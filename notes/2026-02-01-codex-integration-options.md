@@ -64,6 +64,7 @@ Evidence in upstream:
 Implications:
 - This is the cleanest “product-grade” integration boundary: you can treat `codex` as a daemon process and drive it from your own UI/service.
 - You get a richer, more structured event model than `exec` JSONL today (deltas, approvals, terminal interactions, better item types).
+- Operationally, `codex app-server` is not a separate “server binary”; it runs inside the same `codex` executable (the CLI dispatches into `codex_app_server::run_main(...)`).
 
 #### How “well typed” is app-server?
 
@@ -89,19 +90,22 @@ No. This repo contains the `codex app-server` protocol + implementation that pow
 What Codex has today:
 - There is an experimental “steer” UX feature in Codex CLI:
   - `codex-rs/core/src/features.rs` defines `Feature::Steer` (“Enter submits immediately; Tab queues messages when a task is running.”).
+  - In the TUI this is implemented as a keybinding behavior (Enter vs Tab), not as a new model/provider capability.
+  - Under the hood, Codex core already supports “pending input” injection into an in-flight turn (`inject_input()`), and consumes that pending input to trigger a follow-up sampling cycle within the same turn loop.
 
 What that means for integration:
-- This is fundamentally a **client UX behavior**, not a property of the model stream itself.
+- This is fundamentally a **client UX behavior**, but it depends on a core capability (pending-input injection) that is not exposed in all integration surfaces.
 - `codex exec` + TS SDK:
-  - Not a good fit for steer-style interaction because the process is “one run then exit”, and stdin is treated as “give me the prompt, then I’m done”.
-  - You can *simulate queueing* in your own client by buffering user messages while the process runs, but you cannot “submit immediately” without killing the process and restarting.
+  - Not a good fit for steer-style interaction because the process is “one run then exit”, and stdin is treated as “give me the prompt (read-to-EOF), then I’m done”.
+  - It does support a graceful interrupt via Ctrl+C / SIGINT (submits `Op::Interrupt`), but it cannot accept additional user input mid-run; steer requires interrupt + restart of `codex exec`.
 - `codex app-server`:
-  - Still doesn’t appear to support “append more user input to the same in-flight turn” (the API surface is `turn/start` and `turn/interrupt`).
-  - But it *does* support clean interruption (`turn/interrupt`) and long-lived process state, so you can implement the steer UX properly:
+  - The public v2 protocol does not currently expose “append more user input to the same in-flight turn” (it exposes `turn/start` and `turn/interrupt`).
+  - However, because core already supports pending-input injection, `app-server` is the right place to expose a first-class “steer” API (e.g. a custom `turn/inject` RPC that targets an existing `turnId` and injects new `UserInput` into the active turn).
+  - Without modification, you can still implement steer UX via interruption + new turn:
     - “Enter” => `turn/interrupt` then `turn/start` with the new message.
     - “Tab” => queue locally; send after `turn/completed`.
 
-Bottom line: if “streaming input” is a hard requirement, **`app-server` is the only practical route**.
+Bottom line: if “streaming input into an in-flight turn” is a hard requirement, **you’ll need app-server + a small protocol extension**, because neither `exec` nor app-server expose injection today even though core supports it.
 
 ### Plan mode / collaboration modes
 
