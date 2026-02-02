@@ -7,7 +7,7 @@ interface CoverageTotals {
 
 function parseArgs(args: string[]): { min: number; include: string } {
   const envMin = Deno.env.get('COVERAGE_MIN')?.trim()
-  let min = envMin ? Number(envMin) : 0.6
+  let min = envMin ? Number(envMin) : 0.6037
   let include = 'src'
 
   for (const arg of args) {
@@ -76,12 +76,14 @@ const totals = parseLcov(lcov, includeSubstr)
 const pct = totals.lf === 0 ? 1 : totals.lh / totals.lf
 const pctStr = (pct * 100).toFixed(2)
 const minStr = (min * 100).toFixed(2)
+const pctRounded = Number(pctStr) / 100
+const minRounded = Number(minStr) / 100
 
 console.log(
   `coverage: ${pctStr}% (${totals.lh}/${totals.lf} lines) include=${includeSubstr}`,
 )
 
-if (pct < min) {
+if (pctRounded < minRounded) {
   console.error(`coverage below minimum: ${pctStr}% < ${minStr}%`)
   Deno.exit(1)
 }

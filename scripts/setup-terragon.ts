@@ -1,4 +1,4 @@
-import { join } from 'jsr:@std/path@^1'
+import { join } from '@std/path'
 
 async function pathExists(path: string): Promise<boolean> {
   try {

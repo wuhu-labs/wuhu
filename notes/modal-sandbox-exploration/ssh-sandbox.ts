@@ -6,6 +6,7 @@
  */
 import { ModalClient } from 'modal'
 import { mkdirSync } from 'fs'
+import process from 'node:process'
 
 const modal = new ModalClient({
   tokenId: process.env.MODAL_TOKEN_ID,

@@ -5,6 +5,7 @@
  * Demonstrates encrypted tunnels (HTTPS-wrapped).
  */
 import { ModalClient } from 'modal'
+import process from 'node:process'
 
 const modal = new ModalClient({
   tokenId: process.env.MODAL_TOKEN_ID,
