@@ -1,7 +1,6 @@
 {
   "workspace": [
-    "./packages/sandbox-daemon",
-    "./packages/tasks"
+    "./packages/sandbox-daemon"
   ],
   "fmt": {
     "indentWidth": 2,
@@ -9,6 +8,9 @@
     "singleQuote": true
   },
   "lint": {
+    "include": [
+      "packages/"
+    ],
     "rules": {
       "exclude": [
         "require-await",

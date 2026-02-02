@@ -1,0 +1,11 @@
+{
+  "name": "@wuhu/modal-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sandbox:daemon": "bun run launcher.ts"
+  },
+  "dependencies": {
+    "modal": "0.6.1"
+  }
+}
