@@ -1,0 +1,23 @@
+{
+  "workspace": [
+    "./packages/sandbox-daemon"
+  ],
+  "fmt": {
+    "indentWidth": 2,
+    "semiColons": false,
+    "singleQuote": true
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-window"
+      ]
+    }
+  },
+  "tasks": {
+    "check": "deno task --cwd=packages/sandbox-daemon check",
+    "test": "deno task --cwd=packages/sandbox-daemon test",
+    "verify": "deno task -r check && deno task -r test"
+  }
+}
+
