@@ -5,7 +5,7 @@
   },
   "imports": {
     "@std/path": "jsr:@std/path@^1",
-    "modal": "npm:modal@0.6.1"
+    "modal": "npm:@paideia-ai/modal@0.6.1-paideia.0"
   },
   "tasks": {
     "modal:sandbox-daemon": "deno run -A ./modal-sandbox-daemon-launcher.ts"

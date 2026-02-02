@@ -6,7 +6,6 @@
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@1": "1.1.4",
     "npm:@paideia-ai/modal@0.6.1-paideia.0": "0.6.1-paideia.0",
-    "npm:modal@0.6.1": "0.6.1",
     "npm:zod@4.3.6": "4.3.6"
   },
   "jsr": {
@@ -63,29 +62,12 @@
     "@grpc/grpc-js@1.12.6": {
       "integrity": "sha512-JXUj6PI0oqqzTGvKtzOkxtpsyPRNsrmhh41TtIz/zEB6J+AUiZZ0dxWzcMwO9Ns5rmSPuMdghlTbUuqIM48d3Q==",
       "dependencies": [
-        "@grpc/proto-loader@0.7.15",
-        "@js-sdsl/ordered-map"
-      ]
-    },
-    "@grpc/grpc-js@1.14.3": {
-      "integrity": "sha512-Iq8QQQ/7X3Sac15oB6p0FmUg/klxQvXLeileoqrTRGJYLV+/9tubbr9ipz0GKHjmXVsgFPo/+W+2cA8eNcR+XA==",
-      "dependencies": [
-        "@grpc/proto-loader@0.8.0",
+        "@grpc/proto-loader",
         "@js-sdsl/ordered-map"
       ]
     },
     "@grpc/proto-loader@0.7.15": {
       "integrity": "sha512-tMXdRCfYVixjuFK+Hk0Q1s38gV9zDiDJfWL3h1rv4Qc39oILCu1TRTDt7+fGUI8K4G1Fj125Hx/ru3azECWTyQ==",
-      "dependencies": [
-        "lodash.camelcase",
-        "long",
-        "protobufjs",
-        "yargs"
-      ],
-      "bin": true
-    },
-    "@grpc/proto-loader@0.8.0": {
-      "integrity": "sha512-rc1hOQtjIWGxcxpb9aHAfLpIctjEnsDehj0DAiVfBlmT84uvR0uUtN2hEi/ecvWVjXUGf5qPF4qEgiLOx1YIMQ==",
       "dependencies": [
         "lodash.camelcase",
         "long",
@@ -100,10 +82,10 @@
     "@paideia-ai/modal@0.6.1-paideia.0": {
       "integrity": "sha512-fBZgKn3djqS1nKKAkka/Fo4jv4TJpfuvMZokk6iV6sc46m43EufGm1+lTX9WTzRqFj28BYDxPVHsiIsEg6AFuw==",
       "dependencies": [
-        "@grpc/grpc-js@1.12.6",
+        "@grpc/grpc-js",
         "cbor-x",
         "long",
-        "nice-grpc@2.1.11",
+        "nice-grpc",
         "protobufjs",
         "smol-toml",
         "uuid"
@@ -222,17 +204,6 @@
     "long@5.3.2": {
       "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="
     },
-    "modal@0.6.1": {
-      "integrity": "sha512-A2pLSxbXquAtJ5lqBb8SFiuKgJnkNk3bWB7msi/kjVef6m5kiSu3abmbVPPYBQ63K2em0YRk50eR+ElwQzxXXA==",
-      "dependencies": [
-        "cbor-x",
-        "long",
-        "nice-grpc@2.1.14",
-        "protobufjs",
-        "smol-toml",
-        "uuid"
-      ]
-    },
     "nice-grpc-common@2.0.2": {
       "integrity": "sha512-7RNWbls5kAL1QVUOXvBsv1uO0wPQK3lHv+cY1gwkTzirnG1Nop4cBJZubpgziNbaVc/bl9QJcyvsf/NQxa3rjQ==",
       "dependencies": [
@@ -242,15 +213,7 @@
     "nice-grpc@2.1.11": {
       "integrity": "sha512-oizT4+EEJLvN5ydw38P1puP1a+7OngK2EehCA88PoRgnTEaxsb//4KUs+JlN0xjxt0waLC8j6UpOtcaIqOKmgQ==",
       "dependencies": [
-        "@grpc/grpc-js@1.12.6",
-        "abort-controller-x",
-        "nice-grpc-common"
-      ]
-    },
-    "nice-grpc@2.1.14": {
-      "integrity": "sha512-GK9pKNxlvnU5FAdaw7i2FFuR9CqBspcE+if2tqnKXBcE0R8525wj4BZvfcwj7FjvqbssqKxRHt2nwedalbJlww==",
-      "dependencies": [
-        "@grpc/grpc-js@1.14.3",
+        "@grpc/grpc-js",
         "abort-controller-x",
         "nice-grpc-common"
       ]
@@ -357,7 +320,7 @@
       "packages/tasks": {
         "dependencies": [
           "jsr:@std/path@1",
-          "npm:modal@0.6.1"
+          "npm:@paideia-ai/modal@0.6.1-paideia.0"
         ]
       }
     }
