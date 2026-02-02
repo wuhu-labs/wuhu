@@ -25,7 +25,6 @@
     "coverage:check": "deno task --cwd=packages/sandbox-daemon coverage:check"
   },
   "imports": {
-    "@std/path": "jsr:@std/path@^1",
-    "modal": "npm:@paideia-ai/modal@0.6.1-paideia.0"
+    "@std/path": "jsr:@std/path@^1"
   }
 }
