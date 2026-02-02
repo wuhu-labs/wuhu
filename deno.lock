@@ -5,6 +5,7 @@
     "jsr:@std/assert@1": "1.0.18",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/path@1": "1.1.4",
+    "npm:@paideia-ai/modal@0.6.1-paideia.0": "0.6.1-paideia.0",
     "npm:modal@0.6.1": "0.6.1",
     "npm:zod@4.3.6": "4.3.6"
   },
@@ -59,12 +60,29 @@
       "os": ["win32"],
       "cpu": ["x64"]
     },
+    "@grpc/grpc-js@1.12.6": {
+      "integrity": "sha512-JXUj6PI0oqqzTGvKtzOkxtpsyPRNsrmhh41TtIz/zEB6J+AUiZZ0dxWzcMwO9Ns5rmSPuMdghlTbUuqIM48d3Q==",
+      "dependencies": [
+        "@grpc/proto-loader@0.7.15",
+        "@js-sdsl/ordered-map"
+      ]
+    },
     "@grpc/grpc-js@1.14.3": {
       "integrity": "sha512-Iq8QQQ/7X3Sac15oB6p0FmUg/klxQvXLeileoqrTRGJYLV+/9tubbr9ipz0GKHjmXVsgFPo/+W+2cA8eNcR+XA==",
       "dependencies": [
-        "@grpc/proto-loader",
+        "@grpc/proto-loader@0.8.0",
         "@js-sdsl/ordered-map"
       ]
+    },
+    "@grpc/proto-loader@0.7.15": {
+      "integrity": "sha512-tMXdRCfYVixjuFK+Hk0Q1s38gV9zDiDJfWL3h1rv4Qc39oILCu1TRTDt7+fGUI8K4G1Fj125Hx/ru3azECWTyQ==",
+      "dependencies": [
+        "lodash.camelcase",
+        "long",
+        "protobufjs",
+        "yargs"
+      ],
+      "bin": true
     },
     "@grpc/proto-loader@0.8.0": {
       "integrity": "sha512-rc1hOQtjIWGxcxpb9aHAfLpIctjEnsDehj0DAiVfBlmT84uvR0uUtN2hEi/ecvWVjXUGf5qPF4qEgiLOx1YIMQ==",
@@ -78,6 +96,19 @@
     },
     "@js-sdsl/ordered-map@4.4.2": {
       "integrity": "sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw=="
+    },
+    "@paideia-ai/modal@0.6.1-paideia.0": {
+      "integrity": "sha512-fBZgKn3djqS1nKKAkka/Fo4jv4TJpfuvMZokk6iV6sc46m43EufGm1+lTX9WTzRqFj28BYDxPVHsiIsEg6AFuw==",
+      "dependencies": [
+        "@grpc/grpc-js@1.12.6",
+        "cbor-x",
+        "long",
+        "nice-grpc@2.1.11",
+        "protobufjs",
+        "smol-toml",
+        "uuid"
+      ],
+      "tarball": "https://npm.pkg.github.com/download/@paideia-ai/modal/0.6.1-paideia.0/c3b59235d556ac0e7d6fc6ba11b8640b43846658"
     },
     "@protobufjs/aspromise@1.1.2": {
       "integrity": "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="
@@ -196,7 +227,7 @@
       "dependencies": [
         "cbor-x",
         "long",
-        "nice-grpc",
+        "nice-grpc@2.1.14",
         "protobufjs",
         "smol-toml",
         "uuid"
@@ -208,10 +239,18 @@
         "ts-error"
       ]
     },
+    "nice-grpc@2.1.11": {
+      "integrity": "sha512-oizT4+EEJLvN5ydw38P1puP1a+7OngK2EehCA88PoRgnTEaxsb//4KUs+JlN0xjxt0waLC8j6UpOtcaIqOKmgQ==",
+      "dependencies": [
+        "@grpc/grpc-js@1.12.6",
+        "abort-controller-x",
+        "nice-grpc-common"
+      ]
+    },
     "nice-grpc@2.1.14": {
       "integrity": "sha512-GK9pKNxlvnU5FAdaw7i2FFuR9CqBspcE+if2tqnKXBcE0R8525wj4BZvfcwj7FjvqbssqKxRHt2nwedalbJlww==",
       "dependencies": [
-        "@grpc/grpc-js",
+        "@grpc/grpc-js@1.14.3",
         "abort-controller-x",
         "nice-grpc-common"
       ]
@@ -303,7 +342,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/path@1"
+      "jsr:@std/path@1",
+      "npm:@paideia-ai/modal@0.6.1-paideia.0"
     ],
     "members": {
       "packages/sandbox-daemon": {

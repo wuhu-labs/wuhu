@@ -1,4 +1,5 @@
-import { dirname, fromFileUrl, join, posix } from '@std/path'
+import { dirname, fromFileUrl, join } from '@std/path'
+import * as posix from '@std/path/posix'
 import { ModalClient } from 'modal'
 
 type ModalSandbox = Awaited<ReturnType<ModalClient['sandboxes']['create']>>
