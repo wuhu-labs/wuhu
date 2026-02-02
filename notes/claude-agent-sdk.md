@@ -8,7 +8,9 @@
 
 ## How It Works
 
-The SDK spawns the Claude Code CLI (`claude`) as a subprocess with `--print --output-format stream-json --verbose` flags and communicates via stdin/stdout JSON streaming.
+The SDK spawns the Claude Code CLI (`claude`) as a subprocess with
+`--print --output-format stream-json --verbose` flags and communicates via
+stdin/stdout JSON streaming.
 
 ## Installation
 
@@ -21,21 +23,23 @@ npm install @anthropic-ai/claude-agent-sdk
 ## Basic Usage
 
 ```typescript
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from '@anthropic-ai/claude-agent-sdk'
 
-for await (const message of query({
-  prompt: "What is 2 + 2?",
-  options: {
-    allowedTools: ["Read", "Glob", "Grep"],
-    permissionMode: "default",  // or "bypassPermissions" (not as root!)
-    maxTurns: 5,
-  },
-})) {
-  if (message.type === "system" && message.subtype === "init") {
-    console.log("Session ID:", message.session_id);
+for await (
+  const message of query({
+    prompt: 'What is 2 + 2?',
+    options: {
+      allowedTools: ['Read', 'Glob', 'Grep'],
+      permissionMode: 'default', // or "bypassPermissions" (not as root!)
+      maxTurns: 5,
+    },
+  })
+) {
+  if (message.type === 'system' && message.subtype === 'init') {
+    console.log('Session ID:', message.session_id)
   }
-  if ("result" in message) {
-    console.log("Result:", message.result);
+  if ('result' in message) {
+    console.log('Result:', message.result)
   }
 }
 ```
@@ -49,11 +53,13 @@ for await (const message of query({
 ## Session Logs
 
 Sessions are persisted to disk at:
+
 ```
 ~/.claude/projects/<encoded-project-path>/<session-id>.jsonl
 ```
 
 Each line is a JSON object:
+
 - `type`: "queue-operation", "user", "assistant"
 - `sessionId`: UUID for the session
 - `uuid`: UUID for each message
@@ -82,29 +88,34 @@ Session index at `~/.claude/projects/<path>/sessions-index.json`.
 
 ## Multiplatform Strategy
 
-1. **Ripgrep**: Ships ALL platform binaries in package (~55MB). Runtime selects based on `process.platform`/`process.arch`.
+1. **Ripgrep**: Ships ALL platform binaries in package (~55MB). Runtime selects
+   based on `process.platform`/`process.arch`.
 
-2. **Sharp** (image processing): Uses npm `optionalDependencies` with `os`/`cpu`/`libc` constraints - only matching platform is downloaded.
+2. **Sharp** (image processing): Uses npm `optionalDependencies` with
+   `os`/`cpu`/`libc` constraints - only matching platform is downloaded.
 
-3. **WebAssembly**: tree-sitter and resvg use .wasm files (architecture-agnostic).
+3. **WebAssembly**: tree-sitter and resvg use .wasm files
+   (architecture-agnostic).
 
 ## Key Options
 
 ```typescript
 interface ClaudeAgentOptions {
-  allowedTools?: string[];           // ["Read", "Edit", "Bash", "Task", ...]
-  permissionMode?: "default" | "bypassPermissions" | "acceptEdits" | "plan";
-  maxTurns?: number;                 // Max API round-trips
-  mcpServers?: Record<string, McpServerConfig>;
-  agents?: Record<string, AgentDefinition>;  // Custom subagents
-  resume?: string;                   // Session ID to resume
-  pathToClaudeCodeExecutable?: string;  // Custom CLI path (optional)
-  settingSources?: ("user" | "project" | "local")[];
+  allowedTools?: string[] // ["Read", "Edit", "Bash", "Task", ...]
+  permissionMode?: 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan'
+  maxTurns?: number // Max API round-trips
+  mcpServers?: Record<string, McpServerConfig>
+  agents?: Record<string, AgentDefinition> // Custom subagents
+  resume?: string // Session ID to resume
+  pathToClaudeCodeExecutable?: string // Custom CLI path (optional)
+  settingSources?: ('user' | 'project' | 'local')[]
 }
 ```
 
 ## Gotchas
 
 - `bypassPermissions` doesn't work when running as root
-- SDK requires matching claude-code version (check `claudeCodeVersion` in package.json)
-- The SDK automatically finds the bundled CLI - no need to set `pathToClaudeCodeExecutable`
+- SDK requires matching claude-code version (check `claudeCodeVersion` in
+  package.json)
+- The SDK automatically finds the bundled CLI - no need to set
+  `pathToClaudeCodeExecutable`

@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+# Capture staged files before formatting
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+
+deno fmt
+
+# Re-stage only what was previously staged
+if [ -n "$STAGED_FILES" ]; then
+  git add $STAGED_FILES
+fi
+

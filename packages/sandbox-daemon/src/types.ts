@@ -121,14 +121,16 @@ export interface SandboxDaemonRepoClonedEvent extends SandboxDaemonBaseEvent {
   path: string
 }
 
-export interface SandboxDaemonRepoCloneErrorEvent extends SandboxDaemonBaseEvent {
+export interface SandboxDaemonRepoCloneErrorEvent
+  extends SandboxDaemonBaseEvent {
   source: 'daemon'
   type: 'repo_clone_error'
   repoId: string
   error: string
 }
 
-export interface SandboxDaemonCheckpointCommitEvent extends SandboxDaemonBaseEvent {
+export interface SandboxDaemonCheckpointCommitEvent
+  extends SandboxDaemonBaseEvent {
   source: 'daemon'
   type: 'checkpoint_commit'
   repoId: string
@@ -162,7 +164,10 @@ export type SandboxDaemonEvent =
 export interface SandboxDaemonClient {
   setCredentials(payload: SandboxDaemonCredentialsPayload): Promise<void>
   init(request: SandboxDaemonInitRequest): Promise<SandboxDaemonInitResponse>
-  prompt(request: SandboxDaemonPromptRequest): Promise<SandboxDaemonPromptResponse>
-  abort(request?: SandboxDaemonAbortRequest): Promise<SandboxDaemonAbortResponse>
+  prompt(
+    request: SandboxDaemonPromptRequest,
+  ): Promise<SandboxDaemonPromptResponse>
+  abort(
+    request?: SandboxDaemonAbortRequest,
+  ): Promise<SandboxDaemonAbortResponse>
 }
-

@@ -4,11 +4,13 @@ First component to build. The foundation of Wuhu.
 
 ## What it is
 
-A place to store and query coding agent session logs from any source (Claude Code, Codex, OpenCode, etc).
+A place to store and query coding agent session logs from any source (Claude
+Code, Codex, OpenCode, etc).
 
 ## Storage
 
-- Raw logs go to object storage (R2), treated as append-only tree (Claude Code's model - new entries are leaves pointing to parent)
+- Raw logs go to object storage (R2), treated as append-only tree (Claude Code's
+  model - new entries are leaves pointing to parent)
 - "Projections" derived from raw logs, stored in Postgres for querying
 - Projections are always recomputable from raw
 

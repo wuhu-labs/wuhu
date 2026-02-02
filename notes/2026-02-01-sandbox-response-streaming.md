@@ -4,13 +4,16 @@ Date: 2026-02-01
 
 ## Problem
 
-How do we get response streaming from a sandbox back to our main app server when:
+How do we get response streaming from a sandbox back to our main app server
+when:
+
 - Main server has no public ingress (could be behind Tailnet)
 - Sandboxes (Modal or Docker) can't reach main server directly
 
 ## Solution: Daemon as Durable Object
 
-Instead of an external controller/relay service, make the **sandbox daemon itself** the durable endpoint with a local SQLite buffer.
+Instead of an external controller/relay service, make the **sandbox daemon
+itself** the durable endpoint with a local SQLite buffer.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -37,10 +40,10 @@ Instead of an external controller/relay service, make the **sandbox daemon itsel
 
 ## Two Concerns, Cleanly Separated
 
-| Concern | Who | Pattern |
-|---------|-----|---------|
-| Live streaming | Web clients | Connect directly to daemon, fan-out WS, lowest latency |
-| Durable persistence | Main app replica | Redis lease, cursor-based pull, move to your DB |
+| Concern             | Who              | Pattern                                                |
+| ------------------- | ---------------- | ------------------------------------------------------ |
+| Live streaming      | Web clients      | Connect directly to daemon, fan-out WS, lowest latency |
+| Durable persistence | Main app replica | Redis lease, cursor-based pull, move to your DB        |
 
 ## Daemon Design
 
@@ -75,13 +78,16 @@ POST /sessions/{id}/interrupt
 
 ### Properties
 
-- **Single process, single writer** - mutations are trivially serialized, no distributed locking
-- **Fan-out to multiple WS clients** - web clients connect directly for lowest latency
+- **Single process, single writer** - mutations are trivially serialized, no
+  distributed locking
+- **Fan-out to multiple WS clients** - web clients connect directly for lowest
+  latency
 - **Cursor-based resume** - SQLite rowid is the cursor
 
 ## Main App Log Mover
 
-Uses Redis lease to coordinate which replica owns persistence for a given session:
+Uses Redis lease to coordinate which replica owns persistence for a given
+session:
 
 ```
 # Replica tries to acquire ownership
@@ -94,6 +100,7 @@ EXPIRE sandbox:{id}:owner 30
 ```
 
 If a replica crashes:
+
 1. Lease expires after 30s
 2. Another replica claims it
 3. New replica connects to daemon, resumes from cursor
@@ -133,7 +140,8 @@ If a replica crashes:
 
 ## Push Notification Dedup
 
-Neither Web Push nor APNs dedupe across devices. "Seen on one, dismiss on others" is your responsibility.
+Neither Web Push nor APNs dedupe across devices. "Seen on one, dismiss on
+others" is your responsibility.
 
 ### Practical Solution: Delayed Push
 
@@ -153,14 +161,17 @@ Event happens (agent done, etc.)
   push      all devices
 ```
 
-This works because devices are already connected to main server over Tailnet. The push notification becomes a fallback/wake-up for idle devices, not the primary delivery mechanism.
+This works because devices are already connected to main server over Tailnet.
+The push notification becomes a fallback/wake-up for idle devices, not the
+primary delivery mechanism.
 
 ### Platform-Specific Collapse Keys
 
-For repeated updates to the same task, use collapse keys to replace rather than stack:
+For repeated updates to the same task, use collapse keys to replace rather than
+stack:
 
-| Platform | Mechanism |
-|----------|-----------|
+| Platform | Mechanism                                       |
+| -------- | ----------------------------------------------- |
 | Web Push | `Topic` header or `tag` in notification options |
-| APNs | `apns-collapse-id` header |
-| FCM | `collapse_key` |
+| APNs     | `apns-collapse-id` header                       |
+| FCM      | `collapse_key`                                  |

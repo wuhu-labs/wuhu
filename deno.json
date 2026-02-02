@@ -20,4 +20,3 @@
     "verify": "deno task -r check && deno task -r test"
   }
 }
-

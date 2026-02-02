@@ -52,15 +52,18 @@ Deno.test('GET /stream returns SSE with agent events from cursor', async () => {
   assertEquals(res.status, 200)
   const text = await res.text()
 
-  const dataLines = text.split('\n').filter((line) => line.startsWith('data: '))
+  const dataLines = text.split('\n').filter((line: string) =>
+    line.startsWith('data: ')
+  )
   assertEquals(dataLines.length, 1)
 
   const jsonStr = dataLines[0].slice('data: '.length)
-  const envelope = JSON.parse(jsonStr) as SandboxDaemonStreamEnvelope<SandboxDaemonAgentEvent>
+  const envelope = JSON.parse(jsonStr) as SandboxDaemonStreamEnvelope<
+    SandboxDaemonAgentEvent
+  >
 
   assertEquals(envelope.cursor, 1)
   assertEquals(envelope.event.source, 'agent')
   assertEquals(envelope.event.type, 'message_update')
   assertEquals(envelope.event.payload.text, 'partial')
 })
-

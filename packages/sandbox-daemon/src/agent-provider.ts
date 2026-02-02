@@ -47,4 +47,3 @@ export class FakeAgentProvider implements AgentProvider {
     }
   }
 }
-
