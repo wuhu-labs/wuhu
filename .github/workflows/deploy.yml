@@ -18,8 +18,14 @@ jobs:
         run: |
           docker save wuhu-core:${{ github.sha }} | sudo k3s ctr images import -
 
+      - name: Deploy core
+        run: |
+          sudo kubectl apply -f k8s/core.yaml
+          sudo kubectl rollout restart deployment/core
+
   deploy-web:
     runs-on: [self-hosted, wuhu]
+    needs: deploy-core
     steps:
       - uses: actions/checkout@v4
 
@@ -29,3 +35,8 @@ jobs:
       - name: Import to k3s
         run: |
           docker save wuhu-web:${{ github.sha }} | sudo k3s ctr images import -
+
+      - name: Deploy web
+        run: |
+          sudo kubectl apply -f k8s/web.yaml
+          sudo kubectl rollout restart deployment/web
