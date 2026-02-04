@@ -22,9 +22,9 @@
     }
   },
   "tasks": {
-    "check": "deno task --cwd=packages/sandbox-daemon check",
-    "test": "deno task --cwd=packages/sandbox-daemon test",
-    "verify": "deno task -r check && deno task -r test",
+    "check": "deno task --cwd=packages/sandbox-daemon check && deno task --cwd=packages/server check && deno task --cwd=packages/drizzle check",
+    "test": "deno task --cwd=packages/sandbox-daemon test && deno task --cwd=packages/server test && deno task --cwd=packages/drizzle test",
+    "verify": "deno task check && deno task test",
     "coverage": "deno task --cwd=packages/sandbox-daemon coverage",
     "coverage:check": "deno task --cwd=packages/sandbox-daemon coverage:check",
     "db:generate": "deno task --cwd=packages/drizzle db:generate"

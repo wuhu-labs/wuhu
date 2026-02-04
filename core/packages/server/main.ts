@@ -3,6 +3,7 @@ import type { Context } from '@hono/hono'
 import { cors } from '@hono/hono/cors'
 import { streamSSE } from '@hono/hono/streaming'
 import { loadConfig } from './src/config.ts'
+import { db } from './src/db.ts'
 import { createKubeClient } from './src/k8s.ts'
 import type { SandboxRecord } from './src/sandbox-service.ts'
 import { RepoService } from './src/repos.ts'
@@ -14,6 +15,7 @@ import {
   refreshSandboxPod,
   terminateSandbox,
 } from './src/sandbox-service.ts'
+import { fetchSandboxMessages, persistSandboxState } from './src/state.ts'
 
 const app = new Hono()
 const config = loadConfig()
@@ -35,6 +37,19 @@ function readEnvTrimmed(name: string): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function parseNumberField(
+  body: Record<string, unknown>,
+  key: string,
+): number | null {
+  const value = body[key]
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && value.trim().length) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
 }
 
 function parsePreviewHost(host: string): { id: string; port: number } | null {
@@ -537,6 +552,116 @@ app.post('/sandboxes/:id/abort', async (c) => {
   } catch (error) {
     console.error('Failed to proxy abort', error)
     return c.json({ error: 'sandbox_abort_failed' }, 500)
+  }
+})
+
+app.post('/sandboxes/:id/state', async (c) => {
+  const id = c.req.param('id')
+  let body: unknown = {}
+  try {
+    body = await c.req.json()
+  } catch {
+    body = {}
+  }
+  if (!isRecord(body)) return c.json({ error: 'invalid_body' }, 400)
+
+  const cursorField = parseNumberField(body, 'cursor')
+  if (
+    typeof cursorField !== 'number' || !Number.isInteger(cursorField) ||
+    cursorField < 0
+  ) {
+    return c.json({ error: 'invalid_cursor' }, 400)
+  }
+  const cursor = cursorField
+
+  const rawMessages = body.messages
+  if (!Array.isArray(rawMessages)) {
+    return c.json({ error: 'invalid_messages' }, 400)
+  }
+
+  const messages: Array<{
+    cursor: number
+    role: string
+    content: string
+    toolName: string | null
+    toolCallId: string | null
+    turnIndex: number
+  }> = []
+  for (const entry of rawMessages) {
+    if (!isRecord(entry)) return c.json({ error: 'invalid_message' }, 400)
+    const entryCursorField = parseNumberField(entry, 'cursor')
+    const role = entry.role
+    const content = entry.content
+    const turnIndexField = parseNumberField(entry, 'turnIndex')
+    if (
+      typeof entryCursorField !== 'number' ||
+      !Number.isInteger(entryCursorField) ||
+      entryCursorField < 0 ||
+      typeof role !== 'string' || !role.trim().length ||
+      typeof content !== 'string' ||
+      typeof turnIndexField !== 'number' ||
+      !Number.isInteger(turnIndexField) ||
+      turnIndexField < 0
+    ) {
+      return c.json({ error: 'invalid_message' }, 400)
+    }
+    const toolName = typeof entry.toolName === 'string' ? entry.toolName : null
+    const toolCallId = typeof entry.toolCallId === 'string'
+      ? entry.toolCallId
+      : null
+    messages.push({
+      cursor: entryCursorField,
+      role,
+      content,
+      toolName,
+      toolCallId,
+      turnIndex: turnIndexField,
+    })
+  }
+
+  const maxMessageCursor = messages.reduce(
+    (acc, message) => Math.max(acc, message.cursor),
+    0,
+  )
+  if (cursor < maxMessageCursor) {
+    return c.json({ error: 'cursor_less_than_messages' }, 400)
+  }
+
+  try {
+    const record = await getSandbox(id)
+    if (!record) return c.json({ error: 'not_found' }, 404)
+
+    const persisted = await persistSandboxState(db, id, { cursor, messages })
+    return c.json({ ok: true, cursor: persisted.cursor })
+  } catch (error) {
+    console.error('Failed to persist sandbox state', error)
+    return c.json({ error: 'sandbox_state_persist_failed' }, 500)
+  }
+})
+
+app.get('/sandboxes/:id/messages', async (c) => {
+  const id = c.req.param('id')
+  const parsedCursor = Number(c.req.query('cursor') ?? '0')
+  const cursor = Number.isFinite(parsedCursor)
+    ? Math.max(0, Math.floor(parsedCursor))
+    : 0
+  const limitRaw = c.req.query('limit')
+  const parsedLimit = limitRaw ? Number(limitRaw) : 100
+  const limit = Number.isFinite(parsedLimit) ? Math.floor(parsedLimit) : 100
+  const boundedLimit = Math.min(Math.max(limit, 0), 500)
+
+  try {
+    const record = await getSandbox(id)
+    if (!record) return c.json({ error: 'not_found' }, 404)
+
+    const result = await fetchSandboxMessages(db, id, {
+      cursorExclusive: cursor,
+      limit: boundedLimit,
+    })
+    return c.json(result)
+  } catch (error) {
+    console.error('Failed to fetch sandbox messages', error)
+    return c.json({ error: 'sandbox_messages_fetch_failed' }, 500)
   }
 })
 

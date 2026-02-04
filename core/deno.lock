@@ -652,6 +652,7 @@
           "jsr:@std/yaml@1",
           "npm:@octokit/rest@22",
           "npm:drizzle-orm@0.44",
+          "npm:postgres@^3.4.5",
           "npm:redis@^4.7.0"
         ]
       }

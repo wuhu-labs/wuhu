@@ -12,11 +12,15 @@
     "@std/yaml": "jsr:@std/yaml@^1",
     "@octokit/rest": "npm:@octokit/rest@^22.0.0",
     "redis": "npm:redis@^4.7.0",
-    "drizzle-orm": "npm:drizzle-orm@^0.44.0"
+    "drizzle-orm": "npm:drizzle-orm@^0.44.0",
+    "drizzle-orm/postgres-js": "npm:drizzle-orm@^0.44.0/postgres-js",
+    "drizzle-orm/postgres-js/migrator": "npm:drizzle-orm@^0.44.0/postgres-js/migrator",
+    "postgres": "npm:postgres@^3.4.5"
   },
   "tasks": {
     "dev": "deno run -A --watch main.ts",
     "start": "deno run -A main.ts",
-    "check": "deno check . && deno lint"
+    "check": "deno check . && deno lint",
+    "test": "deno test -A"
   }
 }
