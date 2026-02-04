@@ -26,6 +26,18 @@ spec:
               value: "3000"
             - name: SANDBOX_IMAGE
               value: "wuhu-core:latest"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASSWORD)@postgres:5432/wuhu"
           livenessProbe:
             httpGet:
               path: /health
