@@ -70,6 +70,8 @@ done
 - In-band JS proxy in core server
 - Wildcard ingress routes `*.wuhu.liu.ms` → core
 - Core parses host, looks up pod IP, proxies request
+- MVP runs sandbox jobs on the same image as core
+- TODO: build a dedicated sandbox image (keep core image for server only)
 
 **Deferred: Traefik Plugin**
 
