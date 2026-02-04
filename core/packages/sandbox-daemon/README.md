@@ -55,6 +55,7 @@ To allow browser access from arbitrary domains, include a CORS allowlist in the
 
 ## API
 
+- `GET /health` → `{ ok: true }`
 - `POST /credentials` → accepts `SandboxDaemonCredentialsPayload`, returns
   `{ ok: true }`
 - `POST /init` → clones/checks out repos into `SANDBOX_DAEMON_WORKSPACE_ROOT`,

@@ -1,0 +1,31 @@
+name: Smoke Test Sandbox
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'core/Dockerfile.sandbox'
+      - 'core/packages/sandbox-daemon/**'
+      - 'scripts/smoke-sandbox.ts'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+
+      - name: Build sandbox image
+        run: docker build -f core/Dockerfile.sandbox -t wuhu-sandbox:latest ./core
+
+      - name: Run smoke test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SMOKE_AGENT_MODE: ${{ secrets.OPENAI_API_KEY != '' && 'pi-rpc' || 'mock' }}
+          SMOKE_REPO: ${{ github.repository }}
+          SMOKE_BRANCH: ${{ github.ref_name }}
+        run: deno run -A scripts/smoke-sandbox.ts

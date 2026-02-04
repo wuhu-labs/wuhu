@@ -1,6 +1,6 @@
 import { createSandboxDaemonApp } from './src/server.ts'
-import { FakeAgentProvider } from './src/agent-provider.ts'
 import { PiAgentProvider } from './src/pi-agent-provider.ts'
+import { MockAgentProvider } from './src/mock-agent-provider.ts'
 import {
   applyCredentialsToEnv,
   InMemoryCredentialsStore,
@@ -86,7 +86,7 @@ if (envOpenAiKey || envAnthropicKey) {
 }
 
 const provider = agentMode === 'mock'
-  ? new FakeAgentProvider()
+  ? new MockAgentProvider()
   : new LazyAgentProvider({
     getRevision: () => credentials.get().revision,
     create: () => {

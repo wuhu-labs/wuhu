@@ -204,6 +204,10 @@ export function createSandboxDaemonApp(
   const requireUser = authEnabled ? requireScope('user') : noAuth
   const requireAdmin = authEnabled ? requireScope('admin') : noAuth
 
+  app.get('/health', (c: Context) => {
+    return c.json({ ok: true })
+  })
+
   provider.onEvent((event) => {
     eventStore.append(event)
   })

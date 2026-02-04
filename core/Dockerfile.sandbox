@@ -5,6 +5,8 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DENO_INSTALL=/usr/local
 ENV PATH="/usr/local/bin:${PATH}"
+ENV SANDBOX_DAEMON_HOST=0.0.0.0
+ENV SANDBOX_DAEMON_WORKSPACE_ROOT=/root
 
 RUN apt-get update && apt-get install -y \
   ca-certificates \

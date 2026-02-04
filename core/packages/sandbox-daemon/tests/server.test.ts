@@ -10,6 +10,16 @@ import type {
   SandboxDaemonStreamEnvelope,
 } from '../src/types.ts'
 
+Deno.test('GET /health returns ok', async () => {
+  const provider = new FakeAgentProvider()
+  const { app } = createSandboxDaemonApp({ provider })
+
+  const res = await app.request('/health', { method: 'GET' })
+
+  assertEquals(res.status, 200)
+  assertEquals(await res.json(), { ok: true })
+})
+
 Deno.test('POST /prompt forwards to provider and returns success', async () => {
   const provider = new FakeAgentProvider()
   const { app } = createSandboxDaemonApp({ provider })
