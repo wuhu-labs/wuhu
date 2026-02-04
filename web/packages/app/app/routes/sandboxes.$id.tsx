@@ -7,6 +7,7 @@ import {
   useSandboxStreams,
 } from '~/lib/sandbox/use-sandbox.ts'
 import type { UiMessage } from '~/lib/sandbox/types.ts'
+import { queuedPromptIsRecordedInCoding } from '~/lib/sandbox/dedup.ts'
 
 function formatTimestamp(value?: number): string {
   const date = value ? new Date(value) : new Date()
@@ -99,15 +100,22 @@ export default function SandboxDetail() {
   }, [control.prompts, pendingPrompts.length])
 
   const displayMessages = useMemo(() => {
-    const controlMessages: UiMessage[] = control.prompts.map((p) => ({
-      id: `prompt-${p.cursor}`,
-      role: 'user',
-      title: 'You',
-      text: p.message,
-      status: 'complete',
-      cursor: p.cursor,
-      timestamp: formatTimestamp(p.timestamp),
-    }))
+    const controlMessages: UiMessage[] = control.prompts
+      .filter((p) => {
+        // The daemon emits `prompt_queued` (control stream) and the agent later
+        // replays the same user message in the coding stream. Hide the queued
+        // prompt once we see a matching user message at/after that cursor.
+        return !queuedPromptIsRecordedInCoding(p, coding.messages)
+      })
+      .map((p) => ({
+        id: `queued-prompt-${p.cursor}`,
+        role: 'user',
+        title: 'You',
+        text: p.message,
+        status: 'pending',
+        cursor: p.cursor,
+        timestamp: formatTimestamp(p.timestamp),
+      }))
 
     const all = [...controlMessages, ...coding.messages, ...pendingPrompts]
     const byId = new Map<string, UiMessage>()
