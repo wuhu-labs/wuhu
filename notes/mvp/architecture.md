@@ -61,19 +61,25 @@ done
 - Configured with endpoints from Controller
 - Doesn't know or care about deployment mode
 
-## Preview URL Routing (Traefik Plugin)
+## Preview URL Routing
 
 - Pattern: `<sandbox-id>-<port>.wuhu.liu.ms`
 - Uses existing `*.wuhu.liu.ms` DNS/cert (no infra changes)
 
-**Plugin details:**
+**Current implementation (MVP):**
+- In-band JS proxy in core server
+- Wildcard ingress routes `*.wuhu.liu.ms` → core
+- Core parses host, looks up pod IP, proxies request
+
+**Deferred: Traefik Plugin**
+
+TODO: If preview traffic becomes a bottleneck, move routing to a Traefik plugin:
 - Go plugin loaded in-process by Traefik (via Yaegi interpreter)
-- Must be Go - Traefik requirement
 - Plugin logic:
   1. Parse host: extract sandbox ID + port from `<id>-<port>.wuhu.liu.ms`
   2. Call core service for pod IP lookup: `GET http://core/sandbox-lookup?id=<id>`
   3. Proxy request to `<pod-ip>:<port>`
-- Core service maintains sandbox → pod IP mapping (state lives in our code, not plugin)
+- Removes core from the preview traffic path
 
 ## K8s API Access
 

@@ -16,8 +16,9 @@ No agent execution yet - validate sandbox lifecycle and routing.
 
 ## Preview URL Routing
 
-- Traefik plugin routes `<sandbox-id>-<port>.wuhu.liu.ms` to pod
-- See architecture.md for plugin details
+- Pattern: `<sandbox-id>-<port>.wuhu.liu.ms`
+- Implemented as in-band JS proxy in core server (not Traefik plugin)
+- Wildcard ingress routes `*.wuhu.liu.ms` → core, core proxies to pod IP
 
 ## Web UI - Task Detail
 
