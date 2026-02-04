@@ -271,7 +271,7 @@ export async function createSandboxJob(
                   name: 'SANDBOX_DAEMON_PORT',
                   value: String(config.daemonPort),
                 },
-                { name: 'SANDBOX_DAEMON_AGENT_MODE', value: 'mock' },
+                { name: 'SANDBOX_DAEMON_AGENT_MODE', value: 'pi-rpc' },
                 { name: 'SANDBOX_DAEMON_JWT_ENABLED', value: 'false' },
                 { name: 'SANDBOX_DAEMON_WORKSPACE_ROOT', value: '/root' },
                 { name: 'SANDBOX_DAEMON_PREVIEW_ROOT', value: '/root/repo' },
