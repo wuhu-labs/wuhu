@@ -10,7 +10,6 @@ spec:
   tls:
     - hosts:
         - wuhu.liu.ms
-        - api.wuhu.liu.ms
         - "*.wuhu.liu.ms"
       secretName: wuhu-tls
   rules:
