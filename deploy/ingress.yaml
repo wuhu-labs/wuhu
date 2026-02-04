@@ -11,6 +11,7 @@ spec:
     - hosts:
         - wuhu.liu.ms
         - api.wuhu.liu.ms
+        - "*.wuhu.liu.ms"
       secretName: wuhu-tls
   rules:
     - host: wuhu.liu.ms
@@ -24,6 +25,16 @@ spec:
                 port:
                   number: 3000
     - host: api.wuhu.liu.ms
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: core
+                port:
+                  number: 3000
+    - host: "*.wuhu.liu.ms"
       http:
         paths:
           - path: /

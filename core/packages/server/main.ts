@@ -1,4 +1,5 @@
 import { Hono } from '@hono/hono'
+import type { Context } from '@hono/hono'
 import { cors } from '@hono/hono/cors'
 import { loadConfig } from './src/config.ts'
 import { createKubeClient } from './src/k8s.ts'
@@ -17,6 +18,65 @@ const config = loadConfig()
 const kubeClientPromise = createKubeClient(config.kube)
 
 app.use('*', cors())
+
+function parsePreviewHost(host: string): { id: string; port: number } | null {
+  const hostname = host.split(':')[0]
+  const suffix = `.${config.sandbox.previewDomain}`
+  if (!hostname.endsWith(suffix)) return null
+  const prefix = hostname.slice(0, -suffix.length)
+  const dashIndex = prefix.lastIndexOf('-')
+  if (dashIndex <= 0) return null
+  const id = prefix.slice(0, dashIndex)
+  const port = Number(prefix.slice(dashIndex + 1))
+  if (!Number.isInteger(port)) return null
+  return { id, port }
+}
+
+async function proxyPreviewRequest(c: Context): Promise<Response | null> {
+  const host = c.req.header('host') ?? c.req.header('Host')
+  if (!host) return null
+  const parsed = parsePreviewHost(host)
+  if (!parsed) return null
+
+  const kubeClient = await kubeClientPromise
+  const record = await getSandbox(parsed.id)
+  if (!record) {
+    return c.json({ error: 'sandbox_not_found' }, 404)
+  }
+  const refreshed = await refreshSandboxPod(kubeClient, record)
+  if (!refreshed.podIp) {
+    return c.json({ error: 'pod_not_ready' }, 503)
+  }
+  if (parsed.port !== refreshed.previewPort) {
+    return c.json({ error: 'preview_port_mismatch' }, 404)
+  }
+
+  const targetUrl = new URL(c.req.url)
+  targetUrl.protocol = 'http:'
+  targetUrl.hostname = refreshed.podIp
+  targetUrl.port = String(parsed.port)
+
+  const headers = new Headers(c.req.raw.headers)
+  headers.delete('host')
+
+  const response = await fetch(targetUrl.toString(), {
+    method: c.req.method,
+    headers,
+    body: c.req.raw.body,
+    redirect: 'manual',
+  })
+
+  return new Response(response.body, {
+    status: response.status,
+    headers: response.headers,
+  })
+}
+
+app.use('*', async (c, next) => {
+  const proxied = await proxyPreviewRequest(c)
+  if (proxied) return proxied
+  await next()
+})
 
 function buildPreviewUrl(id: string, port: number): string {
   return `https://${id}-${port}.${config.sandbox.previewDomain}`
