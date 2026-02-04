@@ -38,7 +38,7 @@ export function loadConfig(): AppConfig {
   const port = parseInt(Deno.env.get('PORT') ?? '3000')
   const namespace = Deno.env.get('SANDBOX_NAMESPACE') ??
     Deno.env.get('KUBE_NAMESPACE') ?? 'default'
-  const image = Deno.env.get('SANDBOX_IMAGE') ?? 'wuhu-core:latest'
+  const image = Deno.env.get('SANDBOX_IMAGE') ?? 'wuhu-sandbox:latest'
   const previewDomain = Deno.env.get('SANDBOX_PREVIEW_DOMAIN') ??
     'wuhu.liu.ms'
   const githubToken = Deno.env.get('GITHUB_TOKEN') ?? undefined

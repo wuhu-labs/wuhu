@@ -17,16 +17,20 @@ jobs:
       - name: Build core image
         run: docker build -t wuhu-core:${{ env.IMAGE_TAG }} ./core
 
+      - name: Build sandbox image
+        run: docker build -t wuhu-sandbox:${{ env.IMAGE_TAG }} -f core/Dockerfile.sandbox ./core
+
       - name: Import to k3s
         run: |
           docker save wuhu-core:${{ env.IMAGE_TAG }} | sudo k3s ctr images import -
+          docker save wuhu-sandbox:${{ env.IMAGE_TAG }} | sudo k3s ctr images import -
 
       - name: Deploy core
         run: |
           sudo kubectl apply -f deploy/redis.yaml
           sudo kubectl apply -f deploy/core.yaml
           sudo kubectl set image deployment/core core=docker.io/library/wuhu-core:${{ env.IMAGE_TAG }}
-          sudo kubectl set env deployment/core SANDBOX_IMAGE=docker.io/library/wuhu-core:${{ env.IMAGE_TAG }}
+          sudo kubectl set env deployment/core SANDBOX_IMAGE=docker.io/library/wuhu-sandbox:${{ env.IMAGE_TAG }}
 
   deploy-web:
     runs-on: [self-hosted, wuhu]
