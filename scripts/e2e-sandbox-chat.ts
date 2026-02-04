@@ -107,17 +107,17 @@ async function getPodName(id: string, namespace: string) {
   return name
 }
 
-async function waitForPort(port: number, retries = 30) {
+async function waitForPort(port: number, retries = 120) {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(
         `http://127.0.0.1:${port}/stream?cursor=0&follow=0`,
       )
-      if (res.ok) return
+      if (res.ok || res.status === 503) return
     } catch {
       // ignore
     }
-    await sleep(500)
+    await sleep(1000)
   }
   throw new Error('port-forward did not become ready')
 }

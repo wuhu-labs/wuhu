@@ -220,10 +220,22 @@ const shutdown = async () => {
 const { app } = createSandboxDaemonApp({
   provider,
   onCredentials: async (payload) => {
+    const hasOpenAi = Boolean(payload.llm?.openaiApiKey)
+    const hasAnthropic = Boolean(payload.llm?.anthropicApiKey)
+    console.log(
+      `sandbox-daemon credentials received (openai=${hasOpenAi} anthropic=${hasAnthropic})`,
+    )
     applyCredentialsToEnv(payload)
     credentials.set(payload)
-    await provider.start()
-    await persistSessionFile(provider)
+    try {
+      await provider.start()
+      await persistSessionFile(provider)
+    } catch (error) {
+      console.error(
+        'sandbox-daemon: failed to restart provider after credentials',
+        error,
+      )
+    }
   },
   auth: config.jwt.enabled
     ? { secret: config.jwt.secret, issuer: config.jwt.issuer, enabled: true }

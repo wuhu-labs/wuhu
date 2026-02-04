@@ -482,11 +482,21 @@ export default function SandboxDetail() {
   )
 
   const streamAbortRef = useRef<AbortController | null>(null)
+  const retryRef = useRef<number | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     sandboxReadyRef.current = sandboxReady
   }, [sandboxReady])
+
+  useEffect(() => {
+    return () => {
+      if (retryRef.current) {
+        clearTimeout(retryRef.current)
+        retryRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!logRef.current) return
@@ -506,6 +516,7 @@ export default function SandboxDetail() {
     const controller = new AbortController()
     streamAbortRef.current = controller
     let hadError = false
+    let finalStatus: string | null = null
 
     try {
       const res = await fetch(
@@ -517,7 +528,9 @@ export default function SandboxDetail() {
       )
       if (!res.ok || !res.body) {
         const text = await res.text()
-        throw new Error(`Stream failed (${res.status}): ${text}`)
+        const error = new Error(`Stream failed (${res.status}): ${text}`)
+        ;(error as { status?: number }).status = res.status
+        throw error
       }
 
       setConnectionStatus('Connected')
@@ -556,15 +569,36 @@ export default function SandboxDetail() {
       const isAbort = err && typeof err === 'object' &&
         (err as { name?: string }).name === 'AbortError'
       if (!isAbort) {
-        hadError = true
+        const status = err && typeof err === 'object'
+          ? (err as { status?: number }).status
+          : undefined
         const message = err instanceof Error ? err.message : String(err)
-        console.error('Stream error', message)
-        setConnectionStatus('Stream error')
+        const lower = message.toLowerCase()
+        const transient = status === 502 || status === 503 ||
+          lower.includes('connection refused') ||
+          lower.includes('failed to fetch')
+        if (transient) {
+          finalStatus = 'Waiting for sandbox...'
+          if (!retryRef.current) {
+            retryRef.current = setTimeout(() => {
+              retryRef.current = null
+              if (sandboxReadyRef.current) {
+                void startStream()
+              }
+            }, 2000) as unknown as number
+          }
+        } else {
+          hadError = true
+          finalStatus = 'Stream error'
+          console.error('Stream error', message)
+        }
       }
     } finally {
       setStreaming(false)
       streamAbortRef.current = null
-      if (!hadError) {
+      if (finalStatus) {
+        setConnectionStatus(finalStatus)
+      } else if (!hadError) {
         setConnectionStatus(
           sandboxReadyRef.current ? 'Disconnected' : 'Waiting for sandbox...',
         )

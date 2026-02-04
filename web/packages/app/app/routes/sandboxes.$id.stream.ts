@@ -28,16 +28,21 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const cursor = url.searchParams.get('cursor') ?? '0'
   const follow = url.searchParams.get('follow') ?? '1'
 
-  const upstream = await fetch(
-    `http://${podIp}:${daemonPort}/stream?cursor=${
-      encodeURIComponent(cursor)
-    }&follow=${encodeURIComponent(follow)}`,
-    {
-      headers: {
-        accept: 'text/event-stream',
+  let upstream: Response
+  try {
+    upstream = await fetch(
+      `http://${podIp}:${daemonPort}/stream?cursor=${
+        encodeURIComponent(cursor)
+      }&follow=${encodeURIComponent(follow)}`,
+      {
+        headers: {
+          accept: 'text/event-stream',
+        },
       },
-    },
-  )
+    )
+  } catch {
+    return new Response('Sandbox daemon not ready', { status: 503 })
+  }
 
   if (!upstream.ok || !upstream.body) {
     const errorText = await upstream.text()
