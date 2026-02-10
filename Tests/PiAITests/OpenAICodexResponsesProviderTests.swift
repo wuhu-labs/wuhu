@@ -11,12 +11,12 @@ struct OpenAICodexResponsesProviderTests {
 
     let http = MockHTTPClient(sseHandler: { request in
       #expect(request.url?.absoluteString == "https://chatgpt.com/backend-api/codex/responses")
-      let headers = request.allHTTPHeaderFields ?? [:]
-      #expect(headers["Authorization"] == "Bearer \(token)")
+      let headers = normalizedHeaders(request)
+      #expect(headers["authorization"] == "Bearer \(token)")
       #expect(headers["chatgpt-account-id"] == "acc_test")
-      #expect(headers["OpenAI-Beta"] == "responses=experimental")
+      #expect(headers["openai-beta"] == "responses=experimental")
       #expect(headers["originator"] == "pi")
-      #expect(headers["Accept"] == "text/event-stream")
+      #expect(headers["accept"] == "text/event-stream")
       #expect(headers["x-api-key"] == nil)
 
       return AsyncThrowingStream { continuation in
@@ -61,7 +61,7 @@ struct OpenAICodexResponsesProviderTests {
     let sessionId = "test-session-123"
 
     let http = MockHTTPClient(sseHandler: { request in
-      let headers = request.allHTTPHeaderFields ?? [:]
+      let headers = normalizedHeaders(request)
       #expect(headers["conversation_id"] == sessionId)
       #expect(headers["session_id"] == sessionId)
 
@@ -103,4 +103,12 @@ private func base64URL(_ data: Data) -> String {
     .replacingOccurrences(of: "+", with: "-")
     .replacingOccurrences(of: "/", with: "_")
     .replacingOccurrences(of: "=", with: "")
+}
+
+private func normalizedHeaders(_ request: URLRequest) -> [String: String] {
+  Dictionary(
+    uniqueKeysWithValues: (request.allHTTPHeaderFields ?? [:]).map { key, value in
+      (key.lowercased(), value)
+    },
+  )
 }
