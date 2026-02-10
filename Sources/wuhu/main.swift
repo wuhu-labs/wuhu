@@ -40,6 +40,9 @@ struct WuhuCLI: AsyncParsableCommand {
     @Option(help: "System prompt for the agent.")
     var systemPrompt: String = defaultSystemPrompt
 
+    @Option(help: "Working directory for this session (default: current directory).")
+    var cwd: String?
+
     @OptionGroup
     var shared: Shared
 
@@ -48,7 +51,19 @@ struct WuhuCLI: AsyncParsableCommand {
       let service = try makeService(dbPath: shared.db)
 
       let resolvedModel = model ?? defaultModel(for: provider)
-      let session = try await service.createSession(provider: provider, model: resolvedModel, systemPrompt: systemPrompt)
+      let resolvedCwd: String = {
+        if let cwd, !cwd.isEmpty {
+          return ToolPath.resolveToCwd(cwd, cwd: FileManager.default.currentDirectoryPath)
+        }
+        return FileManager.default.currentDirectoryPath
+      }()
+
+      let session = try await service.createSession(
+        provider: provider,
+        model: resolvedModel,
+        systemPrompt: systemPrompt,
+        cwd: resolvedCwd,
+      )
       FileHandle.standardOutput.write(Data("\(session.id)\n".utf8))
     }
   }
@@ -187,15 +202,17 @@ struct WuhuCLI: AsyncParsableCommand {
 }
 
 private let defaultSystemPrompt = [
-  "You are a terminal agent.",
-  "You have a weather tool. Always call it when asked about weather, and prefer tool results over guesses.",
-  "If asked to compare cities, call the tool for each city and compare temperatures.",
+  "You are a coding agent.",
+  "Use tools to inspect and modify the repository in your working directory.",
+  "Prefer read/grep/find/ls over guessing file contents.",
+  "When making changes, use edit for surgical replacements and write for new files.",
+  "Use bash to run builds/tests and gather precise outputs.",
 ].joined(separator: "\n")
 
 private func defaultModel(for provider: WuhuProvider) -> String {
   switch provider {
   case .openai:
-    "gpt-4.1-mini"
+    "gpt-5.2-codex"
   case .anthropic:
     "claude-sonnet-4-5"
   case .openaiCodex:

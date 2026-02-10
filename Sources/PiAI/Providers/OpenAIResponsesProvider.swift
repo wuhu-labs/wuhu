@@ -138,6 +138,13 @@ public struct OpenAIResponsesProvider: Sendable {
       body["prompt_cache_key"] = sessionId
     }
 
+    if let effort = options.reasoningEffort?.rawValue {
+      body["reasoning"] = [
+        "effort": effort,
+      ]
+      body["include"] = ["reasoning.encrypted_content"]
+    }
+
     return body
   }
 

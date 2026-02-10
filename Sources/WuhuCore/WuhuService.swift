@@ -48,7 +48,7 @@ public actor WuhuService {
     sessionID: String,
     input: String,
     maxTurns: Int = 12,
-    tools: [AnyAgentTool] = [WuhuTools.simulatedWeatherTool()],
+    tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> AsyncThrowingStream<WuhuPromptStreamEvent, any Error> {
     let session = try await store.getSession(id: sessionID)
@@ -59,13 +59,24 @@ public actor WuhuService {
 
     let model = Model(id: session.model, provider: session.provider.piProvider)
 
+    let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
+
+    var effectiveSystemPrompt = header.systemPrompt
+    effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
+
+    var requestOptions = RequestOptions()
+    if model.provider == .openai {
+      requestOptions.reasoningEffort = .low
+    }
+
     let agent = PiAgent.Agent(opts: .init(
       initialState: .init(
-        systemPrompt: header.systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         model: model,
-        tools: tools,
+        tools: resolvedTools,
         messages: messages,
       ),
+      requestOptions: requestOptions,
       streamFn: streamFn,
       maxTurns: maxTurns,
     ))

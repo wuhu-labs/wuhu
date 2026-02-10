@@ -147,6 +147,7 @@ public struct RequestOptions: Sendable, Hashable {
   public var apiKey: String?
   public var headers: [String: String]
   public var sessionId: String?
+  public var reasoningEffort: ReasoningEffort?
 
   public init(
     temperature: Double? = nil,
@@ -154,13 +155,23 @@ public struct RequestOptions: Sendable, Hashable {
     apiKey: String? = nil,
     headers: [String: String] = [:],
     sessionId: String? = nil,
+    reasoningEffort: ReasoningEffort? = nil,
   ) {
     self.temperature = temperature
     self.maxTokens = maxTokens
     self.apiKey = apiKey
     self.headers = headers
     self.sessionId = sessionId
+    self.reasoningEffort = reasoningEffort
   }
+}
+
+public enum ReasoningEffort: String, Sendable, Hashable, Codable {
+  case minimal
+  case low
+  case medium
+  case high
+  case xhigh
 }
 
 public struct TextContent: Sendable, Hashable {
