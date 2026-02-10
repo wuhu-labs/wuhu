@@ -182,6 +182,16 @@ public actor WuhuService {
         "name": .string(c.name),
         "arguments": c.arguments,
       ])
+    case let .reasoning(r):
+      var obj: [String: JSONValue] = [
+        "type": .string("reasoning"),
+        "id": .string(r.id),
+        "summary": .array(r.summary),
+      ]
+      if let encrypted = r.encryptedContent {
+        obj["encrypted_content"] = .string(encrypted)
+      }
+      return .object(obj)
     }
   }
 }

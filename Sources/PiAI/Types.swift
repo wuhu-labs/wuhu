@@ -68,9 +68,27 @@ public struct ToolCall: Sendable, Hashable {
   }
 }
 
+/// Provider-specific reasoning content that must be replayed back to the provider in subsequent turns.
+///
+/// Currently used by OpenAI Responses API (`type: "reasoning"` items), where the server may require
+/// historical reasoning items (and their `encrypted_content`) to be included in later requests,
+/// especially when tool calls are involved.
+public struct ReasoningContent: Sendable, Hashable {
+  public var id: String
+  public var encryptedContent: String?
+  public var summary: [JSONValue]
+
+  public init(id: String, encryptedContent: String? = nil, summary: [JSONValue] = []) {
+    self.id = id
+    self.encryptedContent = encryptedContent
+    self.summary = summary
+  }
+}
+
 public enum ContentBlock: Sendable, Hashable {
   case text(TextContent)
   case toolCall(ToolCall)
+  case reasoning(ReasoningContent)
 }
 
 public enum Message: Sendable, Hashable {
@@ -246,6 +264,10 @@ public enum AssistantMessageEvent: Sendable, Hashable {
 public extension ContentBlock {
   static func text(_ text: String, signature: String? = nil) -> ContentBlock {
     .text(.init(text: text, signature: signature))
+  }
+
+  static func reasoning(id: String, encryptedContent: String? = nil) -> ContentBlock {
+    .reasoning(.init(id: id, encryptedContent: encryptedContent))
   }
 }
 

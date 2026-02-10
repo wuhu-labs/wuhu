@@ -291,6 +291,8 @@ private func renderBlocks(_ blocks: [WuhuContentBlock]) -> String {
       text
     case let .toolCall(_, name, arguments):
       "[tool_call \(name) args=\(formatJSON(arguments))]"
+    case .reasoning:
+      nil
     }
   }.joined()
 }

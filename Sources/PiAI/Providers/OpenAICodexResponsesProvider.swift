@@ -68,7 +68,7 @@ public struct OpenAICodexResponsesProvider: Sendable {
     var body: [String: Any] = [
       "model": model.id,
       "stream": true,
-      "store": false,
+      "store": envBool("PIAI_OPENAI_STORE") ?? false,
       "instructions": context.systemPrompt as Any,
       "input": input,
       "text": ["verbosity": "medium"],

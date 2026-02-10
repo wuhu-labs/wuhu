@@ -4,6 +4,7 @@ import PiAI
 public enum WuhuContentBlock: Sendable, Hashable, Codable {
   case text(text: String, signature: String?)
   case toolCall(id: String, name: String, arguments: JSONValue)
+  case reasoning(id: String, encryptedContent: String?, summary: [JSONValue])
 
   enum CodingKeys: String, CodingKey {
     case type
@@ -12,6 +13,8 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
     case id
     case name
     case arguments
+    case encryptedContent = "encrypted_content"
+    case summary
   }
 
   public init(from decoder: any Decoder) throws {
@@ -25,6 +28,12 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
         id: c.decode(String.self, forKey: .id),
         name: c.decode(String.self, forKey: .name),
         arguments: c.decode(JSONValue.self, forKey: .arguments),
+      )
+    case "reasoning":
+      self = try .reasoning(
+        id: c.decode(String.self, forKey: .id),
+        encryptedContent: c.decodeIfPresent(String.self, forKey: .encryptedContent),
+        summary: c.decodeIfPresent([JSONValue].self, forKey: .summary) ?? [],
       )
     default:
       throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown content block type: \(type)")
@@ -43,6 +52,11 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
       try c.encode(id, forKey: .id)
       try c.encode(name, forKey: .name)
       try c.encode(arguments, forKey: .arguments)
+    case let .reasoning(id, encryptedContent, summary):
+      try c.encode("reasoning", forKey: .type)
+      try c.encode(id, forKey: .id)
+      try c.encodeIfPresent(encryptedContent, forKey: .encryptedContent)
+      try c.encode(summary, forKey: .summary)
     }
   }
 
@@ -52,6 +66,8 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
       .text(text: t.text, signature: t.signature)
     case let .toolCall(c):
       .toolCall(id: c.id, name: c.name, arguments: c.arguments)
+    case let .reasoning(r):
+      .reasoning(id: r.id, encryptedContent: r.encryptedContent, summary: r.summary)
     }
   }
 
@@ -61,6 +77,8 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
       .text(.init(text: text, signature: signature))
     case let .toolCall(id, name, arguments):
       .toolCall(.init(id: id, name: name, arguments: arguments))
+    case let .reasoning(id, encryptedContent, summary):
+      .reasoning(.init(id: id, encryptedContent: encryptedContent, summary: summary))
     }
   }
 }

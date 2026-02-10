@@ -91,6 +91,17 @@ public struct OpenAIResponsesProvider: Sendable {
               obj["id"] = itemId
             }
             input.append(obj)
+
+          case let .reasoning(r):
+            var obj: [String: Any] = [
+              "type": "reasoning",
+              "id": r.id,
+              "summary": r.summary.map { $0.toAny() },
+            ]
+            if let encrypted = r.encryptedContent {
+              obj["encrypted_content"] = encrypted
+            }
+            input.append(obj)
           }
         }
 
@@ -113,7 +124,7 @@ public struct OpenAIResponsesProvider: Sendable {
       "model": model.id,
       "input": input,
       "stream": true,
-      "store": false,
+      "store": envBool("PIAI_OPENAI_STORE") ?? false,
     ]
 
     if let tools = context.tools, !tools.isEmpty {
@@ -163,6 +174,7 @@ public struct OpenAIResponsesProvider: Sendable {
         var currentToolCallId: String?
         var currentToolCallName: String?
         var currentToolCallArgumentsBuffer = ""
+        var reasoningIndexById: [String: Int] = [:]
 
         do {
           for try await message in sse {
@@ -176,7 +188,8 @@ public struct OpenAIResponsesProvider: Sendable {
               else { continue }
 
               if itemType == "message" {
-                output.content.append(.text(.init(text: "")))
+                let id = item["id"] as? String
+                output.content.append(.text(.init(text: "", signature: id)))
                 currentTextIndex = output.content.count - 1
                 currentToolCallIndex = nil
                 currentToolCallId = nil
@@ -194,6 +207,18 @@ public struct OpenAIResponsesProvider: Sendable {
                 currentToolCallName = name
                 currentToolCallArgumentsBuffer = item["arguments"] as? String ?? ""
                 currentTextIndex = nil
+              } else if itemType == "reasoning" {
+                let id = item["id"] as? String ?? UUID().uuidString
+                let encrypted = item["encrypted_content"] as? String
+                let summaryAny = item["summary"] as? [Any] ?? []
+                let summary = (try? summaryAny.map(JSONValue.fromAny)) ?? []
+                output.content.append(.reasoning(.init(id: id, encryptedContent: encrypted, summary: summary)))
+                reasoningIndexById[id] = output.content.count - 1
+                currentTextIndex = nil
+                currentToolCallIndex = nil
+                currentToolCallId = nil
+                currentToolCallName = nil
+                currentToolCallArgumentsBuffer = ""
               }
 
             case "response.output_text.delta":
@@ -242,6 +267,26 @@ public struct OpenAIResponsesProvider: Sendable {
                 currentToolCallId = nil
                 currentToolCallName = nil
                 currentToolCallArgumentsBuffer = ""
+              } else if itemType == "reasoning" {
+                let id = item["id"] as? String ?? UUID().uuidString
+                let encrypted = item["encrypted_content"] as? String
+                let summaryAny = item["summary"] as? [Any] ?? []
+                let summary = (try? summaryAny.map(JSONValue.fromAny)) ?? []
+
+                if let idx = reasoningIndexById[id],
+                   idx >= 0,
+                   idx < output.content.count,
+                   case let .reasoning(existing) = output.content[idx]
+                {
+                  output.content[idx] = .reasoning(.init(
+                    id: existing.id,
+                    encryptedContent: encrypted ?? existing.encryptedContent,
+                    summary: summary.isEmpty ? existing.summary : summary,
+                  ))
+                } else {
+                  output.content.append(.reasoning(.init(id: id, encryptedContent: encrypted, summary: summary)))
+                  reasoningIndexById[id] = output.content.count - 1
+                }
               }
 
             case "response.completed":

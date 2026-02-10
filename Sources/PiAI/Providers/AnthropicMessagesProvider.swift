@@ -78,6 +78,8 @@ public struct AnthropicMessagesProvider: Sendable {
               "name": call.name,
               "input": call.arguments.toAny(),
             ])
+          case .reasoning:
+            continue
           }
         }
         if !blocks.isEmpty {
