@@ -66,7 +66,7 @@ jobs:
           xcode-version: "16.3"
 
       - name: Swift version
-        run: swift --version
+        run: xcrun swift --version
 
       - name: Cache SwiftPM build
         uses: actions/cache@v4
@@ -79,16 +79,16 @@ jobs:
             ${{ runner.os }}-spm-
 
       - name: Resolve
-        run: swift package resolve
+        run: xcrun swift package resolve
 
       - name: SwiftFormat (lint)
-        run: swift package --allow-writing-to-package-directory swiftformat --lint .
+        run: xcrun swift package --allow-writing-to-package-directory swiftformat --lint .
 
       - name: Build tests
-        run: swift build --build-tests
+        run: xcrun swift build --build-tests
 
       - name: Build wuhu
-        run: swift build --product wuhu
+        run: xcrun swift build --product wuhu
 
       - name: Run tests
-        run: swift test --skip-build
+        run: xcrun swift test --skip-build
