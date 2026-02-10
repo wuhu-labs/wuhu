@@ -1,221 +1,227 @@
 import ArgumentParser
 import Foundation
-import GRDB
-import PiAgent
-import PiAI
+import WuhuCore
 
-@inline(never)
-private func _ensureGRDBIsLinked() {
-  _ = try? DatabaseQueue(path: ":memory:")
-}
+extension WuhuProvider: ExpressibleByArgument {}
 
 @main
-struct Wuhu: AsyncParsableCommand {
+struct WuhuCLI: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "wuhu",
-    abstract: "Wuhu (Swift) – small demo CLI for PiAI providers.",
-    subcommands: [OpenAI.self, Anthropic.self, Agent.self],
+    abstract: "Wuhu (Swift) – persisted agent sessions (SQLite/GRDB).",
+    subcommands: [
+      CreateSession.self,
+      Prompt.self,
+      GetSession.self,
+      ListSessions.self,
+    ],
   )
 
   struct Shared: ParsableArguments {
     @Option(help: "Path to a .env file to load (default: ./.env if present).")
     var envFile: String?
+
+    @Option(help: "SQLite database path (default: ~/.wuhu/wuhu.sqlite). Use :memory: for ephemeral.")
+    var db: String?
   }
 
-  struct OpenAI: AsyncParsableCommand {
+  struct CreateSession: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-      commandName: "openai",
-      abstract: "Call OpenAI Responses API.",
+      commandName: "create-session",
+      abstract: "Create a new persisted session.",
     )
 
-    @Argument(help: "Prompt to send.")
-    var prompt: String
+    @Option(help: "Provider for this session.")
+    var provider: WuhuProvider
 
-    @Option(help: "OpenAI model id.")
-    var model: String = "gpt-4.1-mini"
+    @Option(help: "Model id (defaults depend on provider).")
+    var model: String?
+
+    @Option(help: "System prompt for the agent.")
+    var systemPrompt: String = defaultSystemPrompt
 
     @OptionGroup
     var shared: Shared
 
     func run() async throws {
-      _ensureGRDBIsLinked()
       try DotEnv.loadIfPresent(path: shared.envFile)
+      let service = try makeService(dbPath: shared.db)
 
-      let provider = OpenAIResponsesProvider()
-      let model = Model(id: model, provider: .openai)
-      let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-        .user(prompt),
-      ])
-
-      for try await event in try await provider.stream(model: model, context: context) {
-        switch event {
-        case .start:
-          break
-        case let .textDelta(delta, _):
-          FileHandle.standardOutput.write(Data(delta.utf8))
-        case .done:
-          FileHandle.standardOutput.write(Data("\n".utf8))
-        }
-      }
+      let resolvedModel = model ?? defaultModel(for: provider)
+      let session = try await service.createSession(provider: provider, model: resolvedModel, systemPrompt: systemPrompt)
+      FileHandle.standardOutput.write(Data("\(session.id)\n".utf8))
     }
   }
 
-  struct Anthropic: AsyncParsableCommand {
+  struct Prompt: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-      commandName: "anthropic",
-      abstract: "Call Anthropic Messages API.",
+      commandName: "prompt",
+      abstract: "Append a prompt to a session and stream the assistant response.",
     )
 
-    @Argument(help: "Prompt to send.")
-    var prompt: String
+    @Option(help: "Session id returned by create-session.")
+    var sessionId: String
 
-    @Option(help: "Anthropic model id.")
-    var model: String = "claude-sonnet-4-5"
+    @Option(help: "Max assistant turns (safety valve).")
+    var maxTurns: Int = 12
+
+    @Argument(parsing: .remaining, help: "Prompt text.")
+    var prompt: [String] = []
 
     @OptionGroup
     var shared: Shared
 
     func run() async throws {
-      _ensureGRDBIsLinked()
       try DotEnv.loadIfPresent(path: shared.envFile)
+      let service = try makeService(dbPath: shared.db)
 
-      let provider = AnthropicMessagesProvider()
-      let model = Model(id: model, provider: .anthropic)
-      let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-        .user(prompt),
-      ])
+      let text = prompt.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
 
-      for try await event in try await provider.stream(model: model, context: context) {
+      let stream = try await service.promptStream(sessionID: sessionId, input: text, maxTurns: maxTurns)
+      var printed = false
+
+      for try await event in stream {
         switch event {
-        case .start:
-          break
-        case let .textDelta(delta, _):
+        case let .toolExecutionStart(_, toolName, args):
+          FileHandle.standardError.write(Data("\n[tool] \(toolName) args=\(formatJSON(args))\n".utf8))
+
+        case let .toolExecutionEnd(_, toolName, result, isError):
+          let suffix = isError ? " (error)" : ""
+          let text = result.content.compactMap { block -> String? in
+            if case let .text(t) = block { return t.text }
+            return nil
+          }.joined()
+          if !text.isEmpty {
+            FileHandle.standardError.write(Data("[tool] \(toolName) result=\(text)\(suffix)\n".utf8))
+          }
+
+        case let .assistantTextDelta(delta):
+          printed = true
           FileHandle.standardOutput.write(Data(delta.utf8))
+
         case .done:
-          FileHandle.standardOutput.write(Data("\n".utf8))
+          if printed {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+          }
         }
       }
     }
   }
 
-  struct Agent: AsyncParsableCommand {
+  struct GetSession: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-      commandName: "agent",
-      abstract: "Run a minimal tool-using agent loop (stdin → tools → final response).",
-      subcommands: [OpenAI.self, Anthropic.self],
+      commandName: "get-session",
+      abstract: "Print session metadata and full transcript.",
     )
 
-    struct SharedAgent: ParsableArguments {
-      @Option(help: "Path to a .env file to load (default: ./.env if present).")
-      var envFile: String?
+    @Option(help: "Session id.")
+    var sessionId: String
 
-      @Option(help: "Max assistant turns (safety valve).")
-      var maxTurns: Int = 12
-    }
+    @OptionGroup
+    var shared: Shared
 
-    struct OpenAI: AsyncParsableCommand {
-      static let configuration = CommandConfiguration(
-        commandName: "openai",
-        abstract: "Agent loop via OpenAI Responses API.",
-      )
+    func run() async throws {
+      let service = try makeService(dbPath: shared.db)
+      let session = try await service.getSession(id: sessionId)
+      let transcript = try await service.getTranscript(sessionID: sessionId)
 
-      @Option(help: "OpenAI model id.")
-      var model: String = "gpt-4.1-mini"
+      FileHandle.standardOutput.write(Data("session \(session.id)\n".utf8))
+      FileHandle.standardOutput.write(Data("provider \(session.provider.rawValue)\n".utf8))
+      FileHandle.standardOutput.write(Data("model \(session.model)\n".utf8))
+      FileHandle.standardOutput.write(Data("createdAt \(session.createdAt)\n".utf8))
+      FileHandle.standardOutput.write(Data("updatedAt \(session.updatedAt)\n".utf8))
+      FileHandle.standardOutput.write(Data("headEntryID \(session.headEntryID)\n".utf8))
+      FileHandle.standardOutput.write(Data("tailEntryID \(session.tailEntryID)\n".utf8))
 
-      @OptionGroup
-      var shared: SharedAgent
+      for entry in transcript {
+        switch entry.payload {
+        case let .header(h):
+          FileHandle.standardOutput.write(Data("\n# header\n".utf8))
+          FileHandle.standardOutput.write(Data("systemPrompt:\n\(h.systemPrompt)\n".utf8))
 
-      func run() async throws {
-        try await runAgent(provider: .openai, modelId: model, shared: shared)
-      }
-    }
+        case let .message(m):
+          FileHandle.standardOutput.write(Data("\n# message \(entry.id)\n".utf8))
+          FileHandle.standardOutput.write(Data(renderMessage(m).utf8))
 
-    struct Anthropic: AsyncParsableCommand {
-      static let configuration = CommandConfiguration(
-        commandName: "anthropic",
-        abstract: "Agent loop via Anthropic Messages API.",
-      )
+        case let .toolExecution(t):
+          FileHandle.standardOutput.write(Data("\n# tool_execution \(entry.id)\n".utf8))
+          FileHandle.standardOutput.write(Data("\(t.phase.rawValue) \(t.toolName) toolCallId=\(t.toolCallId)\n".utf8))
 
-      @Option(help: "Anthropic model id.")
-      var model: String = "claude-sonnet-4-5"
-
-      @OptionGroup
-      var shared: SharedAgent
-
-      func run() async throws {
-        try await runAgent(provider: .anthropic, modelId: model, shared: shared)
-      }
-    }
-
-    private static func runAgent(provider: Provider, modelId: String, shared: SharedAgent) async throws {
-      _ensureGRDBIsLinked()
-      try DotEnv.loadIfPresent(path: shared.envFile)
-
-      let prompt = readAllStdin().trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !prompt.isEmpty else {
-        throw ValidationError("Expected a prompt on stdin.")
-      }
-
-      let tool = makeSimulatedWeatherTool()
-      let model = Model(id: modelId, provider: provider)
-
-      let agent = PiAgent.Agent(opts: .init(
-        initialState: .init(
-          systemPrompt: [
-            "You are a terminal agent.",
-            "You have a weather tool. Always call it when asked about weather, and prefer tool results over guesses.",
-            "If asked to compare cities, call the tool for each city and compare temperatures.",
-          ].joined(separator: "\n"),
-          model: model,
-          tools: [tool],
-        ),
-        maxTurns: shared.maxTurns,
-      ))
-
-      let eventsTask = Task {
-        var printedStreamingText = false
-        do {
-          for try await event in agent.events {
-            switch event {
-            case let .toolExecutionStart(_, toolName, args):
-              FileHandle.standardError.write(Data("\n[tool] \(toolName) args=\(formatJSON(args))\n".utf8))
-            case let .messageUpdate(message, assistantEvent):
-              if case .assistant = message, case let .textDelta(delta, _) = assistantEvent {
-                printedStreamingText = true
-                FileHandle.standardOutput.write(Data(delta.utf8))
-              }
-            case let .messageEnd(message):
-              if case let .assistant(m) = message, printedStreamingText == false {
-                let text = m.content.compactMap { block -> String? in
-                  if case let .text(part) = block { return part.text }
-                  return nil
-                }.joined()
-                if !text.isEmpty {
-                  FileHandle.standardOutput.write(Data(text.utf8))
-                }
-              }
-              if case .assistant = message {
-                FileHandle.standardOutput.write(Data("\n".utf8))
-                printedStreamingText = false
-              }
-            default:
-              continue
-            }
+        case let .custom(customType, data):
+          FileHandle.standardOutput.write(Data("\n# custom \(entry.id)\n".utf8))
+          FileHandle.standardOutput.write(Data("customType \(customType)\n".utf8))
+          if let data {
+            FileHandle.standardOutput.write(Data("data \(formatJSON(data))\n".utf8))
           }
-        } catch {
-          // Ignore cancellation and surface other errors as best-effort stderr output.
-          if (error as? CancellationError) == nil {
-            FileHandle.standardError.write(Data("\n[agent events error] \(String(describing: error))\n".utf8))
-          }
+
+        case let .unknown(type, payload):
+          FileHandle.standardOutput.write(Data("\n# unknown(\(type)) \(entry.id)\n".utf8))
+          FileHandle.standardOutput.write(Data("\(formatJSON(payload))\n".utf8))
         }
       }
-
-      defer { eventsTask.cancel() }
-
-      try await agent.prompt(prompt)
-      await agent.waitForIdle()
     }
   }
+
+  struct ListSessions: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "list-sessions",
+      abstract: "List sessions.",
+    )
+
+    @Option(help: "Max sessions to list.")
+    var limit: Int?
+
+    @OptionGroup
+    var shared: Shared
+
+    func run() async throws {
+      let service = try makeService(dbPath: shared.db)
+      let sessions = try await service.listSessions(limit: limit)
+
+      for s in sessions {
+        FileHandle.standardOutput.write(Data("\(s.id)  \(s.provider.rawValue)  \(s.model)  updatedAt=\(s.updatedAt)\n".utf8))
+      }
+    }
+  }
+}
+
+private let defaultSystemPrompt = [
+  "You are a terminal agent.",
+  "You have a weather tool. Always call it when asked about weather, and prefer tool results over guesses.",
+  "If asked to compare cities, call the tool for each city and compare temperatures.",
+].joined(separator: "\n")
+
+private func defaultModel(for provider: WuhuProvider) -> String {
+  switch provider {
+  case .openai:
+    "gpt-4.1-mini"
+  case .anthropic:
+    "claude-sonnet-4-5"
+  case .openaiCodex:
+    "codex-mini-latest"
+  }
+}
+
+private func makeService(dbPath: String?) throws -> WuhuService {
+  let resolvedPath = try resolveDatabasePath(dbPath)
+  try ensureDirectoryExists(forDatabasePath: resolvedPath)
+
+  let store = try SQLiteSessionStore(path: resolvedPath)
+  return WuhuService(store: store)
+}
+
+private func resolveDatabasePath(_ explicit: String?) throws -> String {
+  if let explicit, !explicit.isEmpty { return (explicit as NSString).expandingTildeInPath }
+  let home = FileManager.default.homeDirectoryForCurrentUser
+  return home.appendingPathComponent(".wuhu/wuhu.sqlite").path
+}
+
+private func ensureDirectoryExists(forDatabasePath path: String) throws {
+  guard path != ":memory:" else { return }
+  let url = URL(fileURLWithPath: path)
+  let dir = url.deletingLastPathComponent()
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 }
 
 enum DotEnv {
@@ -246,83 +252,30 @@ enum DotEnv {
   }
 }
 
-private func readAllStdin() -> String {
-  let data = FileHandle.standardInput.readDataToEndOfFile()
-  return String(decoding: data, as: UTF8.self)
-}
-
-private func makeSimulatedWeatherTool() -> AnyAgentTool {
-  struct Params: Decodable, Sendable {
-    var city: String
+private func renderMessage(_ m: WuhuPersistedMessage) -> String {
+  switch m {
+  case let .user(u):
+    "user: \(renderBlocks(u.content))\n"
+  case let .assistant(a):
+    "assistant: \(renderBlocks(a.content))\n"
+  case let .toolResult(t):
+    "tool_result(\(t.toolName)): \(renderBlocks(t.content))\n"
+  case let .customMessage(c):
+    "custom_message(\(c.customType)): \(renderBlocks(c.content))\n"
+  case let .unknown(role, payload):
+    "unknown_message(\(role)): \(formatJSON(payload))\n"
   }
-
-  let schema: JSONValue = .object([
-    "type": .string("object"),
-    "properties": .object([
-      "city": .object([
-        "type": .string("string"),
-        "description": .string("City name, e.g. San Francisco"),
-      ]),
-    ]),
-    "required": .array([.string("city")]),
-    "additionalProperties": .bool(false),
-  ])
-
-  return AnyAgentTool(
-    name: "weather",
-    label: "Weather",
-    description: "Get simulated weather data for a city (demo tool; returns fake data).",
-    parametersSchema: schema,
-    execute: { (_: String, params: Params) in
-      let report = simulatedWeather(for: params.city)
-      let text = "\(report.city): \(report.temperatureC)°C, \(report.condition) (simulated)"
-      return AgentToolResult(
-        content: [.text(text)],
-        details: .object([
-          "city": .string(report.city),
-          "temperatureC": .number(Double(report.temperatureC)),
-          "condition": .string(report.condition),
-          "source": .string("simulated"),
-        ]),
-      )
-    },
-  )
 }
 
-private struct WeatherReport: Sendable {
-  var city: String
-  var temperatureC: Int
-  var condition: String
-}
-
-private func simulatedWeather(for cityRaw: String) -> WeatherReport {
-  let city = cityRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-  let normalized = city.lowercased()
-
-  // Deterministic "fake" data: stable enough for demos/tests.
-  let fixed: [String: WeatherReport] = [
-    "san francisco": .init(city: "San Francisco", temperatureC: 18, condition: "foggy"),
-    "san diego": .init(city: "San Diego", temperatureC: 24, condition: "sunny"),
-    "tokyo": .init(city: "Tokyo", temperatureC: 29, condition: "humid"),
-    "new york": .init(city: "New York", temperatureC: 6, condition: "windy"),
-  ]
-  if let report = fixed[normalized] { return report }
-
-  let hash = stableHash(normalized)
-  let temp = 5 + Int(hash % 26) // 5..30
-  let conditions = ["sunny", "cloudy", "rainy", "windy", "foggy"]
-  let condition = conditions[Int((hash / 31) % UInt64(conditions.count))]
-  return .init(city: city.isEmpty ? "Unknown" : city, temperatureC: temp, condition: condition)
-}
-
-private func stableHash(_ s: String) -> UInt64 {
-  // FNV-1a 64-bit
-  var hash: UInt64 = 14_695_981_039_346_656_037
-  for b in s.utf8 {
-    hash ^= UInt64(b)
-    hash &*= 1_099_511_628_211
-  }
-  return hash
+private func renderBlocks(_ blocks: [WuhuContentBlock]) -> String {
+  blocks.compactMap { block -> String? in
+    switch block {
+    case let .text(text, _):
+      text
+    case let .toolCall(_, name, arguments):
+      "[tool_call \(name) args=\(formatJSON(arguments))]"
+    }
+  }.joined()
 }
 
 private func formatJSON(_ value: JSONValue) -> String {

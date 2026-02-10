@@ -24,6 +24,7 @@ let package = Package(
   products: [
     .library(name: "PiAI", targets: ["PiAI"]),
     .library(name: "PiAgent", targets: ["PiAgent"]),
+    .library(name: "WuhuCore", targets: ["WuhuCore"]),
     .executable(name: "wuhu", targets: ["wuhu"]),
   ],
   dependencies: [
@@ -48,13 +49,20 @@ let package = Package(
       ],
       swiftSettings: strictConcurrency,
     ),
-    .executableTarget(
-      name: "wuhu",
+    .target(
+      name: "WuhuCore",
       dependencies: [
         "PiAI",
         "PiAgent",
-        .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "GRDB", package: "GRDB.swift"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .executableTarget(
+      name: "wuhu",
+      dependencies: [
+        "WuhuCore",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ],
       swiftSettings: strictConcurrency,
     ),
@@ -70,6 +78,14 @@ let package = Package(
       name: "PiAgentTests",
       dependencies: [
         "PiAgent",
+        .product(name: "Testing", package: "swift-testing"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .testTarget(
+      name: "WuhuCoreTests",
+      dependencies: [
+        "WuhuCore",
         .product(name: "Testing", package: "swift-testing"),
       ],
       swiftSettings: strictConcurrency,
