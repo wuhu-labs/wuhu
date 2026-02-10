@@ -118,12 +118,13 @@ public struct OpenAIResponsesProvider: Sendable {
 
     if let tools = context.tools, !tools.isEmpty {
       body["tools"] = tools.map { tool in
-        [
+        let normalizedParameters = normalizeForOpenAIStrict(tool.parameters)
+        return [
           "type": "function",
           "name": tool.name,
           "description": tool.description,
-          "parameters": tool.parameters.toAny(),
-          "strict": false,
+          "parameters": normalizedParameters.toAny(),
+          "strict": true,
         ] as [String: Any]
       }
     }
@@ -146,6 +147,76 @@ public struct OpenAIResponsesProvider: Sendable {
     }
 
     return body
+  }
+
+  /// OpenAI tool schemas in `strict` mode require `required` to include every key in `properties`.
+  ///
+  /// Preserve semantic optionality by allowing `null` for any property that wasn't originally required.
+  private func normalizeForOpenAIStrict(_ schema: JSONValue) -> JSONValue {
+    guard case let .object(root) = schema else { return schema }
+    guard case let .object(properties) = root["properties"] else { return schema }
+
+    let originalRequired: Set<String> = {
+      guard case let .array(arr) = root["required"] else { return [] }
+      return Set(arr.compactMap(\.stringValue))
+    }()
+
+    var newRoot = root
+
+    let allKeys = properties.keys.sorted()
+    newRoot["required"] = .array(allKeys.map { .string($0) })
+
+    var newProperties: [String: JSONValue] = properties
+    for key in allKeys {
+      guard let propSchema = properties[key] else { continue }
+      if originalRequired.contains(key) {
+        newProperties[key] = propSchema
+      } else {
+        newProperties[key] = makeNullableSchema(propSchema)
+      }
+    }
+    newRoot["properties"] = .object(newProperties)
+
+    // OpenAI strict schemas should be closed-world.
+    if newRoot["additionalProperties"] == nil {
+      newRoot["additionalProperties"] = .bool(false)
+    }
+    if newRoot["type"] == nil {
+      newRoot["type"] = .string("object")
+    }
+
+    return .object(newRoot)
+  }
+
+  private func makeNullableSchema(_ schema: JSONValue) -> JSONValue {
+    guard case let .object(obj) = schema else {
+      return .object([
+        "anyOf": .array([schema, .object(["type": .string("null")])]),
+        "default": .null,
+      ])
+    }
+
+    if let anyOf = obj["anyOf"], anyOf.array != nil {
+      return schema
+    }
+
+    if case let .array(typeArr) = obj["type"],
+       typeArr.contains(.string("null"))
+    {
+      return schema
+    }
+
+    if case let .string(typeStr) = obj["type"], typeStr != "null" {
+      var newObj = obj
+      newObj["type"] = .array([.string(typeStr), .string("null")])
+      if newObj["default"] == nil { newObj["default"] = .null }
+      return .object(newObj)
+    }
+
+    var newObj = obj
+    newObj["anyOf"] = .array([schema, .object(["type": .string("null")])])
+    if newObj["default"] == nil { newObj["default"] = .null }
+    return .object(newObj)
   }
 
   private func mapResponsesSSE(

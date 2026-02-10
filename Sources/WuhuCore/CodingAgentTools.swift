@@ -24,14 +24,47 @@ private func readTool(cwd: String) -> AnyAgentTool {
     var path: String
     var offset: Int?
     var limit: Int?
+
+    private enum CodingKeys: String, CodingKey {
+      case path
+      case offset
+      case limit
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      path = try container.decode(String.self, forKey: .path)
+      offset = Self.decodeIntLenient(container, forKey: .offset)
+      limit = Self.decodeIntLenient(container, forKey: .limit)
+    }
+
+    private static func decodeIntLenient(_ container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Int? {
+      if !container.contains(key) { return nil }
+      if let v = try? container.decode(Int.self, forKey: key) { return v }
+      if let v = try? container.decode(Double.self, forKey: key) { return Int(v) }
+      if let v = try? container.decode(String.self, forKey: key) {
+        return Int(v.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines))
+      }
+      // Some models occasionally emit booleans for numeric params (e.g. offset=true). Treat as absent.
+      if (try? container.decode(Bool.self, forKey: key)) != nil { return nil }
+      return nil
+    }
   }
 
   let schema: JSONValue = .object([
     "type": .string("object"),
     "properties": .object([
       "path": .object(["type": .string("string"), "description": .string("Path to the file to read (relative or absolute)")]),
-      "offset": .object(["type": .string("number"), "description": .string("Line number to start reading from (1-indexed)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of lines to read")]),
+      "offset": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string("Line number to start reading from (1-indexed integer). Example: 2001"),
+      ]),
+      "limit": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string("Maximum number of lines to read (integer). Example: 200"),
+      ]),
     ]),
     "required": .array([.string("path")]),
     "additionalProperties": .bool(false),
@@ -40,7 +73,7 @@ private func readTool(cwd: String) -> AnyAgentTool {
   return AnyAgentTool(
     name: "read",
     label: "read",
-    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.",
+    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). For large files, use offset=<start line (1-indexed integer)> and limit=<max lines (integer)>.",
     parametersSchema: schema,
     execute: { (_: String, params: Params) in
       let resolved = ToolPath.resolveReadPath(params.path, cwd: cwd)
@@ -240,7 +273,11 @@ private func lsTool(cwd: String) -> AnyAgentTool {
     "type": .string("object"),
     "properties": .object([
       "path": .object(["type": .string("string"), "description": .string("Directory to list (default: current directory)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of entries to return (default: 500)")]),
+      "limit": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string("Maximum number of entries to return (default: 500)"),
+      ]),
     ]),
     "required": .array([]),
     "additionalProperties": .bool(false),
@@ -327,7 +364,11 @@ private func findTool(cwd: String) -> AnyAgentTool {
     "properties": .object([
       "pattern": .object(["type": .string("string"), "description": .string("Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'")]),
       "path": .object(["type": .string("string"), "description": .string("Directory to search in (default: current directory)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of results (default: 1000)")]),
+      "limit": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string("Maximum number of results (default: 1000)"),
+      ]),
     ]),
     "required": .array([.string("pattern")]),
     "additionalProperties": .bool(false),
@@ -411,8 +452,16 @@ private func grepTool(cwd: String) -> AnyAgentTool {
       "glob": .object(["type": .string("string"), "description": .string("Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'")]),
       "ignoreCase": .object(["type": .string("boolean"), "description": .string("Case-insensitive search (default: false)")]),
       "literal": .object(["type": .string("boolean"), "description": .string("Treat pattern as literal string instead of regex (default: false)")]),
-      "context": .object(["type": .string("number"), "description": .string("Number of lines to show before and after each match (default: 0)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of matches to return (default: 100)")]),
+      "context": .object([
+        "type": .string("integer"),
+        "minimum": .number(0),
+        "description": .string("Number of lines to show before and after each match (default: 0)"),
+      ]),
+      "limit": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string("Maximum number of matches to return (default: 100)"),
+      ]),
     ]),
     "required": .array([.string("pattern")]),
     "additionalProperties": .bool(false),
