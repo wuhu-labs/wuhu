@@ -65,7 +65,7 @@ public actor WuhuService {
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
-    if model.provider == .openai {
+    if model.provider == .openai, model.id.contains("gpt-5") || model.id.contains("codex") {
       requestOptions.reasoningEffort = .low
     }
 
