@@ -1,6 +1,12 @@
 import ArgumentParser
 import Foundation
+import GRDB
 import PiAI
+
+@inline(never)
+private func _ensureGRDBIsLinked() {
+  _ = try? DatabaseQueue(path: ":memory:")
+}
 
 @main
 struct Wuhu: AsyncParsableCommand {
@@ -31,6 +37,7 @@ struct Wuhu: AsyncParsableCommand {
     var shared: Shared
 
     func run() async throws {
+      _ensureGRDBIsLinked()
       try DotEnv.loadIfPresent(path: shared.envFile)
 
       let provider = OpenAIResponsesProvider()
@@ -68,6 +75,7 @@ struct Wuhu: AsyncParsableCommand {
     var shared: Shared
 
     func run() async throws {
+      _ensureGRDBIsLinked()
       try DotEnv.loadIfPresent(path: shared.envFile)
 
       let provider = AnthropicMessagesProvider()

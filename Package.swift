@@ -10,6 +10,12 @@ let strictConcurrency: [SwiftSetting] = [
   ]),
 ]
 
+#if os(Linux)
+  let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", branch: "development")
+#else
+  let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.9.0")
+#endif
+
 let package = Package(
   name: "wuhu",
   platforms: [
@@ -24,6 +30,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     .package(url: "https://github.com/swiftlang/swift-testing.git", from: "6.2.0"),
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.27.0"),
+    grdbDependency,
   ],
   targets: [
     .target(
@@ -38,6 +45,7 @@ let package = Package(
       dependencies: [
         "PiAI",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "GRDB", package: "GRDB.swift"),
       ],
       swiftSettings: strictConcurrency,
     ),

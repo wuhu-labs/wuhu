@@ -8,7 +8,7 @@ on:
       - 'features/*'
 
 jobs:
-  test:
+  test-linux:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,7 +24,7 @@ jobs:
       - name: Install build deps
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git zstd
+          apt-get install -y --no-install-recommends git zstd libsqlite3-dev
 
       - name: Cache SwiftPM build
         uses: actions/cache@v4
@@ -45,5 +45,53 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
 
+      - name: Build wuhu
+        run: swift build --product wuhu
+
       - name: Run tests
         run: swift test --skip-build
+
+  test-macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode (Swift 6.2)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Swift version
+        run: xcrun swift --version
+
+      - name: SwiftPM version
+        run: xcrun swift package --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            .swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve
+        run: xcrun swift package resolve
+
+      - name: SwiftFormat (lint)
+        run: xcrun swift package --allow-writing-to-package-directory swiftformat --lint .
+
+      - name: Build tests
+        run: xcrun swift build --build-tests
+
+      - name: Build wuhu
+        run: xcrun swift build --product wuhu
+
+      - name: Run tests
+        run: xcrun swift test --skip-build
