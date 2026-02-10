@@ -8,7 +8,7 @@ on:
       - 'features/*'
 
 jobs:
-  test:
+  test-linux:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,7 +24,7 @@ jobs:
       - name: Install build deps
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git zstd
+          apt-get install -y --no-install-recommends git zstd libsqlite3-dev
 
       - name: Cache SwiftPM build
         uses: actions/cache@v4
@@ -44,6 +44,43 @@ jobs:
 
       - name: Build tests
         run: swift build --build-tests
+
+      - name: Build wuhu
+        run: swift build --product wuhu
+
+      - name: Run tests
+        run: swift test --skip-build
+
+  test-macos:
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            .swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve
+        run: swift package resolve
+
+      - name: SwiftFormat (lint)
+        run: swift package --allow-writing-to-package-directory swiftformat --lint .
+
+      - name: Build tests
+        run: swift build --build-tests
+
+      - name: Build wuhu
+        run: swift build --product wuhu
 
       - name: Run tests
         run: swift test --skip-build
