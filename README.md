@@ -21,3 +21,5 @@ swift run wuhu list-sessions
 ```
 
 The CLI reads `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from the environment and will also load a local `.env` if present.
+
+For OpenAI Responses debugging (especially with tool calls + reasoning items), you can enable request storage with `PIAI_OPENAI_STORE=1`.

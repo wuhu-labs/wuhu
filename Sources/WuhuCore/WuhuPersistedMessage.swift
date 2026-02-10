@@ -3,11 +3,13 @@ import PiAI
 
 public enum WuhuContentBlock: Sendable, Hashable, Codable {
   case text(text: String, signature: String?)
+  case thinking(thinking: String, signature: String?)
   case toolCall(id: String, name: String, arguments: JSONValue)
 
   enum CodingKeys: String, CodingKey {
     case type
     case text
+    case thinking
     case signature
     case id
     case name
@@ -20,6 +22,11 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
     switch type {
     case "text":
       self = try .text(text: c.decode(String.self, forKey: .text), signature: c.decodeIfPresent(String.self, forKey: .signature))
+    case "thinking":
+      self = try .thinking(
+        thinking: c.decode(String.self, forKey: .thinking),
+        signature: c.decodeIfPresent(String.self, forKey: .signature),
+      )
     case "tool_call":
       self = try .toolCall(
         id: c.decode(String.self, forKey: .id),
@@ -38,6 +45,10 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
       try c.encode("text", forKey: .type)
       try c.encode(text, forKey: .text)
       try c.encodeIfPresent(signature, forKey: .signature)
+    case let .thinking(thinking, signature):
+      try c.encode("thinking", forKey: .type)
+      try c.encode(thinking, forKey: .thinking)
+      try c.encodeIfPresent(signature, forKey: .signature)
     case let .toolCall(id, name, arguments):
       try c.encode("tool_call", forKey: .type)
       try c.encode(id, forKey: .id)
@@ -50,6 +61,8 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
     switch b {
     case let .text(t):
       .text(text: t.text, signature: t.signature)
+    case let .thinking(t):
+      .thinking(thinking: t.thinking, signature: t.signature)
     case let .toolCall(c):
       .toolCall(id: c.id, name: c.name, arguments: c.arguments)
     }
@@ -59,6 +72,8 @@ public enum WuhuContentBlock: Sendable, Hashable, Codable {
     switch self {
     case let .text(text, signature):
       .text(.init(text: text, signature: signature))
+    case let .thinking(thinking, signature):
+      .thinking(.init(thinking: thinking, signature: signature))
     case let .toolCall(id, name, arguments):
       .toolCall(.init(id: id, name: name, arguments: arguments))
     }

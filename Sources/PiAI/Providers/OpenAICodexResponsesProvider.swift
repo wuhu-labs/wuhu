@@ -41,6 +41,8 @@ public struct OpenAICodexResponsesProvider: Sendable {
   }
 
   private func buildBody(model: Model, context: Context, options: RequestOptions) -> [String: Any] {
+    let store = envFlag("PIAI_OPENAI_STORE", default: false)
+
     var input: [[String: Any]] = []
     for message in context.messages {
       switch message {
@@ -68,7 +70,7 @@ public struct OpenAICodexResponsesProvider: Sendable {
     var body: [String: Any] = [
       "model": model.id,
       "stream": true,
-      "store": false,
+      "store": store,
       "instructions": context.systemPrompt as Any,
       "input": input,
       "text": ["verbosity": "medium"],

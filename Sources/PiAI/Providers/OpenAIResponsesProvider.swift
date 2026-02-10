@@ -40,6 +40,8 @@ public struct OpenAIResponsesProvider: Sendable {
       ])
     }
 
+    let store = envFlag("PIAI_OPENAI_STORE", default: false)
+
     var msgIndex = 0
     for message in context.messages {
       switch message {
@@ -60,6 +62,7 @@ public struct OpenAIResponsesProvider: Sendable {
         ])
 
       case let .assistant(m):
+        let isDifferentModel = m.provider == model.provider && m.model != model.id
         for block in m.content {
           switch block {
           case let .text(part):
@@ -79,6 +82,15 @@ public struct OpenAIResponsesProvider: Sendable {
             ])
             msgIndex += 1
 
+          case let .thinking(part):
+            if let signature = part.signature,
+               let data = signature.data(using: .utf8),
+               let any = try? JSONSerialization.jsonObject(with: data),
+               let dict = any as? [String: Any]
+            {
+              input.append(dict)
+            }
+
           case let .toolCall(call):
             let (callId, itemId) = splitToolCallId(call.id)
             var obj: [String: Any] = [
@@ -87,7 +99,7 @@ public struct OpenAIResponsesProvider: Sendable {
               "name": call.name,
               "arguments": jsonString(call.arguments),
             ]
-            if let itemId {
+            if let itemId, !(isDifferentModel && itemId.hasPrefix("fc_")) {
               obj["id"] = itemId
             }
             input.append(obj)
@@ -113,7 +125,8 @@ public struct OpenAIResponsesProvider: Sendable {
       "model": model.id,
       "input": input,
       "stream": true,
-      "store": false,
+      "store": store,
+      "include": ["reasoning.encrypted_content"],
     ]
 
     if let tools = context.tools, !tools.isEmpty {
@@ -152,6 +165,9 @@ public struct OpenAIResponsesProvider: Sendable {
         continuation.yield(.start(partial: output))
 
         var currentTextIndex: Int?
+        var currentTextItemId: String?
+        var currentReasoningIndex: Int?
+        var currentReasoningBuffer = ""
         var currentToolCallIndex: Int?
         var currentToolCallId: String?
         var currentToolCallName: String?
@@ -171,6 +187,19 @@ public struct OpenAIResponsesProvider: Sendable {
               if itemType == "message" {
                 output.content.append(.text(.init(text: "")))
                 currentTextIndex = output.content.count - 1
+                currentTextItemId = item["id"] as? String
+                currentReasoningIndex = nil
+                currentReasoningBuffer = ""
+                currentToolCallIndex = nil
+                currentToolCallId = nil
+                currentToolCallName = nil
+                currentToolCallArgumentsBuffer = ""
+              } else if itemType == "reasoning" {
+                output.content.append(.thinking(.init(thinking: "")))
+                currentReasoningIndex = output.content.count - 1
+                currentReasoningBuffer = ""
+                currentTextIndex = nil
+                currentTextItemId = nil
                 currentToolCallIndex = nil
                 currentToolCallId = nil
                 currentToolCallName = nil
@@ -187,7 +216,31 @@ public struct OpenAIResponsesProvider: Sendable {
                 currentToolCallName = name
                 currentToolCallArgumentsBuffer = item["arguments"] as? String ?? ""
                 currentTextIndex = nil
+                currentTextItemId = nil
+                currentReasoningIndex = nil
+                currentReasoningBuffer = ""
               }
+
+            case "response.reasoning_summary_text.delta":
+              guard let delta = dict["delta"] as? String else { continue }
+              guard let idx = currentReasoningIndex,
+                    idx >= 0,
+                    idx < output.content.count,
+                    case var .thinking(part) = output.content[idx]
+              else { continue }
+              currentReasoningBuffer += delta
+              part.thinking += delta
+              output.content[idx] = .thinking(part)
+
+            case "response.reasoning_summary_part.done":
+              guard let idx = currentReasoningIndex,
+                    idx >= 0,
+                    idx < output.content.count,
+                    case var .thinking(part) = output.content[idx]
+              else { continue }
+              currentReasoningBuffer += "\n\n"
+              part.thinking += "\n\n"
+              output.content[idx] = .thinking(part)
 
             case "response.output_text.delta":
               guard let delta = dict["delta"] as? String else { continue }
@@ -219,7 +272,43 @@ public struct OpenAIResponsesProvider: Sendable {
               else { continue }
 
               if itemType == "message" {
+                if let idx = currentTextIndex,
+                   idx >= 0,
+                   idx < output.content.count,
+                   case var .text(part) = output.content[idx]
+                {
+                  if let itemId = (item["id"] as? String) ?? currentTextItemId {
+                    part.signature = itemId
+                    output.content[idx] = .text(part)
+                  }
+                }
                 currentTextIndex = nil
+                currentTextItemId = nil
+              } else if itemType == "reasoning" {
+                if let idx = currentReasoningIndex,
+                   idx >= 0,
+                   idx < output.content.count
+                {
+                  let summaryText: String = if !currentReasoningBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    currentReasoningBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                  } else if let parts = item["summary"] as? [[String: Any]] {
+                    parts.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
+                  } else {
+                    ""
+                  }
+
+                  let signature: String? = if let data = try? JSONSerialization.data(withJSONObject: item),
+                                              let text = String(data: data, encoding: .utf8)
+                  {
+                    text
+                  } else {
+                    nil
+                  }
+
+                  output.content[idx] = .thinking(.init(thinking: summaryText, signature: signature))
+                }
+                currentReasoningIndex = nil
+                currentReasoningBuffer = ""
               } else if itemType == "function_call" {
                 let argsText = (currentToolCallArgumentsBuffer.isEmpty ? (item["arguments"] as? String) : currentToolCallArgumentsBuffer) ?? ""
                 if let idx = currentToolCallIndex,

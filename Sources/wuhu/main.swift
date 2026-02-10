@@ -272,6 +272,8 @@ private func renderBlocks(_ blocks: [WuhuContentBlock]) -> String {
     switch block {
     case let .text(text, _):
       text
+    case let .thinking(thinking, _):
+      thinking.isEmpty ? nil : "[thinking \(thinking)]"
     case let .toolCall(_, name, arguments):
       "[tool_call \(name) args=\(formatJSON(arguments))]"
     }

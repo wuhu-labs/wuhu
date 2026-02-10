@@ -70,6 +70,7 @@ public struct ToolCall: Sendable, Hashable {
 
 public enum ContentBlock: Sendable, Hashable {
   case text(TextContent)
+  case thinking(ThinkingContent)
   case toolCall(ToolCall)
 }
 
@@ -173,6 +174,20 @@ public struct TextContent: Sendable, Hashable {
   }
 }
 
+public struct ThinkingContent: Sendable, Hashable {
+  /// A user-visible "thinking summary" if available (e.g. OpenAI reasoning summary).
+  public var thinking: String
+  /// Provider-specific opaque signature that can be replayed in follow-up requests.
+  ///
+  /// For OpenAI Responses API this is a JSON-encoded `reasoning` output item.
+  public var signature: String?
+
+  public init(thinking: String, signature: String? = nil) {
+    self.thinking = thinking
+    self.signature = signature
+  }
+}
+
 public struct AssistantMessage: Sendable, Hashable {
   public var provider: Provider
   public var model: String
@@ -235,6 +250,10 @@ public enum AssistantMessageEvent: Sendable, Hashable {
 public extension ContentBlock {
   static func text(_ text: String, signature: String? = nil) -> ContentBlock {
     .text(.init(text: text, signature: signature))
+  }
+
+  static func thinking(_ thinking: String, signature: String? = nil) -> ContentBlock {
+    .thinking(.init(thinking: thinking, signature: signature))
   }
 }
 

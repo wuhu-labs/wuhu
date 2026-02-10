@@ -71,6 +71,8 @@ public struct AnthropicMessagesProvider: Sendable {
               "type": "text",
               "text": part.text,
             ])
+          case .thinking:
+            continue
           case let .toolCall(call):
             blocks.append([
               "type": "tool_use",

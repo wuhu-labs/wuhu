@@ -164,6 +164,12 @@ public actor WuhuService {
         obj["signature"] = .string(signature)
       }
       return .object(obj)
+    case let .thinking(t):
+      var obj: [String: JSONValue] = ["type": .string("thinking"), "thinking": .string(t.thinking)]
+      if let signature = t.signature {
+        obj["signature"] = .string(signature)
+      }
+      return .object(obj)
     case let .toolCall(c):
       return .object([
         "type": .string("tool_call"),
