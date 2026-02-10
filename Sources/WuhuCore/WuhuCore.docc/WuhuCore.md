@@ -24,6 +24,9 @@ Logical fields (see `SQLiteSessionStore` migration):
 - `id` (TEXT PRIMARY KEY): session id returned to the CLI
 - `provider` (TEXT): `openai`, `anthropic`, `openai-codex`
 - `model` (TEXT): model id
+- `environmentName` (TEXT): environment name resolved at session creation
+- `environmentType` (TEXT): currently `local`
+- `environmentPath` (TEXT): resolved path for the environment (absolute for `local`)
 - `cwd` (TEXT): working directory at session creation
 - `parentSessionID` (TEXT, nullable): reserved for future “fork session” feature
 - `createdAt` / `updatedAt` (DATETIME)
@@ -122,4 +125,3 @@ Forking is expected to be implemented by:
 3. Copying or referencing the desired prefix of entries into the new session (implementation choice)
 
 This keeps per-session chains linear while still supporting “branching” at the session level.
-

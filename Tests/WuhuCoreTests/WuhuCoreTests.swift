@@ -10,7 +10,7 @@ struct WuhuCoreTests {
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
-      cwd: "/tmp",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
     )
 
     #expect(session.provider == .openai)
@@ -37,7 +37,7 @@ struct WuhuCoreTests {
       provider: .openai,
       model: "mock",
       systemPrompt: "You are a terminal agent.",
-      cwd: "/tmp",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
     )
 
     actor StreamState {

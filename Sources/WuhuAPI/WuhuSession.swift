@@ -4,6 +4,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
   public var id: String
   public var provider: WuhuProvider
   public var model: String
+  public var environment: WuhuEnvironment
   public var cwd: String
   public var parentSessionID: String?
   public var createdAt: Date
@@ -15,6 +16,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     id: String,
     provider: WuhuProvider,
     model: String,
+    environment: WuhuEnvironment,
     cwd: String,
     parentSessionID: String?,
     createdAt: Date,
@@ -25,6 +27,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     self.id = id
     self.provider = provider
     self.model = model
+    self.environment = environment
     self.cwd = cwd
     self.parentSessionID = parentSessionID
     self.createdAt = createdAt

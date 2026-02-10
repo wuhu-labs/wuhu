@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import PiAI
+import WuhuAPI
 
 public actor SQLiteSessionStore: SessionStore {
   private let dbQueue: DatabaseQueue
@@ -18,7 +19,7 @@ public actor SQLiteSessionStore: SessionStore {
     provider: WuhuProvider,
     model: String,
     systemPrompt: String,
-    cwd: String,
+    environment: WuhuEnvironment,
     parentSessionID: String?,
   ) async throws -> WuhuSession {
     let now = Date()
@@ -29,7 +30,10 @@ public actor SQLiteSessionStore: SessionStore {
         id: sessionID,
         provider: provider.rawValue,
         model: model,
-        cwd: cwd,
+        environmentName: environment.name,
+        environmentType: environment.type.rawValue,
+        environmentPath: environment.path,
+        cwd: environment.path,
         parentSessionID: parentSessionID,
         createdAt: now,
         updatedAt: now,
@@ -186,6 +190,9 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var id: String
   var provider: String
   var model: String
+  var environmentName: String
+  var environmentType: String
+  var environmentPath: String
   var cwd: String
   var parentSessionID: String?
   var createdAt: Date
@@ -200,10 +207,14 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
     guard let headEntryID, let tailEntryID else {
       throw WuhuStoreError.sessionCorrupt("Session \(id) missing head/tail entry ids")
     }
+    guard let envType = WuhuEnvironmentType(rawValue: environmentType) else {
+      throw WuhuStoreError.sessionCorrupt("Unknown environment type: \(environmentType)")
+    }
     return .init(
       id: id,
       provider: provider,
       model: model,
+      environment: .init(name: environmentName, type: envType, path: environmentPath),
       cwd: cwd,
       parentSessionID: parentSessionID,
       createdAt: createdAt,
@@ -276,6 +287,9 @@ extension SQLiteSessionStore {
         t.column("id", .text).primaryKey()
         t.column("provider", .text).notNull()
         t.column("model", .text).notNull()
+        t.column("environmentName", .text).notNull()
+        t.column("environmentType", .text).notNull()
+        t.column("environmentPath", .text).notNull()
         t.column("cwd", .text).notNull()
         t.column("parentSessionID", .text)
         t.column("createdAt", .datetime).notNull()

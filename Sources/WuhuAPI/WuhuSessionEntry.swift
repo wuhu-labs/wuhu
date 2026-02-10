@@ -112,7 +112,7 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
   }
 }
 
-public struct WuhuSessionEntry: Sendable, Hashable, Identifiable {
+public struct WuhuSessionEntry: Sendable, Hashable, Codable, Identifiable {
   public var id: Int64
   public var sessionID: String
   public var parentEntryID: Int64?

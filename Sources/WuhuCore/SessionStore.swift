@@ -1,4 +1,5 @@
 import Foundation
+import WuhuAPI
 
 public enum WuhuStoreError: Error, Sendable, CustomStringConvertible {
   case sessionNotFound(String)
@@ -22,7 +23,7 @@ public protocol SessionStore: Sendable {
     provider: WuhuProvider,
     model: String,
     systemPrompt: String,
-    cwd: String,
+    environment: WuhuEnvironment,
     parentSessionID: String?,
   ) async throws -> WuhuSession
 

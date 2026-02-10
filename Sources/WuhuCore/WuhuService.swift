@@ -1,6 +1,7 @@
 import Foundation
 import PiAgent
 import PiAI
+import WuhuAPI
 
 public enum WuhuPromptStreamEvent: Sendable, Hashable {
   case toolExecutionStart(toolCallId: String, toolName: String, args: JSONValue)
@@ -20,14 +21,14 @@ public actor WuhuService {
     provider: WuhuProvider,
     model: String,
     systemPrompt: String,
-    cwd: String = FileManager.default.currentDirectoryPath,
+    environment: WuhuEnvironment,
     parentSessionID: String? = nil,
   ) async throws -> WuhuSession {
     try await store.createSession(
       provider: provider,
       model: model,
       systemPrompt: systemPrompt,
-      cwd: cwd,
+      environment: environment,
       parentSessionID: parentSessionID,
     )
   }
