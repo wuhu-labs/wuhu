@@ -6,6 +6,7 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   public var model: String?
   public var systemPrompt: String?
   public var environment: String
+  public var runner: String?
   public var parentSessionID: String?
 
   public init(
@@ -13,12 +14,14 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
     model: String? = nil,
     systemPrompt: String? = nil,
     environment: String,
+    runner: String? = nil,
     parentSessionID: String? = nil,
   ) {
     self.provider = provider
     self.model = model
     self.systemPrompt = systemPrompt
     self.environment = environment
+    self.runner = runner
     self.parentSessionID = parentSessionID
   }
 }

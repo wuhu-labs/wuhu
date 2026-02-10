@@ -1,7 +1,11 @@
 import Foundation
 import Hummingbird
 import HummingbirdCore
+import HummingbirdWebSocket
+import Logging
 import NIOCore
+import WSClient
+import WSCore
 import WuhuAPI
 import WuhuCore
 
@@ -30,6 +34,7 @@ public struct WuhuServer: Sendable {
     let service = WuhuService(store: store)
 
     let envByName: [String: WuhuServerConfig.Environment] = Dictionary(uniqueKeysWithValues: config.environments.map { ($0.name, $0) })
+    let runnerRegistry = RunnerRegistry()
 
     let router = Router(context: WuhuRequestContext.self)
 
@@ -54,26 +59,44 @@ public struct WuhuServer: Sendable {
     router.post("v1/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
-      guard let envConfig = envByName[create.environment] else {
-        throw HTTPError(.badRequest, message: "Unknown environment: \(create.environment)")
-      }
-      guard envConfig.type == "local" else {
-        throw HTTPError(.badRequest, message: "Unsupported environment type: \(envConfig.type)")
-      }
-
-      let resolvedPath = ToolPath.resolveToCwd(envConfig.path, cwd: FileManager.default.currentDirectoryPath)
-      let environment = WuhuEnvironment(name: envConfig.name, type: .local, path: resolvedPath)
-
       let model = (create.model?.isEmpty == false) ? create.model! : defaultModel(for: create.provider)
       let systemPrompt = (create.systemPrompt?.isEmpty == false) ? create.systemPrompt! : defaultSystemPrompt
 
-      let session = try await service.createSession(
-        provider: create.provider,
-        model: model,
-        systemPrompt: systemPrompt,
-        environment: environment,
-        parentSessionID: create.parentSessionID,
-      )
+      let session: WuhuSession
+      if let runnerName = create.runner, !runnerName.isEmpty {
+        guard let runner = await runnerRegistry.get(runnerName: runnerName) else {
+          throw HTTPError(.badRequest, message: "Unknown or disconnected runner: \(runnerName)")
+        }
+        let environment = try await runner.resolveEnvironment(name: create.environment)
+        session = try await service.createSession(
+          provider: create.provider,
+          model: model,
+          systemPrompt: systemPrompt,
+          environment: environment,
+          runnerName: runnerName,
+          parentSessionID: create.parentSessionID,
+        )
+        try await runner.registerSession(sessionID: session.id, environment: environment)
+      } else {
+        guard let envConfig = envByName[create.environment] else {
+          throw HTTPError(.badRequest, message: "Unknown environment: \(create.environment)")
+        }
+        guard envConfig.type == "local" else {
+          throw HTTPError(.badRequest, message: "Unsupported environment type: \(envConfig.type)")
+        }
+
+        let resolvedPath = ToolPath.resolveToCwd(envConfig.path, cwd: FileManager.default.currentDirectoryPath)
+        let environment = WuhuEnvironment(name: envConfig.name, type: .local, path: resolvedPath)
+
+        session = try await service.createSession(
+          provider: create.provider,
+          model: model,
+          systemPrompt: systemPrompt,
+          environment: environment,
+          runnerName: nil,
+          parentSessionID: create.parentSessionID,
+        )
+      }
       return try context.responseEncoder.encode(session, from: request, context: context)
     }
 
@@ -81,28 +104,75 @@ public struct WuhuServer: Sendable {
       let id = try context.parameters.require("id")
       let prompt = try await request.decode(as: WuhuPromptRequest.self, context: context)
 
-      let stream = try await service.promptStream(
-        sessionID: id,
-        input: prompt.input,
-        maxTurns: prompt.maxTurns ?? 12,
-      )
+      let session = try await service.getSession(id: id)
 
-      let byteStream = AsyncThrowingStream<ByteBuffer, any Error> { continuation in
+      let tools: [AnyAgentTool]? = {
+        guard let runnerName = session.runnerName, !runnerName.isEmpty else { return nil }
+        return WuhuRemoteTools.makeTools(
+          sessionID: session.id,
+          runnerName: runnerName,
+          runnerRegistry: runnerRegistry,
+        )
+      }()
+
+      let stream: AsyncThrowingStream<WuhuPromptStreamEvent, any Error>
+      do {
+        stream = try await service.promptStream(
+          sessionID: id,
+          input: prompt.input,
+          maxTurns: prompt.maxTurns ?? 12,
+          tools: tools,
+        )
+      } catch {
+        // Always return a well-formed SSE stream (avoid abrupt chunked close).
+        let errorStream = AsyncStream<ByteBuffer> { continuation in
+          let apiEvents: [WuhuPromptEvent] = [
+            .assistantTextDelta("\n[error] \(error)\n"),
+            .done,
+          ]
+          for apiEvent in apiEvents {
+            let data = try! WuhuJSON.encoder.encode(apiEvent)
+            var s = "data: "
+            s += String(decoding: data, as: UTF8.self)
+            s += "\n\n"
+            continuation.yield(ByteBuffer(string: s))
+          }
+          continuation.finish()
+        }
+
+        var headers = HTTPFields()
+        headers[.contentType] = "text/event-stream"
+        headers[.cacheControl] = "no-cache"
+        headers[.connection] = "keep-alive"
+
+        return Response(
+          status: .ok,
+          headers: headers,
+          body: ResponseBody(asyncSequence: errorStream),
+        )
+      }
+
+      let byteStream = AsyncStream<ByteBuffer> { continuation in
         let task = Task {
+          func yieldEvent(_ apiEvent: WuhuPromptEvent) {
+            let data = try! WuhuJSON.encoder.encode(apiEvent)
+            var s = "data: "
+            s += String(decoding: data, as: UTF8.self)
+            s += "\n\n"
+            continuation.yield(ByteBuffer(string: s))
+          }
+
           do {
             for try await event in stream {
               let apiEvent = mapPromptEvent(event)
-              let data = try WuhuJSON.encoder.encode(apiEvent)
-              var s = "data: "
-              s += String(decoding: data, as: UTF8.self)
-              s += "\n\n"
-              continuation.yield(ByteBuffer(string: s))
+              yieldEvent(apiEvent)
               if case .done = apiEvent { break }
             }
-            continuation.finish()
           } catch {
-            continuation.finish(throwing: error)
+            yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
+            yieldEvent(.done)
           }
+          continuation.finish()
         }
         continuation.onTermination = { _ in task.cancel() }
       }
@@ -119,13 +189,40 @@ public struct WuhuServer: Sendable {
       )
     }
 
+    router.ws("/v1/runners/ws") { _, _ in
+      .upgrade()
+    } onUpgrade: { inbound, outbound, wsContext in
+      do {
+        try await runnerRegistry.acceptRunnerClient(inbound: inbound, outbound: outbound, logger: wsContext.logger)
+      } catch {
+        wsContext.logger.debug("Runner WebSocket error", metadata: ["error": "\(error)"])
+      }
+    }
+
     let port = config.port ?? 5530
     let host = (config.host?.isEmpty == false) ? config.host! : "127.0.0.1"
 
     let app = Application(
       router: router,
+      server: .http1WebSocketUpgrade(webSocketRouter: router),
       configuration: .init(address: .hostname(host, port: port)),
     )
+
+    if let runners = config.runners, !runners.isEmpty {
+      let logger = Logger(label: "WuhuServer")
+      for r in runners {
+        Task {
+          while !Task.isCancelled {
+            do {
+              try await runnerRegistry.connectToRunnerServer(runner: r, logger: logger)
+            } catch {
+              logger.error("Failed to connect to runner", metadata: ["runner": "\(r.name)", "error": "\(error)"])
+              try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+          }
+        }
+      }
+    }
     try await app.runService()
   }
 }

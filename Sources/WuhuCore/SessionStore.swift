@@ -24,6 +24,7 @@ public protocol SessionStore: Sendable {
     model: String,
     systemPrompt: String,
     environment: WuhuEnvironment,
+    runnerName: String?,
     parentSessionID: String?,
   ) async throws -> WuhuSession
 

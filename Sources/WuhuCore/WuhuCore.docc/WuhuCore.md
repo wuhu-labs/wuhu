@@ -109,12 +109,11 @@ All public store APIs are `async` to compose naturally with Swift concurrency.
 
 ## CLI Integration
 
-The `wuhu` executable is a thin wrapper around `WuhuService`:
+The `wuhu` executable runs in three modes:
 
-- `wuhu create-session --provider openai` → prints session id
-- `wuhu prompt --session-id <id> <prompt...>` → appends and streams response
-- `wuhu get-session --session-id <id>` → prints metadata + transcript
-- `wuhu list-sessions` → lists sessions
+- `wuhu server` starts the HTTP server (LLM inference + persistence).
+- `wuhu client …` talks to a running server (HTTP + SSE).
+- `wuhu runner` executes coding-agent tools for remote sessions (see the Server/Runner design doc).
 
 ## Future: Forking Sessions (Not Implemented)
 

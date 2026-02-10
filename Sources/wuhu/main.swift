@@ -3,7 +3,9 @@ import Foundation
 import PiAI
 import WuhuAPI
 import WuhuClient
+import WuhuRunner
 import WuhuServer
+import Yams
 
 extension WuhuProvider: ExpressibleByArgument {}
 
@@ -15,6 +17,7 @@ struct WuhuCLI: AsyncParsableCommand {
     subcommands: [
       Server.self,
       Client.self,
+      Runner.self,
     ],
   )
 
@@ -45,8 +48,8 @@ struct WuhuCLI: AsyncParsableCommand {
     )
 
     struct Shared: ParsableArguments {
-      @Option(help: "Server base URL (default: http://127.0.0.1:5530).")
-      var server: String = "http://127.0.0.1:5530"
+      @Option(help: "Server base URL (default: read ~/.wuhu/client.yml, else http://127.0.0.1:5530).")
+      var server: String?
     }
 
     struct CreateSession: AsyncParsableCommand {
@@ -64,6 +67,9 @@ struct WuhuCLI: AsyncParsableCommand {
       @Option(help: "Environment name from server config (required).")
       var environment: String
 
+      @Option(help: "Runner name (optional). If set, tools execute on the runner.")
+      var runner: String?
+
       @Option(help: "System prompt override (optional).")
       var systemPrompt: String?
 
@@ -80,6 +86,7 @@ struct WuhuCLI: AsyncParsableCommand {
           model: model,
           systemPrompt: systemPrompt,
           environment: environment,
+          runner: runner,
           parentSessionID: parentSessionId,
         ))
         FileHandle.standardOutput.write(Data("\(session.id)\n".utf8))
@@ -216,10 +223,46 @@ struct WuhuCLI: AsyncParsableCommand {
       }
     }
   }
+
+  struct Runner: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "runner",
+      abstract: "Run a Wuhu runner (executes coding-agent tools remotely).",
+    )
+
+    @Option(help: "Path to runner config YAML (default: ~/.wuhu/runner.yml).")
+    var config: String?
+
+    @Option(help: "Connect to a Wuhu server (runner-as-client). Overrides config connectTo.")
+    var connectTo: String?
+
+    func run() async throws {
+      try await WuhuRunner().run(configPath: config, connectTo: connectTo)
+    }
+  }
 }
 
-private func makeClient(_ base: String) throws -> WuhuClient {
-  guard let url = URL(string: base) else { throw ValidationError("Invalid --server URL: \(base)") }
+private struct WuhuClientConfig: Sendable, Codable {
+  var server: String?
+}
+
+private func loadClientConfig() -> WuhuClientConfig? {
+  let path = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".wuhu/client.yml")
+    .path
+  guard FileManager.default.fileExists(atPath: path) else { return nil }
+  guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+  return try? YAMLDecoder().decode(WuhuClientConfig.self, from: text)
+}
+
+private func makeClient(_ baseOverride: String?) throws -> WuhuClient {
+  let base: String = {
+    if let baseOverride, !baseOverride.isEmpty { return baseOverride }
+    if let cfg = loadClientConfig(), let server = cfg.server, !server.isEmpty { return server }
+    return "http://127.0.0.1:5530"
+  }()
+
+  guard let url = URL(string: base) else { throw ValidationError("Invalid server URL: \(base)") }
   return WuhuClient(baseURL: url)
 }
 

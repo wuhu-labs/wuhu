@@ -6,6 +6,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
   public var model: String
   public var environment: WuhuEnvironment
   public var cwd: String
+  public var runnerName: String?
   public var parentSessionID: String?
   public var createdAt: Date
   public var updatedAt: Date
@@ -18,6 +19,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     model: String,
     environment: WuhuEnvironment,
     cwd: String,
+    runnerName: String? = nil,
     parentSessionID: String?,
     createdAt: Date,
     updatedAt: Date,
@@ -29,6 +31,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     self.model = model
     self.environment = environment
     self.cwd = cwd
+    self.runnerName = runnerName
     self.parentSessionID = parentSessionID
     self.createdAt = createdAt
     self.updatedAt = updatedAt

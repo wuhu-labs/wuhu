@@ -28,6 +28,7 @@ let package = Package(
     .library(name: "WuhuCore", targets: ["WuhuCore"]),
     .library(name: "WuhuClient", targets: ["WuhuClient"]),
     .library(name: "WuhuServer", targets: ["WuhuServer"]),
+    .library(name: "WuhuRunner", targets: ["WuhuRunner"]),
     .executable(name: "wuhu", targets: ["wuhu"]),
   ],
   dependencies: [
@@ -36,6 +37,7 @@ let package = Package(
     .package(url: "https://github.com/swiftlang/swift-testing.git", from: "6.2.0"),
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.27.0"),
     .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
+    .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
     .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
     grdbDependency,
   ],
@@ -83,6 +85,19 @@ let package = Package(
       dependencies: [
         "WuhuCore",
         .product(name: "Hummingbird", package: "hummingbird"),
+        .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+        .product(name: "HummingbirdWSClient", package: "hummingbird-websocket"),
+        .product(name: "Yams", package: "Yams"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .target(
+      name: "WuhuRunner",
+      dependencies: [
+        "WuhuCore",
+        .product(name: "Hummingbird", package: "hummingbird"),
+        .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+        .product(name: "HummingbirdWSClient", package: "hummingbird-websocket"),
         .product(name: "Yams", package: "Yams"),
       ],
       swiftSettings: strictConcurrency,
@@ -92,7 +107,9 @@ let package = Package(
       dependencies: [
         "WuhuClient",
         "WuhuServer",
+        "WuhuRunner",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "Yams", package: "Yams"),
       ],
       swiftSettings: strictConcurrency,
     ),

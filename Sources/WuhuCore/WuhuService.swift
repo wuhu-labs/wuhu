@@ -22,6 +22,7 @@ public actor WuhuService {
     model: String,
     systemPrompt: String,
     environment: WuhuEnvironment,
+    runnerName: String? = nil,
     parentSessionID: String? = nil,
   ) async throws -> WuhuSession {
     try await store.createSession(
@@ -29,6 +30,7 @@ public actor WuhuService {
       model: model,
       systemPrompt: systemPrompt,
       environment: environment,
+      runnerName: runnerName,
       parentSessionID: parentSessionID,
     )
   }

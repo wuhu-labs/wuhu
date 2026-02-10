@@ -20,6 +20,7 @@ public actor SQLiteSessionStore: SessionStore {
     model: String,
     systemPrompt: String,
     environment: WuhuEnvironment,
+    runnerName: String?,
     parentSessionID: String?,
   ) async throws -> WuhuSession {
     let now = Date()
@@ -34,6 +35,7 @@ public actor SQLiteSessionStore: SessionStore {
         environmentType: environment.type.rawValue,
         environmentPath: environment.path,
         cwd: environment.path,
+        runnerName: runnerName,
         parentSessionID: parentSessionID,
         createdAt: now,
         updatedAt: now,
@@ -194,6 +196,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var environmentType: String
   var environmentPath: String
   var cwd: String
+  var runnerName: String?
   var parentSessionID: String?
   var createdAt: Date
   var updatedAt: Date
@@ -216,6 +219,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       model: model,
       environment: .init(name: environmentName, type: envType, path: environmentPath),
       cwd: cwd,
+      runnerName: runnerName,
       parentSessionID: parentSessionID,
       createdAt: createdAt,
       updatedAt: updatedAt,
@@ -291,6 +295,7 @@ extension SQLiteSessionStore {
         t.column("environmentType", .text).notNull()
         t.column("environmentPath", .text).notNull()
         t.column("cwd", .text).notNull()
+        t.column("runnerName", .text)
         t.column("parentSessionID", .text)
         t.column("createdAt", .datetime).notNull()
         t.column("updatedAt", .datetime).notNull()
