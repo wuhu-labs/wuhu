@@ -307,4 +307,21 @@ struct CodingAgentToolsTests {
     #expect(out.contains(".hidden-file"))
     #expect(out.contains(".hidden-dir/"))
   }
+
+  @Test func swiftToolRunsSnippet() async throws {
+    let dir = try makeTempDir(prefix: "wuhu-swift-tool")
+    let t = try #require(tools(cwd: dir)["swift"])
+
+    let code = """
+    import Foundation
+    print("hi")
+    """
+
+    let result = try await t.execute(toolCallId: "s1", args: .object([
+      "code": .string(code),
+      "timeout": .number(10),
+    ]))
+
+    #expect(textOutput(result).trimmingCharacters(in: .whitespacesAndNewlines) == "hi")
+  }
 }
