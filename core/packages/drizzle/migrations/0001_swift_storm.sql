@@ -1,1 +1,0 @@
-ALTER TABLE "sandboxes" ADD COLUMN "repo_full_name" text;
