@@ -13,11 +13,13 @@ func parseJSON(_ text: String) throws -> [String: Any]? {
 }
 
 func applyTextDelta(_ delta: String, to message: inout AssistantMessage) {
-  switch message.content.first {
-  case var .text(part):
-    part.text += delta
-    message.content = [.text(part)]
-  default:
-    message.content = [.text(.init(text: delta))]
+  for i in message.content.indices {
+    if case var .text(part) = message.content[i] {
+      part.text += delta
+      message.content[i] = .text(part)
+      return
+    }
   }
+
+  message.content.append(.text(.init(text: delta)))
 }

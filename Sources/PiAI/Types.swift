@@ -112,6 +112,7 @@ public struct TextContent: Sendable, Hashable {
 
 public enum AssistantContent: Sendable, Hashable {
   case text(TextContent)
+  case toolCall(ToolCall)
 }
 
 public struct AssistantMessage: Sendable, Hashable {
