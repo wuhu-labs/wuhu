@@ -1,8 +1,5 @@
 import ArgumentParser
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 import PiAI
 
 @main

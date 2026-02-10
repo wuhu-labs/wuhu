@@ -1,12 +1,9 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 
 public struct AnthropicMessagesProvider: Sendable {
   private let http: any HTTPClient
 
-  public init(http: any HTTPClient = URLSessionHTTPClient()) {
+  public init(http: any HTTPClient = AsyncHTTPClientTransport()) {
     self.http = http
   }
 
@@ -18,18 +15,17 @@ public struct AnthropicMessagesProvider: Sendable {
     let apiKey = try resolveAPIKey(options.apiKey, env: "ANTHROPIC_API_KEY", provider: model.provider)
     let url = model.baseURL.appending(path: "messages")
 
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-    request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    var request = HTTPRequest(url: url, method: "POST")
+    request.setHeader(apiKey, for: "x-api-key")
+    request.setHeader("application/json", for: "Content-Type")
+    request.setHeader("text/event-stream", for: "Accept")
+    request.setHeader("2023-06-01", for: "anthropic-version")
     for (k, v) in options.headers {
-      request.setValue(v, forHTTPHeaderField: k)
+      request.setHeader(v, for: k)
     }
 
     let body = try JSONSerialization.data(withJSONObject: buildBody(model: model, context: context, options: options))
-    request.httpBody = body
+    request.body = body
 
     let sse = try await http.sse(for: request)
     return mapAnthropicSSE(sse, provider: model.provider, modelId: model.id)

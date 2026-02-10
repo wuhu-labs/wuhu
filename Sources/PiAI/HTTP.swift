@@ -1,7 +1,5 @@
+import AsyncHTTPClient
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 
 public struct SSEMessage: Sendable, Hashable {
   public var event: String?
@@ -13,44 +11,129 @@ public struct SSEMessage: Sendable, Hashable {
   }
 }
 
-public protocol HTTPClient: Sendable {
-  func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
-  func sse(for request: URLRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error>
+public struct HTTPRequest: Sendable {
+  public var url: URL
+  public var method: String
+  public var headers: [String: String]
+  public var body: Data?
+
+  public init(
+    url: URL,
+    method: String = "GET",
+    headers: [String: String] = [:],
+    body: Data? = nil,
+  ) {
+    self.url = url
+    self.method = method
+    self.headers = headers
+    self.body = body
+  }
+
+  public mutating func setHeader(_ value: String, for name: String) {
+    headers[name] = value
+  }
 }
 
-public struct URLSessionHTTPClient: HTTPClient {
-  private let session: URLSession
+public struct HTTPResponse: Sendable {
+  public var statusCode: Int
+  public var headers: [String: [String]]
 
-  public init(session: URLSession = .shared) {
-    self.session = session
+  public init(statusCode: Int, headers: [String: [String]] = [:]) {
+    self.statusCode = statusCode
+    self.headers = headers
+  }
+}
+
+public protocol HTTPClient: Sendable {
+  func data(for request: HTTPRequest) async throws -> (Data, HTTPResponse)
+  func sse(for request: HTTPRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error>
+}
+
+public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
+  private let client: AsyncHTTPClient.HTTPClient
+  private let requestTimeoutSeconds: Int64
+  private let ownsClient: Bool
+
+  public init(client: AsyncHTTPClient.HTTPClient? = nil, requestTimeoutSeconds: Int64 = 300) {
+    if let client {
+      self.client = client
+      ownsClient = false
+    } else {
+      self.client = AsyncHTTPClient.HTTPClient(eventLoopGroupProvider: .singleton)
+      ownsClient = true
+    }
+    self.requestTimeoutSeconds = requestTimeoutSeconds
   }
 
-  public func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-    let (data, response) = try await session.data(for: request)
-    guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
-    return (data, http)
+  deinit {
+    guard ownsClient else { return }
+    try? client.syncShutdown()
   }
 
-  public func sse(for request: URLRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error> {
-    #if os(Linux)
-      // FoundationNetworking on Linux doesn’t currently support `URLSession.bytes(for:)`.
-      // We fall back to reading the full response body, then parsing SSE frames.
-      let (data, response) = try await session.data(for: request)
-      guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
-      if http.statusCode < 200 || http.statusCode >= 300 {
-        let body = String(decoding: data, as: UTF8.self)
-        throw PiAIError.httpStatus(code: http.statusCode, body: body)
+  public func data(for request: HTTPRequest) async throws -> (Data, HTTPResponse) {
+    let response = try await execute(request)
+    let body = try await readBody(response.body, limitBytes: .max)
+    return (body, makeResponseMetadata(response))
+  }
+
+  public func sse(for request: HTTPRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error> {
+    let response = try await execute(request)
+    let metadata = makeResponseMetadata(response)
+
+    if metadata.statusCode < 200 || metadata.statusCode >= 300 {
+      let body = try await readBody(response.body, limitBytes: 64 * 1024)
+      throw PiAIError.httpStatus(code: metadata.statusCode, body: String(decoding: body, as: UTF8.self))
+    }
+
+    return SSEDecoder.decode(response.body)
+  }
+
+  private func execute(_ request: HTTPRequest) async throws -> AsyncHTTPClient.HTTPClientResponse {
+    var outgoing = AsyncHTTPClient.HTTPClientRequest(url: request.url.absoluteString)
+    outgoing.method = .RAW(value: request.method.uppercased())
+
+    for (name, value) in request.headers {
+      outgoing.headers.add(name: name, value: value)
+    }
+
+    if let body = request.body {
+      outgoing.body = .bytes(body)
+    }
+
+    return try await client.execute(outgoing, timeout: .seconds(requestTimeoutSeconds))
+  }
+
+  private func makeResponseMetadata(_ response: AsyncHTTPClient.HTTPClientResponse) -> HTTPResponse {
+    var headers: [String: [String]] = [:]
+    for header in response.headers {
+      headers[header.name, default: []].append(header.value)
+    }
+    return HTTPResponse(statusCode: Int(response.status.code), headers: headers)
+  }
+
+  private func readBody(_ body: AsyncHTTPClient.HTTPClientResponse.Body, limitBytes: Int) async throws -> Data {
+    var data = Data()
+    data.reserveCapacity(min(4 * 1024, limitBytes))
+    var count = 0
+
+    for try await var chunk in body {
+      let readable = chunk.readableBytes
+      if readable == 0 { continue }
+
+      let remaining = limitBytes - count
+      if remaining <= 0 { break }
+
+      let toRead = min(readable, remaining)
+      guard let bytes = chunk.readBytes(length: toRead) else { continue }
+      data.append(contentsOf: bytes)
+      count += bytes.count
+
+      if toRead < readable {
+        break
       }
-      return SSEDecoder.decode(data)
-    #else
-      let (bytes, response) = try await session.bytes(for: request)
-      guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
-      if http.statusCode < 200 || http.statusCode >= 300 {
-        let body = try? await readBody(bytes: bytes, limitBytes: 64 * 1024)
-        throw PiAIError.httpStatus(code: http.statusCode, body: body)
-      }
-      return SSEDecoder.decode(bytes)
-    #endif
+    }
+
+    return data
   }
 }
 
@@ -59,22 +142,7 @@ public enum SSEDecoder {
     AsyncThrowingStream { continuation in
       let task = Task {
         var buffer = data
-        while true {
-          if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
-            let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-            buffer.removeSubrange(0 ..< range.upperBound)
-            yieldChunk(chunkData, continuation: continuation)
-            continue
-          }
-          if let range = buffer.range(of: Data([10, 10])) { // \n\n
-            let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-            buffer.removeSubrange(0 ..< range.upperBound)
-            yieldChunk(chunkData, continuation: continuation)
-            continue
-          }
-          break
-        }
-
+        drain(buffer: &buffer, continuation: continuation)
         if !buffer.isEmpty {
           yieldChunk(buffer, continuation: continuation)
         }
@@ -87,49 +155,54 @@ public enum SSEDecoder {
     }
   }
 
-  #if !os(Linux)
-    public static func decode(_ bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<SSEMessage, any Error> {
-      AsyncThrowingStream { continuation in
-        let task = Task {
-          do {
-            var buffer = Data()
-            buffer.reserveCapacity(8 * 1024)
+  static func decode(_ body: AsyncHTTPClient.HTTPClientResponse.Body) -> AsyncThrowingStream<SSEMessage, any Error> {
+    AsyncThrowingStream { continuation in
+      let task = Task {
+        do {
+          var buffer = Data()
+          buffer.reserveCapacity(8 * 1024)
 
-            for try await byte in bytes {
-              buffer.append(byte)
-
-              while true {
-                if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
-                  let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-                  buffer.removeSubrange(0 ..< range.upperBound)
-                  yieldChunk(chunkData, continuation: continuation)
-                  continue
-                }
-                if let range = buffer.range(of: Data([10, 10])) { // \n\n
-                  let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-                  buffer.removeSubrange(0 ..< range.upperBound)
-                  yieldChunk(chunkData, continuation: continuation)
-                  continue
-                }
-                break
-              }
-            }
-
-            if !buffer.isEmpty {
-              yieldChunk(buffer, continuation: continuation)
-            }
-            continuation.finish()
-          } catch {
-            continuation.finish(throwing: PiAIError.decoding(String(describing: error)))
+          for try await var chunk in body {
+            guard let bytes = chunk.readBytes(length: chunk.readableBytes), !bytes.isEmpty else { continue }
+            buffer.append(contentsOf: bytes)
+            drain(buffer: &buffer, continuation: continuation)
           }
-        }
 
-        continuation.onTermination = { _ in
-          task.cancel()
+          if !buffer.isEmpty {
+            yieldChunk(buffer, continuation: continuation)
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: PiAIError.decoding(String(describing: error)))
         }
       }
+
+      continuation.onTermination = { _ in
+        task.cancel()
+      }
     }
-  #endif
+  }
+
+  private static func drain(
+    buffer: inout Data,
+    continuation: AsyncThrowingStream<SSEMessage, any Error>.Continuation,
+  ) {
+    while true {
+      if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
+        let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+        buffer.removeSubrange(0 ..< range.upperBound)
+        yieldChunk(chunkData, continuation: continuation)
+        continue
+      }
+      if let range = buffer.range(of: Data([10, 10])) { // \n\n
+        let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+        buffer.removeSubrange(0 ..< range.upperBound)
+        yieldChunk(chunkData, continuation: continuation)
+        continue
+      }
+      break
+    }
+  }
 
   private static func parseChunk(_ chunk: String) -> SSEMessage? {
     var event: String?
@@ -159,17 +232,3 @@ public enum SSEDecoder {
     }
   }
 }
-
-#if !os(Linux)
-  private func readBody(bytes: URLSession.AsyncBytes, limitBytes: Int) async throws -> String {
-    var data = Data()
-    data.reserveCapacity(min(4 * 1024, limitBytes))
-    var count = 0
-    for try await byte in bytes {
-      if count >= limitBytes { break }
-      data.append(byte)
-      count += 1
-    }
-    return String(decoding: data, as: UTF8.self)
-  }
-#endif

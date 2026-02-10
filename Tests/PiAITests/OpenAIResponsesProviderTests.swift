@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 import PiAI
 import Testing
 
@@ -10,8 +7,8 @@ struct OpenAIResponsesProviderTests {
     let apiKey = "sk-test"
 
     let http = MockHTTPClient(sseHandler: { request in
-      #expect(request.url?.absoluteString == "https://api.openai.com/v1/responses")
-      let headers = request.allHTTPHeaderFields ?? [:]
+      #expect(request.url.absoluteString == "https://api.openai.com/v1/responses")
+      let headers = request.headers
       #expect(headers["Authorization"] == "Bearer \(apiKey)")
       #expect(headers["Accept"] == "text/event-stream")
 

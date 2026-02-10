@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 import PiAI
 import Testing
 
@@ -10,7 +7,7 @@ struct OpenAICodexResponsesProviderTests {
     let token = makeTestJWT(accountId: "acc_test")
 
     let http = MockHTTPClient(sseHandler: { request in
-      #expect(request.url?.absoluteString == "https://chatgpt.com/backend-api/codex/responses")
+      #expect(request.url.absoluteString == "https://chatgpt.com/backend-api/codex/responses")
       let headers = normalizedHeaders(request)
       #expect(headers["authorization"] == "Bearer \(token)")
       #expect(headers["chatgpt-account-id"] == "acc_test")
@@ -65,7 +62,7 @@ struct OpenAICodexResponsesProviderTests {
       #expect(headers["conversation_id"] == sessionId)
       #expect(headers["session_id"] == sessionId)
 
-      let body = try #require(request.httpBody)
+      let body = try #require(request.body)
       let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
       let promptCacheKey = json?["prompt_cache_key"] as? String
       let retention = json?["prompt_cache_retention"] as? String
@@ -105,9 +102,9 @@ private func base64URL(_ data: Data) -> String {
     .replacingOccurrences(of: "=", with: "")
 }
 
-private func normalizedHeaders(_ request: URLRequest) -> [String: String] {
+private func normalizedHeaders(_ request: HTTPRequest) -> [String: String] {
   Dictionary(
-    uniqueKeysWithValues: (request.allHTTPHeaderFields ?? [:]).map { key, value in
+    uniqueKeysWithValues: request.headers.map { key, value in
       (key.lowercased(), value)
     },
   )

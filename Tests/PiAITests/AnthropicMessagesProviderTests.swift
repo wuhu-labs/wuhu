@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 import PiAI
 import Testing
 
@@ -10,7 +7,7 @@ struct AnthropicMessagesProviderTests {
     let apiKey = "ak-test"
 
     let http = MockHTTPClient(sseHandler: { request in
-      #expect(request.url?.absoluteString == "https://api.anthropic.com/v1/messages")
+      #expect(request.url.absoluteString == "https://api.anthropic.com/v1/messages")
       let headers = normalizedHeaders(request)
       #expect(headers["x-api-key"] == apiKey)
       #expect(headers["accept"] == "text/event-stream")
@@ -41,9 +38,9 @@ struct AnthropicMessagesProviderTests {
   }
 }
 
-private func normalizedHeaders(_ request: URLRequest) -> [String: String] {
+private func normalizedHeaders(_ request: HTTPRequest) -> [String: String] {
   Dictionary(
-    uniqueKeysWithValues: (request.allHTTPHeaderFields ?? [:]).map { key, value in
+    uniqueKeysWithValues: request.headers.map { key, value in
       (key.lowercased(), value)
     },
   )

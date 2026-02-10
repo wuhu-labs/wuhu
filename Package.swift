@@ -23,10 +23,14 @@ let package = Package(
     .package(url: "https://github.com/nicklockwood/SwiftFormat.git", from: "0.59.1"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     .package(url: "https://github.com/swiftlang/swift-testing.git", from: "6.2.0"),
+    .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.27.0"),
   ],
   targets: [
     .target(
       name: "PiAI",
+      dependencies: [
+        .product(name: "AsyncHTTPClient", package: "async-http-client"),
+      ],
       swiftSettings: strictConcurrency,
     ),
     .executableTarget(

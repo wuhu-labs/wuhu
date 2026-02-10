@@ -1,12 +1,9 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 
 public struct OpenAIResponsesProvider: Sendable {
   private let http: any HTTPClient
 
-  public init(http: any HTTPClient = URLSessionHTTPClient()) {
+  public init(http: any HTTPClient = AsyncHTTPClientTransport()) {
     self.http = http
   }
 
@@ -18,17 +15,16 @@ public struct OpenAIResponsesProvider: Sendable {
     let apiKey = try resolveAPIKey(options.apiKey, env: "OPENAI_API_KEY", provider: model.provider)
 
     let url = model.baseURL.appending(path: "responses")
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    var request = HTTPRequest(url: url, method: "POST")
+    request.setHeader("Bearer \(apiKey)", for: "Authorization")
+    request.setHeader("application/json", for: "Content-Type")
+    request.setHeader("text/event-stream", for: "Accept")
     for (k, v) in options.headers {
-      request.setValue(v, forHTTPHeaderField: k)
+      request.setHeader(v, for: k)
     }
 
     let body = try JSONSerialization.data(withJSONObject: buildBody(model: model, context: context, options: options))
-    request.httpBody = body
+    request.body = body
 
     let sse = try await http.sse(for: request)
     return mapResponsesSSE(sse, provider: model.provider, modelId: model.id)

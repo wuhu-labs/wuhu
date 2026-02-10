@@ -1,12 +1,9 @@
 import Foundation
-#if canImport(FoundationNetworking)
-  import FoundationNetworking
-#endif
 
 public struct OpenAICodexResponsesProvider: Sendable {
   private let http: any HTTPClient
 
-  public init(http: any HTTPClient = URLSessionHTTPClient()) {
+  public init(http: any HTTPClient = AsyncHTTPClientTransport()) {
     self.http = http
   }
 
@@ -19,26 +16,25 @@ public struct OpenAICodexResponsesProvider: Sendable {
     let accountId = try extractChatGPTAccountId(fromJWT: token)
 
     let url = model.baseURL.appending(path: "codex").appending(path: "responses")
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    request.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
-    request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
-    request.setValue("pi", forHTTPHeaderField: "originator")
-    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    var request = HTTPRequest(url: url, method: "POST")
+    request.setHeader("Bearer \(token)", for: "Authorization")
+    request.setHeader(accountId, for: "chatgpt-account-id")
+    request.setHeader("responses=experimental", for: "OpenAI-Beta")
+    request.setHeader("pi", for: "originator")
+    request.setHeader("text/event-stream", for: "Accept")
+    request.setHeader("application/json", for: "Content-Type")
 
     if let sessionId = options.sessionId, !sessionId.isEmpty {
-      request.setValue(sessionId, forHTTPHeaderField: "conversation_id")
-      request.setValue(sessionId, forHTTPHeaderField: "session_id")
+      request.setHeader(sessionId, for: "conversation_id")
+      request.setHeader(sessionId, for: "session_id")
     }
 
     for (k, v) in options.headers {
-      request.setValue(v, forHTTPHeaderField: k)
+      request.setHeader(v, for: k)
     }
 
     let body = try JSONSerialization.data(withJSONObject: buildBody(model: model, context: context, options: options))
-    request.httpBody = body
+    request.body = body
 
     let sse = try await http.sse(for: request)
     return mapResponsesSSE(sse, provider: model.provider, modelId: model.id)
