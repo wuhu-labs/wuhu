@@ -32,51 +32,53 @@ public struct URLSessionHTTPClient: HTTPClient {
   }
 
   public func sse(for request: URLRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error> {
-    let (bytes, response) = try await session.bytes(for: request)
-    guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
-    if http.statusCode < 200 || http.statusCode >= 300 {
-      let body = try? await readBody(bytes: bytes, limitBytes: 64 * 1024)
-      throw PiAIError.httpStatus(code: http.statusCode, body: body)
-    }
-    return SSEDecoder.decode(bytes)
+    #if os(Linux)
+      // FoundationNetworking on Linux doesn’t currently support `URLSession.bytes(for:)`.
+      // We fall back to reading the full response body, then parsing SSE frames.
+      let (data, response) = try await session.data(for: request)
+      guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
+      if http.statusCode < 200 || http.statusCode >= 300 {
+        let body = String(decoding: data, as: UTF8.self)
+        throw PiAIError.httpStatus(code: http.statusCode, body: body)
+      }
+      return SSEDecoder.decode(data)
+    #else
+      let (bytes, response) = try await session.bytes(for: request)
+      guard let http = response as? HTTPURLResponse else { throw PiAIError.invalidResponse }
+      if http.statusCode < 200 || http.statusCode >= 300 {
+        let body = try? await readBody(bytes: bytes, limitBytes: 64 * 1024)
+        throw PiAIError.httpStatus(code: http.statusCode, body: body)
+      }
+      return SSEDecoder.decode(bytes)
+    #endif
   }
 }
 
 public enum SSEDecoder {
-  public static func decode(_ bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<SSEMessage, any Error> {
+  public static func decode(_ data: Data) -> AsyncThrowingStream<SSEMessage, any Error> {
     AsyncThrowingStream { continuation in
       let task = Task {
-        do {
-          var buffer = Data()
-          buffer.reserveCapacity(8 * 1024)
-
-          for try await byte in bytes {
-            buffer.append(byte)
-
-            while true {
-              if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
-                let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-                buffer.removeSubrange(0 ..< range.upperBound)
-                yieldChunk(chunkData, continuation: continuation)
-                continue
-              }
-              if let range = buffer.range(of: Data([10, 10])) { // \n\n
-                let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
-                buffer.removeSubrange(0 ..< range.upperBound)
-                yieldChunk(chunkData, continuation: continuation)
-                continue
-              }
-              break
-            }
+        var buffer = data
+        while true {
+          if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
+            let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+            buffer.removeSubrange(0 ..< range.upperBound)
+            yieldChunk(chunkData, continuation: continuation)
+            continue
           }
-
-          if !buffer.isEmpty {
-            yieldChunk(buffer, continuation: continuation)
+          if let range = buffer.range(of: Data([10, 10])) { // \n\n
+            let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+            buffer.removeSubrange(0 ..< range.upperBound)
+            yieldChunk(chunkData, continuation: continuation)
+            continue
           }
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: PiAIError.decoding(String(describing: error)))
+          break
         }
+
+        if !buffer.isEmpty {
+          yieldChunk(buffer, continuation: continuation)
+        }
+        continuation.finish()
       }
 
       continuation.onTermination = { _ in
@@ -84,6 +86,50 @@ public enum SSEDecoder {
       }
     }
   }
+
+  #if !os(Linux)
+    public static func decode(_ bytes: URLSession.AsyncBytes) -> AsyncThrowingStream<SSEMessage, any Error> {
+      AsyncThrowingStream { continuation in
+        let task = Task {
+          do {
+            var buffer = Data()
+            buffer.reserveCapacity(8 * 1024)
+
+            for try await byte in bytes {
+              buffer.append(byte)
+
+              while true {
+                if let range = buffer.range(of: Data([13, 10, 13, 10])) { // \r\n\r\n
+                  let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+                  buffer.removeSubrange(0 ..< range.upperBound)
+                  yieldChunk(chunkData, continuation: continuation)
+                  continue
+                }
+                if let range = buffer.range(of: Data([10, 10])) { // \n\n
+                  let chunkData = buffer.subdata(in: 0 ..< range.lowerBound)
+                  buffer.removeSubrange(0 ..< range.upperBound)
+                  yieldChunk(chunkData, continuation: continuation)
+                  continue
+                }
+                break
+              }
+            }
+
+            if !buffer.isEmpty {
+              yieldChunk(buffer, continuation: continuation)
+            }
+            continuation.finish()
+          } catch {
+            continuation.finish(throwing: PiAIError.decoding(String(describing: error)))
+          }
+        }
+
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
+      }
+    }
+  #endif
 
   private static func parseChunk(_ chunk: String) -> SSEMessage? {
     var event: String?
@@ -114,14 +160,16 @@ public enum SSEDecoder {
   }
 }
 
-private func readBody(bytes: URLSession.AsyncBytes, limitBytes: Int) async throws -> String {
-  var data = Data()
-  data.reserveCapacity(min(4 * 1024, limitBytes))
-  var count = 0
-  for try await byte in bytes {
-    if count >= limitBytes { break }
-    data.append(byte)
-    count += 1
+#if !os(Linux)
+  private func readBody(bytes: URLSession.AsyncBytes, limitBytes: Int) async throws -> String {
+    var data = Data()
+    data.reserveCapacity(min(4 * 1024, limitBytes))
+    var count = 0
+    for try await byte in bytes {
+      if count >= limitBytes { break }
+      data.append(byte)
+      count += 1
+    }
+    return String(decoding: data, as: UTF8.self)
   }
-  return String(decoding: data, as: UTF8.self)
-}
+#endif
