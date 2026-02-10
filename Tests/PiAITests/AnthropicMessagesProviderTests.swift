@@ -22,7 +22,7 @@ struct AnthropicMessagesProviderTests {
     let provider = AnthropicMessagesProvider(http: http)
     let model = Model(id: "claude-sonnet-4-5", provider: .anthropic)
     let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-      ChatMessage(role: .user, content: "Say hello"),
+      .user("Say hello"),
     ])
 
     let stream = try await provider.stream(model: model, context: context, options: .init(apiKey: apiKey))

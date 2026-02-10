@@ -23,7 +23,7 @@ struct OpenAIResponsesProviderTests {
     let provider = OpenAIResponsesProvider(http: http)
     let model = Model(id: "gpt-4.1-mini", provider: .openai)
     let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-      ChatMessage(role: .user, content: "Say hello"),
+      .user("Say hello"),
     ])
 
     let stream = try await provider.stream(model: model, context: context, options: .init(apiKey: apiKey))

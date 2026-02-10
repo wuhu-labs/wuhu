@@ -10,7 +10,7 @@ struct LiveProvidersE2ETests {
     let provider = OpenAIResponsesProvider()
     let model = Model(id: "gpt-4.1-mini", provider: .openai)
     let context = Context(systemPrompt: "Follow instructions exactly.", messages: [
-      ChatMessage(role: .user, content: "Output exactly: HELLO"),
+      .user("Output exactly: HELLO"),
     ])
 
     let stream = try await provider.stream(
@@ -38,7 +38,7 @@ struct LiveProvidersE2ETests {
     let provider = AnthropicMessagesProvider()
     let model = Model(id: "claude-sonnet-4-5", provider: .anthropic)
     let context = Context(systemPrompt: "Follow instructions exactly.", messages: [
-      ChatMessage(role: .user, content: "Output exactly: HELLO"),
+      .user("Output exactly: HELLO"),
     ])
 
     let stream = try await provider.stream(

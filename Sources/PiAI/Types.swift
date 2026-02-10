@@ -33,26 +33,89 @@ public struct Model: Sendable, Hashable {
 
 public struct Context: Sendable, Hashable {
   public var systemPrompt: String?
-  public var messages: [ChatMessage]
+  public var messages: [Message]
+  public var tools: [Tool]?
 
-  public init(systemPrompt: String? = nil, messages: [ChatMessage]) {
+  public init(systemPrompt: String? = nil, messages: [Message], tools: [Tool]? = nil) {
     self.systemPrompt = systemPrompt
     self.messages = messages
+    self.tools = tools
   }
 }
 
-public struct ChatMessage: Sendable, Hashable {
-  public enum Role: String, Sendable, Hashable {
-    case user
-    case assistant
+public struct Tool: Sendable, Hashable {
+  public var name: String
+  public var description: String
+  /// JSON Schema (draft-07-ish) for the tool parameters.
+  public var parameters: JSONValue
+
+  public init(name: String, description: String, parameters: JSONValue) {
+    self.name = name
+    self.description = description
+    self.parameters = parameters
+  }
+}
+
+public struct ToolCall: Sendable, Hashable {
+  public var id: String
+  public var name: String
+  public var arguments: JSONValue
+
+  public init(id: String, name: String, arguments: JSONValue) {
+    self.id = id
+    self.name = name
+    self.arguments = arguments
+  }
+}
+
+public enum ContentBlock: Sendable, Hashable {
+  case text(TextContent)
+  case toolCall(ToolCall)
+}
+
+public enum Message: Sendable, Hashable {
+  case user(UserMessage)
+  case assistant(AssistantMessage)
+  case toolResult(ToolResultMessage)
+
+  public var role: MessageRole {
+    switch self {
+    case .user:
+      .user
+    case .assistant:
+      .assistant
+    case .toolResult:
+      .toolResult
+    }
   }
 
-  public var role: Role
-  public var content: String
+  public var timestamp: Date {
+    switch self {
+    case let .user(m):
+      m.timestamp
+    case let .assistant(m):
+      m.timestamp
+    case let .toolResult(m):
+      m.timestamp
+    }
+  }
+
+  public static func user(_ text: String, timestamp: Date = Date()) -> Message {
+    .user(.init(content: [.text(.init(text: text))], timestamp: timestamp))
+  }
+}
+
+public enum MessageRole: String, Sendable, Hashable {
+  case user
+  case assistant
+  case toolResult
+}
+
+public struct UserMessage: Sendable, Hashable {
+  public var content: [ContentBlock]
   public var timestamp: Date
 
-  public init(role: Role, content: String, timestamp: Date = Date()) {
-    self.role = role
+  public init(content: [ContentBlock], timestamp: Date = Date()) {
     self.content = content
     self.timestamp = timestamp
   }
@@ -110,14 +173,10 @@ public struct TextContent: Sendable, Hashable {
   }
 }
 
-public enum AssistantContent: Sendable, Hashable {
-  case text(TextContent)
-}
-
 public struct AssistantMessage: Sendable, Hashable {
   public var provider: Provider
   public var model: String
-  public var content: [AssistantContent]
+  public var content: [ContentBlock]
   public var usage: Usage?
   public var stopReason: StopReason
   public var errorMessage: String?
@@ -126,7 +185,7 @@ public struct AssistantMessage: Sendable, Hashable {
   public init(
     provider: Provider,
     model: String,
-    content: [AssistantContent] = [],
+    content: [ContentBlock] = [],
     usage: Usage? = nil,
     stopReason: StopReason = .stop,
     errorMessage: String? = nil,
@@ -142,8 +201,56 @@ public struct AssistantMessage: Sendable, Hashable {
   }
 }
 
+public struct ToolResultMessage: Sendable, Hashable {
+  public var toolCallId: String
+  public var toolName: String
+  public var content: [ContentBlock]
+  public var details: JSONValue
+  public var isError: Bool
+  public var timestamp: Date
+
+  public init(
+    toolCallId: String,
+    toolName: String,
+    content: [ContentBlock],
+    details: JSONValue = .object([:]),
+    isError: Bool = false,
+    timestamp: Date = Date(),
+  ) {
+    self.toolCallId = toolCallId
+    self.toolName = toolName
+    self.content = content
+    self.details = details
+    self.isError = isError
+    self.timestamp = timestamp
+  }
+}
+
 public enum AssistantMessageEvent: Sendable, Hashable {
   case start(partial: AssistantMessage)
   case textDelta(delta: String, partial: AssistantMessage)
   case done(message: AssistantMessage)
+}
+
+public extension ContentBlock {
+  static func text(_ text: String, signature: String? = nil) -> ContentBlock {
+    .text(.init(text: text, signature: signature))
+  }
+}
+
+public extension Message {
+  var user: UserMessage? {
+    if case let .user(m) = self { return m }
+    return nil
+  }
+
+  var assistant: AssistantMessage? {
+    if case let .assistant(m) = self { return m }
+    return nil
+  }
+
+  var toolResult: ToolResultMessage? {
+    if case let .toolResult(m) = self { return m }
+    return nil
+  }
 }

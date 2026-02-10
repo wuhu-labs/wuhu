@@ -29,7 +29,7 @@ struct OpenAICodexResponsesProviderTests {
     let provider = OpenAICodexResponsesProvider(http: http)
     let model = Model(id: "gpt-5.1-codex", provider: .openaiCodex)
     let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-      ChatMessage(role: .user, content: "Say hello"),
+      .user("Say hello"),
     ])
 
     let stream = try await provider.stream(model: model, context: context, options: .init(apiKey: token))
@@ -77,7 +77,7 @@ struct OpenAICodexResponsesProviderTests {
     let provider = OpenAICodexResponsesProvider(http: http)
     let model = Model(id: "gpt-5.1-codex", provider: .openaiCodex)
     let context = Context(systemPrompt: "You are a helpful assistant.", messages: [
-      ChatMessage(role: .user, content: "Say hello"),
+      .user("Say hello"),
     ])
 
     _ = try await provider.stream(

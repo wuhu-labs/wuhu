@@ -43,7 +43,26 @@ public struct OpenAICodexResponsesProvider: Sendable {
   private func buildBody(model: Model, context: Context, options: RequestOptions) -> [String: Any] {
     var input: [[String: Any]] = []
     for message in context.messages {
-      input.append(["role": message.role.rawValue, "content": message.content])
+      switch message {
+      case let .user(m):
+        let text = m.content.compactMap { block -> String? in
+          if case let .text(part) = block { return part.text }
+          return nil
+        }.joined(separator: "\n")
+        input.append(["role": "user", "content": text])
+      case let .assistant(m):
+        let text = m.content.compactMap { block -> String? in
+          if case let .text(part) = block { return part.text }
+          return nil
+        }.joined(separator: "\n")
+        input.append(["role": "assistant", "content": text])
+      case let .toolResult(m):
+        let text = m.content.compactMap { block -> String? in
+          if case let .text(part) = block { return part.text }
+          return nil
+        }.joined(separator: "\n")
+        input.append(["role": "tool", "content": text])
+      }
     }
 
     var body: [String: Any] = [
