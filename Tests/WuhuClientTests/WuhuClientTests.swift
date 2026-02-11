@@ -12,6 +12,12 @@ struct WuhuClientTests {
         #expect(request.headers["Accept"] == "text/event-stream")
         #expect(request.headers["Content-Type"] == "application/json")
 
+        let body = try #require(request.body)
+        let decoded = try WuhuJSON.decoder.decode(WuhuPromptRequest.self, from: body)
+        #expect(decoded.input == "hello")
+        #expect(decoded.detach == false)
+        #expect(decoded.user == nil)
+
         return AsyncThrowingStream { continuation in
           continuation.yield(.init(data: #"{"type":"assistant_text_delta","delta":"Hi"}"#))
           continuation.yield(.init(data: #"{"type":"done"}"#))
@@ -39,6 +45,25 @@ struct WuhuClientTests {
 
     #expect(deltas == ["Hi"])
     #expect(sawDone)
+  }
+
+  @Test func promptStreamSendsUserWhenProvided() async throws {
+    let http = MockHTTPClient(
+      sseHandler: { request in
+        let body = try #require(request.body)
+        let decoded = try WuhuJSON.decoder.decode(WuhuPromptRequest.self, from: body)
+        #expect(decoded.user == "alice")
+
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.init(data: #"{"type":"done"}"#))
+          continuation.finish()
+        }
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let stream = try await client.promptStream(sessionID: "s1", input: "hello", user: "alice")
+    for try await _ in stream {}
   }
 }
 

@@ -58,6 +58,7 @@ environments:
 
 ```yaml
 server: http://127.0.0.1:5530
+username: alice@my-mac # optional; also supports env var WUHU_USERNAME
 ```
 
 ## Server↔Runner Wire Protocol
@@ -112,4 +113,3 @@ This aligns with the “two migrations, shared models” approach:
 
 - Shared `Codable` models live in `WuhuAPI`.
 - Each component owns its own migrations and db file path.
-

@@ -104,16 +104,40 @@ public struct WuhuUsage: Sendable, Hashable, Codable {
 }
 
 public struct WuhuUserMessage: Sendable, Hashable, Codable {
+  public static let unknownUser = "unknown_user"
+
+  public var user: String
   public var content: [WuhuContentBlock]
   public var timestamp: Date
 
-  public init(content: [WuhuContentBlock], timestamp: Date) {
+  public init(user: String = Self.unknownUser, content: [WuhuContentBlock], timestamp: Date) {
+    self.user = user
     self.content = content
     self.timestamp = timestamp
   }
 
+  enum CodingKeys: String, CodingKey {
+    case user
+    case content
+    case timestamp
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    user = try c.decodeIfPresent(String.self, forKey: .user) ?? Self.unknownUser
+    content = try c.decode([WuhuContentBlock].self, forKey: .content)
+    timestamp = try c.decode(Date.self, forKey: .timestamp)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(user, forKey: .user)
+    try c.encode(content, forKey: .content)
+    try c.encode(timestamp, forKey: .timestamp)
+  }
+
   public static func fromPi(_ m: UserMessage) -> WuhuUserMessage {
-    .init(content: m.content.map(WuhuContentBlock.fromPi), timestamp: m.timestamp)
+    .init(user: unknownUser, content: m.content.map(WuhuContentBlock.fromPi), timestamp: m.timestamp)
   }
 
   public func toPi() -> UserMessage {

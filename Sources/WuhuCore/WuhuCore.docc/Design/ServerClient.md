@@ -34,6 +34,7 @@ The server exposes a minimal command/query/event API:
 - **Commands (POST)**:
   - `POST /v2/sessions` — create session (requires `environment`)
   - `POST /v2/sessions/:id/prompt` — append prompt
+    - Optional `user` field records the prompting user (see Client Identity below)
     - `detach=true` returns immediately (`WuhuPromptDetachedResponse`)
     - otherwise streams events over SSE
 - **Streaming (GET + SSE)**:
@@ -64,6 +65,41 @@ Environment definitions live in a config file and can change at any time. To mak
 - The working directory used for tools is `WuhuSession.cwd` (currently equal to `environment.path` for `local` environments).
 
 This follows the principle: *session execution should not change retroactively when config changes*.
+
+## Client Identity (Username)
+
+The `wuhu client` reads an optional config file at `~/.wuhu/client.yml`:
+
+```yaml
+server: http://127.0.0.1:5530
+username: alice@my-mac
+```
+
+Username resolution order:
+
+1. `wuhu client … --username …`
+2. `WUHU_USERNAME`
+3. `~/.wuhu/client.yml` `username`
+4. Default: `<osuser>@<hostname>`
+
+The client includes this identity in `POST /v2/sessions/:id/prompt` as `user`. The server persists it on `WuhuUserMessage.user`. If missing (or for historical rows), it defaults to `unknown_user`.
+
+## Group Chat Escalation (Server-side)
+
+Sessions are associated with the **first user who prompts them** (not the user who created the session).
+
+When a prompt arrives from a different user for the first time, the server:
+
+1. Appends a “system reminder” message entry (`custom_message`, `customType=wuhu_group_chat_reminder_v1`) that still participates in LLM context as a `user` role message.
+2. For every **user** message created *after* that reminder entry, the server prefixes the message content when rendering to the LLM:
+
+```
+[username]:
+
+<original message>
+```
+
+Messages created before the reminder entry are not modified.
 
 ## Migration Note
 

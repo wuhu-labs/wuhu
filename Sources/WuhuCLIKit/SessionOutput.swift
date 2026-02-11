@@ -88,6 +88,23 @@ public struct SessionOutputStyle: Sendable {
     return ANSI.wrap(base, ANSI.bold + ANSI.blue, enabled: enabled)
   }
 
+  public func userLabel(user: String, cursor: Int64, createdAt: Date) -> String {
+    let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
+    let base = "User \(user) (\(cursor), \(displayTimestamp(createdAt))):"
+    return ANSI.wrap(base, ANSI.bold + ANSI.blue, enabled: enabled)
+  }
+
+  public func systemLabel() -> String {
+    let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
+    return ANSI.wrap("System:", ANSI.bold + ANSI.cyan, enabled: enabled)
+  }
+
+  public func systemLabel(cursor: Int64, createdAt: Date) -> String {
+    let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
+    let base = "System (\(cursor), \(displayTimestamp(createdAt))):"
+    return ANSI.wrap(base, ANSI.bold + ANSI.cyan, enabled: enabled)
+  }
+
   public func agentLabel() -> String {
     let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
     return ANSI.wrap("Agent:", ANSI.bold + ANSI.green, enabled: enabled)
@@ -309,7 +326,7 @@ public struct SessionTranscriptRenderer: Sendable {
           let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
           if text.isEmpty { break }
           flushPendingMetaIfNeeded()
-          appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+          appendVisibleMessage(label: style.userLabel(user: u.user, cursor: entry.id, createdAt: entry.createdAt), text: text)
 
         case let .assistant(a):
           let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -349,8 +366,12 @@ public struct SessionTranscriptRenderer: Sendable {
             }
           }
 
-        case .customMessage:
-          break
+        case let .customMessage(c):
+          guard c.display else { break }
+          let text = renderTextBlocks(c.content).trimmingCharacters(in: .whitespacesAndNewlines)
+          if text.isEmpty { break }
+          flushPendingMetaIfNeeded()
+          appendVisibleMessage(label: style.systemLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
 
         case .unknown:
           break
@@ -438,11 +459,16 @@ public struct SessionStreamPrinter {
       case let .user(u):
         let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return }
-        appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+        appendVisibleMessage(label: style.userLabel(user: u.user, cursor: entry.id, createdAt: entry.createdAt), text: text)
       case let .assistant(a):
         let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return }
         appendVisibleMessage(label: style.agentLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+      case let .customMessage(c):
+        guard c.display else { return }
+        let text = renderTextBlocks(c.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+        appendVisibleMessage(label: style.systemLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
       default:
         break
       }
@@ -483,7 +509,7 @@ public struct SessionStreamPrinter {
         resetAssistantStreamingState()
         let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return }
-        appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+        appendVisibleMessage(label: style.userLabel(user: u.user, cursor: entry.id, createdAt: entry.createdAt), text: text)
 
       case let .assistant(a):
         let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -497,6 +523,13 @@ public struct SessionStreamPrinter {
 
         resetAssistantStreamingState()
         appendVisibleMessage(label: style.agentLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+
+      case let .customMessage(c):
+        resetAssistantStreamingState()
+        guard c.display else { return }
+        let text = renderTextBlocks(c.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+        appendVisibleMessage(label: style.systemLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
 
       case let .toolResult(t):
         if toolEndsHandled.contains(t.toolCallId) { return }

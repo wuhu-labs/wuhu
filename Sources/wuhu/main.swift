@@ -52,6 +52,9 @@ struct WuhuCLI: AsyncParsableCommand {
       @Option(help: "Server base URL (default: read ~/.wuhu/client.yml, else http://127.0.0.1:5530).")
       var server: String?
 
+      @Option(help: "Username for prompts (default: WUHU_USERNAME, else ~/.wuhu/client.yml username, else <osuser>@<hostname>).")
+      var username: String?
+
       @Option(help: "Session output verbosity (full, compact, minimal).")
       var verbosity: SessionOutputVerbosity = .full
     }
@@ -118,6 +121,7 @@ struct WuhuCLI: AsyncParsableCommand {
       func run() async throws {
         let client = try makeClient(shared.server)
         let sessionId = try resolveWuhuSessionId(sessionId)
+        let username = resolveWuhuUsername(shared.username)
 
         let text = prompt.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
@@ -128,12 +132,12 @@ struct WuhuCLI: AsyncParsableCommand {
         )
 
         if detach {
-          let response = try await client.promptDetached(sessionID: sessionId, input: text)
+          let response = try await client.promptDetached(sessionID: sessionId, input: text, user: username)
           printer.printEntryIfVisible(response.userEntry)
           return
         }
 
-        let stream = try await client.promptStream(sessionID: sessionId, input: text)
+        let stream = try await client.promptStream(sessionID: sessionId, input: text, user: username)
         for try await event in stream {
           printer.handle(event)
         }
@@ -243,6 +247,7 @@ struct WuhuCLI: AsyncParsableCommand {
 
 private struct WuhuClientConfig: Sendable, Codable {
   var server: String?
+  var username: String?
 }
 
 private func loadClientConfig() -> WuhuClientConfig? {
@@ -278,6 +283,24 @@ func resolveWuhuSessionId(
     if !trimmed.isEmpty { return trimmed }
   }
   throw ValidationError("Missing session id. Pass --session-id or set WUHU_CURRENT_SESSION_ID.")
+}
+
+func resolveWuhuUsername(
+  _ optionValue: String?,
+  env: [String: String] = ProcessInfo.processInfo.environment,
+) -> String {
+  func cleaned(_ raw: String?) -> String? {
+    let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  if let opt = cleaned(optionValue) { return opt }
+  if let envValue = cleaned(env["WUHU_USERNAME"]) { return envValue }
+  if let cfg = loadClientConfig(), let cfgValue = cleaned(cfg.username) { return cfgValue }
+
+  let user = cleaned(env["USER"]) ?? cleaned(env["USERNAME"]) ?? cleaned(NSUserName()) ?? "unknown_user"
+  let host = cleaned(ProcessInfo.processInfo.hostName) ?? "unknown_host"
+  return "\(user)@\(host)"
 }
 
 func parseSinceTime(_ raw: String) throws -> Date {

@@ -21,3 +21,8 @@ swift run wuhu list-sessions
 ```
 
 The CLI reads `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from the environment and will also load a local `.env` if present.
+
+Client identity:
+
+- `wuhu client prompt` sends an optional `user` (username) with each prompt.
+- Configure via `WUHU_USERNAME` or `~/.wuhu/client.yml` `username:` (defaults to `<osuser>@<hostname>`).

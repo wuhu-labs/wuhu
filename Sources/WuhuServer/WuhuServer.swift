@@ -129,6 +129,7 @@ public struct WuhuServer: Sendable {
         let response = try await service.promptDetached(
           sessionID: id,
           input: prompt.input,
+          user: prompt.user,
           tools: tools,
         )
         return try context.responseEncoder.encode(response, from: request, context: context)
@@ -137,6 +138,7 @@ public struct WuhuServer: Sendable {
       let stream: AsyncThrowingStream<WuhuSessionStreamEvent, any Error> = try await service.promptStream(
         sessionID: id,
         input: prompt.input,
+        user: prompt.user,
         tools: tools,
       )
 
