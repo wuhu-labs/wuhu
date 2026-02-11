@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Dependencies
 import Foundation
 import PiAI
 import WuhuClient
@@ -8,7 +9,7 @@ struct AppSettingsClient: Sendable {
   var save: @Sendable (AppSettings) -> Void
 }
 
-extension AppSettingsClient: TestDependencyKey {
+extension AppSettingsClient: DependencyKey {
   static let liveValue = AppSettingsClient(
     load: {
       let defaults = UserDefaults.standard
@@ -28,7 +29,9 @@ extension AppSettingsClient: TestDependencyKey {
       defaults.set(data, forKey: key)
     },
   )
+}
 
+extension AppSettingsClient: TestDependencyKey {
   static let testValue = AppSettingsClient(
     load: { AppSettings.defaults() },
     save: { _ in },
@@ -46,13 +49,15 @@ struct WuhuClientProvider: Sendable {
   var make: @Sendable (URL) -> WuhuClient
 }
 
-extension WuhuClientProvider: TestDependencyKey {
+extension WuhuClientProvider: DependencyKey {
   static let liveValue = WuhuClientProvider(
     make: { baseURL in
       WuhuClient(baseURL: baseURL)
     },
   )
+}
 
+extension WuhuClientProvider: TestDependencyKey {
   static let testValue = WuhuClientProvider(
     make: { baseURL in
       WuhuClient(baseURL: baseURL, http: WuhuAppTestHTTPClient())
