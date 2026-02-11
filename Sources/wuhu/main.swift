@@ -99,8 +99,8 @@ struct WuhuCLI: AsyncParsableCommand {
         abstract: "Append a prompt to a session and stream the assistant response.",
       )
 
-      @Option(help: "Session id returned by create-session.")
-      var sessionId: String
+      @Option(help: "Session id returned by create-session (or set WUHU_CURRENT_SESSION_ID).")
+      var sessionId: String?
 
       @Argument(parsing: .remaining, help: "Prompt text.")
       var prompt: [String] = []
@@ -110,6 +110,7 @@ struct WuhuCLI: AsyncParsableCommand {
 
       func run() async throws {
         let client = try makeClient(shared.server)
+        let sessionId = try resolveWuhuSessionId(sessionId)
 
         let text = prompt.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
@@ -149,14 +150,15 @@ struct WuhuCLI: AsyncParsableCommand {
         abstract: "Print session metadata and full transcript.",
       )
 
-      @Option(help: "Session id.")
-      var sessionId: String
+      @Option(help: "Session id (or set WUHU_CURRENT_SESSION_ID).")
+      var sessionId: String?
 
       @OptionGroup
       var shared: Shared
 
       func run() async throws {
         let client = try makeClient(shared.server)
+        let sessionId = try resolveWuhuSessionId(sessionId)
         let response = try await client.getSession(id: sessionId)
 
         let session = response.session
@@ -304,4 +306,19 @@ private func formatJSON(_ value: JSONValue) -> String {
     return s
   }
   return "{}"
+}
+
+func resolveWuhuSessionId(
+  _ optionValue: String?,
+  env: [String: String] = ProcessInfo.processInfo.environment,
+) throws -> String {
+  if let optionValue {
+    let trimmed = optionValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty { return trimmed }
+  }
+  if let envValue = env["WUHU_CURRENT_SESSION_ID"] {
+    let trimmed = envValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty { return trimmed }
+  }
+  throw ValidationError("Missing session id. Pass --session-id or set WUHU_CURRENT_SESSION_ID.")
 }
