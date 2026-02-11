@@ -37,18 +37,15 @@ public struct AgentOptions: Sendable {
   public var initialState: AgentState?
   public var requestOptions: RequestOptions
   public var streamFn: StreamFn
-  public var maxTurns: Int?
 
   public init(
     initialState: AgentState? = nil,
     requestOptions: RequestOptions = .init(),
     streamFn: @escaping StreamFn = PiAI.streamSimple,
-    maxTurns: Int? = nil,
   ) {
     self.initialState = initialState
     self.requestOptions = requestOptions
     self.streamFn = streamFn
-    self.maxTurns = maxTurns
   }
 }
 
@@ -64,7 +61,6 @@ public actor Agent {
   private var runningTask: Task<Void, any Error>?
   private var requestOptions: RequestOptions
   private var streamFn: StreamFn
-  private var maxTurns: Int?
   private var skipInitialSteeringPoll = false
 
   private var _state: AgentState
@@ -78,7 +74,6 @@ public actor Agent {
 
     streamFn = opts.streamFn
     requestOptions = opts.requestOptions
-    maxTurns = opts.maxTurns
 
     if let state = opts.initialState {
       _state = state
@@ -212,7 +207,6 @@ public actor Agent {
       let cfg = AgentLoopConfig(
         model: self._state.model,
         requestOptions: self.requestOptions,
-        maxTurns: self.maxTurns,
         transformContext: nil,
         getSteeringMessages: { [weak self] in
           guard let self else { return [] }

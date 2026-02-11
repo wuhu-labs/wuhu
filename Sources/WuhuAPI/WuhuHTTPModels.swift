@@ -28,11 +28,9 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
 
 public struct WuhuPromptRequest: Sendable, Hashable, Codable {
   public var input: String
-  public var maxTurns: Int?
 
-  public init(input: String, maxTurns: Int? = nil) {
+  public init(input: String) {
     self.input = input
-    self.maxTurns = maxTurns
   }
 }
 

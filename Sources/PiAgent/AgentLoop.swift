@@ -20,11 +20,6 @@ public struct AgentLoopConfig: Sendable {
   public var model: Model
   public var requestOptions: RequestOptions
 
-  /// Safety valve for tests and defensive callers: stop after this many assistant turns.
-  ///
-  /// `nil` means unlimited.
-  public var maxTurns: Int?
-
   public var transformContext: (@Sendable ([Message]) async throws -> [Message])?
   public var getSteeringMessages: (@Sendable () async throws -> [Message])?
   public var getFollowUpMessages: (@Sendable () async throws -> [Message])?
@@ -34,7 +29,6 @@ public struct AgentLoopConfig: Sendable {
   public init(
     model: Model,
     requestOptions: RequestOptions = .init(),
-    maxTurns: Int? = nil,
     transformContext: (@Sendable ([Message]) async throws -> [Message])? = nil,
     getSteeringMessages: (@Sendable () async throws -> [Message])? = nil,
     getFollowUpMessages: (@Sendable () async throws -> [Message])? = nil,
@@ -42,7 +36,6 @@ public struct AgentLoopConfig: Sendable {
   ) {
     self.model = model
     self.requestOptions = requestOptions
-    self.maxTurns = maxTurns
     self.transformContext = transformContext
     self.getSteeringMessages = getSteeringMessages
     self.getFollowUpMessages = getFollowUpMessages
@@ -125,7 +118,6 @@ private func runLoop(
   var newMessages: [Message] = []
   var currentContext = context
   var firstTurn = true
-  var assistantTurnCount = 0
 
   var pendingMessages: [Message] = try await (config.getSteeringMessages?() ?? [])
 
@@ -160,11 +152,6 @@ private func runLoop(
           newMessages.append(message)
         }
         pendingMessages = []
-      }
-
-      assistantTurnCount += 1
-      if let maxTurns = config.maxTurns, assistantTurnCount > maxTurns {
-        throw PiAIError.unsupported("Agent loop exceeded maxTurns=\(maxTurns)")
       }
 
       let assistant = try await streamAssistantResponse(

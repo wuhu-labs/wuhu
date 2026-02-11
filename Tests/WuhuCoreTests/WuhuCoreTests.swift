@@ -1,7 +1,30 @@
+import Foundation
 import Testing
 import WuhuCore
+#if canImport(Darwin)
+  import Darwin
+#else
+  import Glibc
+#endif
 
 struct WuhuCoreTests {
+  private func withEnv(_ key: String, _ value: String?, operation: () async throws -> Void) async rethrows {
+    let old = getenv(key).map { String(cString: $0) }
+    if let value {
+      setenv(key, value, 1)
+    } else {
+      unsetenv(key)
+    }
+    defer {
+      if let old {
+        setenv(key, old, 1)
+      } else {
+        unsetenv(key)
+      }
+    }
+    try await operation()
+  }
+
   @Test func createSessionCreatesHeaderAndHeadTail() async throws {
     let store = try SQLiteSessionStore(path: ":memory:")
     let service = WuhuService(store: store)
@@ -90,7 +113,6 @@ struct WuhuCoreTests {
     let stream = try await service.promptStream(
       sessionID: session.id,
       input: "What's the weather in Tokyo?",
-      maxTurns: 5,
       tools: [WuhuTools.simulatedWeatherTool()],
       streamFn: { model, ctx, opts in
         await state.stream(model: model, ctx: ctx, opts)
@@ -110,5 +132,105 @@ struct WuhuCoreTests {
 
     let tail = try await service.getSession(id: session.id).tailEntryID
     #expect(entries.last?.id == tail)
+  }
+
+  @Test func autoCompactionAppendsEntryAndInjectsSummaryIntoContext() async throws {
+    try await withEnv("WUHU_COMPACTION_ENABLED", "1") {
+      try await withEnv("WUHU_COMPACTION_CONTEXT_WINDOW_TOKENS", "400") {
+        try await withEnv("WUHU_COMPACTION_RESERVE_TOKENS", "100") {
+          try await withEnv("WUHU_COMPACTION_KEEP_RECENT_TOKENS", "120") {
+            let store = try SQLiteSessionStore(path: ":memory:")
+            let service = WuhuService(store: store)
+
+            let session = try await service.createSession(
+              provider: .openai,
+              model: "mock",
+              systemPrompt: "You are helpful.",
+              environment: .init(name: "test", type: .local, path: "/tmp"),
+            )
+
+            let chunk = String(repeating: "x", count: 220)
+            for i in 0 ..< 10 {
+              _ = try await store.appendEntry(sessionID: session.id, payload: .message(.fromPi(.user("u\(i) \(chunk)"))))
+              let assistant = AssistantMessage(
+                provider: .openai,
+                model: "mock",
+                content: [.text("a\(i) \(chunk)")],
+                stopReason: .stop,
+              )
+              _ = try await store.appendEntry(sessionID: session.id, payload: .message(.fromPi(.assistant(assistant))))
+            }
+
+            actor Observations {
+              var sawSummaryInjected = false
+              func markInjected() {
+                sawSummaryInjected = true
+              }
+
+              func injected() -> Bool {
+                sawSummaryInjected
+              }
+            }
+            let observations = Observations()
+
+            let stream = try await service.promptStream(
+              sessionID: session.id,
+              input: "hello",
+              tools: [],
+              streamFn: { model, ctx, _ in
+                if ctx.systemPrompt?.contains("context summarization assistant") == true {
+                  return AsyncThrowingStream { continuation in
+                    Task {
+                      let assistant = AssistantMessage(
+                        provider: model.provider,
+                        model: model.id,
+                        content: [.text("SUMMARY")],
+                        stopReason: .stop,
+                      )
+                      continuation.yield(.done(message: assistant))
+                      continuation.finish()
+                    }
+                  }
+                }
+
+                let injected = ctx.messages.contains { msg in
+                  guard case let .user(u) = msg else { return false }
+                  return u.content.contains { block in
+                    if case let .text(t) = block { return t.text.contains("SUMMARY") }
+                    return false
+                  }
+                }
+                if injected {
+                  Task { await observations.markInjected() }
+                }
+
+                return AsyncThrowingStream { continuation in
+                  Task {
+                    let assistant = AssistantMessage(
+                      provider: model.provider,
+                      model: model.id,
+                      content: [.text("ok")],
+                      stopReason: .stop,
+                    )
+                    continuation.yield(.done(message: assistant))
+                    continuation.finish()
+                  }
+                }
+              },
+            )
+
+            for try await _ in stream {}
+
+            let transcript = try await service.getTranscript(sessionID: session.id)
+            let compactions = transcript.compactMap { entry -> WuhuCompaction? in
+              if case let .compaction(c) = entry.payload { return c }
+              return nil
+            }
+            #expect(compactions.count >= 1)
+            #expect(await observations.injected())
+          }
+        }
+      }
+    }
   }
 }

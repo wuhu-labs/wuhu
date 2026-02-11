@@ -44,13 +44,12 @@ public struct WuhuClient: Sendable {
   public func promptStream(
     sessionID: String,
     input: String,
-    maxTurns: Int? = nil,
   ) async throws -> AsyncThrowingStream<WuhuPromptEvent, any Error> {
     let url = baseURL.appending(path: "v1").appending(path: "sessions").appending(path: sessionID).appending(path: "prompt")
     var req = HTTPRequest(url: url, method: "POST")
     req.setHeader("application/json", for: "Content-Type")
     req.setHeader("text/event-stream", for: "Accept")
-    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, maxTurns: maxTurns))
+    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input))
 
     let sse = try await http.sse(for: req)
     return AsyncThrowingStream { continuation in

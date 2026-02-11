@@ -9,7 +9,6 @@ struct AgentLoopTests {
     let config = AgentLoopConfig(
       model: .init(id: "mock", provider: .openai),
       requestOptions: .init(),
-      maxTurns: 2,
       streamFn: { model, _, _ in
         AsyncThrowingStream<AssistantMessageEvent, any Error> { continuation in
           Task {
@@ -100,7 +99,6 @@ struct AgentLoopTests {
     let config = AgentLoopConfig(
       model: .init(id: "mock", provider: .openai),
       requestOptions: .init(),
-      maxTurns: 4,
       streamFn: { model, ctx, _ in
         let hasToolResult = ctx.messages.contains(where: { msg in
           if case .toolResult = msg { return true }

@@ -20,18 +20,50 @@ public extension WuhuTools {
 // MARK: - read
 
 private func readTool(cwd: String) -> AnyAgentTool {
+  struct FlexibleInt: Decodable, Sendable {
+    var value: Int
+
+    init(_ value: Int) {
+      self.value = value
+    }
+
+    init(from decoder: any Decoder) throws {
+      let c = try decoder.singleValueContainer()
+      if let int = try? c.decode(Int.self) {
+        value = int
+        return
+      }
+      if let double = try? c.decode(Double.self) {
+        value = Int(double.rounded(.towardZero))
+        return
+      }
+      if let string = try? c.decode(String.self), let int = Int(string) {
+        value = int
+        return
+      }
+      if let bool = try? c.decode(Bool.self) {
+        value = bool ? 1 : 0
+        return
+      }
+      throw DecodingError.typeMismatch(
+        Int.self,
+        .init(codingPath: decoder.codingPath, debugDescription: "Expected integer-like value"),
+      )
+    }
+  }
+
   struct Params: Decodable, Sendable {
     var path: String
-    var offset: Int?
-    var limit: Int?
+    var offset: FlexibleInt?
+    var limit: FlexibleInt?
   }
 
   let schema: JSONValue = .object([
     "type": .string("object"),
     "properties": .object([
       "path": .object(["type": .string("string"), "description": .string("Path to the file to read (relative or absolute)")]),
-      "offset": .object(["type": .string("number"), "description": .string("Line number to start reading from (1-indexed)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of lines to read")]),
+      "offset": .object(["type": .string("integer"), "description": .string("Line number to start reading from (1-indexed)")]),
+      "limit": .object(["type": .string("integer"), "description": .string("Maximum number of lines to read")]),
     ]),
     "required": .array([.string("path")]),
     "additionalProperties": .bool(false),
@@ -49,14 +81,14 @@ private func readTool(cwd: String) -> AnyAgentTool {
       let allLines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
       let totalLines = allLines.count
 
-      let startLine = max(0, (params.offset ?? 1) - 1)
+      let startLine = max(0, (params.offset?.value ?? 1) - 1)
       if startLine >= totalLines {
-        throw ToolError.message("Offset \(params.offset ?? 1) is beyond end of file (\(totalLines) lines total)")
+        throw ToolError.message("Offset \(params.offset?.value ?? 1) is beyond end of file (\(totalLines) lines total)")
       }
 
       var selected: [String]
       var userLimitedLines: Int?
-      if let limit = params.limit {
+      if let limit = params.limit?.value {
         let end = min(startLine + max(0, limit), totalLines)
         selected = Array(allLines[startLine ..< end])
         userLimitedLines = end - startLine

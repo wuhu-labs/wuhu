@@ -43,10 +43,33 @@ public struct WuhuToolExecution: Sendable, Hashable, Codable {
   }
 }
 
+public struct WuhuCompaction: Sendable, Hashable, Codable {
+  public var version: Int
+  public var summary: String
+  public var tokensBefore: Int
+  public var firstKeptEntryID: Int64
+  public var metadata: JSONValue
+
+  public init(
+    version: Int = 1,
+    summary: String,
+    tokensBefore: Int,
+    firstKeptEntryID: Int64,
+    metadata: JSONValue = .object([:]),
+  ) {
+    self.version = version
+    self.summary = summary
+    self.tokensBefore = tokensBefore
+    self.firstKeptEntryID = firstKeptEntryID
+    self.metadata = metadata
+  }
+}
+
 public enum WuhuEntryPayload: Sendable, Hashable, Codable {
   case header(WuhuSessionHeader)
   case message(WuhuPersistedMessage)
   case toolExecution(WuhuToolExecution)
+  case compaction(WuhuCompaction)
   case custom(customType: String, data: JSONValue?)
   case unknown(type: String, payload: JSONValue)
 
@@ -67,6 +90,8 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
       self = try .message(c.decode(WuhuPersistedMessage.self, forKey: .payload))
     case "tool_execution":
       self = try .toolExecution(c.decode(WuhuToolExecution.self, forKey: .payload))
+    case "compaction":
+      self = try .compaction(c.decode(WuhuCompaction.self, forKey: .payload))
     case "custom":
       self = try .custom(customType: c.decode(String.self, forKey: .customType), data: c.decodeIfPresent(JSONValue.self, forKey: .data))
     default:
@@ -86,6 +111,9 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
     case let .toolExecution(t):
       try c.encode("tool_execution", forKey: .type)
       try c.encode(t, forKey: .payload)
+    case let .compaction(compaction):
+      try c.encode("compaction", forKey: .type)
+      try c.encode(compaction, forKey: .payload)
     case let .custom(customType, data):
       try c.encode("custom", forKey: .type)
       try c.encode(customType, forKey: .customType)
@@ -104,6 +132,8 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
       "message"
     case .toolExecution:
       "tool_execution"
+    case .compaction:
+      "compaction"
     case .custom:
       "custom"
     case let .unknown(type, _):
