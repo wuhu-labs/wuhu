@@ -58,6 +58,22 @@ struct GitIgnore: Sendable {
         enumerator.skipDescendants()
         continue
       }
+      if rel == ".build" || rel.hasPrefix(".build/") {
+        enumerator.skipDescendants()
+        continue
+      }
+      if rel == ".swiftpm" || rel.hasPrefix(".swiftpm/") {
+        enumerator.skipDescendants()
+        continue
+      }
+      if rel == "DerivedData" || rel.hasPrefix("DerivedData/") {
+        enumerator.skipDescendants()
+        continue
+      }
+      if rel == "node_modules" || rel.hasPrefix("node_modules/") {
+        enumerator.skipDescendants()
+        continue
+      }
 
       if (rel as NSString).lastPathComponent == ".gitignore" {
         let abs = URL(fileURLWithPath: searchRoot).appendingPathComponent(rel).resolvingSymlinksInPath().standardizedFileURL.path

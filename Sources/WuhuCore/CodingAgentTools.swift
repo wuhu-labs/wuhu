@@ -354,12 +354,20 @@ private func findTool(cwd: String) -> AnyAgentTool {
       let ignore = GitIgnore(searchRoot: searchRoot)
       let effectiveLimit = max(1, params.limit ?? 1000)
 
-      let matches = try walkFiles(root: searchRoot) { rel, abs, isDir in
-        if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return false }
-        if ignore.isIgnored(absolutePath: abs, isDirectory: isDir) { return false }
-        if isDir { return false }
-        return ToolGlob.matches(pattern: params.pattern, path: rel, anchored: true)
-      }
+      let matches = try walkFiles(
+        root: searchRoot,
+        shouldSkipDescendants: { rel, abs, isDir in
+          guard isDir else { return false }
+          if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return true }
+          return ignore.isIgnored(absolutePath: abs, isDirectory: true)
+        },
+        include: { rel, abs, isDir in
+          if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return false }
+          if ignore.isIgnored(absolutePath: abs, isDirectory: isDir) { return false }
+          if isDir { return false }
+          return ToolGlob.matches(pattern: params.pattern, path: rel, anchored: true)
+        },
+      )
 
       let sorted = matches.sorted { $0.lowercased() < $1.lowercased() }
       let limited = Array(sorted.prefix(effectiveLimit))
@@ -443,15 +451,23 @@ private func grepTool(cwd: String) -> AnyAgentTool {
       let ignore = GitIgnore(searchRoot: rootForRelPaths)
 
       let files: [String] = if isDir.boolValue {
-        try walkFiles(root: searchPath) { rel, abs, isDir in
-          if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return false }
-          if ignore.isIgnored(absolutePath: abs, isDirectory: isDir) { return false }
-          if isDir { return false }
-          if let glob = params.glob {
-            return ToolGlob.matches(pattern: glob, path: rel, anchored: true)
-          }
-          return true
-        }
+        try walkFiles(
+          root: searchPath,
+          shouldSkipDescendants: { rel, abs, isDir in
+            guard isDir else { return false }
+            if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return true }
+            return ignore.isIgnored(absolutePath: abs, isDirectory: true)
+          },
+          include: { rel, abs, isDir in
+            if rel.hasPrefix(".git/") || rel.hasPrefix("node_modules/") { return false }
+            if ignore.isIgnored(absolutePath: abs, isDirectory: isDir) { return false }
+            if isDir { return false }
+            if let glob = params.glob {
+              return ToolGlob.matches(pattern: glob, path: rel, anchored: true)
+            }
+            return true
+          },
+        )
         .map { URL(fileURLWithPath: searchPath).appendingPathComponent($0).path }
       } else {
         [searchPath]
@@ -718,6 +734,7 @@ private enum ToolError: Error, Sendable, CustomStringConvertible {
 
 private func walkFiles(
   root: String,
+  shouldSkipDescendants: ((_ relativePath: String, _ absolutePath: String, _ isDirectory: Bool) -> Bool)? = nil,
   include: (_ relativePath: String, _ absolutePath: String, _ isDirectory: Bool) -> Bool,
 ) throws -> [String] {
   let fm = FileManager.default
@@ -736,7 +753,18 @@ private func walkFiles(
     let values = try? resolvedURL.resourceValues(forKeys: [.isDirectoryKey])
     let isDir = values?.isDirectory ?? false
 
-    if isDir, rel == ".git" || rel.hasPrefix(".git/") || rel == "node_modules" || rel.hasPrefix("node_modules/") {
+    if isDir,
+       rel == ".git" || rel.hasPrefix(".git/") ||
+       rel == "node_modules" || rel.hasPrefix("node_modules/") ||
+       rel == ".build" || rel.hasPrefix(".build/") ||
+       rel == ".swiftpm" || rel.hasPrefix(".swiftpm/") ||
+       rel == "DerivedData" || rel.hasPrefix("DerivedData/")
+    {
+      enumerator.skipDescendants()
+      continue
+    }
+
+    if isDir, shouldSkipDescendants?(rel, abs, isDir) == true {
       enumerator.skipDescendants()
       continue
     }
