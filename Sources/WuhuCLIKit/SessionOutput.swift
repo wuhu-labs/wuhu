@@ -31,8 +31,10 @@ public struct TerminalCapabilities: Sendable {
   }
 
   public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
-    stdoutIsTTY = isatty(fileno(stdout)) != 0
-    stderrIsTTY = isatty(fileno(stderr)) != 0
+    // Avoid referencing C stdio globals (`stdout` / `stderr`), which Swift 6 strict
+    // concurrency treats as unsafe shared mutable state (notably on Linux).
+    stdoutIsTTY = isatty(STDOUT_FILENO) != 0
+    stderrIsTTY = isatty(STDERR_FILENO) != 0
 
     let noColor = environment["WUHU_NO_COLOR"] != nil || environment["NO_COLOR"] != nil
     colorEnabled = !noColor
