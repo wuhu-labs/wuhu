@@ -26,3 +26,8 @@ Client identity:
 
 - `wuhu client prompt` sends an optional `user` (username) with each prompt.
 - Configure via `WUHU_USERNAME` or `~/.wuhu/client.yml` `username:` (defaults to `<osuser>@<hostname>`).
+
+Environments (from `~/.wuhu/server.yml` / `~/.wuhu/runner.yml`):
+
+- `local`: use a fixed working directory (`path`).
+- `folder-template`: copy a template folder (`path`) into `workspaces_path/<session-id>` and optionally run `startup_script` in the copied workspace.

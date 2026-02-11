@@ -19,9 +19,13 @@ The server reads a YAML config file:
 Current schema (subset):
 
 - `llm.openai` / `llm.anthropic`: optional API keys (if omitted, the server falls back to environment variables).
+- `workspaces_path`: optional root directory for per-session workspaces (default: `~/.wuhu/workspaces`).
 - `environments`: array of named environments.
-  - `type`: currently only `local`
-  - `path`: local filesystem path used as the session working directory
+  - `type`:
+    - `local`: session working directory is `path` (resolved at session creation time).
+    - `folder-template`: at session creation time, Wuhu copies the template folder at `path` into `workspaces_path/<session-id>` and uses that copied folder as the working directory.
+      - Optional `startup_script` runs in the copied workspace after the copy completes.
+  - `path`: filesystem path (meaning depends on `type`)
 
 ## HTTP API (v2)
 
@@ -62,7 +66,9 @@ The follow endpoint uses the same SSE encoding, and includes:
 Environment definitions live in a config file and can change at any time. To make sessions reproducible, Wuhu stores an **environment snapshot** in the database at session creation time:
 
 - `WuhuSession.environment` is persisted alongside the session record.
-- The working directory used for tools is `WuhuSession.cwd` (currently equal to `environment.path` for `local` environments).
+- The working directory used for tools is `WuhuSession.cwd` (equal to `environment.path`).
+  - For `local` environments, this is the resolved `path`.
+  - For `folder-template` environments, this is the copied workspace path under `workspaces_path`.
 
 This follows the principle: *session execution should not change retroactively when config changes*.
 
@@ -103,4 +109,4 @@ Messages created before the reminder entry are not modified.
 
 ## Migration Note
 
-This repo is not yet deployed, so database schema changes modify the initial migration in place. When testing locally, delete the previous SQLite file before running the server.
+Database schema changes use additive GRDB migrations. When testing locally, deleting the previous SQLite file is still fine, but production deployments should rely on migrations.

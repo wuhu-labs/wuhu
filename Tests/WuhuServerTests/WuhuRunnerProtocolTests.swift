@@ -11,7 +11,7 @@ struct WuhuRunnerProtocolTests {
 
     let messages: [WuhuRunnerMessage] = [
       .hello(runnerName: "vps-in-la", version: 1),
-      .resolveEnvironmentRequest(id: "req-1", name: "repo"),
+      .resolveEnvironmentRequest(id: "req-1", sessionID: "sess-1", name: "repo"),
       .resolveEnvironmentResponse(
         id: "req-1",
         environment: .init(name: "repo", type: .local, path: "/tmp/repo"),

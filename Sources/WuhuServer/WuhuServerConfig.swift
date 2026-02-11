@@ -16,11 +16,20 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     public var name: String
     public var type: String
     public var path: String
+    public var startupScript: String?
 
-    public init(name: String, type: String, path: String) {
+    enum CodingKeys: String, CodingKey {
+      case name
+      case type
+      case path
+      case startupScript = "startup_script"
+    }
+
+    public init(name: String, type: String, path: String, startupScript: String? = nil) {
       self.name = name
       self.type = type
       self.path = path
+      self.startupScript = startupScript
     }
   }
 
@@ -39,6 +48,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
   public var environments: [Environment]
   public var runners: [Runner]?
   public var databasePath: String?
+  public var workspacesPath: String?
   public var host: String?
   public var port: Int?
 
@@ -47,6 +57,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     environments: [Environment],
     runners: [Runner]? = nil,
     databasePath: String? = nil,
+    workspacesPath: String? = nil,
     host: String? = nil,
     port: Int? = nil,
   ) {
@@ -54,8 +65,19 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     self.environments = environments
     self.runners = runners
     self.databasePath = databasePath
+    self.workspacesPath = workspacesPath
     self.host = host
     self.port = port
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case llm
+    case environments
+    case runners
+    case databasePath
+    case workspacesPath = "workspaces_path"
+    case host
+    case port
   }
 
   public static func load(path: String) throws -> WuhuServerConfig {

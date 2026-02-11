@@ -25,6 +25,8 @@ public actor SQLiteRunnerStore: RunnerStore {
         environmentName: environment.name,
         environmentType: environment.type.rawValue,
         environmentPath: environment.path,
+        environmentTemplatePath: environment.templatePath,
+        environmentStartupScript: environment.startupScript,
         createdAt: now,
         updatedAt: now,
       )
@@ -36,7 +38,13 @@ public actor SQLiteRunnerStore: RunnerStore {
     try await dbQueue.read { db in
       guard let row = try RunnerSessionRow.fetchOne(db, key: sessionID) else { return nil }
       guard let type = WuhuEnvironmentType(rawValue: row.environmentType) else { return nil }
-      return .init(name: row.environmentName, type: type, path: row.environmentPath)
+      return .init(
+        name: row.environmentName,
+        type: type,
+        path: row.environmentPath,
+        templatePath: row.environmentTemplatePath,
+        startupScript: row.environmentStartupScript,
+      )
     }
   }
 }
@@ -48,6 +56,8 @@ private struct RunnerSessionRow: Codable, FetchableRecord, MutablePersistableRec
   var environmentName: String
   var environmentType: String
   var environmentPath: String
+  var environmentTemplatePath: String?
+  var environmentStartupScript: String?
   var createdAt: Date
   var updatedAt: Date
 }
@@ -64,6 +74,23 @@ extension SQLiteRunnerStore {
         t.column("environmentPath", .text).notNull()
         t.column("createdAt", .datetime).notNull()
         t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
+    migrator.registerMigration("environmentMetadata_v2") { db in
+      let info = try Row.fetchAll(db, sql: "PRAGMA table_info(runner_sessions)")
+      let existing = Set(info.compactMap { $0["name"] as String? })
+      let needsTemplate = !existing.contains("environmentTemplatePath")
+      let needsStartup = !existing.contains("environmentStartupScript")
+      guard needsTemplate || needsStartup else { return }
+
+      try db.alter(table: "runner_sessions") { t in
+        if needsTemplate {
+          t.add(column: "environmentTemplatePath", .text)
+        }
+        if needsStartup {
+          t.add(column: "environmentStartupScript", .text)
+        }
       }
     }
 

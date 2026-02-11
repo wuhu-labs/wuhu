@@ -35,6 +35,7 @@ struct AgentsContextTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: UUID().uuidString.lowercased(),
       provider: .openai,
       model: "mock",
       systemPrompt: "Base prompt.",
@@ -111,6 +112,7 @@ struct AgentsContextTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: UUID().uuidString.lowercased(),
       provider: .openai,
       model: "mock",
       systemPrompt: "Base prompt.",
