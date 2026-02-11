@@ -25,6 +25,7 @@ let package = Package(
     .library(name: "PiAI", targets: ["PiAI"]),
     .library(name: "PiAgent", targets: ["PiAgent"]),
     .library(name: "WuhuAPI", targets: ["WuhuAPI"]),
+    .library(name: "WuhuCLIKit", targets: ["WuhuCLIKit"]),
     .library(name: "WuhuCore", targets: ["WuhuCore"]),
     .library(name: "WuhuClient", targets: ["WuhuClient"]),
     .library(name: "WuhuServer", targets: ["WuhuServer"]),
@@ -60,6 +61,15 @@ let package = Package(
       name: "WuhuAPI",
       dependencies: [
         "PiAI",
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .target(
+      name: "WuhuCLIKit",
+      dependencies: [
+        "PiAI",
+        "WuhuAPI",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ],
       swiftSettings: strictConcurrency,
     ),
@@ -106,6 +116,7 @@ let package = Package(
       name: "wuhu",
       dependencies: [
         "WuhuClient",
+        "WuhuCLIKit",
         "WuhuServer",
         "WuhuRunner",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),

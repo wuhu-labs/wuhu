@@ -3,6 +3,7 @@ import Foundation
 import PiAI
 import WuhuAPI
 import WuhuClient
+import WuhuCLIKit
 import WuhuRunner
 import WuhuServer
 import Yams
@@ -50,6 +51,9 @@ struct WuhuCLI: AsyncParsableCommand {
     struct Shared: ParsableArguments {
       @Option(help: "Server base URL (default: read ~/.wuhu/client.yml, else http://127.0.0.1:5530).")
       var server: String?
+
+      @Option(help: "Session output verbosity (full, compact, minimal).")
+      var verbosity: SessionOutputVerbosity = .full
     }
 
     struct CreateSession: AsyncParsableCommand {
@@ -115,31 +119,15 @@ struct WuhuCLI: AsyncParsableCommand {
         let text = prompt.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
 
+        let terminal = TerminalCapabilities()
+        var printer = PromptStreamPrinter(
+          style: .init(verbosity: shared.verbosity, terminal: terminal),
+        )
+        printer.printPromptPreamble(userText: text)
+
         let stream = try await client.promptStream(sessionID: sessionId, input: text)
-        var printed = false
-
         for try await event in stream {
-          switch event {
-          case let .toolExecutionStart(_, toolName, args):
-            FileHandle.standardError.write(Data("\n[tool] \(toolName) args=\(formatJSON(args))\n".utf8))
-
-          case let .toolExecutionEnd(_, toolName, result, isError):
-            let suffix = isError ? " (error)" : ""
-            let text = result.content.compactMap { block -> String? in
-              if case let .text(text, _) = block { return text }
-              return nil
-            }.joined()
-            if !text.isEmpty {
-              FileHandle.standardError.write(Data("[tool] \(toolName) result=\(text)\(suffix)\n".utf8))
-            }
-
-          case let .assistantTextDelta(delta):
-            printed = true
-            FileHandle.standardOutput.write(Data(delta.utf8))
-
-          case .done:
-            if printed { FileHandle.standardOutput.write(Data("\n".utf8)) }
-          }
+          printer.handle(event)
         }
       }
     }
@@ -161,49 +149,10 @@ struct WuhuCLI: AsyncParsableCommand {
         let sessionId = try resolveWuhuSessionId(sessionId)
         let response = try await client.getSession(id: sessionId)
 
-        let session = response.session
-        FileHandle.standardOutput.write(Data("session \(session.id)\n".utf8))
-        FileHandle.standardOutput.write(Data("provider \(session.provider.rawValue)\n".utf8))
-        FileHandle.standardOutput.write(Data("model \(session.model)\n".utf8))
-        FileHandle.standardOutput.write(Data("environment \(session.environment.name)\n".utf8))
-        FileHandle.standardOutput.write(Data("cwd \(session.cwd)\n".utf8))
-        FileHandle.standardOutput.write(Data("createdAt \(session.createdAt)\n".utf8))
-        FileHandle.standardOutput.write(Data("updatedAt \(session.updatedAt)\n".utf8))
-        FileHandle.standardOutput.write(Data("headEntryID \(session.headEntryID)\n".utf8))
-        FileHandle.standardOutput.write(Data("tailEntryID \(session.tailEntryID)\n".utf8))
-
-        for entry in response.transcript {
-          switch entry.payload {
-          case let .header(h):
-            FileHandle.standardOutput.write(Data("\n# header\n".utf8))
-            FileHandle.standardOutput.write(Data("systemPrompt:\n\(h.systemPrompt)\n".utf8))
-
-          case let .message(m):
-            FileHandle.standardOutput.write(Data("\n# message \(entry.id)\n".utf8))
-            FileHandle.standardOutput.write(Data(renderMessage(m).utf8))
-
-          case let .toolExecution(t):
-            FileHandle.standardOutput.write(Data("\n# tool_execution \(entry.id)\n".utf8))
-            FileHandle.standardOutput.write(Data("\(t.phase.rawValue) \(t.toolName) toolCallId=\(t.toolCallId)\n".utf8))
-
-          case let .compaction(c):
-            FileHandle.standardOutput.write(Data("\n# compaction \(entry.id)\n".utf8))
-            FileHandle.standardOutput.write(Data("tokensBefore \(c.tokensBefore)\n".utf8))
-            FileHandle.standardOutput.write(Data("firstKeptEntryID \(c.firstKeptEntryID)\n".utf8))
-            FileHandle.standardOutput.write(Data("summary:\n\(c.summary)\n".utf8))
-
-          case let .custom(customType, data):
-            FileHandle.standardOutput.write(Data("\n# custom \(entry.id)\n".utf8))
-            FileHandle.standardOutput.write(Data("customType \(customType)\n".utf8))
-            if let data {
-              FileHandle.standardOutput.write(Data("data \(formatJSON(data))\n".utf8))
-            }
-
-          case let .unknown(type, payload):
-            FileHandle.standardOutput.write(Data("\n# unknown(\(type)) \(entry.id)\n".utf8))
-            FileHandle.standardOutput.write(Data("\(formatJSON(payload))\n".utf8))
-          }
-        }
+        let terminal = TerminalCapabilities()
+        let style = SessionOutputStyle(verbosity: shared.verbosity, terminal: terminal)
+        let renderer = SessionTranscriptRenderer(style: style)
+        FileHandle.standardOutput.write(Data(renderer.render(response).utf8))
       }
     }
 
@@ -269,43 +218,6 @@ private func makeClient(_ baseOverride: String?) throws -> WuhuClient {
 
   guard let url = URL(string: base) else { throw ValidationError("Invalid server URL: \(base)") }
   return WuhuClient(baseURL: url)
-}
-
-private func renderMessage(_ m: WuhuPersistedMessage) -> String {
-  switch m {
-  case let .user(u):
-    "user: \(renderBlocks(u.content))\n"
-  case let .assistant(a):
-    "assistant: \(renderBlocks(a.content))\n"
-  case let .toolResult(t):
-    "tool_result(\(t.toolName)): \(renderBlocks(t.content))\n"
-  case let .customMessage(c):
-    "custom_message(\(c.customType)): \(renderBlocks(c.content))\n"
-  case let .unknown(role, payload):
-    "unknown_message(\(role)): \(formatJSON(payload))\n"
-  }
-}
-
-private func renderBlocks(_ blocks: [WuhuContentBlock]) -> String {
-  blocks.compactMap { block -> String? in
-    switch block {
-    case let .text(text, _):
-      text
-    case let .toolCall(_, name, arguments):
-      "[tool_call \(name) args=\(formatJSON(arguments))]"
-    case .reasoning:
-      nil
-    }
-  }.joined()
-}
-
-private func formatJSON(_ value: JSONValue) -> String {
-  if let data = try? JSONSerialization.data(withJSONObject: value.toAny(), options: [.sortedKeys]),
-     let s = String(data: data, encoding: .utf8)
-  {
-    return s
-  }
-  return "{}"
 }
 
 func resolveWuhuSessionId(
