@@ -12,6 +12,9 @@ public enum WuhuPromptStreamEvent: Sendable, Hashable {
 
 public actor WuhuService {
   private let store: any SessionStore
+  private var sessionContextActors: [String: WuhuAgentsContextActor] = [:]
+  private var sessionContextActorLastAccess: [String: Date] = [:]
+  private let maxSessionContextActors = 64
 
   public init(store: any SessionStore) {
     self.store = store
@@ -63,6 +66,10 @@ public actor WuhuService {
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
 
     var effectiveSystemPrompt = header.systemPrompt
+    let injectedContext = await sessionContextActor(for: sessionID, cwd: session.cwd).contextSection()
+    if !injectedContext.isEmpty {
+      effectiveSystemPrompt += injectedContext
+    }
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
@@ -276,5 +283,33 @@ public actor WuhuService {
       }
       return .object(obj)
     }
+  }
+
+  private func sessionContextActor(for sessionID: String, cwd: String) -> WuhuAgentsContextActor {
+    if let existing = sessionContextActors[sessionID] {
+      sessionContextActorLastAccess[sessionID] = Date()
+      return existing
+    }
+
+    let actor = WuhuAgentsContextActor(cwd: cwd)
+    sessionContextActors[sessionID] = actor
+    sessionContextActorLastAccess[sessionID] = Date()
+
+    if sessionContextActors.count > maxSessionContextActors {
+      evictLeastRecentlyUsedSessionContextActor()
+    }
+
+    return actor
+  }
+
+  private func evictLeastRecentlyUsedSessionContextActor() {
+    guard sessionContextActors.count > maxSessionContextActors else { return }
+
+    guard let (oldestSessionID, _) = sessionContextActorLastAccess.min(by: { $0.value < $1.value }) else {
+      return
+    }
+
+    sessionContextActors.removeValue(forKey: oldestSessionID)
+    sessionContextActorLastAccess.removeValue(forKey: oldestSessionID)
   }
 }
