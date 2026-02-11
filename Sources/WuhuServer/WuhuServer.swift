@@ -120,7 +120,6 @@ public struct WuhuServer: Sendable {
         stream = try await service.promptStream(
           sessionID: id,
           input: prompt.input,
-          maxTurns: prompt.maxTurns ?? 12,
           tools: tools,
         )
       } catch {

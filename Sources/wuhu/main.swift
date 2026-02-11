@@ -102,9 +102,6 @@ struct WuhuCLI: AsyncParsableCommand {
       @Option(help: "Session id returned by create-session.")
       var sessionId: String
 
-      @Option(help: "Max assistant turns (safety valve).")
-      var maxTurns: Int = 12
-
       @Argument(parsing: .remaining, help: "Prompt text.")
       var prompt: [String] = []
 
@@ -117,7 +114,7 @@ struct WuhuCLI: AsyncParsableCommand {
         let text = prompt.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
 
-        let stream = try await client.promptStream(sessionID: sessionId, input: text, maxTurns: maxTurns)
+        let stream = try await client.promptStream(sessionID: sessionId, input: text)
         var printed = false
 
         for try await event in stream {
@@ -186,6 +183,12 @@ struct WuhuCLI: AsyncParsableCommand {
           case let .toolExecution(t):
             FileHandle.standardOutput.write(Data("\n# tool_execution \(entry.id)\n".utf8))
             FileHandle.standardOutput.write(Data("\(t.phase.rawValue) \(t.toolName) toolCallId=\(t.toolCallId)\n".utf8))
+
+          case let .compaction(c):
+            FileHandle.standardOutput.write(Data("\n# compaction \(entry.id)\n".utf8))
+            FileHandle.standardOutput.write(Data("tokensBefore \(c.tokensBefore)\n".utf8))
+            FileHandle.standardOutput.write(Data("firstKeptEntryID \(c.firstKeptEntryID)\n".utf8))
+            FileHandle.standardOutput.write(Data("summary:\n\(c.summary)\n".utf8))
 
           case let .custom(customType, data):
             FileHandle.standardOutput.write(Data("\n# custom \(entry.id)\n".utf8))

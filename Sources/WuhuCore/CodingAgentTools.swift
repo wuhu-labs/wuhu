@@ -20,6 +20,9 @@ public extension WuhuTools {
 // MARK: - read
 
 private func readTool(cwd: String) -> AnyAgentTool {
+  // Tool argument types are intentionally strict (no coercion). Some models may emit incorrect JSON
+  // types (e.g. booleans for integer fields); we prefer fixing this at the prompt/schema level.
+  // See https://github.com/wuhu-labs/wuhu/issues/12
   struct Params: Decodable, Sendable {
     var path: String
     var offset: Int?
@@ -30,8 +33,8 @@ private func readTool(cwd: String) -> AnyAgentTool {
     "type": .string("object"),
     "properties": .object([
       "path": .object(["type": .string("string"), "description": .string("Path to the file to read (relative or absolute)")]),
-      "offset": .object(["type": .string("number"), "description": .string("Line number to start reading from (1-indexed)")]),
-      "limit": .object(["type": .string("number"), "description": .string("Maximum number of lines to read")]),
+      "offset": .object(["type": .string("integer"), "description": .string("Line number to start reading from (1-indexed)")]),
+      "limit": .object(["type": .string("integer"), "description": .string("Maximum number of lines to read")]),
     ]),
     "required": .array([.string("path")]),
     "additionalProperties": .bool(false),
@@ -40,7 +43,7 @@ private func readTool(cwd: String) -> AnyAgentTool {
   return AnyAgentTool(
     name: "read",
     label: "read",
-    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.",
+    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.\n\nNote: offset/limit must be integers (see https://github.com/wuhu-labs/wuhu/issues/12).",
     parametersSchema: schema,
     execute: { (_: String, params: Params) in
       let resolved = ToolPath.resolveReadPath(params.path, cwd: cwd)

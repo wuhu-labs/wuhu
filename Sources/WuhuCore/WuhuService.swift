@@ -50,15 +50,13 @@ public actor WuhuService {
   public func promptStream(
     sessionID: String,
     input: String,
-    maxTurns: Int = 12,
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> AsyncThrowingStream<WuhuPromptStreamEvent, any Error> {
     let session = try await store.getSession(id: sessionID)
-    let transcript = try await store.getEntries(sessionID: sessionID)
+    var transcript = try await store.getEntries(sessionID: sessionID)
 
     let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
-    let messages = Self.extractContextMessages(from: transcript)
 
     let model = Model(id: session.model, provider: session.provider.piProvider)
 
@@ -72,6 +70,19 @@ public actor WuhuService {
       requestOptions.reasoningEffort = .low
     }
 
+    let compactionSettings = WuhuCompactionSettings.load(model: model)
+    transcript = try await maybeAutoCompact(
+      sessionID: sessionID,
+      transcript: transcript,
+      model: model,
+      requestOptions: requestOptions,
+      compactionSettings: compactionSettings,
+      input: input,
+      streamFn: streamFn,
+    )
+
+    let messages = Self.extractContextMessages(from: transcript)
+
     let agent = PiAgent.Agent(opts: .init(
       initialState: .init(
         systemPrompt: effectiveSystemPrompt,
@@ -81,7 +92,6 @@ public actor WuhuService {
       ),
       requestOptions: requestOptions,
       streamFn: streamFn,
-      maxTurns: maxTurns,
     ))
 
     return AsyncThrowingStream(WuhuPromptStreamEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
@@ -109,6 +119,50 @@ public actor WuhuService {
         Task { await agent.abort() }
       }
     }
+  }
+
+  private func maybeAutoCompact(
+    sessionID: String,
+    transcript: [WuhuSessionEntry],
+    model: Model,
+    requestOptions: RequestOptions,
+    compactionSettings: WuhuCompactionSettings,
+    input: String,
+    streamFn: @escaping StreamFn,
+  ) async throws -> [WuhuSessionEntry] {
+    var current = transcript
+
+    for _ in 0 ..< 3 {
+      let contextMessages = Self.extractContextMessages(from: current)
+      let prospective = contextMessages + [.user(input)]
+      let estimate = WuhuCompactionEngine.estimateContextTokens(messages: prospective)
+
+      if !WuhuCompactionEngine.shouldCompact(contextTokens: estimate.tokens, settings: compactionSettings) {
+        break
+      }
+
+      guard let preparation = WuhuCompactionEngine.prepareCompaction(transcript: current, settings: compactionSettings) else {
+        break
+      }
+
+      let summary = try await WuhuCompactionEngine.generateSummary(
+        preparation: preparation,
+        model: model,
+        settings: compactionSettings,
+        requestOptions: requestOptions,
+        streamFn: streamFn,
+      )
+
+      _ = try await store.appendEntry(sessionID: sessionID, payload: .compaction(.init(
+        summary: summary,
+        tokensBefore: preparation.tokensBefore,
+        firstKeptEntryID: preparation.firstKeptEntryID,
+      )))
+
+      current = try await store.getEntries(sessionID: sessionID)
+    }
+
+    return current
   }
 
   private func handleAgentEvent(
@@ -164,10 +218,36 @@ public actor WuhuService {
   }
 
   private static func extractContextMessages(from transcript: [WuhuSessionEntry]) -> [Message] {
-    transcript.compactMap { entry in
-      guard case let .message(m) = entry.payload else { return nil }
-      return m.toPiMessage()
+    let headerIndex = transcript.firstIndex(where: { $0.parentEntryID == nil }) ?? 0
+
+    var summary: String?
+    var firstKeptEntryID: Int64?
+
+    if let entry = transcript.last(where: { if case .compaction = $0.payload { return true }; return false }),
+       case let .compaction(compaction) = entry.payload
+    {
+      summary = compaction.summary
+      firstKeptEntryID = compaction.firstKeptEntryID
     }
+
+    let startIndex: Int = if let firstKeptEntryID {
+      transcript.firstIndex(where: { $0.id == firstKeptEntryID }) ?? min(headerIndex + 1, transcript.count)
+    } else {
+      min(headerIndex + 1, transcript.count)
+    }
+
+    var messages: [Message] = []
+    if let summary, !summary.isEmpty {
+      messages.append(WuhuCompactionEngine.makeSummaryMessage(summary: summary))
+    }
+
+    for entry in transcript[startIndex...] {
+      guard case let .message(m) = entry.payload else { continue }
+      guard let pi = m.toPiMessage() else { continue }
+      messages.append(pi)
+    }
+
+    return messages
   }
 
   private static func contentBlockToJSON(_ block: ContentBlock) -> JSONValue {
