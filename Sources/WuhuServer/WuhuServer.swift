@@ -71,14 +71,16 @@ public struct WuhuServer: Sendable {
 
       let model = (create.model?.isEmpty == false) ? create.model! : defaultModel(for: create.provider)
       let systemPrompt = (create.systemPrompt?.isEmpty == false) ? create.systemPrompt! : defaultSystemPrompt
+      let sessionID = UUID().uuidString.lowercased()
 
       let session: WuhuSession
       if let runnerName = create.runner, !runnerName.isEmpty {
         guard let runner = await runnerRegistry.get(runnerName: runnerName) else {
           throw HTTPError(.badRequest, message: "Unknown or disconnected runner: \(runnerName)")
         }
-        let environment = try await runner.resolveEnvironment(name: create.environment)
+        let environment = try await runner.resolveEnvironment(sessionID: sessionID, name: create.environment)
         session = try await service.createSession(
+          sessionID: sessionID,
           provider: create.provider,
           model: model,
           systemPrompt: systemPrompt,
@@ -91,14 +93,33 @@ public struct WuhuServer: Sendable {
         guard let envConfig = envByName[create.environment] else {
           throw HTTPError(.badRequest, message: "Unknown environment: \(create.environment)")
         }
-        guard envConfig.type == "local" else {
+        let environment: WuhuEnvironment
+        switch envConfig.type {
+        case "local":
+          let resolvedPath = ToolPath.resolveToCwd(envConfig.path, cwd: FileManager.default.currentDirectoryPath)
+          environment = WuhuEnvironment(name: envConfig.name, type: .local, path: resolvedPath)
+        case "folder-template":
+          let templatePath = ToolPath.resolveToCwd(envConfig.path, cwd: FileManager.default.currentDirectoryPath)
+          let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(config.workspacesPath)
+          let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
+            sessionID: sessionID,
+            templatePath: templatePath,
+            startupScript: envConfig.startupScript,
+            workspacesPath: workspacesRoot,
+          )
+          environment = WuhuEnvironment(
+            name: envConfig.name,
+            type: .folderTemplate,
+            path: workspacePath,
+            templatePath: templatePath,
+            startupScript: envConfig.startupScript,
+          )
+        default:
           throw HTTPError(.badRequest, message: "Unsupported environment type: \(envConfig.type)")
         }
 
-        let resolvedPath = ToolPath.resolveToCwd(envConfig.path, cwd: FileManager.default.currentDirectoryPath)
-        let environment = WuhuEnvironment(name: envConfig.name, type: .local, path: resolvedPath)
-
         session = try await service.createSession(
+          sessionID: sessionID,
           provider: create.provider,
           model: model,
           systemPrompt: systemPrompt,

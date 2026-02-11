@@ -17,6 +17,7 @@ public actor WuhuService {
   }
 
   public func createSession(
+    sessionID: String,
     provider: WuhuProvider,
     model: String,
     systemPrompt: String,
@@ -25,6 +26,7 @@ public actor WuhuService {
     parentSessionID: String? = nil,
   ) async throws -> WuhuSession {
     try await store.createSession(
+      sessionID: sessionID,
       provider: provider,
       model: model,
       systemPrompt: systemPrompt,

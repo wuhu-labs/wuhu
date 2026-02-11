@@ -26,11 +26,16 @@ struct WuhuCoreTests {
     try await operation()
   }
 
+  private func newSessionID() -> String {
+    UUID().uuidString.lowercased()
+  }
+
   @Test func createSessionCreatesHeaderAndHeadTail() async throws {
     let store = try SQLiteSessionStore(path: ":memory:")
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
@@ -58,6 +63,7 @@ struct WuhuCoreTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are a terminal agent.",
@@ -144,6 +150,7 @@ struct WuhuCoreTests {
             let service = WuhuService(store: store)
 
             let session = try await service.createSession(
+              sessionID: newSessionID(),
               provider: .openai,
               model: "mock",
               systemPrompt: "You are helpful.",
@@ -240,6 +247,7 @@ struct WuhuCoreTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
@@ -270,6 +278,7 @@ struct WuhuCoreTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
@@ -338,6 +347,7 @@ struct WuhuCoreTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
@@ -366,6 +376,7 @@ struct WuhuCoreTests {
     let service = WuhuService(store: store)
 
     let session = try await service.createSession(
+      sessionID: newSessionID(),
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",

@@ -120,14 +120,17 @@ private enum RunnerMessageLoop {
       case .hello:
         continue
 
-      case let .resolveEnvironmentRequest(id, name):
-        let env = resolveEnvironment(config: config, name: name)
-        let response: WuhuRunnerMessage = if let env {
-          .resolveEnvironmentResponse(id: id, environment: env, error: nil)
-        } else {
-          .resolveEnvironmentResponse(id: id, environment: nil, error: "Unknown environment: \(name)")
+      case let .resolveEnvironmentRequest(id, sessionID, name):
+        do {
+          let env = try await resolveEnvironment(config: config, sessionID: sessionID, name: name)
+          try await sender.send(.resolveEnvironmentResponse(id: id, environment: env, error: nil))
+        } catch {
+          try await sender.send(.resolveEnvironmentResponse(
+            id: id,
+            environment: nil,
+            error: String(describing: error),
+          ))
         }
-        try await sender.send(response)
 
       case let .registerSession(sessionID, environment):
         try await store.upsertSession(sessionID: sessionID, environment: environment)
@@ -190,11 +193,45 @@ private enum RunnerMessageLoop {
     }
   }
 
-  private static func resolveEnvironment(config: WuhuRunnerConfig, name: String) -> WuhuEnvironment? {
-    guard let env = config.environments.first(where: { $0.name == name }) else { return nil }
-    guard env.type == "local" else { return nil }
-    let resolvedPath = ToolPath.resolveToCwd(env.path, cwd: FileManager.default.currentDirectoryPath)
-    return .init(name: env.name, type: .local, path: resolvedPath)
+  private static func resolveEnvironment(
+    config: WuhuRunnerConfig,
+    sessionID: String?,
+    name: String,
+  ) async throws -> WuhuEnvironment {
+    guard let env = config.environments.first(where: { $0.name == name }) else {
+      throw WuhuEnvironmentResolutionError.unknownEnvironment(name)
+    }
+
+    switch env.type {
+    case "local":
+      let resolvedPath = ToolPath.resolveToCwd(env.path, cwd: FileManager.default.currentDirectoryPath)
+      return .init(name: env.name, type: .local, path: resolvedPath)
+
+    case "folder-template":
+      let effectiveSessionID = (sessionID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !effectiveSessionID.isEmpty else {
+        throw WuhuEnvironmentResolutionError.missingSessionIDForFolderTemplate
+      }
+
+      let templatePath = ToolPath.resolveToCwd(env.path, cwd: FileManager.default.currentDirectoryPath)
+      let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(config.workspacesPath)
+      let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
+        sessionID: effectiveSessionID,
+        templatePath: templatePath,
+        startupScript: env.startupScript,
+        workspacesPath: workspacesRoot,
+      )
+      return .init(
+        name: env.name,
+        type: .folderTemplate,
+        path: workspacePath,
+        templatePath: templatePath,
+        startupScript: env.startupScript,
+      )
+
+    default:
+      throw WuhuEnvironmentResolutionError.unsupportedEnvironmentType(env.type)
+    }
   }
 }
 

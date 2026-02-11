@@ -16,6 +16,7 @@ public actor SQLiteSessionStore: SessionStore {
   }
 
   public func createSession(
+    sessionID rawSessionID: String,
     provider: WuhuProvider,
     model: String,
     systemPrompt: String,
@@ -24,7 +25,7 @@ public actor SQLiteSessionStore: SessionStore {
     parentSessionID: String?,
   ) async throws -> WuhuSession {
     let now = Date()
-    let sessionID = UUID().uuidString.lowercased()
+    let sessionID = rawSessionID.lowercased()
 
     return try await dbQueue.write { db in
       var sessionRow = SessionRow(
@@ -34,6 +35,8 @@ public actor SQLiteSessionStore: SessionStore {
         environmentName: environment.name,
         environmentType: environment.type.rawValue,
         environmentPath: environment.path,
+        environmentTemplatePath: environment.templatePath,
+        environmentStartupScript: environment.startupScript,
         cwd: environment.path,
         runnerName: runnerName,
         parentSessionID: parentSessionID,
@@ -219,6 +222,8 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var environmentName: String
   var environmentType: String
   var environmentPath: String
+  var environmentTemplatePath: String?
+  var environmentStartupScript: String?
   var cwd: String
   var runnerName: String?
   var parentSessionID: String?
@@ -241,7 +246,13 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       id: id,
       provider: provider,
       model: model,
-      environment: .init(name: environmentName, type: envType, path: environmentPath),
+      environment: .init(
+        name: environmentName,
+        type: envType,
+        path: environmentPath,
+        templatePath: environmentTemplatePath,
+        startupScript: environmentStartupScript,
+      ),
       cwd: cwd,
       runnerName: runnerName,
       parentSessionID: parentSessionID,
@@ -342,6 +353,24 @@ extension SQLiteSessionStore {
 
       // Enforce exactly one header per session: the only entry with parentEntryID IS NULL.
       try db.create(index: "session_entries_unique_header_per_session", on: "session_entries", columns: ["sessionID"], unique: true, condition: Column("parentEntryID") == nil)
+    }
+
+    migrator.registerMigration("environmentMetadata_v2") { db in
+      // Older databases created before issue #25 may not have these columns.
+      let info = try Row.fetchAll(db, sql: "PRAGMA table_info(sessions)")
+      let existing = Set(info.compactMap { $0["name"] as String? })
+      let needsTemplate = !existing.contains("environmentTemplatePath")
+      let needsStartup = !existing.contains("environmentStartupScript")
+      guard needsTemplate || needsStartup else { return }
+
+      try db.alter(table: "sessions") { t in
+        if needsTemplate {
+          t.add(column: "environmentTemplatePath", .text)
+        }
+        if needsStartup {
+          t.add(column: "environmentStartupScript", .text)
+        }
+      }
     }
 
     return migrator

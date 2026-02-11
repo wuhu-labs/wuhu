@@ -8,10 +8,12 @@ struct WuhuServerConfigTests {
     llm:
       openai: sk-openai
       anthropic: sk-anthropic
+    workspaces_path: /tmp/wuhu-workspaces
     environments:
     - name: wuhu-repo
       type: local
       path: /tmp/wuhu
+      startup_script: ./startup.sh
     databasePath: /tmp/wuhu.sqlite
     host: 127.0.0.1
     port: 5530
@@ -26,11 +28,13 @@ struct WuhuServerConfigTests {
     #expect(config.llm?.openai == "sk-openai")
     #expect(config.llm?.anthropic == "sk-anthropic")
     #expect(config.databasePath == "/tmp/wuhu.sqlite")
+    #expect(config.workspacesPath == "/tmp/wuhu-workspaces")
     #expect(config.host == "127.0.0.1")
     #expect(config.port == 5530)
     #expect(config.environments.count == 1)
     #expect(config.environments[0].name == "wuhu-repo")
     #expect(config.environments[0].type == "local")
     #expect(config.environments[0].path == "/tmp/wuhu")
+    #expect(config.environments[0].startupScript == "./startup.sh")
   }
 }

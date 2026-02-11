@@ -30,10 +30,15 @@ After this split, Wuhu supports:
 llm:
   openai: "…"
   anthropic: "…"
+workspaces_path: ~/.wuhu/workspaces
 environments:
   - name: wuhu-repo
     type: local
     path: /Users/selveskii/Developer/wuhu-swift
+  - name: multi-repo
+    type: folder-template
+    path: /Users/selveskii/Developer/wuhu-templates/multi-repo
+    startup_script: ./startup.sh
 runners:
   - name: vps-in-la
     address: 1.2.3.4:5531
@@ -48,10 +53,15 @@ listen:                        # used when connectTo is not set
   host: 0.0.0.0
   port: 5531
 databasePath: ~/.wuhu/runner.sqlite
+workspaces_path: ~/.wuhu/workspaces
 environments:
   - name: wuhu-repo
     type: local
     path: /home/ubuntu/wuhu-swift
+  - name: multi-repo
+    type: folder-template
+    path: /home/ubuntu/wuhu-templates/multi-repo
+    startup_script: ./startup.sh
 ```
 
 ### `client.yml` (optional)
