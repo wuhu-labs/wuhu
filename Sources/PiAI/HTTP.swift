@@ -85,7 +85,28 @@ public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
       throw PiAIError.httpStatus(code: metadata.statusCode, body: String(decoding: body, as: UTF8.self))
     }
 
-    return SSEDecoder.decode(response.body)
+    // Keep `self` alive for the lifetime of the stream. Callers often create a temporary transport/client
+    // (e.g. `WuhuClient(baseURL:).followSessionStream(...)`) and only retain the returned stream. If the
+    // transport is deinitialized, it will shut down the underlying AsyncHTTPClient and cancel the in-flight
+    // SSE body stream, which surfaces as `HTTPClientError.cancelled`.
+    let body = response.body
+    return AsyncThrowingStream { continuation in
+      let task = Task { [self] in
+        _ = self
+        do {
+          for try await message in SSEDecoder.decode(body) {
+            continuation.yield(message)
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: error)
+        }
+      }
+
+      continuation.onTermination = { _ in
+        task.cancel()
+      }
+    }
   }
 
   private func execute(_ request: HTTPRequest) async throws -> AsyncHTTPClient.HTTPClientResponse {
