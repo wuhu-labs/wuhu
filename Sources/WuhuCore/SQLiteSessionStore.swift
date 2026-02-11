@@ -130,6 +130,30 @@ public actor SQLiteSessionStore: SessionStore {
     }
   }
 
+  public func getEntries(
+    sessionID: String,
+    sinceCursor: Int64?,
+    sinceTime: Date?,
+  ) async throws -> [WuhuSessionEntry] {
+    try await dbQueue.read { db in
+      guard let _ = try SessionRow.fetchOne(db, key: sessionID) else {
+        throw WuhuStoreError.sessionNotFound(sessionID)
+      }
+
+      var filter = Column("sessionID") == sessionID
+      if let sinceCursor {
+        filter = filter && Column("id") > sinceCursor
+      }
+      if let sinceTime {
+        filter = filter && Column("createdAt") > sinceTime
+      }
+
+      var req = EntryRow.filter(filter)
+      req = req.order(Column("id").asc)
+      return try req.fetchAll(db).map { $0.toModel() }
+    }
+  }
+
   private static func linearize(
     entries: [WuhuSessionEntry],
     sessionID: String,

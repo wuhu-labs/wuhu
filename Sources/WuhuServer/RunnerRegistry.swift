@@ -21,7 +21,7 @@ actor RunnerRegistry {
   }
 
   func connectToRunnerServer(runner: WuhuServerConfig.Runner, logger: Logger) async throws {
-    let wsURL = wsURLFromAddress(runner.address, path: "/v1/runner/ws")
+    let wsURL = wsURLFromAddress(runner.address, path: "/v2/runner/ws")
 
     let client = WebSocketClient(url: wsURL, logger: logger) { inbound, outbound, context in
       do {

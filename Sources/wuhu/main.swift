@@ -109,6 +109,9 @@ struct WuhuCLI: AsyncParsableCommand {
       @Argument(parsing: .remaining, help: "Prompt text.")
       var prompt: [String] = []
 
+      @Flag(help: "Send the prompt and return immediately (do not wait for the agent to finish).")
+      var detach: Bool = false
+
       @OptionGroup
       var shared: Shared
 
@@ -120,10 +123,15 @@ struct WuhuCLI: AsyncParsableCommand {
         guard !text.isEmpty else { throw ValidationError("Expected a prompt.") }
 
         let terminal = TerminalCapabilities()
-        var printer = PromptStreamPrinter(
+        var printer = SessionStreamPrinter(
           style: .init(verbosity: shared.verbosity, terminal: terminal),
         )
-        printer.printPromptPreamble(userText: text)
+
+        if detach {
+          let response = try await client.promptDetached(sessionID: sessionId, input: text)
+          printer.printEntryIfVisible(response.userEntry)
+          return
+        }
 
         let stream = try await client.promptStream(sessionID: sessionId, input: text)
         for try await event in stream {
@@ -141,13 +149,50 @@ struct WuhuCLI: AsyncParsableCommand {
       @Option(help: "Session id (or set WUHU_CURRENT_SESSION_ID).")
       var sessionId: String?
 
+      @Option(help: "Only include transcript entries after this cursor id (exclusive).")
+      var sinceCursor: Int64?
+
+      @Option(help: "Only include transcript entries after this time. Accepts unix seconds, ISO-8601, or 'yyyy/MM/dd HH:mm:ss[Z]'.")
+      var sinceTime: String?
+
+      @Flag(help: "Follow live updates to the session over SSE.")
+      var follow: Bool = false
+
+      @Flag(help: "In follow mode, stop once the session becomes idle.")
+      var stopAfterIdle: Bool = false
+
+      @Option(help: "In follow mode, stop after this many seconds.")
+      var timeoutSeconds: Double?
+
       @OptionGroup
       var shared: Shared
 
       func run() async throws {
         let client = try makeClient(shared.server)
         let sessionId = try resolveWuhuSessionId(sessionId)
-        let response = try await client.getSession(id: sessionId)
+
+        let parsedSinceTime = try sinceTime.flatMap(parseSinceTime)
+
+        if follow {
+          let terminal = TerminalCapabilities()
+          var printer = SessionStreamPrinter(style: .init(verbosity: shared.verbosity, terminal: terminal))
+
+          let effectiveStopAfterIdle = stopAfterIdle || (timeoutSeconds == nil)
+          let stream = try await client.followSessionStream(
+            sessionID: sessionId,
+            sinceCursor: sinceCursor,
+            sinceTime: parsedSinceTime,
+            stopAfterIdle: effectiveStopAfterIdle,
+            timeoutSeconds: timeoutSeconds,
+          )
+
+          for try await event in stream {
+            printer.handle(event)
+          }
+          return
+        }
+
+        let response = try await client.getSession(id: sessionId, sinceCursor: sinceCursor, sinceTime: parsedSinceTime)
 
         let terminal = TerminalCapabilities()
         let style = SessionOutputStyle(verbosity: shared.verbosity, terminal: terminal)
@@ -233,4 +278,35 @@ func resolveWuhuSessionId(
     if !trimmed.isEmpty { return trimmed }
   }
   throw ValidationError("Missing session id. Pass --session-id or set WUHU_CURRENT_SESSION_ID.")
+}
+
+func parseSinceTime(_ raw: String) throws -> Date {
+  let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else {
+    throw ValidationError("Invalid --since-time (empty).")
+  }
+
+  if let seconds = Double(trimmed) {
+    return Date(timeIntervalSince1970: seconds)
+  }
+
+  let iso = ISO8601DateFormatter()
+  if let date = iso.date(from: trimmed) {
+    return date
+  }
+
+  let fmt = DateFormatter()
+  fmt.locale = Locale(identifier: "en_US_POSIX")
+
+  if trimmed.hasSuffix("Z") {
+    fmt.timeZone = TimeZone(secondsFromGMT: 0)
+    fmt.dateFormat = "yyyy/MM/dd HH:mm:ss'Z'"
+    if let date = fmt.date(from: trimmed) { return date }
+  }
+
+  fmt.timeZone = TimeZone.current
+  fmt.dateFormat = "yyyy/MM/dd HH:mm:ss"
+  if let date = fmt.date(from: trimmed) { return date }
+
+  throw ValidationError("Invalid --since-time value: \(raw)")
 }

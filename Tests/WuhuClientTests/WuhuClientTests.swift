@@ -8,7 +8,7 @@ struct WuhuClientTests {
   @Test func promptStreamDecodesSSEEvents() async throws {
     let http = MockHTTPClient(
       sseHandler: { request in
-        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/sessions/s1/prompt")
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/prompt")
         #expect(request.headers["Accept"] == "text/event-stream")
         #expect(request.headers["Content-Type"] == "application/json")
 

@@ -57,7 +57,7 @@ private func runAsClient(
   config: WuhuRunnerConfig,
   store: SQLiteRunnerStore,
 ) async throws {
-  let wsURL = wsURLFromHTTP(connectTo, path: "/v1/runners/ws")
+  let wsURL = wsURLFromHTTP(connectTo, path: "/v2/runners/ws")
 
   let logger = Logger(label: "WuhuRunner")
   let client = WebSocketClient(url: wsURL, logger: logger) { inbound, outbound, context in
@@ -81,7 +81,7 @@ private enum RunnerRouter {
 
     router.get("healthz") { _, _ -> String in "ok" }
 
-    router.ws("/v1/runner/ws") { _, _ in
+    router.ws("/v2/runner/ws") { _, _ in
       .upgrade()
     } onUpgrade: { inbound, outbound, wsContext in
       let hello = WuhuRunnerMessage.hello(runnerName: runnerName, version: 1)

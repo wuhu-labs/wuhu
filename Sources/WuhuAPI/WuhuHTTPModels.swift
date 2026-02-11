@@ -28,9 +28,19 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
 
 public struct WuhuPromptRequest: Sendable, Hashable, Codable {
   public var input: String
+  public var detach: Bool?
 
-  public init(input: String) {
+  public init(input: String, detach: Bool? = nil) {
     self.input = input
+    self.detach = detach
+  }
+}
+
+public struct WuhuPromptDetachedResponse: Sendable, Hashable, Codable {
+  public var userEntry: WuhuSessionEntry
+
+  public init(userEntry: WuhuSessionEntry) {
+    self.userEntry = userEntry
   }
 }
 
@@ -54,19 +64,15 @@ public struct WuhuToolResult: Sendable, Hashable, Codable {
   }
 }
 
-public enum WuhuPromptEvent: Sendable, Hashable, Codable {
-  case toolExecutionStart(toolCallId: String, toolName: String, args: JSONValue)
-  case toolExecutionEnd(toolCallId: String, toolName: String, result: WuhuToolResult, isError: Bool)
+public enum WuhuSessionStreamEvent: Sendable, Hashable, Codable {
+  case entryAppended(WuhuSessionEntry)
   case assistantTextDelta(String)
+  case idle
   case done
 
   enum CodingKeys: String, CodingKey {
     case type
-    case toolCallId
-    case toolName
-    case args
-    case result
-    case isError
+    case entry
     case delta
   }
 
@@ -74,45 +80,30 @@ public enum WuhuPromptEvent: Sendable, Hashable, Codable {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let type = try c.decode(String.self, forKey: .type)
     switch type {
-    case "tool_execution_start":
-      self = try .toolExecutionStart(
-        toolCallId: c.decode(String.self, forKey: .toolCallId),
-        toolName: c.decode(String.self, forKey: .toolName),
-        args: c.decode(JSONValue.self, forKey: .args),
-      )
-    case "tool_execution_end":
-      self = try .toolExecutionEnd(
-        toolCallId: c.decode(String.self, forKey: .toolCallId),
-        toolName: c.decode(String.self, forKey: .toolName),
-        result: c.decode(WuhuToolResult.self, forKey: .result),
-        isError: c.decode(Bool.self, forKey: .isError),
-      )
+    case "entry_appended":
+      self = try .entryAppended(c.decode(WuhuSessionEntry.self, forKey: .entry))
     case "assistant_text_delta":
       self = try .assistantTextDelta(c.decode(String.self, forKey: .delta))
+    case "idle":
+      self = .idle
     case "done":
       self = .done
     default:
-      throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown prompt event type: \\(type)")
+      throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown session stream event type: \\(type)")
     }
   }
 
   public func encode(to encoder: any Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
     switch self {
-    case let .toolExecutionStart(toolCallId, toolName, args):
-      try c.encode("tool_execution_start", forKey: .type)
-      try c.encode(toolCallId, forKey: .toolCallId)
-      try c.encode(toolName, forKey: .toolName)
-      try c.encode(args, forKey: .args)
-    case let .toolExecutionEnd(toolCallId, toolName, result, isError):
-      try c.encode("tool_execution_end", forKey: .type)
-      try c.encode(toolCallId, forKey: .toolCallId)
-      try c.encode(toolName, forKey: .toolName)
-      try c.encode(result, forKey: .result)
-      try c.encode(isError, forKey: .isError)
+    case let .entryAppended(entry):
+      try c.encode("entry_appended", forKey: .type)
+      try c.encode(entry, forKey: .entry)
     case let .assistantTextDelta(delta):
       try c.encode("assistant_text_delta", forKey: .type)
       try c.encode(delta, forKey: .delta)
+    case .idle:
+      try c.encode("idle", forKey: .type)
     case .done:
       try c.encode("done", forKey: .type)
     }

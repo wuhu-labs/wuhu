@@ -42,21 +42,31 @@ public struct WuhuServer: Sendable {
       "ok"
     }
 
-    router.get("v1/sessions") { request, context async throws -> [WuhuSession] in
+    router.get("v2/sessions") { request, context async throws -> [WuhuSession] in
       struct Query: Decodable { var limit: Int? }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
       return try await service.listSessions(limit: query.limit)
     }
 
-    router.get("v1/sessions/:id") { request, context async throws -> Response in
+    router.get("v2/sessions/:id") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
+      struct Query: Decodable {
+        var sinceCursor: Int64?
+        var sinceTime: Double?
+      }
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+      let sinceTime = query.sinceTime.map { Date(timeIntervalSince1970: $0) }
       let session = try await service.getSession(id: id)
-      let transcript = try await service.getTranscript(sessionID: id)
+      let transcript: [WuhuSessionEntry] = if query.sinceCursor != nil || sinceTime != nil {
+        try await service.getTranscript(sessionID: id, sinceCursor: query.sinceCursor, sinceTime: sinceTime)
+      } else {
+        try await service.getTranscript(sessionID: id)
+      }
       let response = WuhuGetSessionResponse(session: session, transcript: transcript)
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
-    router.post("v1/sessions") { request, context async throws -> Response in
+    router.post("v2/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
       let model = (create.model?.isEmpty == false) ? create.model! : defaultModel(for: create.provider)
@@ -100,7 +110,7 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(session, from: request, context: context)
     }
 
-    router.post("v1/sessions/:id/prompt") { request, context async throws -> Response in
+    router.post("v2/sessions/:id/prompt") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       let prompt = try await request.decode(as: WuhuPromptRequest.self, context: context)
 
@@ -115,45 +125,24 @@ public struct WuhuServer: Sendable {
         )
       }()
 
-      let stream: AsyncThrowingStream<WuhuPromptStreamEvent, any Error>
-      do {
-        stream = try await service.promptStream(
+      if prompt.detach == true {
+        let response = try await service.promptDetached(
           sessionID: id,
           input: prompt.input,
           tools: tools,
         )
-      } catch {
-        // Always return a well-formed SSE stream (avoid abrupt chunked close).
-        let errorStream = AsyncStream<ByteBuffer> { continuation in
-          let apiEvents: [WuhuPromptEvent] = [
-            .assistantTextDelta("\n[error] \(error)\n"),
-            .done,
-          ]
-          for apiEvent in apiEvents {
-            let data = try! WuhuJSON.encoder.encode(apiEvent)
-            var s = "data: "
-            s += String(decoding: data, as: UTF8.self)
-            s += "\n\n"
-            continuation.yield(ByteBuffer(string: s))
-          }
-          continuation.finish()
-        }
-
-        var headers = HTTPFields()
-        headers[.contentType] = "text/event-stream"
-        headers[.cacheControl] = "no-cache"
-        headers[.connection] = "keep-alive"
-
-        return Response(
-          status: .ok,
-          headers: headers,
-          body: ResponseBody(asyncSequence: errorStream),
-        )
+        return try context.responseEncoder.encode(response, from: request, context: context)
       }
+
+      let stream: AsyncThrowingStream<WuhuSessionStreamEvent, any Error> = try await service.promptStream(
+        sessionID: id,
+        input: prompt.input,
+        tools: tools,
+      )
 
       let byteStream = AsyncStream<ByteBuffer> { continuation in
         let task = Task {
-          func yieldEvent(_ apiEvent: WuhuPromptEvent) {
+          func yieldEvent(_ apiEvent: WuhuSessionStreamEvent) {
             let data = try! WuhuJSON.encoder.encode(apiEvent)
             var s = "data: "
             s += String(decoding: data, as: UTF8.self)
@@ -163,9 +152,8 @@ public struct WuhuServer: Sendable {
 
           do {
             for try await event in stream {
-              let apiEvent = mapPromptEvent(event)
-              yieldEvent(apiEvent)
-              if case .done = apiEvent { break }
+              yieldEvent(event)
+              if case .done = event { break }
             }
           } catch {
             yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
@@ -188,7 +176,63 @@ public struct WuhuServer: Sendable {
       )
     }
 
-    router.ws("/v1/runners/ws") { _, _ in
+    router.get("v2/sessions/:id/follow") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      struct Query: Decodable {
+        var sinceCursor: Int64?
+        var sinceTime: Double?
+        var stopAfterIdle: Int?
+        var timeoutSeconds: Double?
+      }
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+      let sinceTime = query.sinceTime.map { Date(timeIntervalSince1970: $0) }
+      let stopAfterIdle = (query.stopAfterIdle ?? 0) != 0
+
+      let stream = try await service.followSessionStream(
+        sessionID: id,
+        sinceCursor: query.sinceCursor,
+        sinceTime: sinceTime,
+        stopAfterIdle: stopAfterIdle,
+        timeoutSeconds: query.timeoutSeconds,
+      )
+
+      let byteStream = AsyncStream<ByteBuffer> { continuation in
+        let task = Task {
+          func yieldEvent(_ apiEvent: WuhuSessionStreamEvent) {
+            let data = try! WuhuJSON.encoder.encode(apiEvent)
+            var s = "data: "
+            s += String(decoding: data, as: UTF8.self)
+            s += "\n\n"
+            continuation.yield(ByteBuffer(string: s))
+          }
+
+          do {
+            for try await event in stream {
+              yieldEvent(event)
+              if case .done = event { break }
+            }
+          } catch {
+            yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
+            yieldEvent(.done)
+          }
+          continuation.finish()
+        }
+        continuation.onTermination = { _ in task.cancel() }
+      }
+
+      var headers = HTTPFields()
+      headers[.contentType] = "text/event-stream"
+      headers[.cacheControl] = "no-cache"
+      headers[.connection] = "keep-alive"
+
+      return Response(
+        status: .ok,
+        headers: headers,
+        body: ResponseBody(asyncSequence: byteStream),
+      )
+    }
+
+    router.ws("/v2/runners/ws") { _, _ in
       .upgrade()
     } onUpgrade: { inbound, outbound, wsContext in
       do {
@@ -252,23 +296,4 @@ private func ensureDirectoryExists(forDatabasePath path: String) throws {
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 }
 
-private func mapPromptEvent(_ event: WuhuPromptStreamEvent) -> WuhuPromptEvent {
-  switch event {
-  case let .toolExecutionStart(toolCallId, toolName, args):
-    .toolExecutionStart(toolCallId: toolCallId, toolName: toolName, args: args)
-  case let .toolExecutionEnd(toolCallId, toolName, result, isError):
-    .toolExecutionEnd(
-      toolCallId: toolCallId,
-      toolName: toolName,
-      result: .init(
-        content: result.content.map(WuhuContentBlock.fromPi),
-        details: result.details,
-      ),
-      isError: isError,
-    )
-  case let .assistantTextDelta(delta):
-    .assistantTextDelta(delta)
-  case .done:
-    .done
-  }
-}
+// Prompt streaming now emits `WuhuSessionStreamEvent` directly (no mapping layer).

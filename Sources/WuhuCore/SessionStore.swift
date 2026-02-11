@@ -34,4 +34,9 @@ public protocol SessionStore: Sendable {
   @discardableResult
   func appendEntry(sessionID: String, payload: WuhuEntryPayload) async throws -> WuhuSessionEntry
   func getEntries(sessionID: String) async throws -> [WuhuSessionEntry]
+  func getEntries(
+    sessionID: String,
+    sinceCursor: Int64?,
+    sinceTime: Date?,
+  ) async throws -> [WuhuSessionEntry]
 }

@@ -64,6 +64,14 @@ public struct SessionOutputStyle: Sendable {
     self.terminal = terminal
   }
 
+  public func displayTimestamp(_ date: Date) -> String {
+    let fmt = DateFormatter()
+    fmt.locale = Locale(identifier: "en_US_POSIX")
+    fmt.timeZone = TimeZone(secondsFromGMT: 0)
+    fmt.dateFormat = "yyyy/MM/dd HH:mm:ss'Z'"
+    return fmt.string(from: date)
+  }
+
   public var separator: String {
     let base = "-----"
     return ANSI.wrap(base, ANSI.dim, enabled: terminal.colorEnabled && terminal.stdoutIsTTY)
@@ -74,9 +82,21 @@ public struct SessionOutputStyle: Sendable {
     return ANSI.wrap("User:", ANSI.bold + ANSI.blue, enabled: enabled)
   }
 
+  public func userLabel(cursor: Int64, createdAt: Date) -> String {
+    let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
+    let base = "User (\(cursor), \(displayTimestamp(createdAt))):"
+    return ANSI.wrap(base, ANSI.bold + ANSI.blue, enabled: enabled)
+  }
+
   public func agentLabel() -> String {
     let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
     return ANSI.wrap("Agent:", ANSI.bold + ANSI.green, enabled: enabled)
+  }
+
+  public func agentLabel(cursor: Int64, createdAt: Date) -> String {
+    let enabled = terminal.colorEnabled && terminal.stdoutIsTTY
+    let base = "Agent (\(cursor), \(displayTimestamp(createdAt))):"
+    return ANSI.wrap(base, ANSI.bold + ANSI.green, enabled: enabled)
   }
 
   public func meta(_ text: String) -> String {
@@ -289,13 +309,13 @@ public struct SessionTranscriptRenderer: Sendable {
           let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
           if text.isEmpty { break }
           flushPendingMetaIfNeeded()
-          appendVisibleMessage(label: style.userLabel(), text: text)
+          appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
 
         case let .assistant(a):
           let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
           if text.isEmpty { break }
           flushPendingMetaIfNeeded()
-          appendVisibleMessage(label: style.agentLabel(), text: text)
+          appendVisibleMessage(label: style.agentLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
 
         case let .toolResult(t):
           if toolEndsHandled.contains(t.toolCallId) { break }
@@ -390,13 +410,16 @@ public struct SessionTranscriptRenderer: Sendable {
   }
 }
 
-public struct PromptStreamPrinter {
+public struct SessionStreamPrinter {
   public var style: SessionOutputStyle
   public var stdout: FileHandle
   public var stderr: FileHandle
 
   private var toolArgsById: [String: JSONValue] = [:]
+  private var toolEndsHandled: Set<String> = []
+
   private var printedAnyAssistantText = false
+  private var printedAssistantPreamble = false
 
   public init(
     style: SessionOutputStyle,
@@ -408,48 +431,136 @@ public struct PromptStreamPrinter {
     self.stderr = stderr
   }
 
-  public mutating func printPromptPreamble(userText: String) {
-    let trunc: DisplayTruncation = (style.verbosity == .full) ? .messageFull : .messageCompact
-    let user = truncateForDisplay(userText, options: trunc).trimmingCharacters(in: .newlines)
-
-    writeStdout("\(style.userLabel())\n")
-    writeStdout(user + "\n")
-    writeStdout("\n\(style.separator)\n")
-    writeStdout("\(style.agentLabel())\n")
+  public mutating func printEntryIfVisible(_ entry: WuhuSessionEntry) {
+    switch entry.payload {
+    case let .message(m):
+      switch m {
+      case let .user(u):
+        let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+        appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+      case let .assistant(a):
+        let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+        appendVisibleMessage(label: style.agentLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+      default:
+        break
+      }
+    default:
+      break
+    }
   }
 
-  public mutating func handle(_ event: WuhuPromptEvent) {
+  public mutating func handle(_ event: WuhuSessionStreamEvent) {
     switch event {
-    case let .toolExecutionStart(toolCallId, _, args):
-      toolArgsById[toolCallId] = args
-
-    case let .toolExecutionEnd(toolCallId, toolName, result, isError):
-      defer { toolArgsById.removeValue(forKey: toolCallId) }
-      guard style.verbosity != .minimal else { return }
-
-      let args = toolArgsById[toolCallId]
-      let summary = toolSummaryLine(
-        .init(toolName: toolName, args: args, result: result, isError: isError),
-        verbosity: style.verbosity,
-      )
-      var line = "[tool] \(summary)"
-      if isError { line += " (error)" }
-      writeStderr(style.tool(line) + "\n")
-
-      if let details = toolDetailsForDisplay(
-        .init(toolName: toolName, args: args, result: result, isError: isError),
-        verbosity: style.verbosity,
-      ) {
-        writeStderr(details + "\n")
-      }
+    case let .entryAppended(entry):
+      handleAppendedEntry(entry)
 
     case let .assistantTextDelta(delta):
+      if !printedAssistantPreamble {
+        writeStdout("\n\(style.separator)\n")
+        writeStdout("\(style.agentLabel())\n")
+        printedAssistantPreamble = true
+      }
       printedAnyAssistantText = true
       writeStdout(delta)
 
+    case .idle:
+      writeStdout("\n\(style.meta("[idle]"))\n")
+
     case .done:
       if printedAnyAssistantText { writeStdout("\n") }
+      printedAnyAssistantText = false
+      printedAssistantPreamble = false
     }
+  }
+
+  private mutating func handleAppendedEntry(_ entry: WuhuSessionEntry) {
+    switch entry.payload {
+    case let .message(m):
+      switch m {
+      case let .user(u):
+        resetAssistantStreamingState()
+        let text = renderTextBlocks(u.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+        appendVisibleMessage(label: style.userLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+
+      case let .assistant(a):
+        let text = renderTextBlocks(a.content).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return }
+
+        if printedAnyAssistantText {
+          resetAssistantStreamingState()
+          writeStdout(style.meta("Agent cursor \(entry.id), \(style.displayTimestamp(entry.createdAt))") + "\n")
+          return
+        }
+
+        resetAssistantStreamingState()
+        appendVisibleMessage(label: style.agentLabel(cursor: entry.id, createdAt: entry.createdAt), text: text)
+
+      case let .toolResult(t):
+        if toolEndsHandled.contains(t.toolCallId) { return }
+        if style.verbosity == .minimal { return }
+
+        let line = toolSummaryLine(
+          .init(
+            toolName: t.toolName,
+            args: toolArgsById[t.toolCallId],
+            result: .init(content: t.content, details: t.details),
+            isError: t.isError,
+          ),
+          verbosity: style.verbosity,
+        )
+        writeStderr(style.tool("[tool] \(line)\(t.isError ? " (error)" : "")") + "\n")
+
+      default:
+        break
+      }
+
+    case let .toolExecution(t):
+      switch t.phase {
+      case .start:
+        toolArgsById[t.toolCallId] = t.arguments
+      case .end:
+        toolEndsHandled.insert(t.toolCallId)
+        defer { toolArgsById.removeValue(forKey: t.toolCallId) }
+        guard style.verbosity != .minimal else { return }
+
+        let toolResult = t.result.flatMap { decodeFromJSONValue($0, as: WuhuToolResult.self) }
+        let isError = t.isError ?? false
+        let line = toolSummaryLine(
+          .init(toolName: t.toolName, args: toolArgsById[t.toolCallId], result: toolResult, isError: isError),
+          verbosity: style.verbosity,
+        )
+        writeStderr(style.tool("[tool] \(line)\(isError ? " (error)" : "")") + "\n")
+        if let details = toolDetailsForDisplay(
+          .init(toolName: t.toolName, args: toolArgsById[t.toolCallId], result: toolResult, isError: isError),
+          verbosity: style.verbosity,
+        ) {
+          writeStderr(details + "\n")
+        }
+      }
+
+    case .compaction, .header, .custom, .unknown:
+      break
+    }
+  }
+
+  private mutating func resetAssistantStreamingState() {
+    if printedAnyAssistantText {
+      writeStdout("\n")
+    }
+    printedAnyAssistantText = false
+    printedAssistantPreamble = false
+  }
+
+  private mutating func appendVisibleMessage(label: String, text: String) {
+    let trunc: DisplayTruncation = (style.verbosity == .full) ? .messageFull : .messageCompact
+    let rendered = truncateForDisplay(text, options: trunc).trimmingCharacters(in: .newlines)
+
+    writeStdout("\n\(style.separator)\n")
+    writeStdout("\(label)\n")
+    writeStdout(rendered + "\n")
   }
 
   private func writeStdout(_ s: String) {

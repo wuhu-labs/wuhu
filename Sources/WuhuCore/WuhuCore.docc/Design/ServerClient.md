@@ -23,26 +23,38 @@ Current schema (subset):
   - `type`: currently only `local`
   - `path`: local filesystem path used as the session working directory
 
-## HTTP API (v1)
+## HTTP API (v2)
 
 The server exposes a minimal command/query/event API:
 
 - **Queries (GET)**:
-  - `GET /v1/sessions?limit=…` — list sessions
-  - `GET /v1/sessions/:id` — session + transcript
+  - `GET /v2/sessions?limit=…` — list sessions
+  - `GET /v2/sessions/:id` — session + transcript
+    - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
 - **Commands (POST)**:
-  - `POST /v1/sessions` — create session (requires `environment`)
-  - `POST /v1/sessions/:id/prompt` — append prompt and stream events over SSE
+  - `POST /v2/sessions` — create session (requires `environment`)
+  - `POST /v2/sessions/:id/prompt` — append prompt
+    - `detach=true` returns immediately (`WuhuPromptDetachedResponse`)
+    - otherwise streams events over SSE
+- **Streaming (GET + SSE)**:
+  - `GET /v2/sessions/:id/follow` — stream session changes over SSE
+    - Optional filters: `sinceCursor`, `sinceTime`
+    - Stop conditions: `stopAfterIdle=1`, `timeoutSeconds`
 
 ### Streaming (SSE)
 
 Prompting is a command (`POST`), but its result is an event stream:
 
 - Response content type: `text/event-stream`
-- Events are encoded as JSON `WuhuPromptEvent` payloads in `data:` frames.
+- Events are encoded as JSON `WuhuSessionStreamEvent` payloads in `data:` frames.
 - The client represents these events as an `AsyncThrowingStream`.
 
-This preserves the current coding-agent loop’s “text delta” streaming and tool execution events without introducing WebSocket.
+This preserves the coding-agent loop’s “text delta” streaming and tool execution events without introducing WebSocket.
+
+The follow endpoint uses the same SSE encoding, and includes:
+
+- persisted updates (`entry_appended`, with entry id + timestamp)
+- in-flight assistant progress (`assistant_text_delta`)
 
 ## Environment Snapshots (Persistence Decision)
 
@@ -56,4 +68,3 @@ This follows the principle: *session execution should not change retroactively w
 ## Migration Note
 
 This repo is not yet deployed, so database schema changes modify the initial migration in place. When testing locally, delete the previous SQLite file before running the server.
-
