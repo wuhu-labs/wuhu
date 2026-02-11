@@ -57,11 +57,22 @@ public actor WuhuService {
   public func promptStream(
     sessionID: String,
     input: String,
+    user: String? = nil,
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
+    let effectiveUser = Self.normalizeUser(user)
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
+
+    let reminderEntry = try await maybeAppendGroupChatReminderIfNeeded(
+      sessionID: sessionID,
+      transcript: transcript,
+      promptingUser: effectiveUser,
+    )
+    if reminderEntry != nil {
+      transcript = try await store.getEntries(sessionID: sessionID)
+    }
 
     let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
 
@@ -82,13 +93,15 @@ public actor WuhuService {
     }
 
     let compactionSettings = WuhuCompactionSettings.load(model: model)
+    let groupChatActive = WuhuGroupChat.reminderEntryIndex(in: transcript) != nil
+    let renderedInput = groupChatActive ? WuhuGroupChat.renderPromptInput(user: effectiveUser, input: input) : input
     transcript = try await maybeAutoCompact(
       sessionID: sessionID,
       transcript: transcript,
       model: model,
       requestOptions: requestOptions,
       compactionSettings: compactionSettings,
-      input: input,
+      input: renderedInput,
       streamFn: streamFn,
     )
 
@@ -106,14 +119,21 @@ public actor WuhuService {
     ))
 
     beginPrompt(sessionID: sessionID)
-    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(.user(input))))
+    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
+      user: effectiveUser,
+      content: [.text(text: input, signature: nil)],
+      timestamp: Date(),
+    ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
       let task = Task {
         do {
-          defer { Task { await self.endPrompt(sessionID: sessionID) } }
+          defer { Task { await self.endPromptAsync(sessionID: sessionID) } }
 
+          if let reminderEntry {
+            continuation.yield(.entryAppended(reminderEntry))
+          }
           continuation.yield(.entryAppended(userEntry))
 
           let consumeTask = Task {
@@ -123,7 +143,7 @@ public actor WuhuService {
             }
           }
           defer { consumeTask.cancel() }
-          try await agent.prompt(input)
+          try await agent.prompt(renderedInput)
           _ = try await consumeTask.value
 
           continuation.yield(.done)
@@ -136,7 +156,7 @@ public actor WuhuService {
       continuation.onTermination = { _ in
         task.cancel()
         Task { await agent.abort() }
-        Task { await self.endPrompt(sessionID: sessionID) }
+        Task { await self.endPromptAsync(sessionID: sessionID) }
       }
     }
   }
@@ -144,11 +164,20 @@ public actor WuhuService {
   public func promptDetached(
     sessionID: String,
     input: String,
+    user: String? = nil,
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
+    let effectiveUser = Self.normalizeUser(user)
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
+
+    _ = try await maybeAppendGroupChatReminderIfNeeded(
+      sessionID: sessionID,
+      transcript: transcript,
+      promptingUser: effectiveUser,
+    )
+    transcript = try await store.getEntries(sessionID: sessionID)
 
     let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
     let model = Model(id: session.model, provider: session.provider.piProvider)
@@ -168,13 +197,15 @@ public actor WuhuService {
     }
 
     let compactionSettings = WuhuCompactionSettings.load(model: model)
+    let groupChatActive = WuhuGroupChat.reminderEntryIndex(in: transcript) != nil
+    let renderedInput = groupChatActive ? WuhuGroupChat.renderPromptInput(user: effectiveUser, input: input) : input
     transcript = try await maybeAutoCompact(
       sessionID: sessionID,
       transcript: transcript,
       model: model,
       requestOptions: requestOptions,
       compactionSettings: compactionSettings,
-      input: input,
+      input: renderedInput,
       streamFn: streamFn,
     )
 
@@ -192,12 +223,16 @@ public actor WuhuService {
     ))
 
     beginPrompt(sessionID: sessionID)
-    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(.user(input))))
+    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
+      user: effectiveUser,
+      content: [.text(text: input, signature: nil)],
+      timestamp: Date(),
+    ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
     Task {
       do {
-        defer { Task { await self.endPrompt(sessionID: sessionID) } }
+        defer { Task { await self.endPromptAsync(sessionID: sessionID) } }
 
         let consumeTask = Task {
           do {
@@ -211,8 +246,8 @@ public actor WuhuService {
         }
         defer { consumeTask.cancel() }
 
-        try await agent.prompt(input)
-        _ = try await consumeTask.value
+        try await agent.prompt(renderedInput)
+        _ = await consumeTask.value
       } catch {
         await agent.abort()
       }
@@ -392,6 +427,7 @@ public actor WuhuService {
 
   private static func extractContextMessages(from transcript: [WuhuSessionEntry]) -> [Message] {
     let headerIndex = transcript.firstIndex(where: { $0.parentEntryID == nil }) ?? 0
+    let reminderIndex = WuhuGroupChat.reminderEntryIndex(in: transcript)
 
     var summary: String?
     var firstKeptEntryID: Int64?
@@ -414,13 +450,53 @@ public actor WuhuService {
       messages.append(WuhuCompactionEngine.makeSummaryMessage(summary: summary))
     }
 
-    for entry in transcript[startIndex...] {
+    for (idx, entry) in transcript[startIndex...].enumerated() {
+      let entryIndex = startIndex + idx
       guard case let .message(m) = entry.payload else { continue }
-      guard let pi = m.toPiMessage() else { continue }
+      guard let pi = WuhuGroupChat.renderForLLM(message: m, entryIndex: entryIndex, reminderIndex: reminderIndex) else { continue }
       messages.append(pi)
     }
 
     return messages
+  }
+
+  private static func normalizeUser(_ user: String?) -> String {
+    let trimmed = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? WuhuUserMessage.unknownUser : trimmed
+  }
+
+  private static func firstPromptingUser(in transcript: [WuhuSessionEntry]) -> String? {
+    for entry in transcript {
+      guard case let .message(m) = entry.payload else { continue }
+      guard case let .user(u) = m else { continue }
+      return u.user
+    }
+    return nil
+  }
+
+  private func maybeAppendGroupChatReminderIfNeeded(
+    sessionID: String,
+    transcript: [WuhuSessionEntry],
+    promptingUser: String,
+  ) async throws -> WuhuSessionEntry? {
+    if WuhuGroupChat.reminderEntryIndex(in: transcript) != nil {
+      return nil
+    }
+
+    guard let firstUser = Self.firstPromptingUser(in: transcript) else {
+      return nil
+    }
+
+    guard firstUser != promptingUser else {
+      return nil
+    }
+
+    let reminderEntry = try await store.appendEntry(
+      sessionID: sessionID,
+      payload: .message(WuhuGroupChat.makeReminderMessage(previousUser: firstUser)),
+    )
+    publishLiveEvent(sessionID: sessionID, event: .entryAppended(reminderEntry))
+    return reminderEntry
   }
 
   private static func contentBlockToJSON(_ block: ContentBlock) -> JSONValue {
@@ -520,6 +596,10 @@ public actor WuhuService {
     } else {
       activePromptCount[sessionID] = n
     }
+  }
+
+  private func endPromptAsync(sessionID: String) async {
+    endPrompt(sessionID: sessionID)
   }
 
   private func isIdle(sessionID: String) -> Bool {

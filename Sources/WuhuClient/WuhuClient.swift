@@ -56,12 +56,13 @@ public struct WuhuClient: Sendable {
   public func promptStream(
     sessionID: String,
     input: String,
+    user: String? = nil,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
     let url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: sessionID).appending(path: "prompt")
     var req = HTTPRequest(url: url, method: "POST")
     req.setHeader("application/json", for: "Content-Type")
     req.setHeader("text/event-stream", for: "Accept")
-    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, detach: false))
+    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, user: user, detach: false))
 
     let sse = try await http.sse(for: req)
     return AsyncThrowingStream { continuation in
@@ -88,12 +89,13 @@ public struct WuhuClient: Sendable {
   public func promptDetached(
     sessionID: String,
     input: String,
+    user: String? = nil,
   ) async throws -> WuhuPromptDetachedResponse {
     let url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: sessionID).appending(path: "prompt")
     var req = HTTPRequest(url: url, method: "POST")
     req.setHeader("application/json", for: "Content-Type")
     req.setHeader("application/json", for: "Accept")
-    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, detach: true))
+    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, user: user, detach: true))
 
     let (data, _) = try await http.data(for: req)
     return try WuhuJSON.decoder.decode(WuhuPromptDetachedResponse.self, from: data)

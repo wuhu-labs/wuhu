@@ -92,6 +92,10 @@ All entry payloads are stored as JSON and decoded into `WuhuEntryPayload`:
 - `custom_message` (reserved for extensions; participates in context like a user message)
 - `unknown`
 
+User messages persist an additional identity field:
+
+- `WuhuUserMessage.user` (defaults to `unknown_user` for historical data / missing clients)
+
 This deliberately leaves space for:
 
 - “new entry” types (via `custom` / `unknown`)

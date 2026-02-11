@@ -360,4 +360,133 @@ struct WuhuCoreTests {
     }
     #expect(sawDone)
   }
+
+  @Test func groupChat_escalatesOnSecondUserAndPrefixesOnlyAfterReminder() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    actor Captures {
+      var ctxByCall: [Int: Context] = [:]
+      var callCount = 0
+
+      func stream(model: Model, ctx: Context, _: RequestOptions) -> AsyncThrowingStream<AssistantMessageEvent, any Error> {
+        callCount += 1
+        ctxByCall[callCount] = ctx
+
+        return AsyncThrowingStream { continuation in
+          Task {
+            let assistant = AssistantMessage(
+              provider: model.provider,
+              model: model.id,
+              content: [.text("ok")],
+              stopReason: .stop,
+            )
+            continuation.yield(.done(message: assistant))
+            continuation.finish()
+          }
+        }
+      }
+
+      func context(forCall n: Int) -> Context? {
+        ctxByCall[n]
+      }
+    }
+
+    func joinedUserText(_ message: Message) -> String? {
+      guard case let .user(u) = message else { return nil }
+      return u.content.compactMap { block in
+        guard case let .text(t) = block else { return nil }
+        return t.text
+      }.joined()
+    }
+
+    func joinedStoredText(_ message: WuhuUserMessage) -> String {
+      message.content.compactMap { block in
+        guard case let .text(text, _) = block else { return nil }
+        return text
+      }.joined()
+    }
+
+    let captures = Captures()
+
+    let prompt1 = "What is going on in the last two commits?"
+    let s1 = try await service.promptStream(
+      sessionID: session.id,
+      input: prompt1,
+      user: "alice",
+      tools: [],
+      streamFn: { model, ctx, opts in
+        await captures.stream(model: model, ctx: ctx, opts)
+      },
+    )
+    for try await _ in s1 {}
+
+    let c1 = try #require(await captures.context(forCall: 1))
+    let lastUser1 = try #require(c1.messages.last(where: { $0.role == .user }))
+    #expect(joinedUserText(lastUser1) == prompt1)
+
+    let prompt2 = "Can you summarize?"
+    let s2 = try await service.promptStream(
+      sessionID: session.id,
+      input: prompt2,
+      user: "bob",
+      tools: [],
+      streamFn: { model, ctx, opts in
+        await captures.stream(model: model, ctx: ctx, opts)
+      },
+    )
+    for try await _ in s2 {}
+
+    let c2 = try #require(await captures.context(forCall: 2))
+    let allUser2 = c2.messages.compactMap(joinedUserText(_:))
+
+    #expect(allUser2.contains(prompt1))
+    #expect(allUser2.contains { $0.contains("A new user has joined this conversation") && $0.contains("alice") })
+    #expect(allUser2.last == "bob:\n\n\(prompt2)")
+
+    let transcriptAfter2 = try await service.getTranscript(sessionID: session.id)
+    let storedUserMessages = transcriptAfter2.compactMap { entry -> WuhuUserMessage? in
+      guard case let .message(m) = entry.payload else { return nil }
+      guard case let .user(u) = m else { return nil }
+      return u
+    }
+    #expect(storedUserMessages.count >= 2)
+    #expect(storedUserMessages[0].user == "alice")
+    #expect(joinedStoredText(storedUserMessages[0]).trimmingCharacters(in: .whitespacesAndNewlines) == prompt1)
+    #expect(storedUserMessages[1].user == "bob")
+    #expect(joinedStoredText(storedUserMessages[1]).trimmingCharacters(in: .whitespacesAndNewlines) == prompt2)
+
+    let prompt3 = "Thanks."
+    let s3 = try await service.promptStream(
+      sessionID: session.id,
+      input: prompt3,
+      user: "alice",
+      tools: [],
+      streamFn: { model, ctx, opts in
+        await captures.stream(model: model, ctx: ctx, opts)
+      },
+    )
+    for try await _ in s3 {}
+
+    let c3 = try #require(await captures.context(forCall: 3))
+    let allUser3 = c3.messages.compactMap(joinedUserText(_:))
+
+    #expect(allUser3.contains(prompt1))
+    #expect(allUser3.contains("bob:\n\n\(prompt2)"))
+    #expect(allUser3.last == "alice:\n\n\(prompt3)")
+  }
+
+  @Test func userMessageDecodingDefaultsUserForHistoricalData() throws {
+    let json = #"{"content":[{"type":"text","text":"hi","signature":null}],"timestamp":0}"#
+    let data = Data(json.utf8)
+    let decoded = try WuhuJSON.decoder.decode(WuhuUserMessage.self, from: data)
+    #expect(decoded.user == WuhuUserMessage.unknownUser)
+  }
 }

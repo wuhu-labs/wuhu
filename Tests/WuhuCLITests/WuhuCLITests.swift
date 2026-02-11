@@ -18,4 +18,14 @@ struct WuhuCLITests {
       _ = try resolveWuhuSessionId(nil, env: [:])
     }
   }
+
+  @Test func resolveWuhuUsername_prefersOptionOverEnv() {
+    let resolved = resolveWuhuUsername("opt_user", env: ["WUHU_USERNAME": "env_user"])
+    #expect(resolved == "opt_user")
+  }
+
+  @Test func resolveWuhuUsername_usesEnvWhenOptionMissing() {
+    let resolved = resolveWuhuUsername(nil, env: ["WUHU_USERNAME": "env_user"])
+    #expect(resolved == "env_user")
+  }
 }

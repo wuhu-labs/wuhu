@@ -28,10 +28,12 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
 
 public struct WuhuPromptRequest: Sendable, Hashable, Codable {
   public var input: String
+  public var user: String?
   public var detach: Bool?
 
-  public init(input: String, detach: Bool? = nil) {
+  public init(input: String, user: String? = nil, detach: Bool? = nil) {
     self.input = input
+    self.user = user
     self.detach = detach
   }
 }
