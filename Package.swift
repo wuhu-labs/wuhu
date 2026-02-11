@@ -32,6 +32,7 @@ let package = Package(
     .library(name: "WuhuServer", targets: ["WuhuServer"]),
     .library(name: "WuhuRunner", targets: ["WuhuRunner"]),
     .executable(name: "wuhu", targets: ["wuhu"]),
+    .executable(name: "wuhu-bench-find", targets: ["WuhuBenchFind"]),
   ],
   dependencies: [
     .package(url: "https://github.com/nicklockwood/SwiftFormat.git", from: "0.59.1"),
@@ -122,6 +123,15 @@ let package = Package(
         "WuhuRunner",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Yams", package: "Yams"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .executableTarget(
+      name: "WuhuBenchFind",
+      dependencies: [
+        "WuhuCore",
+        "PiAI",
+        "PiAgent",
       ],
       swiftSettings: strictConcurrency,
     ),
