@@ -60,53 +60,16 @@ Environment variables:
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 
-If keys aren’t set in the environment, the `wuhu` CLI also tries to load a local `.env`.
+For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don’t rely on a local `.env`).
 
-## Reference Paths
+## GitHub Issue Workflow
 
-These paths are available in the Terragon dev environment:
+When you are assigned to work on a GitHub issue, you must create a new branch:
 
-- `.` - Wuhu repo (this repo)
-- `../wuhu-terragon` - Terragon source code, always available
-- `../axiia-website` - Personal project with useful code patterns (Bun-based)
-- `../codex` - OpenAI Codex repo, for integration experiments
-- `../pi-mono` - Pi coding agent monorepo, reference harness
-
-The `terragon-setup.sh` script clones these repos before your environment starts.
-
-## Using Terragon Code
-
-Terragon has working implementations of:
-
-- Sandbox providers (E2B, Docker, Daytona)
-- Daemon (agent runtime)
-- GitHub integration (PRs, checkpoints, webhooks)
-- Real-time updates (PartyKit)
-- Web UI patterns
-
-Reference it freely. Copy and adapt what makes sense. But Wuhu has different
-goals - don't inherit Terragon's tight coupling.
-
-## Key Differences from Terragon
-
-Terragon: "agents do your coding tasks" - full product, tightly integrated Wuhu:
-"understand your coding agents" - data layer, composition-first, modular
-
-Wuhu principles:
-
-- Expose primitives via API/MCP, let agents compose
-- Small interfaces, easy mocks
-- GitHub-optional (mock locally, polling for no-domain setups)
-- Infrastructure-agnostic contracts
-
-## Reference Projects
-
-### Axiia Website (`../axiia-website`)
-
-Personal project (paideia-ai/axiia-website). Bun monorepo with Elysia server,
-React Router SSR, service registry pattern, and domain API layering. Useful
-patterns for API design, DI, and config management. See `notes/axiia-website.md`
-for details.
+1. If you are already on a new branch that has no changes and has no new commits ahead of `main`, assume that branch is for you.
+2. If you are in a dirty place (uncommitted changes), stop and ask for human intervention.
+3. If the current branch (either you created or already present) is behind `origin/main`, bring it up to the latest `main` before you start your work.
+4. After you finish your work and perform validations, create a PR and make sure all checks pass before you finish your work.
 
 ## Notes
 
