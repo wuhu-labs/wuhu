@@ -20,42 +20,13 @@ public extension WuhuTools {
 // MARK: - read
 
 private func readTool(cwd: String) -> AnyAgentTool {
-  struct FlexibleInt: Decodable, Sendable {
-    var value: Int
-
-    init(_ value: Int) {
-      self.value = value
-    }
-
-    init(from decoder: any Decoder) throws {
-      let c = try decoder.singleValueContainer()
-      if let int = try? c.decode(Int.self) {
-        value = int
-        return
-      }
-      if let double = try? c.decode(Double.self) {
-        value = Int(double.rounded(.towardZero))
-        return
-      }
-      if let string = try? c.decode(String.self), let int = Int(string) {
-        value = int
-        return
-      }
-      if let bool = try? c.decode(Bool.self) {
-        value = bool ? 1 : 0
-        return
-      }
-      throw DecodingError.typeMismatch(
-        Int.self,
-        .init(codingPath: decoder.codingPath, debugDescription: "Expected integer-like value"),
-      )
-    }
-  }
-
+  // Tool argument types are intentionally strict (no coercion). Some models may emit incorrect JSON
+  // types (e.g. booleans for integer fields); we prefer fixing this at the prompt/schema level.
+  // See https://github.com/wuhu-labs/wuhu/issues/12
   struct Params: Decodable, Sendable {
     var path: String
-    var offset: FlexibleInt?
-    var limit: FlexibleInt?
+    var offset: Int?
+    var limit: Int?
   }
 
   let schema: JSONValue = .object([
@@ -72,7 +43,7 @@ private func readTool(cwd: String) -> AnyAgentTool {
   return AnyAgentTool(
     name: "read",
     label: "read",
-    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.",
+    description: "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.\n\nNote: offset/limit must be integers (see https://github.com/wuhu-labs/wuhu/issues/12).",
     parametersSchema: schema,
     execute: { (_: String, params: Params) in
       let resolved = ToolPath.resolveReadPath(params.path, cwd: cwd)
@@ -81,14 +52,14 @@ private func readTool(cwd: String) -> AnyAgentTool {
       let allLines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
       let totalLines = allLines.count
 
-      let startLine = max(0, (params.offset?.value ?? 1) - 1)
+      let startLine = max(0, (params.offset ?? 1) - 1)
       if startLine >= totalLines {
-        throw ToolError.message("Offset \(params.offset?.value ?? 1) is beyond end of file (\(totalLines) lines total)")
+        throw ToolError.message("Offset \(params.offset ?? 1) is beyond end of file (\(totalLines) lines total)")
       }
 
       var selected: [String]
       var userLimitedLines: Int?
-      if let limit = params.limit?.value {
+      if let limit = params.limit {
         let end = min(startLine + max(0, limit), totalLines)
         selected = Array(allLines[startLine ..< end])
         userLimitedLines = end - startLine
