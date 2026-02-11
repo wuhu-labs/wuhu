@@ -26,6 +26,16 @@ struct ServerFormView: View {
             .textInputAutocapitalization(.never)
             .keyboardType(.URL)
             .autocorrectionDisabled()
+
+            TextField(
+              "Username (optional)",
+              text: Binding(
+                get: { store.server.username ?? "" },
+                set: { store.send(.binding(.set(\.server.username, $0.trimmedNonEmpty))) },
+              ),
+            )
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
           }
 
           if let error = store.error {

@@ -54,7 +54,7 @@ struct AppFeature {
           .sessions(
             .settingsChanged(
               serverURL: settings.selectedServer?.url,
-              username: settings.username.trimmedNonEmpty,
+              username: settings.resolvedUsername,
             ),
           ),
         )

@@ -52,6 +52,7 @@ struct ServerFormFeature {
         }
         state.server.name = state.server.name.trimmingCharacters(in: .whitespacesAndNewlines)
         state.server.urlString = state.server.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.server.username = state.server.username?.trimmingCharacters(in: .whitespacesAndNewlines).trimmedNonEmpty
         return .send(.delegate(.saved(state.server)))
 
       case .cancelTapped:

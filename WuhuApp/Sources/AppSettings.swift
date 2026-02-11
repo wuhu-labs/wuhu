@@ -4,11 +4,13 @@ struct ServerConfig: Codable, Equatable, Identifiable {
   var id: UUID
   var name: String
   var urlString: String
+  var username: String?
 
-  init(id: UUID = UUID(), name: String, urlString: String) {
+  init(id: UUID = UUID(), name: String, urlString: String, username: String? = nil) {
     self.id = id
     self.name = name
     self.urlString = urlString
+    self.username = username
   }
 
   var url: URL? {
@@ -33,6 +35,10 @@ struct AppSettings: Codable, Equatable {
   var selectedServer: ServerConfig? {
     guard let selectedServerID else { return servers.first }
     return servers.first { $0.id == selectedServerID } ?? servers.first
+  }
+
+  var resolvedUsername: String? {
+    selectedServer?.username?.trimmedNonEmpty ?? username.trimmedNonEmpty
   }
 }
 

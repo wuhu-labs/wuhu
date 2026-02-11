@@ -19,6 +19,11 @@ struct SettingsView: View {
                     Text(server.urlString)
                       .font(.caption)
                       .foregroundStyle(.secondary)
+                    if let username = server.username?.trimmedNonEmpty {
+                      Text("User: \(username)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                   }
                   Spacer()
                   if store.selectedServerID == server.id {
@@ -46,7 +51,7 @@ struct SettingsView: View {
 
           Section("User") {
             TextField(
-              "Username",
+              "Default username",
               text: Binding(
                 get: { store.username },
                 set: { store.send(.binding(.set(\.username, $0))) },
@@ -54,6 +59,10 @@ struct SettingsView: View {
             )
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
+
+            Text("You can override this per server by editing the server.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
           }
         }
         .navigationTitle("Settings")
