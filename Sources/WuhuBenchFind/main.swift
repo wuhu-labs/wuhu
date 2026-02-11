@@ -94,11 +94,11 @@ private func parseOptions(_ args: ArraySlice<String>) throws -> Options {
     case "--tool-path":
       options.toolPath = try nextValue(arg)
     case "--tool-limit":
-      options.toolLimit = Int(try nextValue(arg)) ?? options.toolLimit
+      options.toolLimit = try Int(nextValue(arg)) ?? options.toolLimit
     case "--iterations":
-      options.iterations = Int(try nextValue(arg)) ?? options.iterations
+      options.iterations = try Int(nextValue(arg)) ?? options.iterations
     case "--warmup":
-      options.warmup = Int(try nextValue(arg)) ?? options.warmup
+      options.warmup = try Int(nextValue(arg)) ?? options.warmup
     case "--cli-find":
       options.cliFindPath = try nextValue(arg)
     case "--cli-prune-defaults":
@@ -108,7 +108,7 @@ private func parseOptions(_ args: ArraySlice<String>) throws -> Options {
     case "--include-git-ignored":
       options.includeGitIgnored = true
     case "--print-first-lines":
-      options.printFirstLines = Int(try nextValue(arg)) ?? options.printFirstLines
+      options.printFirstLines = try Int(nextValue(arg)) ?? options.printFirstLines
     case "-h", "--help":
       printHelpAndExit()
     default:
