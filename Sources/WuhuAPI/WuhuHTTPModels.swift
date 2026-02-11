@@ -56,6 +56,34 @@ public struct WuhuGetSessionResponse: Sendable, Hashable, Codable {
   }
 }
 
+public struct WuhuRunnerInfo: Sendable, Hashable, Codable, Identifiable {
+  public var name: String
+  public var connected: Bool
+
+  public var id: String {
+    name
+  }
+
+  public init(name: String, connected: Bool) {
+    self.name = name
+    self.connected = connected
+  }
+}
+
+public struct WuhuEnvironmentInfo: Sendable, Hashable, Codable, Identifiable {
+  public var name: String
+  public var type: String
+
+  public var id: String {
+    name
+  }
+
+  public init(name: String, type: String) {
+    self.name = name
+    self.type = type
+  }
+}
+
 public struct WuhuToolResult: Sendable, Hashable, Codable {
   public var content: [WuhuContentBlock]
   public var details: JSONValue

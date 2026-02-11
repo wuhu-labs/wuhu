@@ -20,6 +20,7 @@ let package = Package(
   name: "wuhu",
   platforms: [
     .macOS(.v14),
+    .iOS(.v16),
   ],
   products: [
     .library(name: "PiAI", targets: ["PiAI"]),

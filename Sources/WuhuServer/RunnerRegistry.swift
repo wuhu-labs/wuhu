@@ -8,6 +8,10 @@ import WuhuAPI
 actor RunnerRegistry {
   private var connections: [String: RunnerConnection] = [:]
 
+  func listRunnerNames() -> [String] {
+    connections.keys.sorted()
+  }
+
   func set(_ connection: RunnerConnection, for runnerName: String? = nil) {
     connections[runnerName ?? connection.runnerName] = connection
   }

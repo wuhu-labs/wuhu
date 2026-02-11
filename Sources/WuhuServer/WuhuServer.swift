@@ -42,6 +42,18 @@ public struct WuhuServer: Sendable {
       "ok"
     }
 
+    router.get("v2/runners") { _, _ async -> [WuhuRunnerInfo] in
+      let configured = (config.runners ?? []).map(\.name)
+      let connected = await runnerRegistry.listRunnerNames()
+      let connectedSet = Set(connected)
+      let all = Set(configured).union(connectedSet).sorted()
+      return all.map { .init(name: $0, connected: connectedSet.contains($0)) }
+    }
+
+    router.get("v2/environments") { _, _ -> [WuhuEnvironmentInfo] in
+      config.environments.map { .init(name: $0.name, type: $0.type) }
+    }
+
     router.get("v2/sessions") { request, context async throws -> [WuhuSession] in
       struct Query: Decodable { var limit: Int? }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)

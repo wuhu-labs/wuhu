@@ -5,6 +5,48 @@ import WuhuAPI
 import WuhuClient
 
 struct WuhuClientTests {
+  @Test func listRunnersDecodesResponse() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/runners")
+        #expect(request.method == "GET")
+        let data = try WuhuJSON.encoder.encode(
+          [
+            WuhuRunnerInfo(name: "r1", connected: true),
+            WuhuRunnerInfo(name: "r2", connected: false),
+          ],
+        )
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let runners = try await client.listRunners()
+    #expect(runners.map(\.name) == ["r1", "r2"])
+    #expect(runners.map(\.connected) == [true, false])
+  }
+
+  @Test func listEnvironmentsDecodesResponse() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/environments")
+        #expect(request.method == "GET")
+        let data = try WuhuJSON.encoder.encode(
+          [
+            WuhuEnvironmentInfo(name: "local", type: "local"),
+            WuhuEnvironmentInfo(name: "template", type: "folder-template"),
+          ],
+        )
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let envs = try await client.listEnvironments()
+    #expect(envs.map(\.name) == ["local", "template"])
+    #expect(envs.map(\.type) == ["local", "folder-template"])
+  }
+
   @Test func promptStreamDecodesSSEEvents() async throws {
     let http = MockHTTPClient(
       sseHandler: { request in
@@ -64,6 +106,41 @@ struct WuhuClientTests {
     let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
     let stream = try await client.promptStream(sessionID: "s1", input: "hello", user: "alice")
     for try await _ in stream {}
+  }
+
+  @Test func followSessionStreamSetsAcceptHeaderAndDecodesEvents() async throws {
+    let http = MockHTTPClient(
+      sseHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/follow")
+        #expect(request.headers["Accept"] == "text/event-stream")
+
+        return AsyncThrowingStream { continuation in
+          continuation.yield(.init(data: #"{"type":"idle"}"#))
+          continuation.yield(.init(data: #"{"type":"done"}"#))
+          continuation.finish()
+        }
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let stream = try await client.followSessionStream(sessionID: "s1")
+
+    var sawIdle = false
+    var sawDone = false
+
+    for try await event in stream {
+      switch event {
+      case .idle:
+        sawIdle = true
+      case .done:
+        sawDone = true
+      default:
+        break
+      }
+    }
+
+    #expect(sawIdle)
+    #expect(sawDone)
   }
 }
 

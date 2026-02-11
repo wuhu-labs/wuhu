@@ -11,6 +11,20 @@ public struct WuhuClient: Sendable {
     self.http = http
   }
 
+  public func listRunners() async throws -> [WuhuRunnerInfo] {
+    let url = baseURL.appending(path: "v2").appending(path: "runners")
+    let req = HTTPRequest(url: url, method: "GET")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode([WuhuRunnerInfo].self, from: data)
+  }
+
+  public func listEnvironments() async throws -> [WuhuEnvironmentInfo] {
+    let url = baseURL.appending(path: "v2").appending(path: "environments")
+    let req = HTTPRequest(url: url, method: "GET")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode([WuhuEnvironmentInfo].self, from: data)
+  }
+
   public func createSession(_ request: WuhuCreateSessionRequest) async throws -> WuhuSession {
     let url = baseURL.appending(path: "v2").appending(path: "sessions")
     var req = HTTPRequest(url: url, method: "POST")
@@ -118,7 +132,8 @@ public struct WuhuClient: Sendable {
     components?.queryItems = items.isEmpty ? nil : items
     url = components?.url ?? url
 
-    let req = HTTPRequest(url: url, method: "GET")
+    var req = HTTPRequest(url: url, method: "GET")
+    req.setHeader("text/event-stream", for: "Accept")
     let sse = try await http.sse(for: req)
     return AsyncThrowingStream { continuation in
       let task = Task {
