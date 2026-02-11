@@ -31,3 +31,8 @@ Environments (from `~/.wuhu/server.yml` / `~/.wuhu/runner.yml`):
 
 - `local`: use a fixed working directory (`path`).
 - `folder-template`: copy a template folder (`path`) into `workspaces_path/<session-id>` and optionally run `startup_script` in the copied workspace.
+
+Networking defaults:
+
+- Server listens on `host`/`port` from `~/.wuhu/server.yml` (default: `127.0.0.1:5530`).
+- Runner listens on `listen.host`/`listen.port` from `~/.wuhu/runner.yml` when `connectTo` is not set (default: `127.0.0.1:5531`).

@@ -79,6 +79,7 @@ Package.resolved
 DerivedData/
 *.xcodeproj
 *.xcworkspace
+**/xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 
@@ -87,6 +88,9 @@ DerivedData/
 !WuhuApp/*.xcworkspace
 !WuhuApp/*.xcodeproj/**
 !WuhuApp/*.xcworkspace/**
+
+# Never commit user-specific Xcode state (even for checked-in projects).
+**/xcuserdata/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

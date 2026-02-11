@@ -27,6 +27,8 @@ After this split, Wuhu supports:
 ### `server.yml` (excerpt)
 
 ```yaml
+host: 127.0.0.1            # set to 0.0.0.0 to listen on all interfaces
+port: 5530
 llm:
   openai: "…"
   anthropic: "…"
