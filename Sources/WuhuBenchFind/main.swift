@@ -1,7 +1,14 @@
+import Dispatch
 import Foundation
 import PiAgent
 import PiAI
 import WuhuCore
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 private struct Options: Sendable {
   var root: String = FileManager.default.currentDirectoryPath
@@ -52,13 +59,13 @@ struct WuhuBenchFindMain {
     var cliCount = 0
 
     for i in 1 ... options.iterations {
-      let wuhuStart = CFAbsoluteTimeGetCurrent()
+      let wuhuStart = nowNs()
       let wuhu = try await runWuhuFind(options: options)
-      let wuhuMs = (CFAbsoluteTimeGetCurrent() - wuhuStart) * 1000.0
+      let wuhuMs = elapsedMs(startNs: wuhuStart)
 
-      let cliStart = CFAbsoluteTimeGetCurrent()
+      let cliStart = nowNs()
       let cli = try runCLIFind(options: options)
-      let cliMs = (CFAbsoluteTimeGetCurrent() - cliStart) * 1000.0
+      let cliMs = elapsedMs(startNs: cliStart)
 
       wuhuTimes.append(wuhuMs)
       cliTimes.append(cliMs)
@@ -277,6 +284,15 @@ private func resolve(_ path: String) -> String {
   let expanded = (path as NSString).expandingTildeInPath
   if expanded.hasPrefix("/") { return expanded }
   return URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded).path
+}
+
+private func nowNs() -> UInt64 {
+  DispatchTime.now().uptimeNanoseconds
+}
+
+private func elapsedMs(startNs: UInt64) -> Double {
+  let end = DispatchTime.now().uptimeNanoseconds
+  return Double(end - startNs) / 1_000_000.0
 }
 
 private func median(_ xs: [Double]) -> Double {
