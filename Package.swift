@@ -153,5 +153,13 @@ let package = Package(
       ],
       swiftSettings: strictConcurrency,
     ),
+    .testTarget(
+      name: "WuhuCLITests",
+      dependencies: [
+        "wuhu",
+        .product(name: "Testing", package: "swift-testing"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
   ],
 )
