@@ -183,5 +183,13 @@ let package = Package(
       ],
       swiftSettings: strictConcurrency,
     ),
+    .testTarget(
+      name: "WuhuAPITests",
+      dependencies: [
+        "WuhuAPI",
+        .product(name: "Testing", package: "swift-testing"),
+      ],
+      swiftSettings: strictConcurrency,
+    ),
   ],
 )

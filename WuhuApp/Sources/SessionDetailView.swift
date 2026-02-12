@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import PiAI
 import SwiftUI
 import WuhuAPI
 
@@ -31,8 +30,9 @@ struct SessionDetailView: View {
           set: { store.send(.binding(.set(\.verbosity, $0))) },
         ),
       ) {
-        Text("Minimal").tag(SessionDetailFeature.Verbosity.minimal)
-        Text("Compact").tag(SessionDetailFeature.Verbosity.compact)
+        Text("Minimal").tag(WuhuSessionVerbosity.minimal)
+        Text("Compact").tag(WuhuSessionVerbosity.compact)
+        Text("Full").tag(WuhuSessionVerbosity.full)
       }
       .pickerStyle(.segmented)
 
@@ -54,35 +54,40 @@ struct SessionDetailView: View {
               .padding(.horizontal)
           }
 
-          ForEach(store.transcript) { entry in
-            if let view = EntryView(entry: entry, verbosity: store.verbosity) {
-              view
-                .id(entry.id)
-            }
+          let items = WuhuSessionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
+          ForEach(items) { item in
+            TranscriptItemRow(item: item, verbosity: store.verbosity)
+              .id(item.id)
           }
 
           if !store.streamingAssistantText.isEmpty {
+            TranscriptSeparator()
+              .padding(.horizontal)
             MessageBubble(
               role: "assistant",
-              title: "Assistant (streaming)",
+              title: "Agent (streaming):",
               text: store.streamingAssistantText,
-              isCompact: store.verbosity == .compact,
+              isCompact: false,
             )
             .padding(.horizontal)
-            .id("streaming")
+            .id("streaming.agent")
           }
         }
         .padding(.vertical, 12)
       }
       .onChange(of: store.transcript.last?.id) { lastID in
         guard let lastID else { return }
+        let lastVisibleID =
+          WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
+            .format(Array(store.transcript))
+            .last?.id ?? "entry.\(lastID)"
         withAnimation(.easeOut(duration: 0.2)) {
-          proxy.scrollTo(lastID, anchor: .bottom)
+          proxy.scrollTo(lastVisibleID, anchor: .bottom)
         }
       }
       .onChange(of: store.streamingAssistantText) { _ in
         guard !store.streamingAssistantText.isEmpty else { return }
-        proxy.scrollTo("streaming", anchor: .bottom)
+        proxy.scrollTo("streaming.agent", anchor: .bottom)
       }
     }
   }
@@ -113,130 +118,62 @@ struct SessionDetailView: View {
   }
 }
 
-private func EntryView(entry: WuhuSessionEntry, verbosity: SessionDetailFeature.Verbosity) -> AnyView? {
-  switch entry.payload {
-  case let .message(message):
-    return AnyView(
+private struct TranscriptItemRow: View {
+  let item: WuhuSessionDisplayItem
+  let verbosity: WuhuSessionVerbosity
+
+  var body: some View {
+    switch item.role {
+    case .meta:
+      Text(item.text)
+        .font(.system(.caption, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+
+    case .tool:
       MessageBubble(
-        role: roleLabel(message),
-        title: titleLabel(message, verbosity: verbosity),
-        text: messageText(message, verbosity: verbosity),
+        role: "tool",
+        title: item.title,
+        text: item.text,
+        isCompact: true,
+      )
+      .padding(.horizontal)
+
+    case .system, .user, .agent:
+      TranscriptSeparator()
+        .padding(.horizontal)
+      MessageBubble(
+        role: bubbleRole,
+        title: item.title,
+        text: item.text,
         isCompact: verbosity == .compact,
       )
-      .padding(.horizontal),
-    )
+      .padding(.horizontal)
+    }
+  }
 
-  case let .toolExecution(tool) where verbosity == .compact:
-    let phase = tool.phase.rawValue.uppercased()
-    let text = "\(phase) \(tool.toolName)\n\(tool.arguments.prettyPrinted())"
-    return AnyView(
-      MessageBubble(role: "tool", title: "Tool Execution", text: text, isCompact: true)
-        .padding(.horizontal),
-    )
-
-  case .toolExecution:
-    return nil
-
-  case let .compaction(compaction) where verbosity == .compact:
-    let text = "Tokens before: \(compaction.tokensBefore)\n\n\(compaction.summary)"
-    return AnyView(
-      MessageBubble(role: "system", title: "Compaction", text: text, isCompact: true)
-        .padding(.horizontal),
-    )
-
-  case .compaction:
-    return nil
-
-  case .header, .custom(customType: _, data: _), .unknown(type: _, payload: _):
-    return nil
+  private var bubbleRole: String {
+    switch item.role {
+    case .user:
+      "user"
+    case .agent:
+      "assistant"
+    case .system:
+      "system"
+    case .tool:
+      "tool"
+    case .meta:
+      "meta"
+    }
   }
 }
 
-private func roleLabel(_ message: WuhuPersistedMessage) -> String {
-  switch message {
-  case .user:
-    "user"
-  case .assistant:
-    "assistant"
-  case .toolResult:
-    "tool"
-  case .customMessage:
-    "custom"
-  case .unknown:
-    "unknown"
+private struct TranscriptSeparator: View {
+  var body: some View {
+    Text("-----")
+      .font(.system(.caption2, design: .monospaced))
+      .foregroundStyle(.secondary)
   }
-}
-
-private func titleLabel(_ message: WuhuPersistedMessage, verbosity: SessionDetailFeature.Verbosity) -> String {
-  switch message {
-  case let .user(m):
-    verbosity == .compact ? "User (\(m.user))" : "User"
-  case let .assistant(m):
-    verbosity == .compact ? "Assistant (\(m.provider.rawValue) · \(m.model))" : "Assistant"
-  case let .toolResult(m):
-    verbosity == .compact ? "Tool Result (\(m.toolName))" : "Tool"
-  case let .customMessage(m):
-    verbosity == .compact ? "Custom (\(m.customType))" : "Custom"
-  case let .unknown(role, _):
-    "Unknown (\(role))"
-  }
-}
-
-private func messageText(_ message: WuhuPersistedMessage, verbosity: SessionDetailFeature.Verbosity) -> String {
-  switch message {
-  case let .user(m):
-    return contentBlocksText(m.content, verbosity: verbosity)
-  case let .assistant(m):
-    var text = contentBlocksText(m.content, verbosity: verbosity)
-    if verbosity == .compact, let usage = m.usage {
-      text += "\n\nUsage: \(usage.totalTokens) tokens"
-    }
-    if let error = m.errorMessage, verbosity == .compact {
-      text += "\n\nError: \(error)"
-    }
-    return text
-  case let .toolResult(m):
-    if verbosity == .minimal {
-      return contentBlocksText(m.content, verbosity: .minimal)
-    }
-    return """
-    Tool: \(m.toolName)
-    isError: \(m.isError)
-
-    \(contentBlocksText(m.content, verbosity: .compact))
-
-    Details:
-    \(m.details.prettyPrinted())
-    """
-  case let .customMessage(m):
-    if verbosity == .minimal, m.display == false { return "" }
-    var text = contentBlocksText(m.content, verbosity: verbosity)
-    if verbosity == .compact, let details = m.details {
-      text += "\n\nDetails:\n\(details.prettyPrinted())"
-    }
-    return text
-  case let .unknown(_, payload):
-    return payload.prettyPrinted()
-  }
-}
-
-private func contentBlocksText(_ blocks: [WuhuContentBlock], verbosity: SessionDetailFeature.Verbosity) -> String {
-  var parts: [String] = []
-  for block in blocks {
-    switch block {
-    case let .text(text, _):
-      parts.append(text)
-    case let .toolCall(id, name, arguments) where verbosity == .compact:
-      parts.append("Tool call: \(name) (\(id))\n\(arguments.prettyPrinted())")
-    case let .reasoning(_, _, summary) where verbosity == .compact:
-      if !summary.isEmpty {
-        parts.append("Reasoning summary:\n" + summary.map { $0.prettyPrinted() }.joined(separator: "\n"))
-      }
-    default:
-      break
-    }
-  }
-  return parts.joined(separator: "\n\n")
 }
 
 private struct MessageBubble: View {
@@ -283,23 +220,5 @@ private struct MessageBubble: View {
     default:
       Color.secondary.opacity(0.08)
     }
-  }
-}
-
-private extension JSONValue {
-  func prettyPrinted() -> String {
-    if let data = try? WuhuJSON.encoder.encode(self),
-       let object = try? JSONSerialization.jsonObject(with: data),
-       let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-       let string = String(data: pretty, encoding: .utf8)
-    {
-      return string
-    }
-    if let data = try? WuhuJSON.encoder.encode(self),
-       let string = String(data: data, encoding: .utf8)
-    {
-      return string
-    }
-    return "\(self)"
   }
 }
