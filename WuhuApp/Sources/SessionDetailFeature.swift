@@ -5,11 +5,6 @@ import WuhuClient
 
 @Reducer
 struct SessionDetailFeature {
-  enum Verbosity: String, CaseIterable, Hashable {
-    case minimal
-    case compact
-  }
-
   @ObservableState
   struct State: Equatable, Identifiable {
     var id: String {
@@ -31,7 +26,7 @@ struct SessionDetailFeature {
     var draft: String = ""
     var streamingAssistantText: String = ""
 
-    var verbosity: Verbosity = .minimal
+    var verbosity: WuhuSessionVerbosity = .minimal
 
     init(sessionID: String, serverURL: URL?, username: String?) {
       self.sessionID = sessionID
