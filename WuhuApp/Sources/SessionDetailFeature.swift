@@ -299,7 +299,7 @@ struct SessionDetailFeature {
     state.reasoningEffort = currentReasoningEffort(from: transcript)
   }
 
-  private func setModelSelectionInState(provider: WuhuProvider, model: String, transcript: [WuhuSessionEntry], state: inout State) {
+  private func setModelSelectionInState(provider: WuhuProvider, model: String, transcript _: [WuhuSessionEntry], state: inout State) {
     let knownIDs = Set(WuhuModelCatalog.models(for: provider).map(\.id))
     if knownIDs.contains(model) {
       state.modelSelection = model
