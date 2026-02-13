@@ -773,7 +773,7 @@ public actor WuhuService {
     for toolCallId in pendingOrder {
       guard let toolName = pendingNames[toolCallId] else { continue }
 
-      let reason: String = switch mode {
+      let reason = switch mode {
       case .lost:
         "lost"
       case .stopped:

@@ -108,4 +108,3 @@ struct WuhuSessionExecutionInferenceTests {
     #expect(inferred.pendingToolCallIds.isEmpty)
   }
 }
-

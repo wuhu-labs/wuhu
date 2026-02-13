@@ -368,7 +368,6 @@ struct SessionDetailFeature {
       if state.inProcessExecution != nil {
         state.inProcessExecution = .init(activePromptCount: 0)
       }
-      break
     case .done:
       break
     }

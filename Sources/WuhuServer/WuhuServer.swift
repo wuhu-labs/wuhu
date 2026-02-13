@@ -235,7 +235,7 @@ public struct WuhuServer: Sendable {
 
     router.post("v2/sessions/:id/stop") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
-      let stopRequest = (try? await request.decode(as: WuhuStopSessionRequest.self, context: context)) ?? WuhuStopSessionRequest()
+      let stopRequest = await (try? request.decode(as: WuhuStopSessionRequest.self, context: context)) ?? WuhuStopSessionRequest()
       let response = try await service.stopSession(sessionID: id, user: stopRequest.user)
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
