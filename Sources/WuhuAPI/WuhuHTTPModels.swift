@@ -4,6 +4,7 @@ import PiAI
 public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   public var provider: WuhuProvider
   public var model: String?
+  public var reasoningEffort: ReasoningEffort?
   public var systemPrompt: String?
   public var environment: String
   public var runner: String?
@@ -12,6 +13,7 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   public init(
     provider: WuhuProvider,
     model: String? = nil,
+    reasoningEffort: ReasoningEffort? = nil,
     systemPrompt: String? = nil,
     environment: String,
     runner: String? = nil,
@@ -19,6 +21,7 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   ) {
     self.provider = provider
     self.model = model
+    self.reasoningEffort = reasoningEffort
     self.systemPrompt = systemPrompt
     self.environment = environment
     self.runner = runner

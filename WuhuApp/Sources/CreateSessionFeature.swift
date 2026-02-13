@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import PiAI
 import WuhuAPI
 import WuhuClient
 
@@ -7,6 +8,8 @@ import WuhuClient
 struct CreateSessionFeature {
   @ObservableState
   struct State: Equatable {
+    static let customModelSentinel = "__custom__"
+
     var serverURL: URL
     var username: String?
 
@@ -17,7 +20,9 @@ struct CreateSessionFeature {
     var provider: WuhuProvider = .openai
     var environmentName: String = ""
     var runnerName: String = ""
-    var model: String = ""
+    var modelSelection: String = ""
+    var customModel: String = ""
+    var reasoningEffort: ReasoningEffort?
     var systemPrompt: String = ""
 
     var isCreating = false
@@ -26,6 +31,17 @@ struct CreateSessionFeature {
     init(serverURL: URL, username: String?) {
       self.serverURL = serverURL
       self.username = username
+    }
+
+    var resolvedModelID: String? {
+      switch modelSelection {
+      case "":
+        return nil
+      case Self.customModelSentinel:
+        return customModel.trimmedNonEmpty
+      default:
+        return modelSelection
+      }
     }
   }
 
@@ -94,7 +110,8 @@ struct CreateSessionFeature {
         let serverURL = state.serverURL
         let request = WuhuCreateSessionRequest(
           provider: state.provider,
-          model: state.model.trimmedNonEmpty,
+          model: state.resolvedModelID,
+          reasoningEffort: state.reasoningEffort,
           systemPrompt: state.systemPrompt.trimmedNonEmpty,
           environment: state.environmentName,
           runner: state.runnerName.trimmedNonEmpty,
@@ -121,8 +138,23 @@ struct CreateSessionFeature {
       case .cancelTapped:
         return .send(.delegate(.cancelled))
 
-      case .binding:
+      case let .binding(binding):
         state.error = nil
+        if binding.keyPath == \.provider {
+          state.modelSelection = ""
+          state.customModel = ""
+          state.reasoningEffort = nil
+        }
+
+        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
+          provider: state.provider,
+          modelID: state.resolvedModelID,
+        )
+        if let current = state.reasoningEffort,
+           !supportedEfforts.contains(current)
+        {
+          state.reasoningEffort = nil
+        }
         return .none
 
       case .delegate:

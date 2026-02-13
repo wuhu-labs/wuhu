@@ -86,6 +86,14 @@ public struct OpenAICodexResponsesProvider: Sendable {
       body["prompt_cache_retention"] = "in-memory"
     }
 
+    if let effort = options.reasoningEffort {
+      let clamped = clampReasoningEffort(modelId: model.id, effort: effort)
+      body["reasoning"] = [
+        "effort": clamped.rawValue,
+        "summary": "auto",
+      ]
+    }
+
     return body
   }
 
@@ -154,6 +162,26 @@ public struct OpenAICodexResponsesProvider: Sendable {
       }
     }
   }
+}
+
+private func clampReasoningEffort(modelId: String, effort: ReasoningEffort) -> ReasoningEffort {
+  let id = modelId.split(separator: "/").last.map(String.init) ?? modelId
+
+  if (id.hasPrefix("gpt-5.2") || id.hasPrefix("gpt-5.3")) && effort == .minimal {
+    return .low
+  }
+  if id == "gpt-5.1" && effort == .xhigh {
+    return .high
+  }
+  if id == "gpt-5.1-codex-mini" {
+    return (effort == .high || effort == .xhigh) ? .high : .medium
+  }
+
+  if effort == .xhigh, !(id.hasPrefix("gpt-5.2") || id.hasPrefix("gpt-5.3")) {
+    return .high
+  }
+
+  return effort
 }
 
 private func extractChatGPTAccountId(fromJWT token: String) throws -> String {

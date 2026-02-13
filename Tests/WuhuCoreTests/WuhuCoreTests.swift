@@ -58,6 +58,79 @@ struct WuhuCoreTests {
     #expect(header.systemPrompt == "You are helpful.")
   }
 
+  @Test func createSessionPersistsReasoningEffortInHeaderMetadata() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "gpt-5.2-codex",
+      reasoningEffort: .medium,
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    let entries = try await service.getTranscript(sessionID: session.id)
+    #expect(entries.count == 1)
+
+    guard case let .header(header) = entries[0].payload else {
+      #expect(Bool(false))
+      return
+    }
+
+    let meta = header.metadata.object?["reasoningEffort"]?.stringValue
+    #expect(meta == "medium")
+  }
+
+  @Test func promptStreamUsesHeaderReasoningEffortWhenPresent() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "gpt-5.2-codex",
+      reasoningEffort: .high,
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    actor Capture {
+      var last: RequestOptions?
+
+      func stream(model: Model, ctx _: Context, options: RequestOptions) -> AsyncThrowingStream<AssistantMessageEvent, any Error> {
+        last = options
+        return AsyncThrowingStream { continuation in
+          let assistant = AssistantMessage(
+            provider: model.provider,
+            model: model.id,
+            content: [.text("ok")],
+            stopReason: .stop,
+          )
+          continuation.yield(.done(message: assistant))
+          continuation.finish()
+        }
+      }
+    }
+
+    let capture = Capture()
+
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "hi",
+      user: "test",
+      tools: nil,
+      streamFn: { model, ctx, options in
+        await capture.stream(model: model, ctx: ctx, options: options)
+      },
+    )
+    for try await _ in stream {}
+
+    let last = await capture.last
+    #expect(last?.reasoningEffort == .high)
+  }
+
   @Test func promptStreamPersistsLinearChain() async throws {
     let store = try SQLiteSessionStore(path: ":memory:")
     let service = WuhuService(store: store)

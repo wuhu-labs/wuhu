@@ -19,6 +19,7 @@ public actor SQLiteSessionStore: SessionStore {
     sessionID rawSessionID: String,
     provider: WuhuProvider,
     model: String,
+    reasoningEffort: ReasoningEffort?,
     systemPrompt: String,
     environment: WuhuEnvironment,
     runnerName: String?,
@@ -47,7 +48,14 @@ public actor SQLiteSessionStore: SessionStore {
       )
       try sessionRow.insert(db)
 
-      let headerPayload = WuhuEntryPayload.header(.init(systemPrompt: systemPrompt))
+      var headerMetadata: [String: JSONValue] = [:]
+      if let reasoningEffort {
+        headerMetadata["reasoningEffort"] = .string(reasoningEffort.rawValue)
+      }
+      let headerPayload = WuhuEntryPayload.header(.init(
+        systemPrompt: systemPrompt,
+        metadata: .object(headerMetadata),
+      ))
       var headerRow = try EntryRow.new(
         sessionID: sessionID,
         parentEntryID: nil,
