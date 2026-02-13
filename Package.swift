@@ -37,7 +37,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/nicklockwood/SwiftFormat.git", from: "0.59.1"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
-    .package(url: "https://github.com/swiftlang/swift-testing.git", from: "6.2.0"),
+    .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "48a471ab313e858258ab0b9b0bf2cea55a50cefb"),
     .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.27.0"),
     .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
     .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),

@@ -86,6 +86,41 @@ struct OpenAICodexResponsesProviderTests {
       options: .init(apiKey: token, sessionId: sessionId),
     )
   }
+
+  @Test func includesReasoningEffortAndClampsUnsupportedValues() async throws {
+    let token = makeTestJWT(accountId: "acc_test")
+
+    do {
+      let http = MockHTTPClient(sseHandler: { request in
+        let body = try #require(request.body)
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let reasoning = try #require(json["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "low")
+        #expect(reasoning["summary"] as? String == "auto")
+        return AsyncThrowingStream { $0.finish() }
+      })
+
+      let provider = OpenAICodexResponsesProvider(http: http)
+      let model = Model(id: "gpt-5.2-codex", provider: .openaiCodex)
+      let context = Context(systemPrompt: nil, messages: [.user("Hi")])
+      _ = try await provider.stream(model: model, context: context, options: .init(apiKey: token, reasoningEffort: .minimal))
+    }
+
+    do {
+      let http = MockHTTPClient(sseHandler: { request in
+        let body = try #require(request.body)
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let reasoning = try #require(json["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "high")
+        return AsyncThrowingStream { $0.finish() }
+      })
+
+      let provider = OpenAICodexResponsesProvider(http: http)
+      let model = Model(id: "gpt-5.1", provider: .openaiCodex)
+      let context = Context(systemPrompt: nil, messages: [.user("Hi")])
+      _ = try await provider.stream(model: model, context: context, options: .init(apiKey: token, reasoningEffort: .xhigh))
+    }
+  }
 }
 
 private func makeTestJWT(accountId: String) -> String {

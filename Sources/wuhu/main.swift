@@ -9,6 +9,7 @@ import WuhuServer
 import Yams
 
 extension WuhuProvider: ExpressibleByArgument {}
+extension ReasoningEffort: ExpressibleByArgument {}
 
 @main
 struct WuhuCLI: AsyncParsableCommand {
@@ -71,6 +72,9 @@ struct WuhuCLI: AsyncParsableCommand {
       @Option(help: "Model id (server defaults depend on provider).")
       var model: String?
 
+      @Option(help: "Reasoning effort (minimal, low, medium, high, xhigh). Only applies to some OpenAI/Codex models.")
+      var reasoningEffort: ReasoningEffort?
+
       @Option(help: "Environment name from server config (required).")
       var environment: String
 
@@ -91,6 +95,7 @@ struct WuhuCLI: AsyncParsableCommand {
         let session = try await client.createSession(.init(
           provider: provider,
           model: model,
+          reasoningEffort: reasoningEffort,
           systemPrompt: systemPrompt,
           environment: environment,
           runner: runner,

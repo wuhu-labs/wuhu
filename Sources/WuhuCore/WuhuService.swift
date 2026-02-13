@@ -20,6 +20,7 @@ public actor WuhuService {
     sessionID: String,
     provider: WuhuProvider,
     model: String,
+    reasoningEffort: ReasoningEffort? = nil,
     systemPrompt: String,
     environment: WuhuEnvironment,
     runnerName: String? = nil,
@@ -29,6 +30,7 @@ public actor WuhuService {
       sessionID: sessionID,
       provider: provider,
       model: model,
+      reasoningEffort: reasoningEffort,
       systemPrompt: systemPrompt,
       environment: environment,
       runnerName: runnerName,
@@ -90,7 +92,11 @@ public actor WuhuService {
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
-    if model.provider == .openai, model.id.contains("gpt-5") || model.id.contains("codex") {
+    if let effort = Self.extractReasoningEffort(from: header) {
+      requestOptions.reasoningEffort = effort
+    } else if model.provider == .openai || model.provider == .openaiCodex,
+              model.id.contains("gpt-5") || model.id.contains("codex")
+    {
       requestOptions.reasoningEffort = .low
     }
 
@@ -194,7 +200,11 @@ public actor WuhuService {
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
-    if model.provider == .openai, model.id.contains("gpt-5") || model.id.contains("codex") {
+    if let effort = Self.extractReasoningEffort(from: header) {
+      requestOptions.reasoningEffort = effort
+    } else if model.provider == .openai || model.provider == .openaiCodex,
+              model.id.contains("gpt-5") || model.id.contains("codex")
+    {
       requestOptions.reasoningEffort = .low
     }
 
@@ -425,6 +435,12 @@ public actor WuhuService {
       throw WuhuStoreError.sessionCorrupt("Header entry \(headerEntry.id) payload is not header")
     }
     return header
+  }
+
+  private static func extractReasoningEffort(from header: WuhuSessionHeader) -> ReasoningEffort? {
+    guard let metadata = header.metadata.object else { return nil }
+    guard let raw = metadata["reasoningEffort"]?.stringValue else { return nil }
+    return ReasoningEffort(rawValue: raw)
   }
 
   private static func extractContextMessages(from transcript: [WuhuSessionEntry]) -> [Message] {

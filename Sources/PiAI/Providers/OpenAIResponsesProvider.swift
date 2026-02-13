@@ -149,9 +149,10 @@ public struct OpenAIResponsesProvider: Sendable {
       body["prompt_cache_key"] = sessionId
     }
 
-    if let effort = options.reasoningEffort?.rawValue {
+    if let effort = options.reasoningEffort {
+      let clamped = clampReasoningEffort(modelId: model.id, effort: effort)
       body["reasoning"] = [
-        "effort": effort,
+        "effort": clamped.rawValue,
       ]
       body["include"] = ["reasoning.encrypted_content"]
     }
@@ -331,6 +332,26 @@ public struct OpenAIResponsesProvider: Sendable {
       }
     }
   }
+}
+
+private func clampReasoningEffort(modelId: String, effort: ReasoningEffort) -> ReasoningEffort {
+  let id = modelId.split(separator: "/").last.map(String.init) ?? modelId
+
+  if id.hasPrefix("gpt-5.2") || id.hasPrefix("gpt-5.3"), effort == .minimal {
+    return .low
+  }
+  if id == "gpt-5.1", effort == .xhigh {
+    return .high
+  }
+  if id == "gpt-5.1-codex-mini" {
+    return (effort == .high || effort == .xhigh) ? .high : .medium
+  }
+
+  if effort == .xhigh, !(id.hasPrefix("gpt-5.2") || id.hasPrefix("gpt-5.3")) {
+    return .high
+  }
+
+  return effort
 }
 
 private func splitToolCallId(_ id: String) -> (callId: String, itemId: String?) {

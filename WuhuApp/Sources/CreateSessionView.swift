@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import PiAI
 import SwiftUI
 import WuhuAPI
 
@@ -60,15 +61,50 @@ struct CreateSessionView: View {
             }
             .disabled(store.isLoadingOptions)
 
-            TextField(
-              "Model (optional)",
-              text: Binding(
-                get: { store.model },
-                set: { store.send(.binding(.set(\.model, $0))) },
+            Picker(
+              "Model",
+              selection: Binding(
+                get: { store.modelSelection },
+                set: { store.send(.binding(.set(\.modelSelection, $0))) },
               ),
+            ) {
+              Text("Server default").tag("")
+              ForEach(WuhuModelCatalog.models(for: store.provider)) { option in
+                Text(option.displayName).tag(option.id)
+              }
+              Text("Custom…").tag(CreateSessionFeature.State.customModelSentinel)
+            }
+
+            if store.modelSelection == CreateSessionFeature.State.customModelSentinel {
+              TextField(
+                "Custom model id",
+                text: Binding(
+                  get: { store.customModel },
+                  set: { store.send(.binding(.set(\.customModel, $0))) },
+                ),
+              )
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+            }
+
+            let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
+              provider: store.provider,
+              modelID: store.resolvedModelID,
             )
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            if !supportedEfforts.isEmpty {
+              Picker(
+                "Reasoning effort",
+                selection: Binding(
+                  get: { store.reasoningEffort },
+                  set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
+                ),
+              ) {
+                Text("Default").tag(nil as ReasoningEffort?)
+                ForEach(supportedEfforts, id: \.self) { effort in
+                  Text(effort.rawValue).tag(Optional(effort))
+                }
+              }
+            }
 
             TextField(
               "System prompt (optional)",

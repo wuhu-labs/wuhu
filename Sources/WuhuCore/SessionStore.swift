@@ -1,4 +1,5 @@
 import Foundation
+import PiAI
 import WuhuAPI
 
 public enum WuhuStoreError: Error, Sendable, CustomStringConvertible {
@@ -23,6 +24,7 @@ public protocol SessionStore: Sendable {
     sessionID: String,
     provider: WuhuProvider,
     model: String,
+    reasoningEffort: ReasoningEffort?,
     systemPrompt: String,
     environment: WuhuEnvironment,
     runnerName: String?,
