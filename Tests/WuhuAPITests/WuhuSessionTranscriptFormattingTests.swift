@@ -114,4 +114,27 @@ struct WuhuSessionTranscriptFormattingTests {
     let bashTool = items.first(where: { $0.role == .tool && $0.text.hasPrefix("bash ") })?.text ?? ""
     #expect(bashTool.contains("[truncated]"))
   }
+
+  @Test func assistantMessagesAreNeverTruncated() {
+    let now = Date(timeIntervalSince1970: 0)
+    let longMessage = (0 ..< 80).map { "line \($0)" }.joined(separator: "\n")
+    let entries: [WuhuSessionEntry] = [
+      .init(id: 1, sessionID: "s1", parentEntryID: nil, createdAt: now, payload: .message(.assistant(.init(
+        provider: .openai,
+        model: "gpt-test",
+        content: [.text(text: longMessage, signature: nil)],
+        usage: nil,
+        stopReason: "stop",
+        errorMessage: nil,
+        timestamp: now,
+      )))),
+    ]
+
+    for verbosity in [WuhuSessionVerbosity.minimal, .compact, .full] {
+      let items = WuhuSessionTranscriptFormatter(verbosity: verbosity).format(entries)
+      let agentText = items.first(where: { $0.role == .agent })?.text ?? ""
+      #expect(!agentText.contains("[truncated]"))
+      #expect(agentText.contains("line 79"))
+    }
+  }
 }

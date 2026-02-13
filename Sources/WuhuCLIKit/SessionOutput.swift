@@ -131,9 +131,6 @@ struct DisplayTruncation: Sendable {
   var maxLines: Int
   var maxChars: Int
 
-  static let messageFull = DisplayTruncation(maxLines: 200, maxChars: 24000)
-  static let messageCompact = DisplayTruncation(maxLines: 40, maxChars: 6000)
-
   static let toolFull = DisplayTruncation(maxLines: 12, maxChars: 2000)
 }
 
@@ -330,8 +327,7 @@ public struct SessionTranscriptRenderer: Sendable {
     func appendVisibleMessage(label: String, text: String) {
       out += "\n\(style.separator)\n"
       out += "\(label)\n"
-      let trunc: DisplayTruncation = (style.verbosity == .full) ? .messageFull : .messageCompact
-      out += truncateForDisplay(text, options: trunc).trimmingCharacters(in: .newlines)
+      out += text.trimmingCharacters(in: .whitespacesAndNewlines)
       out += "\n"
       printedAnyVisibleMessage = true
     }
@@ -434,7 +430,7 @@ public struct SessionTranscriptRenderer: Sendable {
       case let .header(h):
         if style.verbosity == .minimal || style.verbosity == .compact { break }
         out += "\(style.meta("System prompt:"))\n"
-        out += truncateForDisplay(h.systemPrompt, options: .messageCompact) + "\n"
+        out += h.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
 
       case let .sessionSettings(s):
         flushPendingMetaIfNeeded()
@@ -628,12 +624,9 @@ public struct SessionStreamPrinter {
   }
 
   private mutating func appendVisibleMessage(label: String, text: String) {
-    let trunc: DisplayTruncation = (style.verbosity == .full) ? .messageFull : .messageCompact
-    let rendered = truncateForDisplay(text, options: trunc).trimmingCharacters(in: .newlines)
-
     writeStdout("\n\(style.separator)\n")
     writeStdout("\(label)\n")
-    writeStdout(rendered + "\n")
+    writeStdout(text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n")
   }
 
   private func writeStdout(_ s: String) {

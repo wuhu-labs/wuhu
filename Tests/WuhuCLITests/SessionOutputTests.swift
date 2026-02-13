@@ -138,4 +138,45 @@ struct SessionOutputTests {
     #expect(!output.contains("Tool:"))
     #expect(!output.contains("bash echo hi"))
   }
+
+  @Test func transcript_neverTruncatesAssistantMessages() {
+    let now = Date(timeIntervalSince1970: 0)
+    let session = WuhuSession(
+      id: "s1",
+      provider: .openai,
+      model: "gpt-test",
+      environment: .init(name: "local", type: .local, path: "/tmp"),
+      cwd: "/repo",
+      parentSessionID: nil,
+      createdAt: now,
+      updatedAt: now,
+      headEntryID: 1,
+      tailEntryID: 1,
+    )
+
+    let longMessage = (0 ..< 80).map { "line \($0)" }.joined(separator: "\n")
+    let entries: [WuhuSessionEntry] = [
+      .init(id: 1, sessionID: "s1", parentEntryID: nil, createdAt: now, payload: .message(.assistant(.init(
+        provider: .openai,
+        model: "gpt-test",
+        content: [.text(text: longMessage, signature: nil)],
+        usage: nil,
+        stopReason: "stop",
+        errorMessage: nil,
+        timestamp: now,
+      )))),
+    ]
+
+    let response = WuhuGetSessionResponse(session: session, transcript: entries)
+    let terminal = TerminalCapabilities(stdoutIsTTY: false, stderrIsTTY: false, colorEnabled: false)
+
+    for verbosity in [SessionOutputVerbosity.minimal, .compact, .full] {
+      let style = SessionOutputStyle(verbosity: verbosity, terminal: terminal)
+      let renderer = SessionTranscriptRenderer(style: style)
+      let output = renderer.render(response)
+
+      #expect(!output.contains("[truncated]"))
+      #expect(output.contains("line 79"))
+    }
+  }
 }
