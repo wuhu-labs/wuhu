@@ -19,19 +19,9 @@ This repo is the Swift pivot of Wuhu. It’s currently a Swift Package with:
 
 ## Project Structure
 
-```
-.
-├── Package.swift
-├── Sources/
-│   ├── PiAI/                # Unified LLM API (OpenAI, OpenAI Codex, Anthropic)
-│   └── wuhu/                # CLI binary demonstrating PiAI usage
-├── Tests/
-│   └── PiAITests/           # Provider + SSE parsing tests (swift-testing)
-├── docs/
-│   └── what-is-a-coding-agent.md
-└── .github/workflows/
-    └── ci.yml               # SwiftFormat + build + tests
-```
+Never add a “project structure diagram” (tree listing) to this file. It always drifts from reality.
+
+If you need to understand the current layout, inspect the repo directly (or use `Package.swift` / `swift package describe` as the source of truth).
 
 ## Local Dev
 
@@ -62,9 +52,31 @@ Environment variables:
 
 For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don’t rely on a local `.env`).
 
-## GitHub Issue Workflow
+## Workspace + Issues
 
-When you are assigned to work on a GitHub issue, you must create a new branch:
+This project manages issues in a dedicated workspace repo: `wuhu-labs/wuhu-workspace`.
+
+When working in this repo, clone any related repos you need as siblings next to this repo (same parent directory). Example: clone `wuhu-workspace` to `../wuhu-workspace`.
+
+Common sibling repos (clone on demand, next to this repo):
+
+- `../wuhu-workspace` (issue tracker + project management; issues are `WUHU-####`)
+- `../wuhu` (main Wuhu repo)
+- `../wuhu-terragon` (reference implementations and patterns)
+- `../pi-mono` (reference harness + model/provider lists)
+- `../codex` (OpenAI Codex repo, for integration experiments)
+- `../axiia-website` (reference patterns)
+
+Starting new work:
+
+- Clone sibling repos on demand (only what you need).
+- Refresh a sibling repo with `git pull` only if you are on its default branch (usually `main`) and the working tree is clean (no local edits). If not, stop and ask for human intervention.
+
+## Issue Workflow
+
+Issues use the format `WUHU-####` (four digits) and live in `../wuhu-workspace/issues/*.md`. If you see “Fix WUHU-0001”, assume it refers to an issue in `wuhu-workspace` (not GitHub Issues).
+
+When you are assigned to work on a `WUHU-####` issue, you must create a new branch:
 
 1. If you are already on a new branch that has no changes and has no new commits ahead of `main`, assume that branch is for you.
 2. If you are in a dirty place (uncommitted changes), stop and ask for human intervention.
