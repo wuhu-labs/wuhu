@@ -75,4 +75,3 @@ public struct WuhuLLMGiveUpEvent: Sendable, Hashable, Codable {
     return .object(obj)
   }
 }
-

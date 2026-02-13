@@ -156,7 +156,10 @@ struct WuhuCoreTests {
 
     actor Attempts {
       var n = 0
-      func next() -> Int { n += 1; return n }
+      func next() -> Int {
+        n += 1
+        return n
+      }
     }
     let attempts = Attempts()
 
@@ -188,18 +191,18 @@ struct WuhuCoreTests {
     for try await _ in stream {}
 
     let entries = try await service.getTranscript(sessionID: session.id)
-    let retryCount = entries.filter {
+    let retryCount = entries.count(where: {
       if case let .custom(customType, _) = $0.payload {
         return customType == WuhuLLMCustomEntryTypes.retry
       }
       return false
-    }.count
-    let giveUpCount = entries.filter {
+    })
+    let giveUpCount = entries.count(where: {
       if case let .custom(customType, _) = $0.payload {
         return customType == WuhuLLMCustomEntryTypes.giveUp
       }
       return false
-    }.count
+    })
 
     #expect(retryCount == 2)
     #expect(giveUpCount == 0)
@@ -247,18 +250,18 @@ struct WuhuCoreTests {
     }
 
     let entries = try await service.getTranscript(sessionID: session.id)
-    let retryCount = entries.filter {
+    let retryCount = entries.count(where: {
       if case let .custom(customType, _) = $0.payload {
         return customType == WuhuLLMCustomEntryTypes.retry
       }
       return false
-    }.count
-    let giveUpCount = entries.filter {
+    })
+    let giveUpCount = entries.count(where: {
       if case let .custom(customType, _) = $0.payload {
         return customType == WuhuLLMCustomEntryTypes.giveUp
       }
       return false
-    }.count
+    })
 
     #expect(retryCount == 5)
     #expect(giveUpCount == 1)
