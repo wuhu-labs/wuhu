@@ -49,6 +49,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
   public var runners: [Runner]?
   public var databasePath: String?
   public var workspacesPath: String?
+  public var llmRequestLogDir: String?
   public var host: String?
   public var port: Int?
 
@@ -58,6 +59,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     runners: [Runner]? = nil,
     databasePath: String? = nil,
     workspacesPath: String? = nil,
+    llmRequestLogDir: String? = nil,
     host: String? = nil,
     port: Int? = nil,
   ) {
@@ -66,6 +68,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     self.runners = runners
     self.databasePath = databasePath
     self.workspacesPath = workspacesPath
+    self.llmRequestLogDir = llmRequestLogDir
     self.host = host
     self.port = port
   }
@@ -76,6 +79,7 @@ public struct WuhuServerConfig: Sendable, Hashable, Codable {
     case runners
     case databasePath
     case workspacesPath = "workspaces_path"
+    case llmRequestLogDir = "llm_request_log_dir"
     case host
     case port
   }

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import PiAI
 import WuhuAPI
 import WuhuClient
 
@@ -21,6 +22,10 @@ struct SessionDetailFeature {
     var isLoading = false
     var isSending = false
 
+    var isShowingModelPicker = false
+    var isUpdatingModel = false
+    var modelUpdateStatus: String?
+
     var error: String?
 
     var draft: String = ""
@@ -28,10 +33,26 @@ struct SessionDetailFeature {
 
     var verbosity: WuhuSessionVerbosity = .minimal
 
+    var provider: WuhuProvider = .openai
+    var modelSelection: String = ""
+    var customModel: String = ""
+    var reasoningEffort: ReasoningEffort?
+
     init(sessionID: String, serverURL: URL?, username: String?) {
       self.sessionID = sessionID
       self.serverURL = serverURL
       self.username = username
+    }
+
+    var resolvedModelID: String? {
+      switch modelSelection {
+      case "":
+        nil
+      case ModelSelectionUI.customModelSentinel:
+        customModel.trimmedNonEmpty
+      default:
+        modelSelection
+      }
     }
   }
 
@@ -50,6 +71,9 @@ struct SessionDetailFeature {
     case sendTapped
     case promptEvent(WuhuSessionStreamEvent)
     case promptFailed(String)
+
+    case applyModelTapped
+    case setModelResponse(TaskResult<WuhuSetSessionModelResponse>)
 
     case delegate(Delegate)
 
@@ -105,6 +129,7 @@ struct SessionDetailFeature {
         state.isLoading = false
         state.session = response.session
         state.transcript = IdentifiedArray(uniqueElements: response.transcript)
+        syncModelSelectionFromSession(response.session, transcript: response.transcript, state: &state)
         return .none
 
       case let .refreshResponse(.failure(error)):
@@ -181,7 +206,60 @@ struct SessionDetailFeature {
         state.error = message
         return .send(.startFollow)
 
-      case .binding:
+      case let .binding(binding):
+        if binding.keyPath == \.provider {
+          state.modelSelection = ""
+          state.customModel = ""
+          state.reasoningEffort = nil
+        }
+
+        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(provider: state.provider, modelID: state.resolvedModelID)
+        if let current = state.reasoningEffort,
+           !supportedEfforts.contains(current)
+        {
+          state.reasoningEffort = nil
+        }
+
+        return .none
+
+      case .applyModelTapped:
+        guard let serverURL = state.serverURL else { return .none }
+        state.isUpdatingModel = true
+        state.modelUpdateStatus = nil
+        state.error = nil
+
+        let sessionID = state.sessionID
+        let provider = state.provider
+        let model = state.resolvedModelID
+        let effort = state.reasoningEffort
+
+        return .run { send in
+          await send(
+            .setModelResponse(
+              TaskResult {
+                try await wuhuClientProvider.make(serverURL).setSessionModel(
+                  sessionID: sessionID,
+                  provider: provider,
+                  model: model,
+                  reasoningEffort: effort,
+                )
+              },
+            ),
+          )
+        }
+
+      case let .setModelResponse(.success(response)):
+        state.isUpdatingModel = false
+        state.modelUpdateStatus = response.applied ? "Applied." : "Pending (will apply when session is idle)."
+        state.session = response.session
+        state.provider = response.selection.provider
+        setModelSelectionInState(provider: response.selection.provider, model: response.selection.model, transcript: Array(state.transcript), state: &state)
+        state.reasoningEffort = response.selection.reasoningEffort
+        return .none
+
+      case let .setModelResponse(.failure(error)):
+        state.isUpdatingModel = false
+        state.error = "\(error)"
         return .none
 
       case .delegate:
@@ -195,6 +273,14 @@ struct SessionDetailFeature {
     case let .entryAppended(entry):
       state.transcript[id: entry.id] = entry
       state.streamingAssistantText = ""
+      if case let .sessionSettings(s) = entry.payload {
+        state.session?.provider = s.provider
+        state.session?.model = s.model
+        state.provider = s.provider
+        setModelSelectionInState(provider: s.provider, model: s.model, transcript: Array(state.transcript), state: &state)
+        state.reasoningEffort = s.reasoningEffort
+        state.modelUpdateStatus = nil
+      }
     case let .assistantTextDelta(delta):
       state.streamingAssistantText += delta
     case .idle:
@@ -202,5 +288,39 @@ struct SessionDetailFeature {
     case .done:
       break
     }
+  }
+
+  private func syncModelSelectionFromSession(_ session: WuhuSession, transcript: [WuhuSessionEntry], state: inout State) {
+    guard !state.isShowingModelPicker else { return }
+    guard !state.isUpdatingModel else { return }
+
+    state.provider = session.provider
+    setModelSelectionInState(provider: session.provider, model: session.model, transcript: transcript, state: &state)
+    state.reasoningEffort = currentReasoningEffort(from: transcript)
+  }
+
+  private func setModelSelectionInState(provider: WuhuProvider, model: String, transcript: [WuhuSessionEntry], state: inout State) {
+    let knownIDs = Set(WuhuModelCatalog.models(for: provider).map(\.id))
+    if knownIDs.contains(model) {
+      state.modelSelection = model
+      state.customModel = ""
+    } else {
+      state.modelSelection = ModelSelectionUI.customModelSentinel
+      state.customModel = model
+    }
+  }
+
+  private func currentReasoningEffort(from transcript: [WuhuSessionEntry]) -> ReasoningEffort? {
+    for entry in transcript.reversed() {
+      if case let .sessionSettings(s) = entry.payload {
+        return s.reasoningEffort
+      }
+    }
+    for entry in transcript {
+      guard case let .header(h) = entry.payload else { continue }
+      guard let raw = h.metadata.object?["reasoningEffort"]?.stringValue else { return nil }
+      return ReasoningEffort(rawValue: raw)
+    }
+    return nil
   }
 }

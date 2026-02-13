@@ -65,11 +65,24 @@ public struct WuhuCompaction: Sendable, Hashable, Codable {
   }
 }
 
+public struct WuhuSessionSettings: Sendable, Hashable, Codable {
+  public var provider: WuhuProvider
+  public var model: String
+  public var reasoningEffort: ReasoningEffort?
+
+  public init(provider: WuhuProvider, model: String, reasoningEffort: ReasoningEffort? = nil) {
+    self.provider = provider
+    self.model = model
+    self.reasoningEffort = reasoningEffort
+  }
+}
+
 public enum WuhuEntryPayload: Sendable, Hashable, Codable {
   case header(WuhuSessionHeader)
   case message(WuhuPersistedMessage)
   case toolExecution(WuhuToolExecution)
   case compaction(WuhuCompaction)
+  case sessionSettings(WuhuSessionSettings)
   case custom(customType: String, data: JSONValue?)
   case unknown(type: String, payload: JSONValue)
 
@@ -92,6 +105,8 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
       self = try .toolExecution(c.decode(WuhuToolExecution.self, forKey: .payload))
     case "compaction":
       self = try .compaction(c.decode(WuhuCompaction.self, forKey: .payload))
+    case "session_settings":
+      self = try .sessionSettings(c.decode(WuhuSessionSettings.self, forKey: .payload))
     case "custom":
       self = try .custom(customType: c.decode(String.self, forKey: .customType), data: c.decodeIfPresent(JSONValue.self, forKey: .data))
     default:
@@ -114,6 +129,9 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
     case let .compaction(compaction):
       try c.encode("compaction", forKey: .type)
       try c.encode(compaction, forKey: .payload)
+    case let .sessionSettings(settings):
+      try c.encode("session_settings", forKey: .type)
+      try c.encode(settings, forKey: .payload)
     case let .custom(customType, data):
       try c.encode("custom", forKey: .type)
       try c.encode(customType, forKey: .customType)
@@ -134,6 +152,8 @@ public enum WuhuEntryPayload: Sendable, Hashable, Codable {
       "tool_execution"
     case .compaction:
       "compaction"
+    case .sessionSettings:
+      "session_settings"
     case .custom:
       "custom"
     case let .unknown(type, _):

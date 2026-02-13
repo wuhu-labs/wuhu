@@ -5,6 +5,7 @@ import WuhuAPI
 
 public actor WuhuService {
   private let store: any SessionStore
+  private let llmRequestLogger: WuhuLLMRequestLogger?
   private var sessionContextActors: [String: WuhuAgentsContextActor] = [:]
   private var sessionContextActorLastAccess: [String: Date] = [:]
   private let maxSessionContextActors = 64
@@ -12,8 +13,40 @@ public actor WuhuService {
   private var liveSubscribers: [String: [UUID: AsyncStream<WuhuSessionStreamEvent>.Continuation]] = [:]
   private var activePromptCount: [String: Int] = [:]
 
-  public init(store: any SessionStore) {
+  private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
+  private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
+
+  public init(store: any SessionStore, llmRequestLogger: WuhuLLMRequestLogger? = nil) {
     self.store = store
+    self.llmRequestLogger = llmRequestLogger
+  }
+
+  public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
+    _ = try await store.getSession(id: sessionID)
+
+    let effectiveModel: String = {
+      let trimmed = (request.model ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty { return trimmed }
+      return WuhuModelCatalog.defaultModelID(for: request.provider)
+    }()
+
+    let selection = WuhuSessionSettings(
+      provider: request.provider,
+      model: effectiveModel,
+      reasoningEffort: request.reasoningEffort,
+    )
+
+    let canApplyNow = isIdle(sessionID: sessionID) && (lastAssistantMessageHadToolCalls[sessionID] != true)
+    if canApplyNow {
+      _ = try await applyModelSelection(sessionID: sessionID, selection: selection)
+      let session = try await store.getSession(id: sessionID)
+      pendingModelSelection[sessionID] = nil
+      return .init(session: session, selection: selection, applied: true)
+    }
+
+    pendingModelSelection[sessionID] = selection
+    let session = try await store.getSession(id: sessionID)
+    return .init(session: session, selection: selection, applied: false)
   }
 
   public func createSession(
@@ -79,8 +112,12 @@ public actor WuhuService {
     }
 
     let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
+    let settingsOverride = Self.extractLatestSessionSettings(from: transcript)
 
     let model = Model(id: session.model, provider: session.provider.piProvider)
+
+    let agentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+    let compactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
 
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
 
@@ -92,7 +129,8 @@ public actor WuhuService {
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
-    if let effort = Self.extractReasoningEffort(from: header) {
+    let sessionEffort = settingsOverride != nil ? settingsOverride?.reasoningEffort : Self.extractReasoningEffort(from: header)
+    if let effort = sessionEffort {
       requestOptions.reasoningEffort = effort
     } else if model.provider == .openai || model.provider == .openaiCodex,
               model.id.contains("gpt-5") || model.id.contains("codex")
@@ -110,7 +148,7 @@ public actor WuhuService {
       requestOptions: requestOptions,
       compactionSettings: compactionSettings,
       input: renderedInput,
-      streamFn: streamFn,
+      streamFn: compactionStreamFn,
     )
 
     let messages = Self.extractContextMessages(from: transcript)
@@ -123,7 +161,7 @@ public actor WuhuService {
         messages: messages,
       ),
       requestOptions: requestOptions,
-      streamFn: streamFn,
+      streamFn: agentStreamFn,
     ))
 
     beginPrompt(sessionID: sessionID)
@@ -188,7 +226,11 @@ public actor WuhuService {
     transcript = try await store.getEntries(sessionID: sessionID)
 
     let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
+    let settingsOverride = Self.extractLatestSessionSettings(from: transcript)
     let model = Model(id: session.model, provider: session.provider.piProvider)
+
+    let agentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+    let compactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
 
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
 
@@ -200,7 +242,8 @@ public actor WuhuService {
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
     var requestOptions = RequestOptions()
-    if let effort = Self.extractReasoningEffort(from: header) {
+    let sessionEffort = settingsOverride != nil ? settingsOverride?.reasoningEffort : Self.extractReasoningEffort(from: header)
+    if let effort = sessionEffort {
       requestOptions.reasoningEffort = effort
     } else if model.provider == .openai || model.provider == .openaiCodex,
               model.id.contains("gpt-5") || model.id.contains("codex")
@@ -218,7 +261,7 @@ public actor WuhuService {
       requestOptions: requestOptions,
       compactionSettings: compactionSettings,
       input: renderedInput,
-      streamFn: streamFn,
+      streamFn: compactionStreamFn,
     )
 
     let messages = Self.extractContextMessages(from: transcript)
@@ -231,7 +274,7 @@ public actor WuhuService {
         messages: messages,
       ),
       requestOptions: requestOptions,
-      streamFn: streamFn,
+      streamFn: agentStreamFn,
     ))
 
     beginPrompt(sessionID: sessionID)
@@ -418,6 +461,9 @@ public actor WuhuService {
       if case .user = message {
         break
       }
+      if case let .assistant(a) = message {
+        lastAssistantMessageHadToolCalls[sessionID] = a.content.contains { if case .toolCall = $0 { return true }; return false }
+      }
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(message)))
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
       continuation?.yield(.entryAppended(entry))
@@ -476,6 +522,15 @@ public actor WuhuService {
     }
 
     return messages
+  }
+
+  private static func extractLatestSessionSettings(from transcript: [WuhuSessionEntry]) -> WuhuSessionSettings? {
+    for entry in transcript.reversed() {
+      if case let .sessionSettings(s) = entry.payload {
+        return s
+      }
+    }
+    return nil
   }
 
   private static func normalizeUser(_ user: String?) -> String {
@@ -618,9 +673,29 @@ public actor WuhuService {
 
   private func endPromptAsync(sessionID: String) async {
     endPrompt(sessionID: sessionID)
+    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
   }
 
   private func isIdle(sessionID: String) -> Bool {
     (activePromptCount[sessionID] ?? 0) == 0
+  }
+
+  private func applyPendingModelSelectionIfPossible(sessionID: String) async {
+    guard isIdle(sessionID: sessionID) else { return }
+    guard lastAssistantMessageHadToolCalls[sessionID] != true else { return }
+    guard let selection = pendingModelSelection[sessionID] else { return }
+    do {
+      _ = try await applyModelSelection(sessionID: sessionID, selection: selection)
+      pendingModelSelection[sessionID] = nil
+    } catch {
+      // Best-effort: keep the pending selection so a later idle transition can retry.
+    }
+  }
+
+  @discardableResult
+  private func applyModelSelection(sessionID: String, selection: WuhuSessionSettings) async throws -> WuhuSessionEntry {
+    let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
+    publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+    return entry
   }
 }

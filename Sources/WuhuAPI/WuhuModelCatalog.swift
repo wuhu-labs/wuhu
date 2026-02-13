@@ -12,6 +12,17 @@ public struct WuhuModelOption: Sendable, Hashable, Identifiable {
 }
 
 public enum WuhuModelCatalog {
+  public static func defaultModelID(for provider: WuhuProvider) -> String {
+    switch provider {
+    case .openai:
+      "gpt-5.2-codex"
+    case .anthropic:
+      "claude-sonnet-4-5"
+    case .openaiCodex:
+      "codex-mini-latest"
+    }
+  }
+
   public static func models(for provider: WuhuProvider) -> [WuhuModelOption] {
     switch provider {
     case .openai:

@@ -32,8 +32,11 @@ struct WuhuCLI: AsyncParsableCommand {
     @Option(help: "Path to server config YAML (default: ~/.wuhu/server.yml).")
     var config: String?
 
+    @Option(help: "If set, dump all LLM requests/responses to this directory (JSON, ordered by time).")
+    var llmRequestLogDir: String?
+
     func run() async throws {
-      try await WuhuServer().run(configPath: config)
+      try await WuhuServer().run(configPath: config, llmRequestLogDir: llmRequestLogDir)
     }
   }
 
@@ -43,6 +46,7 @@ struct WuhuCLI: AsyncParsableCommand {
       abstract: "Client commands (talk to a running Wuhu server).",
       subcommands: [
         CreateSession.self,
+        SetModel.self,
         Prompt.self,
         GetSession.self,
         ListSessions.self,
@@ -146,6 +150,45 @@ struct WuhuCLI: AsyncParsableCommand {
         for try await event in stream {
           printer.handle(event)
         }
+      }
+    }
+
+    struct SetModel: AsyncParsableCommand {
+      static let configuration = CommandConfiguration(
+        commandName: "set-model",
+        abstract: "Change the model selection for an existing session.",
+      )
+
+      @Option(help: "Session id returned by create-session (or set WUHU_CURRENT_SESSION_ID).")
+      var sessionId: String?
+
+      @Option(help: "Provider for this session.")
+      var provider: WuhuProvider
+
+      @Option(help: "Model id (server defaults depend on provider).")
+      var model: String?
+
+      @Option(help: "Reasoning effort (minimal, low, medium, high, xhigh). Only applies to some OpenAI/Codex models.")
+      var reasoningEffort: ReasoningEffort?
+
+      @OptionGroup
+      var shared: Shared
+
+      func run() async throws {
+        let client = try makeClient(shared.server)
+        let sessionId = try resolveWuhuSessionId(sessionId)
+        let response = try await client.setSessionModel(
+          sessionID: sessionId,
+          provider: provider,
+          model: model,
+          reasoningEffort: reasoningEffort,
+        )
+
+        let effort = response.selection.reasoningEffort?.rawValue ?? "default"
+        let status = response.applied ? "applied" : "pending"
+        FileHandle.standardOutput.write(
+          Data("\(status)  \(response.selection.provider.rawValue)  \(response.selection.model)  reasoning=\(effort)\n".utf8),
+        )
       }
     }
 

@@ -418,6 +418,11 @@ public struct SessionTranscriptRenderer: Sendable {
         out += "\(style.meta("System prompt:"))\n"
         out += truncateForDisplay(h.systemPrompt, options: .messageCompact) + "\n"
 
+      case let .sessionSettings(s):
+        flushPendingMetaIfNeeded()
+        let effort = s.reasoningEffort?.rawValue ?? "default"
+        out += "\(style.meta("Model changed: \(s.provider.rawValue) / \(s.model) (reasoning=\(effort))"))\n"
+
       case .custom, .unknown:
         break
       }
@@ -573,6 +578,11 @@ public struct SessionStreamPrinter {
           writeStderr(details + "\n")
         }
       }
+
+    case let .sessionSettings(s):
+      resetAssistantStreamingState()
+      let effort = s.reasoningEffort?.rawValue ?? "default"
+      writeStdout("\n\(style.meta("Model changed: \(s.provider.rawValue) / \(s.model) (reasoning=\(effort))"))\n")
 
     case .compaction, .header, .custom, .unknown:
       break

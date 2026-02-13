@@ -9,6 +9,7 @@ struct WuhuServerConfigTests {
       openai: sk-openai
       anthropic: sk-anthropic
     workspaces_path: /tmp/wuhu-workspaces
+    llm_request_log_dir: /tmp/wuhu-llm-logs
     environments:
     - name: wuhu-repo
       type: local
@@ -29,6 +30,7 @@ struct WuhuServerConfigTests {
     #expect(config.llm?.anthropic == "sk-anthropic")
     #expect(config.databasePath == "/tmp/wuhu.sqlite")
     #expect(config.workspacesPath == "/tmp/wuhu-workspaces")
+    #expect(config.llmRequestLogDir == "/tmp/wuhu-llm-logs")
     #expect(config.host == "127.0.0.1")
     #expect(config.port == 5530)
     #expect(config.environments.count == 1)

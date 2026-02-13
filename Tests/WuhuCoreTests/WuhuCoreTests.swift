@@ -1,6 +1,7 @@
 import Foundation
 import PiAI
 import Testing
+import WuhuAPI
 import WuhuCore
 #if canImport(Darwin)
   import Darwin
@@ -129,6 +130,149 @@ struct WuhuCoreTests {
 
     let last = await capture.last
     #expect(last?.reasoningEffort == .high)
+  }
+
+  @Test func setSessionModelAppendsSessionSettingsAndUpdatesFuturePrompts() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "gpt-5.2-codex",
+      reasoningEffort: .high,
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    let response = try await service.setSessionModel(
+      sessionID: session.id,
+      request: .init(provider: .openai, model: "gpt-5.1-codex", reasoningEffort: .medium),
+    )
+    #expect(response.applied == true)
+    #expect(response.selection.model == "gpt-5.1-codex")
+    #expect(response.selection.reasoningEffort == .medium)
+
+    let updatedSession = try await service.getSession(id: session.id)
+    #expect(updatedSession.model == "gpt-5.1-codex")
+
+    let transcript = try await service.getTranscript(sessionID: session.id)
+    #expect(transcript.contains(where: { if case .sessionSettings = $0.payload { return true }; return false }))
+
+    actor Capture {
+      var lastModelID: String?
+      var lastOptions: RequestOptions?
+
+      func stream(model: Model, ctx _: Context, options: RequestOptions) -> AsyncThrowingStream<AssistantMessageEvent, any Error> {
+        lastModelID = model.id
+        lastOptions = options
+        return AsyncThrowingStream { continuation in
+          let assistant = AssistantMessage(provider: model.provider, model: model.id, content: [.text("ok")], stopReason: .stop)
+          continuation.yield(.done(message: assistant))
+          continuation.finish()
+        }
+      }
+    }
+
+    let capture = Capture()
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "hi",
+      tools: nil,
+      streamFn: { model, ctx, options in
+        await capture.stream(model: model, ctx: ctx, options: options)
+      },
+    )
+    for try await _ in stream {}
+
+    #expect(await capture.lastModelID == "gpt-5.1-codex")
+    #expect(await capture.lastOptions?.reasoningEffort == .medium)
+  }
+
+  @Test func setSessionModelWhilePromptActiveDefersUntilIdle() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "gpt-5.2-codex",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    actor Gate {
+      var started = false
+      private var continuation: CheckedContinuation<Void, Never>?
+
+      func waitUntilStarted() async {
+        while !started {
+          await Task.yield()
+        }
+      }
+
+      func wait() async {
+        if continuation == nil, started {
+          // already waiting
+        }
+        started = true
+        if continuation == nil {
+          await withCheckedContinuation { c in
+            continuation = c
+          }
+        }
+      }
+
+      func release() {
+        continuation?.resume()
+        continuation = nil
+      }
+    }
+
+    let gate = Gate()
+
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "hi",
+      tools: nil,
+      streamFn: { model, _, _ in
+        AsyncThrowingStream { continuation in
+          Task {
+            await gate.wait()
+            let assistant = AssistantMessage(provider: model.provider, model: model.id, content: [.text("ok")], stopReason: .stop)
+            continuation.yield(.done(message: assistant))
+            continuation.finish()
+          }
+        }
+      },
+    )
+
+    let consumeTask = Task {
+      for try await event in stream {
+        if case .done = event { break }
+      }
+    }
+
+    await gate.waitUntilStarted()
+
+    let response = try await service.setSessionModel(
+      sessionID: session.id,
+      request: .init(provider: .openai, model: "gpt-5.1-codex", reasoningEffort: .low),
+    )
+    #expect(response.applied == false)
+
+    await gate.release()
+    try await consumeTask.value
+
+    var finalModel: String?
+    for _ in 0 ..< 200 {
+      let s = try await service.getSession(id: session.id)
+      finalModel = s.model
+      if s.model == "gpt-5.1-codex" { break }
+      await Task.yield()
+    }
+
+    #expect(finalModel == "gpt-5.1-codex")
   }
 
   @Test func promptStreamPersistsLinearChain() async throws {
