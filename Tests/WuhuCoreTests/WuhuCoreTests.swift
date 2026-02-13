@@ -238,8 +238,14 @@ struct WuhuCoreTests {
 
     actor Capture {
       var messages: [Message] = []
-      func set(_ ms: [Message]) { messages = ms }
-      func get() -> [Message] { messages }
+
+      func set(_ ms: [Message]) {
+        messages = ms
+      }
+
+      func get() -> [Message] {
+        messages
+      }
     }
 
     let capture = Capture()
