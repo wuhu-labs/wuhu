@@ -81,10 +81,8 @@ public struct WuhuSessionTranscriptFormatter: Sendable {
     func appendVisibleMessage(id: String, role: WuhuSessionDisplayRole, title: String, text: String) {
       appendMetaIfNeeded()
 
-      let truncation: DisplayTruncation = (verbosity == .full) ? .messageFull : .messageCompact
-      let truncated = truncateForDisplay(text.trimmingCharacters(in: .whitespacesAndNewlines), options: truncation)
-        .trimmingCharacters(in: .newlines)
-      items.append(.init(id: id, role: role, title: title, text: truncated))
+      let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      items.append(.init(id: id, role: role, title: title, text: normalized))
       printedAnyVisibleMessage = true
     }
 
@@ -187,8 +185,13 @@ public struct WuhuSessionTranscriptFormatter: Sendable {
 
       case let .header(h):
         guard verbosity == .full else { break }
-        let text = truncateForDisplay(h.systemPrompt, options: .messageCompact)
-        items.append(.init(id: "entry.\(entry.id)", role: .system, title: "System:", text: "System prompt:\n\n" + text))
+        let text = h.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        items.append(.init(
+          id: "entry.\(entry.id)",
+          role: .system,
+          title: "System:",
+          text: "System prompt:\n\n" + text,
+        ))
 
       case let .sessionSettings(s):
         appendMetaIfNeeded()
@@ -241,8 +244,6 @@ private struct DisplayTruncation: Sendable {
   var maxLines: Int
   var maxChars: Int
 
-  static let messageFull = DisplayTruncation(maxLines: 200, maxChars: 24000)
-  static let messageCompact = DisplayTruncation(maxLines: 40, maxChars: 6000)
   static let toolFull = DisplayTruncation(maxLines: 12, maxChars: 2000)
 }
 
