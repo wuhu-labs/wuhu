@@ -35,6 +35,30 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode(WuhuSession.self, from: data)
   }
 
+  public func setSessionModel(
+    sessionID: String,
+    provider: WuhuProvider,
+    model: String? = nil,
+    reasoningEffort: ReasoningEffort? = nil,
+  ) async throws -> WuhuSetSessionModelResponse {
+    let url = baseURL
+      .appending(path: "v2")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "model")
+    var req = HTTPRequest(url: url, method: "POST")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(WuhuSetSessionModelRequest(
+      provider: provider,
+      model: model,
+      reasoningEffort: reasoningEffort,
+    ))
+
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuSetSessionModelResponse.self, from: data)
+  }
+
   public func listSessions(limit: Int? = nil) async throws -> [WuhuSession] {
     var url = baseURL.appending(path: "v2").appending(path: "sessions")
     if let limit {

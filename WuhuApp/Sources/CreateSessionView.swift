@@ -18,17 +18,24 @@ struct CreateSessionView: View {
           }
 
           Section {
-            Picker(
-              "Provider",
-              selection: Binding(
+            ModelSelectionFields(
+              provider: Binding(
                 get: { store.provider },
                 set: { store.send(.binding(.set(\.provider, $0))) },
               ),
-            ) {
-              Text("OpenAI").tag(WuhuProvider.openai)
-              Text("Anthropic").tag(WuhuProvider.anthropic)
-              Text("OpenAI Codex").tag(WuhuProvider.openaiCodex)
-            }
+              modelSelection: Binding(
+                get: { store.modelSelection },
+                set: { store.send(.binding(.set(\.modelSelection, $0))) },
+              ),
+              customModel: Binding(
+                get: { store.customModel },
+                set: { store.send(.binding(.set(\.customModel, $0))) },
+              ),
+              reasoningEffort: Binding(
+                get: { store.reasoningEffort },
+                set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
+              ),
+            )
 
             Picker(
               "Environment",
@@ -60,51 +67,6 @@ struct CreateSessionView: View {
               }
             }
             .disabled(store.isLoadingOptions)
-
-            Picker(
-              "Model",
-              selection: Binding(
-                get: { store.modelSelection },
-                set: { store.send(.binding(.set(\.modelSelection, $0))) },
-              ),
-            ) {
-              Text("Server default").tag("")
-              ForEach(WuhuModelCatalog.models(for: store.provider)) { option in
-                Text(option.displayName).tag(option.id)
-              }
-              Text("Custom…").tag(CreateSessionFeature.State.customModelSentinel)
-            }
-
-            if store.modelSelection == CreateSessionFeature.State.customModelSentinel {
-              TextField(
-                "Custom model id",
-                text: Binding(
-                  get: { store.customModel },
-                  set: { store.send(.binding(.set(\.customModel, $0))) },
-                ),
-              )
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-            }
-
-            let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
-              provider: store.provider,
-              modelID: store.resolvedModelID,
-            )
-            if !supportedEfforts.isEmpty {
-              Picker(
-                "Reasoning effort",
-                selection: Binding(
-                  get: { store.reasoningEffort },
-                  set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
-                ),
-              ) {
-                Text("Default").tag(nil as ReasoningEffort?)
-                ForEach(supportedEfforts, id: \.self) { effort in
-                  Text(effort.rawValue).tag(Optional(effort))
-                }
-              }
-            }
 
             TextField(
               "System prompt (optional)",

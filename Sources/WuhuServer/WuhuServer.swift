@@ -12,7 +12,7 @@ import WuhuCore
 public struct WuhuServer: Sendable {
   public init() {}
 
-  public func run(configPath: String?) async throws {
+  public func run(configPath: String?, llmRequestLogDir: String? = nil) async throws {
     let path = (configPath?.isEmpty == false) ? configPath! : WuhuServerConfig.defaultPath()
     let config = try WuhuServerConfig.load(path: path)
 
@@ -31,7 +31,19 @@ public struct WuhuServer: Sendable {
     try ensureDirectoryExists(forDatabasePath: dbPath)
 
     let store = try SQLiteSessionStore(path: dbPath)
-    let service = WuhuService(store: store)
+
+    let effectiveLogDir: String? = {
+      if let llmRequestLogDir, !llmRequestLogDir.isEmpty { return llmRequestLogDir }
+      if let fromConfig = config.llmRequestLogDir, !fromConfig.isEmpty { return fromConfig }
+      return nil
+    }()
+
+    let requestLogger: WuhuLLMRequestLogger? = effectiveLogDir.flatMap { raw in
+      let expanded = (raw as NSString).expandingTildeInPath
+      return try? WuhuLLMRequestLogger(directoryURL: URL(fileURLWithPath: expanded, isDirectory: true))
+    }
+
+    let service = WuhuService(store: store, llmRequestLogger: requestLogger)
 
     let envByName: [String: WuhuServerConfig.Environment] = Dictionary(uniqueKeysWithValues: config.environments.map { ($0.name, $0) })
     let runnerRegistry = RunnerRegistry()
@@ -81,7 +93,7 @@ public struct WuhuServer: Sendable {
     router.post("v2/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
-      let model = (create.model?.isEmpty == false) ? create.model! : defaultModel(for: create.provider)
+      let model = (create.model?.isEmpty == false) ? create.model! : WuhuModelCatalog.defaultModelID(for: create.provider)
       let systemPrompt = (create.systemPrompt?.isEmpty == false) ? create.systemPrompt! : defaultSystemPrompt
       let sessionID = UUID().uuidString.lowercased()
 
@@ -143,6 +155,13 @@ public struct WuhuServer: Sendable {
         )
       }
       return try context.responseEncoder.encode(session, from: request, context: context)
+    }
+
+    router.post("v2/sessions/:id/model") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      let setModel = try await request.decode(as: WuhuSetSessionModelRequest.self, context: context)
+      let response = try await service.setSessionModel(sessionID: id, request: setModel)
+      return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
     router.post("v2/sessions/:id/prompt") { request, context async throws -> Response in
@@ -304,17 +323,6 @@ public struct WuhuServer: Sendable {
       }
     }
     try await app.runService()
-  }
-}
-
-private func defaultModel(for provider: WuhuProvider) -> String {
-  switch provider {
-  case .openai:
-    "gpt-5.2-codex"
-  case .anthropic:
-    "claude-sonnet-4-5"
-  case .openaiCodex:
-    "codex-mini-latest"
   }
 }
 

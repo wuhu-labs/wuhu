@@ -142,6 +142,50 @@ struct WuhuClientTests {
     #expect(sawIdle)
     #expect(sawDone)
   }
+
+  @Test func setSessionModelPostsAndDecodesResponse() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/model")
+        #expect(request.method == "POST")
+        #expect(request.headers["Accept"] == "application/json")
+        #expect(request.headers["Content-Type"] == "application/json")
+
+        let body = try #require(request.body)
+        let decoded = try WuhuJSON.decoder.decode(WuhuSetSessionModelRequest.self, from: body)
+        #expect(decoded.provider == .openai)
+        #expect(decoded.model == "gpt-5.2-codex")
+        #expect(decoded.reasoningEffort == .high)
+
+        let session = WuhuSession(
+          id: "s1",
+          provider: .openai,
+          model: "gpt-5.2-codex",
+          environment: .init(name: "local", type: .local, path: "/tmp"),
+          cwd: "/tmp",
+          runnerName: nil,
+          parentSessionID: nil,
+          createdAt: Date(timeIntervalSince1970: 1),
+          updatedAt: Date(timeIntervalSince1970: 2),
+          headEntryID: 1,
+          tailEntryID: 2,
+        )
+        let response = WuhuSetSessionModelResponse(
+          session: session,
+          selection: .init(provider: .openai, model: "gpt-5.2-codex", reasoningEffort: .high),
+          applied: true,
+        )
+        let data = try WuhuJSON.encoder.encode(response)
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let response = try await client.setSessionModel(sessionID: "s1", provider: .openai, model: "gpt-5.2-codex", reasoningEffort: .high)
+    #expect(response.applied == true)
+    #expect(response.session.model == "gpt-5.2-codex")
+    #expect(response.selection.reasoningEffort == .high)
+  }
 }
 
 private struct MockHTTPClient: HTTPClient {

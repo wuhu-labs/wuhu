@@ -184,6 +184,17 @@ public struct WuhuSessionTranscriptFormatter: Sendable {
         let text = truncateForDisplay(h.systemPrompt, options: .messageCompact)
         items.append(.init(id: "entry.\(entry.id)", role: .system, title: "System:", text: "System prompt:\n\n" + text))
 
+      case let .sessionSettings(s):
+        appendMetaIfNeeded()
+        let effort = s.reasoningEffort?.rawValue ?? "default"
+        items.append(.init(
+          id: "entry.\(entry.id)",
+          role: .meta,
+          title: "",
+          text: "Model changed: \(s.provider.rawValue) / \(s.model) (reasoning=\(effort))",
+        ))
+        printedAnyVisibleMessage = true
+
       case .custom, .unknown:
         break
       }

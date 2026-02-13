@@ -8,7 +8,7 @@ import WuhuClient
 struct CreateSessionFeature {
   @ObservableState
   struct State: Equatable {
-    static let customModelSentinel = "__custom__"
+    static let customModelSentinel = ModelSelectionUI.customModelSentinel
 
     var serverURL: URL
     var username: String?

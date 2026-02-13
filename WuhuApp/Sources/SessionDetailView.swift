@@ -16,6 +16,21 @@ struct SessionDetailView: View {
       }
       .navigationTitle("Session")
       .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button("Model") {
+            store.send(.binding(.set(\.isShowingModelPicker, true)))
+          }
+        }
+      }
+      .sheet(
+        isPresented: Binding(
+          get: { store.isShowingModelPicker },
+          set: { store.send(.binding(.set(\.isShowingModelPicker, $0))) },
+        ),
+      ) {
+        SessionModelPickerSheet(store: store)
+      }
       .task { await store.send(.onAppear).finish() }
       .onDisappear { store.send(.onDisappear) }
     }
@@ -115,6 +130,71 @@ struct SessionDetailView: View {
     }
     .padding(.horizontal)
     .padding(.vertical, 10)
+  }
+}
+
+private struct SessionModelPickerSheet: View {
+  let store: StoreOf<SessionDetailFeature>
+
+  var body: some View {
+    WithPerceptionTracking {
+      NavigationStack {
+        Form {
+          if let status = store.modelUpdateStatus {
+            Section {
+              Text(status)
+                .foregroundStyle(.secondary)
+            }
+          }
+
+          if let error = store.error {
+            Section {
+              Text(error)
+                .foregroundStyle(.red)
+            }
+          }
+
+          Section {
+            ModelSelectionFields(
+              provider: Binding(
+                get: { store.provider },
+                set: { store.send(.binding(.set(\.provider, $0))) },
+              ),
+              modelSelection: Binding(
+                get: { store.modelSelection },
+                set: { store.send(.binding(.set(\.modelSelection, $0))) },
+              ),
+              customModel: Binding(
+                get: { store.customModel },
+                set: { store.send(.binding(.set(\.customModel, $0))) },
+              ),
+              reasoningEffort: Binding(
+                get: { store.reasoningEffort },
+                set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
+              ),
+            )
+          } header: {
+            Text("Model")
+          }
+
+          Section {
+            Button("Apply") { store.send(.applyModelTapped) }
+              .disabled(store.isUpdatingModel)
+          }
+        }
+        .navigationTitle("Model")
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button("Done") { store.send(.binding(.set(\.isShowingModelPicker, false))) }
+          }
+          if store.isUpdatingModel {
+            ToolbarItem(placement: .confirmationAction) {
+              ProgressView()
+            }
+          }
+        }
+      }
+    }
   }
 }
 

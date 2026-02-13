@@ -41,6 +41,34 @@ public struct WuhuPromptRequest: Sendable, Hashable, Codable {
   }
 }
 
+public struct WuhuSetSessionModelRequest: Sendable, Hashable, Codable {
+  public var provider: WuhuProvider
+  /// If nil/empty, the server uses its default model for this provider.
+  public var model: String?
+  /// If nil, the server clears any session-level override (use default behavior for the model).
+  public var reasoningEffort: ReasoningEffort?
+
+  public init(provider: WuhuProvider, model: String? = nil, reasoningEffort: ReasoningEffort? = nil) {
+    self.provider = provider
+    self.model = model
+    self.reasoningEffort = reasoningEffort
+  }
+}
+
+public struct WuhuSetSessionModelResponse: Sendable, Hashable, Codable {
+  public var session: WuhuSession
+  /// The resolved selection the server will use (includes provider defaults).
+  public var selection: WuhuSessionSettings
+  /// True if the selection became effective immediately; false if it will be applied once the session is idle.
+  public var applied: Bool
+
+  public init(session: WuhuSession, selection: WuhuSessionSettings, applied: Bool) {
+    self.session = session
+    self.selection = selection
+    self.applied = applied
+  }
+}
+
 public struct WuhuPromptDetachedResponse: Sendable, Hashable, Codable {
   public var userEntry: WuhuSessionEntry
 

@@ -116,6 +116,11 @@ public actor SQLiteSessionStore: SessionStore {
 
       session.tailEntryID = newID
       session.updatedAt = now
+
+      if case let .sessionSettings(settings) = payload {
+        session.provider = settings.provider.rawValue
+        session.model = settings.model
+      }
       try session.update(db)
 
       return row.toModel()
