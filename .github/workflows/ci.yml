@@ -21,6 +21,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Toolchain key
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(swift --version | head -n 1)"
+          safe="$(printf '%s' "$version" | tr ' ' '_' | tr -cd '[:alnum:]_.-')"
+          echo "key=$safe" >> "$GITHUB_OUTPUT"
+
       - name: Install build deps
         run: |
           apt-get update
@@ -32,9 +41,9 @@ jobs:
           path: |
             .build
             .swiftpm
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ steps.toolchain.outputs.key }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
-            ${{ runner.os }}-spm-
+            ${{ runner.os }}-spm-${{ steps.toolchain.outputs.key }}-
 
       - name: Resolve
         run: swift package resolve
@@ -65,6 +74,15 @@ jobs:
         with:
           xcode-version: "latest-stable"
 
+      - name: Toolchain key
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(xcrun swift --version | head -n 1)"
+          safe="$(printf '%s' "$version" | tr ' ' '_' | tr -cd '[:alnum:]_.-')"
+          echo "key=$safe" >> "$GITHUB_OUTPUT"
+
       - name: Swift version
         run: xcrun swift --version
 
@@ -77,9 +95,9 @@ jobs:
           path: |
             .build
             .swiftpm
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ steps.toolchain.outputs.key }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
-            ${{ runner.os }}-spm-
+            ${{ runner.os }}-spm-${{ steps.toolchain.outputs.key }}-
 
       - name: Resolve
         run: xcrun swift package resolve
