@@ -209,6 +209,123 @@ struct WuhuCoreTests {
     #expect(entries.contains { if case let .message(.assistant(a)) = $0.payload { return a.content.contains { if case .text = $0 { return true }; return false } }; return false })
   }
 
+  @Test func promptStreamRepairsMissingToolResultsBeforeSendingToLLM() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(store: store)
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    _ = try await store.appendEntry(sessionID: session.id, payload: .message(.fromPi(.user("please run the tool"))))
+
+    let toolCall = ToolCall(
+      id: "tool_missing_1",
+      name: "echo",
+      arguments: .object(["value": .string("hello")]),
+    )
+    let assistant = AssistantMessage(
+      provider: .openai,
+      model: "mock",
+      content: [.toolCall(toolCall)],
+      stopReason: .toolUse,
+    )
+    _ = try await store.appendEntry(sessionID: session.id, payload: .message(.fromPi(.assistant(assistant))))
+
+    actor Capture {
+      var messages: [Message] = []
+      func set(_ ms: [Message]) { messages = ms }
+      func get() -> [Message] { messages }
+    }
+
+    let capture = Capture()
+
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "next",
+      user: "test",
+      tools: nil,
+      streamFn: { model, ctx, _ in
+        await capture.set(ctx.messages)
+        return AsyncThrowingStream { continuation in
+          let assistant = AssistantMessage(
+            provider: model.provider,
+            model: model.id,
+            content: [.text("ok")],
+            stopReason: .stop,
+          )
+          continuation.yield(.done(message: assistant))
+          continuation.finish()
+        }
+      },
+    )
+    for try await _ in stream {}
+
+    let ctxMessages = await capture.get()
+    let toolCallIndex = ctxMessages.firstIndex(where: { msg in
+      guard case let .assistant(a) = msg else { return false }
+      return a.content.contains(where: { block in
+        guard case let .toolCall(call) = block else { return false }
+        return call.id == "tool_missing_1"
+      })
+    })
+    let toolResultIndex = ctxMessages.firstIndex(where: { msg in
+      guard case let .toolResult(r) = msg else { return false }
+      return r.toolCallId == "tool_missing_1"
+    })
+    let lastUserIndex = ctxMessages.lastIndex(where: { if case .user = $0 { return true }; return false })
+
+    #expect(toolCallIndex != nil)
+    #expect(toolResultIndex != nil)
+    #expect(lastUserIndex != nil)
+    if let toolCallIndex, let toolResultIndex {
+      #expect(toolCallIndex < toolResultIndex)
+    } else {
+      #expect(Bool(false))
+    }
+    if let toolResultIndex, let lastUserIndex {
+      #expect(toolResultIndex < lastUserIndex)
+    } else {
+      #expect(Bool(false))
+    }
+
+    if let toolResultIndex, case let .toolResult(r) = ctxMessages[toolResultIndex] {
+      #expect(r.isError == true)
+      let text = r.content.compactMap { block -> String? in
+        if case let .text(t) = block { return t.text }
+        return nil
+      }.joined(separator: "\n")
+      #expect(text.contains("has been lost"))
+    }
+
+    let entries = try await service.getTranscript(sessionID: session.id)
+    let toolResultEntryIndex = entries.firstIndex(where: { entry in
+      guard case let .message(m) = entry.payload else { return false }
+      guard case let .toolResult(r) = m else { return false }
+      return r.toolCallId == "tool_missing_1"
+    })
+    let nextUserEntryIndex = entries.firstIndex(where: { entry in
+      guard case let .message(m) = entry.payload else { return false }
+      guard case let .user(u) = m else { return false }
+      return u.content.contains(where: { block in
+        guard case let .text(text, _) = block else { return false }
+        return text == "next"
+      })
+    })
+
+    #expect(toolResultEntryIndex != nil)
+    #expect(nextUserEntryIndex != nil)
+    if let toolResultEntryIndex, let nextUserEntryIndex {
+      #expect(toolResultEntryIndex < nextUserEntryIndex)
+    } else {
+      #expect(Bool(false))
+    }
+  }
+
   @Test func promptStreamGivesUpAfterMaxRetriesAndAppendsGiveUpEntry() async throws {
     let store = try SQLiteSessionStore(path: ":memory:")
     let service = WuhuService(
