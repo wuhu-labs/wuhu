@@ -36,11 +36,11 @@ struct CreateSessionFeature {
     var resolvedModelID: String? {
       switch modelSelection {
       case "":
-        return nil
+        nil
       case Self.customModelSentinel:
-        return customModel.trimmedNonEmpty
+        customModel.trimmedNonEmpty
       default:
-        return modelSelection
+        modelSelection
       }
     }
   }

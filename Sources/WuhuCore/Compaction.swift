@@ -404,7 +404,7 @@ enum WuhuCompactionEngine {
 
     var opts = requestOptions
     opts.maxTokens = maxTokens
-    if (model.provider == .openai || model.provider == .openaiCodex),
+    if model.provider == .openai || model.provider == .openaiCodex,
        model.id.contains("gpt-5") || model.id.contains("codex")
     {
       opts.reasoningEffort = .high

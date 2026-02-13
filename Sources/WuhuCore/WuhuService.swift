@@ -94,7 +94,7 @@ public actor WuhuService {
     var requestOptions = RequestOptions()
     if let effort = Self.extractReasoningEffort(from: header) {
       requestOptions.reasoningEffort = effort
-    } else if (model.provider == .openai || model.provider == .openaiCodex),
+    } else if model.provider == .openai || model.provider == .openaiCodex,
               model.id.contains("gpt-5") || model.id.contains("codex")
     {
       requestOptions.reasoningEffort = .low
@@ -202,7 +202,7 @@ public actor WuhuService {
     var requestOptions = RequestOptions()
     if let effort = Self.extractReasoningEffort(from: header) {
       requestOptions.reasoningEffort = effort
-    } else if (model.provider == .openai || model.provider == .openaiCodex),
+    } else if model.provider == .openai || model.provider == .openaiCodex,
               model.id.contains("gpt-5") || model.id.contains("codex")
     {
       requestOptions.reasoningEffort = .low

@@ -15,7 +15,7 @@ public enum WuhuModelCatalog {
   public static func models(for provider: WuhuProvider) -> [WuhuModelOption] {
     switch provider {
     case .openai:
-      return [
+      [
         .init(id: "gpt-5", displayName: "GPT-5"),
         .init(id: "gpt-5-codex", displayName: "GPT-5 Codex"),
         .init(id: "gpt-5.1", displayName: "GPT-5.1"),
@@ -27,7 +27,7 @@ public enum WuhuModelCatalog {
       ]
 
     case .openaiCodex:
-      return [
+      [
         .init(id: "codex-mini-latest", displayName: "Codex mini (latest)"),
         .init(id: "gpt-5.1", displayName: "GPT-5.1"),
         .init(id: "gpt-5.1-codex-mini", displayName: "GPT-5.1 Codex mini"),
@@ -38,7 +38,7 @@ public enum WuhuModelCatalog {
       ]
 
     case .anthropic:
-      return [
+      [
         .init(id: "claude-haiku-4-5", displayName: "Claude Haiku 4.5"),
         .init(id: "claude-sonnet-4-5", displayName: "Claude Sonnet 4.5"),
         .init(id: "claude-opus-4-5", displayName: "Claude Opus 4.5"),
@@ -80,4 +80,3 @@ public enum WuhuModelCatalog {
     }
   }
 }
-
