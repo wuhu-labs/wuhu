@@ -63,7 +63,19 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Wuhu
+        CFBundleIconName: AppIcon
         UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ms.liu.wuhu.ios
