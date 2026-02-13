@@ -48,6 +48,7 @@ struct WuhuCLI: AsyncParsableCommand {
         CreateSession.self,
         SetModel.self,
         Prompt.self,
+        StopSession.self,
         GetSession.self,
         ListSessions.self,
       ],
@@ -189,6 +190,34 @@ struct WuhuCLI: AsyncParsableCommand {
         FileHandle.standardOutput.write(
           Data("\(status)  \(response.selection.provider.rawValue)  \(response.selection.model)  reasoning=\(effort)\n".utf8),
         )
+      }
+    }
+
+    struct StopSession: AsyncParsableCommand {
+      static let configuration = CommandConfiguration(
+        commandName: "stop-session",
+        abstract: "Stop the current session execution, if any.",
+      )
+
+      @Option(help: "Session id (or set WUHU_CURRENT_SESSION_ID).")
+      var sessionId: String?
+
+      @OptionGroup
+      var shared: Shared
+
+      func run() async throws {
+        let client = try makeClient(shared.server)
+        let sessionId = try resolveWuhuSessionId(sessionId)
+        let username = resolveWuhuUsername(shared.username)
+
+        let response = try await client.stopSession(sessionID: sessionId, user: username)
+        if let stopEntry = response.stopEntry {
+          FileHandle.standardOutput.write(
+            Data("stopped  cursor=\(stopEntry.id)  repaired=\(response.repairedEntries.count)\n".utf8),
+          )
+        } else {
+          FileHandle.standardOutput.write(Data("idle\n".utf8))
+        }
       }
     }
 

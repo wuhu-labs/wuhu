@@ -18,9 +18,13 @@ struct SessionDetailFeature {
 
     var session: WuhuSession?
     var transcript: IdentifiedArrayOf<WuhuSessionEntry> = []
+    var inProcessExecution: WuhuInProcessExecutionInfo?
+    var inferredExecution: WuhuSessionExecutionInference = .infer(from: [])
 
     var isLoading = false
     var isSending = false
+    var isStopping = false
+    var didPromptDeadLoop = false
 
     var isShowingModelPicker = false
     var isUpdatingModel = false
@@ -37,6 +41,8 @@ struct SessionDetailFeature {
     var modelSelection: String = ""
     var customModel: String = ""
     var reasoningEffort: ReasoningEffort?
+
+    @Presents var alert: AlertState<Action.Alert>?
 
     init(sessionID: String, serverURL: URL?, username: String?) {
       self.sessionID = sessionID
@@ -72,13 +78,21 @@ struct SessionDetailFeature {
     case promptEvent(WuhuSessionStreamEvent)
     case promptFailed(String)
 
+    case stopTapped
+    case stopResponse(TaskResult<WuhuStopSessionResponse>)
+
     case applyModelTapped
     case setModelResponse(TaskResult<WuhuSetSessionModelResponse>)
 
+    case alert(PresentationAction<Alert>)
     case delegate(Delegate)
 
     enum Delegate: Equatable {
       case didClose
+    }
+
+    enum Alert: Equatable {
+      case stopDeadLoopConfirmed
     }
   }
 
@@ -129,7 +143,30 @@ struct SessionDetailFeature {
         state.isLoading = false
         state.session = response.session
         state.transcript = IdentifiedArray(uniqueElements: response.transcript)
+        state.inProcessExecution = response.inProcessExecution
+        state.inferredExecution = WuhuSessionExecutionInference.infer(from: response.transcript)
         syncModelSelectionFromSession(response.session, transcript: response.transcript, state: &state)
+
+        if let inProcess = response.inProcessExecution,
+           !state.didPromptDeadLoop,
+           state.inferredExecution.state == .executing,
+           inProcess.activePromptCount == 0
+        {
+          state.didPromptDeadLoop = true
+          state.alert = AlertState {
+            TextState("Session looks stuck")
+          } actions: {
+            ButtonState(role: .destructive, action: .send(.stopDeadLoopConfirmed)) {
+              TextState("Stop execution")
+            }
+            ButtonState(role: .cancel) {
+              TextState("Keep")
+            }
+          } message: {
+            TextState("This session appears to be executing based on its transcript, but the server reports no active execution. Stop it by appending an “Execution stopped” entry?")
+          }
+        }
+
         return .none
 
       case let .refreshResponse(.failure(error)):
@@ -206,6 +243,40 @@ struct SessionDetailFeature {
         state.error = message
         return .send(.startFollow)
 
+      case .stopTapped:
+        guard let serverURL = state.serverURL else { return .none }
+        state.isStopping = true
+        state.error = nil
+        state.streamingAssistantText = ""
+        let sessionID = state.sessionID
+        let user = state.username
+        return .run { send in
+          await send(
+            .stopResponse(
+              TaskResult {
+                try await wuhuClientProvider.make(serverURL).stopSession(sessionID: sessionID, user: user)
+              },
+            ),
+          )
+        }
+
+      case let .stopResponse(.success(response)):
+        state.isStopping = false
+        state.isSending = false
+        for entry in response.repairedEntries {
+          state.transcript[id: entry.id] = entry
+        }
+        if let stopEntry = response.stopEntry {
+          state.transcript[id: stopEntry.id] = stopEntry
+        }
+        state.inferredExecution = WuhuSessionExecutionInference.infer(from: Array(state.transcript))
+        return .none
+
+      case let .stopResponse(.failure(error)):
+        state.isStopping = false
+        state.error = "\(error)"
+        return .none
+
       case let .binding(binding):
         if binding.keyPath == \.provider {
           state.modelSelection = ""
@@ -264,7 +335,16 @@ struct SessionDetailFeature {
 
       case .delegate:
         return .none
+
+      case let .alert(.presented(.stopDeadLoopConfirmed)):
+        return .send(.stopTapped)
+
+      case .alert:
+        return .none
       }
+    }
+    .ifLet(\.$alert, action: \.alert) {
+      EmptyReducer()
     }
   }
 
@@ -273,6 +353,7 @@ struct SessionDetailFeature {
     case let .entryAppended(entry):
       state.transcript[id: entry.id] = entry
       state.streamingAssistantText = ""
+      state.inferredExecution = WuhuSessionExecutionInference.infer(from: Array(state.transcript))
       if case let .sessionSettings(s) = entry.payload {
         state.session?.provider = s.provider
         state.session?.model = s.model
@@ -284,6 +365,9 @@ struct SessionDetailFeature {
     case let .assistantTextDelta(delta):
       state.streamingAssistantText += delta
     case .idle:
+      if state.inProcessExecution != nil {
+        state.inProcessExecution = .init(activePromptCount: 0)
+      }
       break
     case .done:
       break

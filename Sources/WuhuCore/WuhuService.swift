@@ -13,6 +13,12 @@ public actor WuhuService {
 
   private var liveSubscribers: [String: [UUID: AsyncStream<WuhuSessionStreamEvent>.Continuation]] = [:]
   private var activePromptCount: [String: Int] = [:]
+  private struct ActiveExecution: Sendable {
+    var agent: PiAgent.Agent
+    var cancel: @Sendable () -> Void
+  }
+
+  private var activeExecutions: [String: [UUID: ActiveExecution]] = [:]
 
   private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
   private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
@@ -108,7 +114,7 @@ public actor WuhuService {
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
 
-    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: transcript)
+    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: transcript, mode: .lost)
     transcript = toolRepair.transcript
 
     let reminderEntry = try await maybeAppendGroupChatReminderIfNeeded(
@@ -175,7 +181,8 @@ public actor WuhuService {
       streamFn: agentStreamFn,
     ))
 
-    beginPrompt(sessionID: sessionID)
+    let executionToken = UUID()
+    beginPrompt(sessionID: sessionID, token: executionToken, agent: agent)
     let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
       user: effectiveUser,
       content: [.text(text: input, signature: nil)],
@@ -186,7 +193,7 @@ public actor WuhuService {
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
       let task = Task {
         do {
-          defer { Task { await self.endPromptAsync(sessionID: sessionID) } }
+          defer { Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) } }
 
           for entry in toolRepair.repairEntries {
             continuation.yield(.entryAppended(entry))
@@ -198,7 +205,7 @@ public actor WuhuService {
 
           let consumeTask = Task {
             for try await event in agent.events {
-              try await self.handleAgentEvent(event, sessionID: sessionID, continuation: continuation)
+              try await self.handleAgentEvent(event, sessionID: sessionID, token: executionToken, continuation: continuation)
               if case .agentEnd = event { break }
             }
           }
@@ -213,10 +220,21 @@ public actor WuhuService {
         }
       }
 
+      Task {
+        await self.setActiveExecutionCancel(
+          sessionID: sessionID,
+          token: executionToken,
+          cancel: {
+            task.cancel()
+            Task { await agent.abort() }
+          },
+        )
+      }
+
       continuation.onTermination = { _ in
         task.cancel()
         Task { await agent.abort() }
-        Task { await self.endPromptAsync(sessionID: sessionID) }
+        Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) }
       }
     }
   }
@@ -232,7 +250,7 @@ public actor WuhuService {
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
 
-    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: transcript)
+    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: transcript, mode: .lost)
     transcript = toolRepair.transcript
 
     _ = try await maybeAppendGroupChatReminderIfNeeded(
@@ -296,7 +314,8 @@ public actor WuhuService {
       streamFn: agentStreamFn,
     ))
 
-    beginPrompt(sessionID: sessionID)
+    let executionToken = UUID()
+    beginPrompt(sessionID: sessionID, token: executionToken, agent: agent)
     let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
       user: effectiveUser,
       content: [.text(text: input, signature: nil)],
@@ -304,14 +323,14 @@ public actor WuhuService {
     ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
-    Task {
+    let promptTask = Task {
       do {
-        defer { Task { await self.endPromptAsync(sessionID: sessionID) } }
+        defer { Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) } }
 
         let consumeTask = Task {
           do {
             for try await event in agent.events {
-              try await self.handleAgentEvent(event, sessionID: sessionID, continuation: nil)
+              try await self.handleAgentEvent(event, sessionID: sessionID, token: executionToken, continuation: nil)
               if case .agentEnd = event { break }
             }
           } catch {
@@ -327,7 +346,66 @@ public actor WuhuService {
       }
     }
 
+    await setActiveExecutionCancel(
+      sessionID: sessionID,
+      token: executionToken,
+      cancel: {
+        promptTask.cancel()
+        Task { await agent.abort() }
+      },
+    )
+
     return WuhuPromptDetachedResponse(userEntry: userEntry)
+  }
+
+  public func inProcessExecutionInfo(sessionID: String) -> WuhuInProcessExecutionInfo {
+    let count = activeExecutions[sessionID]?.count ?? 0
+    return .init(activePromptCount: count)
+  }
+
+  public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
+    _ = try await store.getSession(id: sessionID)
+
+    let transcript = try await store.getEntries(sessionID: sessionID)
+    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
+    let inProcessCount = activeExecutions[sessionID]?.count ?? 0
+
+    guard inferred.state == .executing || inProcessCount > 0 else {
+      return .init(repairedEntries: [], stopEntry: nil)
+    }
+
+    let runningTokens: [UUID] = activeExecutions[sessionID].map { Array($0.keys) } ?? []
+    for token in runningTokens {
+      activeExecutions[sessionID]?[token]?.cancel()
+      removeActiveExecution(sessionID: sessionID, token: token)
+    }
+
+    var updatedTranscript = try await store.getEntries(sessionID: sessionID)
+    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: updatedTranscript, mode: .stopped)
+    updatedTranscript = toolRepair.transcript
+
+    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
+    if !stoppedBy.isEmpty {
+      details["user"] = .string(stoppedBy)
+    }
+
+    let stopMessage = WuhuPersistedMessage.customMessage(.init(
+      customType: WuhuCustomMessageTypes.executionStopped,
+      content: [.text(text: "Execution stopped", signature: nil)],
+      details: .object(details),
+      display: true,
+      timestamp: Date(),
+    ))
+    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
+    publishLiveEvent(sessionID: sessionID, event: .entryAppended(stopEntry))
+
+    for _ in runningTokens {
+      endPrompt(sessionID: sessionID)
+    }
+    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
+
+    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
 
   public func followSessionStream(
@@ -442,8 +520,13 @@ public actor WuhuService {
   private func handleAgentEvent(
     _ event: AgentEvent,
     sessionID: String,
+    token: UUID,
     continuation: AsyncThrowingStream<WuhuSessionStreamEvent, any Error>.Continuation?,
   ) async throws {
+    guard activeExecutions[sessionID]?[token] != nil else {
+      return
+    }
+
     switch event {
     case let .toolExecutionStart(toolCallId, toolName, args):
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
@@ -622,14 +705,23 @@ public actor WuhuService {
   private static let lostToolResultText =
     "The result for this tool call has been lost. Retry if needed. The tool call might or might not have taken place; for non-idempotent actions, check the current state before continuing."
 
+  private static let stoppedToolResultText =
+    "Execution was stopped before a result for this tool call was recorded. Retry if needed. The tool call might or might not have taken place; for non-idempotent actions, check the current state before continuing."
+
   private struct ToolRepairResult: Sendable {
     var transcript: [WuhuSessionEntry]
     var repairEntries: [WuhuSessionEntry]
   }
 
+  private enum ToolRepairMode: Sendable {
+    case lost
+    case stopped
+  }
+
   private func repairMissingToolResultsIfNeeded(
     sessionID: String,
     transcript: [WuhuSessionEntry],
+    mode: ToolRepairMode,
   ) async throws -> ToolRepairResult {
     var pendingOrder: [String] = []
     var pendingNames: [String: String] = [:]
@@ -681,13 +773,26 @@ public actor WuhuService {
     for toolCallId in pendingOrder {
       guard let toolName = pendingNames[toolCallId] else { continue }
 
+      let reason: String = switch mode {
+      case .lost:
+        "lost"
+      case .stopped:
+        "stopped"
+      }
+      let text: String = switch mode {
+      case .lost:
+        Self.lostToolResultText
+      case .stopped:
+        Self.stoppedToolResultText
+      }
+
       let repaired: Message = .toolResult(.init(
         toolCallId: toolCallId,
         toolName: toolName,
-        content: [.text(Self.lostToolResultText)],
+        content: [.text(text)],
         details: .object([
           "wuhu_repair": .string("missing_tool_result"),
-          "reason": .string("lost"),
+          "reason": .string(reason),
         ]),
         isError: true,
       ))
@@ -836,7 +941,36 @@ public actor WuhuService {
     }
   }
 
-  private func endPromptAsync(sessionID: String) async {
+  private func beginPrompt(sessionID: String, token: UUID, agent: PiAgent.Agent) {
+    let execution = ActiveExecution(
+      agent: agent,
+      cancel: {
+        Task { await agent.abort() }
+      },
+    )
+    activeExecutions[sessionID, default: [:]][token] = execution
+    beginPrompt(sessionID: sessionID)
+  }
+
+  private func setActiveExecutionCancel(sessionID: String, token: UUID, cancel: @escaping @Sendable () -> Void) async {
+    guard var executions = activeExecutions[sessionID],
+          let existing = executions[token]
+    else {
+      return
+    }
+    executions[token] = ActiveExecution(agent: existing.agent, cancel: cancel)
+    activeExecutions[sessionID] = executions
+  }
+
+  private func removeActiveExecution(sessionID: String, token: UUID) {
+    activeExecutions[sessionID]?[token] = nil
+    if activeExecutions[sessionID]?.isEmpty == true {
+      activeExecutions[sessionID] = nil
+    }
+  }
+
+  private func endPromptAsync(sessionID: String, token: UUID) async {
+    removeActiveExecution(sessionID: sessionID, token: token)
     endPrompt(sessionID: sessionID)
     await applyPendingModelSelectionIfPossible(sessionID: sessionID)
   }

@@ -186,6 +186,43 @@ struct WuhuClientTests {
     #expect(response.session.model == "gpt-5.2-codex")
     #expect(response.selection.reasoningEffort == .high)
   }
+
+  @Test func stopSessionPostsAndDecodesResponse() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/stop")
+        #expect(request.method == "POST")
+        #expect(request.headers["Accept"] == "application/json")
+        #expect(request.headers["Content-Type"] == "application/json")
+
+        let body = try #require(request.body)
+        let decoded = try WuhuJSON.decoder.decode(WuhuStopSessionRequest.self, from: body)
+        #expect(decoded.user == "alice")
+
+        let now = Date(timeIntervalSince1970: 0)
+        let stopEntry = WuhuSessionEntry(
+          id: 2,
+          sessionID: "s1",
+          parentEntryID: 1,
+          createdAt: now,
+          payload: .message(.customMessage(.init(
+            customType: WuhuCustomMessageTypes.executionStopped,
+            content: [.text(text: "Execution stopped", signature: nil)],
+            details: nil,
+            display: true,
+            timestamp: now,
+          ))),
+        )
+        let response = WuhuStopSessionResponse(repairedEntries: [], stopEntry: stopEntry)
+        let data = try WuhuJSON.encoder.encode(response)
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let response = try await client.stopSession(sessionID: "s1", user: "alice")
+    #expect(response.stopEntry?.id == 2)
+  }
 }
 
 private struct MockHTTPClient: HTTPClient {

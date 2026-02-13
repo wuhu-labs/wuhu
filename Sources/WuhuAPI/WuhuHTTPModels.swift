@@ -80,10 +80,22 @@ public struct WuhuPromptDetachedResponse: Sendable, Hashable, Codable {
 public struct WuhuGetSessionResponse: Sendable, Hashable, Codable {
   public var session: WuhuSession
   public var transcript: [WuhuSessionEntry]
+  /// Best-effort, in-process execution info from the server that served this request.
+  /// May be nil when talking to older servers.
+  public var inProcessExecution: WuhuInProcessExecutionInfo?
 
-  public init(session: WuhuSession, transcript: [WuhuSessionEntry]) {
+  public init(session: WuhuSession, transcript: [WuhuSessionEntry], inProcessExecution: WuhuInProcessExecutionInfo? = nil) {
     self.session = session
     self.transcript = transcript
+    self.inProcessExecution = inProcessExecution
+  }
+}
+
+public struct WuhuInProcessExecutionInfo: Sendable, Hashable, Codable {
+  public var activePromptCount: Int
+
+  public init(activePromptCount: Int) {
+    self.activePromptCount = activePromptCount
   }
 }
 
@@ -168,5 +180,23 @@ public enum WuhuSessionStreamEvent: Sendable, Hashable, Codable {
     case .done:
       try c.encode("done", forKey: .type)
     }
+  }
+}
+
+public struct WuhuStopSessionRequest: Sendable, Hashable, Codable {
+  public var user: String?
+
+  public init(user: String? = nil) {
+    self.user = user
+  }
+}
+
+public struct WuhuStopSessionResponse: Sendable, Hashable, Codable {
+  public var repairedEntries: [WuhuSessionEntry]
+  public var stopEntry: WuhuSessionEntry?
+
+  public init(repairedEntries: [WuhuSessionEntry], stopEntry: WuhuSessionEntry?) {
+    self.repairedEntries = repairedEntries
+    self.stopEntry = stopEntry
   }
 }

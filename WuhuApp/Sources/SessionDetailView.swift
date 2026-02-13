@@ -17,6 +17,17 @@ struct SessionDetailView: View {
       .navigationTitle("Session")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          let canStop =
+            store.isSending ||
+            store.inferredExecution.state == .executing ||
+            (store.inProcessExecution?.activePromptCount ?? 0) > 0
+
+          Button("Stop") {
+            store.send(.stopTapped)
+          }
+          .disabled(!canStop || store.isStopping)
+        }
         ToolbarItem(placement: .primaryAction) {
           Button("Model") {
             store.send(.binding(.set(\.isShowingModelPicker, true)))
@@ -31,6 +42,7 @@ struct SessionDetailView: View {
       ) {
         SessionModelPickerSheet(store: store)
       }
+      .alert(store: store.scope(state: \.$alert, action: \.alert))
       .task { await store.send(.onAppear).finish() }
       .onDisappear { store.send(.onDisappear) }
     }
@@ -53,6 +65,12 @@ struct SessionDetailView: View {
 
       if store.isLoading {
         ProgressView()
+      }
+
+      if store.isSending || store.inferredExecution.state == .executing || (store.inProcessExecution?.activePromptCount ?? 0) > 0 {
+        Text("Running")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
     }
     .padding(.horizontal)
@@ -126,7 +144,7 @@ struct SessionDetailView: View {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 22))
       }
-      .disabled(store.isSending || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      .disabled(store.isSending || store.isStopping || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
     .padding(.horizontal)
     .padding(.vertical, 10)

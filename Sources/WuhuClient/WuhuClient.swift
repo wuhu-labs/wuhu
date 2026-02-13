@@ -179,4 +179,22 @@ public struct WuhuClient: Sendable {
       }
     }
   }
+
+  public func stopSession(
+    sessionID: String,
+    user: String? = nil,
+  ) async throws -> WuhuStopSessionResponse {
+    let url = baseURL
+      .appending(path: "v2")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "stop")
+    var req = HTTPRequest(url: url, method: "POST")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(WuhuStopSessionRequest(user: user))
+
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuStopSessionResponse.self, from: data)
+  }
 }
