@@ -52,6 +52,12 @@ Environment variables:
 
 For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don’t rely on a local `.env`).
 
+WuhuApp / XcodeGen:
+
+- `WuhuApp.xcodeproj` is generated, not source-of-truth. Source-of-truth is `WuhuApp/project.yml`.
+- Before running any Xcode/iOS command that expects the project file (`xcodebuild`, opening the project, TestFlight scripts), check whether `WuhuApp/WuhuApp.xcodeproj` exists.
+- If it does not exist, run `cd WuhuApp && xcodegen generate` first.
+
 ## Workspace + Issues
 
 This project manages issues in a dedicated workspace repo: `wuhu-labs/wuhu-workspace`.

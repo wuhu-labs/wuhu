@@ -82,12 +82,7 @@ DerivedData/
 **/xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
-
-# Allow checked-in iOS app project (generated via XcodeGen).
-!WuhuApp/*.xcodeproj
-!WuhuApp/*.xcworkspace
-!WuhuApp/*.xcodeproj/**
-!WuhuApp/*.xcworkspace/**
+WuhuApp/Sources/Info.plist
 
 # Never commit user-specific Xcode state (even for checked-in projects).
 **/xcuserdata/
