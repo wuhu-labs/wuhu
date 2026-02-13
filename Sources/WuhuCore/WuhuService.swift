@@ -6,6 +6,7 @@ import WuhuAPI
 public actor WuhuService {
   private let store: any SessionStore
   private let llmRequestLogger: WuhuLLMRequestLogger?
+  private let retryPolicy: WuhuLLMRetryPolicy
   private var sessionContextActors: [String: WuhuAgentsContextActor] = [:]
   private var sessionContextActorLastAccess: [String: Date] = [:]
   private let maxSessionContextActors = 64
@@ -16,9 +17,14 @@ public actor WuhuService {
   private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
   private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
 
-  public init(store: any SessionStore, llmRequestLogger: WuhuLLMRequestLogger? = nil) {
+  public init(
+    store: any SessionStore,
+    llmRequestLogger: WuhuLLMRequestLogger? = nil,
+    retryPolicy: WuhuLLMRetryPolicy = .init(),
+  ) {
     self.store = store
     self.llmRequestLogger = llmRequestLogger
+    self.retryPolicy = retryPolicy
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -116,8 +122,10 @@ public actor WuhuService {
 
     let model = Model(id: session.model, provider: session.provider.piProvider)
 
-    let agentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
-    let compactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
+    let loggedAgentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+    let loggedCompactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
+    let agentStreamFn = makeRetryingStreamFn(base: loggedAgentStreamFn, sessionID: sessionID, purpose: .agent)
+    let compactionStreamFn = makeRetryingStreamFn(base: loggedCompactionStreamFn, sessionID: sessionID, purpose: .compaction)
 
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
 
@@ -229,8 +237,10 @@ public actor WuhuService {
     let settingsOverride = Self.extractLatestSessionSettings(from: transcript)
     let model = Model(id: session.model, provider: session.provider.piProvider)
 
-    let agentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
-    let compactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
+    let loggedAgentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+    let loggedCompactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
+    let agentStreamFn = makeRetryingStreamFn(base: loggedAgentStreamFn, sessionID: sessionID, purpose: .agent)
+    let compactionStreamFn = makeRetryingStreamFn(base: loggedCompactionStreamFn, sessionID: sessionID, purpose: .compaction)
 
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
 
@@ -697,5 +707,177 @@ public actor WuhuService {
     let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
     return entry
+  }
+
+  private func makeRetryingStreamFn(
+    base: @escaping StreamFn,
+    sessionID: String,
+    purpose: WuhuLLMRequestLogger.Purpose,
+  ) -> StreamFn {
+    let maxRetries = retryPolicy.maxRetries
+    let initialBackoffSeconds = retryPolicy.initialBackoffSeconds
+    let maxBackoffSeconds = retryPolicy.maxBackoffSeconds
+    let jitterFraction = retryPolicy.jitterFraction
+    let sleepFn = retryPolicy.sleep
+
+    let nextBackoffSeconds: @Sendable (Int) -> Double = { retryIndex in
+      let base = max(0, initialBackoffSeconds)
+      let exp = pow(2.0, Double(max(0, retryIndex - 1)))
+      let unclamped = base * exp
+      let maxDelay = max(0, maxBackoffSeconds)
+      let clamped = min(unclamped, maxDelay)
+
+      let jitter = max(0, jitterFraction)
+      guard jitter > 0, clamped > 0 else { return clamped }
+
+      let sign: Double = (retryIndex % 2 == 0) ? -1 : 1
+      return max(0, clamped * (1 + sign * jitter))
+    }
+
+    let sleepSeconds: @Sendable (Double) async throws -> Void = { seconds in
+      let ns = UInt64(max(0, seconds) * 1_000_000_000)
+      try await sleepFn(ns)
+    }
+
+    return { model, context, options in
+      AsyncThrowingStream(AssistantMessageEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
+        let task = Task {
+          var retryIndex = 0
+          while true {
+            if Task.isCancelled {
+              continuation.finish(throwing: CancellationError())
+              return
+            }
+
+            var yieldedAnyEvent = false
+            do {
+              let underlying = try await base(model, context, options)
+              do {
+                for try await event in underlying {
+                  yieldedAnyEvent = true
+                  continuation.yield(event)
+                }
+                continuation.finish()
+                return
+              } catch {
+                if Task.isCancelled {
+                  continuation.finish(throwing: CancellationError())
+                  return
+                }
+
+                let shouldRetry = yieldedAnyEvent == false && retryIndex < maxRetries
+                if shouldRetry {
+                  retryIndex += 1
+                  let backoff = nextBackoffSeconds(retryIndex)
+                  await self.appendLLMRetryEntry(
+                    sessionID: sessionID,
+                    purpose: purpose,
+                    retryIndex: retryIndex,
+                    maxRetries: maxRetries,
+                    backoffSeconds: backoff,
+                    error: error,
+                  )
+                  do {
+                    try await sleepSeconds(backoff)
+                  } catch {
+                    continuation.finish(throwing: error)
+                    return
+                  }
+                  continue
+                }
+
+                await self.appendLLMGiveUpEntry(sessionID: sessionID, purpose: purpose, maxRetries: maxRetries, error: error)
+                continuation.finish(throwing: error)
+                return
+              }
+            } catch {
+              if Task.isCancelled {
+                continuation.finish(throwing: CancellationError())
+                return
+              }
+
+              let shouldRetry = retryIndex < maxRetries
+              if shouldRetry {
+                retryIndex += 1
+                let backoff = nextBackoffSeconds(retryIndex)
+                await self.appendLLMRetryEntry(
+                  sessionID: sessionID,
+                  purpose: purpose,
+                  retryIndex: retryIndex,
+                  maxRetries: maxRetries,
+                  backoffSeconds: backoff,
+                  error: error,
+                )
+                do {
+                  try await sleepSeconds(backoff)
+                } catch {
+                  continuation.finish(throwing: error)
+                  return
+                }
+                continue
+              }
+
+              await self.appendLLMGiveUpEntry(sessionID: sessionID, purpose: purpose, maxRetries: maxRetries, error: error)
+              continuation.finish(throwing: error)
+              return
+            }
+          }
+        }
+
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
+      }
+    }
+  }
+
+  private func appendLLMRetryEntry(
+    sessionID: String,
+    purpose: WuhuLLMRequestLogger.Purpose,
+    retryIndex: Int,
+    maxRetries: Int,
+    backoffSeconds: Double,
+    error: any Error,
+  ) async {
+    let payload: WuhuEntryPayload = .custom(
+      customType: WuhuLLMCustomEntryTypes.retry,
+      data: WuhuLLMRetryEvent(
+        purpose: purpose.rawValue,
+        retryIndex: retryIndex,
+        maxRetries: maxRetries,
+        backoffSeconds: backoffSeconds,
+        error: "\(error)",
+      ).toJSONValue(),
+    )
+
+    do {
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+    } catch {
+      // Best-effort: retry logging must never crash the server.
+    }
+  }
+
+  private func appendLLMGiveUpEntry(
+    sessionID: String,
+    purpose: WuhuLLMRequestLogger.Purpose,
+    maxRetries: Int,
+    error: any Error,
+  ) async {
+    let payload: WuhuEntryPayload = .custom(
+      customType: WuhuLLMCustomEntryTypes.giveUp,
+      data: WuhuLLMGiveUpEvent(
+        purpose: purpose.rawValue,
+        maxRetries: maxRetries,
+        error: "\(error)",
+      ).toJSONValue(),
+    )
+
+    do {
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+    } catch {
+      // Best-effort: give-up logging must never crash the server.
+    }
   }
 }

@@ -110,6 +110,12 @@ public struct WuhuSessionTranscriptFormatter: Sendable {
       items.append(.init(id: id, role: .tool, title: "Tool:", text: text))
     }
 
+    func appendMetaLine(id: String, text: String) {
+      appendMetaIfNeeded()
+      items.append(.init(id: id, role: .meta, title: "", text: text))
+      printedAnyVisibleMessage = true
+    }
+
     for entry in entries {
       switch entry.payload {
       case let .message(m):
@@ -195,7 +201,30 @@ public struct WuhuSessionTranscriptFormatter: Sendable {
         ))
         printedAnyVisibleMessage = true
 
-      case .custom, .unknown:
+      case let .custom(customType, data):
+        guard let data else { break }
+
+        if customType == WuhuLLMCustomEntryTypes.retry, let evt = decodeFromJSONValue(data, as: WuhuLLMRetryEvent.self) {
+          let purpose = evt.purpose.map { " \($0)" } ?? ""
+          let err = commandPrefix(collapseWhitespace(evt.error), maxChars: 240)
+          appendMetaLine(
+            id: "entry.\(entry.id)",
+            text: "LLM retry\(purpose): \(evt.retryIndex)/\(evt.maxRetries) in \(String(format: "%.2f", evt.backoffSeconds))s (\(err))",
+          )
+          break
+        }
+
+        if customType == WuhuLLMCustomEntryTypes.giveUp, let evt = decodeFromJSONValue(data, as: WuhuLLMGiveUpEvent.self) {
+          let purpose = evt.purpose.map { " \($0)" } ?? ""
+          let err = commandPrefix(collapseWhitespace(evt.error), maxChars: 240)
+          appendMetaLine(
+            id: "entry.\(entry.id)",
+            text: "LLM failed\(purpose) after \(evt.maxRetries) retries (\(err))",
+          )
+          break
+        }
+
+      case .unknown:
         break
       }
     }

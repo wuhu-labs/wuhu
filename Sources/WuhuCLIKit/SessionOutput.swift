@@ -180,6 +180,24 @@ func commandPrefix(_ command: String, maxChars: Int) -> String {
   return String(collapsed.prefix(maxChars)) + "..."
 }
 
+func renderCustomEntryMetaLine(customType: String, data: JSONValue?) -> String? {
+  guard let data else { return nil }
+
+  if customType == WuhuLLMCustomEntryTypes.retry, let evt = decodeFromJSONValue(data, as: WuhuLLMRetryEvent.self) {
+    let purpose = evt.purpose.map { " \($0)" } ?? ""
+    let err = commandPrefix(collapseWhitespace(evt.error), maxChars: 240)
+    return "LLM retry\(purpose): \(evt.retryIndex)/\(evt.maxRetries) in \(String(format: "%.2f", evt.backoffSeconds))s (\(err))"
+  }
+
+  if customType == WuhuLLMCustomEntryTypes.giveUp, let evt = decodeFromJSONValue(data, as: WuhuLLMGiveUpEvent.self) {
+    let purpose = evt.purpose.map { " \($0)" } ?? ""
+    let err = commandPrefix(collapseWhitespace(evt.error), maxChars: 240)
+    return "LLM failed\(purpose) after \(evt.maxRetries) retries (\(err))"
+  }
+
+  return nil
+}
+
 func decodeFromJSONValue<T: Decodable>(_ value: JSONValue, as _: T.Type) -> T? {
   guard JSONSerialization.isValidJSONObject(value.toAny()),
         let data = try? JSONSerialization.data(withJSONObject: value.toAny(), options: [])
@@ -423,7 +441,14 @@ public struct SessionTranscriptRenderer: Sendable {
         let effort = s.reasoningEffort?.rawValue ?? "default"
         out += "\(style.meta("Model changed: \(s.provider.rawValue) / \(s.model) (reasoning=\(effort))"))\n"
 
-      case .custom, .unknown:
+      case let .custom(customType, data):
+        if let line = renderCustomEntryMetaLine(customType: customType, data: data) {
+          flushPendingMetaIfNeeded()
+          out += "\(style.meta(line))\n"
+          printedAnyVisibleMessage = true
+        }
+
+      case .unknown:
         break
       }
     }
@@ -584,7 +609,12 @@ public struct SessionStreamPrinter {
       let effort = s.reasoningEffort?.rawValue ?? "default"
       writeStdout("\n\(style.meta("Model changed: \(s.provider.rawValue) / \(s.model) (reasoning=\(effort))"))\n")
 
-    case .compaction, .header, .custom, .unknown:
+    case let .custom(customType, data):
+      resetAssistantStreamingState()
+      guard let line = renderCustomEntryMetaLine(customType: customType, data: data) else { return }
+      writeStdout("\n\(style.meta(line))\n")
+
+    case .compaction, .header, .unknown:
       break
     }
   }

@@ -1,4 +1,5 @@
 import Foundation
+import PiAgent
 import PiAI
 import Testing
 import WuhuAPI
@@ -130,6 +131,137 @@ struct WuhuCoreTests {
 
     let last = await capture.last
     #expect(last?.reasoningEffort == .high)
+  }
+
+  @Test func promptStreamRetriesLLMRequestsAndAppendsCustomEntries() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(
+      store: store,
+      retryPolicy: .init(
+        maxRetries: 5,
+        initialBackoffSeconds: 0,
+        maxBackoffSeconds: 0,
+        jitterFraction: 0,
+        sleep: { _ in },
+      ),
+    )
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    actor Attempts {
+      var n = 0
+      func next() -> Int { n += 1; return n }
+    }
+    let attempts = Attempts()
+
+    let baseStreamFn: StreamFn = { model, _, _ in
+      let attempt = await attempts.next()
+      if attempt <= 2 {
+        throw PiAIError.unsupported("transient error \(attempt)")
+      }
+
+      return AsyncThrowingStream { continuation in
+        let assistant = AssistantMessage(
+          provider: model.provider,
+          model: model.id,
+          content: [.text("ok")],
+          stopReason: .stop,
+        )
+        continuation.yield(.done(message: assistant))
+        continuation.finish()
+      }
+    }
+
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "hi",
+      user: "test",
+      tools: nil,
+      streamFn: baseStreamFn,
+    )
+    for try await _ in stream {}
+
+    let entries = try await service.getTranscript(sessionID: session.id)
+    let retryCount = entries.filter {
+      if case let .custom(customType, _) = $0.payload {
+        return customType == WuhuLLMCustomEntryTypes.retry
+      }
+      return false
+    }.count
+    let giveUpCount = entries.filter {
+      if case let .custom(customType, _) = $0.payload {
+        return customType == WuhuLLMCustomEntryTypes.giveUp
+      }
+      return false
+    }.count
+
+    #expect(retryCount == 2)
+    #expect(giveUpCount == 0)
+    #expect(entries.contains { if case let .message(.assistant(a)) = $0.payload { return a.content.contains { if case .text = $0 { return true }; return false } }; return false })
+  }
+
+  @Test func promptStreamGivesUpAfterMaxRetriesAndAppendsGiveUpEntry() async throws {
+    let store = try SQLiteSessionStore(path: ":memory:")
+    let service = WuhuService(
+      store: store,
+      retryPolicy: .init(
+        maxRetries: 5,
+        initialBackoffSeconds: 0,
+        maxBackoffSeconds: 0,
+        jitterFraction: 0,
+        sleep: { _ in },
+      ),
+    )
+
+    let session = try await service.createSession(
+      sessionID: newSessionID(),
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: "/tmp"),
+    )
+
+    let alwaysFail: StreamFn = { _, _, _ in
+      throw PiAIError.unsupported("permanent failure")
+    }
+
+    let stream = try await service.promptStream(
+      sessionID: session.id,
+      input: "hi",
+      user: "test",
+      tools: nil,
+      streamFn: alwaysFail,
+    )
+
+    do {
+      for try await _ in stream {}
+      #expect(Bool(false))
+    } catch {
+      // expected
+    }
+
+    let entries = try await service.getTranscript(sessionID: session.id)
+    let retryCount = entries.filter {
+      if case let .custom(customType, _) = $0.payload {
+        return customType == WuhuLLMCustomEntryTypes.retry
+      }
+      return false
+    }.count
+    let giveUpCount = entries.filter {
+      if case let .custom(customType, _) = $0.payload {
+        return customType == WuhuLLMCustomEntryTypes.giveUp
+      }
+      return false
+    }.count
+
+    #expect(retryCount == 5)
+    #expect(giveUpCount == 1)
   }
 
   @Test func setSessionModelAppendsSessionSettingsAndUpdatesFuturePrompts() async throws {
