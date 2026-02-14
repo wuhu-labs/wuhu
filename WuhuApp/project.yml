@@ -58,6 +58,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+        excludes:
+          - Info-macOS.plist
     info:
       path: Sources/Info.plist
       properties:
@@ -120,6 +122,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+        excludes:
+          - Info.plist
     info:
       path: Sources/Info-macOS.plist
       properties:
