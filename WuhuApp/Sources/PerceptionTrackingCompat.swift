@@ -2,7 +2,7 @@ import ComposableArchitecture
 import SwiftUI
 
 @ViewBuilder
-func WuhuPerceptionTracking<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
+func WuhuPerceptionTracking(@ViewBuilder _ content: @escaping () -> some View) -> some View {
   #if os(macOS)
     content()
   #else
