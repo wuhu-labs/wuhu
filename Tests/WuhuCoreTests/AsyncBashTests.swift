@@ -92,10 +92,13 @@ struct AsyncBashTests {
       eventIndex += 1
       switch event {
       case let .entryAppended(entry):
-        guard case let .message(.user(m)) = entry.payload else { break }
+        guard case let .message(.customMessage(m)) = entry.payload else { break }
+        guard m.customType == WuhuCustomMessageTypes.asyncBashCompletion else { break }
         guard let text = firstText(m.content) else { break }
         guard let data = text.data(using: .utf8) else { break }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { break }
+        guard obj["type"] as? String == "system_reminder" else { break }
+        guard obj["event"] as? String == "async_bash_finished" else { break }
         guard obj["exit_code"] != nil, obj["stdout_file"] != nil, obj["stderr_file"] != nil else { break }
         completionIndex = eventIndex
         completionJSON = obj
@@ -115,6 +118,7 @@ struct AsyncBashTests {
     }
 
     let json = try #require(completionJSON)
+    #expect(json["message"] != nil)
     #expect(json["id"] != nil)
     #expect(json["started_at"] != nil)
     #expect(json["ended_at"] != nil)

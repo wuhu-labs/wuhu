@@ -1,0 +1,10 @@
+# Debug server config (safe defaults, no API keys)
+host: 127.0.0.1
+port: 5532
+databasePath: ~/.wuhu/wuhu-debug.sqlite
+
+environments:
+  - name: local-debug
+    type: local
+    # Relative to the server process CWD (recommended: run from repo root).
+    path: .

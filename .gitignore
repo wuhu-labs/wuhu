@@ -82,7 +82,12 @@ DerivedData/
 **/xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
+*.xcarchive
 WuhuApp/Sources/Info.plist
+
+# Local iOS export / experiments
+ExportOptions.plist
+WuhuApp/Sources/PerceptionTrackingCompat.swift
 
 # Never commit user-specific Xcode state (even for checked-in projects).
 **/xcuserdata/

@@ -35,6 +35,8 @@ struct SessionDetailFeature {
     var draft: String = ""
     var streamingAssistantText: String = ""
 
+    var followRetryCount: Int = 0
+
     var verbosity: WuhuSessionVerbosity = .minimal
 
     var provider: WuhuProvider = .openai
@@ -108,6 +110,7 @@ struct SessionDetailFeature {
     Reduce { state, action in
       switch action {
       case .onAppear:
+        state.followRetryCount = 0
         return .merge(
           .send(.refresh),
           .send(.startFollow),
@@ -186,6 +189,7 @@ struct SessionDetailFeature {
               await send(.followEvent(event))
             }
           } catch {
+            if error is CancellationError { return }
             await send(.followFailed("\(error)"))
           }
         }
@@ -193,11 +197,20 @@ struct SessionDetailFeature {
 
       case let .followEvent(event):
         applyStreamEvent(event, to: &state)
+        state.followRetryCount = 0
+        state.error = nil
         return .none
 
       case let .followFailed(message):
         state.error = message
-        return .none
+        let retryCount = state.followRetryCount
+        state.followRetryCount = min(20, retryCount + 1)
+
+        let delaySeconds = min(10.0, max(0.5, pow(1.6, Double(retryCount)) * 0.5))
+        return .run { send in
+          try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+          await send(.startFollow)
+        }
 
       case .sendTapped:
         guard let serverURL = state.serverURL else { return .none }
