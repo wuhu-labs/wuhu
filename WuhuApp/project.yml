@@ -39,9 +39,6 @@ packages:
   CombineSchedulers:
     url: https://github.com/pointfreeco/combine-schedulers
     from: 1.1.0
-  Perception:
-    url: https://github.com/pointfreeco/swift-perception
-    from: 2.0.9
   Sharing:
     url: https://github.com/pointfreeco/swift-sharing
     from: 2.7.4
@@ -58,6 +55,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+        excludes:
+          - Info-macOS.plist
     info:
       path: Sources/Info.plist
       properties:
@@ -102,8 +101,6 @@ targets:
         product: CustomDump
       - package: CombineSchedulers
         product: CombineSchedulers
-      - package: Perception
-        product: Perception
       - package: Sharing
         product: Sharing
       - package: SwiftNavigation
@@ -120,6 +117,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+        excludes:
+          - Info.plist
     info:
       path: Sources/Info-macOS.plist
       properties:
@@ -153,8 +152,6 @@ targets:
         product: CustomDump
       - package: CombineSchedulers
         product: CombineSchedulers
-      - package: Perception
-        product: Perception
       - package: Sharing
         product: Sharing
       - package: SwiftNavigation
@@ -192,8 +189,6 @@ targets:
         product: CustomDump
       - package: CombineSchedulers
         product: CombineSchedulers
-      - package: Perception
-        product: Perception
       - package: Sharing
         product: Sharing
       - package: SwiftNavigation

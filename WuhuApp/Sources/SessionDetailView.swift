@@ -6,46 +6,44 @@ struct SessionDetailView: View {
   let store: StoreOf<SessionDetailFeature>
 
   var body: some View {
-    WuhuPerceptionTracking {
-      VStack(spacing: 0) {
-        header
-        Divider()
-        transcript
-        Divider()
-        composer
-      }
-      .navigationTitle("Session")
-      .wuhuNavigationBarTitleDisplayModeInline()
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          let canStop =
-            store.isSending ||
-            store.inferredExecution.state == .executing ||
-            (store.inProcessExecution?.activePromptCount ?? 0) > 0
-
-          Button("Stop") {
-            store.send(.stopTapped)
-          }
-          .disabled(!canStop || store.isStopping)
-        }
-        ToolbarItem(placement: .primaryAction) {
-          Button("Model") {
-            store.send(.binding(.set(\.isShowingModelPicker, true)))
-          }
-        }
-      }
-      .sheet(
-        isPresented: Binding(
-          get: { store.isShowingModelPicker },
-          set: { store.send(.binding(.set(\.isShowingModelPicker, $0))) },
-        ),
-      ) {
-        SessionModelPickerSheet(store: store)
-      }
-      .alert(store: store.scope(state: \.$alert, action: \.alert))
-      .task { await store.send(.onAppear).finish() }
-      .onDisappear { store.send(.onDisappear) }
+    VStack(spacing: 0) {
+      header
+      Divider()
+      transcript
+      Divider()
+      composer
     }
+    .navigationTitle("Session")
+    .wuhuNavigationBarTitleDisplayModeInline()
+    .toolbar {
+      ToolbarItem(placement: .cancellationAction) {
+        let canStop =
+          store.isSending ||
+          store.inferredExecution.state == .executing ||
+          (store.inProcessExecution?.activePromptCount ?? 0) > 0
+
+        Button("Stop") {
+          store.send(.stopTapped)
+        }
+        .disabled(!canStop || store.isStopping)
+      }
+      ToolbarItem(placement: .primaryAction) {
+        Button("Model") {
+          store.send(.binding(.set(\.isShowingModelPicker, true)))
+        }
+      }
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { store.isShowingModelPicker },
+        set: { store.send(.binding(.set(\.isShowingModelPicker, $0))) },
+      ),
+    ) {
+      SessionModelPickerSheet(store: store)
+    }
+    .alert(store: store.scope(state: \.$alert, action: \.alert))
+    .task { await store.send(.onAppear).finish() }
+    .onDisappear { store.send(.onDisappear) }
   }
 
   private var header: some View {
@@ -155,60 +153,58 @@ private struct SessionModelPickerSheet: View {
   let store: StoreOf<SessionDetailFeature>
 
   var body: some View {
-    WuhuPerceptionTracking {
-      NavigationStack {
-        Form {
-          if let status = store.modelUpdateStatus {
-            Section {
-              Text(status)
-                .foregroundStyle(.secondary)
-            }
-          }
-
-          if let error = store.error {
-            Section {
-              Text(error)
-                .foregroundStyle(.red)
-            }
-          }
-
+    NavigationStack {
+      Form {
+        if let status = store.modelUpdateStatus {
           Section {
-            ModelSelectionFields(
-              provider: Binding(
-                get: { store.provider },
-                set: { store.send(.binding(.set(\.provider, $0))) },
-              ),
-              modelSelection: Binding(
-                get: { store.modelSelection },
-                set: { store.send(.binding(.set(\.modelSelection, $0))) },
-              ),
-              customModel: Binding(
-                get: { store.customModel },
-                set: { store.send(.binding(.set(\.customModel, $0))) },
-              ),
-              reasoningEffort: Binding(
-                get: { store.reasoningEffort },
-                set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
-              ),
-            )
-          } header: {
-            Text("Model")
-          }
-
-          Section {
-            Button("Apply") { store.send(.applyModelTapped) }
-              .disabled(store.isUpdatingModel)
+            Text(status)
+              .foregroundStyle(.secondary)
           }
         }
-        .navigationTitle("Model")
-        .toolbar {
-          ToolbarItem(placement: .cancellationAction) {
-            Button("Done") { store.send(.binding(.set(\.isShowingModelPicker, false))) }
+
+        if let error = store.error {
+          Section {
+            Text(error)
+              .foregroundStyle(.red)
           }
-          if store.isUpdatingModel {
-            ToolbarItem(placement: .confirmationAction) {
-              ProgressView()
-            }
+        }
+
+        Section {
+          ModelSelectionFields(
+            provider: Binding(
+              get: { store.provider },
+              set: { store.send(.binding(.set(\.provider, $0))) },
+            ),
+            modelSelection: Binding(
+              get: { store.modelSelection },
+              set: { store.send(.binding(.set(\.modelSelection, $0))) },
+            ),
+            customModel: Binding(
+              get: { store.customModel },
+              set: { store.send(.binding(.set(\.customModel, $0))) },
+            ),
+            reasoningEffort: Binding(
+              get: { store.reasoningEffort },
+              set: { store.send(.binding(.set(\.reasoningEffort, $0))) },
+            ),
+          )
+        } header: {
+          Text("Model")
+        }
+
+        Section {
+          Button("Apply") { store.send(.applyModelTapped) }
+            .disabled(store.isUpdatingModel)
+        }
+      }
+      .navigationTitle("Model")
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { store.send(.binding(.set(\.isShowingModelPicker, false))) }
+        }
+        if store.isUpdatingModel {
+          ToolbarItem(placement: .confirmationAction) {
+            ProgressView()
           }
         }
       }
