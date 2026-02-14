@@ -304,6 +304,7 @@ private let defaultSystemPrompt = [
   "Prefer read/grep/find/ls over guessing file contents.",
   "When making changes, use edit for surgical replacements and write for new files.",
   "Use bash to run builds/tests and gather precise outputs.",
+  "Use async_bash to start long-running commands in the background, and async_bash_status to check their status.",
 ].joined(separator: "\n")
 
 private func ensureDirectoryExists(forDatabasePath path: String) throws {

@@ -7,6 +7,9 @@ public actor WuhuService {
   private let store: any SessionStore
   private let llmRequestLogger: WuhuLLMRequestLogger?
   private let retryPolicy: WuhuLLMRetryPolicy
+  private let asyncBashRegistry: WuhuAsyncBashRegistry
+  private let instanceID: String
+  private var asyncBashCompletionTask: Task<Void, Never>?
   private var sessionContextActors: [String: WuhuAgentsContextActor] = [:]
   private var sessionContextActorLastAccess: [String: Date] = [:]
   private let maxSessionContextActors = 64
@@ -47,10 +50,13 @@ public actor WuhuService {
     store: any SessionStore,
     llmRequestLogger: WuhuLLMRequestLogger? = nil,
     retryPolicy: WuhuLLMRetryPolicy = .init(),
+    asyncBashRegistry: WuhuAsyncBashRegistry = .shared,
   ) {
     self.store = store
     self.llmRequestLogger = llmRequestLogger
     self.retryPolicy = retryPolicy
+    self.asyncBashRegistry = asyncBashRegistry
+    instanceID = UUID().uuidString.lowercased()
   }
 
   deinit {
@@ -59,10 +65,12 @@ public actor WuhuService {
     for (_, continuation) in sessionLoopContinuations {
       continuation.finish()
     }
+    asyncBashCompletionTask?.cancel()
   }
 
   public func startAgentLoopManager() {
     guard agentLoopManagerTask == nil else { return }
+    ensureAsyncBashCompletionListener()
 
     var capturedContinuation: AsyncStream<AgentLoopManagerCommand>.Continuation?
     let commands = AsyncStream(AgentLoopManagerCommand.self, bufferingPolicy: .unbounded) { continuation in
@@ -221,6 +229,7 @@ public actor WuhuService {
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
     startAgentLoopManager()
+    ensureAsyncBashCompletionListener()
     guard isIdle(sessionID: sessionID) else {
       throw PiAIError.unsupported("Session is already executing")
     }
@@ -248,7 +257,10 @@ public actor WuhuService {
     let agentStreamFn = makeRetryingStreamFn(base: loggedAgentStreamFn, sessionID: sessionID, purpose: .agent)
     let compactionStreamFn = makeRetryingStreamFn(base: loggedCompactionStreamFn, sessionID: sessionID, purpose: .compaction)
 
-    let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
+    let resolvedTools = tools ?? WuhuTools.codingAgentTools(
+      cwd: session.cwd,
+      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID),
+    )
 
     var effectiveSystemPrompt = header.systemPrompt
     let injectedContext = await sessionContextActor(for: sessionID, cwd: session.cwd).contextSection()
@@ -1204,6 +1216,89 @@ public actor WuhuService {
       }
     } catch {
       // Best-effort: detached prompts don't surface errors to a caller.
+    }
+  }
+
+  private func ensureAsyncBashCompletionListener() {
+    guard asyncBashCompletionTask == nil else { return }
+    asyncBashCompletionTask = Task { [weak self] in
+      guard let self else { return }
+      let stream = await self.asyncBashRegistry.subscribeCompletions()
+      for await completion in stream {
+        await self.handleAsyncBashCompletion(completion)
+      }
+    }
+  }
+
+  private func handleAsyncBashCompletion(_ completion: WuhuAsyncBashCompletion) async {
+    guard completion.ownerID == instanceID else { return }
+    guard let sessionID = completion.sessionID else { return }
+
+    let stdoutData = (try? Data(contentsOf: URL(fileURLWithPath: completion.stdoutFile))) ?? Data()
+    let stderrData = (try? Data(contentsOf: URL(fileURLWithPath: completion.stderrFile))) ?? Data()
+
+    let stdoutText = String(decoding: stdoutData, as: UTF8.self)
+    let stderrText = String(decoding: stderrData, as: UTF8.self)
+
+    var combined = stdoutText
+    if !stderrText.isEmpty {
+      if !combined.isEmpty, !combined.hasSuffix("\n") { combined += "\n" }
+      combined += stderrText
+    }
+
+    let truncation = ToolTruncation.truncateTail(combined)
+    var outputText = truncation.content.isEmpty ? "(no output)" : truncation.content
+
+    if truncation.truncated {
+      let startLine = truncation.totalLines - truncation.outputLines + 1
+      let endLine = truncation.totalLines
+      if truncation.lastLinePartial {
+        let last = combined.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        let lastSize = ToolTruncation.formatSize(last.utf8.count)
+        if !outputText.isEmpty { outputText += "\n\n" }
+        outputText +=
+          "[Showing last \(ToolTruncation.formatSize(truncation.outputBytes)) of line \(endLine) (line is \(lastSize)). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
+      } else if truncation.truncatedBy == "lines" {
+        outputText +=
+          "\n\n[Showing lines \(startLine)-\(endLine) of \(truncation.totalLines). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
+      } else {
+        outputText +=
+          "\n\n[Showing lines \(startLine)-\(endLine) of \(truncation.totalLines) (\(ToolTruncation.formatSize(ToolTruncation.defaultMaxBytes)) limit). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
+      }
+    }
+
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+    let message: JSONValue = .object([
+      "id": .string(completion.id),
+      "started_at": .string(fmt.string(from: completion.startedAt)),
+      "ended_at": .string(fmt.string(from: completion.endedAt)),
+      "duration": .number(completion.durationSeconds),
+      "exit_code": .number(Double(completion.exitCode)),
+      "timed_out": .bool(completion.timedOut),
+      "stdout_file": .string(completion.stdoutFile),
+      "stderr_file": .string(completion.stderrFile),
+      "output": .string(outputText),
+    ])
+
+    let jsonText = wuhuEncodeToolJSON(message)
+
+    do {
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
+        user: WuhuUserMessage.unknownUser,
+        content: [.text(text: jsonText, signature: nil)],
+        timestamp: completion.endedAt,
+      ))))
+      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+    } catch {
+      // Best-effort: task may outlive the session/service.
+    }
+
+    if let executions = activeExecutions[sessionID] {
+      for (_, exec) in executions {
+        await exec.agent.steer(.user(jsonText, timestamp: completion.endedAt))
+      }
     }
   }
 }

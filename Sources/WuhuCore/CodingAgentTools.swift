@@ -3,7 +3,10 @@ import PiAgent
 import PiAI
 
 public extension WuhuTools {
-  static func codingAgentTools(cwd: String) -> [AnyAgentTool] {
+  static func codingAgentTools(
+    cwd: String,
+    asyncBash: WuhuAsyncBashToolContext = .init(),
+  ) -> [AnyAgentTool] {
     [
       readTool(cwd: cwd),
       writeTool(cwd: cwd),
@@ -12,6 +15,8 @@ public extension WuhuTools {
       findTool(cwd: cwd),
       grepTool(cwd: cwd),
       bashTool(cwd: cwd),
+      asyncBashTool(cwd: cwd, context: asyncBash),
+      asyncBashStatusTool(context: asyncBash),
       swiftTool(cwd: cwd),
     ]
   }
@@ -723,6 +728,129 @@ private func bashTool(cwd: String) -> AnyAgentTool {
       try? FileManager.default.removeItem(atPath: fullOutputPath)
     }
     return AgentToolResult(content: [.text(outputText)], details: details.isEmpty ? .object([:]) : .object(details))
+  }
+}
+
+// MARK: - async_bash
+
+private func asyncBashTool(cwd: String, context: WuhuAsyncBashToolContext) -> AnyAgentTool {
+  struct Params: Sendable {
+    var command: String
+    var timeout: Double?
+
+    static func parse(toolName: String, args: JSONValue) throws -> Params {
+      let a = try ToolArgs(toolName: toolName, args: args)
+      let command = try a.requireString("command")
+      let timeout = try a.optionalDouble("timeout")
+      return .init(command: command, timeout: timeout)
+    }
+  }
+
+  let schema: JSONValue = .object([
+    "type": .string("object"),
+    "properties": .object([
+      "command": .object(["type": .string("string"), "description": .string("Bash command to execute in the background")]),
+      "timeout": .object(["type": .string("number"), "description": .string("Timeout in seconds (optional). If set, the process is terminated after this duration.")]),
+    ]),
+    "required": .array([.string("command")]),
+    "additionalProperties": .bool(false),
+  ])
+
+  let tool = Tool(
+    name: "async_bash",
+    description: "Start a bash command in the background. Returns immediately with a task id. When the task finishes, Wuhu may insert a user-level JSON message into the session transcript.",
+    parameters: schema,
+  )
+
+  return AnyAgentTool(tool: tool, label: "async_bash") { toolCallId, args in
+    let params = try Params.parse(toolName: tool.name, args: args)
+    let started = try await context.registry.start(
+      command: params.command,
+      cwd: cwd,
+      sessionID: context.sessionID,
+      ownerID: context.ownerID,
+      timeoutSeconds: params.timeout,
+    )
+
+    let response: JSONValue = .object([
+      "id": .string(started.id),
+      "message": .string("Task started. You will receive a message when it finishes; you do not need to wait or poll."),
+    ])
+
+    return AgentToolResult(
+      content: [.text(wuhuEncodeToolJSON(response))],
+      details: .object([
+        "id": .string(started.id),
+        "pid": .number(Double(started.pid)),
+        "started_at": .number(started.startedAt.timeIntervalSince1970),
+        "stdout_file": .string(started.stdoutFile),
+        "stderr_file": .string(started.stderrFile),
+      ]),
+    )
+  }
+}
+
+// MARK: - async_bash_status
+
+private func asyncBashStatusTool(context: WuhuAsyncBashToolContext) -> AnyAgentTool {
+  struct Params: Sendable {
+    var id: String
+
+    static func parse(toolName: String, args: JSONValue) throws -> Params {
+      let a = try ToolArgs(toolName: toolName, args: args)
+      let id = try a.requireString("id")
+      return .init(id: id)
+    }
+  }
+
+  let schema: JSONValue = .object([
+    "type": .string("object"),
+    "properties": .object([
+      "id": .object(["type": .string("string"), "description": .string("Task id returned by async_bash")]),
+    ]),
+    "required": .array([.string("id")]),
+    "additionalProperties": .bool(false),
+  ])
+
+  let tool = Tool(
+    name: "async_bash_status",
+    description: "Query the status of an async_bash task. Returns whether the task is running or finished, plus pid (if running) and stdout/stderr file paths.",
+    parameters: schema,
+  )
+
+  return AnyAgentTool(tool: tool, label: "async_bash_status") { _, args in
+    let params = try Params.parse(toolName: tool.name, args: args)
+    guard let status = await context.registry.status(id: params.id) else {
+      throw ToolError.message("Unknown async_bash task id: \(params.id)")
+    }
+
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+    var obj: [String: JSONValue] = [
+      "id": .string(status.id),
+      "state": .string(status.state.rawValue),
+      "stdout_file": .string(status.stdoutFile),
+      "stderr_file": .string(status.stderrFile),
+      "started_at": .string(fmt.string(from: status.startedAt)),
+      "timed_out": .bool(status.timedOut),
+    ]
+
+    if let pid = status.pid {
+      obj["pid"] = .number(Double(pid))
+    }
+    if let endedAt = status.endedAt {
+      obj["ended_at"] = .string(fmt.string(from: endedAt))
+    }
+    if let duration = status.durationSeconds {
+      obj["duration_seconds"] = .number(duration)
+    }
+    if let exitCode = status.exitCode {
+      obj["exit_code"] = .number(Double(exitCode))
+    }
+
+    let response: JSONValue = .object(obj)
+    return AgentToolResult(content: [.text(wuhuEncodeToolJSON(response))], details: response)
   }
 }
 

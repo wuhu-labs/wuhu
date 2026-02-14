@@ -237,6 +237,17 @@ func toolSummaryLine(_ input: ToolRenderInput, verbosity: SessionOutputVerbosity
     }
     return "bash"
 
+  case "async_bash":
+    if let command = argString("command") {
+      let max = (verbosity == .compact) ? 80 : 140
+      return "async_bash \(commandPrefix(command, maxChars: max))"
+    }
+    return "async_bash"
+
+  case "async_bash_status":
+    if let id = argString("id") { return "async_bash_status \(id)" }
+    return "async_bash_status"
+
   case "grep":
     let pattern = argString("pattern")
     let path = argString("path")
