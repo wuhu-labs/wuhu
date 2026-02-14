@@ -37,10 +37,9 @@ The server exposes a minimal command/query/event API:
     - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
 - **Commands (POST)**:
   - `POST /v2/sessions` — create session (requires `environment`)
-  - `POST /v2/sessions/:id/prompt` — append prompt
+  - `POST /v2/sessions/:id/prompt` — enqueue prompt
     - Optional `user` field records the prompting user (see Client Identity below)
-    - `detach=true` returns immediately (`WuhuPromptDetachedResponse`)
-    - otherwise streams events over SSE
+    - Returns immediately (`WuhuPromptDetachedResponse`); `detach` is accepted for backward compatibility but ignored
 - **Streaming (GET + SSE)**:
   - `GET /v2/sessions/:id/follow` — stream session changes over SSE
     - Optional filters: `sinceCursor`, `sinceTime`
@@ -48,18 +47,18 @@ The server exposes a minimal command/query/event API:
 
 ### Streaming (SSE)
 
-Prompting is a command (`POST`), but its result is an event stream:
+Prompting is a command (`POST`), but its result is observed via a follow stream:
 
 - Response content type: `text/event-stream`
 - Events are encoded as JSON `WuhuSessionStreamEvent` payloads in `data:` frames.
 - The client represents these events as an `AsyncThrowingStream`.
 
-This preserves the coding-agent loop’s “text delta” streaming and tool execution events without introducing WebSocket.
-
 The follow endpoint uses the same SSE encoding, and includes:
 
 - persisted updates (`entry_appended`, with entry id + timestamp)
 - in-flight assistant progress (`assistant_text_delta`)
+
+Clients that want streaming should keep a `follow` stream open (or open one immediately after prompting) and render events until the session transitions to `idle`.
 
 ## Environment Snapshots (Persistence Decision)
 

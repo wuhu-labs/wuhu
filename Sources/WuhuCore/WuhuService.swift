@@ -23,6 +23,26 @@ public actor WuhuService {
   private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
   private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
 
+  private enum AgentLoopManagerCommand: Sendable {
+    case startSession(sessionID: String, stream: AsyncStream<SessionLoopCommand>)
+    case shutdown
+  }
+
+  private enum SessionLoopCommand: Sendable {
+    case execute(ExecutionWorkItem)
+  }
+
+  private struct ExecutionWorkItem: Sendable {
+    var sessionID: String
+    var token: UUID
+    var agent: PiAgent.Agent
+    var renderedInput: String
+  }
+
+  private var agentLoopManagerTask: Task<Void, Never>?
+  private var agentLoopManagerContinuation: AsyncStream<AgentLoopManagerCommand>.Continuation?
+  private var sessionLoopContinuations: [String: AsyncStream<SessionLoopCommand>.Continuation] = [:]
+
   public init(
     store: any SessionStore,
     llmRequestLogger: WuhuLLMRequestLogger? = nil,
@@ -31,6 +51,72 @@ public actor WuhuService {
     self.store = store
     self.llmRequestLogger = llmRequestLogger
     self.retryPolicy = retryPolicy
+  }
+
+  deinit {
+    agentLoopManagerTask?.cancel()
+    agentLoopManagerContinuation?.finish()
+    for (_, continuation) in sessionLoopContinuations {
+      continuation.finish()
+    }
+  }
+
+  public func startAgentLoopManager() {
+    guard agentLoopManagerTask == nil else { return }
+
+    var capturedContinuation: AsyncStream<AgentLoopManagerCommand>.Continuation?
+    let commands = AsyncStream(AgentLoopManagerCommand.self, bufferingPolicy: .unbounded) { continuation in
+      capturedContinuation = continuation
+    }
+    agentLoopManagerContinuation = capturedContinuation
+
+    agentLoopManagerTask = Task { [weak self] in
+      await withTaskGroup(of: Void.self) { group in
+        var startedSessions: Set<String> = []
+        var shouldExit = false
+
+        for await command in commands {
+          if Task.isCancelled { break }
+          if self == nil { break }
+
+          switch command {
+          case let .startSession(sessionID, stream):
+            guard !startedSessions.contains(sessionID) else { continue }
+            startedSessions.insert(sessionID)
+            group.addTask { [weak self] in
+              for await sessionCommand in stream {
+                if Task.isCancelled { break }
+                guard let self else { break }
+                switch sessionCommand {
+                case let .execute(item):
+                  await executeWorkItem(item)
+                }
+              }
+            }
+          case .shutdown:
+            shouldExit = true
+          }
+
+          if shouldExit { break }
+        }
+
+        group.cancelAll()
+      }
+    }
+  }
+
+  public func shutdownAgentLoopManager() {
+    agentLoopManagerContinuation?.yield(.shutdown)
+    agentLoopManagerContinuation?.finish()
+    agentLoopManagerContinuation = nil
+
+    for (_, continuation) in sessionLoopContinuations {
+      continuation.finish()
+    }
+    sessionLoopContinuations = [:]
+
+    agentLoopManagerTask?.cancel()
+    agentLoopManagerTask = nil
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -110,133 +196,21 @@ public actor WuhuService {
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    let effectiveUser = Self.normalizeUser(user)
-    let session = try await store.getSession(id: sessionID)
-    var transcript = try await store.getEntries(sessionID: sessionID)
-
-    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: transcript, mode: .lost)
-    transcript = toolRepair.transcript
-
-    let reminderEntry = try await maybeAppendGroupChatReminderIfNeeded(
+    let detached = try await promptDetached(
       sessionID: sessionID,
-      transcript: transcript,
-      promptingUser: effectiveUser,
-    )
-    if reminderEntry != nil {
-      transcript = try await store.getEntries(sessionID: sessionID)
-    }
-
-    let header = try Self.extractHeader(from: transcript, sessionID: sessionID)
-    let settingsOverride = Self.extractLatestSessionSettings(from: transcript)
-
-    let model = Model(id: session.model, provider: session.provider.piProvider)
-
-    let loggedAgentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
-    let loggedCompactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
-    let agentStreamFn = makeRetryingStreamFn(base: loggedAgentStreamFn, sessionID: sessionID, purpose: .agent)
-    let compactionStreamFn = makeRetryingStreamFn(base: loggedCompactionStreamFn, sessionID: sessionID, purpose: .compaction)
-
-    let resolvedTools = tools ?? WuhuTools.codingAgentTools(cwd: session.cwd)
-
-    var effectiveSystemPrompt = header.systemPrompt
-    let injectedContext = await sessionContextActor(for: sessionID, cwd: session.cwd).contextSection()
-    if !injectedContext.isEmpty {
-      effectiveSystemPrompt += injectedContext
-    }
-    effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
-
-    var requestOptions = RequestOptions()
-    let sessionEffort = settingsOverride != nil ? settingsOverride?.reasoningEffort : Self.extractReasoningEffort(from: header)
-    if let effort = sessionEffort {
-      requestOptions.reasoningEffort = effort
-    } else if model.provider == .openai || model.provider == .openaiCodex,
-              model.id.contains("gpt-5") || model.id.contains("codex")
-    {
-      requestOptions.reasoningEffort = .low
-    }
-
-    let compactionSettings = WuhuCompactionSettings.load(model: model)
-    let groupChatActive = WuhuGroupChat.reminderEntryIndex(in: transcript) != nil
-    let renderedInput = groupChatActive ? WuhuGroupChat.renderPromptInput(user: effectiveUser, input: input) : input
-    transcript = try await maybeAutoCompact(
-      sessionID: sessionID,
-      transcript: transcript,
-      model: model,
-      requestOptions: requestOptions,
-      compactionSettings: compactionSettings,
-      input: renderedInput,
-      streamFn: compactionStreamFn,
+      input: input,
+      user: user,
+      tools: tools,
+      streamFn: streamFn,
     )
 
-    let messages = Self.extractContextMessages(from: transcript)
-
-    let agent = PiAgent.Agent(opts: .init(
-      initialState: .init(
-        systemPrompt: effectiveSystemPrompt,
-        model: model,
-        tools: resolvedTools,
-        messages: messages,
-      ),
-      requestOptions: requestOptions,
-      streamFn: agentStreamFn,
-    ))
-
-    let executionToken = UUID()
-    beginPrompt(sessionID: sessionID, token: executionToken, agent: agent)
-    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
-      user: effectiveUser,
-      content: [.text(text: input, signature: nil)],
-      timestamp: Date(),
-    ))))
-    publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
-
-    return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
-      let task = Task {
-        do {
-          defer { Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) } }
-
-          for entry in toolRepair.repairEntries {
-            continuation.yield(.entryAppended(entry))
-          }
-          if let reminderEntry {
-            continuation.yield(.entryAppended(reminderEntry))
-          }
-          continuation.yield(.entryAppended(userEntry))
-
-          let consumeTask = Task {
-            for try await event in agent.events {
-              try await self.handleAgentEvent(event, sessionID: sessionID, token: executionToken, continuation: continuation)
-              if case .agentEnd = event { break }
-            }
-          }
-          defer { consumeTask.cancel() }
-          try await agent.prompt(renderedInput)
-          _ = try await consumeTask.value
-
-          continuation.yield(.done)
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
-      }
-
-      Task {
-        await self.setActiveExecutionCancel(
-          sessionID: sessionID,
-          token: executionToken,
-          cancel: {
-            task.cancel()
-            Task { await agent.abort() }
-          },
-        )
-      }
-
-      continuation.onTermination = { _ in
-        task.cancel()
-        Task { await agent.abort() }
-        Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) }
-      }
-    }
+    return try await followSessionStream(
+      sessionID: sessionID,
+      sinceCursor: detached.userEntry.parentEntryID,
+      sinceTime: nil,
+      stopAfterIdle: true,
+      timeoutSeconds: nil,
+    )
   }
 
   public func promptDetached(
@@ -246,6 +220,11 @@ public actor WuhuService {
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
+    startAgentLoopManager()
+    guard isIdle(sessionID: sessionID) else {
+      throw PiAIError.unsupported("Session is already executing")
+    }
+
     let effectiveUser = Self.normalizeUser(user)
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
@@ -323,37 +302,13 @@ public actor WuhuService {
     ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
-    let promptTask = Task {
-      do {
-        defer { Task { await self.endPromptAsync(sessionID: sessionID, token: executionToken) } }
-
-        let consumeTask = Task {
-          do {
-            for try await event in agent.events {
-              try await self.handleAgentEvent(event, sessionID: sessionID, token: executionToken, continuation: nil)
-              if case .agentEnd = event { break }
-            }
-          } catch {
-            // Best-effort: detached prompts don't surface errors to a caller.
-          }
-        }
-        defer { consumeTask.cancel() }
-
-        try await agent.prompt(renderedInput)
-        _ = await consumeTask.value
-      } catch {
-        await agent.abort()
-      }
-    }
-
-    await setActiveExecutionCancel(
+    ensureSessionLoop(sessionID: sessionID)
+    sessionLoopContinuations[sessionID]?.yield(.execute(.init(
       sessionID: sessionID,
       token: executionToken,
-      cancel: {
-        promptTask.cancel()
-        Task { await agent.abort() }
-      },
-    )
+      agent: agent,
+      renderedInput: renderedInput,
+    )))
 
     return WuhuPromptDetachedResponse(userEntry: userEntry)
   }
@@ -973,6 +928,9 @@ public actor WuhuService {
     removeActiveExecution(sessionID: sessionID, token: token)
     endPrompt(sessionID: sessionID)
     await applyPendingModelSelectionIfPossible(sessionID: sessionID)
+    if activePromptCount.isEmpty {
+      shutdownAgentLoopManager()
+    }
   }
 
   private func isIdle(sessionID: String) -> Bool {
@@ -1167,6 +1125,85 @@ public actor WuhuService {
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
     } catch {
       // Best-effort: give-up logging must never crash the server.
+    }
+  }
+
+  private func ensureSessionLoop(sessionID: String) {
+    guard sessionLoopContinuations[sessionID] == nil else { return }
+    var capturedContinuation: AsyncStream<SessionLoopCommand>.Continuation?
+    let stream = AsyncStream(SessionLoopCommand.self, bufferingPolicy: .unbounded) { continuation in
+      capturedContinuation = continuation
+    }
+    sessionLoopContinuations[sessionID] = capturedContinuation
+    agentLoopManagerContinuation?.yield(.startSession(sessionID: sessionID, stream: stream))
+  }
+
+  private func executeWorkItem(_ item: ExecutionWorkItem) async {
+    let sessionID = item.sessionID
+    let token = item.token
+    let agent = item.agent
+
+    let consumeTask = Task { [weak self] in
+      guard let self else { return }
+      await consumeAgentEvents(agent: agent, sessionID: sessionID, token: token)
+    }
+
+    var promptSucceeded = false
+    do {
+      try await agent.prompt(item.renderedInput)
+      promptSucceeded = true
+    } catch {
+      await agent.abort()
+    }
+
+    if promptSucceeded {
+      // Best-effort: ensure the agent's run task fully settles before we stop consuming events.
+      // Avoid hanging forever if the agent fails to reach idle for some reason.
+      let idleTimeoutTask = Task {
+        try? await Task.sleep(nanoseconds: 10_000_000_000)
+        await agent.abort()
+      }
+      await agent.waitForIdle()
+      idleTimeoutTask.cancel()
+    }
+
+    if !promptSucceeded {
+      // If the prompt failed, the events stream might never emit `agentEnd`.
+      // Cancel consumption so we can finalize the session state.
+      consumeTask.cancel()
+    }
+
+    let consumeTimeoutTask: Task<Void, Never>? = promptSucceeded
+      ? Task {
+        // Best-effort: agent.events should normally terminate after the run completes.
+        // Avoid hanging the entire detached session loop if the stream doesn't close.
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        consumeTask.cancel()
+      }
+      : nil
+
+    _ = await consumeTask.value
+    consumeTimeoutTask?.cancel()
+
+    await endPromptAsync(sessionID: sessionID, token: token)
+  }
+
+  private func consumeAgentEvents(
+    agent: PiAgent.Agent,
+    sessionID: String,
+    token: UUID,
+  ) async {
+    do {
+      for try await event in agent.events {
+        do {
+          try await handleAgentEvent(event, sessionID: sessionID, token: token, continuation: nil)
+        } catch {
+          // Best-effort: ignore handler errors for detached execution loops.
+        }
+        if case .agentEnd = event { break }
+      }
+    } catch {
+      // Best-effort: detached prompts don't surface errors to a caller.
     }
   }
 }

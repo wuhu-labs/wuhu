@@ -44,6 +44,7 @@ public struct WuhuServer: Sendable {
     }
 
     let service = WuhuService(store: store, llmRequestLogger: requestLogger)
+    await service.startAgentLoopManager()
 
     let envByName: [String: WuhuServerConfig.Environment] = Dictionary(uniqueKeysWithValues: config.environments.map { ($0.name, $0) })
     let runnerRegistry = RunnerRegistry()
@@ -180,7 +181,7 @@ public struct WuhuServer: Sendable {
         )
       }()
 
-      if prompt.detach == true {
+      do {
         let response = try await service.promptDetached(
           sessionID: id,
           input: prompt.input,
@@ -188,49 +189,12 @@ public struct WuhuServer: Sendable {
           tools: tools,
         )
         return try context.responseEncoder.encode(response, from: request, context: context)
-      }
-
-      let stream: AsyncThrowingStream<WuhuSessionStreamEvent, any Error> = try await service.promptStream(
-        sessionID: id,
-        input: prompt.input,
-        user: prompt.user,
-        tools: tools,
-      )
-
-      let byteStream = AsyncStream<ByteBuffer> { continuation in
-        let task = Task {
-          func yieldEvent(_ apiEvent: WuhuSessionStreamEvent) {
-            let data = try! WuhuJSON.encoder.encode(apiEvent)
-            var s = "data: "
-            s += String(decoding: data, as: UTF8.self)
-            s += "\n\n"
-            continuation.yield(ByteBuffer(string: s))
-          }
-
-          do {
-            for try await event in stream {
-              yieldEvent(event)
-              if case .done = event { break }
-            }
-          } catch {
-            yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
-            yieldEvent(.done)
-          }
-          continuation.finish()
+      } catch let error as PiAIError {
+        if case let .unsupported(message) = error {
+          throw HTTPError(.conflict, message: message)
         }
-        continuation.onTermination = { _ in task.cancel() }
+        throw error
       }
-
-      var headers = HTTPFields()
-      headers[.contentType] = "text/event-stream"
-      headers[.cacheControl] = "no-cache"
-      headers[.connection] = "keep-alive"
-
-      return Response(
-        status: .ok,
-        headers: headers,
-        body: ResponseBody(asyncSequence: byteStream),
-      )
     }
 
     router.post("v2/sessions/:id/stop") { request, context async throws -> Response in
@@ -349,4 +313,4 @@ private func ensureDirectoryExists(forDatabasePath path: String) throws {
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 }
 
-// Prompt streaming now emits `WuhuSessionStreamEvent` directly (no mapping layer).
+// Session follow streaming emits `WuhuSessionStreamEvent` directly (no mapping layer).

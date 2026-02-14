@@ -75,8 +75,7 @@ struct SessionDetailFeature {
     case followFailed(String)
 
     case sendTapped
-    case promptEvent(WuhuSessionStreamEvent)
-    case promptFailed(String)
+    case promptResponse(TaskResult<WuhuPromptDetachedResponse>)
 
     case stopTapped
     case stopResponse(TaskResult<WuhuStopSessionResponse>)
@@ -213,35 +212,27 @@ struct SessionDetailFeature {
         let sessionID = state.sessionID
         let user = state.username
 
-        return .merge(
-          .cancel(id: CancelID.follow),
-          .run { send in
-            do {
-              let stream = try await wuhuClientProvider
-                .make(serverURL)
-                .promptStream(sessionID: sessionID, input: input, user: user)
-              for try await event in stream {
-                await send(.promptEvent(event))
-              }
-            } catch {
-              await send(.promptFailed("\(error)"))
-            }
-          }
-          .cancellable(id: CancelID.prompt, cancelInFlight: true),
-        )
-
-      case let .promptEvent(event):
-        applyStreamEvent(event, to: &state)
-        if case .done = event {
-          state.isSending = false
-          return .send(.startFollow)
+        return .run { send in
+          await send(
+            .promptResponse(
+              TaskResult {
+                try await wuhuClientProvider
+                  .make(serverURL)
+                  .promptDetached(sessionID: sessionID, input: input, user: user)
+              },
+            ),
+          )
         }
+        .cancellable(id: CancelID.prompt, cancelInFlight: true)
+
+      case .promptResponse(.success):
+        // Follow stream drives transcript updates and completion (idle).
         return .none
 
-      case let .promptFailed(message):
+      case let .promptResponse(.failure(error)):
         state.isSending = false
-        state.error = message
-        return .send(.startFollow)
+        state.error = "\(error)"
+        return .none
 
       case .stopTapped:
         guard let serverURL = state.serverURL else { return .none }
@@ -365,6 +356,8 @@ struct SessionDetailFeature {
     case let .assistantTextDelta(delta):
       state.streamingAssistantText += delta
     case .idle:
+      state.isSending = false
+      state.isStopping = false
       if state.inProcessExecution != nil {
         state.inProcessExecution = .init(activePromptCount: 0)
       }

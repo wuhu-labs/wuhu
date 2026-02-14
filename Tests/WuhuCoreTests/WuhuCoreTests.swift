@@ -365,12 +365,7 @@ struct WuhuCoreTests {
       streamFn: alwaysFail,
     )
 
-    do {
-      for try await _ in stream {}
-      #expect(Bool(false))
-    } catch {
-      // expected
-    }
+    for try await _ in stream {}
 
     let entries = try await service.getTranscript(sessionID: session.id)
     let retryCount = entries.count(where: {

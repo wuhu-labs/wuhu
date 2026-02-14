@@ -49,16 +49,32 @@ struct WuhuClientTests {
 
   @Test func promptStreamDecodesSSEEvents() async throws {
     let http = MockHTTPClient(
-      sseHandler: { request in
+      dataHandler: { request in
         #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/prompt")
-        #expect(request.headers["Accept"] == "text/event-stream")
+        #expect(request.method == "POST")
+        #expect(request.headers["Accept"] == "application/json")
         #expect(request.headers["Content-Type"] == "application/json")
 
         let body = try #require(request.body)
         let decoded = try WuhuJSON.decoder.decode(WuhuPromptRequest.self, from: body)
         #expect(decoded.input == "hello")
-        #expect(decoded.detach == false)
+        #expect(decoded.detach == true)
         #expect(decoded.user == nil)
+
+        let now = Date(timeIntervalSince1970: 0)
+        let userEntry = WuhuSessionEntry(
+          id: 2,
+          sessionID: "s1",
+          parentEntryID: 1,
+          createdAt: now,
+          payload: .message(.user(.init(user: "unknown_user", content: [.text(text: "hello", signature: nil)], timestamp: now))),
+        )
+        let data = try WuhuJSON.encoder.encode(WuhuPromptDetachedResponse(userEntry: userEntry))
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+      sseHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v2/sessions/s1/follow?sinceCursor=1&stopAfterIdle=1")
+        #expect(request.headers["Accept"] == "text/event-stream")
 
         return AsyncThrowingStream { continuation in
           continuation.yield(.init(data: #"{"type":"assistant_text_delta","delta":"Hi"}"#))
@@ -91,12 +107,24 @@ struct WuhuClientTests {
 
   @Test func promptStreamSendsUserWhenProvided() async throws {
     let http = MockHTTPClient(
-      sseHandler: { request in
+      dataHandler: { request in
         let body = try #require(request.body)
         let decoded = try WuhuJSON.decoder.decode(WuhuPromptRequest.self, from: body)
         #expect(decoded.user == "alice")
 
-        return AsyncThrowingStream { continuation in
+        let now = Date(timeIntervalSince1970: 0)
+        let userEntry = WuhuSessionEntry(
+          id: 2,
+          sessionID: "s1",
+          parentEntryID: 1,
+          createdAt: now,
+          payload: .message(.user(.init(user: "alice", content: [.text(text: "hello", signature: nil)], timestamp: now))),
+        )
+        let data = try WuhuJSON.encoder.encode(WuhuPromptDetachedResponse(userEntry: userEntry))
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+      sseHandler: { _ in
+        AsyncThrowingStream { continuation in
           continuation.yield(.init(data: #"{"type":"done"}"#))
           continuation.finish()
         }

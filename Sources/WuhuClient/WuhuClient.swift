@@ -96,32 +96,14 @@ public struct WuhuClient: Sendable {
     input: String,
     user: String? = nil,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    let url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: sessionID).appending(path: "prompt")
-    var req = HTTPRequest(url: url, method: "POST")
-    req.setHeader("application/json", for: "Content-Type")
-    req.setHeader("text/event-stream", for: "Accept")
-    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, user: user, detach: false))
-
-    let sse = try await http.sse(for: req)
-    return AsyncThrowingStream { continuation in
-      let task = Task {
-        do {
-          for try await message in sse {
-            guard let data = message.data.data(using: .utf8) else { continue }
-            let event = try WuhuJSON.decoder.decode(WuhuSessionStreamEvent.self, from: data)
-            continuation.yield(event)
-            if case .done = event { break }
-          }
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
-      }
-
-      continuation.onTermination = { _ in
-        task.cancel()
-      }
-    }
+    let detached = try await promptDetached(sessionID: sessionID, input: input, user: user)
+    return try await followSessionStream(
+      sessionID: sessionID,
+      sinceCursor: detached.userEntry.parentEntryID,
+      sinceTime: nil,
+      stopAfterIdle: true,
+      timeoutSeconds: nil,
+    )
   }
 
   public func promptDetached(
