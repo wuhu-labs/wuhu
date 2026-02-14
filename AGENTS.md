@@ -92,3 +92,12 @@ When you are assigned to work on a `WUHU-####` issue, you must create a new bran
 ## Notes
 
 General documentation lives in `docs/`.
+
+## Collaboration
+
+When the user is interactively asking questions while reviewing code:
+
+- Treat the user’s questions/concerns as likely-valid signals, not as “user error”.
+- Take a neutral stance: verify by inspecting the repo before concluding who’s right.
+- Correct the user only when there’s a clear factual mismatch, and cite the exact file/symbol you’re relying on.
+- Assume parts of the codebase may be sloppy/LLM-generated; prioritize clarity and maintainability over defending the status quo.
