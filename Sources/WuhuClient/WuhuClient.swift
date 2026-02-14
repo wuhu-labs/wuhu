@@ -91,6 +91,17 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode(WuhuGetSessionResponse.self, from: data)
   }
 
+  public func getSessionSkills(sessionID: String) async throws -> [WuhuSkill] {
+    let url = baseURL
+      .appending(path: "v2")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "skills")
+    let req = HTTPRequest(url: url, method: "GET")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode([WuhuSkill].self, from: data)
+  }
+
   public func promptStream(
     sessionID: String,
     input: String,

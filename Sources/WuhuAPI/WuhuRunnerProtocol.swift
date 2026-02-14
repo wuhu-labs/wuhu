@@ -5,7 +5,7 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
   case hello(runnerName: String, version: Int)
 
   case resolveEnvironmentRequest(id: String, sessionID: String?, name: String)
-  case resolveEnvironmentResponse(id: String, environment: WuhuEnvironment?, error: String?)
+  case resolveEnvironmentResponse(id: String, environment: WuhuEnvironment?, skills: [WuhuSkill]?, error: String?)
 
   case registerSession(sessionID: String, environment: WuhuEnvironment)
 
@@ -20,6 +20,7 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
     case name
     case environment
     case error
+    case skills
     case sessionID
     case toolCallId
     case toolName
@@ -50,6 +51,7 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
       self = try .resolveEnvironmentResponse(
         id: c.decode(String.self, forKey: .id),
         environment: c.decodeIfPresent(WuhuEnvironment.self, forKey: .environment),
+        skills: c.decodeIfPresent([WuhuSkill].self, forKey: .skills),
         error: c.decodeIfPresent(String.self, forKey: .error),
       )
 
@@ -97,10 +99,11 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
       try c.encodeIfPresent(sessionID, forKey: .sessionID)
       try c.encode(name, forKey: .name)
 
-    case let .resolveEnvironmentResponse(id, environment, error):
+    case let .resolveEnvironmentResponse(id, environment, skills, error):
       try c.encode("resolve_environment_response", forKey: .type)
       try c.encode(id, forKey: .id)
       try c.encodeIfPresent(environment, forKey: .environment)
+      try c.encodeIfPresent(skills, forKey: .skills)
       try c.encodeIfPresent(error, forKey: .error)
 
     case let .registerSession(sessionID, environment):

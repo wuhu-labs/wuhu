@@ -29,10 +29,12 @@ public protocol SessionStore: Sendable {
     environment: WuhuEnvironment,
     runnerName: String?,
     parentSessionID: String?,
+    skills: [WuhuSkill],
   ) async throws -> WuhuSession
 
   func getSession(id: String) async throws -> WuhuSession
   func listSessions(limit: Int?) async throws -> [WuhuSession]
+  func getHeader(sessionID: String) async throws -> WuhuSessionHeader
 
   @discardableResult
   func appendEntry(sessionID: String, payload: WuhuEntryPayload) async throws -> WuhuSessionEntry

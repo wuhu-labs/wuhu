@@ -36,6 +36,8 @@ struct SessionDetailFeature {
     var streamingAssistantText: String = ""
 
     var verbosity: WuhuSessionVerbosity = .minimal
+    var skills: [WuhuSkill] = []
+    var isShowingSkills: Bool = false
 
     var provider: WuhuProvider = .openai
     var modelSelection: String = ""
@@ -144,6 +146,7 @@ struct SessionDetailFeature {
         state.transcript = IdentifiedArray(uniqueElements: response.transcript)
         state.inProcessExecution = response.inProcessExecution
         state.inferredExecution = WuhuSessionExecutionInference.infer(from: response.transcript)
+        state.skills = extractSkills(from: response.transcript)
         syncModelSelectionFromSession(response.session, transcript: response.transcript, state: &state)
 
         if let inProcess = response.inProcessExecution,
@@ -384,6 +387,16 @@ struct SessionDetailFeature {
       state.modelSelection = ModelSelectionUI.customModelSentinel
       state.customModel = model
     }
+  }
+
+  private func extractSkills(from transcript: [WuhuSessionEntry]) -> [WuhuSkill] {
+    for entry in transcript where entry.parentEntryID == nil {
+      guard case let .header(header) = entry.payload else { continue }
+      guard let obj = header.metadata.object else { return [] }
+      guard let skillsValue = obj["skills"] else { return [] }
+      return WuhuSkill.arrayFromJSONValue(skillsValue)
+    }
+    return []
   }
 
   private func currentReasoningEffort(from transcript: [WuhuSessionEntry]) -> ReasoningEffort? {

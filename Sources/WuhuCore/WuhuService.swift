@@ -164,8 +164,15 @@ public actor WuhuService {
     environment: WuhuEnvironment,
     runnerName: String? = nil,
     parentSessionID: String? = nil,
+    skills: [WuhuSkill]? = nil,
   ) async throws -> WuhuSession {
-    try await store.createSession(
+    let effectiveSkills: [WuhuSkill] = {
+      if let skills { return skills }
+      if runnerName != nil { return [] }
+      return WuhuSkillLoader.loadSkills(environmentRoot: environment.path)
+    }()
+
+    return try await store.createSession(
       sessionID: sessionID,
       provider: provider,
       model: model,
@@ -174,6 +181,7 @@ public actor WuhuService {
       environment: environment,
       runnerName: runnerName,
       parentSessionID: parentSessionID,
+      skills: effectiveSkills,
     )
   }
 
@@ -195,6 +203,11 @@ public actor WuhuService {
     sinceTime: Date?,
   ) async throws -> [WuhuSessionEntry] {
     try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
+  }
+
+  public func getSessionSkills(sessionID: String) async throws -> [WuhuSkill] {
+    let header = try await store.getHeader(sessionID: sessionID)
+    return Self.extractSkills(from: header)
   }
 
   public func promptStream(
@@ -266,6 +279,11 @@ public actor WuhuService {
     let injectedContext = await sessionContextActor(for: sessionID, cwd: session.cwd).contextSection()
     if !injectedContext.isEmpty {
       effectiveSystemPrompt += injectedContext
+    }
+
+    let skillsSection = WuhuSkillsPromptFormatter.formatForSystemPrompt(Self.extractSkills(from: header))
+    if !skillsSection.isEmpty {
+      effectiveSystemPrompt += skillsSection
     }
     effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
 
@@ -556,6 +574,12 @@ public actor WuhuService {
     guard let metadata = header.metadata.object else { return nil }
     guard let raw = metadata["reasoningEffort"]?.stringValue else { return nil }
     return ReasoningEffort(rawValue: raw)
+  }
+
+  private static func extractSkills(from header: WuhuSessionHeader) -> [WuhuSkill] {
+    guard let metadata = header.metadata.object else { return [] }
+    guard let skillsValue = metadata["skills"] else { return [] }
+    return WuhuSkill.arrayFromJSONValue(skillsValue)
   }
 
   private static func extractContextMessages(from transcript: [WuhuSessionEntry]) -> [Message] {

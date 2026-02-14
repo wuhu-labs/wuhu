@@ -50,6 +50,7 @@ struct WuhuCLI: AsyncParsableCommand {
         Prompt.self,
         StopSession.self,
         GetSession.self,
+        SessionSkills.self,
         ListSessions.self,
       ],
     )
@@ -279,6 +280,36 @@ struct WuhuCLI: AsyncParsableCommand {
         let style = SessionOutputStyle(verbosity: shared.verbosity, terminal: terminal)
         let renderer = SessionTranscriptRenderer(style: style)
         FileHandle.standardOutput.write(Data(renderer.render(response).utf8))
+      }
+    }
+
+    struct SessionSkills: AsyncParsableCommand {
+      static let configuration = CommandConfiguration(
+        commandName: "session-skills",
+        abstract: "List skills captured for a session.",
+      )
+
+      @Option(help: "Session id (or set WUHU_CURRENT_SESSION_ID).")
+      var sessionId: String?
+
+      @OptionGroup
+      var shared: Shared
+
+      func run() async throws {
+        let client = try makeClient(shared.server)
+        let sessionId = try resolveWuhuSessionId(sessionId)
+        let skills = try await client.getSessionSkills(sessionID: sessionId)
+
+        guard !skills.isEmpty else {
+          FileHandle.standardOutput.write(Data("(no skills)\n".utf8))
+          return
+        }
+
+        for skill in skills {
+          FileHandle.standardOutput.write(
+            Data("\(skill.name)  source=\(skill.source.rawValue)  \(skill.filePath)\n\(skill.description)\n\n".utf8),
+          )
+        }
       }
     }
 

@@ -9,12 +9,18 @@ struct WuhuRunnerProtocolTests {
       details: .object(["exitCode": .number(0)]),
     )
 
+    let skills: [WuhuSkill] = [
+      .init(name: "skill-a", description: "Does A", filePath: "/tmp/skills/skill-a/SKILL.md", source: .user),
+      .init(name: "skill-b", description: "Does B", filePath: "/tmp/repo/.wuhu/skills/skill-b/SKILL.md", source: .project, disableModelInvocation: true),
+    ]
+
     let messages: [WuhuRunnerMessage] = [
       .hello(runnerName: "vps-in-la", version: 1),
       .resolveEnvironmentRequest(id: "req-1", sessionID: "sess-1", name: "repo"),
       .resolveEnvironmentResponse(
         id: "req-1",
         environment: .init(name: "repo", type: .local, path: "/tmp/repo"),
+        skills: skills,
         error: nil,
       ),
       .registerSession(sessionID: "sess-1", environment: .init(name: "repo", type: .local, path: "/tmp/repo")),

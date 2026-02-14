@@ -28,6 +28,11 @@ struct SessionDetailView: View {
         .disabled(!canStop || store.isStopping)
       }
       ToolbarItem(placement: .primaryAction) {
+        Button("Skills") {
+          store.send(.binding(.set(\.isShowingSkills, true)))
+        }
+      }
+      ToolbarItem(placement: .primaryAction) {
         Button("Model") {
           store.send(.binding(.set(\.isShowingModelPicker, true)))
         }
@@ -40,6 +45,14 @@ struct SessionDetailView: View {
       ),
     ) {
       SessionModelPickerSheet(store: store)
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { store.isShowingSkills },
+        set: { store.send(.binding(.set(\.isShowingSkills, $0))) },
+      ),
+    ) {
+      SessionSkillsSheet(skills: store.skills)
     }
     .alert(store: store.scope(state: \.$alert, action: \.alert))
     .task { await store.send(.onAppear).finish() }
@@ -206,6 +219,47 @@ private struct SessionModelPickerSheet: View {
           ToolbarItem(placement: .confirmationAction) {
             ProgressView()
           }
+        }
+      }
+    }
+  }
+}
+
+private struct SessionSkillsSheet: View {
+  let skills: [WuhuSkill]
+
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      List {
+        if skills.isEmpty {
+          Text("(no skills)")
+            .foregroundStyle(.secondary)
+        } else {
+          ForEach(skills) { skill in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack(spacing: 8) {
+                Text(skill.name)
+                  .font(.headline)
+                Text(skill.source.rawValue)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              Text(skill.description)
+                .font(.subheadline)
+              Text(skill.filePath)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+          }
+        }
+      }
+      .navigationTitle("Skills")
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { dismiss() }
         }
       }
     }

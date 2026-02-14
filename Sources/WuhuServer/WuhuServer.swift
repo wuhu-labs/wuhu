@@ -92,6 +92,12 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
+    router.get("v2/sessions/:id/skills") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      let skills = try await service.getSessionSkills(sessionID: id)
+      return try context.responseEncoder.encode(skills, from: request, context: context)
+    }
+
     router.post("v2/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
@@ -104,7 +110,8 @@ public struct WuhuServer: Sendable {
         guard let runner = await runnerRegistry.get(runnerName: runnerName) else {
           throw HTTPError(.badRequest, message: "Unknown or disconnected runner: \(runnerName)")
         }
-        let environment = try await runner.resolveEnvironment(sessionID: sessionID, name: create.environment)
+        let resolved = try await runner.resolveEnvironment(sessionID: sessionID, name: create.environment)
+        let environment = resolved.environment
         session = try await service.createSession(
           sessionID: sessionID,
           provider: create.provider,
@@ -114,6 +121,7 @@ public struct WuhuServer: Sendable {
           environment: environment,
           runnerName: runnerName,
           parentSessionID: create.parentSessionID,
+          skills: resolved.skills,
         )
         try await runner.registerSession(sessionID: session.id, environment: environment)
       } else {

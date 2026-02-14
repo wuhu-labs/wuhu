@@ -123,11 +123,13 @@ private enum RunnerMessageLoop {
       case let .resolveEnvironmentRequest(id, sessionID, name):
         do {
           let env = try await resolveEnvironment(config: config, sessionID: sessionID, name: name)
-          try await sender.send(.resolveEnvironmentResponse(id: id, environment: env, error: nil))
+          let skills = WuhuSkillLoader.loadSkills(environmentRoot: env.path)
+          try await sender.send(.resolveEnvironmentResponse(id: id, environment: env, skills: skills, error: nil))
         } catch {
           try await sender.send(.resolveEnvironmentResponse(
             id: id,
             environment: nil,
+            skills: nil,
             error: String(describing: error),
           ))
         }

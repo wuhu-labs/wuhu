@@ -24,6 +24,7 @@ public actor SQLiteSessionStore: SessionStore {
     environment: WuhuEnvironment,
     runnerName: String?,
     parentSessionID: String?,
+    skills: [WuhuSkill],
   ) async throws -> WuhuSession {
     let now = Date()
     let sessionID = rawSessionID.lowercased()
@@ -51,6 +52,9 @@ public actor SQLiteSessionStore: SessionStore {
       var headerMetadata: [String: JSONValue] = [:]
       if let reasoningEffort {
         headerMetadata["reasoningEffort"] = .string(reasoningEffort.rawValue)
+      }
+      if !skills.isEmpty {
+        headerMetadata["skills"] = .array(skills.map { $0.toJSONValue() })
       }
       let headerPayload = WuhuEntryPayload.header(.init(
         systemPrompt: systemPrompt,
@@ -81,6 +85,22 @@ public actor SQLiteSessionStore: SessionStore {
         throw WuhuStoreError.sessionNotFound(id)
       }
       return try row.toModel()
+    }
+  }
+
+  public func getHeader(sessionID: String) async throws -> WuhuSessionHeader {
+    try await dbQueue.read { db in
+      guard let row = try EntryRow
+        .filter(Column("sessionID") == sessionID && Column("parentEntryID") == nil)
+        .fetchOne(db)
+      else {
+        throw WuhuStoreError.noHeaderEntry(sessionID)
+      }
+      let entry = row.toModel()
+      guard case let .header(header) = entry.payload else {
+        throw WuhuStoreError.sessionCorrupt("Header entry \(entry.id) payload is not header")
+      }
+      return header
     }
   }
 

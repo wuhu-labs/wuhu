@@ -82,6 +82,7 @@ let package = Package(
         "PiAI",
         "PiAgent",
         .product(name: "GRDB", package: "GRDB.swift"),
+        .product(name: "Yams", package: "Yams"),
       ],
       swiftSettings: strictConcurrency,
     ),

@@ -30,16 +30,23 @@ final actor RunnerConnection {
     failAllPending(error)
   }
 
-  func resolveEnvironment(sessionID: String, name: String) async throws -> WuhuEnvironment {
+  struct ResolveEnvironmentResult: Sendable {
+    var environment: WuhuEnvironment
+    var skills: [WuhuSkill]
+  }
+
+  func resolveEnvironment(sessionID: String, name: String) async throws -> ResolveEnvironmentResult {
     let id = UUID().uuidString
     let response = try await requestResponse(
       requestId: id,
       message: .resolveEnvironmentRequest(id: id, sessionID: sessionID, name: name),
     )
-    guard case let .resolveEnvironmentResponse(_, environment, error) = response else {
+    guard case let .resolveEnvironmentResponse(_, environment, skills, error) = response else {
       throw PiAIError.decoding("Unexpected response")
     }
-    if let environment { return environment }
+    if let environment {
+      return .init(environment: environment, skills: skills ?? [])
+    }
     throw PiAIError.unsupported(error ?? "Unknown environment")
   }
 
@@ -75,7 +82,7 @@ final actor RunnerConnection {
     switch message {
     case .hello, .registerSession, .resolveEnvironmentRequest, .toolRequest:
       return
-    case let .resolveEnvironmentResponse(id, _, _),
+    case let .resolveEnvironmentResponse(id, _, _, _),
          let .toolResponse(id, _, _, _, _, _):
       if let cont = pending.removeValue(forKey: id) {
         cont.resume(returning: message)
