@@ -35,7 +35,10 @@ struct AsyncBashTests {
 
     actor TurnCounter {
       var n = 0
-      func next() -> Int { n += 1; return n }
+      func next() -> Int {
+        n += 1
+        return n
+      }
     }
     let turns = TurnCounter()
 
