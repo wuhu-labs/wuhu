@@ -225,27 +225,47 @@ public struct WuhuServer: Sendable {
       )
 
       let byteStream = AsyncStream<ByteBuffer> { continuation in
+        let writer = WuhuSSEWriter(continuation: continuation)
         let task = Task {
-          func yieldEvent(_ apiEvent: WuhuSessionStreamEvent) {
-            let data = try! WuhuJSON.encoder.encode(apiEvent)
-            var s = "data: "
-            s += String(decoding: data, as: UTF8.self)
-            s += "\n\n"
-            continuation.yield(ByteBuffer(string: s))
+          await writer.yieldRaw(": connected\n\n")
+
+          let heartbeatTask = Task {
+            while !Task.isCancelled {
+              try? await Task.sleep(nanoseconds: 15_000_000_000)
+              await writer.yieldRaw(": heartbeat\n\n")
+            }
+          }
+
+          func yieldEvent(_ apiEvent: WuhuSessionStreamEvent) async {
+            do {
+              let data = try WuhuJSON.encoder.encode(apiEvent)
+              var s = "data: "
+              s += String(decoding: data, as: UTF8.self)
+              s += "\n\n"
+              await writer.yieldRaw(s)
+            } catch {
+              await writer.yieldRaw(": encode_error \(error)\n\n")
+            }
           }
 
           do {
             for try await event in stream {
-              yieldEvent(event)
+              await yieldEvent(event)
               if case .done = event { break }
             }
+          } catch is CancellationError {
+            // Client disconnected; don't emit synthetic error events.
           } catch {
-            yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
-            yieldEvent(.done)
+            await yieldEvent(.assistantTextDelta("\n[error] \(error)\n"))
+            await yieldEvent(.done)
           }
-          continuation.finish()
+
+          heartbeatTask.cancel()
+          await writer.finish()
         }
-        continuation.onTermination = { _ in task.cancel() }
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
       }
 
       var headers = HTTPFields()
@@ -306,6 +326,23 @@ private let defaultSystemPrompt = [
   "Use bash to run builds/tests and gather precise outputs.",
   "Use async_bash to start long-running commands in the background, and async_bash_status to check their status.",
 ].joined(separator: "\n")
+
+private actor WuhuSSEWriter {
+  private var continuation: AsyncStream<ByteBuffer>.Continuation?
+
+  init(continuation: AsyncStream<ByteBuffer>.Continuation) {
+    self.continuation = continuation
+  }
+
+  func yieldRaw(_ s: String) {
+    continuation?.yield(ByteBuffer(string: s))
+  }
+
+  func finish() {
+    continuation?.finish()
+    continuation = nil
+  }
+}
 
 private func ensureDirectoryExists(forDatabasePath path: String) throws {
   guard path != ":memory:" else { return }
