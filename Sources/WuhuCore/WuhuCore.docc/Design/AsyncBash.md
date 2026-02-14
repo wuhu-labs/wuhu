@@ -9,8 +9,8 @@ WUHU-0010 introduces two coding-agent tools:
 
 1. **Non-blocking tool call**: starting a long-running command should not block the agent loop.
 2. **Durable logs**: stdout and stderr are redirected to separate files so the agent can inspect output later.
-3. **Immediate completion signaling**: when a task finishes, Wuhu should append a user-level JSON message to the session transcript as soon as possible (even if the model is still streaming).
-4. **Leave space for steering queues**: completion signaling should integrate naturally with PiAgent’s steering mechanism.
+3. **Immediate completion signaling**: when a task finishes, Wuhu should append a completion message to the session transcript as soon as possible (even if the model is still streaming).
+4. **Leave space for steering queues**: completion signaling should leave room for future “steer queue” designs without changing the async task plumbing.
 
 ## Implementation Overview
 
@@ -41,13 +41,10 @@ The `async_bash_status` tool:
 
 `WuhuService` subscribes to the registry’s completion stream and, for tasks that belong to the service instance:
 
-- appends a `message` entry whose LLM role is **user**
-- content is a JSON object including: `id`, `started_at`, `ended_at`, `duration_seconds`, `exit_code`, `output`
+- appends a `custom_message` entry (displayed as a system message in UIs)
+- content is a JSON object including: `type: "system_reminder"`, `event: "async_bash_finished"`, `id`, `started_at`, `ended_at`, `duration`, `exit_code`, `output`
 - `output` is truncated using the same tail-truncation policy as `bash`, and references the stdout/stderr log files as the source of truth
 
 ### 4) Steering (future-friendly)
 
-When a completion event arrives, `WuhuService` also calls `PiAgent.Agent.steer(.user(…))` for any active execution in the session.
-
-PiAgent polls steering messages at safe boundaries (between assistant turns / after tool execution), so this design leaves room for a future “steer queue” that can become more aggressive (e.g. interrupting a long stream) without changing the async task plumbing.
-
+PiAgent supports steering queues, but async task completion notifications are currently persisted to the transcript only (no automatic mid-turn steering injection), so agents won’t mistakenly treat them as interactive user input.

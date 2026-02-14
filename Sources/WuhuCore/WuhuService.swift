@@ -1271,7 +1271,10 @@ public actor WuhuService {
     fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
     let message: JSONValue = .object([
+      "type": .string("system_reminder"),
+      "event": .string("async_bash_finished"),
       "id": .string(completion.id),
+      "message": .string("system-reminder: async_bash task finished (id: \(completion.id))"),
       "started_at": .string(fmt.string(from: completion.startedAt)),
       "ended_at": .string(fmt.string(from: completion.endedAt)),
       "duration": .number(completion.durationSeconds),
@@ -1285,20 +1288,23 @@ public actor WuhuService {
     let jsonText = wuhuEncodeToolJSON(message)
 
     do {
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
-        user: WuhuUserMessage.unknownUser,
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.customMessage(.init(
+        customType: WuhuCustomMessageTypes.asyncBashCompletion,
         content: [.text(text: jsonText, signature: nil)],
+        details: .object([
+          "wuhu_event": .string("async_bash_completion"),
+          "id": .string(completion.id),
+          "exit_code": .number(Double(completion.exitCode)),
+          "timed_out": .bool(completion.timedOut),
+          "stdout_file": .string(completion.stdoutFile),
+          "stderr_file": .string(completion.stderrFile),
+        ]),
+        display: true,
         timestamp: completion.endedAt,
       ))))
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
     } catch {
       // Best-effort: task may outlive the session/service.
-    }
-
-    if let executions = activeExecutions[sessionID] {
-      for (_, exec) in executions {
-        await exec.agent.steer(.user(jsonText, timestamp: completion.endedAt))
-      }
     }
   }
 }

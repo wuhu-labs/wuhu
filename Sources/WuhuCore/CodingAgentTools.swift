@@ -758,7 +758,7 @@ private func asyncBashTool(cwd: String, context: WuhuAsyncBashToolContext) -> An
 
   let tool = Tool(
     name: "async_bash",
-    description: "Start a bash command in the background. Returns immediately with a task id. When the task finishes, Wuhu may insert a user-level JSON message into the session transcript.",
+    description: "Start a bash command in the background. Returns immediately with a task id. When the task finishes, Wuhu will append a system-reminder JSON message to the session transcript (no polling required).",
     parameters: schema,
   )
 
