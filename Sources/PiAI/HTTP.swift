@@ -52,9 +52,18 @@ public protocol HTTPClient: Sendable {
 public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
   private let client: AsyncHTTPClient.HTTPClient
   private let requestTimeoutSeconds: Int64
+  private let sseTimeoutSeconds: Int64
   private let ownsClient: Bool
 
-  public init(client: AsyncHTTPClient.HTTPClient? = nil, requestTimeoutSeconds: Int64 = 300) {
+  public convenience init(client: AsyncHTTPClient.HTTPClient? = nil, requestTimeoutSeconds: Int64 = 300) {
+    self.init(client: client, requestTimeoutSeconds: requestTimeoutSeconds, sseTimeoutSeconds: 86400)
+  }
+
+  public init(
+    client: AsyncHTTPClient.HTTPClient? = nil,
+    requestTimeoutSeconds: Int64 = 300,
+    sseTimeoutSeconds: Int64,
+  ) {
     if let client {
       self.client = client
       ownsClient = false
@@ -63,6 +72,7 @@ public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
       ownsClient = true
     }
     self.requestTimeoutSeconds = requestTimeoutSeconds
+    self.sseTimeoutSeconds = sseTimeoutSeconds
   }
 
   deinit {
@@ -71,13 +81,13 @@ public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
   }
 
   public func data(for request: HTTPRequest) async throws -> (Data, HTTPResponse) {
-    let response = try await execute(request)
+    let response = try await execute(request, timeoutSeconds: requestTimeoutSeconds)
     let body = try await readBody(response.body, limitBytes: .max)
     return (body, makeResponseMetadata(response))
   }
 
   public func sse(for request: HTTPRequest) async throws -> AsyncThrowingStream<SSEMessage, any Error> {
-    let response = try await execute(request)
+    let response = try await execute(request, timeoutSeconds: sseTimeoutSeconds)
     let metadata = makeResponseMetadata(response)
 
     if metadata.statusCode < 200 || metadata.statusCode >= 300 {
@@ -109,7 +119,7 @@ public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
     }
   }
 
-  private func execute(_ request: HTTPRequest) async throws -> AsyncHTTPClient.HTTPClientResponse {
+  private func execute(_ request: HTTPRequest, timeoutSeconds: Int64) async throws -> AsyncHTTPClient.HTTPClientResponse {
     var outgoing = AsyncHTTPClient.HTTPClientRequest(url: request.url.absoluteString)
     outgoing.method = .RAW(value: request.method.uppercased())
 
@@ -121,7 +131,7 @@ public final class AsyncHTTPClientTransport: HTTPClient, @unchecked Sendable {
       outgoing.body = .bytes(body)
     }
 
-    return try await client.execute(outgoing, timeout: .seconds(requestTimeoutSeconds))
+    return try await client.execute(outgoing, timeout: .seconds(timeoutSeconds))
   }
 
   private func makeResponseMetadata(_ response: AsyncHTTPClient.HTTPClientResponse) -> HTTPResponse {
@@ -164,9 +174,8 @@ public enum SSEDecoder {
       let task = Task {
         var buffer = data
         drain(buffer: &buffer, continuation: continuation)
-        if !buffer.isEmpty {
-          yieldChunk(buffer, continuation: continuation)
-        }
+        // If the data doesn't end with an SSE frame delimiter, treat any remaining bytes as a partial
+        // frame and drop them.
         continuation.finish()
       }
 
@@ -189,12 +198,15 @@ public enum SSEDecoder {
             drain(buffer: &buffer, continuation: continuation)
           }
 
-          if !buffer.isEmpty {
-            yieldChunk(buffer, continuation: continuation)
-          }
+          // If we reach EOF without an SSE frame delimiter, treat the remaining bytes as a partial frame
+          // and drop them. This commonly happens when a client cancels a request mid-frame.
           continuation.finish()
         } catch {
-          continuation.finish(throwing: PiAIError.decoding(String(describing: error)))
+          if Task.isCancelled {
+            continuation.finish()
+          } else {
+            continuation.finish(throwing: error)
+          }
         }
       }
 
