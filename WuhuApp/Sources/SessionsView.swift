@@ -9,7 +9,7 @@ struct SessionsView: View {
     NavigationStackStore(
       store.scope(state: \.path, action: \.path),
     ) {
-      WithPerceptionTracking {
+      WuhuPerceptionTracking {
         List {
           if let error = store.error {
             Section {

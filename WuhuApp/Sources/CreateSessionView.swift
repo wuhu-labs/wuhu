@@ -7,7 +7,7 @@ struct CreateSessionView: View {
   let store: StoreOf<CreateSessionFeature>
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       NavigationStack {
         Form {
           if let error = store.error {
