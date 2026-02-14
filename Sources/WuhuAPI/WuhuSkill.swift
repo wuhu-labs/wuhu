@@ -13,7 +13,9 @@ public struct WuhuSkill: Sendable, Hashable, Codable, Identifiable {
   public var source: Source
   public var disableModelInvocation: Bool
 
-  public var id: String { name }
+  public var id: String {
+    name
+  }
 
   public init(
     name: String,
@@ -63,4 +65,3 @@ public extension WuhuSkill {
     return arr.compactMap(WuhuSkill.fromJSONValue)
   }
 }
-
