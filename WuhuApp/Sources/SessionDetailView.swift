@@ -6,7 +6,7 @@ struct SessionDetailView: View {
   let store: StoreOf<SessionDetailFeature>
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       VStack(spacing: 0) {
         header
         Divider()
@@ -15,7 +15,7 @@ struct SessionDetailView: View {
         composer
       }
       .navigationTitle("Session")
-      .navigationBarTitleDisplayMode(.inline)
+      .wuhuNavigationBarTitleDisplayModeInline()
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           let canStop =
@@ -108,7 +108,7 @@ struct SessionDetailView: View {
         }
         .padding(.vertical, 12)
       }
-      .onChange(of: store.transcript.last?.id) { lastID in
+      .onChange(of: store.transcript.last?.id) { _, lastID in
         guard let lastID else { return }
         let lastVisibleID =
           WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
@@ -118,7 +118,7 @@ struct SessionDetailView: View {
           proxy.scrollTo(lastVisibleID, anchor: .bottom)
         }
       }
-      .onChange(of: store.streamingAssistantText) { _ in
+      .onChange(of: store.streamingAssistantText) { _, _ in
         guard !store.streamingAssistantText.isEmpty else { return }
         proxy.scrollTo("streaming.agent", anchor: .bottom)
       }
@@ -136,7 +136,7 @@ struct SessionDetailView: View {
         axis: .vertical,
       )
       .lineLimit(1 ... 6)
-      .textInputAutocapitalization(.sentences)
+      .wuhuTextInputAutocapitalizationSentences()
 
       Button {
         store.send(.sendTapped)
@@ -155,7 +155,7 @@ private struct SessionModelPickerSheet: View {
   let store: StoreOf<SessionDetailFeature>
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       NavigationStack {
         Form {
           if let status = store.modelUpdateStatus {

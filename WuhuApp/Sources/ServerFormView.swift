@@ -5,7 +5,7 @@ struct ServerFormView: View {
   let store: StoreOf<ServerFormFeature>
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       NavigationStack {
         Form {
           Section {
@@ -23,9 +23,9 @@ struct ServerFormView: View {
                 set: { store.send(.binding(.set(\.server.urlString, $0))) },
               ),
             )
-            .textInputAutocapitalization(.never)
-            .keyboardType(.URL)
-            .autocorrectionDisabled()
+            .wuhuTextInputAutocapitalizationNever()
+            .wuhuKeyboardTypeURL()
+            .wuhuAutocorrectionDisabled()
 
             TextField(
               "Username (optional)",
@@ -34,8 +34,8 @@ struct ServerFormView: View {
                 set: { store.send(.binding(.set(\.server.username, $0.trimmedNonEmpty))) },
               ),
             )
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            .wuhuTextInputAutocapitalizationNever()
+            .wuhuAutocorrectionDisabled()
           }
 
           if let error = store.error {

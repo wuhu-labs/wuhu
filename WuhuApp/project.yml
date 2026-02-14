@@ -8,7 +8,6 @@ settings:
   base:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 97W7A3Y9GD
-    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 
 packages:
   Wuhu:
@@ -79,6 +78,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ms.liu.wuhu.ios
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     dependencies:
       - package: Wuhu
         product: WuhuClient
@@ -110,6 +110,55 @@ targets:
         product: SwiftUINavigation
       - package: SwiftNavigation
         product: UIKitNavigation
+      - package: XCTestDynamicOverlay
+        product: IssueReporting
+      - package: XCTestDynamicOverlay
+        product: XCTestDynamicOverlay
+
+  WuhuAppMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    info:
+      path: Sources/Info-macOS.plist
+      properties:
+        CFBundleDisplayName: Wuhu
+        CFBundleIconName: AppIcon
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ms.liu.wuhu.macos
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+    dependencies:
+      - package: Wuhu
+        product: WuhuClient
+      - package: Wuhu
+        product: WuhuAPI
+      - package: ComposableArchitecture
+        product: ComposableArchitecture
+      - package: SwiftCollections
+        product: OrderedCollections
+      - package: CasePaths
+        product: CasePaths
+      - package: IdentifiedCollections
+        product: IdentifiedCollections
+      - package: Clocks
+        product: Clocks
+      - package: Dependencies
+        product: Dependencies
+      - package: ConcurrencyExtras
+        product: ConcurrencyExtras
+      - package: CustomDump
+        product: CustomDump
+      - package: CombineSchedulers
+        product: CombineSchedulers
+      - package: Perception
+        product: Perception
+      - package: Sharing
+        product: Sharing
+      - package: SwiftNavigation
+        product: SwiftUINavigation
       - package: XCTestDynamicOverlay
         product: IssueReporting
       - package: XCTestDynamicOverlay

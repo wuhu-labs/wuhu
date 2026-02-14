@@ -5,7 +5,7 @@ struct SettingsView: View {
   let store: StoreOf<SettingsFeature>
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       NavigationStack {
         Form {
           Section("Servers") {
@@ -57,8 +57,8 @@ struct SettingsView: View {
                 set: { store.send(.binding(.set(\.username, $0))) },
               ),
             )
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            .wuhuTextInputAutocapitalizationNever()
+            .wuhuAutocorrectionDisabled()
 
             Text("You can override this per server by editing the server.")
               .font(.footnote)

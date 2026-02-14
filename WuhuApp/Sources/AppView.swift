@@ -7,7 +7,7 @@ struct AppView: View {
   @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
-    WithPerceptionTracking {
+    WuhuPerceptionTracking {
       TabView(
         selection: Binding(
           get: { store.selectedTab },
@@ -23,7 +23,7 @@ struct AppView: View {
           .tag(AppFeature.State.Tab.settings)
       }
       .onAppear { store.send(.onAppear) }
-      .onChange(of: scenePhase) { newPhase in
+      .onChange(of: scenePhase) { _, newPhase in
         store.send(.scenePhaseChanged(newPhase))
       }
     }

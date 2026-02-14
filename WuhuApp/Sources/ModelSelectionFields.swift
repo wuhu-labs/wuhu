@@ -25,8 +25,8 @@ struct ModelSelectionFields: View {
 
     if modelSelection == ModelSelectionUI.customModelSentinel {
       TextField("Custom model id", text: $customModel)
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
+        .wuhuTextInputAutocapitalizationNever()
+        .wuhuAutocorrectionDisabled()
     }
 
     let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(provider: provider, modelID: resolvedModelID)
