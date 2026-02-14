@@ -135,7 +135,7 @@ private func runLoop(
 
   while true {
     var hasMoreToolCalls = true
-    var steeringAfterTools: [Message]? = nil
+    var steeringAfterTools: [Message]?
 
     while hasMoreToolCalls || !pendingMessages.isEmpty {
       if !firstTurn {
@@ -273,7 +273,7 @@ private func executeToolCalls(
   getSteeringMessages: (@Sendable () async throws -> [Message])?,
 ) async throws -> (toolResults: [ToolResultMessage], steeringMessages: [Message]?) {
   var results: [ToolResultMessage] = []
-  var steeringMessages: [Message]? = nil
+  var steeringMessages: [Message]?
 
   for (index, toolCall) in toolCalls.enumerated() {
     emit(.toolExecutionStart(toolCallId: toolCall.id, toolName: toolCall.name, args: toolCall.arguments))

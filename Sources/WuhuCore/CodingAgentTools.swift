@@ -762,7 +762,7 @@ private func asyncBashTool(cwd: String, context: WuhuAsyncBashToolContext) -> An
     parameters: schema,
   )
 
-  return AnyAgentTool(tool: tool, label: "async_bash") { toolCallId, args in
+  return AnyAgentTool(tool: tool, label: "async_bash") { _, args in
     let params = try Params.parse(toolName: tool.name, args: args)
     let started = try await context.registry.start(
       command: params.command,

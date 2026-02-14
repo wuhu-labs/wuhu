@@ -1223,9 +1223,9 @@ public actor WuhuService {
     guard asyncBashCompletionTask == nil else { return }
     asyncBashCompletionTask = Task { [weak self] in
       guard let self else { return }
-      let stream = await self.asyncBashRegistry.subscribeCompletions()
+      let stream = await asyncBashRegistry.subscribeCompletions()
       for await completion in stream {
-        await self.handleAsyncBashCompletion(completion)
+        await handleAsyncBashCompletion(completion)
       }
     }
   }
