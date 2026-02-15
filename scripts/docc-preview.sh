@@ -42,14 +42,17 @@ case "$catalog" in
   WuhuCore)
     target="WuhuCore"
     catalog_path="$repo_root/Sources/WuhuCore/WuhuCore.docc"
+    doc_path="/documentation/wuhucore"
     ;;
   PiAgent)
     target="PiAgent"
     catalog_path="$repo_root/Sources/PiAgent/PiAgent.docc"
+    doc_path="/documentation/piagent"
     ;;
   /*|./*|../*)
     target=""
     catalog_path="$catalog"
+    doc_path="/"
     ;;
   *)
     echo "Unknown catalog '$catalog'." >&2
@@ -78,7 +81,7 @@ fi
 echo "Previewing DocC catalog: $catalog_path"
 echo "Symbol graphs: $symbol_graph_dir"
 echo "Port: $port"
-echo "URL: http://localhost:$port/"
+echo "URL: http://localhost:$port$doc_path"
 
 exec xcrun docc preview "$catalog_path" \
   --additional-symbol-graph-dir "$symbol_graph_dir" \
