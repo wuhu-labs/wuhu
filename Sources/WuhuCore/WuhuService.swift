@@ -9,15 +9,11 @@ public actor WuhuService {
   private let retryPolicy: WuhuLLMRetryPolicy
   private let asyncBashRegistry: WuhuAsyncBashRegistry
   private let instanceID: String
-  private var asyncBashCompletionTask: Task<Void, Never>?
+  private let eventHub = WuhuLiveEventHub()
+  private var asyncBashRouter: WuhuAsyncBashCompletionRouter?
   private var sessionContextActors: [String: WuhuAgentsContextActor] = [:]
   private var sessionContextActorLastAccess: [String: Date] = [:]
   private let maxSessionContextActors = 64
-
-  private var liveSubscribers: [String: [UUID: AsyncStream<WuhuSessionStreamEvent>.Continuation]] = [:]
-  private var runningSessions: Set<String> = []
-  private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
-  private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
 
   private var sessionAgents: [String: WuhuSessionAgentActor] = [:]
 
@@ -35,13 +31,37 @@ public actor WuhuService {
   }
 
   deinit {
-    asyncBashCompletionTask?.cancel()
+    if let router = asyncBashRouter {
+      Task { await router.stop() }
+    }
   }
 
-  public func startAgentLoopManager() {
+  public func startAgentLoopManager() async {
     // Backwards-compatible entrypoint: keep background listeners alive even as execution
     // is delegated to per-session actors.
-    ensureAsyncBashCompletionListener()
+    await ensureAsyncBashRouter()
+  }
+
+  private func ensureAsyncBashRouter() async {
+    guard asyncBashRouter == nil else { return }
+    let router = WuhuAsyncBashCompletionRouter(
+      registry: asyncBashRegistry,
+      store: store,
+      eventHub: eventHub,
+      instanceID: instanceID,
+      steerUserJSON: { [weak self] sessionID, jsonText, timestamp in
+        guard let self else { return }
+        await self.steerUserJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
+      }
+    )
+    asyncBashRouter = router
+    await router.start()
+  }
+
+  private func steerUserJSON(sessionID: String, jsonText: String, timestamp: Date) async {
+    if let agent = sessionAgents[sessionID] {
+      await agent.steerUser(jsonText, timestamp: timestamp)
+    }
   }
 
   private func sessionAgent(for sessionID: String) -> WuhuSessionAgentActor {
@@ -52,9 +72,7 @@ public actor WuhuService {
   }
 
   func sessionDidBecomeIdle(sessionID: String) async {
-    runningSessions.remove(sessionID)
-    publishLiveEvent(sessionID: sessionID, event: .idle)
-    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
+    await eventHub.publish(sessionID: sessionID, event: .idle)
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -72,17 +90,9 @@ public actor WuhuService {
       reasoningEffort: request.reasoningEffort,
     )
 
-    let canApplyNow = (!runningSessions.contains(sessionID)) && (lastAssistantMessageHadToolCalls[sessionID] != true)
-    if canApplyNow {
-      _ = try await applyModelSelection(sessionID: sessionID, selection: selection)
-      let session = try await store.getSession(id: sessionID)
-      pendingModelSelection[sessionID] = nil
-      return .init(session: session, selection: selection, applied: true)
-    }
-
-    pendingModelSelection[sessionID] = selection
+    let applied = try await sessionAgent(for: sessionID).setModelSelection(selection)
     let session = try await store.getSession(id: sessionID)
-    return .init(session: session, selection: selection, applied: false)
+    return .init(session: session, selection: selection, applied: applied)
   }
 
   public func createSession(
@@ -158,8 +168,8 @@ public actor WuhuService {
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
-    ensureAsyncBashCompletionListener()
-    guard !runningSessions.contains(sessionID), await sessionAgent(for: sessionID).isIdle() else {
+    await ensureAsyncBashRouter()
+    guard await sessionAgent(for: sessionID).isIdle() else {
       throw PiAIError.unsupported("Session is already executing")
     }
 
@@ -228,9 +238,8 @@ public actor WuhuService {
       content: [.text(text: input, signature: nil)],
       timestamp: Date(),
     ))))
-    publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(userEntry))
 
-    runningSessions.insert(sessionID)
     do {
       let prepared = WuhuSessionAgentActor.PreparedPrompt(
         renderedInput: renderedInput,
@@ -243,15 +252,17 @@ public actor WuhuService {
       )
       try await sessionAgent(for: sessionID).runDetached(prepared)
     } catch {
-      runningSessions.remove(sessionID)
       throw error
     }
 
     return WuhuPromptDetachedResponse(userEntry: userEntry)
   }
 
-  public func inProcessExecutionInfo(sessionID: String) -> WuhuInProcessExecutionInfo {
-    .init(activePromptCount: runningSessions.contains(sessionID) ? 1 : 0)
+  public func inProcessExecutionInfo(sessionID: String) async -> WuhuInProcessExecutionInfo {
+    if let agent = sessionAgents[sessionID] {
+      return .init(activePromptCount: (await agent.isIdle()) ? 0 : 1)
+    }
+    return .init(activePromptCount: 0)
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
@@ -259,7 +270,7 @@ public actor WuhuService {
 
     let transcript = try await store.getEntries(sessionID: sessionID)
     let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    let inProcessCount = runningSessions.contains(sessionID) ? 1 : 0
+    let inProcessCount: Int = if let agent = sessionAgents[sessionID] { (await agent.isIdle()) ? 0 : 1 } else { 0 }
 
     guard inferred.state == .executing || inProcessCount > 0 else {
       return .init(repairedEntries: [], stopEntry: nil)
@@ -287,7 +298,7 @@ public actor WuhuService {
       timestamp: Date(),
     ))
     let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
-    publishLiveEvent(sessionID: sessionID, event: .entryAppended(stopEntry))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
 
     await sessionDidBecomeIdle(sessionID: sessionID)
 
@@ -301,10 +312,10 @@ public actor WuhuService {
     stopAfterIdle: Bool,
     timeoutSeconds: Double?,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    let live = subscribeLiveEvents(sessionID: sessionID)
+    let live = await eventHub.subscribe(sessionID: sessionID)
     let initial = try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
     let lastInitialCursor = initial.last?.id ?? sinceCursor ?? 0
-    let initiallyIdle = !runningSessions.contains(sessionID)
+    let initiallyIdle: Bool = if let agent = sessionAgents[sessionID] { await agent.isIdle() } else { true }
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
       let forwardTask = Task {
@@ -395,7 +406,7 @@ public actor WuhuService {
         tokensBefore: preparation.tokensBefore,
         firstKeptEntryID: preparation.firstKeptEntryID,
       )))
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
 
       current = try await store.getEntries(sessionID: sessionID)
     }
@@ -415,7 +426,7 @@ public actor WuhuService {
         toolName: toolName,
         arguments: args,
       )))
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
 
     case let .toolExecutionEnd(toolCallId, toolName, result, isError):
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
@@ -429,22 +440,19 @@ public actor WuhuService {
         ]),
         isError: isError,
       )))
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
 
     case let .messageUpdate(message, assistantEvent):
       if case .assistant = message, case let .textDelta(delta, _) = assistantEvent {
-        publishLiveEvent(sessionID: sessionID, event: .assistantTextDelta(delta))
+        await eventHub.publish(sessionID: sessionID, event: .assistantTextDelta(delta))
       }
 
     case let .messageEnd(message):
       if case .user = message {
         break
       }
-      if case let .assistant(a) = message {
-        lastAssistantMessageHadToolCalls[sessionID] = a.content.contains { if case .toolCall = $0 { return true }; return false }
-      }
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(message)))
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
 
     default:
       break
@@ -546,7 +554,7 @@ public actor WuhuService {
       sessionID: sessionID,
       payload: .message(WuhuGroupChat.makeReminderMessage(previousUser: firstUser)),
     )
-    publishLiveEvent(sessionID: sessionID, event: .entryAppended(reminderEntry))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(reminderEntry))
     return reminderEntry
   }
 
@@ -676,7 +684,7 @@ public actor WuhuService {
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(repaired)))
       updatedTranscript.append(entry)
       repairEntries.append(entry)
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
     }
 
     return ToolRepairResult(transcript: updatedTranscript, repairEntries: repairEntries)
@@ -774,48 +782,10 @@ public actor WuhuService {
     sessionContextActorLastAccess.removeValue(forKey: oldestSessionID)
   }
 
-  private func subscribeLiveEvents(sessionID: String) -> AsyncStream<WuhuSessionStreamEvent> {
-    AsyncStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
-      let token = UUID()
-      liveSubscribers[sessionID, default: [:]][token] = continuation
-      continuation.onTermination = { _ in
-        Task { await self.removeLiveSubscriber(sessionID: sessionID, token: token) }
-      }
-    }
-  }
-
-  private func removeLiveSubscriber(sessionID: String, token: UUID) {
-    liveSubscribers[sessionID]?[token] = nil
-    if liveSubscribers[sessionID]?.isEmpty == true {
-      liveSubscribers[sessionID] = nil
-    }
-  }
-
-  private func publishLiveEvent(sessionID: String, event: WuhuSessionStreamEvent) {
-    guard var sessionSubs = liveSubscribers[sessionID], !sessionSubs.isEmpty else { return }
-    for (token, continuation) in sessionSubs {
-      continuation.yield(event)
-      sessionSubs[token] = continuation
-    }
-    liveSubscribers[sessionID] = sessionSubs
-  }
-
-  private func applyPendingModelSelectionIfPossible(sessionID: String) async {
-    guard !runningSessions.contains(sessionID) else { return }
-    guard lastAssistantMessageHadToolCalls[sessionID] != true else { return }
-    guard let selection = pendingModelSelection[sessionID] else { return }
-    do {
-      _ = try await applyModelSelection(sessionID: sessionID, selection: selection)
-      pendingModelSelection[sessionID] = nil
-    } catch {
-      // Best-effort: keep the pending selection so a later idle transition can retry.
-    }
-  }
-
   @discardableResult
-  private func applyModelSelection(sessionID: String, selection: WuhuSessionSettings) async throws -> WuhuSessionEntry {
+  func applyModelSelection(sessionID: String, selection: WuhuSessionSettings) async throws -> WuhuSessionEntry {
     let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
-    publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
     return entry
   }
 
@@ -960,13 +930,13 @@ public actor WuhuService {
       ).toJSONValue(),
     )
 
-    do {
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-    } catch {
-      // Best-effort: retry logging must never crash the server.
-    }
-  }
+	    do {
+	      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+	      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+	    } catch {
+	      // Best-effort: retry logging must never crash the server.
+	    }
+	  }
 
   private func appendLLMGiveUpEntry(
     sessionID: String,
@@ -983,92 +953,13 @@ public actor WuhuService {
       ).toJSONValue(),
     )
 
-    do {
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-    } catch {
-      // Best-effort: give-up logging must never crash the server.
-    }
-  }
+	    do {
+	      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+	      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+	    } catch {
+	      // Best-effort: give-up logging must never crash the server.
+	    }
+	  }
 
-  private func ensureAsyncBashCompletionListener() {
-    guard asyncBashCompletionTask == nil else { return }
-    asyncBashCompletionTask = Task { [weak self] in
-      guard let self else { return }
-      let stream = await asyncBashRegistry.subscribeCompletions()
-      for await completion in stream {
-        await handleAsyncBashCompletion(completion)
-      }
-    }
-  }
-
-  private func handleAsyncBashCompletion(_ completion: WuhuAsyncBashCompletion) async {
-    guard completion.ownerID == instanceID else { return }
-    guard let sessionID = completion.sessionID else { return }
-
-    let stdoutData = (try? Data(contentsOf: URL(fileURLWithPath: completion.stdoutFile))) ?? Data()
-    let stderrData = (try? Data(contentsOf: URL(fileURLWithPath: completion.stderrFile))) ?? Data()
-
-    let stdoutText = String(decoding: stdoutData, as: UTF8.self)
-    let stderrText = String(decoding: stderrData, as: UTF8.self)
-
-    var combined = stdoutText
-    if !stderrText.isEmpty {
-      if !combined.isEmpty, !combined.hasSuffix("\n") { combined += "\n" }
-      combined += stderrText
-    }
-
-    let truncation = ToolTruncation.truncateTail(combined)
-    var outputText = truncation.content.isEmpty ? "(no output)" : truncation.content
-
-    if truncation.truncated {
-      let startLine = truncation.totalLines - truncation.outputLines + 1
-      let endLine = truncation.totalLines
-      if truncation.lastLinePartial {
-        let last = combined.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
-        let lastSize = ToolTruncation.formatSize(last.utf8.count)
-        if !outputText.isEmpty { outputText += "\n\n" }
-        outputText +=
-          "[Showing last \(ToolTruncation.formatSize(truncation.outputBytes)) of line \(endLine) (line is \(lastSize)). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
-      } else if truncation.truncatedBy == "lines" {
-        outputText +=
-          "\n\n[Showing lines \(startLine)-\(endLine) of \(truncation.totalLines). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
-      } else {
-        outputText +=
-          "\n\n[Showing lines \(startLine)-\(endLine) of \(truncation.totalLines) (\(ToolTruncation.formatSize(ToolTruncation.defaultMaxBytes)) limit). Full output: \(completion.stdoutFile) (stdout), \(completion.stderrFile) (stderr)]"
-      }
-    }
-
-    let fmt = ISO8601DateFormatter()
-    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-    let message: JSONValue = .object([
-      "id": .string(completion.id),
-      "started_at": .string(fmt.string(from: completion.startedAt)),
-      "ended_at": .string(fmt.string(from: completion.endedAt)),
-      "duration": .number(completion.durationSeconds),
-      "exit_code": .number(Double(completion.exitCode)),
-      "timed_out": .bool(completion.timedOut),
-      "stdout_file": .string(completion.stdoutFile),
-      "stderr_file": .string(completion.stderrFile),
-      "output": .string(outputText),
-    ])
-
-    let jsonText = wuhuEncodeToolJSON(message)
-
-    do {
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
-        user: WuhuUserMessage.unknownUser,
-        content: [.text(text: jsonText, signature: nil)],
-        timestamp: completion.endedAt,
-      ))))
-      publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-    } catch {
-      // Best-effort: task may outlive the session/service.
-    }
-
-    if let agent = sessionAgents[sessionID] {
-      await agent.steerUser(jsonText, timestamp: completion.endedAt)
-    }
-  }
+  // Async bash completion handling lives in `WuhuAsyncBashCompletionRouter`.
 }

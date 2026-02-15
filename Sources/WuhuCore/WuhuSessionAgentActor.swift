@@ -1,6 +1,7 @@
 import Foundation
 import PiAgent
 import PiAI
+import WuhuAPI
 
 actor WuhuSessionAgentActor {
   struct PreparedPrompt: Sendable {
@@ -20,6 +21,9 @@ actor WuhuSessionAgentActor {
   private var eventsConsumerTask: Task<Void, Never>?
 
   private var runningPromptTask: Task<Void, Never>?
+
+  private var pendingModelSelection: WuhuSessionSettings?
+  private var lastAssistantMessageHadToolCalls: Bool = false
 
   private let runEndStream: AsyncStream<Void>
   private let runEndContinuation: AsyncStream<Void>.Continuation
@@ -48,6 +52,17 @@ actor WuhuSessionAgentActor {
 
   func isIdle() -> Bool {
     runningPromptTask == nil
+  }
+
+  func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
+    if runningPromptTask == nil, !lastAssistantMessageHadToolCalls {
+      pendingModelSelection = nil
+      try await service?.applyModelSelection(sessionID: sessionID, selection: selection)
+      return true
+    }
+
+    pendingModelSelection = selection
+    return false
   }
 
   func steerUser(_ text: String, timestamp: Date) async {
@@ -85,6 +100,7 @@ actor WuhuSessionAgentActor {
       }
 
       await self.waitForRunEnd(timeoutNanoseconds: 5_000_000_000)
+      await self.applyPendingModelSelectionIfPossible()
       await service?.sessionDidBecomeIdle(sessionID: sessionID)
     }
   }
@@ -145,6 +161,9 @@ actor WuhuSessionAgentActor {
           } catch {
             // Best-effort: ignore handler errors for long-lived session agents.
           }
+          if case let .messageEnd(message) = event, case let .assistant(a) = message {
+            recordAssistantMessageEnd(a)
+          }
           if case .agentEnd = event {
             runEndContinuation.yield(())
           }
@@ -152,6 +171,22 @@ actor WuhuSessionAgentActor {
       } catch {
         // Best-effort: ignore stream termination errors.
       }
+    }
+  }
+
+  private func recordAssistantMessageEnd(_ a: AssistantMessage) {
+    lastAssistantMessageHadToolCalls = a.content.contains { if case .toolCall = $0 { return true }; return false }
+  }
+
+  private func applyPendingModelSelectionIfPossible() async {
+    guard !lastAssistantMessageHadToolCalls else { return }
+    guard let selection = pendingModelSelection else { return }
+
+    do {
+      try await service?.applyModelSelection(sessionID: sessionID, selection: selection)
+      pendingModelSelection = nil
+    } catch {
+      // Best-effort: keep pending selection.
     }
   }
 }
