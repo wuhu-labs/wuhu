@@ -12,7 +12,7 @@ Wuhu persists agent sessions as an append-only linear chain of entries stored in
 
 The detailed persistence schema and invariants live in the SQLite Schema design article.
 
-See: <doc:Design/SQLiteSchema>
+See: <doc:SQLiteSchema>
 
 ## Concurrency Model
 
@@ -32,15 +32,15 @@ All public store APIs are `async` to compose naturally with Swift concurrency.
 
 ### Design
 
-- <doc:Design/SessionContracts>
-- <doc:Design/SQLiteSchema>
-- <doc:Design/SessionFollow>
-- <doc:Design/AgentLoopTasks>
-- <doc:Design/AsyncBash>
-- <doc:Design/ContextFiles>
-- <doc:Design/ServerClient>
-- <doc:Design/ServerRunner>
-- <doc:Design/FolderTemplateEnvironment>
+- <doc:SessionContracts>
+- <doc:SQLiteSchema>
+- <doc:SessionFollow>
+- <doc:AgentLoopTasks>
+- <doc:AsyncBash>
+- <doc:ContextFiles>
+- <doc:ServerClient>
+- <doc:ServerRunner>
+- <doc:FolderTemplateEnvironment>
 
 ## CLI Integration
 
