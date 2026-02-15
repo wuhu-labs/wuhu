@@ -4,6 +4,11 @@ import PiAI
 import WuhuAPI
 
 actor WuhuSessionAgentActor {
+  /// A fully-prepared prompt, ready to be executed by `PiAgent.Agent`.
+  ///
+  /// This type exists to separate the heavyweight prompt-preparation phase (loading transcript,
+  /// injecting context, compaction, request options) from the execution phase (calling
+  /// `PiAgent.Agent.prompt(_:)` and consuming events).
   struct PreparedPrompt: Sendable {
     var renderedInput: String
     var systemPrompt: String
@@ -14,6 +19,7 @@ actor WuhuSessionAgentActor {
     var streamFn: StreamFn
   }
 
+  /// The session this actor owns.
   let sessionID: String
   private let store: any SessionStore
   private let eventHub: WuhuLiveEventHub
@@ -25,6 +31,7 @@ actor WuhuSessionAgentActor {
   private var agent: PiAgent.Agent?
   private var eventsConsumerTask: Task<Void, Never>?
 
+  /// The currently-running prompt execution task (if any).
   private var runningPromptTask: Task<Void, Never>?
 
   private struct QueuedPrompt {
@@ -36,7 +43,9 @@ actor WuhuSessionAgentActor {
     var continuation: CheckedContinuation<WuhuPromptDetachedResponse, Error>
   }
 
+  /// FIFO queue for prompts, so each session behaves like a single-threaded “living actor”.
   private var promptQueue: [QueuedPrompt] = []
+  /// The task that drains `promptQueue`.
   private var promptQueueTask: Task<Void, Never>?
 
   private var pendingModelSelection: WuhuSessionSettings?
@@ -48,6 +57,10 @@ actor WuhuSessionAgentActor {
   private let runEndStream: AsyncStream<Void>
   private let runEndContinuation: AsyncStream<Void>.Continuation
 
+  /// Creates (or resumes) the long-lived per-session execution actor.
+  ///
+  /// - Note: The actor owns a persistent `PiAgent.Agent` and persists its events into the session
+  ///   transcript. Callers should create one instance per session id and reuse it.
   init(
     sessionID: String,
     store: any SessionStore,
@@ -75,6 +88,9 @@ actor WuhuSessionAgentActor {
     eventsConsumerTask?.cancel()
   }
 
+  /// Aborts any in-flight prompt execution.
+  ///
+  /// This cancels the current execution task and calls `PiAgent.Agent.abort()` (best-effort).
   func abort() async {
     runningPromptTask?.cancel()
     runningPromptTask = nil
@@ -83,10 +99,23 @@ actor WuhuSessionAgentActor {
     }
   }
 
+  /// Returns whether this session is currently executing a prompt.
   func isIdle() -> Bool {
     runningPromptTask == nil
   }
 
+  /// Enqueues a prompt for this session and returns when it becomes *active*.
+  ///
+  /// Because Wuhu persists a single linear transcript chain, prompts must be serialized per
+  /// session. This method:
+  ///
+  /// 1. Enqueues the prompt.
+  /// 2. Waits until it reaches the head of the queue.
+  /// 3. Appends the user entry to the transcript and starts agent execution.
+  /// 4. Returns `WuhuPromptDetachedResponse` containing the appended user entry.
+  ///
+  /// If the caller cancels while the prompt is still queued, the prompt is removed from the
+  /// queue and this throws `CancellationError`.
   func promptDetached(
     input: String,
     user: String?,
@@ -104,6 +133,10 @@ actor WuhuSessionAgentActor {
     }
   }
 
+  /// Attempts to apply a model selection immediately, or defers it until the session becomes idle.
+  ///
+  /// Returns `true` when applied immediately. Returns `false` when stored as pending and will be
+  /// applied after the current run ends (as long as the session isn’t waiting on tool calls).
   func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
     if runningPromptTask == nil, !lastAssistantMessageHadToolCalls {
       pendingModelSelection = nil
@@ -115,10 +148,14 @@ actor WuhuSessionAgentActor {
     return false
   }
 
+  /// Returns a coarse “in-process prompts” count for this session.
+  ///
+  /// Includes the active prompt (0/1) plus queued prompts.
   func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
     .init(activePromptCount: (runningPromptTask == nil ? 0 : 1) + promptQueue.count)
   }
 
+  /// Stops the current execution (if any), cancels queued prompts, and appends an “Execution stopped” entry.
   func stopSession(user: String?) async throws -> WuhuStopSessionResponse {
     cancelQueuedPrompts()
     _ = try await store.getSession(id: sessionID)
@@ -164,6 +201,7 @@ actor WuhuSessionAgentActor {
     return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
 
+  /// Injects a steering user message into the underlying `PiAgent.Agent` (if it exists).
   func steerUser(_ text: String, timestamp: Date) async {
     guard let agent else { return }
     await agent.steer(.user(text, timestamp: timestamp))
