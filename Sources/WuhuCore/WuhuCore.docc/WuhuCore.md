@@ -105,9 +105,13 @@ This deliberately leaves space for:
 
 - `SQLiteSessionStore` is an `actor` that wraps a `GRDB.DatabaseQueue`.
 - `WuhuService` is an `actor` that:
-  - loads a transcript from SQLite
-  - runs a `PiAgent.Agent` loop
-  - persists finalized events back to SQLite as the agent runs
+  - owns an in-process live event hub (`WuhuLiveEventHub`)
+  - starts long-lived background listeners (for example async-bash completion routing)
+  - routes API calls to a per-session `WuhuSessionAgentActor`
+- `WuhuSessionAgentActor` is a per-session `actor` that:
+  - owns a persistent `PiAgent.Agent`
+  - serializes prompts via an in-memory queue
+  - persists agent events to SQLite as they occur
 
 All public store APIs are `async` to compose naturally with Swift concurrency.
 

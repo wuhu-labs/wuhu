@@ -41,7 +41,7 @@ The event stream includes:
 
 - `entry_appended` — a persisted `WuhuSessionEntry` (includes cursor + timestamp)
 - `assistant_text_delta` — in-flight assistant progress (not persisted as individual DB rows)
-- `idle` — the session transitioned from “running” → “idle”
+- `idle` — the active prompt finished and the per-session actor transitioned back to idle
 - `done` — server closed the stream (stop condition or timeout)
 
 ## Stop Conditions
@@ -62,4 +62,3 @@ To avoid missing events when switching from “query the DB” → “subscribe 
 3. forwards buffered/live events, skipping already-delivered cursors
 
 This yields “tail -f”-like behavior without introducing a message queue.
-

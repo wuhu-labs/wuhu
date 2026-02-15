@@ -37,9 +37,9 @@ The server exposes a minimal command/query/event API:
     - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
 - **Commands (POST)**:
   - `POST /v2/sessions` — create session (requires `environment`)
-  - `POST /v2/sessions/:id/prompt` — enqueue prompt
+  - `POST /v2/sessions/:id/prompt` — enqueue prompt (serialized per session)
     - Optional `user` field records the prompting user (see Client Identity below)
-    - Returns immediately (`WuhuPromptDetachedResponse`); `detach` is accepted for backward compatibility but ignored
+    - Returns (`WuhuPromptDetachedResponse`). If a prompt is already running, the request waits until it becomes active and is appended; `detach` is accepted for backward compatibility but ignored
 - **Streaming (GET + SSE)**:
   - `GET /v2/sessions/:id/follow` — stream session changes over SSE
     - Optional filters: `sinceCursor`, `sinceTime`

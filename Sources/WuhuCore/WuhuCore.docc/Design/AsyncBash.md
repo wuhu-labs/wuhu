@@ -39,15 +39,14 @@ The `async_bash_status` tool:
 
 ### 3) Transcript insertion on completion: `WuhuService`
 
-`WuhuService` subscribes to the registry’s completion stream and, for tasks that belong to the service instance:
+`WuhuService` starts a background `WuhuAsyncBashCompletionRouter`, which subscribes to the registry’s completion stream and, for tasks that belong to the service instance:
 
 - appends a `message` entry whose LLM role is **user**
-- content is a JSON object including: `id`, `started_at`, `ended_at`, `duration_seconds`, `exit_code`, `output`
+- content is a JSON object including: `id`, `started_at`, `ended_at`, `duration`, `exit_code`, `timed_out`, `stdout_file`, `stderr_file`, `output`
 - `output` is truncated using the same tail-truncation policy as `bash`, and references the stdout/stderr log files as the source of truth
 
 ### 4) Steering (future-friendly)
 
-When a completion event arrives, `WuhuService` also calls `PiAgent.Agent.steer(.user(…))` for any active execution in the session.
+When a completion event arrives, the router also steers the per-session agent (`PiAgent.Agent.steer(.user(…))`) for any active execution in the session.
 
 PiAgent polls steering messages at safe boundaries (between assistant turns / after tool execution), so this design leaves room for a future “steer queue” that can become more aggressive (e.g. interrupting a long stream) without changing the async task plumbing.
-
