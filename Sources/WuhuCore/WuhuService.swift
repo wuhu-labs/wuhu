@@ -71,7 +71,6 @@ public actor WuhuService {
       retryPolicy: retryPolicy,
       asyncBashRegistry: asyncBashRegistry,
       instanceID: instanceID,
-      service: self
     )
     sessionAgents[sessionID] = actor
     return actor
@@ -251,78 +250,6 @@ public actor WuhuService {
         forwardTask.cancel()
         timeoutTask?.cancel()
       }
-    }
-  }
-
-  func handleAgentEvent(
-    _ event: AgentEvent,
-    sessionID: String,
-  ) async throws {
-    switch event {
-    case let .toolExecutionStart(toolCallId, toolName, args):
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
-        phase: .start,
-        toolCallId: toolCallId,
-        toolName: toolName,
-        arguments: args,
-      )))
-      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-
-    case let .toolExecutionEnd(toolCallId, toolName, result, isError):
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
-        phase: .end,
-        toolCallId: toolCallId,
-        toolName: toolName,
-        arguments: .null,
-        result: .object([
-          "content": .array(result.content.map(Self.contentBlockToJSON)),
-          "details": result.details,
-        ]),
-        isError: isError,
-      )))
-      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-
-    case let .messageUpdate(message, assistantEvent):
-      if case .assistant = message, case let .textDelta(delta, _) = assistantEvent {
-        await eventHub.publish(sessionID: sessionID, event: .assistantTextDelta(delta))
-      }
-
-    case let .messageEnd(message):
-      if case .user = message {
-        break
-      }
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(message)))
-      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-
-    default:
-      break
-    }
-  }
-  private static func contentBlockToJSON(_ block: ContentBlock) -> JSONValue {
-    switch block {
-    case let .text(t):
-      var obj: [String: JSONValue] = ["type": .string("text"), "text": .string(t.text)]
-      if let signature = t.signature {
-        obj["signature"] = .string(signature)
-      }
-      return .object(obj)
-    case let .toolCall(c):
-      return .object([
-        "type": .string("tool_call"),
-        "id": .string(c.id),
-        "name": .string(c.name),
-        "arguments": c.arguments,
-      ])
-    case let .reasoning(r):
-      var obj: [String: JSONValue] = [
-        "type": .string("reasoning"),
-        "id": .string(r.id),
-        "summary": .array(r.summary),
-      ]
-      if let encrypted = r.encryptedContent {
-        obj["encrypted_content"] = .string(encrypted)
-      }
-      return .object(obj)
     }
   }
 
