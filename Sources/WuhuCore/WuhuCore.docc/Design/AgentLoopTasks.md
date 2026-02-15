@@ -10,8 +10,10 @@ This design keeps the agentic loop alive while still respecting structured concu
 - `WuhuService.startAgentLoopManager()` starts long-lived **background listeners** (for example async-bash completion routing).
 - Wuhu starts one long-lived **per-session actor** (`WuhuSessionAgentActor`) per session (as needed).
 - `WuhuSessionAgentActor` owns the persistent `PiAgent.Agent` and acts as the session’s execution loop.
-- `POST /v2/sessions/:id/prompt` enqueues work to the per-session actor. If a prompt is already running, the request waits until it can become active (because the transcript is persisted as a single linear chain).
+- `POST /v2/sessions/:id/prompt` should be modeled as a low-latency command that enqueues user input (steer or follow-up) without waiting for agent execution.
 - `GET /v2/sessions/:id/follow` is the canonical streaming channel for UI/CLI.
+
+For the target meaning boundary (queues + subscription), see the Session Contracts design article.
 
 ## Task Hierarchy
 
@@ -33,10 +35,9 @@ The key property is that prompt execution is a **child of the server’s long-li
 
 When a prompt arrives:
 
-1. The server appends any required repair/reminder entries to the transcript.
-2. The server appends the user prompt entry.
-3. The server schedules the long-running agent execution on the session loop.
-4. The prompt request returns (`WuhuPromptDetachedResponse`). If the session is busy, this happens once the prompt becomes active and is appended.
+1. The server enqueues the user input into the appropriate lane (steer or follow-up).
+2. The per-session actor materializes queued inputs into the transcript at defined checkpoints (aligned to PiAgent boundaries).
+3. The long-running agent execution proceeds independently of any particular HTTP request.
 
 Clients that want live output should follow the session and render `WuhuSessionStreamEvent` until an `idle` event is observed.
 

@@ -62,3 +62,13 @@ To avoid missing events when switching from “query the DB” → “subscribe 
 3. forwards buffered/live events, skipping already-delivered cursors
 
 This yields “tail -f”-like behavior without introducing a message queue.
+
+## Target: Single Subscription Contract
+
+Wuhu is evolving toward a transport-agnostic subscription contract that matches the SSE shape:
+
+- initial state + catch-up (transcript + queue state/history)
+- then live updates
+- without gaps or duplicate delivery during the backfill window
+
+See the Session Contracts design article and `WuhuCore/Contracts/SessionSubscribing`.
