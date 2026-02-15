@@ -15,7 +15,7 @@ public actor WuhuService {
   private let maxSessionContextActors = 64
 
   private var liveSubscribers: [String: [UUID: AsyncStream<WuhuSessionStreamEvent>.Continuation]] = [:]
-  private var activePromptCount: [String: Int] = [:]
+  private var runningSessions: Set<String> = []
   private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
   private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
 
@@ -51,6 +51,12 @@ public actor WuhuService {
     return actor
   }
 
+  func sessionDidBecomeIdle(sessionID: String) async {
+    runningSessions.remove(sessionID)
+    publishLiveEvent(sessionID: sessionID, event: .idle)
+    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
+  }
+
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
     _ = try await store.getSession(id: sessionID)
 
@@ -66,7 +72,7 @@ public actor WuhuService {
       reasoningEffort: request.reasoningEffort,
     )
 
-    let canApplyNow = isIdle(sessionID: sessionID) && (lastAssistantMessageHadToolCalls[sessionID] != true)
+    let canApplyNow = (!runningSessions.contains(sessionID)) && (lastAssistantMessageHadToolCalls[sessionID] != true)
     if canApplyNow {
       _ = try await applyModelSelection(sessionID: sessionID, selection: selection)
       let session = try await store.getSession(id: sessionID)
@@ -153,7 +159,7 @@ public actor WuhuService {
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
     ensureAsyncBashCompletionListener()
-    guard isIdle(sessionID: sessionID) else {
+    guard !runningSessions.contains(sessionID), await sessionAgent(for: sessionID).isIdle() else {
       throw PiAIError.unsupported("Session is already executing")
     }
 
@@ -217,7 +223,6 @@ public actor WuhuService {
 
     let messages = Self.extractContextMessages(from: transcript)
 
-    beginPrompt(sessionID: sessionID)
     let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
       user: effectiveUser,
       content: [.text(text: input, signature: nil)],
@@ -225,6 +230,7 @@ public actor WuhuService {
     ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
+    runningSessions.insert(sessionID)
     do {
       let prepared = WuhuSessionAgentActor.PreparedPrompt(
         renderedInput: renderedInput,
@@ -237,7 +243,7 @@ public actor WuhuService {
       )
       try await sessionAgent(for: sessionID).runDetached(prepared)
     } catch {
-      endPrompt(sessionID: sessionID)
+      runningSessions.remove(sessionID)
       throw error
     }
 
@@ -245,7 +251,7 @@ public actor WuhuService {
   }
 
   public func inProcessExecutionInfo(sessionID: String) -> WuhuInProcessExecutionInfo {
-    return .init(activePromptCount: activePromptCount[sessionID] ?? 0)
+    .init(activePromptCount: runningSessions.contains(sessionID) ? 1 : 0)
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
@@ -253,7 +259,7 @@ public actor WuhuService {
 
     let transcript = try await store.getEntries(sessionID: sessionID)
     let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    let inProcessCount = activePromptCount[sessionID] ?? 0
+    let inProcessCount = runningSessions.contains(sessionID) ? 1 : 0
 
     guard inferred.state == .executing || inProcessCount > 0 else {
       return .init(repairedEntries: [], stopEntry: nil)
@@ -283,8 +289,7 @@ public actor WuhuService {
     let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(stopEntry))
 
-    endPrompt(sessionID: sessionID)
-    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
+    await sessionDidBecomeIdle(sessionID: sessionID)
 
     return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
@@ -299,7 +304,7 @@ public actor WuhuService {
     let live = subscribeLiveEvents(sessionID: sessionID)
     let initial = try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
     let lastInitialCursor = initial.last?.id ?? sinceCursor ?? 0
-    let initiallyIdle = isIdle(sessionID: sessionID)
+    let initiallyIdle = !runningSessions.contains(sessionID)
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
       let forwardTask = Task {
@@ -795,34 +800,8 @@ public actor WuhuService {
     liveSubscribers[sessionID] = sessionSubs
   }
 
-  private func beginPrompt(sessionID: String) {
-    let n = (activePromptCount[sessionID] ?? 0) + 1
-    activePromptCount[sessionID] = n
-  }
-
-  private func endPrompt(sessionID: String) {
-    let old = activePromptCount[sessionID] ?? 0
-    if old == 0 { return }
-    let n = max(0, old - 1)
-    if n == 0 {
-      activePromptCount[sessionID] = nil
-      publishLiveEvent(sessionID: sessionID, event: .idle)
-    } else {
-      activePromptCount[sessionID] = n
-    }
-  }
-
-  func endPromptAsync(sessionID: String) async {
-    endPrompt(sessionID: sessionID)
-    await applyPendingModelSelectionIfPossible(sessionID: sessionID)
-  }
-
-  private func isIdle(sessionID: String) -> Bool {
-    (activePromptCount[sessionID] ?? 0) == 0
-  }
-
   private func applyPendingModelSelectionIfPossible(sessionID: String) async {
-    guard isIdle(sessionID: sessionID) else { return }
+    guard !runningSessions.contains(sessionID) else { return }
     guard lastAssistantMessageHadToolCalls[sessionID] != true else { return }
     guard let selection = pendingModelSelection[sessionID] else { return }
     do {

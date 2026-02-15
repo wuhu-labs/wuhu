@@ -30,3 +30,8 @@ This file is a scratchpad for refactors/architecture changes noted during intera
 
 - `sessionLoopContinuations` is technically accurate but hard to read (Continuation ≠ “continuation-passing style” in most readers’ heads).
 - Consider renaming to `sessionCommandSenders` / `sessionCommandChannels`, or wrapping `AsyncStream.Continuation` in a small local `Channel` type (`send`, `finish`, `stream`) for readability and future policy changes (buffering/backpressure).
+
+## Per-session idle/execution state
+
+- `WuhuService` still owns some session-scoped state (`pendingModelSelection`, `lastAssistantMessageHadToolCalls`) and publishes `.idle` to live subscribers.
+- We introduced a `runningSessions` set in `WuhuService` as a sync cache (needed for non-`async` helpers like `inProcessExecutionInfo`), but the source of truth for “am I busy?” should ultimately live in `WuhuSessionAgentActor` (and be queried/updated via explicit messages).

@@ -46,6 +46,10 @@ actor WuhuSessionAgentActor {
     }
   }
 
+  func isIdle() -> Bool {
+    runningPromptTask == nil
+  }
+
   func steerUser(_ text: String, timestamp: Date) async {
     guard let agent else { return }
     await agent.steer(.user(text, timestamp: timestamp))
@@ -81,7 +85,7 @@ actor WuhuSessionAgentActor {
       }
 
       await self.waitForRunEnd(timeoutNanoseconds: 5_000_000_000)
-      await service?.endPromptAsync(sessionID: sessionID)
+      await service?.sessionDidBecomeIdle(sessionID: sessionID)
     }
   }
 
