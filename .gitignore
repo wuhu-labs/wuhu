@@ -1,3 +1,10 @@
+# macOS / editors
+.DS_Store
+.vscode/
+
+# Generic build output
+build/
+
 # Logs
 logs
 *.log

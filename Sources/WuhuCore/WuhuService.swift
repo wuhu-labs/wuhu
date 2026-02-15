@@ -16,35 +16,10 @@ public actor WuhuService {
 
   private var liveSubscribers: [String: [UUID: AsyncStream<WuhuSessionStreamEvent>.Continuation]] = [:]
   private var activePromptCount: [String: Int] = [:]
-  private struct ActiveExecution: Sendable {
-    var agent: PiAgent.Agent
-    var cancel: @Sendable () -> Void
-  }
-
-  private var activeExecutions: [String: [UUID: ActiveExecution]] = [:]
-
   private var pendingModelSelection: [String: WuhuSessionSettings] = [:]
   private var lastAssistantMessageHadToolCalls: [String: Bool] = [:]
 
-  private enum AgentLoopManagerCommand: Sendable {
-    case startSession(sessionID: String, stream: AsyncStream<SessionLoopCommand>)
-    case shutdown
-  }
-
-  private enum SessionLoopCommand: Sendable {
-    case execute(ExecutionWorkItem)
-  }
-
-  private struct ExecutionWorkItem: Sendable {
-    var sessionID: String
-    var token: UUID
-    var agent: PiAgent.Agent
-    var renderedInput: String
-  }
-
-  private var agentLoopManagerTask: Task<Void, Never>?
-  private var agentLoopManagerContinuation: AsyncStream<AgentLoopManagerCommand>.Continuation?
-  private var sessionLoopContinuations: [String: AsyncStream<SessionLoopCommand>.Continuation] = [:]
+  private var sessionAgents: [String: WuhuSessionAgentActor] = [:]
 
   public init(
     store: any SessionStore,
@@ -60,71 +35,20 @@ public actor WuhuService {
   }
 
   deinit {
-    agentLoopManagerTask?.cancel()
-    agentLoopManagerContinuation?.finish()
-    for (_, continuation) in sessionLoopContinuations {
-      continuation.finish()
-    }
     asyncBashCompletionTask?.cancel()
   }
 
   public func startAgentLoopManager() {
-    guard agentLoopManagerTask == nil else { return }
+    // Backwards-compatible entrypoint: keep background listeners alive even as execution
+    // is delegated to per-session actors.
     ensureAsyncBashCompletionListener()
-
-    var capturedContinuation: AsyncStream<AgentLoopManagerCommand>.Continuation?
-    let commands = AsyncStream(AgentLoopManagerCommand.self, bufferingPolicy: .unbounded) { continuation in
-      capturedContinuation = continuation
-    }
-    agentLoopManagerContinuation = capturedContinuation
-
-    agentLoopManagerTask = Task { [weak self] in
-      await withTaskGroup(of: Void.self) { group in
-        var startedSessions: Set<String> = []
-        var shouldExit = false
-
-        for await command in commands {
-          if Task.isCancelled { break }
-          if self == nil { break }
-
-          switch command {
-          case let .startSession(sessionID, stream):
-            guard !startedSessions.contains(sessionID) else { continue }
-            startedSessions.insert(sessionID)
-            group.addTask { [weak self] in
-              for await sessionCommand in stream {
-                if Task.isCancelled { break }
-                guard let self else { break }
-                switch sessionCommand {
-                case let .execute(item):
-                  await executeWorkItem(item)
-                }
-              }
-            }
-          case .shutdown:
-            shouldExit = true
-          }
-
-          if shouldExit { break }
-        }
-
-        group.cancelAll()
-      }
-    }
   }
 
-  public func shutdownAgentLoopManager() {
-    agentLoopManagerContinuation?.yield(.shutdown)
-    agentLoopManagerContinuation?.finish()
-    agentLoopManagerContinuation = nil
-
-    for (_, continuation) in sessionLoopContinuations {
-      continuation.finish()
-    }
-    sessionLoopContinuations = [:]
-
-    agentLoopManagerTask?.cancel()
-    agentLoopManagerTask = nil
+  private func sessionAgent(for sessionID: String) -> WuhuSessionAgentActor {
+    if let existing = sessionAgents[sessionID] { return existing }
+    let actor = WuhuSessionAgentActor(sessionID: sessionID, service: self)
+    sessionAgents[sessionID] = actor
+    return actor
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -228,7 +152,6 @@ public actor WuhuService {
     tools: [AnyAgentTool]? = nil,
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
-    startAgentLoopManager()
     ensureAsyncBashCompletionListener()
     guard isIdle(sessionID: sessionID) else {
       throw PiAIError.unsupported("Session is already executing")
@@ -294,19 +217,7 @@ public actor WuhuService {
 
     let messages = Self.extractContextMessages(from: transcript)
 
-    let agent = PiAgent.Agent(opts: .init(
-      initialState: .init(
-        systemPrompt: effectiveSystemPrompt,
-        model: model,
-        tools: resolvedTools,
-        messages: messages,
-      ),
-      requestOptions: requestOptions,
-      streamFn: agentStreamFn,
-    ))
-
-    let executionToken = UUID()
-    beginPrompt(sessionID: sessionID, token: executionToken, agent: agent)
+    beginPrompt(sessionID: sessionID)
     let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
       user: effectiveUser,
       content: [.text(text: input, signature: nil)],
@@ -314,20 +225,27 @@ public actor WuhuService {
     ))))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(userEntry))
 
-    ensureSessionLoop(sessionID: sessionID)
-    sessionLoopContinuations[sessionID]?.yield(.execute(.init(
-      sessionID: sessionID,
-      token: executionToken,
-      agent: agent,
-      renderedInput: renderedInput,
-    )))
+    do {
+      let prepared = WuhuSessionAgentActor.PreparedPrompt(
+        renderedInput: renderedInput,
+        systemPrompt: effectiveSystemPrompt,
+        model: model,
+        tools: resolvedTools,
+        messages: messages,
+        requestOptions: requestOptions,
+        streamFn: agentStreamFn,
+      )
+      try await sessionAgent(for: sessionID).runDetached(prepared)
+    } catch {
+      endPrompt(sessionID: sessionID)
+      throw error
+    }
 
     return WuhuPromptDetachedResponse(userEntry: userEntry)
   }
 
   public func inProcessExecutionInfo(sessionID: String) -> WuhuInProcessExecutionInfo {
-    let count = activeExecutions[sessionID]?.count ?? 0
-    return .init(activePromptCount: count)
+    return .init(activePromptCount: activePromptCount[sessionID] ?? 0)
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
@@ -335,16 +253,14 @@ public actor WuhuService {
 
     let transcript = try await store.getEntries(sessionID: sessionID)
     let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    let inProcessCount = activeExecutions[sessionID]?.count ?? 0
+    let inProcessCount = activePromptCount[sessionID] ?? 0
 
     guard inferred.state == .executing || inProcessCount > 0 else {
       return .init(repairedEntries: [], stopEntry: nil)
     }
 
-    let runningTokens: [UUID] = activeExecutions[sessionID].map { Array($0.keys) } ?? []
-    for token in runningTokens {
-      activeExecutions[sessionID]?[token]?.cancel()
-      removeActiveExecution(sessionID: sessionID, token: token)
+    if let agent = sessionAgents[sessionID] {
+      await agent.abort()
     }
 
     var updatedTranscript = try await store.getEntries(sessionID: sessionID)
@@ -367,9 +283,7 @@ public actor WuhuService {
     let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
     publishLiveEvent(sessionID: sessionID, event: .entryAppended(stopEntry))
 
-    for _ in runningTokens {
-      endPrompt(sessionID: sessionID)
-    }
+    endPrompt(sessionID: sessionID)
     await applyPendingModelSelectionIfPossible(sessionID: sessionID)
 
     return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
@@ -484,16 +398,10 @@ public actor WuhuService {
     return current
   }
 
-  private func handleAgentEvent(
+  func handleAgentEvent(
     _ event: AgentEvent,
     sessionID: String,
-    token: UUID,
-    continuation: AsyncThrowingStream<WuhuSessionStreamEvent, any Error>.Continuation?,
   ) async throws {
-    guard activeExecutions[sessionID]?[token] != nil else {
-      return
-    }
-
     switch event {
     case let .toolExecutionStart(toolCallId, toolName, args):
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
@@ -503,7 +411,6 @@ public actor WuhuService {
         arguments: args,
       )))
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-      continuation?.yield(.entryAppended(entry))
 
     case let .toolExecutionEnd(toolCallId, toolName, result, isError):
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .toolExecution(.init(
@@ -518,12 +425,10 @@ public actor WuhuService {
         isError: isError,
       )))
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-      continuation?.yield(.entryAppended(entry))
 
     case let .messageUpdate(message, assistantEvent):
       if case .assistant = message, case let .textDelta(delta, _) = assistantEvent {
         publishLiveEvent(sessionID: sessionID, event: .assistantTextDelta(delta))
-        continuation?.yield(.assistantTextDelta(delta))
       }
 
     case let .messageEnd(message):
@@ -535,7 +440,6 @@ public actor WuhuService {
       }
       let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(message)))
       publishLiveEvent(sessionID: sessionID, event: .entryAppended(entry))
-      continuation?.yield(.entryAppended(entry))
 
     default:
       break
@@ -908,41 +812,9 @@ public actor WuhuService {
     }
   }
 
-  private func beginPrompt(sessionID: String, token: UUID, agent: PiAgent.Agent) {
-    let execution = ActiveExecution(
-      agent: agent,
-      cancel: {
-        Task { await agent.abort() }
-      },
-    )
-    activeExecutions[sessionID, default: [:]][token] = execution
-    beginPrompt(sessionID: sessionID)
-  }
-
-  private func setActiveExecutionCancel(sessionID: String, token: UUID, cancel: @escaping @Sendable () -> Void) async {
-    guard var executions = activeExecutions[sessionID],
-          let existing = executions[token]
-    else {
-      return
-    }
-    executions[token] = ActiveExecution(agent: existing.agent, cancel: cancel)
-    activeExecutions[sessionID] = executions
-  }
-
-  private func removeActiveExecution(sessionID: String, token: UUID) {
-    activeExecutions[sessionID]?[token] = nil
-    if activeExecutions[sessionID]?.isEmpty == true {
-      activeExecutions[sessionID] = nil
-    }
-  }
-
-  private func endPromptAsync(sessionID: String, token: UUID) async {
-    removeActiveExecution(sessionID: sessionID, token: token)
+  func endPromptAsync(sessionID: String) async {
     endPrompt(sessionID: sessionID)
     await applyPendingModelSelectionIfPossible(sessionID: sessionID)
-    if activePromptCount.isEmpty {
-      shutdownAgentLoopManager()
-    }
   }
 
   private func isIdle(sessionID: String) -> Bool {
@@ -1140,85 +1012,6 @@ public actor WuhuService {
     }
   }
 
-  private func ensureSessionLoop(sessionID: String) {
-    guard sessionLoopContinuations[sessionID] == nil else { return }
-    var capturedContinuation: AsyncStream<SessionLoopCommand>.Continuation?
-    let stream = AsyncStream(SessionLoopCommand.self, bufferingPolicy: .unbounded) { continuation in
-      capturedContinuation = continuation
-    }
-    sessionLoopContinuations[sessionID] = capturedContinuation
-    agentLoopManagerContinuation?.yield(.startSession(sessionID: sessionID, stream: stream))
-  }
-
-  private func executeWorkItem(_ item: ExecutionWorkItem) async {
-    let sessionID = item.sessionID
-    let token = item.token
-    let agent = item.agent
-
-    let consumeTask = Task { [weak self] in
-      guard let self else { return }
-      await consumeAgentEvents(agent: agent, sessionID: sessionID, token: token)
-    }
-
-    var promptSucceeded = false
-    do {
-      try await agent.prompt(item.renderedInput)
-      promptSucceeded = true
-    } catch {
-      await agent.abort()
-    }
-
-    if promptSucceeded {
-      // Best-effort: ensure the agent's run task fully settles before we stop consuming events.
-      // Avoid hanging forever if the agent fails to reach idle for some reason.
-      let idleTimeoutTask = Task {
-        try? await Task.sleep(nanoseconds: 10_000_000_000)
-        await agent.abort()
-      }
-      await agent.waitForIdle()
-      idleTimeoutTask.cancel()
-    }
-
-    if !promptSucceeded {
-      // If the prompt failed, the events stream might never emit `agentEnd`.
-      // Cancel consumption so we can finalize the session state.
-      consumeTask.cancel()
-    }
-
-    let consumeTimeoutTask: Task<Void, Never>? = promptSucceeded
-      ? Task {
-        // Best-effort: agent.events should normally terminate after the run completes.
-        // Avoid hanging the entire detached session loop if the stream doesn't close.
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-        consumeTask.cancel()
-      }
-      : nil
-
-    _ = await consumeTask.value
-    consumeTimeoutTask?.cancel()
-
-    await endPromptAsync(sessionID: sessionID, token: token)
-  }
-
-  private func consumeAgentEvents(
-    agent: PiAgent.Agent,
-    sessionID: String,
-    token: UUID,
-  ) async {
-    do {
-      for try await event in agent.events {
-        do {
-          try await handleAgentEvent(event, sessionID: sessionID, token: token, continuation: nil)
-        } catch {
-          // Best-effort: ignore handler errors for detached execution loops.
-        }
-        if case .agentEnd = event { break }
-      }
-    } catch {
-      // Best-effort: detached prompts don't surface errors to a caller.
-    }
-  }
-
   private func ensureAsyncBashCompletionListener() {
     guard asyncBashCompletionTask == nil else { return }
     asyncBashCompletionTask = Task { [weak self] in
@@ -1295,10 +1088,8 @@ public actor WuhuService {
       // Best-effort: task may outlive the session/service.
     }
 
-    if let executions = activeExecutions[sessionID] {
-      for (_, exec) in executions {
-        await exec.agent.steer(.user(jsonText, timestamp: completion.endedAt))
-      }
+    if let agent = sessionAgents[sessionID] {
+      await agent.steerUser(jsonText, timestamp: completion.endedAt)
     }
   }
 }
