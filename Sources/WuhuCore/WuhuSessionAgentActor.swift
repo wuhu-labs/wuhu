@@ -17,6 +17,10 @@ actor WuhuSessionAgentActor {
   let sessionID: String
   private let store: any SessionStore
   private let eventHub: WuhuLiveEventHub
+  private let llmRequestLogger: WuhuLLMRequestLogger?
+  private let retryPolicy: WuhuLLMRetryPolicy
+  private let asyncBashRegistry: WuhuAsyncBashRegistry
+  private let instanceID: String
   private weak var service: WuhuService?
 
   private var agent: PiAgent.Agent?
@@ -27,13 +31,29 @@ actor WuhuSessionAgentActor {
   private var pendingModelSelection: WuhuSessionSettings?
   private var lastAssistantMessageHadToolCalls: Bool = false
 
+  private var contextActor: WuhuAgentsContextActor?
+  private var contextCwd: String?
+
   private let runEndStream: AsyncStream<Void>
   private let runEndContinuation: AsyncStream<Void>.Continuation
 
-  init(sessionID: String, store: any SessionStore, eventHub: WuhuLiveEventHub, service: WuhuService) {
+  init(
+    sessionID: String,
+    store: any SessionStore,
+    eventHub: WuhuLiveEventHub,
+    llmRequestLogger: WuhuLLMRequestLogger?,
+    retryPolicy: WuhuLLMRetryPolicy,
+    asyncBashRegistry: WuhuAsyncBashRegistry,
+    instanceID: String,
+    service: WuhuService
+  ) {
     self.sessionID = sessionID
     self.store = store
     self.eventHub = eventHub
+    self.llmRequestLogger = llmRequestLogger
+    self.retryPolicy = retryPolicy
+    self.asyncBashRegistry = asyncBashRegistry
+    self.instanceID = instanceID
     self.service = service
 
     let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -56,6 +76,93 @@ actor WuhuSessionAgentActor {
 
   func isIdle() -> Bool {
     runningPromptTask == nil
+  }
+
+  func promptDetached(
+    input: String,
+    user: String?,
+    tools: [AnyAgentTool]?,
+    streamFn: @escaping StreamFn,
+  ) async throws -> WuhuPromptDetachedResponse {
+    guard isIdle() else {
+      throw PiAIError.unsupported("Session is already executing")
+    }
+
+    let effectiveUser = WuhuPromptPreparation.normalizeUser(user)
+    let session = try await store.getSession(id: sessionID)
+    var transcript = try await store.getEntries(sessionID: sessionID)
+
+    let toolRepair = try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
+      sessionID: sessionID,
+      transcript: transcript,
+      mode: .lost,
+      store: store,
+      eventHub: eventHub
+    )
+    transcript = toolRepair.transcript
+
+    _ = try await maybeAppendGroupChatReminderIfNeeded(
+      transcript: transcript,
+      promptingUser: effectiveUser,
+    )
+    transcript = try await store.getEntries(sessionID: sessionID)
+
+    let header = try WuhuPromptPreparation.extractHeader(from: transcript, sessionID: sessionID)
+    let settingsOverride = WuhuPromptPreparation.extractLatestSessionSettings(from: transcript)
+    let model = Model(id: session.model, provider: session.provider.piProvider)
+
+    let loggedAgentStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+    let loggedCompactionStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .compaction) ?? streamFn
+    let agentStreamFn = makeRetryingStreamFn(base: loggedAgentStreamFn, purpose: .agent)
+    let compactionStreamFn = makeRetryingStreamFn(base: loggedCompactionStreamFn, purpose: .compaction)
+
+    let resolvedTools = tools ?? WuhuTools.codingAgentTools(
+      cwd: session.cwd,
+      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID),
+    )
+
+    var effectiveSystemPrompt = header.systemPrompt
+    let injectedContext = await sessionContextSection(cwd: session.cwd)
+    if !injectedContext.isEmpty {
+      effectiveSystemPrompt += injectedContext
+    }
+    effectiveSystemPrompt += "\n\nWorking directory: \(session.cwd)\nAll relative paths are resolved from this directory."
+
+    let requestOptions = makeRequestOptions(model: model, header: header, settingsOverride: settingsOverride)
+
+    let compactionSettings = WuhuCompactionSettings.load(model: model)
+    let groupChatActive = WuhuGroupChat.reminderEntryIndex(in: transcript) != nil
+    let renderedInput = groupChatActive ? WuhuGroupChat.renderPromptInput(user: effectiveUser, input: input) : input
+    transcript = try await maybeAutoCompact(
+      transcript: transcript,
+      model: model,
+      requestOptions: requestOptions,
+      compactionSettings: compactionSettings,
+      input: renderedInput,
+      streamFn: compactionStreamFn,
+    )
+
+    let messages = WuhuPromptPreparation.extractContextMessages(from: transcript)
+
+    let userEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
+      user: effectiveUser,
+      content: [.text(text: input, signature: nil)],
+      timestamp: Date(),
+    ))))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(userEntry))
+
+    let prepared = PreparedPrompt(
+      renderedInput: renderedInput,
+      systemPrompt: effectiveSystemPrompt,
+      model: model,
+      tools: resolvedTools,
+      messages: messages,
+      requestOptions: requestOptions,
+      streamFn: agentStreamFn,
+    )
+    try await runDetached(prepared)
+
+    return WuhuPromptDetachedResponse(userEntry: userEntry)
   }
 
   func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
@@ -247,5 +354,266 @@ actor WuhuSessionAgentActor {
     let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
     await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
     return entry
+  }
+
+  private func sessionContextSection(cwd: String) async -> String {
+    if contextActor == nil || contextCwd != cwd {
+      contextActor = WuhuAgentsContextActor(cwd: cwd)
+      contextCwd = cwd
+    }
+    guard let contextActor else { return "" }
+    return await contextActor.contextSection()
+  }
+
+  private func maybeAppendGroupChatReminderIfNeeded(
+    transcript: [WuhuSessionEntry],
+    promptingUser: String,
+  ) async throws -> WuhuSessionEntry? {
+    if WuhuGroupChat.reminderEntryIndex(in: transcript) != nil {
+      return nil
+    }
+
+    guard let firstUser = WuhuPromptPreparation.firstPromptingUser(in: transcript) else {
+      return nil
+    }
+
+    guard firstUser != promptingUser else {
+      return nil
+    }
+
+    let reminderEntry = try await store.appendEntry(
+      sessionID: sessionID,
+      payload: .message(WuhuGroupChat.makeReminderMessage(previousUser: firstUser)),
+    )
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(reminderEntry))
+    return reminderEntry
+  }
+
+  private func maybeAutoCompact(
+    transcript: [WuhuSessionEntry],
+    model: Model,
+    requestOptions: RequestOptions,
+    compactionSettings: WuhuCompactionSettings,
+    input: String,
+    streamFn: @escaping StreamFn,
+  ) async throws -> [WuhuSessionEntry] {
+    var current = transcript
+
+    for _ in 0 ..< 3 {
+      let contextMessages = WuhuPromptPreparation.extractContextMessages(from: current)
+      let prospective = contextMessages + [.user(input)]
+      let estimate = WuhuCompactionEngine.estimateContextTokens(messages: prospective)
+
+      if !WuhuCompactionEngine.shouldCompact(contextTokens: estimate.tokens, settings: compactionSettings) {
+        break
+      }
+
+      guard let preparation = WuhuCompactionEngine.prepareCompaction(transcript: current, settings: compactionSettings) else {
+        break
+      }
+
+      let summary = try await WuhuCompactionEngine.generateSummary(
+        preparation: preparation,
+        model: model,
+        settings: compactionSettings,
+        requestOptions: requestOptions,
+        streamFn: streamFn,
+      )
+
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: .compaction(.init(
+        summary: summary,
+        tokensBefore: preparation.tokensBefore,
+        firstKeptEntryID: preparation.firstKeptEntryID,
+      )))
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+
+      current = try await store.getEntries(sessionID: sessionID)
+    }
+
+    return current
+  }
+
+  private func makeRequestOptions(
+    model: Model,
+    header: WuhuSessionHeader,
+    settingsOverride: WuhuSessionSettings?,
+  ) -> RequestOptions {
+    var requestOptions = RequestOptions()
+    let sessionEffort = settingsOverride?.reasoningEffort ?? WuhuPromptPreparation.extractReasoningEffort(from: header)
+    if let effort = sessionEffort {
+      requestOptions.reasoningEffort = effort
+    } else if model.provider == .openai || model.provider == .openaiCodex,
+              model.id.contains("gpt-5") || model.id.contains("codex")
+    {
+      requestOptions.reasoningEffort = .low
+    }
+    return requestOptions
+  }
+
+  private func makeRetryingStreamFn(
+    base: @escaping StreamFn,
+    purpose: WuhuLLMRequestLogger.Purpose,
+  ) -> StreamFn {
+    let maxRetries = retryPolicy.maxRetries
+    let initialBackoffSeconds = retryPolicy.initialBackoffSeconds
+    let maxBackoffSeconds = retryPolicy.maxBackoffSeconds
+    let jitterFraction = retryPolicy.jitterFraction
+    let sleepFn = retryPolicy.sleep
+
+    let nextBackoffSeconds: @Sendable (Int) -> Double = { retryIndex in
+      let base = max(0, initialBackoffSeconds)
+      let exp = pow(2.0, Double(max(0, retryIndex - 1)))
+      let unclamped = base * exp
+      let maxDelay = max(0, maxBackoffSeconds)
+      let clamped = min(unclamped, maxDelay)
+
+      let jitter = max(0, jitterFraction)
+      guard jitter > 0, clamped > 0 else { return clamped }
+
+      let sign: Double = (retryIndex % 2 == 0) ? -1 : 1
+      return max(0, clamped * (1 + sign * jitter))
+    }
+
+    let sleepSeconds: @Sendable (Double) async throws -> Void = { seconds in
+      let ns = UInt64(max(0, seconds) * 1_000_000_000)
+      try await sleepFn(ns)
+    }
+
+    return { model, context, options in
+      AsyncThrowingStream(AssistantMessageEvent.self, bufferingPolicy: .bufferingNewest(1024)) { continuation in
+        let task = Task {
+          var retryIndex = 0
+          while true {
+            if Task.isCancelled {
+              continuation.finish(throwing: CancellationError())
+              return
+            }
+
+            var yieldedAnyEvent = false
+            do {
+              let underlying = try await base(model, context, options)
+              do {
+                for try await event in underlying {
+                  yieldedAnyEvent = true
+                  continuation.yield(event)
+                }
+                continuation.finish()
+                return
+              } catch {
+                if Task.isCancelled {
+                  continuation.finish(throwing: CancellationError())
+                  return
+                }
+
+                let shouldRetry = yieldedAnyEvent == false && retryIndex < maxRetries
+                if shouldRetry {
+                  retryIndex += 1
+                  let backoff = nextBackoffSeconds(retryIndex)
+                  await self.appendLLMRetryEntry(
+                    purpose: purpose,
+                    retryIndex: retryIndex,
+                    maxRetries: maxRetries,
+                    backoffSeconds: backoff,
+                    error: error,
+                  )
+                  do {
+                    try await sleepSeconds(backoff)
+                  } catch {
+                    continuation.finish(throwing: error)
+                    return
+                  }
+                  continue
+                }
+
+                await self.appendLLMGiveUpEntry(purpose: purpose, maxRetries: maxRetries, error: error)
+                continuation.finish(throwing: error)
+                return
+              }
+            } catch {
+              if Task.isCancelled {
+                continuation.finish(throwing: CancellationError())
+                return
+              }
+
+              let shouldRetry = retryIndex < maxRetries
+              if shouldRetry {
+                retryIndex += 1
+                let backoff = nextBackoffSeconds(retryIndex)
+                await self.appendLLMRetryEntry(
+                  purpose: purpose,
+                  retryIndex: retryIndex,
+                  maxRetries: maxRetries,
+                  backoffSeconds: backoff,
+                  error: error,
+                )
+                do {
+                  try await sleepSeconds(backoff)
+                } catch {
+                  continuation.finish(throwing: error)
+                  return
+                }
+                continue
+              }
+
+              await self.appendLLMGiveUpEntry(purpose: purpose, maxRetries: maxRetries, error: error)
+              continuation.finish(throwing: error)
+              return
+            }
+          }
+        }
+
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
+      }
+    }
+  }
+
+  private func appendLLMRetryEntry(
+    purpose: WuhuLLMRequestLogger.Purpose,
+    retryIndex: Int,
+    maxRetries: Int,
+    backoffSeconds: Double,
+    error: any Error,
+  ) async {
+    let payload: WuhuEntryPayload = .custom(
+      customType: WuhuLLMCustomEntryTypes.retry,
+      data: WuhuLLMRetryEvent(
+        purpose: purpose.rawValue,
+        retryIndex: retryIndex,
+        maxRetries: maxRetries,
+        backoffSeconds: backoffSeconds,
+        error: "\(error)",
+      ).toJSONValue(),
+    )
+
+    do {
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+    } catch {
+      // Best-effort: retry logging must never crash the server.
+    }
+  }
+
+  private func appendLLMGiveUpEntry(
+    purpose: WuhuLLMRequestLogger.Purpose,
+    maxRetries: Int,
+    error: any Error,
+  ) async {
+    let payload: WuhuEntryPayload = .custom(
+      customType: WuhuLLMCustomEntryTypes.giveUp,
+      data: WuhuLLMGiveUpEvent(
+        purpose: purpose.rawValue,
+        maxRetries: maxRetries,
+        error: "\(error)",
+      ).toJSONValue(),
+    )
+
+    do {
+      let entry = try await store.appendEntry(sessionID: sessionID, payload: payload)
+      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+    } catch {
+      // Best-effort: give-up logging must never crash the server.
+    }
   }
 }

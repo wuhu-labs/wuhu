@@ -4,7 +4,7 @@ This file is a scratchpad for refactors/architecture changes noted during intera
 
 ## WuhuService prompt lifecycle
 
-- `promptDetached` currently acts as an execution constructor (builds `Agent`, decides request options, triggers compaction) rather than enqueuing a unit of work to a long-lived session actor.
+- `promptDetached` originally acted as an execution constructor (builds `Agent`, decides request options, triggers compaction) rather than enqueuing a unit of work to a long-lived session actor.
 - Desired mental model: “insert into a queue, nudge if needed” managed by a *living* per-session actor/object (not just Swift actor serialization), which owns:
   - request option defaults / selection
   - compaction policy and when it runs
@@ -13,12 +13,13 @@ This file is a scratchpad for refactors/architecture changes noted during intera
 ### Refactor in-progress
 
 - Introduced `WuhuSessionAgentActor` (per session) that owns a persistent `PiAgent.Agent` instance.
+- Moved the bulk of `promptDetached` preparation (context injection, request options, compaction) into the session actor (so `WuhuService` becomes a thin router).
 - For now it still refreshes agent context via `setSystemPrompt/setModel/setTools/replaceMessages` per prompt (safer, keeps semantics), but the end goal is to stop rebuilding context from transcript and instead make the session actor the source of truth (and write transcript entries as a projection).
 
 ## RequestOptions in promptDetached
 
 - `promptDetached` builds `RequestOptions` inline (policy mixed into orchestration).
-- Bug: `let sessionEffort = settingsOverride != nil ? settingsOverride?.reasoningEffort : Self.extractReasoningEffort(from: header)` fails to fall back to header when override exists but effort is nil; should be `settingsOverride?.reasoningEffort ?? Self.extractReasoningEffort(from: header)`.
+- Fixed: effort now properly falls back to header when override exists but effort is nil.
 - Heuristic defaulting based on `model.id.contains("gpt-5") || model.id.contains("codex")` is brittle; prefer capability/config-driven defaults.
 
 ## Compaction in promptDetached
@@ -33,5 +34,5 @@ This file is a scratchpad for refactors/architecture changes noted during intera
 
 ## Per-session idle/execution state
 
-- `WuhuService` still owns some session-scoped state (`pendingModelSelection`, `lastAssistantMessageHadToolCalls`) and publishes `.idle` to live subscribers.
-- We introduced a `runningSessions` set in `WuhuService` as a sync cache (needed for non-`async` helpers like `inProcessExecutionInfo`), but the source of truth for “am I busy?” should ultimately live in `WuhuSessionAgentActor` (and be queried/updated via explicit messages).
+- Session-scoped state (`pendingModelSelection`, `lastAssistantMessageHadToolCalls`, idle publication) lives in `WuhuSessionAgentActor`.
+- Remaining desired direction: session actor should own a real work queue (accept new prompts while busy, process sequentially) instead of throwing “already executing”.
