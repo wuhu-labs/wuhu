@@ -27,6 +27,18 @@ actor WuhuSessionAgentActor {
 
   private var runningPromptTask: Task<Void, Never>?
 
+  private struct QueuedPrompt {
+    var id: UUID
+    var input: String
+    var user: String?
+    var tools: [AnyAgentTool]?
+    var streamFn: StreamFn
+    var continuation: CheckedContinuation<WuhuPromptDetachedResponse, Error>
+  }
+
+  private var promptQueue: [QueuedPrompt] = []
+  private var promptQueueTask: Task<Void, Never>?
+
   private var pendingModelSelection: WuhuSessionSettings?
   private var lastAssistantMessageHadToolCalls: Bool = false
 
@@ -81,10 +93,176 @@ actor WuhuSessionAgentActor {
     tools: [AnyAgentTool]?,
     streamFn: @escaping StreamFn,
   ) async throws -> WuhuPromptDetachedResponse {
-    guard isIdle() else {
+    let queuedID = UUID()
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        promptQueue.append(.init(id: queuedID, input: input, user: user, tools: tools, streamFn: streamFn, continuation: continuation))
+        startPromptQueueIfNeeded()
+      }
+    } onCancel: {
+      Task { await self.cancelQueuedPrompt(id: queuedID) }
+    }
+  }
+
+  func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
+    if runningPromptTask == nil, !lastAssistantMessageHadToolCalls {
+      pendingModelSelection = nil
+      try await applyModelSelection(selection)
+      return true
+    }
+
+    pendingModelSelection = selection
+    return false
+  }
+
+  func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
+    .init(activePromptCount: (runningPromptTask == nil ? 0 : 1) + promptQueue.count)
+  }
+
+  func stopSession(user: String?) async throws -> WuhuStopSessionResponse {
+    cancelQueuedPrompts()
+    _ = try await store.getSession(id: sessionID)
+
+    let transcript = try await store.getEntries(sessionID: sessionID)
+    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
+    let inProcessCount = (runningPromptTask == nil) ? 0 : 1
+
+    guard inferred.state == .executing || inProcessCount > 0 else {
+      return .init(repairedEntries: [], stopEntry: nil)
+    }
+
+    await abort()
+
+    var updatedTranscript = try await store.getEntries(sessionID: sessionID)
+    let toolRepair = try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
+      sessionID: sessionID,
+      transcript: updatedTranscript,
+      mode: .stopped,
+      store: store,
+      eventHub: eventHub
+    )
+    updatedTranscript = toolRepair.transcript
+
+    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
+    if !stoppedBy.isEmpty {
+      details["user"] = .string(stoppedBy)
+    }
+
+    let stopMessage = WuhuPersistedMessage.customMessage(.init(
+      customType: WuhuCustomMessageTypes.executionStopped,
+      content: [.text(text: "Execution stopped", signature: nil)],
+      details: .object(details),
+      display: true,
+      timestamp: Date(),
+    ))
+    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
+
+    await eventHub.publish(sessionID: sessionID, event: .idle)
+
+    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
+  }
+
+  func steerUser(_ text: String, timestamp: Date) async {
+    guard let agent else { return }
+    await agent.steer(.user(text, timestamp: timestamp))
+  }
+
+  private func runDetached(_ prepared: PreparedPrompt) async throws -> Task<Void, Never> {
+    if runningPromptTask != nil {
       throw PiAIError.unsupported("Session is already executing")
     }
 
+    let agent = try await ensureAgent(prepared: prepared)
+    ensureEventConsumer(agent: agent)
+
+    let task = Task { [weak self] in
+      guard let self else { return }
+      defer { Task { await self.clearRunningTask() } }
+
+      var promptSucceeded = false
+      do {
+        try await agent.prompt(prepared.renderedInput)
+        promptSucceeded = true
+      } catch {
+        await agent.abort()
+      }
+
+      if promptSucceeded {
+        let idleTimeoutTask = Task {
+          try? await Task.sleep(nanoseconds: 10_000_000_000)
+          await agent.abort()
+        }
+        await agent.waitForIdle()
+        idleTimeoutTask.cancel()
+      }
+
+      await self.waitForRunEnd(timeoutNanoseconds: 5_000_000_000)
+      await self.applyPendingModelSelectionIfPossible()
+      await eventHub.publish(sessionID: sessionID, event: .idle)
+    }
+    runningPromptTask = task
+    return task
+  }
+
+  private func clearRunningTask() {
+    runningPromptTask = nil
+  }
+
+  private func startPromptQueueIfNeeded() {
+    guard promptQueueTask == nil else { return }
+    promptQueueTask = Task { [weak self] in
+      await self?.processPromptQueue()
+    }
+  }
+
+  private func cancelQueuedPrompts() {
+    promptQueueTask?.cancel()
+    promptQueueTask = nil
+
+    let queued = promptQueue
+    promptQueue = []
+    for q in queued {
+      q.continuation.resume(throwing: PiAIError.unsupported("Session was stopped"))
+    }
+  }
+
+  private func cancelQueuedPrompt(id: UUID) {
+    guard let idx = promptQueue.firstIndex(where: { $0.id == id }) else { return }
+    let q = promptQueue.remove(at: idx)
+    q.continuation.resume(throwing: CancellationError())
+  }
+
+  private func processPromptQueue() async {
+    while true {
+      if Task.isCancelled { break }
+      guard !promptQueue.isEmpty else { break }
+
+      let next = promptQueue.removeFirst()
+      do {
+        let (response, runTask) = try await startAndRunPrompt(
+          input: next.input,
+          user: next.user,
+          tools: next.tools,
+          streamFn: next.streamFn,
+        )
+        next.continuation.resume(returning: response)
+        await runTask.value
+      } catch {
+        next.continuation.resume(throwing: error)
+      }
+    }
+
+    promptQueueTask = nil
+  }
+
+  private func startAndRunPrompt(
+    input: String,
+    user: String?,
+    tools: [AnyAgentTool]?,
+    streamFn: @escaping StreamFn,
+  ) async throws -> (WuhuPromptDetachedResponse, Task<Void, Never>) {
     let effectiveUser = WuhuPromptPreparation.normalizeUser(user)
     let session = try await store.getSession(id: sessionID)
     var transcript = try await store.getEntries(sessionID: sessionID)
@@ -157,112 +335,9 @@ actor WuhuSessionAgentActor {
       requestOptions: requestOptions,
       streamFn: agentStreamFn,
     )
-    try await runDetached(prepared)
+    let runTask = try await runDetached(prepared)
 
-    return WuhuPromptDetachedResponse(userEntry: userEntry)
-  }
-
-  func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
-    if runningPromptTask == nil, !lastAssistantMessageHadToolCalls {
-      pendingModelSelection = nil
-      try await applyModelSelection(selection)
-      return true
-    }
-
-    pendingModelSelection = selection
-    return false
-  }
-
-  func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
-    .init(activePromptCount: (runningPromptTask == nil) ? 0 : 1)
-  }
-
-  func stopSession(user: String?) async throws -> WuhuStopSessionResponse {
-    _ = try await store.getSession(id: sessionID)
-
-    let transcript = try await store.getEntries(sessionID: sessionID)
-    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    let inProcessCount = (runningPromptTask == nil) ? 0 : 1
-
-    guard inferred.state == .executing || inProcessCount > 0 else {
-      return .init(repairedEntries: [], stopEntry: nil)
-    }
-
-    await abort()
-
-    var updatedTranscript = try await store.getEntries(sessionID: sessionID)
-    let toolRepair = try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
-      sessionID: sessionID,
-      transcript: updatedTranscript,
-      mode: .stopped,
-      store: store,
-      eventHub: eventHub
-    )
-    updatedTranscript = toolRepair.transcript
-
-    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
-    if !stoppedBy.isEmpty {
-      details["user"] = .string(stoppedBy)
-    }
-
-    let stopMessage = WuhuPersistedMessage.customMessage(.init(
-      customType: WuhuCustomMessageTypes.executionStopped,
-      content: [.text(text: "Execution stopped", signature: nil)],
-      details: .object(details),
-      display: true,
-      timestamp: Date(),
-    ))
-    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
-    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
-
-    await eventHub.publish(sessionID: sessionID, event: .idle)
-
-    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
-  }
-
-  func steerUser(_ text: String, timestamp: Date) async {
-    guard let agent else { return }
-    await agent.steer(.user(text, timestamp: timestamp))
-  }
-
-  func runDetached(_ prepared: PreparedPrompt) async throws {
-    if runningPromptTask != nil {
-      throw PiAIError.unsupported("Session is already executing")
-    }
-
-    let agent = try await ensureAgent(prepared: prepared)
-    ensureEventConsumer(agent: agent)
-
-    runningPromptTask = Task { [weak self] in
-      guard let self else { return }
-      defer { Task { await self.clearRunningTask() } }
-
-      var promptSucceeded = false
-      do {
-        try await agent.prompt(prepared.renderedInput)
-        promptSucceeded = true
-      } catch {
-        await agent.abort()
-      }
-
-      if promptSucceeded {
-        let idleTimeoutTask = Task {
-          try? await Task.sleep(nanoseconds: 10_000_000_000)
-          await agent.abort()
-        }
-        await agent.waitForIdle()
-        idleTimeoutTask.cancel()
-      }
-
-      await self.waitForRunEnd(timeoutNanoseconds: 5_000_000_000)
-      await self.applyPendingModelSelectionIfPossible()
-      await eventHub.publish(sessionID: sessionID, event: .idle)
-    }
-  }
-
-  private func clearRunningTask() {
-    runningPromptTask = nil
+    return (WuhuPromptDetachedResponse(userEntry: userEntry), runTask)
   }
 
   private func waitForRunEnd(timeoutNanoseconds: UInt64) async {
