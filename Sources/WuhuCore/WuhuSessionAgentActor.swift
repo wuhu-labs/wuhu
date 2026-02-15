@@ -15,6 +15,8 @@ actor WuhuSessionAgentActor {
   }
 
   let sessionID: String
+  private let store: any SessionStore
+  private let eventHub: WuhuLiveEventHub
   private weak var service: WuhuService?
 
   private var agent: PiAgent.Agent?
@@ -28,8 +30,10 @@ actor WuhuSessionAgentActor {
   private let runEndStream: AsyncStream<Void>
   private let runEndContinuation: AsyncStream<Void>.Continuation
 
-  init(sessionID: String, service: WuhuService) {
+  init(sessionID: String, store: any SessionStore, eventHub: WuhuLiveEventHub, service: WuhuService) {
     self.sessionID = sessionID
+    self.store = store
+    self.eventHub = eventHub
     self.service = service
 
     let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -57,12 +61,60 @@ actor WuhuSessionAgentActor {
   func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
     if runningPromptTask == nil, !lastAssistantMessageHadToolCalls {
       pendingModelSelection = nil
-      try await service?.applyModelSelection(sessionID: sessionID, selection: selection)
+      try await applyModelSelection(selection)
       return true
     }
 
     pendingModelSelection = selection
     return false
+  }
+
+  func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
+    .init(activePromptCount: (runningPromptTask == nil) ? 0 : 1)
+  }
+
+  func stopSession(user: String?) async throws -> WuhuStopSessionResponse {
+    _ = try await store.getSession(id: sessionID)
+
+    let transcript = try await store.getEntries(sessionID: sessionID)
+    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
+    let inProcessCount = (runningPromptTask == nil) ? 0 : 1
+
+    guard inferred.state == .executing || inProcessCount > 0 else {
+      return .init(repairedEntries: [], stopEntry: nil)
+    }
+
+    await abort()
+
+    var updatedTranscript = try await store.getEntries(sessionID: sessionID)
+    let toolRepair = try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
+      sessionID: sessionID,
+      transcript: updatedTranscript,
+      mode: .stopped,
+      store: store,
+      eventHub: eventHub
+    )
+    updatedTranscript = toolRepair.transcript
+
+    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
+    if !stoppedBy.isEmpty {
+      details["user"] = .string(stoppedBy)
+    }
+
+    let stopMessage = WuhuPersistedMessage.customMessage(.init(
+      customType: WuhuCustomMessageTypes.executionStopped,
+      content: [.text(text: "Execution stopped", signature: nil)],
+      details: .object(details),
+      display: true,
+      timestamp: Date(),
+    ))
+    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
+
+    await eventHub.publish(sessionID: sessionID, event: .idle)
+
+    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
 
   func steerUser(_ text: String, timestamp: Date) async {
@@ -101,7 +153,7 @@ actor WuhuSessionAgentActor {
 
       await self.waitForRunEnd(timeoutNanoseconds: 5_000_000_000)
       await self.applyPendingModelSelectionIfPossible()
-      await service?.sessionDidBecomeIdle(sessionID: sessionID)
+      await eventHub.publish(sessionID: sessionID, event: .idle)
     }
   }
 
@@ -183,10 +235,17 @@ actor WuhuSessionAgentActor {
     guard let selection = pendingModelSelection else { return }
 
     do {
-      try await service?.applyModelSelection(sessionID: sessionID, selection: selection)
+      try await applyModelSelection(selection)
       pendingModelSelection = nil
     } catch {
       // Best-effort: keep pending selection.
     }
+  }
+
+  @discardableResult
+  private func applyModelSelection(_ selection: WuhuSessionSettings) async throws -> WuhuSessionEntry {
+    let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
+    return entry
   }
 }

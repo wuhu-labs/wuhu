@@ -66,13 +66,9 @@ public actor WuhuService {
 
   private func sessionAgent(for sessionID: String) -> WuhuSessionAgentActor {
     if let existing = sessionAgents[sessionID] { return existing }
-    let actor = WuhuSessionAgentActor(sessionID: sessionID, service: self)
+    let actor = WuhuSessionAgentActor(sessionID: sessionID, store: store, eventHub: eventHub, service: self)
     sessionAgents[sessionID] = actor
     return actor
-  }
-
-  func sessionDidBecomeIdle(sessionID: String) async {
-    await eventHub.publish(sessionID: sessionID, event: .idle)
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -260,49 +256,13 @@ public actor WuhuService {
 
   public func inProcessExecutionInfo(sessionID: String) async -> WuhuInProcessExecutionInfo {
     if let agent = sessionAgents[sessionID] {
-      return .init(activePromptCount: (await agent.isIdle()) ? 0 : 1)
+      return await agent.inProcessExecutionInfo()
     }
     return .init(activePromptCount: 0)
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
-    _ = try await store.getSession(id: sessionID)
-
-    let transcript = try await store.getEntries(sessionID: sessionID)
-    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    let inProcessCount: Int = if let agent = sessionAgents[sessionID] { (await agent.isIdle()) ? 0 : 1 } else { 0 }
-
-    guard inferred.state == .executing || inProcessCount > 0 else {
-      return .init(repairedEntries: [], stopEntry: nil)
-    }
-
-    if let agent = sessionAgents[sessionID] {
-      await agent.abort()
-    }
-
-    var updatedTranscript = try await store.getEntries(sessionID: sessionID)
-    let toolRepair = try await repairMissingToolResultsIfNeeded(sessionID: sessionID, transcript: updatedTranscript, mode: .stopped)
-    updatedTranscript = toolRepair.transcript
-
-    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
-    if !stoppedBy.isEmpty {
-      details["user"] = .string(stoppedBy)
-    }
-
-    let stopMessage = WuhuPersistedMessage.customMessage(.init(
-      customType: WuhuCustomMessageTypes.executionStopped,
-      content: [.text(text: "Execution stopped", signature: nil)],
-      details: .object(details),
-      display: true,
-      timestamp: Date(),
-    ))
-    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
-    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
-
-    await sessionDidBecomeIdle(sessionID: sessionID)
-
-    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
+    try await sessionAgent(for: sessionID).stopSession(user: user)
   }
 
   public func followSessionStream(
@@ -586,172 +546,22 @@ public actor WuhuService {
     }
   }
 
-  private static let lostToolResultText =
-    "The result for this tool call has been lost. Retry if needed. The tool call might or might not have taken place; for non-idempotent actions, check the current state before continuing."
-
-  private static let stoppedToolResultText =
-    "Execution was stopped before a result for this tool call was recorded. Retry if needed. The tool call might or might not have taken place; for non-idempotent actions, check the current state before continuing."
-
-  private struct ToolRepairResult: Sendable {
-    var transcript: [WuhuSessionEntry]
-    var repairEntries: [WuhuSessionEntry]
-  }
-
-  private enum ToolRepairMode: Sendable {
-    case lost
-    case stopped
-  }
-
   private func repairMissingToolResultsIfNeeded(
     sessionID: String,
     transcript: [WuhuSessionEntry],
-    mode: ToolRepairMode,
-  ) async throws -> ToolRepairResult {
-    var pendingOrder: [String] = []
-    var pendingNames: [String: String] = [:]
-
-    var lastMessage: Message?
-
-    for entry in transcript {
-      guard case let .message(m) = entry.payload else { continue }
-      guard let pi = m.toPiMessage() else { continue }
-      lastMessage = pi
-      switch pi {
-      case let .assistant(a):
-        for block in a.content {
-          guard case let .toolCall(call) = block else { continue }
-          if pendingNames[call.id] == nil {
-            pendingOrder.append(call.id)
-          }
-          pendingNames[call.id] = call.name
-        }
-      case let .toolResult(r):
-        pendingNames[r.toolCallId] = nil
-        pendingOrder.removeAll(where: { $0 == r.toolCallId })
-      case .user:
-        break
-      }
-    }
-
-    guard !pendingOrder.isEmpty else {
-      return ToolRepairResult(transcript: transcript, repairEntries: [])
-    }
-
-    // Only persist a repair when the transcript ends with an assistant tool-call message.
-    guard case let .assistant(lastAssistant) = lastMessage else {
-      return ToolRepairResult(transcript: transcript, repairEntries: [])
-    }
-    let lastAssistantToolCallIDs = Set(lastAssistant.content.compactMap { block -> String? in
-      if case let .toolCall(call) = block { return call.id }
-      return nil
-    })
-    guard !lastAssistantToolCallIDs.isEmpty,
-          pendingOrder.allSatisfy({ lastAssistantToolCallIDs.contains($0) })
-    else {
-      return ToolRepairResult(transcript: transcript, repairEntries: [])
-    }
-
-    var updatedTranscript = transcript
-    var repairEntries: [WuhuSessionEntry] = []
-
-    for toolCallId in pendingOrder {
-      guard let toolName = pendingNames[toolCallId] else { continue }
-
-      let reason = switch mode {
-      case .lost:
-        "lost"
-      case .stopped:
-        "stopped"
-      }
-      let text: String = switch mode {
-      case .lost:
-        Self.lostToolResultText
-      case .stopped:
-        Self.stoppedToolResultText
-      }
-
-      let repaired: Message = .toolResult(.init(
-        toolCallId: toolCallId,
-        toolName: toolName,
-        content: [.text(text)],
-        details: .object([
-          "wuhu_repair": .string("missing_tool_result"),
-          "reason": .string(reason),
-        ]),
-        isError: true,
-      ))
-
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.fromPi(repaired)))
-      updatedTranscript.append(entry)
-      repairEntries.append(entry)
-      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-    }
-
-    return ToolRepairResult(transcript: updatedTranscript, repairEntries: repairEntries)
+    mode: WuhuToolRepairer.Mode,
+  ) async throws -> WuhuToolRepairer.Result {
+    try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
+      sessionID: sessionID,
+      transcript: transcript,
+      mode: mode,
+      store: store,
+      eventHub: eventHub
+    )
   }
 
   private static func repairMissingToolResultsInMemory(_ messages: [Message]) -> [Message] {
-    var repaired: [Message] = []
-    repaired.reserveCapacity(messages.count)
-
-    var pendingOrder: [String] = []
-    var pendingNames: [String: String] = [:]
-
-    func injectMissingToolResults(timestamp: Date) {
-      guard !pendingOrder.isEmpty else { return }
-      for toolCallId in pendingOrder {
-        guard let toolName = pendingNames[toolCallId] else { continue }
-        repaired.append(.toolResult(.init(
-          toolCallId: toolCallId,
-          toolName: toolName,
-          content: [.text(Self.lostToolResultText)],
-          details: .object([
-            "wuhu_repair": .string("missing_tool_result"),
-            "reason": .string("lost"),
-          ]),
-          isError: true,
-          timestamp: timestamp,
-        )))
-      }
-      pendingOrder = []
-      pendingNames = [:]
-    }
-
-    for msg in messages {
-      switch msg {
-      case let .toolResult(r):
-        repaired.append(msg)
-        if pendingNames[r.toolCallId] != nil {
-          pendingNames[r.toolCallId] = nil
-          pendingOrder.removeAll(where: { $0 == r.toolCallId })
-        }
-
-      case let .assistant(a):
-        if !pendingOrder.isEmpty {
-          injectMissingToolResults(timestamp: msg.timestamp)
-        }
-        repaired.append(msg)
-        for block in a.content {
-          guard case let .toolCall(call) = block else { continue }
-          if pendingNames[call.id] == nil {
-            pendingOrder.append(call.id)
-          }
-          pendingNames[call.id] = call.name
-        }
-
-      case .user:
-        if !pendingOrder.isEmpty {
-          injectMissingToolResults(timestamp: msg.timestamp)
-        }
-        repaired.append(msg)
-      }
-    }
-
-    if !pendingOrder.isEmpty {
-      injectMissingToolResults(timestamp: messages.last?.timestamp ?? Date())
-    }
-
-    return repaired
+    WuhuToolRepairer.repairMissingToolResultsInMemory(messages)
   }
 
   private func sessionContextActor(for sessionID: String, cwd: String) -> WuhuAgentsContextActor {
@@ -780,13 +590,6 @@ public actor WuhuService {
 
     sessionContextActors.removeValue(forKey: oldestSessionID)
     sessionContextActorLastAccess.removeValue(forKey: oldestSessionID)
-  }
-
-  @discardableResult
-  func applyModelSelection(sessionID: String, selection: WuhuSessionSettings) async throws -> WuhuSessionEntry {
-    let entry = try await store.appendEntry(sessionID: sessionID, payload: .sessionSettings(selection))
-    await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-    return entry
   }
 
   private func makeRetryingStreamFn(
