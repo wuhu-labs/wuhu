@@ -2,6 +2,10 @@
 .DS_Store
 .vscode/
 
+# Local agent context overrides
+AGENTS.local.md
+**/AGENTS.local.md
+
 # Generic build output
 build/
 
