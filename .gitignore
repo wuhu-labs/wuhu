@@ -6,6 +6,9 @@
 AGENTS.local.md
 **/AGENTS.local.md
 
+# DocC build artifacts
+.docc-build/
+
 # Generic build output
 build/
 
