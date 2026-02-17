@@ -75,26 +75,33 @@ public enum SystemUrgentQueueJournalEntry: Sendable, Hashable, Codable {
   case materialized(id: QueueItemID, transcriptEntryID: TranscriptEntryID, at: Date)
 }
 
-/// Backfill request for a queue lane.
-public enum QueueBackfillRequest: Sendable, Hashable, Codable {
-  /// Request a full pending snapshot for initial load.
-  case snapshot
-  /// Request journal entries since a cursor for catch-up.
-  case since(QueueCursor)
+/// Catch-up data for a user queue lane.
+///
+/// When `since` is nil, the response is a full snapshot. When a cursor is provided,
+/// the response is journal entries since that cursor. Implementations may coalesce
+/// transient enqueue→materialize pairs that complete within the window.
+public struct UserQueueBackfill: Sendable, Hashable, Codable {
+  public var cursor: QueueCursor
+  public var pending: [UserQueuePendingItem]
+  public var journal: [UserQueueJournalEntry]
+
+  public init(cursor: QueueCursor, pending: [UserQueuePendingItem], journal: [UserQueueJournalEntry]) {
+    self.cursor = cursor
+    self.pending = pending
+    self.journal = journal
+  }
 }
 
-public enum UserQueueBackfill: Sendable, Hashable, Codable {
-  /// Full snapshot of pending items, plus a cursor representing "now".
-  case snapshot(cursor: QueueCursor, pending: [UserQueuePendingItem])
-  /// Journal entries since a cursor, plus a cursor representing "now".
-  ///
-  /// Implementations may coalesce away transient enqueue→materialize pairs that complete entirely
-  /// within the backfill window, to avoid transmitting already-processed work as "pending".
-  case journal(cursor: QueueCursor, entries: [UserQueueJournalEntry])
-}
+/// Catch-up data for the system-urgent queue lane.
+public struct SystemUrgentQueueBackfill: Sendable, Hashable, Codable {
+  public var cursor: QueueCursor
+  public var pending: [SystemUrgentPendingItem]
+  public var journal: [SystemUrgentQueueJournalEntry]
 
-public enum SystemUrgentQueueBackfill: Sendable, Hashable, Codable {
-  case snapshot(cursor: QueueCursor, pending: [SystemUrgentPendingItem])
-  case journal(cursor: QueueCursor, entries: [SystemUrgentQueueJournalEntry])
+  public init(cursor: QueueCursor, pending: [SystemUrgentPendingItem], journal: [SystemUrgentQueueJournalEntry]) {
+    self.cursor = cursor
+    self.pending = pending
+    self.journal = journal
+  }
 }
 

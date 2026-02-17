@@ -1,8 +1,6 @@
-# ContractSession
+# Session Contracts
 
 Session contracts define the programming model for Wuhu sessions.
-
-All implementation in this project is LLM-generated. This document and the types under `Contracts/` serve as the **carbon-silicon alignment basis** — the specification that keeps generated code honest.
 
 > Some contract types may not yet match the names used in this document. Where they diverge, this document describes the target.
 
@@ -22,32 +20,35 @@ For the agentic loop that drives the canonical machine, see <doc:ContractAgentic
 
 ## Transcript
 
-The transcript is the canonical ordered log of `Entry` values. It is **append-only**: entries are never inserted, reordered, or mutated. (Compaction appends a summary entry and starts a fresh context window — it does not modify history.)
+The transcript is the canonical ordered log of ``Entry`` values. It is **append-only**: entries are never inserted, reordered, or mutated.
 
-The same canonical log can be **projected** into different shapes for different consumers:
+The same canonical log can be **projected** into different shapes for different consumers. Without compaction, the LLM context projection is a simple flat filter over message-eligible entries. With compaction, the projection becomes more involved — see the Compaction section below. The UI projection is yet another shape entirely.
 
-- **LLM input context**: drop entries before the last compaction boundary, include only message-eligible entries.
-- **UI rendering**: reorder and group tool calls between human messages by type (read / write / exec), collapse diagnostics, apply syntax highlighting to code blocks.
+- **LLM input context**: filter to message-eligible entries. When a compaction entry exists, start from the compaction summary and include only entries after the compaction boundary (see Compaction).
+- **UI rendering**: show all entries (including those before compaction boundaries), reorder and group tool calls between human messages by type (read / write / exec), collapse diagnostics, visually indicate compaction boundaries.
 
 Entry types:
 
-- **Message entries** (`MessageEntry`): eligible for LLM context. Carry an author and content.
+- **Message entries** (``MessageEntry``): eligible for LLM context. Carry an author and content.
 - **Non-message entries** (markers, tool surface, diagnostics): exist for observability and UX.
-
-See: `Entry`, `MessageEntry` in `Contracts/TranscriptContracts.swift`
-
-**Invariant**: The transcript is an append-only linear chain.
 
 ## Parties and the Canonical Machine
 
 Each session has one **canonical machine** — the LLM that generates tool calls, assistant messages, and drives the agentic loop.
 
-All other participants are **parties**. A party can be a human, another LLM, or a bot account. Parties are equal in how they interact with the session through input lanes, with one optimization for the common single-party case:
+All other participants are **parties**. A party can be a human, another LLM, or a bot account. All messages — from parties and from system sources alike — use a uniform header format:
 
-- When only one party exists, messages carry no prefix.
-- When a second party joins, the session is **promoted to group chat**: a system message announces the promotion and identifies the original party. All subsequent messages are prefixed with the party name (e.g., `"Minsheng:\n"`).
+    minsheng <lambda@liu.ms> 26/2/17 14:56
 
-See: `Author`, `ParticipantID`, `ParticipantKind` in `Contracts/SessionIdentity.swift`
+    message goes here...
+
+    system-reminder 26/2/17 14:57
+
+    async task xxx has finished execution. use xxx tool to get more info
+
+There is no special casing for single-party vs multi-party sessions. Every message carries a header from the start. The canonical machine learns the format in-context.
+
+See: ``Author``, ``ParticipantID``, ``ParticipantKind``
 
 ## Input Lanes
 
@@ -66,9 +67,9 @@ Three input lanes can influence the next model request:
 
 The system lane and user lanes have distinct pending item and journal types because they differ in nature: system items have a machine source (e.g., `asyncBashCallback`), while user items have a party author.
 
-See: `SystemUrgentInput`, `UserQueueLane`, `QueuedUserMessage` in `Contracts/QueueContracts.swift`
+See: ``SystemUrgentInput``, ``UserQueueLane``, ``QueuedUserMessage``
 
-> **Target**: rename `SystemUrgentInput` to `SystemInput` and `systemUrgent` to `system`.
+> **Target**: rename ``SystemUrgentInput`` to `SystemInput` and `systemUrgent` to `system`.
 
 ## Checkpoints
 
@@ -90,11 +91,9 @@ The public command surface is intentionally small. Commands return quickly with 
 - `enqueue(message, lane: .steer | .followUp)` → `QueueItemID`
 - `cancel(id, lane: .steer | .followUp)`
 
-The data types for steer and follow-up payloads are identical (`QueuedUserMessage`), differing only in which lane they target.
+The data types for steer and follow-up payloads are identical (``QueuedUserMessage``), differing only in which lane they target.
 
-See: `SessionCommanding` in `Contracts/SessionCommanding.swift`
-
-> **Target**: unify `SessionCommanding` to `enqueue(_:lane:)` / `cancel(_:lane:)` instead of separate `enqueueSteer` / `enqueueFollowUp` methods.
+See: ``SessionCommanding``
 
 ## Materialization and Journal
 
@@ -105,9 +104,9 @@ Persistence and observability require a richer representation than the command A
 - **External commands** (API): enqueue, cancel
 - **Durable facts** (store): enqueued, canceled, **materialized**
 
-Materialization links a queue item to its transcript entry via `TranscriptEntryID`, making the queue-to-transcript flow fully traceable.
+Materialization links a queue item to its transcript entry via ``TranscriptEntryID``, making the queue-to-transcript flow fully traceable.
 
-See: `UserQueueJournalEntry`, `SystemUrgentQueueJournalEntry` in `Contracts/QueueContracts.swift`
+See: ``UserQueueJournalEntry``, ``SystemUrgentQueueJournalEntry``
 
 ## Subscription: State + Patch
 
@@ -126,7 +125,7 @@ The core observation primitive is `subscribe(since:)`, which returns a **stable 
 2. Server computes and sends a **stable patch** bringing the client to the current stable version.
 3. Server begins streaming events.
 4. If there is a message being streamed mid-flight when the subscription starts, the server emits `message.start`, then a first `text.delta` containing all accumulated text so far, then subsequent `text.delta` events as upstream inference produces them. Mid-flight content is never part of the stable patch.
-5. Periodically, committing events in the stream advance the client's stable version.
+5. When a streamed message finishes, the server emits a committing event (e.g., `message.end`) carrying the **full message content** plus a new stable version. This commits all preceding deltas — the client can discard its accumulated delta state and use the full content as ground truth.
 6. On disconnect, the client reconnects with its last known stable version. Already-committed content is not retransmitted.
 
 ### Composability
@@ -147,23 +146,26 @@ Within this model, queue lifecycle transitions like enqueue → materialize are 
 
 Each component's subscription logic can be built and tested independently, then composed into the session-level subscription.
 
-> **Implementation note**: streaming events have no stable version tag. The server does not persist streaming events or maintain a replay buffer for them. On reconnect, the client always starts from a stable version boundary. In-flight streaming state is reconstructed from the current inference call, if any.
-
-See: `SessionSubscribing`, `SessionSubscription`, `SessionBackfillRequest` in `Contracts/SessionSubscriptionContracts.swift`
-
-> **Target**: rename `backfill:` parameter to `since:` and simplify `QueueBackfillRequest` to an optional cursor (nil = from scratch).
+See: ``SessionSubscribing``, ``SessionSubscription``, ``SessionSubscriptionRequest``
 
 ## Compaction
 
-Compaction manages LLM context size by summarizing a **portion** of transcript history.
+Compaction manages LLM context size by summarizing a **portion** of the LLM context.
 
-### Semantics
+### How it works
 
-1. Select a prefix of the current LLM context (strictly smaller than the full context — this guarantees the compaction request fits within limits).
-2. Ask the LLM to produce a summary of that prefix.
-3. Append the summary as a compaction entry in the transcript. The LLM context projection uses this summary as the starting point and skips all entries before the compaction boundary.
+1. **Find a cut point**: walk backwards from the newest entry in the LLM context, accumulating tokens until the keep-recent budget is reached. The cut point must land on a valid boundary (user message, assistant message) — never on a tool result, which must stay with its tool call.
+2. **Summarize the segment**: entries from the previous compaction (or the start) up to the cut point are summarized by the LLM.
+3. **Append a compaction entry** to the transcript. The entry carries:
+   - The summary text.
+   - A `firstKeptEntryID` — the earliest entry that remains in the LLM context after compaction.
+4. **The LLM context projection changes**: previous summaries are preserved, the new summary is appended after them, followed by entries from `firstKeptEntryID` onwards.
 
-Compaction does not mutate or delete existing transcript entries.
+Summaries **stack** — each compaction only summarizes the segment between the previous cut point and the new one. After multiple compactions, the LLM sees: system prompt, sum₁, sum₂, ..., sumₙ, then the kept entries.
+
+![Compaction: summaries stack across multiple compactions](compaction)
+
+The original entries remain in the transcript — compaction only changes how the LLM context projection is computed. The transcript itself is never modified.
 
 ### Trigger
 
@@ -194,4 +196,4 @@ The system lane and user lanes use different author representations:
 
 Transcript entries carry a full `Author` since they can originate from any source.
 
-See: `Author` in `Contracts/SessionIdentity.swift`, `SystemUrgentSource` in `Contracts/QueueContracts.swift`
+See: ``Author``, ``SystemUrgentSource``

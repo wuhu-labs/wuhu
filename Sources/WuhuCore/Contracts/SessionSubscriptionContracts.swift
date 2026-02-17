@@ -1,28 +1,28 @@
 import Foundation
 
-/// Backfill parameters for establishing a session subscription.
+/// Parameters for establishing a session subscription.
 ///
-/// Intended to map cleanly to HTTP query params like `?after=` and `?steerQueueSince=`.
-public struct SessionBackfillRequest: Sendable, Hashable, Codable {
-  public var transcriptAfter: TranscriptCursor?
+/// All cursors are optional — nil means "from scratch."
+public struct SessionSubscriptionRequest: Sendable, Hashable, Codable {
+  public var transcriptSince: TranscriptCursor?
   public var transcriptPageSize: Int
 
-  public var systemUrgent: QueueBackfillRequest
-  public var steer: QueueBackfillRequest
-  public var followUp: QueueBackfillRequest
+  public var systemSince: QueueCursor?
+  public var steerSince: QueueCursor?
+  public var followUpSince: QueueCursor?
 
   public init(
-    transcriptAfter: TranscriptCursor? = nil,
+    transcriptSince: TranscriptCursor? = nil,
     transcriptPageSize: Int = 200,
-    systemUrgent: QueueBackfillRequest = .snapshot,
-    steer: QueueBackfillRequest = .snapshot,
-    followUp: QueueBackfillRequest = .snapshot
+    systemSince: QueueCursor? = nil,
+    steerSince: QueueCursor? = nil,
+    followUpSince: QueueCursor? = nil
   ) {
-    self.transcriptAfter = transcriptAfter
+    self.transcriptSince = transcriptSince
     self.transcriptPageSize = transcriptPageSize
-    self.systemUrgent = systemUrgent
-    self.steer = steer
-    self.followUp = followUp
+    self.systemSince = systemSince
+    self.steerSince = steerSince
+    self.followUpSince = followUpSince
   }
 }
 
@@ -79,6 +79,5 @@ public struct SessionSubscription: Sendable {
 
 /// Transport-agnostic "single stream" contract, suitable for an SSE endpoint.
 public protocol SessionSubscribing: Actor {
-  func subscribe(sessionID: SessionID, backfill: SessionBackfillRequest) async throws -> SessionSubscription
+  func subscribe(sessionID: SessionID, since: SessionSubscriptionRequest) async throws -> SessionSubscription
 }
-

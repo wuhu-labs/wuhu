@@ -1,4 +1,4 @@
-# ContractAgenticLoop
+# Agentic Loop Contracts
 
 The agentic loop is the state machine that drives LLM inference, tool execution, and checkpoint materialization for a Wuhu session.
 
