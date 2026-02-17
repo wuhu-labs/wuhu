@@ -30,9 +30,13 @@ All public store APIs are `async` to compose naturally with Swift concurrency.
 
 ## Topics
 
+### Contracts
+
+- <doc:ContractSession>
+- <doc:ContractAgenticLoop>
+
 ### Design
 
-- <doc:SessionContracts>
 - <doc:SQLiteSchema>
 - <doc:SessionFollow>
 - <doc:AgentLoopTasks>
