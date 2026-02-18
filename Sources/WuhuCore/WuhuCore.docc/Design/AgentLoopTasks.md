@@ -1,4 +1,4 @@
-# Agentic Loop Task Hierarchy
+# Agent Loop Task Hierarchy
 
 Wuhu’s agent execution can take minutes to hours (tool calls, retries, large repos). It must **not** be tied to a single HTTP request task (for example an SSE stream) because clients routinely cancel those tasks when they leave a screen.
 

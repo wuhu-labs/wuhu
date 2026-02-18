@@ -35,7 +35,7 @@ All public store APIs are `async` to compose naturally with Swift concurrency.
 All implementation in this project is LLM-generated. Contract documents and the types under `Contracts/` serve as the **carbon-silicon alignment basis** — the specification that keeps generated code honest.
 
 - <doc:ContractSession>
-- <doc:ContractAgenticLoop>
+- <doc:ContractAgentLoop>
 
 ### Design
 

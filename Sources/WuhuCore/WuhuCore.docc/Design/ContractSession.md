@@ -16,7 +16,7 @@ A Wuhu session is:
 
 Each session has a single **owner** that loads state from the durable store (SQLite) on demand, serves reads from memory after the initial load, and persists all durable mutations. Only streaming ephemera (partial LLM message deltas) skip persistence.
 
-For the agentic loop that drives the canonical machine, see <doc:ContractAgenticLoop>.
+For the agent loop that drives the canonical machine, see <doc:ContractAgentLoop>.
 
 ## Transcript
 
