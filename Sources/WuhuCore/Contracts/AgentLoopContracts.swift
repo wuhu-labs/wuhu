@@ -39,7 +39,7 @@ public protocol SessionPersistence: Sendable {
   ///
   /// Called once when the ``SessionAgent`` is started. After this point,
   /// the store serves reads from memory.
-  func loadState(_ sessionID: SessionID) async throws -> SessionPersistedState
+  func loadState(_ sessionID: SessionID) async throws -> SessionState
 
   // MARK: Queue Operations
 
@@ -88,10 +88,17 @@ public protocol SessionPersistence: Sendable {
   func performCompaction(sessionID: SessionID) async throws
 }
 
-// MARK: - Persisted State
+// MARK: - Session State
 
-/// Full session state as loaded from the database.
-public struct SessionPersistedState: Sendable {
+/// Plain data struct holding all session state.
+///
+/// This is a value type — fields only, no logic. The ``SessionAgent`` actor
+/// holds one as `private(set) var state`. Policy decisions (what to
+/// materialize, how to build context, when to compact) live on
+/// ``SessionPolicy``, not here.
+///
+/// Also used as the return type of ``SessionPersistence/loadState(_:)``.
+public struct SessionState: Sendable {
   public var transcript: [TranscriptItem]
   public var toolCallStatus: [String: ToolCallStatus]
   public var systemQueue: [SystemUrgentPendingItem]
@@ -111,6 +118,49 @@ public struct SessionPersistedState: Sendable {
     self.steerQueue = steerQueue
     self.followUpQueue = followUpQueue
   }
+
+  public static let empty = SessionState(
+    transcript: [], toolCallStatus: [:],
+    systemQueue: [], steerQueue: [], followUpQueue: []
+  )
+}
+
+// MARK: - Session Policy
+
+/// Decision logic for the agent loop.
+///
+/// All methods are pure functions of the current ``SessionState`` (and
+/// inference output where relevant). The ``SessionAgent`` calls these to
+/// decide **what** to do; it handles **when** and **safely** itself.
+///
+/// > Implementation note: LLM agents should implement this protocol.
+/// > The concurrency and persistence story is handled by ``SessionAgent``
+/// > and ``SessionPersistence`` — this protocol is where the actual
+/// > agent behavior lives. Implementors do not need to reason about
+/// > serialization, crash recovery, or persistence ordering.
+public protocol SessionPolicy: Sendable {
+
+  /// Which tool call IDs are stuck in `.started` from a previous crash.
+  func staleToolCallIDs(in state: SessionState) -> [String]
+
+  /// Build an error result to inject for a crash-interrupted tool call.
+  func crashRecoveryOutput(toolCallID: String) -> AgentToolOutput
+
+  /// Determine which queued items should materialize into the transcript
+  /// at this checkpoint. Encapsulates steer-vs-follow-up priority logic.
+  func materializationRequests(for state: SessionState) -> [MaterializeRequest]
+
+  /// Project the transcript into LLM input context.
+  func buildContext(for state: SessionState) -> AgentLoopContext
+
+  /// Run inference.
+  func infer(context: AgentLoopContext) async throws -> AgentInferenceOutput
+
+  /// Execute a single tool call. May be called concurrently for parallel tools.
+  func execute(_ call: AgentToolCall) async throws -> AgentToolOutput
+
+  /// Whether compaction should run after this inference.
+  func shouldCompact(state: SessionState, usage: AgentLoopUsage) -> Bool
 }
 
 /// Status of a tool call in the execution lifecycle.
