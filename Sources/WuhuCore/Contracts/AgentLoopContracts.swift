@@ -1,167 +1,184 @@
 import Foundation
+import PiAI
 
-// MARK: - Session Persistence
+// MARK: - Agent Loop State
 
-/// IO boundary for session state.
+/// Minimum state shape the ``AgentLoop`` requires for orchestration.
 ///
-/// The ``SessionAgent`` actor delegates all durable operations to this protocol.
-/// Implementations provide the actual storage — SQLite for production,
-/// in-memory arrays for tests.
+/// The loop reads `transcript` and `toolCallStatus` to schedule tool
+/// execution and decide when to go idle. The behavior's concrete `State`
+/// type can include additional fields (queues, settings, etc.) — the loop
+/// applies actions to them via ``AgentBehavior/apply(_:to:)`` but never
+/// reads them directly.
+public protocol AgentLoopState: Sendable, Equatable {
+  var transcript: [TranscriptItem] { get set }
+  var toolCallStatus: [String: ToolCallStatus] { get set }
+  static var empty: Self { get }
+}
+
+// MARK: - Agent Behavior
+
+/// Domain-specific feature that drives an ``AgentLoop``.
 ///
-/// ## Atomicity Requirements
+/// Owns persistence, inference, tool execution, and drain logic.
+/// All IO methods persist to the database and return **actions** describing
+/// what changed. The loop applies actions to in-memory state and emits
+/// them as observation events.
 ///
-/// Every method MUST be atomic and crash-safe. If the process crashes mid-call,
-/// the database must remain in a consistent state — either the operation fully
-/// committed or it didn't.
+/// ## Invariant
 ///
-/// In particular:
-/// - ``toolDidExecute(toolCallID:output:sessionID:)`` flips the tool-call status AND
-///   writes the transcript entry in a **single transaction**. Partial writes
-///   (status flipped but entry missing, or vice versa) are not recoverable.
-/// - ``materialize(_:)`` moves items from queue tables to the transcript table
-///   in a **single transaction**.
+/// For every IO method that returns actions:
 ///
-/// See <doc:ContractAgentLoop> for the design rationale.
-public protocol SessionPersistence: Sendable {
+///     var state = /* current state */
+///     let actions = try await behavior.someMethod(state: state)
+///     for action in actions { behavior.apply(action, to: &state) }
+///     let reloaded = try await behavior.loadState()
+///     assert(state == reloaded)
+///
+/// The in-memory state after applying actions must equal a fresh load
+/// from the database. This **free test** verifies persistence, action
+/// generation, and the reducer in one assertion.
+///
+/// See <doc:ContractAgentLoop> for the full design rationale.
+public protocol AgentBehavior: Sendable {
 
-  // MARK: Lifecycle
+  // MARK: Associated Types
 
-  /// Record the session as actively running. Used for crash recovery:
-  /// on restart, sessions marked running are resumed.
-  func markRunning(_ sessionID: SessionID) async throws
+  /// Full state held by the loop. Must expose transcript and tool status
+  /// via ``AgentLoopState``, but can include arbitrary domain fields
+  /// (queues, settings, etc.).
+  associatedtype State: AgentLoopState
 
-  /// Record the session as idle.
-  func markIdle(_ sessionID: SessionID) async throws
+  /// Describes a persisted mutation. Applied to state by ``apply(_:to:)``,
+  /// then emitted to observers.
+  associatedtype CommittedAction: Sendable
 
-  // MARK: State Loading
+  /// Describes an ephemeral streaming update (inference text delta, etc.).
+  /// Not persisted, not applied to committed state.
+  associatedtype StreamAction: Sendable
 
-  /// Load full session state from the database.
+  /// Domain-specific commands from outside the loop (enqueue, cancel,
+  /// change model, etc.).
+  associatedtype ExternalAction: Sendable
+
+  /// The result of executing a tool. Opaque to the loop — it just
+  /// passes the value from ``executeToolCall(_:)`` to
+  /// ``toolDidExecute(_:result:state:)``.
+  associatedtype ToolResult: Sendable
+
+  // MARK: State Management
+
+  /// Load full state from the database. Called once on startup.
+  func loadState() async throws -> State
+
+  /// Pure reducer. Apply a committed action to in-memory state.
   ///
-  /// Called once when the ``SessionAgent`` is started. After this point,
-  /// the store serves reads from memory.
-  func loadState(_ sessionID: SessionID) async throws -> SessionState
+  /// - Important: Must be synchronous — no IO, no suspension.
+  func apply(_ action: CommittedAction, to state: inout State)
 
-  // MARK: Queue Operations
+  // MARK: External Actions
 
-  /// Insert a queue item. The item is durable after this returns.
-  func insertQueueItem(_ item: UserQueuePendingItem, lane: UserQueueLane) async throws
-
-  /// Insert a system-urgent queue item.
-  func insertSystemItem(_ item: SystemUrgentPendingItem) async throws
-
-  /// Cancel a queue item that has not yet been materialized.
-  func cancelQueueItem(_ id: QueueItemID, lane: UserQueueLane) async throws
-
-  // MARK: Materialization
-
-  /// Move queued items into the transcript in a single transaction.
+  /// Handle a command from outside the loop.
   ///
-  /// After this call, the items no longer exist in the queue tables and
-  /// appear as transcript entries. This is the checkpoint operation.
-  func materialize(_ items: [MaterializeRequest]) async throws
+  /// Persists the effect and returns actions. For example, an enqueue
+  /// command persists the queue item (and possibly flips `has_work`)
+  /// and returns actions that update in-memory queue state.
+  func handle(_ action: ExternalAction, state: State) async throws -> [CommittedAction]
 
-  // MARK: Transcript
+  // MARK: Drain
 
-  /// Persist the assistant's response to the transcript.
+  /// Atomically drain interrupt-priority items and write them to the
+  /// transcript. Returns actions describing what was drained.
   ///
-  /// Returns the assigned entry ID.
-  func appendAssistantEntry(_ output: AgentInferenceOutput, sessionID: SessionID) async throws -> TranscriptEntryID
+  /// Called at the **interrupt checkpoint** — after tool results are
+  /// collected, before next inference.
+  func drainInterruptItems(state: State) async throws -> [CommittedAction]
 
-  // MARK: Tool Execution Bookkeeping
-
-  /// Record that a tool execution has started.
+  /// Atomically drain turn-boundary items and write them to the
+  /// transcript. Returns actions describing what was drained.
   ///
-  /// On crash recovery, tool calls marked as started but not completed
-  /// are treated as failed (error result injected).
-  func toolWillExecute(toolCallID: String, sessionID: SessionID) async throws
+  /// Called at the **turn boundary** — the agent would otherwise go idle.
+  func drainTurnItems(state: State) async throws -> [CommittedAction]
 
-  /// Persist a tool result to the transcript.
+  // MARK: Inference
+
+  /// Project current state into LLM input context.
   ///
-  /// **Must be a single transaction**: flips the tool-call status to completed
-  /// AND inserts the transcript entry atomically.
-  func toolDidExecute(toolCallID: String, output: AgentToolOutput, sessionID: SessionID) async throws -> TranscriptEntryID
+  /// Pure function of state — no IO.
+  func buildContext(state: State) -> Context
+
+  /// Run inference. Yields streaming deltas to `stream` during execution.
+  ///
+  /// This is the only IO operation that is **not** persisted before
+  /// returning. If the process crashes during inference, the loop
+  /// retries on restart.
+  func infer(
+    context: Context,
+    stream: AgentStreamSink<StreamAction>
+  ) async throws -> AssistantMessage
+
+  // MARK: Persist Inference Results
+
+  /// Persist the assistant's response and return actions.
+  func persistAssistantEntry(
+    _ message: AssistantMessage,
+    state: State
+  ) async throws -> [CommittedAction]
+
+  // MARK: Tool Lifecycle
+
+  /// Record that a tool call is about to execute.
+  ///
+  /// Persists the status change for crash recovery: on restart,
+  /// tool calls marked as started but not completed are treated as failed.
+  func toolWillExecute(
+    _ call: ToolCall,
+    state: State
+  ) async throws -> [CommittedAction]
+
+  /// Execute a tool call. Runs outside the serialized path (parallel).
+  func executeToolCall(_ call: ToolCall) async throws -> ToolResult
+
+  /// Persist a tool result and return actions.
+  func toolDidExecute(
+    _ call: ToolCall,
+    result: ToolResult,
+    state: State
+  ) async throws -> [CommittedAction]
+
+  /// Persist an error for a tool call that threw during execution.
+  func toolDidFail(
+    _ call: ToolCall,
+    error: any Error,
+    state: State
+  ) async throws -> [CommittedAction]
 
   // MARK: Compaction
 
-  /// Perform compaction: summarize a segment of history and append the
-  /// compaction entry. See <doc:ContractSession> for compaction semantics.
-  func performCompaction(sessionID: SessionID) async throws
-}
-
-// MARK: - Session State
-
-/// Plain data struct holding all session state.
-///
-/// This is a value type — fields only, no logic. The ``SessionAgent`` actor
-/// holds one as `private(set) var state`. Policy decisions (what to
-/// materialize, how to build context, when to compact) live on
-/// ``SessionPolicy``, not here.
-///
-/// Also used as the return type of ``SessionPersistence/loadState(_:)``.
-public struct SessionState: Sendable {
-  public var transcript: [TranscriptItem]
-  public var toolCallStatus: [String: ToolCallStatus]
-  public var systemQueue: [SystemUrgentPendingItem]
-  public var steerQueue: [UserQueuePendingItem]
-  public var followUpQueue: [UserQueuePendingItem]
-
-  public init(
-    transcript: [TranscriptItem],
-    toolCallStatus: [String: ToolCallStatus],
-    systemQueue: [SystemUrgentPendingItem],
-    steerQueue: [UserQueuePendingItem],
-    followUpQueue: [UserQueuePendingItem]
-  ) {
-    self.transcript = transcript
-    self.toolCallStatus = toolCallStatus
-    self.systemQueue = systemQueue
-    self.steerQueue = steerQueue
-    self.followUpQueue = followUpQueue
-  }
-
-  public static let empty = SessionState(
-    transcript: [], toolCallStatus: [:],
-    systemQueue: [], steerQueue: [], followUpQueue: []
-  )
-}
-
-// MARK: - Session Policy
-
-/// Decision logic for the agent loop.
-///
-/// All methods are pure functions of the current ``SessionState`` (and
-/// inference output where relevant). The ``SessionAgent`` calls these to
-/// decide **what** to do; it handles **when** and **safely** itself.
-///
-/// > Implementation note: LLM agents should implement this protocol.
-/// > The concurrency and persistence story is handled by ``SessionAgent``
-/// > and ``SessionPersistence`` — this protocol is where the actual
-/// > agent behavior lives. Implementors do not need to reason about
-/// > serialization, crash recovery, or persistence ordering.
-public protocol SessionPolicy: Sendable {
-
-  /// Which tool call IDs are stuck in `.started` from a previous crash.
-  func staleToolCallIDs(in state: SessionState) -> [String]
-
-  /// Build an error result to inject for a crash-interrupted tool call.
-  func crashRecoveryOutput(toolCallID: String) -> AgentToolOutput
-
-  /// Determine which queued items should materialize into the transcript
-  /// at this checkpoint. Encapsulates steer-vs-follow-up priority logic.
-  func materializationRequests(for state: SessionState) -> [MaterializeRequest]
-
-  /// Project the transcript into LLM input context.
-  func buildContext(for state: SessionState) -> AgentLoopContext
-
-  /// Run inference.
-  func infer(context: AgentLoopContext) async throws -> AgentInferenceOutput
-
-  /// Execute a single tool call. May be called concurrently for parallel tools.
-  func execute(_ call: AgentToolCall) async throws -> AgentToolOutput
-
   /// Whether compaction should run after this inference.
-  func shouldCompact(state: SessionState, usage: AgentLoopUsage) -> Bool
+  func shouldCompact(state: State, usage: Usage) -> Bool
+
+  /// Perform compaction and return actions.
+  func performCompaction(state: State) async throws -> [CommittedAction]
+
+  // MARK: Crash Recovery
+
+  /// Tool call IDs stuck in `.started` from a previous crash.
+  func staleToolCallIDs(in state: State) -> [String]
+
+  /// Inject an error result for a crash-interrupted tool call.
+  func recoverStaleToolCall(
+    id: String,
+    state: State
+  ) async throws -> [CommittedAction]
+
+  // MARK: Cold Start
+
+  /// Whether the loaded state has pending work.
+  func hasWork(state: State) -> Bool
 }
+
+// MARK: - Tool Call Status
 
 /// Status of a tool call in the execution lifecycle.
 public enum ToolCallStatus: String, Sendable, Hashable, Codable {
@@ -171,141 +188,67 @@ public enum ToolCallStatus: String, Sendable, Hashable, Codable {
   case errored
 }
 
-/// A request to materialize a queued item into the transcript.
-public struct MaterializeRequest: Sendable {
-  public var queueItemID: QueueItemID
-  public var lane: MaterializeLane
-  public var transcriptEntry: TranscriptItem
+// MARK: - Stream Sink
 
-  public init(queueItemID: QueueItemID, lane: MaterializeLane, transcriptEntry: TranscriptItem) {
-    self.queueItemID = queueItemID
-    self.lane = lane
-    self.transcriptEntry = transcriptEntry
-  }
-}
-
-public enum MaterializeLane: String, Sendable, Hashable, Codable {
-  case system
-  case steer
-  case followUp
-}
-
-// MARK: - Context
-
-/// LLM input context built from the transcript.
-public struct AgentLoopContext: Sendable {
-  public var systemPrompt: String
-  public var entries: [AgentLoopContextEntry]
-
-  public init(systemPrompt: String, entries: [AgentLoopContextEntry]) {
-    self.systemPrompt = systemPrompt
-    self.entries = entries
-  }
-}
-
-/// A transcript entry projected for LLM input. Always carries an entry ID.
-public struct AgentLoopContextEntry: Sendable {
-  public var id: TranscriptEntryID
-  public var message: MessageEntry
-
-  public init(id: TranscriptEntryID, message: MessageEntry) {
-    self.id = id
-    self.message = message
-  }
-}
-
-// MARK: - Inference Output
-
-/// Output from a single inference call.
-public struct AgentInferenceOutput: Sendable {
-  public var text: String?
-  public var toolCalls: [AgentToolCall]
-  public var usage: AgentLoopUsage
-
-  public init(text: String?, toolCalls: [AgentToolCall], usage: AgentLoopUsage) {
-    self.text = text
-    self.toolCalls = toolCalls
-    self.usage = usage
-  }
-}
-
-/// A tool call from the assistant's response.
-public struct AgentToolCall: Sendable, Hashable {
-  public var id: String
-  public var name: String
-  public var arguments: String
-
-  public init(id: String, name: String, arguments: String) {
-    self.id = id
-    self.name = name
-    self.arguments = arguments
-  }
-}
-
-// MARK: - Tool Output
-
-/// The result of executing a tool.
-public struct AgentToolOutput: Sendable {
-  public var toolCallID: String
-  public var content: String
-  public var isError: Bool
-
-  public init(toolCallID: String, content: String, isError: Bool) {
-    self.toolCallID = toolCallID
-    self.content = content
-    self.isError = isError
-  }
-}
-
-// MARK: - Tool Protocol
-
-/// A tool that the agent loop can execute.
-public protocol AgentTool: Sendable {
-  var name: String { get }
-
-  func execute(callID: String, arguments: String) async throws -> AgentToolOutput
-}
-
-// MARK: - Usage
-
-/// Token usage from an inference call, for compaction decisions.
-public struct AgentLoopUsage: Sendable {
-  public var inputTokens: Int
-  public var outputTokens: Int
-  public var contextLimit: Int
-
-  public init(inputTokens: Int, outputTokens: Int, contextLimit: Int) {
-    self.inputTokens = inputTokens
-    self.outputTokens = outputTokens
-    self.contextLimit = contextLimit
-  }
-}
-
-// MARK: - Events
-
-/// Events emitted by the agent loop for observation (UI, SSE).
+/// Push-based sink for streaming inference deltas into the loop's
+/// event stream.
 ///
-/// Streaming events (inference deltas) are ephemeral and not persisted.
-/// Committed events (entry appended, checkpoint materialized) advance stable state.
-public enum AgentLoopEvent: Sendable {
-  // Lifecycle
-  case started
-  case idle
+/// The behavior yields stream actions during inference. The loop
+/// forwards them as ``AgentLoopEvent/streamDelta(_:)`` events to
+/// observers.
+public struct AgentStreamSink<Action: Sendable>: Sendable {
+  public let yield: @Sendable (Action) -> Void
 
-  // Inference
-  case inferenceStarted
-  case inferenceDelta(String)
-  case inferenceCompleted(entryID: TranscriptEntryID)
+  public init(yield: @escaping @Sendable (Action) -> Void) {
+    self.yield = yield
+  }
+}
 
-  // Tool execution
-  case toolStarted(toolCallID: String, name: String)
-  case toolCompleted(toolCallID: String, entryID: TranscriptEntryID)
+// MARK: - Loop Events
 
-  // Checkpoints
-  case steerMaterialized([TranscriptEntryID])
-  case followUpMaterialized([TranscriptEntryID])
+/// Events emitted by the agent loop for observation.
+///
+/// Committed actions advance the persisted state. Stream events are
+/// ephemeral — they are not persisted and do not advance the stable
+/// version.
+public enum AgentLoopEvent<CommittedAction: Sendable, StreamAction: Sendable>: Sendable {
+  /// A persisted mutation was applied to state.
+  case committed(CommittedAction)
 
-  // Compaction
-  case compactionStarted
-  case compactionCompleted
+  /// Inference streaming has begun.
+  case streamBegan
+
+  /// An ephemeral streaming delta.
+  case streamDelta(StreamAction)
+
+  /// Inference streaming has ended.
+  case streamEnded
+}
+
+// MARK: - Observation
+
+/// Gap-free observation of the agent loop's state and events.
+///
+/// Returned by ``AgentLoop/observe()``. The state snapshot and event
+/// stream are registered atomically — no events are missed between
+/// the snapshot and the first event on the stream.
+public struct AgentLoopObservation<B: AgentBehavior>: Sendable {
+  /// Current committed state at the time of observation.
+  public var state: B.State
+
+  /// Accumulated stream deltas if inference is in progress, nil otherwise.
+  public var inflight: [B.StreamAction]?
+
+  /// Live event stream from the point of observation.
+  public var events: AsyncStream<AgentLoopEvent<B.CommittedAction, B.StreamAction>>
+
+  public init(
+    state: B.State,
+    inflight: [B.StreamAction]?,
+    events: AsyncStream<AgentLoopEvent<B.CommittedAction, B.StreamAction>>
+  ) {
+    self.state = state
+    self.inflight = inflight
+    self.events = events
+  }
 }
