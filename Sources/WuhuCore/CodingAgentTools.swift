@@ -45,16 +45,42 @@ private func readTool(cwd: String) -> AnyAgentTool {
   let schema: JSONValue = .object([
     "type": .string("object"),
     "properties": .object([
-      "path": .object(["type": .string("string"), "description": .string("Path to the file to read (relative or absolute)")]),
-      "offset": .object(["type": .string("integer"), "description": .string("Line number to start reading from (1-indexed)")]),
-      "limit": .object(["type": .string("integer"), "description": .string("Maximum number of lines to read")]),
+      "path": .object([
+        "type": .string("string"),
+        "description": .string("Path to the file to read (relative or absolute)"),
+      ]),
+      "offset": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string(
+          "(Optional) 1-indexed line number to start reading from. IMPORTANT: must be an integer JSON number, not true/false. Example: 2001",
+        ),
+      ]),
+      "limit": .object([
+        "type": .string("integer"),
+        "minimum": .number(1),
+        "description": .string(
+          "(Optional) Maximum number of lines to read. IMPORTANT: must be an integer JSON number, not true/false. Example: 2000",
+        ),
+      ]),
     ]),
     "required": .array([.string("path")]),
     "additionalProperties": .bool(false),
   ])
 
-  let description =
-    "Read the contents of a text file. Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first). Use offset/limit for large files.\n\nNote: offset/limit must be integers (see https://github.com/wuhu-labs/wuhu/issues/12)."
+  let description = [
+    "Read the contents of a text file.",
+    "Output is truncated to \(ToolTruncation.defaultMaxLines) lines or \(ToolTruncation.defaultMaxBytes / 1024)KB (whichever is hit first).",
+    "",
+    "Pagination:",
+    "- offset: integer (1-indexed). The first line number to return.",
+    "- limit: integer. The maximum number of lines to return.",
+    "",
+    "IMPORTANT:",
+    "- offset/limit MUST be integers (JSON numbers), not booleans or strings.",
+    "- To continue after truncation, copy the exact number from the tool output notice.",
+    "  Example: if the output says \"Use offset=2001 to continue\", call read with {\"path\":\"<same file>\",\"offset\":2001}.",
+  ].joined(separator: "\n")
 
   let tool = Tool(name: "read", description: description, parameters: schema)
 

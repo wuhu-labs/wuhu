@@ -139,20 +139,24 @@ struct CodingAgentToolsTests {
     }
   }
 
-  @Test func readToolOffsetBoolTrueIsTreatedAsOffset1() async throws {
+  @Test func readToolOffsetBoolTrueThrowsHelpfulError() async throws {
     let dir = try makeTempDir(prefix: "wuhu-read-type-mismatch")
     let file = (dir as NSString).appendingPathComponent("test.txt")
     try "Line 1\nLine 2\nLine 3".write(toFile: file, atomically: true, encoding: .utf8)
 
     let t = try #require(tools(cwd: dir)["read"])
-    let result = try await t.execute(toolCallId: "t-bool-offset", args: .object([
-      "path": .string(file),
-      "offset": .bool(true),
-    ]))
-    let out = textOutput(result)
-    #expect(out.contains("Line 1"))
-    #expect(out.contains("Line 2"))
-    #expect(out.contains("Line 3"))
+    do {
+      _ = try await t.execute(toolCallId: "t-bool-offset", args: .object([
+        "path": .string(file),
+        "offset": .bool(true),
+      ]))
+      #expect(Bool(false))
+    } catch {
+      #expect(
+        String(describing: error)
+          == "read tool expects integer for key path \"offset\", but value \"true\" of boolean received.",
+      )
+    }
   }
 
   @Test func readToolOffsetTypeMismatchHasHelpfulError() async throws {
@@ -170,7 +174,7 @@ struct CodingAgentToolsTests {
     } catch {
       #expect(
         String(describing: error)
-          == "read tool expects number for key path \"offset\", but value \"true\" of string received.",
+          == "read tool expects integer for key path \"offset\", but value \"true\" of string received.",
       )
     }
   }
