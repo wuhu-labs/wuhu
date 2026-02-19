@@ -17,12 +17,10 @@ actor WuhuSessionSubscriptionHub {
   }
 
   func publish(sessionID: String, event: SessionEvent) {
-    guard var sessionSubs = subscribers[sessionID], !sessionSubs.isEmpty else { return }
-    for (token, continuation) in sessionSubs {
+    guard let sessionSubs = subscribers[sessionID], !sessionSubs.isEmpty else { return }
+    for (_, continuation) in sessionSubs {
       continuation.yield(event)
-      sessionSubs[token] = continuation
     }
-    subscribers[sessionID] = sessionSubs
   }
 
   private func removeSubscriber(sessionID: String, token: UUID) {
