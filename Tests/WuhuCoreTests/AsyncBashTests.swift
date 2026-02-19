@@ -92,8 +92,16 @@ struct AsyncBashTests {
       eventIndex += 1
       switch event {
       case let .entryAppended(entry):
-        guard case let .message(.user(m)) = entry.payload else { break }
-        guard let text = firstText(m.content) else { break }
+        let blocks: [WuhuContentBlock]? = switch entry.payload {
+        case let .message(.user(m)):
+          m.content
+        case let .message(.customMessage(m)):
+          m.content
+        default:
+          nil
+        }
+        guard let blocks else { break }
+        guard let text = firstText(blocks) else { break }
         guard let data = text.data(using: .utf8) else { break }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { break }
         guard obj["exit_code"] != nil, obj["stdout_file"] != nil, obj["stderr_file"] != nil else { break }
