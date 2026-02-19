@@ -77,4 +77,3 @@ enum WuhuPromptPreparation {
     return nil
   }
 }
-

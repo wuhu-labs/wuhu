@@ -2,7 +2,7 @@ import Foundation
 import PiAI
 import WuhuAPI
 
-struct WuhuToolRepairer {
+enum WuhuToolRepairer {
   static let lostToolResultText =
     "The result for this tool call has been lost. Retry if needed. The tool call might or might not have taken place; for non-idempotent actions, check the current state before continuing."
 
@@ -173,4 +173,3 @@ struct WuhuToolRepairer {
     return repaired
   }
 }
-

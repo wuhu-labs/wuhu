@@ -24,4 +24,3 @@ public enum ParticipantKind: String, Sendable, Hashable, Codable {
   case human
   case bot
 }
-

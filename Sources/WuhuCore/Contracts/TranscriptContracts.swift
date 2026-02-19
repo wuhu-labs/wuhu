@@ -76,4 +76,3 @@ public struct TranscriptPage: Sendable, Hashable, Codable {
     self.nextCursor = nextCursor
   }
 }
-

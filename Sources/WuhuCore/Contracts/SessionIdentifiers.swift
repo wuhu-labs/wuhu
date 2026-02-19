@@ -44,4 +44,3 @@ public struct QueueCursor: RawRepresentable, Sendable, Hashable, Codable {
     self.rawValue = rawValue
   }
 }
-

@@ -41,7 +41,6 @@ public protocol AgentLoopState: Sendable, Equatable {
 ///
 /// See <doc:ContractAgentLoop> for the full design rationale.
 public protocol AgentBehavior: Sendable {
-
   // MARK: Associated Types
 
   /// Full state held by the loop. Must expose transcript and tool status
@@ -114,7 +113,7 @@ public protocol AgentBehavior: Sendable {
   /// retries on restart.
   func infer(
     context: Context,
-    stream: AgentStreamSink<StreamAction>
+    stream: AgentStreamSink<StreamAction>,
   ) async throws -> AssistantMessage
 
   // MARK: Persist Inference Results
@@ -122,7 +121,7 @@ public protocol AgentBehavior: Sendable {
   /// Persist the assistant's response and return actions.
   func persistAssistantEntry(
     _ message: AssistantMessage,
-    state: State
+    state: State,
   ) async throws -> [CommittedAction]
 
   // MARK: Tool Lifecycle
@@ -133,7 +132,7 @@ public protocol AgentBehavior: Sendable {
   /// tool calls marked as started but not completed are treated as failed.
   func toolWillExecute(
     _ call: ToolCall,
-    state: State
+    state: State,
   ) async throws -> [CommittedAction]
 
   /// Execute a tool call. Runs outside the serialized path (parallel).
@@ -143,14 +142,14 @@ public protocol AgentBehavior: Sendable {
   func toolDidExecute(
     _ call: ToolCall,
     result: ToolResult,
-    state: State
+    state: State,
   ) async throws -> [CommittedAction]
 
   /// Persist an error for a tool call that threw during execution.
   func toolDidFail(
     _ call: ToolCall,
     error: any Error,
-    state: State
+    state: State,
   ) async throws -> [CommittedAction]
 
   // MARK: Compaction
@@ -169,7 +168,7 @@ public protocol AgentBehavior: Sendable {
   /// Inject an error result for a crash-interrupted tool call.
   func recoverStaleToolCall(
     id: String,
-    state: State
+    state: State,
   ) async throws -> [CommittedAction]
 
   // MARK: Cold Start
@@ -245,7 +244,7 @@ public struct AgentLoopObservation<B: AgentBehavior>: Sendable {
   public init(
     state: B.State,
     inflight: [B.StreamAction]?,
-    events: AsyncStream<AgentLoopEvent<B.CommittedAction, B.StreamAction>>
+    events: AsyncStream<AgentLoopEvent<B.CommittedAction, B.StreamAction>>,
   ) {
     self.state = state
     self.inflight = inflight

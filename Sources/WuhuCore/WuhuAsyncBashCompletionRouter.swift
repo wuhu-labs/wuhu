@@ -12,7 +12,7 @@ actor WuhuAsyncBashCompletionRouter {
   init(
     registry: WuhuAsyncBashRegistry,
     instanceID: String,
-    enqueueSystemJSON: @escaping @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void
+    enqueueSystemJSON: @escaping @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void,
   ) {
     self.registry = registry
     self.instanceID = instanceID

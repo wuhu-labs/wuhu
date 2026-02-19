@@ -46,8 +46,8 @@ public actor WuhuService {
       instanceID: instanceID,
       enqueueSystemJSON: { [weak self] sessionID, jsonText, timestamp in
         guard let self else { return }
-        try? await self.enqueueSystemJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
-      }
+        try? await enqueueSystemJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
+      },
     )
     asyncBashRouter = router
     await router.start()
@@ -163,7 +163,7 @@ public actor WuhuService {
 
     let resolvedTools = tools ?? WuhuTools.codingAgentTools(
       cwd: session.cwd,
-      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID)
+      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID),
     )
 
     let loggedStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
@@ -203,7 +203,7 @@ public actor WuhuService {
       transcript: transcript,
       mode: .stopped,
       store: store,
-      eventHub: eventHub
+      eventHub: eventHub,
     )
     transcript = toolRepair.transcript
 

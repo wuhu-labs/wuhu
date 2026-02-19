@@ -102,7 +102,7 @@ public actor SQLiteSessionStore: SessionStore {
     let (_, entry) = try await appendEntryWithSession(
       sessionID: SessionID(rawValue: sessionID),
       payload: payload,
-      createdAt: Date()
+      createdAt: Date(),
     )
     return entry
   }
@@ -457,7 +457,7 @@ extension SQLiteSessionStore {
       status: status,
       systemUrgent: systemUrgent,
       steer: steer,
-      followUp: followUp
+      followUp: followUp,
     )
   }
 
@@ -480,7 +480,7 @@ extension SQLiteSessionStore {
         effectiveModel: effectiveModel,
         pendingModel: pendingModel,
         effectiveReasoningEffort: effectiveEffort,
-        pendingReasoningEffort: pendingEffort
+        pendingReasoningEffort: pendingEffort,
       )
     }
   }
@@ -513,7 +513,7 @@ extension SQLiteSessionStore {
     let (session, entry) = try await appendEntryWithSession(
       sessionID: sessionID,
       payload: .sessionSettings(selection),
-      createdAt: Date()
+      createdAt: Date(),
     )
     let settings = try await loadSettingsSnapshot(sessionID: sessionID)
     return (session, entry, settings)
@@ -535,11 +535,11 @@ extension SQLiteSessionStore {
 
       // Append a settings entry; `appendEntryWithSession` will clear pending.
       let entryRow = try Self.appendEntryWithSession(db: db, sessionRow: &row, payload: .sessionSettings(selection), createdAt: Date())
-      return (try row.toModel(), entryRow.toModel())
+      return try (row.toModel(), entryRow.toModel())
     }
 
     guard let result else { return nil }
-    return (result.0, result.1, try await loadSettingsSnapshot(sessionID: sessionID))
+    return try await (result.0, result.1, loadSettingsSnapshot(sessionID: sessionID))
   }
 
   func enqueueUserMessage(sessionID: SessionID, id: QueueItemID, message: QueuedUserMessage, lane: UserQueueLane) async throws -> QueueItemID {
@@ -551,7 +551,7 @@ extension SQLiteSessionStore {
         INSERT INTO user_queue_pending (id, sessionID, lane, enqueuedAt, payload)
         VALUES (?, ?, ?, ?, ?)
         """,
-        arguments: [id.rawValue, sessionID.rawValue, lane.rawValue, now, data]
+        arguments: [id.rawValue, sessionID.rawValue, lane.rawValue, now, data],
       )
 
       let pendingItem = UserQueuePendingItem(id: id, enqueuedAt: now, message: message)
@@ -562,7 +562,7 @@ extension SQLiteSessionStore {
         INSERT INTO user_queue_journal (sessionID, lane, payload, createdAt)
         VALUES (?, ?, ?, ?)
         """,
-        arguments: [sessionID.rawValue, lane.rawValue, journalData, now]
+        arguments: [sessionID.rawValue, lane.rawValue, journalData, now],
       )
 
       try Self.updateSessionUpdatedAt(db: db, sessionID: sessionID.rawValue)
@@ -576,7 +576,7 @@ extension SQLiteSessionStore {
     try await dbQueue.write { db in
       try db.execute(
         sql: "DELETE FROM user_queue_pending WHERE sessionID = ? AND lane = ? AND id = ?",
-        arguments: [sessionID.rawValue, lane.rawValue, id.rawValue]
+        arguments: [sessionID.rawValue, lane.rawValue, id.rawValue],
       )
       if db.changesCount == 0 {
         throw WuhuStoreError.sessionCorrupt("Queue item not found: \(id.rawValue)")
@@ -586,7 +586,7 @@ extension SQLiteSessionStore {
       let data = try WuhuJSON.encoder.encode(journal)
       try db.execute(
         sql: "INSERT INTO user_queue_journal (sessionID, lane, payload, createdAt) VALUES (?, ?, ?, ?)",
-        arguments: [sessionID.rawValue, lane.rawValue, data, now]
+        arguments: [sessionID.rawValue, lane.rawValue, data, now],
       )
 
       try Self.updateSessionUpdatedAt(db: db, sessionID: sessionID.rawValue)
@@ -600,7 +600,7 @@ extension SQLiteSessionStore {
       let data = try WuhuJSON.encoder.encode(input)
       try db.execute(
         sql: "INSERT INTO system_queue_pending (id, sessionID, enqueuedAt, payload) VALUES (?, ?, ?, ?)",
-        arguments: [id.rawValue, sessionID.rawValue, now, data]
+        arguments: [id.rawValue, sessionID.rawValue, now, data],
       )
 
       let pendingItem = SystemUrgentPendingItem(id: id, enqueuedAt: now, input: input)
@@ -608,7 +608,7 @@ extension SQLiteSessionStore {
       let journalData = try WuhuJSON.encoder.encode(journal)
       try db.execute(
         sql: "INSERT INTO system_queue_journal (sessionID, payload, createdAt) VALUES (?, ?, ?)",
-        arguments: [sessionID.rawValue, journalData, now]
+        arguments: [sessionID.rawValue, journalData, now],
       )
 
       try Self.updateSessionUpdatedAt(db: db, sessionID: sessionID.rawValue)
@@ -652,13 +652,13 @@ extension SQLiteSessionStore {
 
       guard !candidates.isEmpty else {
         let session = try sessionRow.toModel()
-        return DrainResult(
+        return try DrainResult(
           didDrain: false,
           session: session,
           entries: [],
-          systemUrgent: try Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
-          steer: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
-          followUp: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp)
+          systemUrgent: Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
+          steer: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
+          followUp: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp),
         )
       }
 
@@ -682,13 +682,13 @@ extension SQLiteSessionStore {
               "source": .string(systemSourceString(input.source)),
             ]),
             display: true,
-            timestamp: createdAt
+            timestamp: createdAt,
           )
           entryPayload = .message(.customMessage(custom))
 
           try db.execute(
             sql: "DELETE FROM system_queue_pending WHERE sessionID = ? AND id = ?",
-            arguments: [sessionID.rawValue, c.id]
+            arguments: [sessionID.rawValue, c.id],
           )
         } else {
           let message = try WuhuJSON.decoder.decode(QueuedUserMessage.self, from: c.payload)
@@ -699,13 +699,13 @@ extension SQLiteSessionStore {
           let user = WuhuUserMessage(
             user: userString(message.author),
             content: [.text(text: text, signature: nil)],
-            timestamp: createdAt
+            timestamp: createdAt,
           )
           entryPayload = .message(.user(user))
 
           try db.execute(
             sql: "DELETE FROM user_queue_pending WHERE sessionID = ? AND lane = ? AND id = ?",
-            arguments: [sessionID.rawValue, UserQueueLane.steer.rawValue, c.id]
+            arguments: [sessionID.rawValue, UserQueueLane.steer.rawValue, c.id],
           )
         }
 
@@ -719,36 +719,36 @@ extension SQLiteSessionStore {
           let journal = SystemUrgentQueueJournalEntry.materialized(
             id: QueueItemID(rawValue: c.id),
             transcriptEntryID: transcriptEntryID,
-            at: now
+            at: now,
           )
           let data = try WuhuJSON.encoder.encode(journal)
           try db.execute(
             sql: "INSERT INTO system_queue_journal (sessionID, payload, createdAt) VALUES (?, ?, ?)",
-            arguments: [sessionID.rawValue, data, now]
+            arguments: [sessionID.rawValue, data, now],
           )
         } else {
           let journal = UserQueueJournalEntry.materialized(
             lane: .steer,
             id: QueueItemID(rawValue: c.id),
             transcriptEntryID: transcriptEntryID,
-            at: now
+            at: now,
           )
           let data = try WuhuJSON.encoder.encode(journal)
           try db.execute(
             sql: "INSERT INTO user_queue_journal (sessionID, lane, payload, createdAt) VALUES (?, ?, ?, ?)",
-            arguments: [sessionID.rawValue, UserQueueLane.steer.rawValue, data, now]
+            arguments: [sessionID.rawValue, UserQueueLane.steer.rawValue, data, now],
           )
         }
       }
 
       let session = try sessionRow.toModel()
-      return DrainResult(
+      return try DrainResult(
         didDrain: true,
         session: session,
         entries: appended,
-        systemUrgent: try Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
-        steer: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
-        followUp: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp)
+        systemUrgent: Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
+        steer: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
+        followUp: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp),
       )
     }
   }
@@ -766,15 +766,15 @@ extension SQLiteSessionStore {
 
       guard !followRows.isEmpty else {
         let session = try sessionRow.toModel()
-        return DrainResult(
-        didDrain: false,
-        session: session,
-        entries: [],
-        systemUrgent: try Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
-        steer: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
-        followUp: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp)
-      )
-    }
+        return try DrainResult(
+          didDrain: false,
+          session: session,
+          entries: [],
+          systemUrgent: Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
+          steer: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
+          followUp: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp),
+        )
+      }
 
       var appended: [WuhuSessionEntry] = []
       appended.reserveCapacity(followRows.count)
@@ -789,7 +789,7 @@ extension SQLiteSessionStore {
         let user = WuhuUserMessage(
           user: userString(message.author),
           content: [.text(text: text, signature: nil)],
-          timestamp: r.enqueuedAt
+          timestamp: r.enqueuedAt,
         )
 
         let entryPayload: WuhuEntryPayload = .message(.user(user))
@@ -798,7 +798,7 @@ extension SQLiteSessionStore {
 
         try db.execute(
           sql: "DELETE FROM user_queue_pending WHERE sessionID = ? AND lane = ? AND id = ?",
-          arguments: [sessionID.rawValue, UserQueueLane.followUp.rawValue, r.id]
+          arguments: [sessionID.rawValue, UserQueueLane.followUp.rawValue, r.id],
         )
 
         let transcriptEntryID = TranscriptEntryID(rawValue: "\(entryRow.id ?? -1)")
@@ -806,23 +806,23 @@ extension SQLiteSessionStore {
           lane: .followUp,
           id: QueueItemID(rawValue: r.id),
           transcriptEntryID: transcriptEntryID,
-          at: Date()
+          at: Date(),
         )
         let data = try WuhuJSON.encoder.encode(journal)
         try db.execute(
           sql: "INSERT INTO user_queue_journal (sessionID, lane, payload, createdAt) VALUES (?, ?, ?, ?)",
-          arguments: [sessionID.rawValue, UserQueueLane.followUp.rawValue, data, Date()]
+          arguments: [sessionID.rawValue, UserQueueLane.followUp.rawValue, data, Date()],
         )
       }
 
       let session = try sessionRow.toModel()
-      return DrainResult(
+      return try DrainResult(
         didDrain: true,
         session: session,
         entries: appended,
-        systemUrgent: try Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
-        steer: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
-        followUp: try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp)
+        systemUrgent: Self.loadSystemQueueBackfill(db: db, sessionID: sessionID),
+        steer: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .steer),
+        followUp: Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: .followUp),
       )
     }
   }
@@ -863,7 +863,7 @@ extension SQLiteSessionStore {
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(sessionID, toolCallID) DO UPDATE SET status = excluded.status, updatedAt = excluded.updatedAt
           """,
-          arguments: [sessionID.rawValue, call.id, status.rawValue, now, now]
+          arguments: [sessionID.rawValue, call.id, status.rawValue, now, now],
         )
       }
       if status == .pending || status == .started {
@@ -882,7 +882,7 @@ extension SQLiteSessionStore {
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(sessionID, toolCallID) DO UPDATE SET status = excluded.status, updatedAt = excluded.updatedAt
         """,
-        arguments: [sessionID.rawValue, id, status.rawValue, now, now]
+        arguments: [sessionID.rawValue, id, status.rawValue, now, now],
       )
       if status == .pending || status == .started {
         try Self.setExecutionStatus(db: db, sessionID: sessionID.rawValue, status: .running)
@@ -897,7 +897,7 @@ extension SQLiteSessionStore {
         throw WuhuStoreError.sessionNotFound(sessionID.rawValue)
       }
       let entryRow = try Self.appendEntryWithSession(db: db, sessionRow: &sessionRow, payload: payload, createdAt: createdAt)
-      return (try sessionRow.toModel(), entryRow.toModel())
+      return try (sessionRow.toModel(), entryRow.toModel())
     }
   }
 
@@ -906,14 +906,14 @@ extension SQLiteSessionStore {
   private static func updateSessionUpdatedAt(db: Database, sessionID: String) throws {
     try db.execute(
       sql: "UPDATE sessions SET updatedAt = ? WHERE id = ?",
-      arguments: [Date(), sessionID]
+      arguments: [Date(), sessionID],
     )
   }
 
   private static func setExecutionStatus(db: Database, sessionID: String, status: SessionExecutionStatus) throws {
     try db.execute(
       sql: "UPDATE sessions SET executionStatus = ?, updatedAt = ? WHERE id = ?",
-      arguments: [status.rawValue, Date(), sessionID]
+      arguments: [status.rawValue, Date(), sessionID],
     )
   }
 
@@ -939,7 +939,7 @@ extension SQLiteSessionStore {
       SELECT COUNT(*) FROM tool_call_status
       WHERE sessionID = ? AND (status = ? OR status = ?)
       """,
-      arguments: [sessionID, ToolCallStatus.pending.rawValue, ToolCallStatus.started.rawValue]
+      arguments: [sessionID, ToolCallStatus.pending.rawValue, ToolCallStatus.started.rawValue],
     ) ?? 0
     return systemCount + userCount + toolCount
   }
@@ -995,7 +995,7 @@ extension SQLiteSessionStore {
       sessionID: sessionRow.id,
       parentEntryID: tailID,
       payload: payload,
-      createdAt: createdAt
+      createdAt: createdAt,
     )
     try row.insert(db)
     guard let newID = row.id else {

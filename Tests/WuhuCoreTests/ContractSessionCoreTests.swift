@@ -1,8 +1,8 @@
 import Foundation
 import PiAI
 import Testing
-@testable import WuhuCore
 import WuhuAPI
+@testable import WuhuCore
 
 struct ContractSessionCoreTests {
   private func makeStore() throws -> SQLiteSessionStore {
@@ -18,7 +18,7 @@ struct ContractSessionCoreTests {
       systemPrompt: systemPrompt,
       environment: .init(name: "test", type: .local, path: "/tmp"),
       runnerName: nil,
-      parentSessionID: nil
+      parentSessionID: nil,
     )
   }
 
@@ -31,7 +31,7 @@ struct ContractSessionCoreTests {
         continuation.finish()
       }
     },
-    tools: [AnyAgentTool] = []
+    tools: [AnyAgentTool] = [],
   ) async -> (behavior: WuhuSessionBehavior, config: WuhuSessionRuntimeConfig) {
     let config = WuhuSessionRuntimeConfig()
     await config.setStreamFn(streamFn)
@@ -42,7 +42,7 @@ struct ContractSessionCoreTests {
   private func applyAndAssertInvariant(
     _ behavior: WuhuSessionBehavior,
     _ state: WuhuSessionLoopState,
-    _ fn: @Sendable (WuhuSessionLoopState) async throws -> [WuhuSessionCommittedAction]
+    _ fn: @Sendable (WuhuSessionLoopState) async throws -> [WuhuSessionCommittedAction],
   ) async throws -> WuhuSessionLoopState {
     var next = state
     let actions = try await fn(state)
@@ -112,7 +112,7 @@ struct ContractSessionCoreTests {
     let tool = AnyAgentTool(
       tool: .init(name: "echo", description: "Echoes input", parameters: .object([:])),
       label: "Echo",
-      execute: { _, _ in .init(content: [.text("echoed")]) }
+      execute: { _, _ in .init(content: [.text("echoed")]) },
     )
 
     let (behavior, _) = await makeBehavior(sessionID: session.id, store: store, tools: [tool])
@@ -168,7 +168,7 @@ struct ContractSessionCoreTests {
       sessionID: .init(rawValue: session.id),
       id: .init(rawValue: "sys1"),
       input: .init(source: .asyncTaskNotification, content: .text("{\"type\":\"system\"}")),
-      enqueuedAt: Date(timeIntervalSince1970: 0)
+      enqueuedAt: Date(timeIntervalSince1970: 0),
     )
     state = try await behavior.loadState()
 
@@ -177,7 +177,7 @@ struct ContractSessionCoreTests {
       try await behavior.handle(WuhuSessionExternalAction.enqueueUser(
         id: .init(rawValue: "steer1"),
         message: QueuedUserMessage(author: Author.unknown, content: MessageContent.text("{\"type\":\"steer\"}")),
-        lane: .steer
+        lane: .steer,
       ), state: state)
     }
 
@@ -211,7 +211,7 @@ struct ContractSessionCoreTests {
           provider: model.provider,
           model: model.id,
           content: [.text("summary")],
-          stopReason: .stop
+          stopReason: .stop,
         )
         continuation.yield(.done(message: assistant))
         continuation.finish()

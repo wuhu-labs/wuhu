@@ -20,7 +20,6 @@ import PiAI
 ///
 /// See <doc:ContractAgentLoop> for the full design rationale.
 public actor AgentLoop<B: AgentBehavior> {
-
   // MARK: Dependencies
 
   nonisolated let behavior: B
@@ -48,7 +47,7 @@ public actor AgentLoop<B: AgentBehavior> {
 
   public init(behavior: B) {
     self.behavior = behavior
-    self.state = B.State.empty
+    state = B.State.empty
   }
 
   // MARK: - Observation
@@ -96,7 +95,7 @@ public actor AgentLoop<B: AgentBehavior> {
     defer { started = false }
 
     let (stream, continuation) = AsyncStream<Void>.makeStream(
-      bufferingPolicy: .bufferingNewest(1)
+      bufferingPolicy: .bufferingNewest(1),
     )
     signal = continuation
 
@@ -121,7 +120,7 @@ public actor AgentLoop<B: AgentBehavior> {
   /// - Important: Work closures must not call ``serialized(_:)`` (deadlock).
   @discardableResult
   private func serialized(
-    _ work: @escaping @Sendable (B.State) async throws -> [B.CommittedAction]
+    _ work: @escaping @Sendable (B.State) async throws -> [B.CommittedAction],
   ) async throws -> [B.CommittedAction] {
     let previous = _tail
     return try await withCheckedThrowingContinuation { cont in
@@ -157,7 +156,7 @@ public actor AgentLoop<B: AgentBehavior> {
         try await behavior.drainInterruptItems(state: state)
       }
 
-      if interruptActions.isEmpty && !hasToolResults {
+      if interruptActions.isEmpty, !hasToolResults {
         // No interrupt work. Check turn boundary.
         let turnActions = try await serialized { [behavior] state in
           try await behavior.drainTurnItems(state: state)
@@ -178,7 +177,7 @@ public actor AgentLoop<B: AgentBehavior> {
 
       // Tool calls
       let toolCalls = message.content.compactMap { block -> ToolCall? in
-        if case .toolCall(let call) = block { return call }
+        if case let .toolCall(call) = block { return call }
         return nil
       }
 
@@ -189,7 +188,7 @@ public actor AgentLoop<B: AgentBehavior> {
 
       // Compaction
       if let usage = message.usage,
-        behavior.shouldCompact(state: state, usage: usage)
+         behavior.shouldCompact(state: state, usage: usage)
       {
         try await serialized { [behavior] state in
           try await behavior.performCompaction(state: state)
@@ -259,7 +258,7 @@ public actor AgentLoop<B: AgentBehavior> {
     // Execute in parallel
     let results: [(ToolCall, Result<B.ToolResult, any Error>)] =
       await withTaskGroup(
-        of: (ToolCall, Result<B.ToolResult, any Error>).self
+        of: (ToolCall, Result<B.ToolResult, any Error>).self,
       ) { [behavior] group in
         for call in calls {
           group.addTask {
@@ -281,11 +280,11 @@ public actor AgentLoop<B: AgentBehavior> {
     // Record results
     for (call, result) in results {
       switch result {
-      case .success(let toolResult):
+      case let .success(toolResult):
         try await serialized { [behavior] state in
           try await behavior.toolDidExecute(call, result: toolResult, state: state)
         }
-      case .failure(let error):
+      case let .failure(error):
         try await serialized { [behavior] state in
           try await behavior.toolDidFail(call, error: error, state: state)
         }

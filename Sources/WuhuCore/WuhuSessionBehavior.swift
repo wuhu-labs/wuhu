@@ -1,6 +1,6 @@
 import Foundation
-import PiAI
 import PiAgent
+import PiAI
 import WuhuAPI
 
 enum WuhuSessionStreamAction: Sendable, Hashable {
@@ -49,7 +49,7 @@ struct WuhuSessionLoopState: AgentLoopState {
       status: .init(status: .idle),
       systemUrgent: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
       steer: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
-      followUp: .init(cursor: .init(rawValue: "0"), pending: [], journal: [])
+      followUp: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
     )
   }
 }
@@ -65,12 +65,6 @@ struct WuhuSessionBehavior: AgentBehavior {
   let store: SQLiteSessionStore
   let runtimeConfig: WuhuSessionRuntimeConfig
 
-  init(sessionID: SessionID, store: SQLiteSessionStore, runtimeConfig: WuhuSessionRuntimeConfig) {
-    self.sessionID = sessionID
-    self.store = store
-    self.runtimeConfig = runtimeConfig
-  }
-
   func loadState() async throws -> State {
     let parts = try await store.loadLoopStateParts(sessionID: sessionID)
     return .init(
@@ -81,7 +75,7 @@ struct WuhuSessionBehavior: AgentBehavior {
       status: parts.status,
       systemUrgent: parts.systemUrgent,
       steer: parts.steer,
-      followUp: parts.followUp
+      followUp: parts.followUp,
     )
   }
 
@@ -117,7 +111,7 @@ struct WuhuSessionBehavior: AgentBehavior {
     }
   }
 
-  func handle(_ action: ExternalAction, state: State) async throws -> [CommittedAction] {
+  func handle(_ action: ExternalAction, state _: State) async throws -> [CommittedAction] {
     switch action {
     case let .enqueueUser(id, message, lane):
       _ = try await store.enqueueUserMessage(sessionID: sessionID, id: id, message: message, lane: lane)
@@ -163,7 +157,7 @@ struct WuhuSessionBehavior: AgentBehavior {
 
     case .applyPendingModelIfPossible:
       guard let result = try await store.applyPendingModelIfPossible(sessionID: sessionID) else {
-        return [.settingsUpdated(try await store.loadSettingsSnapshot(sessionID: sessionID))]
+        return try await [.settingsUpdated(store.loadSettingsSnapshot(sessionID: sessionID))]
       }
       return [
         .sessionUpdated(result.session),
@@ -184,7 +178,7 @@ struct WuhuSessionBehavior: AgentBehavior {
     }
     actions.append(.systemQueueUpdated(drained.systemUrgent))
     actions.append(.userQueueUpdated(lane: .steer, backfill: drained.steer))
-    actions.append(.statusUpdated(try await store.loadStatusSnapshot(sessionID: sessionID)))
+    try await actions.append(.statusUpdated(store.loadStatusSnapshot(sessionID: sessionID)))
     return actions
   }
 
@@ -198,7 +192,7 @@ struct WuhuSessionBehavior: AgentBehavior {
       actions.append(.entryAppended(entry))
     }
     actions.append(.userQueueUpdated(lane: .followUp, backfill: drained.followUp))
-    actions.append(.statusUpdated(try await store.loadStatusSnapshot(sessionID: sessionID)))
+    try await actions.append(.statusUpdated(store.loadStatusSnapshot(sessionID: sessionID)))
     return actions
   }
 
@@ -252,11 +246,11 @@ struct WuhuSessionBehavior: AgentBehavior {
     throw PiAIError.unsupported("No model output")
   }
 
-  func persistAssistantEntry(_ message: AssistantMessage, state: State) async throws -> [CommittedAction] {
+  func persistAssistantEntry(_ message: AssistantMessage, state _: State) async throws -> [CommittedAction] {
     let (session, entry) = try await store.appendEntryWithSession(
       sessionID: sessionID,
       payload: .message(.fromPi(.assistant(message))),
-      createdAt: message.timestamp
+      createdAt: message.timestamp,
     )
 
     var actions: [CommittedAction] = [
@@ -280,7 +274,7 @@ struct WuhuSessionBehavior: AgentBehavior {
     return actions
   }
 
-  func toolWillExecute(_ call: ToolCall, state: State) async throws -> [CommittedAction] {
+  func toolWillExecute(_ call: ToolCall, state _: State) async throws -> [CommittedAction] {
     let updated = try await store.setToolCallStatus(sessionID: sessionID, id: call.id, status: .started)
     let status = try await store.loadStatusSnapshot(sessionID: sessionID)
     return [
@@ -297,7 +291,7 @@ struct WuhuSessionBehavior: AgentBehavior {
     return try await tool.execute(toolCallId: call.id, args: call.arguments)
   }
 
-  func toolDidExecute(_ call: ToolCall, result: ToolResult, state: State) async throws -> [CommittedAction] {
+  func toolDidExecute(_ call: ToolCall, result: ToolResult, state _: State) async throws -> [CommittedAction] {
     let now = Date()
     let toolResult: Message = .toolResult(.init(
       toolCallId: call.id,
@@ -305,13 +299,13 @@ struct WuhuSessionBehavior: AgentBehavior {
       content: result.content,
       details: result.details,
       isError: false,
-      timestamp: now
+      timestamp: now,
     ))
 
     let (session, entry) = try await store.appendEntryWithSession(
       sessionID: sessionID,
       payload: .message(.fromPi(toolResult)),
-      createdAt: now
+      createdAt: now,
     )
 
     let updated = try await store.setToolCallStatus(sessionID: sessionID, id: call.id, status: .completed)
@@ -324,7 +318,7 @@ struct WuhuSessionBehavior: AgentBehavior {
     ]
   }
 
-  func toolDidFail(_ call: ToolCall, error: any Error, state: State) async throws -> [CommittedAction] {
+  func toolDidFail(_ call: ToolCall, error: any Error, state _: State) async throws -> [CommittedAction] {
     let now = Date()
     let toolResult: Message = .toolResult(.init(
       toolCallId: call.id,
@@ -334,13 +328,13 @@ struct WuhuSessionBehavior: AgentBehavior {
         "wuhu_tool_error": .string("\(error)"),
       ]),
       isError: true,
-      timestamp: now
+      timestamp: now,
     ))
 
     let (session, entry) = try await store.appendEntryWithSession(
       sessionID: sessionID,
       payload: .message(.fromPi(toolResult)),
-      createdAt: now
+      createdAt: now,
     )
 
     let updated = try await store.setToolCallStatus(sessionID: sessionID, id: call.id, status: .errored)
@@ -377,24 +371,24 @@ struct WuhuSessionBehavior: AgentBehavior {
       model: model,
       settings: settings,
       requestOptions: requestOptions,
-      streamFn: streamFn
+      streamFn: streamFn,
     )
 
     let payload: WuhuEntryPayload = .compaction(.init(
       summary: summary,
       tokensBefore: prep.tokensBefore,
-      firstKeptEntryID: prep.firstKeptEntryID
+      firstKeptEntryID: prep.firstKeptEntryID,
     ))
 
     let (_, entry) = try await store.appendEntryWithSession(
       sessionID: sessionID,
       payload: payload,
-      createdAt: Date()
+      createdAt: Date(),
     )
 
-    return [
+    return try await [
       .entryAppended(entry),
-      .statusUpdated(try await store.loadStatusSnapshot(sessionID: sessionID)),
+      .statusUpdated(store.loadStatusSnapshot(sessionID: sessionID)),
     ]
   }
 
@@ -445,13 +439,13 @@ struct WuhuSessionBehavior: AgentBehavior {
         "reason": .string("lost"),
       ]),
       isError: true,
-      timestamp: now
+      timestamp: now,
     ))
 
     let (session, entry) = try await store.appendEntryWithSession(
       sessionID: sessionID,
       payload: .message(.fromPi(repaired)),
-      createdAt: now
+      createdAt: now,
     )
 
     let updated = try await store.setToolCallStatus(sessionID: sessionID, id: id, status: .errored)
@@ -520,31 +514,31 @@ private func toTranscriptItem(_ entry: WuhuSessionEntry) -> TranscriptItem {
       return .init(
         id: id,
         createdAt: createdAt,
-        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(u.content))))
+        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(u.content)))),
       )
     case let .assistant(a):
       return .init(
         id: id,
         createdAt: createdAt,
-        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(a.content))))
+        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(a.content)))),
       )
     case let .customMessage(c):
       return .init(
         id: id,
         createdAt: createdAt,
-        entry: .message(.init(author: .system, content: .text(textFromBlocks(c.content))))
+        entry: .message(.init(author: .system, content: .text(textFromBlocks(c.content)))),
       )
     case let .toolResult(t):
       return .init(
         id: id,
         createdAt: createdAt,
-        entry: .tool(.init(name: t.toolName, detail: textFromBlocks(t.content)))
+        entry: .tool(.init(name: t.toolName, detail: textFromBlocks(t.content))),
       )
     case .unknown:
       return .init(
         id: id,
         createdAt: createdAt,
-        entry: .diagnostic(.init(message: "unknown message"))
+        entry: .diagnostic(.init(message: "unknown message")),
       )
     }
 

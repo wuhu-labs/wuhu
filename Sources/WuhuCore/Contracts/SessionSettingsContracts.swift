@@ -13,7 +13,7 @@ public struct SessionSettingsSnapshot: Sendable, Hashable, Codable {
     effectiveModel: ModelSpecifier,
     pendingModel: ModelSpecifier? = nil,
     effectiveReasoningEffort: ReasoningEffort? = nil,
-    pendingReasoningEffort: ReasoningEffort? = nil
+    pendingReasoningEffort: ReasoningEffort? = nil,
   ) {
     self.effectiveModel = effectiveModel
     self.pendingModel = pendingModel
@@ -59,4 +59,3 @@ public struct SessionStatusSnapshot: Sendable, Hashable, Codable {
     self.status = status
   }
 }
-

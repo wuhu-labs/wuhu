@@ -42,9 +42,9 @@ actor WuhuSessionRuntime {
     observeTask = Task { [weak self] in
       guard let self else { return }
       let observation = await loop.observe()
-      await self.setInitialObservationState(observation)
+      await setInitialObservationState(observation)
       for await event in observation.events {
-        await self.handleLoopEvent(event)
+        await handleLoopEvent(event)
       }
     }
 
@@ -67,7 +67,7 @@ actor WuhuSessionRuntime {
 
   func isIdle() -> Bool {
     // Fast-path: don't block callers on observation if they only need a best-effort hint.
-    return !streaming && !behavior.hasWork(state: observedState)
+    !streaming && !behavior.hasWork(state: observedState)
   }
 
   func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
@@ -99,7 +99,7 @@ actor WuhuSessionRuntime {
   func setModelSelection(_ selection: WuhuSessionSettings) async throws -> Bool {
     await ensureStarted()
 
-    if !streaming && !behavior.hasWork(state: observedState) {
+    if !streaming, !behavior.hasWork(state: observedState) {
       try await loop.send(.applyModelSelection(selection))
       // Observe if the session updates quickly; otherwise treat as deferred.
       let updated = try await store.getSession(id: sessionID.rawValue)
@@ -178,7 +178,7 @@ actor WuhuSessionRuntime {
 
     while true {
       if let transcriptEntryID = materializedTranscriptEntryID(queueItemID: queueItemID, lane: lane) {
-        if let entry = observedState.entries.first(where: { "\($0.id)" == transcriptEntryID.rawValue }) {
+        if let entry = observedState.entries.first(where: { transcriptEntryID.rawValue == "\($0.id)" }) {
           return entry
         }
       }

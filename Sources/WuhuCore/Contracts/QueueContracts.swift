@@ -104,4 +104,3 @@ public struct SystemUrgentQueueBackfill: Sendable, Hashable, Codable {
     self.journal = journal
   }
 }
-

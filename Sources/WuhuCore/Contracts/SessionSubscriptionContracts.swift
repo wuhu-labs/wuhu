@@ -16,7 +16,7 @@ public struct SessionSubscriptionRequest: Sendable, Hashable, Codable {
     transcriptPageSize: Int = 200,
     systemSince: QueueCursor? = nil,
     steerSince: QueueCursor? = nil,
-    followUpSince: QueueCursor? = nil
+    followUpSince: QueueCursor? = nil,
   ) {
     self.transcriptSince = transcriptSince
     self.transcriptPageSize = transcriptPageSize
@@ -43,7 +43,7 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
     transcriptPages: [TranscriptPage],
     systemUrgent: SystemUrgentQueueBackfill,
     steer: UserQueueBackfill,
-    followUp: UserQueueBackfill
+    followUp: UserQueueBackfill,
   ) {
     self.settings = settings
     self.status = status
