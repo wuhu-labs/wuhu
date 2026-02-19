@@ -411,12 +411,7 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
       }
     }
 
-    let connectionStates = AsyncStream<SessionSubscriptionConnectionState> { continuation in
-      continuation.yield(.connected)
-      continuation.finish()
-    }
-
-    return .init(initial: initial, events: events, connectionStates: connectionStates)
+    return .init(initial: initial, events: events)
   }
 
   private func loadInitialState(sessionID: SessionID, request: SessionSubscriptionRequest) async throws -> SessionInitialState {

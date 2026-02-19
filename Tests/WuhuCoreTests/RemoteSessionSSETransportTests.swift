@@ -133,12 +133,12 @@ struct RemoteSessionSSETransportTests {
       },
     )
 
-    let subscription = try await transport.subscribe(sessionID: .init(rawValue: "s1"), since: .init())
-    #expect(subscription.initial == initialState)
+    let result = try await transport.subscribeWithConnectionState(sessionID: .init(rawValue: "s1"), since: .init())
+    #expect(result.subscription.initial == initialState)
 
     let states = await Task {
-      var it = subscription.connectionStates.makeAsyncIterator()
-      var out: [SessionSubscriptionConnectionState] = []
+      var it = result.connectionStates.makeAsyncIterator()
+      var out: [SSEConnectionState] = []
       while out.count < 6, let next = await it.next() {
         out.append(next)
         if next == .connected { break }

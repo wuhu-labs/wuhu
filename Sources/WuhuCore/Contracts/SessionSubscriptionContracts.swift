@@ -67,26 +67,13 @@ public enum SessionEvent: Sendable, Hashable, Codable {
 ///
 /// Implementations should ensure the caller can send `initial` and then consume `events` without
 /// missing or duplicating updates that occur between subscription establishment and initial backfill.
-public enum SessionSubscriptionConnectionState: Sendable, Hashable {
-  case connecting
-  case connected
-  case retrying(attempt: Int, delaySeconds: Double)
-  case closed
-}
-
 public struct SessionSubscription: Sendable {
   public var initial: SessionInitialState
   public var events: AsyncThrowingStream<SessionEvent, Error>
-  public var connectionStates: AsyncStream<SessionSubscriptionConnectionState>
 
-  public init(
-    initial: SessionInitialState,
-    events: AsyncThrowingStream<SessionEvent, Error>,
-    connectionStates: AsyncStream<SessionSubscriptionConnectionState>,
-  ) {
+  public init(initial: SessionInitialState, events: AsyncThrowingStream<SessionEvent, Error>) {
     self.initial = initial
     self.events = events
-    self.connectionStates = connectionStates
   }
 }
 

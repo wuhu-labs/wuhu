@@ -1,6 +1,31 @@
 import Foundation
 import PiAI
 
+/// Transport-level connection lifecycle for SSE subscriptions.
+///
+/// This type is specific to ``RemoteSessionSSETransport`` — it describes
+/// wire-level reconnection state, not session domain state.
+public enum SSEConnectionState: Sendable, Hashable {
+  case connecting
+  case connected
+  case retrying(attempt: Int, delaySeconds: Double)
+  case closed
+}
+
+/// The result of ``RemoteSessionSSETransport/subscribeWithConnectionState(sessionID:since:)``.
+///
+/// Bundles the domain ``SessionSubscription`` with the transport-specific
+/// ``SSEConnectionState`` stream.
+public struct RemoteSessionSubscription: Sendable {
+  public var subscription: SessionSubscription
+  public var connectionStates: AsyncStream<SSEConnectionState>
+
+  public init(subscription: SessionSubscription, connectionStates: AsyncStream<SSEConnectionState>) {
+    self.subscription = subscription
+    self.connectionStates = connectionStates
+  }
+}
+
 /// Remote transport that speaks the session contracts over HTTP + SSE.
 ///
 /// This is the adapter WuhuApp should use: it conforms to
@@ -84,11 +109,15 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
   }
 
   public func subscribe(sessionID: SessionID, since request0: SessionSubscriptionRequest) async throws -> SessionSubscription {
+    try await subscribeWithConnectionState(sessionID: sessionID, since: request0).subscription
+  }
+
+  public func subscribeWithConnectionState(sessionID: SessionID, since request0: SessionSubscriptionRequest) async throws -> RemoteSessionSubscription {
     let (events, eventsContinuation) = AsyncThrowingStream<SessionEvent, any Error>.makeStream(
       bufferingPolicy: .bufferingNewest(4096),
     )
 
-    let (connectionStates, connectionContinuation) = AsyncStream<SessionSubscriptionConnectionState>.makeStream(
+    let (connectionStates, connectionContinuation) = AsyncStream<SSEConnectionState>.makeStream(
       bufferingPolicy: .bufferingNewest(64),
     )
 
@@ -213,7 +242,10 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
       throw CancellationError()
     }
 
-    return .init(initial: initial, events: events, connectionStates: connectionStates)
+    return .init(
+      subscription: .init(initial: initial, events: events),
+      connectionStates: connectionStates,
+    )
   }
 
   private func makeSubscribeRequest(sessionID: SessionID, request: SessionSubscriptionRequest) -> HTTPRequest {

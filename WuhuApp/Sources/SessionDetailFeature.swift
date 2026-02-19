@@ -81,7 +81,7 @@ struct SessionDetailFeature {
     case startSubscription
     case subscriptionInitial(SessionInitialState)
     case subscriptionEvent(SessionEvent)
-    case connectionStateChanged(SessionSubscriptionConnectionState)
+    case connectionStateChanged(SSEConnectionState)
     case subscriptionFailed(String)
 
     case sendTapped
@@ -145,19 +145,19 @@ struct SessionDetailFeature {
 
         return .run { send in
           do {
-            let subscription = try await transport.subscribe(sessionID: .init(rawValue: sessionID), since: since)
-            await send(.subscriptionInitial(subscription.initial))
+            let result = try await transport.subscribeWithConnectionState(sessionID: .init(rawValue: sessionID), since: since)
+            await send(.subscriptionInitial(result.subscription.initial))
 
             await withTaskGroup(of: Void.self) { group in
               group.addTask {
-                for await connection in subscription.connectionStates {
+                for await connection in result.connectionStates {
                   await send(.connectionStateChanged(connection))
                 }
               }
 
               group.addTask {
                 do {
-                  for try await event in subscription.events {
+                  for try await event in result.subscription.events {
                     await send(.subscriptionEvent(event))
                   }
                 } catch {
