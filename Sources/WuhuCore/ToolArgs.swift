@@ -98,7 +98,7 @@ struct ToolArgs {
 
     throw ToolArgumentParseError(message: ToolArgs.typeMismatchMessage(
       toolName: toolName,
-      expected: "number",
+      expected: "integer",
       keyPath: key,
       received: value,
     ))

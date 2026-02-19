@@ -102,6 +102,10 @@ public actor Agent {
     _state.tools = t
   }
 
+  public func setRequestOptions(_ o: RequestOptions) {
+    requestOptions = o
+  }
+
   public func replaceMessages(_ ms: [Message]) {
     _state.messages = ms
   }

@@ -1,3 +1,17 @@
+# macOS / editors
+.DS_Store
+.vscode/
+
+# Local agent context overrides
+AGENTS.local.md
+**/AGENTS.local.md
+
+# DocC build artifacts
+.docc-build/
+
+# Generic build output
+build/
+
 # Logs
 logs
 *.log

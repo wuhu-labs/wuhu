@@ -41,7 +41,7 @@ The event stream includes:
 
 - `entry_appended` — a persisted `WuhuSessionEntry` (includes cursor + timestamp)
 - `assistant_text_delta` — in-flight assistant progress (not persisted as individual DB rows)
-- `idle` — the session transitioned from “running” → “idle”
+- `idle` — the active prompt finished and the per-session actor transitioned back to idle
 - `done` — server closed the stream (stop condition or timeout)
 
 ## Stop Conditions
@@ -63,3 +63,12 @@ To avoid missing events when switching from “query the DB” → “subscribe 
 
 This yields “tail -f”-like behavior without introducing a message queue.
 
+## Target: Single Subscription Contract
+
+Wuhu is evolving toward a transport-agnostic subscription contract that matches the SSE shape:
+
+- initial state + catch-up (transcript + queue state/history)
+- then live updates
+- without gaps or duplicate delivery during the backfill window
+
+See the Session Contracts design article and `WuhuCore/Contracts/SessionSubscribing`.
