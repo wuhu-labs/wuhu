@@ -94,18 +94,18 @@ struct SessionDetailView: View {
           }
         }
         .padding(.vertical, 12)
-    }
-    .onChange(of: store.transcript.last?.id) { _, lastID in
-      guard let lastID else { return }
-      let lastVisibleID =
+      }
+      .onChange(of: store.transcript.last?.id) { _, lastID in
+        guard let lastID else { return }
+        let lastVisibleID =
           WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
             .format(Array(store.transcript))
             .last?.id ?? "entry.\(lastID)"
-      withAnimation(.easeOut(duration: 0.2)) {
-        proxy.scrollTo(lastVisibleID, anchor: .bottom)
+        withAnimation(.easeOut(duration: 0.2)) {
+          proxy.scrollTo(lastVisibleID, anchor: .bottom)
+        }
       }
     }
-  }
   }
 
   private var composer: some View {

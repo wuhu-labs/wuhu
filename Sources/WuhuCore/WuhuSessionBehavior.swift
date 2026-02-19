@@ -59,7 +59,9 @@ struct WuhuSessionBehavior: AgentBehavior {
   typealias ExternalAction = WuhuSessionExternalAction
   typealias ToolResult = AgentToolResult
 
-  static var emptyState: WuhuSessionLoopState { .empty }
+  static var emptyState: WuhuSessionLoopState {
+    .empty
+  }
 
   let sessionID: SessionID
   let store: SQLiteSessionStore
