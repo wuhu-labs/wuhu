@@ -35,7 +35,7 @@ Preserving an identical injected context across restarts/evictions is intentiona
 
 ## Caching
 
-Context files are cached **in memory** per session by the per-session `WuhuSessionAgentActor`.
+Context files are cached **in memory** per session by `WuhuAgentsContextActor` (owned by the session runtime).
 
 - Cache key: session id (actor lifetime)
 - Reload trigger: file set or `(mtime, size)` snapshot changes

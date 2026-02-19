@@ -8,8 +8,8 @@ This design keeps the agentic loop alive while still respecting structured concu
 
 - The server process creates a single `WuhuService` actor for the lifetime of the daemon.
 - `WuhuService.startAgentLoopManager()` starts long-lived **background listeners** (for example async-bash completion routing).
-- Wuhu starts one long-lived **per-session actor** (`WuhuSessionAgentActor`) per session (as needed).
-- `WuhuSessionAgentActor` owns the persistent `PiAgent.Agent` and acts as the session’s execution loop.
+- Wuhu starts one long-lived **per-session actor** (`WuhuSessionRuntime`) per session (as needed).
+- `WuhuSessionRuntime` owns a persistent `AgentLoop<WuhuSessionBehavior>` and acts as the session’s execution loop.
 - `POST /v2/sessions/:id/prompt` should be modeled as a low-latency command that enqueues user input (steer or follow-up) without waiting for agent execution.
 - `GET /v2/sessions/:id/follow` is the canonical streaming channel for UI/CLI.
 
@@ -24,10 +24,9 @@ At runtime the hierarchy looks like:
 
 For each active session:
 
-- `WuhuSessionAgentActor(sessionID: …)`
-  - a long-lived agent event consumer task (persists PiAgent events)
-  - a prompt-queue task (serializes prompts)
-    - a per-prompt execution task (`PiAgent.Agent.prompt(...)`)
+- `WuhuSessionRuntime(sessionID: …)`
+  - a long-lived loop observation task (publishes `WuhuSessionStreamEvent`)
+  - a per-session loop task (`AgentLoop.start()`)
 
 The key property is that prompt execution is a **child of the server’s long-lived manager**, not the request handler task.
 
@@ -36,7 +35,7 @@ The key property is that prompt execution is a **child of the server’s long-li
 When a prompt arrives:
 
 1. The server enqueues the user input into the appropriate lane (steer or follow-up).
-2. The per-session actor materializes queued inputs into the transcript at defined checkpoints (aligned to PiAgent boundaries).
+2. The per-session runtime materializes queued inputs into the transcript at defined checkpoints (interrupt vs turn boundary).
 3. The long-running agent execution proceeds independently of any particular HTTP request.
 
 Clients that want live output should follow the session and render `WuhuSessionStreamEvent` until an `idle` event is observed.

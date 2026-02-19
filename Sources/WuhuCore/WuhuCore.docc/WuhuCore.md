@@ -20,11 +20,12 @@ See: <doc:SQLiteSchema>
 - `WuhuService` is an `actor` that:
   - owns an in-process live event hub (`WuhuLiveEventHub`)
   - starts long-lived background listeners (for example async-bash completion routing)
-  - routes API calls to a per-session `WuhuSessionAgentActor`
-- `WuhuSessionAgentActor` is a per-session `actor` that:
-  - owns a persistent `PiAgent.Agent`
-  - serializes prompts via an in-memory queue
-  - persists agent events to SQLite as they occur
+  - routes API calls to a per-session `WuhuSessionRuntime`
+- `WuhuSessionRuntime` is a per-session `actor` that:
+  - owns a long-lived `AgentLoop<WuhuSessionBehavior>`
+  - serializes external actions through the loop (queues, settings, etc.)
+  - observes committed actions / stream deltas and publishes them to `WuhuLiveEventHub`
+  - persists session state to SQLite via `SQLiteSessionStore` (through `WuhuSessionBehavior`)
 
 All public store APIs are `async` to compose naturally with Swift concurrency.
 
