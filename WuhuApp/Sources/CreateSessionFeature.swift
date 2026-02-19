@@ -47,6 +47,7 @@ struct CreateSessionFeature {
 
   enum Action: BindableAction {
     case onAppear
+    case onDisappear
     case binding(BindingAction<State>)
 
     case loadOptionsResponse(TaskResult<(envs: [WuhuEnvironmentInfo], runners: [WuhuRunnerInfo])>)
@@ -63,6 +64,11 @@ struct CreateSessionFeature {
   }
 
   @Dependency(\.wuhuClientProvider) private var wuhuClientProvider
+
+  private enum CancelID {
+    case loadOptions
+    case create
+  }
 
   var body: some ReducerOf<Self> {
     BindingReducer()
@@ -84,6 +90,13 @@ struct CreateSessionFeature {
             ),
           )
         }
+        .cancellable(id: CancelID.loadOptions, cancelInFlight: true)
+
+      case .onDisappear:
+        return .merge(
+          .cancel(id: CancelID.loadOptions),
+          .cancel(id: CancelID.create),
+        )
 
       case let .loadOptionsResponse(.success(options)):
         state.isLoadingOptions = false
@@ -125,10 +138,15 @@ struct CreateSessionFeature {
             ),
           )
         }
+        .cancellable(id: CancelID.create, cancelInFlight: true)
 
       case let .createResponse(.success(session)):
         state.isCreating = false
-        return .send(.delegate(.created(session)))
+        return .merge(
+          .cancel(id: CancelID.loadOptions),
+          .cancel(id: CancelID.create),
+          .send(.delegate(.created(session))),
+        )
 
       case let .createResponse(.failure(error)):
         state.isCreating = false
@@ -136,7 +154,11 @@ struct CreateSessionFeature {
         return .none
 
       case .cancelTapped:
-        return .send(.delegate(.cancelled))
+        return .merge(
+          .cancel(id: CancelID.loadOptions),
+          .cancel(id: CancelID.create),
+          .send(.delegate(.cancelled)),
+        )
 
       case let .binding(binding):
         state.error = nil

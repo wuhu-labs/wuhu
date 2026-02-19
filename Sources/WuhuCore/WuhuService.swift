@@ -10,6 +10,7 @@ public actor WuhuService {
   private let asyncBashRegistry: WuhuAsyncBashRegistry
   private let instanceID: String
   private let eventHub = WuhuLiveEventHub()
+  private let subscriptionHub = WuhuSessionSubscriptionHub()
   private var asyncBashRouter: WuhuAsyncBashCompletionRouter?
 
   private var runtimes: [String: WuhuSessionRuntime] = [:]
@@ -55,7 +56,12 @@ public actor WuhuService {
 
   private func runtime(for sessionID: String) -> WuhuSessionRuntime {
     if let existing = runtimes[sessionID] { return existing }
-    let runtime = WuhuSessionRuntime(sessionID: .init(rawValue: sessionID), store: store, eventHub: eventHub)
+    let runtime = WuhuSessionRuntime(
+      sessionID: .init(rawValue: sessionID),
+      store: store,
+      eventHub: eventHub,
+      subscriptionHub: subscriptionHub,
+    )
     runtimes[sessionID] = runtime
     return runtime
   }
@@ -229,8 +235,17 @@ public actor WuhuService {
     ))
     let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
     try await store.setSessionExecutionStatus(sessionID: .init(rawValue: sessionID), status: .stopped)
+
     await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
     await eventHub.publish(sessionID: sessionID, event: .idle)
+
+    await subscriptionHub.publish(
+      sessionID: sessionID,
+      event: .transcriptAppended(.init(items: [wuhuToTranscriptItem(stopEntry)], nextCursor: nil)),
+    )
+    if let status = try? await store.loadStatusSnapshot(sessionID: .init(rawValue: sessionID)) {
+      await subscriptionHub.publish(sessionID: sessionID, event: .statusUpdated(status))
+    }
 
     return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
@@ -300,4 +315,154 @@ public actor WuhuService {
   }
 
   // Async bash completion handling lives in `WuhuAsyncBashCompletionRouter`.
+}
+
+// MARK: - New session contracts
+
+extension WuhuService: SessionCommanding, SessionSubscribing {
+  public func enqueue(sessionID: SessionID, message: QueuedUserMessage, lane: UserQueueLane) async throws -> QueueItemID {
+    _ = try await store.getSession(id: sessionID.rawValue)
+    let runtime = runtime(for: sessionID.rawValue)
+    await runtime.ensureStarted()
+    return try await runtime.enqueue(message: message, lane: lane)
+  }
+
+  public func cancel(sessionID: SessionID, id: QueueItemID, lane: UserQueueLane) async throws {
+    _ = try await store.getSession(id: sessionID.rawValue)
+    let runtime = runtime(for: sessionID.rawValue)
+    await runtime.ensureStarted()
+    try await runtime.cancel(id: id, lane: lane)
+  }
+
+  public func subscribe(sessionID: SessionID, since request: SessionSubscriptionRequest) async throws -> SessionSubscription {
+    _ = try await store.getSession(id: sessionID.rawValue)
+
+    // Subscribe first, then backfill (bufferingNewest in the hub bridges the gap).
+    let live = await subscriptionHub.subscribe(sessionID: sessionID.rawValue)
+
+    // Ensure the session actor is running so future events will be published.
+    let runtime = runtime(for: sessionID.rawValue)
+    await runtime.ensureStarted()
+
+    let initial = try await loadInitialState(sessionID: sessionID, request: request)
+
+    let lastTranscriptID0: Int64 = {
+      let fromRequest = Int64(request.transcriptSince?.rawValue ?? "") ?? 0
+      let fromInitial = initial.transcriptPages.last?.items.last.flatMap { Int64($0.id.rawValue) } ?? 0
+      return max(fromRequest, fromInitial)
+    }()
+
+    let lastSystemCursor0 = Int64(initial.systemUrgent.cursor.rawValue) ?? 0
+    let lastSteerCursor0 = Int64(initial.steer.cursor.rawValue) ?? 0
+    let lastFollowUpCursor0 = Int64(initial.followUp.cursor.rawValue) ?? 0
+
+    let events = AsyncThrowingStream(SessionEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
+      let forwardTask = Task {
+        var lastTranscriptID = lastTranscriptID0
+        var lastSystemCursor = lastSystemCursor0
+        var lastSteerCursor = lastSteerCursor0
+        var lastFollowUpCursor = lastFollowUpCursor0
+
+        for await event in live {
+          if Task.isCancelled { break }
+
+          switch event {
+          case let .transcriptAppended(page):
+            let filtered = page.items.filter { (Int64($0.id.rawValue) ?? 0) > lastTranscriptID }
+            guard !filtered.isEmpty else { continue }
+            lastTranscriptID = max(lastTranscriptID, filtered.map { Int64($0.id.rawValue) ?? 0 }.max() ?? lastTranscriptID)
+            continuation.yield(.transcriptAppended(.init(items: filtered, nextCursor: page.nextCursor)))
+
+          case let .systemUrgentQueue(cursor, entries):
+            let cursorVal = Int64(cursor.rawValue) ?? 0
+            if cursorVal <= lastSystemCursor { continue }
+            lastSystemCursor = cursorVal
+            continuation.yield(.systemUrgentQueue(cursor: cursor, entries: entries))
+
+          case let .userQueue(cursor, entries):
+            guard let lane = entries.first?.lane else {
+              continuation.yield(.userQueue(cursor: cursor, entries: entries))
+              continue
+            }
+            let cursorVal = Int64(cursor.rawValue) ?? 0
+            switch lane {
+            case .steer:
+              if cursorVal <= lastSteerCursor { continue }
+              lastSteerCursor = cursorVal
+              continuation.yield(.userQueue(cursor: cursor, entries: entries))
+            case .followUp:
+              if cursorVal <= lastFollowUpCursor { continue }
+              lastFollowUpCursor = cursorVal
+              continuation.yield(.userQueue(cursor: cursor, entries: entries))
+            }
+
+          case let .settingsUpdated(settings):
+            continuation.yield(.settingsUpdated(settings))
+
+          case let .statusUpdated(status):
+            continuation.yield(.statusUpdated(status))
+          }
+        }
+        continuation.finish()
+      }
+
+      continuation.onTermination = { _ in
+        forwardTask.cancel()
+      }
+    }
+
+    let connectionStates = AsyncStream<SessionSubscriptionConnectionState> { continuation in
+      continuation.yield(.connected)
+      continuation.finish()
+    }
+
+    return .init(initial: initial, events: events, connectionStates: connectionStates)
+  }
+
+  private func loadInitialState(sessionID: SessionID, request: SessionSubscriptionRequest) async throws -> SessionInitialState {
+    let settings = try await store.loadSettingsSnapshot(sessionID: sessionID)
+    let status = try await store.loadStatusSnapshot(sessionID: sessionID)
+
+    let sinceCursor = Int64(request.transcriptSince?.rawValue ?? "")
+    let entries = try await store.getEntries(sessionID: sessionID.rawValue, sinceCursor: sinceCursor, sinceTime: nil)
+    let items = entries.map(wuhuToTranscriptItem)
+
+    let transcriptPages = makeTranscriptPages(items: items, pageSize: request.transcriptPageSize)
+
+    let systemUrgent = try await store.loadSystemQueueBackfill(sessionID: sessionID, since: request.systemSince)
+    let steer = try await store.loadUserQueueBackfill(sessionID: sessionID, lane: .steer, since: request.steerSince)
+    let followUp = try await store.loadUserQueueBackfill(sessionID: sessionID, lane: .followUp, since: request.followUpSince)
+
+    return .init(
+      settings: settings,
+      status: status,
+      transcriptPages: transcriptPages,
+      systemUrgent: systemUrgent,
+      steer: steer,
+      followUp: followUp,
+    )
+  }
+
+  private func makeTranscriptPages(items: [TranscriptItem], pageSize: Int) -> [TranscriptPage] {
+    let size = max(1, pageSize)
+    guard !items.isEmpty else { return [] }
+
+    var pages: [TranscriptPage] = []
+    pages.reserveCapacity((items.count / size) + 1)
+
+    var index = 0
+    while index < items.count {
+      let end = min(index + size, items.count)
+      let slice = Array(items[index ..< end])
+
+      let nextCursor: TranscriptCursor? = end < items.count
+        ? TranscriptCursor(rawValue: slice.last?.id.rawValue ?? "")
+        : nil
+
+      pages.append(.init(items: slice, nextCursor: nextCursor))
+      index = end
+    }
+
+    return pages
+  }
 }

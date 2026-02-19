@@ -260,6 +260,99 @@ public struct WuhuServer: Sendable {
       )
     }
 
+    // MARK: - V3 session contracts (commands + subscription)
+
+    router.post("v3/sessions/:id/enqueue") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      struct Query: Decodable { var lane: String }
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+      guard let lane = UserQueueLane(rawValue: query.lane) else {
+        throw HTTPError(.badRequest, message: "Invalid lane: \(query.lane)")
+      }
+
+      let message = try await request.decode(as: QueuedUserMessage.self, context: context)
+      let qid = try await service.enqueue(sessionID: .init(rawValue: id), message: message, lane: lane)
+      return try context.responseEncoder.encode(qid, from: request, context: context)
+    }
+
+    router.post("v3/sessions/:id/cancel") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      struct Query: Decodable { var lane: String }
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+      guard let lane = UserQueueLane(rawValue: query.lane) else {
+        throw HTTPError(.badRequest, message: "Invalid lane: \(query.lane)")
+      }
+
+      struct Body: Decodable { var id: QueueItemID }
+      let body = try await request.decode(as: Body.self, context: context)
+      try await service.cancel(sessionID: .init(rawValue: id), id: body.id, lane: lane)
+
+      return Response(status: .ok)
+    }
+
+    router.get("v3/sessions/:id/subscribe") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+
+      struct Query: Decodable {
+        var transcriptSince: String?
+        var transcriptPageSize: Int?
+        var systemSince: String?
+        var steerSince: String?
+        var followUpSince: String?
+      }
+
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+
+      let subRequest = SessionSubscriptionRequest(
+        transcriptSince: query.transcriptSince.flatMap { $0.isEmpty ? nil : TranscriptCursor(rawValue: $0) },
+        transcriptPageSize: query.transcriptPageSize ?? 200,
+        systemSince: query.systemSince.flatMap { $0.isEmpty ? nil : QueueCursor(rawValue: $0) },
+        steerSince: query.steerSince.flatMap { $0.isEmpty ? nil : QueueCursor(rawValue: $0) },
+        followUpSince: query.followUpSince.flatMap { $0.isEmpty ? nil : QueueCursor(rawValue: $0) },
+      )
+
+      let subscription = try await service.subscribe(sessionID: .init(rawValue: id), since: subRequest)
+
+      let byteStream = AsyncStream<ByteBuffer> { continuation in
+        let task = Task {
+          func yieldFrame(_ frame: SessionSubscriptionSSEFrame) {
+            let data = try! WuhuJSON.encoder.encode(frame)
+            var s = "data: "
+            s += String(decoding: data, as: UTF8.self)
+            s += "\n\n"
+            continuation.yield(ByteBuffer(string: s))
+          }
+
+          yieldFrame(.initial(subscription.initial))
+
+          do {
+            for try await event in subscription.events {
+              yieldFrame(.event(event))
+            }
+          } catch {
+            // Best-effort: close stream. Clients retry.
+          }
+
+          continuation.finish()
+        }
+
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
+      }
+
+      var headers = HTTPFields()
+      headers[.contentType] = "text/event-stream"
+      headers[.cacheControl] = "no-cache"
+      headers[.connection] = "keep-alive"
+
+      return Response(
+        status: .ok,
+        headers: headers,
+        body: ResponseBody(asyncSequence: byteStream),
+      )
+    }
+
     router.ws("/v2/runners/ws") { _, _ in
       .upgrade()
     } onUpgrade: { inbound, outbound, wsContext in

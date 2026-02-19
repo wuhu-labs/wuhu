@@ -100,5 +100,8 @@ struct CreateSessionView: View {
     .task {
       await store.send(.onAppear).finish()
     }
+    .onDisappear {
+      store.send(.onDisappear)
+    }
   }
 }

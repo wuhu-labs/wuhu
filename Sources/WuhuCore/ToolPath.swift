@@ -9,8 +9,15 @@ public enum ToolPath {
     s = normalizeUnicodeSpaces(s)
     s = s.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    if s == "~" { return FileManager.default.homeDirectoryForCurrentUser.path }
-    if s.hasPrefix("~/") { return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(s.dropFirst(2))).path }
+    let home = NSHomeDirectory()
+
+    if s == "~" { return home }
+    if s.hasPrefix("~/") {
+      return URL(fileURLWithPath: home, isDirectory: true)
+        .appendingPathComponent(String(s.dropFirst(2)))
+        .path
+    }
+
     return s
   }
 

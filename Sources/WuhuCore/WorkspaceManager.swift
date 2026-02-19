@@ -28,7 +28,7 @@ public enum WuhuWorkspaceError: Error, Sendable, CustomStringConvertible {
 
 public enum WuhuWorkspaceManager {
   public static func defaultWorkspacesPath() -> String {
-    FileManager.default.homeDirectoryForCurrentUser
+    URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
       .appendingPathComponent(".wuhu/workspaces")
       .path
   }
@@ -112,34 +112,45 @@ public enum WuhuWorkspaceManager {
     return root.appendingPathComponent("\(safeBase)-\(UUID().uuidString.lowercased())", isDirectory: true)
   }
 
-  private static func runStartupScript(scriptPath: String, cwd: String) async throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/bash")
-    process.arguments = ["-lc", "set -euo pipefail; bash \(shellEscape(scriptPath))"]
-    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+  #if os(macOS) || os(Linux)
+    private static func runStartupScript(scriptPath: String, cwd: String) async throws {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/bash")
+      process.arguments = ["-lc", "set -euo pipefail; bash \(shellEscape(scriptPath))"]
+      process.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
-    let outputURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("wuhu-startup-\(UUID().uuidString.lowercased()).log")
-    FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-    let outputHandle = try FileHandle(forWritingTo: outputURL)
-    process.standardOutput = outputHandle
-    process.standardError = outputHandle
+      let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wuhu-startup-\(UUID().uuidString.lowercased()).log")
+      FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+      let outputHandle = try FileHandle(forWritingTo: outputURL)
+      process.standardOutput = outputHandle
+      process.standardError = outputHandle
 
-    try process.run()
-    process.waitUntilExit()
-    try? outputHandle.close()
+      try process.run()
+      process.waitUntilExit()
+      try? outputHandle.close()
 
-    let data = (try? Data(contentsOf: outputURL)) ?? Data()
-    let output = String(decoding: data, as: UTF8.self)
-    if process.terminationStatus != 0 {
+      let data = (try? Data(contentsOf: outputURL)) ?? Data()
+      let output = String(decoding: data, as: UTF8.self)
+      if process.terminationStatus != 0 {
+        throw WuhuWorkspaceError.startupScriptFailed(
+          path: scriptPath,
+          cwd: cwd,
+          exitCode: process.terminationStatus,
+          output: output,
+        )
+      }
+    }
+  #else
+    private static func runStartupScript(scriptPath: String, cwd: String) async throws {
       throw WuhuWorkspaceError.startupScriptFailed(
         path: scriptPath,
         cwd: cwd,
-        exitCode: process.terminationStatus,
-        output: output,
+        exitCode: -1,
+        output: "Startup scripts are not supported on this platform.",
       )
     }
-  }
+  #endif
 
   private static func shellEscape(_ s: String) -> String {
     if s.isEmpty { return "''" }

@@ -83,6 +83,8 @@ targets:
         product: WuhuClient
       - package: Wuhu
         product: WuhuAPI
+      - package: Wuhu
+        product: WuhuCore
       - package: ComposableArchitecture
         product: ComposableArchitecture
       - package: SwiftCollections
@@ -134,6 +136,8 @@ targets:
         product: WuhuClient
       - package: Wuhu
         product: WuhuAPI
+      - package: Wuhu
+        product: WuhuCore
       - package: ComposableArchitecture
         product: ComposableArchitecture
       - package: SwiftCollections
