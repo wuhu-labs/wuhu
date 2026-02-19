@@ -75,6 +75,12 @@ struct ToolArgs {
     if value is NSNull { return nil }
 
     if let i = value as? Int { return i }
+    if let b = value as? Bool {
+      // Some models occasionally emit booleans for integer-typed fields.
+      // For optional integers, treat `true` as 1 and `false` as nil to avoid
+      // hard-failing tool calls on benign type mistakes.
+      return b ? 1 : nil
+    }
     if let d = value as? Double {
       guard d.isFinite else {
         throw ToolArgumentParseError(message: ToolArgs.typeMismatchMessage(

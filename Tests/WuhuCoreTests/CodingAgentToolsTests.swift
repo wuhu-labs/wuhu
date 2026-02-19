@@ -139,19 +139,38 @@ struct CodingAgentToolsTests {
     }
   }
 
-  @Test func readToolOffsetTypeMismatchHasHelpfulError() async throws {
+  @Test func readToolOffsetBoolTrueIsTreatedAsOffset1() async throws {
     let dir = try makeTempDir(prefix: "wuhu-read-type-mismatch")
     let file = (dir as NSString).appendingPathComponent("test.txt")
     try "Line 1\nLine 2\nLine 3".write(toFile: file, atomically: true, encoding: .utf8)
 
     let t = try #require(tools(cwd: dir)["read"])
+    let result = try await t.execute(toolCallId: "t-bool-offset", args: .object([
+      "path": .string(file),
+      "offset": .bool(true),
+    ]))
+    let out = textOutput(result)
+    #expect(out.contains("Line 1"))
+    #expect(out.contains("Line 2"))
+    #expect(out.contains("Line 3"))
+  }
+
+  @Test func readToolOffsetTypeMismatchHasHelpfulError() async throws {
+    let dir = try makeTempDir(prefix: "wuhu-read-type-mismatch-2")
+    let file = (dir as NSString).appendingPathComponent("test.txt")
+    try "Line 1\nLine 2\nLine 3".write(toFile: file, atomically: true, encoding: .utf8)
+
+    let t = try #require(tools(cwd: dir)["read"])
     do {
-      _ = try await t.execute(toolCallId: "t-mismatch", args: .object(["path": .string(file), "offset": .bool(true)]))
+      _ = try await t.execute(toolCallId: "t-mismatch", args: .object([
+        "path": .string(file),
+        "offset": .string("true"),
+      ]))
       #expect(Bool(false))
     } catch {
       #expect(
         String(describing: error)
-          == "read tool expects number for key path \"offset\", but value \"true\" of boolean received.",
+          == "read tool expects number for key path \"offset\", but value \"true\" of string received.",
       )
     }
   }
