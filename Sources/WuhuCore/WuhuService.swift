@@ -185,6 +185,7 @@ public actor WuhuService {
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
+    let hadRuntime = runtimes[sessionID] != nil
     if let runtime = runtimes[sessionID] {
       await runtime.stop()
       runtimes[sessionID] = nil
@@ -194,7 +195,9 @@ public actor WuhuService {
 
     var transcript = try await store.getEntries(sessionID: sessionID)
     let inferred = WuhuSessionExecutionInference.infer(from: transcript)
-    guard inferred.state == .executing else {
+
+    let shouldAppendStopMarker = hadRuntime || inferred.state == .executing
+    guard shouldAppendStopMarker else {
       return .init(repairedEntries: [], stopEntry: nil)
     }
 
@@ -206,6 +209,10 @@ public actor WuhuService {
       eventHub: eventHub,
     )
     transcript = toolRepair.transcript
+
+    for toolCallId in inferred.pendingToolCallIds.sorted() {
+      _ = try await store.setToolCallStatus(sessionID: .init(rawValue: sessionID), id: toolCallId, status: .errored)
+    }
 
     let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
@@ -221,6 +228,7 @@ public actor WuhuService {
       timestamp: Date(),
     ))
     let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
+    try await store.setSessionExecutionStatus(sessionID: .init(rawValue: sessionID), status: .stopped)
     await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
     await eventHub.publish(sessionID: sessionID, event: .idle)
 

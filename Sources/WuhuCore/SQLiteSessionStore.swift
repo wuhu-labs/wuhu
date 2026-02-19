@@ -495,6 +495,12 @@ extension SQLiteSessionStore {
     }
   }
 
+  func setSessionExecutionStatus(sessionID: SessionID, status: SessionExecutionStatus) async throws {
+    try await dbQueue.write { db in
+      try Self.setExecutionStatus(db: db, sessionID: sessionID.rawValue, status: status)
+    }
+  }
+
   func setPendingModelSelection(sessionID: SessionID, selection: WuhuSessionSettings) async throws -> SessionSettingsSnapshot {
     try await dbQueue.write { db in
       guard var row = try SessionRow.fetchOne(db, key: sessionID.rawValue) else {

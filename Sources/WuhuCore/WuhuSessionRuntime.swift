@@ -117,8 +117,15 @@ actor WuhuSessionRuntime {
   }
 
   func stop() async {
-    startTask?.cancel()
-    observeTask?.cancel()
+    let start = startTask
+    let observe = observeTask
+
+    start?.cancel()
+    observe?.cancel()
+
+    _ = await start?.result
+    _ = await observe?.result
+
     startTask = nil
     observeTask = nil
     observationReady = false
