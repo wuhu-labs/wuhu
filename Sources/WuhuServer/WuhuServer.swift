@@ -315,19 +315,25 @@ public struct WuhuServer: Sendable {
 
       let byteStream = AsyncStream<ByteBuffer> { continuation in
         let task = Task {
-          func yieldFrame(_ frame: SessionSubscriptionSSEFrame) {
-            let data = try! WuhuJSON.encoder.encode(frame)
+          func yieldFrame(_ frame: SessionSubscriptionSSEFrame) -> Bool {
+            guard let data = try? WuhuJSON.encoder.encode(frame) else { return false }
             var s = "data: "
             s += String(decoding: data, as: UTF8.self)
             s += "\n\n"
             continuation.yield(ByteBuffer(string: s))
+            return true
           }
 
-          yieldFrame(.initial(subscription.initial))
+          guard yieldFrame(.initial(subscription.initial)) else {
+            continuation.finish()
+            return
+          }
 
           do {
             for try await event in subscription.events {
-              yieldFrame(.event(event))
+              if !yieldFrame(.event(event)) {
+                break
+              }
             }
           } catch {
             // Best-effort: close stream. Clients retry.
