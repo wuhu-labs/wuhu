@@ -4,7 +4,7 @@ import PiAI
 import WuhuAPI
 
 public actor WuhuService {
-  private let store: any SessionStore
+  private let store: SQLiteSessionStore
   private let llmRequestLogger: WuhuLLMRequestLogger?
   private let retryPolicy: WuhuLLMRetryPolicy
   private let asyncBashRegistry: WuhuAsyncBashRegistry
@@ -12,10 +12,10 @@ public actor WuhuService {
   private let eventHub = WuhuLiveEventHub()
   private var asyncBashRouter: WuhuAsyncBashCompletionRouter?
 
-  private var sessionAgents: [String: WuhuSessionAgentActor] = [:]
+  private var runtimes: [String: WuhuSessionRuntime] = [:]
 
   public init(
-    store: any SessionStore,
+    store: SQLiteSessionStore,
     llmRequestLogger: WuhuLLMRequestLogger? = nil,
     retryPolicy: WuhuLLMRetryPolicy = .init(),
     asyncBashRegistry: WuhuAsyncBashRegistry = .shared,
@@ -43,37 +43,26 @@ public actor WuhuService {
     guard asyncBashRouter == nil else { return }
     let router = WuhuAsyncBashCompletionRouter(
       registry: asyncBashRegistry,
-      store: store,
-      eventHub: eventHub,
       instanceID: instanceID,
-      steerUserJSON: { [weak self] sessionID, jsonText, timestamp in
+      enqueueSystemJSON: { [weak self] sessionID, jsonText, timestamp in
         guard let self else { return }
-        await self.steerUserJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
+        try? await self.enqueueSystemJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
       }
     )
     asyncBashRouter = router
     await router.start()
   }
 
-  private func steerUserJSON(sessionID: String, jsonText: String, timestamp: Date) async {
-    if let agent = sessionAgents[sessionID] {
-      await agent.steerUser(jsonText, timestamp: timestamp)
-    }
+  private func runtime(for sessionID: String) -> WuhuSessionRuntime {
+    if let existing = runtimes[sessionID] { return existing }
+    let runtime = WuhuSessionRuntime(sessionID: .init(rawValue: sessionID), store: store, eventHub: eventHub)
+    runtimes[sessionID] = runtime
+    return runtime
   }
 
-  private func sessionAgent(for sessionID: String) -> WuhuSessionAgentActor {
-    if let existing = sessionAgents[sessionID] { return existing }
-    let actor = WuhuSessionAgentActor(
-      sessionID: sessionID,
-      store: store,
-      eventHub: eventHub,
-      llmRequestLogger: llmRequestLogger,
-      retryPolicy: retryPolicy,
-      asyncBashRegistry: asyncBashRegistry,
-      instanceID: instanceID,
-    )
-    sessionAgents[sessionID] = actor
-    return actor
+  private func enqueueSystemJSON(sessionID: String, jsonText: String, timestamp: Date) async throws {
+    let input = SystemUrgentInput(source: .asyncBashCallback, content: .text(jsonText))
+    try await runtime(for: sessionID).enqueueSystem(input: input, enqueuedAt: timestamp)
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -91,7 +80,7 @@ public actor WuhuService {
       reasoningEffort: request.reasoningEffort,
     )
 
-    let applied = try await sessionAgent(for: sessionID).setModelSelection(selection)
+    let applied = try await runtime(for: sessionID).setModelSelection(selection)
     let session = try await store.getSession(id: sessionID)
     return .init(session: session, selection: selection, applied: applied)
   }
@@ -170,23 +159,72 @@ public actor WuhuService {
     streamFn: @escaping StreamFn = PiAI.streamSimple,
   ) async throws -> WuhuPromptDetachedResponse {
     await ensureAsyncBashRouter()
-    return try await sessionAgent(for: sessionID).promptDetached(
-      input: input,
-      user: user,
-      tools: tools,
-      streamFn: streamFn
+    let session = try await store.getSession(id: sessionID)
+
+    let resolvedTools = tools ?? WuhuTools.codingAgentTools(
+      cwd: session.cwd,
+      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID)
     )
+
+    let loggedStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
+
+    let runtime = runtime(for: sessionID)
+    await runtime.setContextCwd(session.cwd)
+    await runtime.setTools(resolvedTools)
+    await runtime.setStreamFn(loggedStreamFn)
+
+    let userEntry = try await runtime.enqueueFollowUp(input: input, user: user)
+    return .init(userEntry: userEntry)
   }
 
   public func inProcessExecutionInfo(sessionID: String) async -> WuhuInProcessExecutionInfo {
-    if let agent = sessionAgents[sessionID] {
-      return await agent.inProcessExecutionInfo()
+    if let runtime = runtimes[sessionID] {
+      return await runtime.inProcessExecutionInfo()
     }
     return .init(activePromptCount: 0)
   }
 
   public func stopSession(sessionID: String, user: String? = nil) async throws -> WuhuStopSessionResponse {
-    try await sessionAgent(for: sessionID).stopSession(user: user)
+    if let runtime = runtimes[sessionID] {
+      await runtime.stop()
+      runtimes[sessionID] = nil
+    }
+
+    _ = try await store.getSession(id: sessionID)
+
+    var transcript = try await store.getEntries(sessionID: sessionID)
+    let inferred = WuhuSessionExecutionInference.infer(from: transcript)
+    guard inferred.state == .executing else {
+      return .init(repairedEntries: [], stopEntry: nil)
+    }
+
+    let toolRepair = try await WuhuToolRepairer.repairMissingToolResultsIfNeeded(
+      sessionID: sessionID,
+      transcript: transcript,
+      mode: .stopped,
+      store: store,
+      eventHub: eventHub
+    )
+    transcript = toolRepair.transcript
+
+    let stoppedBy = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    var details: [String: JSONValue] = ["wuhu_event": .string("execution_stopped")]
+    if !stoppedBy.isEmpty {
+      details["user"] = .string(stoppedBy)
+    }
+
+    let stopMessage = WuhuPersistedMessage.customMessage(.init(
+      customType: WuhuCustomMessageTypes.executionStopped,
+      content: [.text(text: "Execution stopped", signature: nil)],
+      details: .object(details),
+      display: true,
+      timestamp: Date(),
+    ))
+    let stopEntry = try await store.appendEntry(sessionID: sessionID, payload: .message(stopMessage))
+    await eventHub.publish(sessionID: sessionID, event: .entryAppended(stopEntry))
+    await eventHub.publish(sessionID: sessionID, event: .idle)
+
+    return .init(repairedEntries: toolRepair.repairEntries, stopEntry: stopEntry)
   }
 
   public func followSessionStream(
@@ -199,7 +237,7 @@ public actor WuhuService {
     let live = await eventHub.subscribe(sessionID: sessionID)
     let initial = try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
     let lastInitialCursor = initial.last?.id ?? sinceCursor ?? 0
-    let initiallyIdle: Bool = if let agent = sessionAgents[sessionID] { await agent.isIdle() } else { true }
+    let initiallyIdle: Bool = if let runtime = runtimes[sessionID] { await runtime.isIdle() } else { true }
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
       let forwardTask = Task {

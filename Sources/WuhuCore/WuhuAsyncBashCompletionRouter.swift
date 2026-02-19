@@ -4,25 +4,19 @@ import WuhuAPI
 
 actor WuhuAsyncBashCompletionRouter {
   private let registry: WuhuAsyncBashRegistry
-  private let store: any SessionStore
-  private let eventHub: WuhuLiveEventHub
   private let instanceID: String
-  private let steerUserJSON: @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void
+  private let enqueueSystemJSON: @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void
 
   private var task: Task<Void, Never>?
 
   init(
     registry: WuhuAsyncBashRegistry,
-    store: any SessionStore,
-    eventHub: WuhuLiveEventHub,
     instanceID: String,
-    steerUserJSON: @escaping @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void
+    enqueueSystemJSON: @escaping @Sendable (_ sessionID: String, _ jsonText: String, _ timestamp: Date) async -> Void
   ) {
     self.registry = registry
-    self.store = store
-    self.eventHub = eventHub
     self.instanceID = instanceID
-    self.steerUserJSON = steerUserJSON
+    self.enqueueSystemJSON = enqueueSystemJSON
   }
 
   func start() {
@@ -94,18 +88,6 @@ actor WuhuAsyncBashCompletionRouter {
 
     let jsonText = wuhuEncodeToolJSON(message)
 
-    do {
-      let entry = try await store.appendEntry(sessionID: sessionID, payload: .message(.user(.init(
-        user: WuhuUserMessage.unknownUser,
-        content: [.text(text: jsonText, signature: nil)],
-        timestamp: completion.endedAt
-      ))))
-      await eventHub.publish(sessionID: sessionID, event: .entryAppended(entry))
-    } catch {
-      // Best-effort: task may outlive the session/service.
-    }
-
-    await steerUserJSON(sessionID, jsonText, completion.endedAt)
+    await enqueueSystemJSON(sessionID, jsonText, completion.endedAt)
   }
 }
-
