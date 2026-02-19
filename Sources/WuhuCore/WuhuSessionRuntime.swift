@@ -7,7 +7,12 @@ actor WuhuSessionRuntime {
   private let sessionID: SessionID
   private let store: SQLiteSessionStore
   private let eventHub: WuhuLiveEventHub
+  private let subscriptionHub: WuhuSessionSubscriptionHub
   private let runtimeConfig: WuhuSessionRuntimeConfig
+
+  private var publishedSystemCursor: QueueCursor = .init(rawValue: "0")
+  private var publishedSteerCursor: QueueCursor = .init(rawValue: "0")
+  private var publishedFollowUpCursor: QueueCursor = .init(rawValue: "0")
 
   private let behavior: WuhuSessionBehavior
   private let loop: AgentLoop<WuhuSessionBehavior>
@@ -19,10 +24,11 @@ actor WuhuSessionRuntime {
   private var observedState: WuhuSessionLoopState = .empty
   private var observationReady: Bool = false
 
-  init(sessionID: SessionID, store: SQLiteSessionStore, eventHub: WuhuLiveEventHub) {
+  init(sessionID: SessionID, store: SQLiteSessionStore, eventHub: WuhuLiveEventHub, subscriptionHub: WuhuSessionSubscriptionHub) {
     self.sessionID = sessionID
     self.store = store
     self.eventHub = eventHub
+    self.subscriptionHub = subscriptionHub
     runtimeConfig = WuhuSessionRuntimeConfig()
     behavior = WuhuSessionBehavior(sessionID: sessionID, store: store, runtimeConfig: runtimeConfig)
     loop = AgentLoop(behavior: behavior)
@@ -74,6 +80,18 @@ actor WuhuSessionRuntime {
     let queued = observedState.followUp.pending.count
     let active = streaming ? 1 : 0
     return .init(activePromptCount: active + queued)
+  }
+
+  func enqueue(message: QueuedUserMessage, lane: UserQueueLane) async throws -> QueueItemID {
+    await ensureStarted()
+    let id = QueueItemID(rawValue: UUID().uuidString.lowercased())
+    try await loop.send(.enqueueUser(id: id, message: message, lane: lane))
+    return id
+  }
+
+  func cancel(id: QueueItemID, lane: UserQueueLane) async throws {
+    await ensureStarted()
+    try await loop.send(.cancelUser(id: id, lane: lane))
   }
 
   func enqueueFollowUp(input: String, user: String?) async throws -> WuhuSessionEntry {
@@ -131,6 +149,10 @@ actor WuhuSessionRuntime {
     observationReady = false
     streaming = false
     observedState = .empty
+
+    publishedSystemCursor = .init(rawValue: "0")
+    publishedSteerCursor = .init(rawValue: "0")
+    publishedFollowUpCursor = .init(rawValue: "0")
   }
 
   // MARK: - Observation handling
@@ -138,6 +160,11 @@ actor WuhuSessionRuntime {
   private func setInitialObservationState(_ observation: AgentLoopObservation<WuhuSessionBehavior>) async {
     observedState = observation.state
     streaming = observation.inflight != nil
+
+    publishedSystemCursor = observation.state.systemUrgent.cursor
+    publishedSteerCursor = observation.state.steer.cursor
+    publishedFollowUpCursor = observation.state.followUp.cursor
+
     observationReady = true
   }
 
@@ -148,8 +175,51 @@ actor WuhuSessionRuntime {
       switch action {
       case let .entryAppended(entry):
         await eventHub.publish(sessionID: sessionID.rawValue, event: .entryAppended(entry))
-      default:
+        await subscriptionHub.publish(
+          sessionID: sessionID.rawValue,
+          event: .transcriptAppended(.init(items: [wuhuToTranscriptItem(entry)], nextCursor: nil)),
+        )
+
+      case .sessionUpdated:
         break
+
+      case .toolCallStatusUpdated:
+        break
+
+      case .systemQueueUpdated:
+        let delta = try? await store.loadSystemQueueJournal(sessionID: sessionID, since: publishedSystemCursor)
+        if let delta {
+          publishedSystemCursor = delta.cursor
+          if !delta.entries.isEmpty {
+            await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .systemUrgentQueue(cursor: delta.cursor, entries: delta.entries))
+          }
+        }
+
+      case let .userQueueUpdated(lane, _):
+        switch lane {
+        case .steer:
+          let delta = try? await store.loadUserQueueJournal(sessionID: sessionID, lane: lane, since: publishedSteerCursor)
+          if let delta {
+            publishedSteerCursor = delta.cursor
+            if !delta.entries.isEmpty {
+              await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .userQueue(cursor: delta.cursor, entries: delta.entries))
+            }
+          }
+        case .followUp:
+          let delta = try? await store.loadUserQueueJournal(sessionID: sessionID, lane: lane, since: publishedFollowUpCursor)
+          if let delta {
+            publishedFollowUpCursor = delta.cursor
+            if !delta.entries.isEmpty {
+              await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .userQueue(cursor: delta.cursor, entries: delta.entries))
+            }
+          }
+        }
+
+      case let .settingsUpdated(settings):
+        await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .settingsUpdated(settings))
+
+      case let .statusUpdated(status):
+        await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .statusUpdated(status))
       }
 
       if isIdle() {

@@ -3,6 +3,7 @@ import Dependencies
 import Foundation
 import PiAI
 import WuhuClient
+import WuhuCore
 
 struct AppSettingsClient: Sendable {
   var load: @Sendable () -> AppSettings
@@ -49,10 +50,22 @@ struct WuhuClientProvider: Sendable {
   var make: @Sendable (URL) -> WuhuClient
 }
 
+struct SessionTransportProvider: Sendable {
+  var make: @Sendable (URL) -> RemoteSessionSSETransport
+}
+
 extension WuhuClientProvider: DependencyKey {
   static let liveValue = WuhuClientProvider(
     make: { baseURL in
       WuhuClient(baseURL: baseURL)
+    },
+  )
+}
+
+extension SessionTransportProvider: DependencyKey {
+  static let liveValue = SessionTransportProvider(
+    make: { baseURL in
+      RemoteSessionSSETransport(baseURL: baseURL)
     },
   )
 }
@@ -65,10 +78,23 @@ extension WuhuClientProvider: TestDependencyKey {
   )
 }
 
+extension SessionTransportProvider: TestDependencyKey {
+  static let testValue = SessionTransportProvider(
+    make: { baseURL in
+      RemoteSessionSSETransport(baseURL: baseURL, http: WuhuAppTestHTTPClient())
+    },
+  )
+}
+
 extension DependencyValues {
   var wuhuClientProvider: WuhuClientProvider {
     get { self[WuhuClientProvider.self] }
     set { self[WuhuClientProvider.self] = newValue }
+  }
+
+  var sessionTransportProvider: SessionTransportProvider {
+    get { self[SessionTransportProvider.self] }
+    set { self[SessionTransportProvider.self] = newValue }
   }
 }
 

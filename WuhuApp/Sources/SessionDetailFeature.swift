@@ -3,6 +3,7 @@ import Foundation
 import PiAI
 import WuhuAPI
 import WuhuClient
+import WuhuCore
 
 @Reducer
 struct SessionDetailFeature {
@@ -16,15 +17,22 @@ struct SessionDetailFeature {
     var serverURL: URL?
     var username: String?
 
-    var session: WuhuSession?
-    var transcript: IdentifiedArrayOf<WuhuSessionEntry> = []
-    var inProcessExecution: WuhuInProcessExecutionInfo?
-    var inferredExecution: WuhuSessionExecutionInference = .infer(from: [])
+    var transcript: IdentifiedArrayOf<TranscriptItem> = []
 
-    var isLoading = false
-    var isSending = false
+    var settings: SessionSettingsSnapshot?
+    var status: SessionStatusSnapshot?
+
+    var systemUrgent: SystemUrgentQueueBackfill?
+    var steer: UserQueueBackfill?
+    var followUp: UserQueueBackfill?
+
+    var isSubscribing = false
+    var isRetrying = false
+    var retryAttempt = 0
+    var retryDelaySeconds: Double = 0
+
+    var isEnqueuing = false
     var isStopping = false
-    var didPromptDeadLoop = false
 
     var isShowingModelPicker = false
     var isUpdatingModel = false
@@ -33,7 +41,6 @@ struct SessionDetailFeature {
     var error: String?
 
     var draft: String = ""
-    var streamingAssistantText: String = ""
 
     var verbosity: WuhuSessionVerbosity = .minimal
 
@@ -60,6 +67,10 @@ struct SessionDetailFeature {
         modelSelection
       }
     }
+
+    var executionStatus: SessionExecutionStatus {
+      status?.status ?? .idle
+    }
   }
 
   enum Action: BindableAction {
@@ -67,15 +78,14 @@ struct SessionDetailFeature {
     case onDisappear
     case binding(BindingAction<State>)
 
-    case refresh
-    case refreshResponse(TaskResult<WuhuGetSessionResponse>)
-
-    case startFollow
-    case followEvent(WuhuSessionStreamEvent)
-    case followFailed(String)
+    case startSubscription
+    case subscriptionInitial(SessionInitialState)
+    case subscriptionEvent(SessionEvent)
+    case connectionStateChanged(SSEConnectionState)
+    case subscriptionFailed(String)
 
     case sendTapped
-    case promptResponse(TaskResult<WuhuPromptDetachedResponse>)
+    case enqueueResponse(TaskResult<QueueItemID>)
 
     case stopTapped
     case stopResponse(TaskResult<WuhuStopSessionResponse>)
@@ -90,16 +100,15 @@ struct SessionDetailFeature {
       case didClose
     }
 
-    enum Alert: Equatable {
-      case stopDeadLoopConfirmed
-    }
+    enum Alert: Equatable {}
   }
 
   @Dependency(\.wuhuClientProvider) private var wuhuClientProvider
+  @Dependency(\.sessionTransportProvider) private var sessionTransportProvider
 
   private enum CancelID {
-    case follow
-    case prompt
+    case subscription
+    case enqueue
   }
 
   var body: some ReducerOf<Self> {
@@ -108,94 +117,114 @@ struct SessionDetailFeature {
     Reduce { state, action in
       switch action {
       case .onAppear:
-        return .merge(
-          .send(.refresh),
-          .send(.startFollow),
-        )
+        state.error = nil
+        return .send(.startSubscription)
 
       case .onDisappear:
         return .merge(
-          .cancel(id: CancelID.follow),
-          .cancel(id: CancelID.prompt),
+          .cancel(id: CancelID.subscription),
+          .cancel(id: CancelID.enqueue),
           .send(.delegate(.didClose)),
         )
 
-      case .refresh:
+      case .startSubscription:
         guard let serverURL = state.serverURL else {
           state.error = "No server selected."
           return .none
         }
-        state.isLoading = true
+
+        state.isSubscribing = true
+        state.isRetrying = false
+        state.retryAttempt = 0
+        state.retryDelaySeconds = 0
         state.error = nil
+
         let sessionID = state.sessionID
-        return .run { send in
-          await send(
-            .refreshResponse(
-              TaskResult {
-                try await wuhuClientProvider.make(serverURL).getSession(id: sessionID)
-              },
-            ),
-          )
-        }
+        let since = makeSinceRequest(from: state)
+        let transport = sessionTransportProvider.make(serverURL)
 
-      case let .refreshResponse(.success(response)):
-        state.isLoading = false
-        state.session = response.session
-        state.transcript = IdentifiedArray(uniqueElements: response.transcript)
-        state.inProcessExecution = response.inProcessExecution
-        state.inferredExecution = WuhuSessionExecutionInference.infer(from: response.transcript)
-        syncModelSelectionFromSession(response.session, transcript: response.transcript, state: &state)
-
-        if let inProcess = response.inProcessExecution,
-           !state.didPromptDeadLoop,
-           state.inferredExecution.state == .executing,
-           inProcess.activePromptCount == 0
-        {
-          state.didPromptDeadLoop = true
-          state.alert = AlertState {
-            TextState("Session looks stuck")
-          } actions: {
-            ButtonState(role: .destructive, action: .send(.stopDeadLoopConfirmed)) {
-              TextState("Stop execution")
-            }
-            ButtonState(role: .cancel) {
-              TextState("Keep")
-            }
-          } message: {
-            TextState("This session appears to be executing based on its transcript, but the server reports no active execution. Stop it by appending an “Execution stopped” entry?")
-          }
-        }
-
-        return .none
-
-      case let .refreshResponse(.failure(error)):
-        state.isLoading = false
-        state.error = "\(error)"
-        return .none
-
-      case .startFollow:
-        guard let serverURL = state.serverURL else { return .none }
-        let sessionID = state.sessionID
-        let sinceCursor = state.transcript.last?.id
         return .run { send in
           do {
-            let stream = try await wuhuClientProvider
-              .make(serverURL)
-              .followSessionStream(sessionID: sessionID, sinceCursor: sinceCursor)
-            for try await event in stream {
-              await send(.followEvent(event))
+            let result = try await transport.subscribeWithConnectionState(sessionID: .init(rawValue: sessionID), since: since)
+            await send(.subscriptionInitial(result.subscription.initial))
+
+            await withTaskGroup(of: Void.self) { group in
+              group.addTask {
+                for await connection in result.connectionStates {
+                  await send(.connectionStateChanged(connection))
+                }
+              }
+
+              group.addTask {
+                do {
+                  for try await event in result.subscription.events {
+                    await send(.subscriptionEvent(event))
+                  }
+                } catch {
+                  if Task.isCancelled { return }
+                  await send(.subscriptionFailed("\(error)"))
+                }
+              }
+
+              await group.waitForAll()
             }
           } catch {
-            await send(.followFailed("\(error)"))
+            if Task.isCancelled { return }
+            await send(.subscriptionFailed("\(error)"))
           }
         }
-        .cancellable(id: CancelID.follow, cancelInFlight: true)
+        .cancellable(id: CancelID.subscription, cancelInFlight: true)
 
-      case let .followEvent(event):
-        applyStreamEvent(event, to: &state)
+      case let .subscriptionInitial(initial):
+        state.isSubscribing = false
+
+        state.settings = initial.settings
+        state.status = initial.status
+        state.systemUrgent = initial.systemUrgent
+        state.steer = initial.steer
+        state.followUp = initial.followUp
+
+        let items = initial.transcriptPages.flatMap(\.items)
+        state.transcript = IdentifiedArray(uniqueElements: items)
+
+        syncModelSelectionFromSettings(initial.settings, state: &state)
+
         return .none
 
-      case let .followFailed(message):
+      case let .connectionStateChanged(connection):
+        switch connection {
+        case .connecting:
+          state.isSubscribing = true
+          state.isRetrying = false
+          state.retryAttempt = 0
+          state.retryDelaySeconds = 0
+
+        case .connected:
+          state.isSubscribing = false
+          state.isRetrying = false
+          state.retryAttempt = 0
+          state.retryDelaySeconds = 0
+
+        case let .retrying(attempt, delaySeconds):
+          state.isSubscribing = false
+          state.isRetrying = true
+          state.retryAttempt = attempt
+          state.retryDelaySeconds = delaySeconds
+
+        case .closed:
+          state.isSubscribing = false
+          state.isRetrying = false
+        }
+        return .none
+
+      case let .subscriptionEvent(event):
+        state.error = nil
+        apply(event: event, to: &state)
+        return .none
+
+      case let .subscriptionFailed(message):
+        state.isSubscribing = false
+        state.isRetrying = false
         state.error = message
         return .none
 
@@ -205,32 +234,36 @@ struct SessionDetailFeature {
         guard !input.isEmpty else { return .none }
 
         state.draft = ""
-        state.isSending = true
+        state.isEnqueuing = true
         state.error = nil
-        state.streamingAssistantText = ""
 
         let sessionID = state.sessionID
-        let user = state.username
+        let author: Author = {
+          let trimmed = (state.username ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          if trimmed.isEmpty { return .unknown }
+          return .participant(.init(rawValue: trimmed), kind: .human)
+        }()
+
+        let message = QueuedUserMessage(author: author, content: .text(input))
+        let transport = sessionTransportProvider.make(serverURL)
 
         return .run { send in
           await send(
-            .promptResponse(
+            .enqueueResponse(
               TaskResult {
-                try await wuhuClientProvider
-                  .make(serverURL)
-                  .promptDetached(sessionID: sessionID, input: input, user: user)
+                try await transport.enqueue(sessionID: .init(rawValue: sessionID), message: message, lane: .followUp)
               },
             ),
           )
         }
-        .cancellable(id: CancelID.prompt, cancelInFlight: true)
+        .cancellable(id: CancelID.enqueue, cancelInFlight: true)
 
-      case .promptResponse(.success):
-        // Follow stream drives transcript updates and completion (idle).
+      case .enqueueResponse(.success):
+        state.isEnqueuing = false
         return .none
 
-      case let .promptResponse(.failure(error)):
-        state.isSending = false
+      case let .enqueueResponse(.failure(error)):
+        state.isEnqueuing = false
         state.error = "\(error)"
         return .none
 
@@ -238,9 +271,10 @@ struct SessionDetailFeature {
         guard let serverURL = state.serverURL else { return .none }
         state.isStopping = true
         state.error = nil
-        state.streamingAssistantText = ""
+
         let sessionID = state.sessionID
         let user = state.username
+
         return .run { send in
           await send(
             .stopResponse(
@@ -251,16 +285,8 @@ struct SessionDetailFeature {
           )
         }
 
-      case let .stopResponse(.success(response)):
+      case .stopResponse(.success):
         state.isStopping = false
-        state.isSending = false
-        for entry in response.repairedEntries {
-          state.transcript[id: entry.id] = entry
-        }
-        if let stopEntry = response.stopEntry {
-          state.transcript[id: stopEntry.id] = stopEntry
-        }
-        state.inferredExecution = WuhuSessionExecutionInference.infer(from: Array(state.transcript))
         return .none
 
       case let .stopResponse(.failure(error)):
@@ -275,7 +301,10 @@ struct SessionDetailFeature {
           state.reasoningEffort = nil
         }
 
-        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(provider: state.provider, modelID: state.resolvedModelID)
+        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
+          provider: state.provider,
+          modelID: state.resolvedModelID,
+        )
         if let current = state.reasoningEffort,
            !supportedEfforts.contains(current)
         {
@@ -313,10 +342,6 @@ struct SessionDetailFeature {
       case let .setModelResponse(.success(response)):
         state.isUpdatingModel = false
         state.modelUpdateStatus = response.applied ? "Applied." : "Pending (will apply when session is idle)."
-        state.session = response.session
-        state.provider = response.selection.provider
-        setModelSelectionInState(provider: response.selection.provider, model: response.selection.model, transcript: Array(state.transcript), state: &state)
-        state.reasoningEffort = response.selection.reasoningEffort
         return .none
 
       case let .setModelResponse(.failure(error)):
@@ -327,9 +352,6 @@ struct SessionDetailFeature {
       case .delegate:
         return .none
 
-      case let .alert(.presented(.stopDeadLoopConfirmed)):
-        return .send(.stopTapped)
-
       case .alert:
         return .none
       }
@@ -339,43 +361,85 @@ struct SessionDetailFeature {
     }
   }
 
-  private func applyStreamEvent(_ event: WuhuSessionStreamEvent, to state: inout State) {
+  private func makeSinceRequest(from state: State) -> SessionSubscriptionRequest {
+    let transcriptSince = state.transcript.last.map { TranscriptCursor(rawValue: $0.id.rawValue) }
+
+    return SessionSubscriptionRequest(
+      transcriptSince: transcriptSince,
+      transcriptPageSize: 200,
+      systemSince: state.systemUrgent?.cursor,
+      steerSince: state.steer?.cursor,
+      followUpSince: state.followUp?.cursor,
+    )
+  }
+
+  private func apply(event: SessionEvent, to state: inout State) {
     switch event {
-    case let .entryAppended(entry):
-      state.transcript[id: entry.id] = entry
-      state.streamingAssistantText = ""
-      state.inferredExecution = WuhuSessionExecutionInference.infer(from: Array(state.transcript))
-      if case let .sessionSettings(s) = entry.payload {
-        state.session?.provider = s.provider
-        state.session?.model = s.model
-        state.provider = s.provider
-        setModelSelectionInState(provider: s.provider, model: s.model, transcript: Array(state.transcript), state: &state)
-        state.reasoningEffort = s.reasoningEffort
-        state.modelUpdateStatus = nil
+    case let .transcriptAppended(page):
+      for item in page.items {
+        state.transcript[id: item.id] = item
       }
-    case let .assistantTextDelta(delta):
-      state.streamingAssistantText += delta
-    case .idle:
-      state.isSending = false
-      state.isStopping = false
-      if state.inProcessExecution != nil {
-        state.inProcessExecution = .init(activePromptCount: 0)
+
+    case let .systemUrgentQueue(cursor, entries: entries):
+      if var backfill = state.systemUrgent {
+        backfill.cursor = cursor
+        backfill.journal.append(contentsOf: entries)
+        state.systemUrgent = backfill
       }
-    case .done:
-      break
+
+    case let .userQueue(cursor, entries):
+      guard let lane = entries.first?.lane else { break }
+      switch lane {
+      case .steer:
+        if var backfill = state.steer {
+          backfill.cursor = cursor
+          backfill.journal.append(contentsOf: entries)
+          state.steer = backfill
+        }
+      case .followUp:
+        if var backfill = state.followUp {
+          backfill.cursor = cursor
+          backfill.journal.append(contentsOf: entries)
+          state.followUp = backfill
+        }
+      }
+
+    case let .settingsUpdated(settings):
+      state.settings = settings
+      syncModelSelectionFromSettings(settings, state: &state)
+      state.modelUpdateStatus = nil
+
+    case let .statusUpdated(status):
+      state.status = status
+      if status.status == .idle {
+        state.isStopping = false
+      }
     }
   }
 
-  private func syncModelSelectionFromSession(_ session: WuhuSession, transcript: [WuhuSessionEntry], state: inout State) {
+  private func syncModelSelectionFromSettings(_ settings: SessionSettingsSnapshot, state: inout State) {
     guard !state.isShowingModelPicker else { return }
     guard !state.isUpdatingModel else { return }
 
-    state.provider = session.provider
-    setModelSelectionInState(provider: session.provider, model: session.model, transcript: transcript, state: &state)
-    state.reasoningEffort = currentReasoningEffort(from: transcript)
+    state.provider = wuhuProviderFromSettings(settings)
+    setModelSelectionInState(provider: state.provider, model: settings.effectiveModel.id, state: &state)
+    state.reasoningEffort = settings.effectiveReasoningEffort
   }
 
-  private func setModelSelectionInState(provider: WuhuProvider, model: String, transcript _: [WuhuSessionEntry], state: inout State) {
+  private func wuhuProviderFromSettings(_ settings: SessionSettingsSnapshot) -> WuhuProvider {
+    switch settings.effectiveModel.provider {
+    case .openai:
+      .openai
+    case .openaiCodex:
+      .openaiCodex
+    case .anthropic:
+      .anthropic
+    default:
+      .openai
+    }
+  }
+
+  private func setModelSelectionInState(provider: WuhuProvider, model: String, state: inout State) {
     let knownIDs = Set(WuhuModelCatalog.models(for: provider).map(\.id))
     if knownIDs.contains(model) {
       state.modelSelection = model
@@ -384,19 +448,5 @@ struct SessionDetailFeature {
       state.modelSelection = ModelSelectionUI.customModelSentinel
       state.customModel = model
     }
-  }
-
-  private func currentReasoningEffort(from transcript: [WuhuSessionEntry]) -> ReasoningEffort? {
-    for entry in transcript.reversed() {
-      if case let .sessionSettings(s) = entry.payload {
-        return s.reasoningEffort
-      }
-    }
-    for entry in transcript {
-      guard case let .header(h) = entry.payload else { continue }
-      guard let raw = h.metadata.object?["reasoningEffort"]?.stringValue else { return nil }
-      return ReasoningEffort(rawValue: raw)
-    }
-    return nil
   }
 }

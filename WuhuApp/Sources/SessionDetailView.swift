@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import SwiftUI
 import WuhuAPI
+import WuhuCore
 
 struct SessionDetailView: View {
   let store: StoreOf<SessionDetailFeature>
@@ -17,10 +18,7 @@ struct SessionDetailView: View {
     .wuhuNavigationBarTitleDisplayModeInline()
     .toolbar {
       ToolbarItem(placement: .cancellationAction) {
-        let canStop =
-          store.isSending ||
-          store.inferredExecution.state == .executing ||
-          (store.inProcessExecution?.activePromptCount ?? 0) > 0
+        let canStop = store.executionStatus == .running
 
         Button("Stop") {
           store.send(.stopTapped)
@@ -61,11 +59,15 @@ struct SessionDetailView: View {
       }
       .pickerStyle(.segmented)
 
-      if store.isLoading {
+      if store.isSubscribing || store.isRetrying {
         ProgressView()
       }
 
-      if store.isSending || store.inferredExecution.state == .executing || (store.inProcessExecution?.activePromptCount ?? 0) > 0 {
+      if store.isRetrying {
+        Text(String(format: "Retrying (%.0fs)", store.retryDelaySeconds))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else if store.executionStatus == .running {
         Text("Running")
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -85,23 +87,10 @@ struct SessionDetailView: View {
               .padding(.horizontal)
           }
 
-          let items = WuhuSessionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
+          let items = SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
           ForEach(items) { item in
             TranscriptItemRow(item: item, verbosity: store.verbosity)
               .id(item.id)
-          }
-
-          if !store.streamingAssistantText.isEmpty {
-            TranscriptSeparator()
-              .padding(.horizontal)
-            MessageBubble(
-              role: "assistant",
-              title: "Agent (streaming):",
-              text: store.streamingAssistantText,
-              isCompact: false,
-            )
-            .padding(.horizontal)
-            .id("streaming.agent")
           }
         }
         .padding(.vertical, 12)
@@ -109,16 +98,12 @@ struct SessionDetailView: View {
       .onChange(of: store.transcript.last?.id) { _, lastID in
         guard let lastID else { return }
         let lastVisibleID =
-          WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
+          SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity)
             .format(Array(store.transcript))
-            .last?.id ?? "entry.\(lastID)"
+            .last?.id ?? "entry.\(lastID.rawValue)"
         withAnimation(.easeOut(duration: 0.2)) {
           proxy.scrollTo(lastVisibleID, anchor: .bottom)
         }
-      }
-      .onChange(of: store.streamingAssistantText) { _, _ in
-        guard !store.streamingAssistantText.isEmpty else { return }
-        proxy.scrollTo("streaming.agent", anchor: .bottom)
       }
     }
   }
@@ -142,7 +127,7 @@ struct SessionDetailView: View {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 22))
       }
-      .disabled(store.isSending || store.isStopping || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      .disabled(store.isEnqueuing || store.isStopping || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
     .padding(.horizontal)
     .padding(.vertical, 10)

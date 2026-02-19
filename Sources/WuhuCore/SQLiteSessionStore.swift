@@ -845,6 +845,30 @@ extension SQLiteSessionStore {
     }
   }
 
+  func loadSystemQueueBackfill(sessionID: SessionID, since cursor: QueueCursor?) async throws -> SystemUrgentQueueBackfill {
+    try await dbQueue.read { db in
+      try Self.loadSystemQueueBackfill(db: db, sessionID: sessionID, since: cursor)
+    }
+  }
+
+  func loadUserQueueBackfill(sessionID: SessionID, lane: UserQueueLane, since cursor: QueueCursor?) async throws -> UserQueueBackfill {
+    try await dbQueue.read { db in
+      try Self.loadUserQueueBackfill(db: db, sessionID: sessionID, lane: lane, since: cursor)
+    }
+  }
+
+  func loadSystemQueueJournal(sessionID: SessionID, since cursor: QueueCursor) async throws -> (cursor: QueueCursor, entries: [SystemUrgentQueueJournalEntry]) {
+    try await dbQueue.read { db in
+      try Self.loadSystemQueueJournal(db: db, sessionID: sessionID, since: cursor)
+    }
+  }
+
+  func loadUserQueueJournal(sessionID: SessionID, lane: UserQueueLane, since cursor: QueueCursor) async throws -> (cursor: QueueCursor, entries: [UserQueueJournalEntry]) {
+    try await dbQueue.read { db in
+      try Self.loadUserQueueJournal(db: db, sessionID: sessionID, lane: lane, since: cursor)
+    }
+  }
+
   func loadToolCallStatus(sessionID: SessionID) async throws -> [String: ToolCallStatus] {
     try await dbQueue.read { db in
       let rows = try ToolCallStatusRow
@@ -951,6 +975,10 @@ extension SQLiteSessionStore {
   }
 
   private static func loadSystemQueueBackfill(db: Database, sessionID: SessionID) throws -> SystemUrgentQueueBackfill {
+    try loadSystemQueueBackfill(db: db, sessionID: sessionID, since: nil)
+  }
+
+  private static func loadSystemQueueBackfill(db: Database, sessionID: SessionID, since cursor: QueueCursor?) throws -> SystemUrgentQueueBackfill {
     let pendingRows = try SystemQueuePendingRow
       .filter(Column("sessionID") == sessionID.rawValue)
       .order(Column("enqueuedAt").asc)
@@ -960,19 +988,54 @@ extension SQLiteSessionStore {
       return .init(id: QueueItemID(rawValue: row.id), enqueuedAt: row.enqueuedAt, input: input)
     }
 
+    let sinceID = Int64(cursor?.rawValue ?? "") ?? 0
+    let maxID = try Int64.fetchOne(
+      db,
+      sql: "SELECT MAX(id) FROM system_queue_journal WHERE sessionID = ?",
+      arguments: [sessionID.rawValue],
+    ) ?? 0
+    let effectiveMax = max(maxID, sinceID)
+
     let journalRows = try SystemQueueJournalRow
-      .filter(Column("sessionID") == sessionID.rawValue)
+      .filter(Column("sessionID") == sessionID.rawValue && Column("id") > sinceID)
       .order(Column("id").asc)
       .fetchAll(db)
     let journal: [SystemUrgentQueueJournalEntry] = try journalRows.map { row in
       try WuhuJSON.decoder.decode(SystemUrgentQueueJournalEntry.self, from: row.payload)
     }
 
-    let cursorValue = (journalRows.last?.id ?? 0)
-    return .init(cursor: .init(rawValue: "\(cursorValue)"), pending: pending, journal: journal)
+    return .init(cursor: .init(rawValue: "\(effectiveMax)"), pending: pending, journal: journal)
+  }
+
+  private static func loadSystemQueueJournal(
+    db: Database,
+    sessionID: SessionID,
+    since cursor: QueueCursor,
+  ) throws -> (cursor: QueueCursor, entries: [SystemUrgentQueueJournalEntry]) {
+    let sinceID = Int64(cursor.rawValue) ?? 0
+    let maxID = try Int64.fetchOne(
+      db,
+      sql: "SELECT MAX(id) FROM system_queue_journal WHERE sessionID = ?",
+      arguments: [sessionID.rawValue],
+    ) ?? 0
+    let effectiveMax = max(maxID, sinceID)
+
+    let journalRows = try SystemQueueJournalRow
+      .filter(Column("sessionID") == sessionID.rawValue && Column("id") > sinceID)
+      .order(Column("id").asc)
+      .fetchAll(db)
+    let entries: [SystemUrgentQueueJournalEntry] = try journalRows.map { row in
+      try WuhuJSON.decoder.decode(SystemUrgentQueueJournalEntry.self, from: row.payload)
+    }
+
+    return (cursor: .init(rawValue: "\(effectiveMax)"), entries: entries)
   }
 
   private static func loadUserQueueBackfill(db: Database, sessionID: SessionID, lane: UserQueueLane) throws -> UserQueueBackfill {
+    try loadUserQueueBackfill(db: db, sessionID: sessionID, lane: lane, since: nil)
+  }
+
+  private static func loadUserQueueBackfill(db: Database, sessionID: SessionID, lane: UserQueueLane, since cursor: QueueCursor?) throws -> UserQueueBackfill {
     let pendingRows = try UserQueuePendingRow
       .filter(Column("sessionID") == sessionID.rawValue && Column("lane") == lane.rawValue)
       .order(Column("enqueuedAt").asc)
@@ -982,16 +1045,48 @@ extension SQLiteSessionStore {
       return .init(id: QueueItemID(rawValue: row.id), enqueuedAt: row.enqueuedAt, message: message)
     }
 
+    let sinceID = Int64(cursor?.rawValue ?? "") ?? 0
+    let maxID = try Int64.fetchOne(
+      db,
+      sql: "SELECT MAX(id) FROM user_queue_journal WHERE sessionID = ? AND lane = ?",
+      arguments: [sessionID.rawValue, lane.rawValue],
+    ) ?? 0
+    let effectiveMax = max(maxID, sinceID)
+
     let journalRows = try UserQueueJournalRow
-      .filter(Column("sessionID") == sessionID.rawValue && Column("lane") == lane.rawValue)
+      .filter(Column("sessionID") == sessionID.rawValue && Column("lane") == lane.rawValue && Column("id") > sinceID)
       .order(Column("id").asc)
       .fetchAll(db)
     let journal: [UserQueueJournalEntry] = try journalRows.map { row in
       try WuhuJSON.decoder.decode(UserQueueJournalEntry.self, from: row.payload)
     }
 
-    let cursorValue = (journalRows.last?.id ?? 0)
-    return .init(cursor: .init(rawValue: "\(cursorValue)"), pending: pending, journal: journal)
+    return .init(cursor: .init(rawValue: "\(effectiveMax)"), pending: pending, journal: journal)
+  }
+
+  private static func loadUserQueueJournal(
+    db: Database,
+    sessionID: SessionID,
+    lane: UserQueueLane,
+    since cursor: QueueCursor,
+  ) throws -> (cursor: QueueCursor, entries: [UserQueueJournalEntry]) {
+    let sinceID = Int64(cursor.rawValue) ?? 0
+    let maxID = try Int64.fetchOne(
+      db,
+      sql: "SELECT MAX(id) FROM user_queue_journal WHERE sessionID = ? AND lane = ?",
+      arguments: [sessionID.rawValue, lane.rawValue],
+    ) ?? 0
+    let effectiveMax = max(maxID, sinceID)
+
+    let journalRows = try UserQueueJournalRow
+      .filter(Column("sessionID") == sessionID.rawValue && Column("lane") == lane.rawValue && Column("id") > sinceID)
+      .order(Column("id").asc)
+      .fetchAll(db)
+    let entries: [UserQueueJournalEntry] = try journalRows.map { row in
+      try WuhuJSON.decoder.decode(UserQueueJournalEntry.self, from: row.payload)
+    }
+
+    return (cursor: .init(rawValue: "\(effectiveMax)"), entries: entries)
   }
 
   private static func appendEntryWithSession(db: Database, sessionRow: inout SessionRow, payload: WuhuEntryPayload, createdAt: Date) throws -> EntryRow {

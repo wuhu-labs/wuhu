@@ -1121,36 +1121,40 @@ private struct BashRunResult: Sendable {
 }
 
 private func runBash(command: String, cwd: String, timeoutSeconds: Double?) async throws -> BashRunResult {
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/bin/bash")
-  process.arguments = ["-lc", command]
-  process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+  #if os(macOS) || os(Linux)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/bash")
+    process.arguments = ["-lc", command]
+    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
-  let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("wuhu-bash-\(UUID().uuidString.lowercased()).log")
-  FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-  let outputHandle = try FileHandle(forWritingTo: outputURL)
-  process.standardOutput = outputHandle
-  process.standardError = outputHandle
+    let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("wuhu-bash-\(UUID().uuidString.lowercased()).log")
+    FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+    let outputHandle = try FileHandle(forWritingTo: outputURL)
+    process.standardOutput = outputHandle
+    process.standardError = outputHandle
 
-  try process.run()
+    try process.run()
 
-  let start = Date()
-  var timedOut = false
-  while process.isRunning {
-    if let timeoutSeconds, timeoutSeconds > 0, Date().timeIntervalSince(start) > timeoutSeconds {
-      timedOut = true
-      process.terminate()
-      break
+    let start = Date()
+    var timedOut = false
+    while process.isRunning {
+      if let timeoutSeconds, timeoutSeconds > 0, Date().timeIntervalSince(start) > timeoutSeconds {
+        timedOut = true
+        process.terminate()
+        break
+      }
+      try await Task.sleep(nanoseconds: 50_000_000)
     }
-    try await Task.sleep(nanoseconds: 50_000_000)
-  }
 
-  process.waitUntilExit()
-  try? outputHandle.close()
+    process.waitUntilExit()
+    try? outputHandle.close()
 
-  let data = (try? Data(contentsOf: outputURL)) ?? Data()
-  let output = String(decoding: data, as: UTF8.self)
-  return .init(exitCode: process.terminationStatus, output: output, timedOut: timedOut, terminated: false, fullOutputPath: outputURL.path)
+    let data = (try? Data(contentsOf: outputURL)) ?? Data()
+    let output = String(decoding: data, as: UTF8.self)
+    return .init(exitCode: process.terminationStatus, output: output, timedOut: timedOut, terminated: false, fullOutputPath: outputURL.path)
+  #else
+    throw PiAIError.unsupported("bash is not supported on this platform")
+  #endif
 }
 
 private extension String {

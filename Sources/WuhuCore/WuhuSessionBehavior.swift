@@ -68,7 +68,7 @@ struct WuhuSessionBehavior: AgentBehavior {
   func loadState() async throws -> State {
     let parts = try await store.loadLoopStateParts(sessionID: sessionID)
     return .init(
-      transcript: parts.entries.map(toTranscriptItem),
+      transcript: parts.entries.map(wuhuToTranscriptItem),
       toolCallStatus: parts.toolCallStatus,
       entries: parts.entries,
       settings: parts.settings,
@@ -87,7 +87,7 @@ struct WuhuSessionBehavior: AgentBehavior {
 
     case let .entryAppended(entry):
       state.entries.append(entry)
-      state.transcript.append(toTranscriptItem(entry))
+      state.transcript.append(wuhuToTranscriptItem(entry))
 
     case let .toolCallStatusUpdated(id, status):
       state.toolCallStatus[id] = status
@@ -494,70 +494,4 @@ private func modelFromSettings(_ settings: SessionSettingsSnapshot) -> Model {
     .openai
   }
   return .init(id: settings.effectiveModel.id, provider: provider)
-}
-
-private func toTranscriptItem(_ entry: WuhuSessionEntry) -> TranscriptItem {
-  let id = TranscriptEntryID(rawValue: "\(entry.id)")
-  let createdAt = entry.createdAt
-
-  func textFromBlocks(_ blocks: [WuhuContentBlock]) -> String {
-    blocks.compactMap { block in
-      if case let .text(text, _) = block { return text }
-      return nil
-    }.joined(separator: "\n")
-  }
-
-  switch entry.payload {
-  case let .message(m):
-    switch m {
-    case let .user(u):
-      return .init(
-        id: id,
-        createdAt: createdAt,
-        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(u.content)))),
-      )
-    case let .assistant(a):
-      return .init(
-        id: id,
-        createdAt: createdAt,
-        entry: .message(.init(author: .unknown, content: .text(textFromBlocks(a.content)))),
-      )
-    case let .customMessage(c):
-      return .init(
-        id: id,
-        createdAt: createdAt,
-        entry: .message(.init(author: .system, content: .text(textFromBlocks(c.content)))),
-      )
-    case let .toolResult(t):
-      return .init(
-        id: id,
-        createdAt: createdAt,
-        entry: .tool(.init(name: t.toolName, detail: textFromBlocks(t.content))),
-      )
-    case .unknown:
-      return .init(
-        id: id,
-        createdAt: createdAt,
-        entry: .diagnostic(.init(message: "unknown message")),
-      )
-    }
-
-  case let .toolExecution(t):
-    return .init(id: id, createdAt: createdAt, entry: .tool(.init(name: t.toolName, detail: t.phase.rawValue)))
-
-  case .compaction:
-    return .init(id: id, createdAt: createdAt, entry: .marker(.executionResumed(trigger: .system)))
-
-  case .sessionSettings:
-    return .init(id: id, createdAt: createdAt, entry: .marker(.executionResumed(trigger: .system)))
-
-  case .header:
-    return .init(id: id, createdAt: createdAt, entry: .marker(.participantJoined(.system)))
-
-  case let .custom(customType, _):
-    return .init(id: id, createdAt: createdAt, entry: .diagnostic(.init(message: "custom: \(customType)")))
-
-  case .unknown:
-    return .init(id: id, createdAt: createdAt, entry: .diagnostic(.init(message: "unknown payload")))
-  }
 }

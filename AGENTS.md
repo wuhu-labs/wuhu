@@ -89,6 +89,12 @@ When you are assigned to work on a `WUHU-####` issue, you must create a new bran
 3. If the current branch (either you created or already present) is behind `origin/main`, bring it up to the latest `main` before you start your work.
 4. After you finish your work and perform validations, create a PR and make sure all checks pass before you finish your work.
 
+## WuhuCore
+
+Before modifying anything in `Sources/WuhuCore/`, read the DocC index (`Sources/WuhuCore/WuhuCore.docc/WuhuCore.md`) to understand the module's architecture and contract boundaries.
+
+Files under `Sources/WuhuCore/Contracts/` are the human-authored alignment surface. **Do not add, remove, or modify contract types without explicit human approval.**
+
 ## Notes
 
 General documentation lives in `docs/`.
