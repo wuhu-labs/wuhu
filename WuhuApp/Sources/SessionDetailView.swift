@@ -87,25 +87,25 @@ struct SessionDetailView: View {
               .padding(.horizontal)
           }
 
-          let items = SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
+          let items = WuhuSessionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
           ForEach(items) { item in
             TranscriptItemRow(item: item, verbosity: store.verbosity)
               .id(item.id)
           }
         }
         .padding(.vertical, 12)
-      }
-      .onChange(of: store.transcript.last?.id) { _, lastID in
-        guard let lastID else { return }
-        let lastVisibleID =
-          SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity)
+    }
+    .onChange(of: store.transcript.last?.id) { _, lastID in
+      guard let lastID else { return }
+      let lastVisibleID =
+          WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
             .format(Array(store.transcript))
-            .last?.id ?? "entry.\(lastID.rawValue)"
-        withAnimation(.easeOut(duration: 0.2)) {
-          proxy.scrollTo(lastVisibleID, anchor: .bottom)
-        }
+            .last?.id ?? "entry.\(lastID)"
+      withAnimation(.easeOut(duration: 0.2)) {
+        proxy.scrollTo(lastVisibleID, anchor: .bottom)
       }
     }
+  }
   }
 
   private var composer: some View {

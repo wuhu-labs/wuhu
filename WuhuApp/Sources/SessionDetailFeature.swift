@@ -17,7 +17,7 @@ struct SessionDetailFeature {
     var serverURL: URL?
     var username: String?
 
-    var transcript: IdentifiedArrayOf<TranscriptItem> = []
+    var transcript: IdentifiedArrayOf<WuhuSessionEntry> = []
 
     var settings: SessionSettingsSnapshot?
     var status: SessionStatusSnapshot?
@@ -184,8 +184,7 @@ struct SessionDetailFeature {
         state.steer = initial.steer
         state.followUp = initial.followUp
 
-        let items = initial.transcriptPages.flatMap(\.items)
-        state.transcript = IdentifiedArray(uniqueElements: items)
+        state.transcript = IdentifiedArray(uniqueElements: initial.transcript)
 
         syncModelSelectionFromSettings(initial.settings, state: &state)
 
@@ -362,7 +361,7 @@ struct SessionDetailFeature {
   }
 
   private func makeSinceRequest(from state: State) -> SessionSubscriptionRequest {
-    let transcriptSince = state.transcript.last.map { TranscriptCursor(rawValue: $0.id.rawValue) }
+    let transcriptSince = state.transcript.last.map { TranscriptCursor(rawValue: String($0.id)) }
 
     return SessionSubscriptionRequest(
       transcriptSince: transcriptSince,
@@ -375,9 +374,9 @@ struct SessionDetailFeature {
 
   private func apply(event: SessionEvent, to state: inout State) {
     switch event {
-    case let .transcriptAppended(page):
-      for item in page.items {
-        state.transcript[id: item.id] = item
+    case let .transcriptAppended(entries):
+      for entry in entries {
+        state.transcript[id: entry.id] = entry
       }
 
     case let .systemUrgentQueue(cursor, entries: entries):

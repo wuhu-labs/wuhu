@@ -241,7 +241,7 @@ public actor WuhuService {
 
     await subscriptionHub.publish(
       sessionID: sessionID,
-      event: .transcriptAppended(.init(items: [wuhuToTranscriptItem(stopEntry)], nextCursor: nil)),
+      event: .transcriptAppended([stopEntry]),
     )
     if let status = try? await store.loadStatusSnapshot(sessionID: .init(rawValue: sessionID)) {
       await subscriptionHub.publish(sessionID: sessionID, event: .statusUpdated(status))
@@ -348,7 +348,7 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
 
     let lastTranscriptID0: Int64 = {
       let fromRequest = Int64(request.transcriptSince?.rawValue ?? "") ?? 0
-      let fromInitial = initial.transcriptPages.last?.items.last.flatMap { Int64($0.id.rawValue) } ?? 0
+      let fromInitial = initial.transcript.last?.id ?? 0
       return max(fromRequest, fromInitial)
     }()
 
@@ -367,11 +367,11 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
           if Task.isCancelled { break }
 
           switch event {
-          case let .transcriptAppended(page):
-            let filtered = page.items.filter { (Int64($0.id.rawValue) ?? 0) > lastTranscriptID }
+          case let .transcriptAppended(entries):
+            let filtered = entries.filter { $0.id > lastTranscriptID }
             guard !filtered.isEmpty else { continue }
-            lastTranscriptID = max(lastTranscriptID, filtered.map { Int64($0.id.rawValue) ?? 0 }.max() ?? lastTranscriptID)
-            continuation.yield(.transcriptAppended(.init(items: filtered, nextCursor: page.nextCursor)))
+            lastTranscriptID = max(lastTranscriptID, filtered.map(\.id).max() ?? lastTranscriptID)
+            continuation.yield(.transcriptAppended(filtered))
 
           case let .systemUrgentQueue(cursor, entries):
             let cursorVal = Int64(cursor.rawValue) ?? 0
@@ -420,9 +420,7 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
 
     let sinceCursor = Int64(request.transcriptSince?.rawValue ?? "")
     let entries = try await store.getEntries(sessionID: sessionID.rawValue, sinceCursor: sinceCursor, sinceTime: nil)
-    let items = entries.map(wuhuToTranscriptItem)
-
-    let transcriptPages = makeTranscriptPages(items: items, pageSize: request.transcriptPageSize)
+    let transcript = entries
 
     let systemUrgent = try await store.loadSystemQueueBackfill(sessionID: sessionID, since: request.systemSince)
     let steer = try await store.loadUserQueueBackfill(sessionID: sessionID, lane: .steer, since: request.steerSince)
@@ -431,33 +429,10 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
     return .init(
       settings: settings,
       status: status,
-      transcriptPages: transcriptPages,
+      transcript: transcript,
       systemUrgent: systemUrgent,
       steer: steer,
       followUp: followUp,
     )
-  }
-
-  private func makeTranscriptPages(items: [TranscriptItem], pageSize: Int) -> [TranscriptPage] {
-    let size = max(1, pageSize)
-    guard !items.isEmpty else { return [] }
-
-    var pages: [TranscriptPage] = []
-    pages.reserveCapacity((items.count / size) + 1)
-
-    var index = 0
-    while index < items.count {
-      let end = min(index + size, items.count)
-      let slice = Array(items[index ..< end])
-
-      let nextCursor: TranscriptCursor? = end < items.count
-        ? TranscriptCursor(rawValue: slice.last?.id.rawValue ?? "")
-        : nil
-
-      pages.append(.init(items: slice, nextCursor: nextCursor))
-      index = end
-    }
-
-    return pages
   }
 }

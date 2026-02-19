@@ -47,7 +47,7 @@ public actor AgentLoop<B: AgentBehavior> {
 
   public init(behavior: B) {
     self.behavior = behavior
-    state = B.State.empty
+    state = B.emptyState
   }
 
   // MARK: - Observation

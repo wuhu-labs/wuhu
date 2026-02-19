@@ -1,21 +1,6 @@
 import Foundation
 import PiAI
 
-// MARK: - Agent Loop State
-
-/// Minimum state shape the ``AgentLoop`` requires for orchestration.
-///
-/// The loop reads `transcript` and `toolCallStatus` to schedule tool
-/// execution and decide when to go idle. The behavior's concrete `State`
-/// type can include additional fields (queues, settings, etc.) — the loop
-/// applies actions to them via ``AgentBehavior/apply(_:to:)`` but never
-/// reads them directly.
-public protocol AgentLoopState: Sendable, Equatable {
-  var transcript: [TranscriptItem] { get set }
-  var toolCallStatus: [String: ToolCallStatus] { get set }
-  static var empty: Self { get }
-}
-
 // MARK: - Agent Behavior
 
 /// Domain-specific feature that drives an ``AgentLoop``.
@@ -43,10 +28,12 @@ public protocol AgentLoopState: Sendable, Equatable {
 public protocol AgentBehavior: Sendable {
   // MARK: Associated Types
 
-  /// Full state held by the loop. Must expose transcript and tool status
-  /// via ``AgentLoopState``, but can include arbitrary domain fields
-  /// (queues, settings, etc.).
-  associatedtype State: AgentLoopState
+  /// Full state held by the loop.
+  ///
+  /// The loop treats state as an opaque value — it is owned and evolved by
+  /// the behavior via ``apply(_:to:)``. The state must be equatable to support
+  /// observation snapshots and invariant checks.
+  associatedtype State: Sendable & Equatable
 
   /// Describes a persisted mutation. Applied to state by ``apply(_:to:)``,
   /// then emitted to observers.
@@ -66,6 +53,12 @@ public protocol AgentBehavior: Sendable {
   associatedtype ToolResult: Sendable
 
   // MARK: State Management
+
+  /// Placeholder state used before ``loadState()`` runs.
+  ///
+  /// The loop initializes synchronously, but real state is loaded async at
+  /// startup. This value should be cheap and deterministic.
+  static var emptyState: State { get }
 
   /// Load full state from the database. Called once on startup.
   func loadState() async throws -> State
