@@ -162,7 +162,7 @@ struct AgentsContextTests {
     )
 
     func runOnce() async throws {
-      let baselineCursor = (try await service.getTranscript(sessionID: session.id).last?.id) ?? 0
+      let baselineCursor = try await (service.getTranscript(sessionID: session.id).last?.id) ?? 0
       _ = try await service.enqueue(
         sessionID: .init(rawValue: session.id),
         message: .init(author: .unknown, content: .text("hello")),

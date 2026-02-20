@@ -217,15 +217,14 @@ public actor WuhuService {
     let initial = try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
     let lastInitialCursor = initial.last?.id ?? sinceCursor ?? 0
     let status = try? await store.loadStatusSnapshot(sessionID: .init(rawValue: sessionID))
-    let initiallyIdle: Bool
-    if let runtime = runtimes[sessionID] {
+    let initiallyIdle: Bool = if let runtime = runtimes[sessionID] {
       if status?.status == .running {
-        initiallyIdle = false
+        false
       } else {
-        initiallyIdle = await runtime.isIdle()
+        await runtime.isIdle()
       }
     } else {
-      initiallyIdle = true
+      true
     }
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in

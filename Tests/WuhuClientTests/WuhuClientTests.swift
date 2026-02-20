@@ -89,7 +89,7 @@ struct WuhuClientTests {
                 payload: .message(.user(.init(
                   user: "unknown_user",
                   content: [.text(text: "baseline", signature: nil)],
-                  timestamp: now
+                  timestamp: now,
                 ))),
               ),
             ],
