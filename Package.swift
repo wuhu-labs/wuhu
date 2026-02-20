@@ -89,6 +89,7 @@ let package = Package(
       name: "WuhuClient",
       dependencies: [
         "WuhuAPI",
+        "WuhuCore",
       ],
       swiftSettings: strictConcurrency,
     ),

@@ -8,6 +8,8 @@ public actor WuhuService {
   private let llmRequestLogger: WuhuLLMRequestLogger?
   private let retryPolicy: WuhuLLMRetryPolicy
   private let asyncBashRegistry: WuhuAsyncBashRegistry
+  private let remoteToolsProvider: (@Sendable (_ sessionID: String, _ runnerName: String) async throws -> [AnyAgentTool])?
+  private let baseStreamFn: StreamFn
   private let instanceID: String
   private let eventHub = WuhuLiveEventHub()
   private let subscriptionHub = WuhuSessionSubscriptionHub()
@@ -20,11 +22,15 @@ public actor WuhuService {
     llmRequestLogger: WuhuLLMRequestLogger? = nil,
     retryPolicy: WuhuLLMRetryPolicy = .init(),
     asyncBashRegistry: WuhuAsyncBashRegistry = .shared,
+    remoteToolsProvider: (@Sendable (_ sessionID: String, _ runnerName: String) async throws -> [AnyAgentTool])? = nil,
+    baseStreamFn: @escaping StreamFn = PiAI.streamSimple,
   ) {
     self.store = store
     self.llmRequestLogger = llmRequestLogger
     self.retryPolicy = retryPolicy
     self.asyncBashRegistry = asyncBashRegistry
+    self.remoteToolsProvider = remoteToolsProvider
+    self.baseStreamFn = baseStreamFn
     instanceID = UUID().uuidString.lowercased()
   }
 
@@ -133,56 +139,6 @@ public actor WuhuService {
     try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
   }
 
-  public func promptStream(
-    sessionID: String,
-    input: String,
-    user: String? = nil,
-    tools: [AnyAgentTool]? = nil,
-    streamFn: @escaping StreamFn = PiAI.streamSimple,
-  ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    let detached = try await promptDetached(
-      sessionID: sessionID,
-      input: input,
-      user: user,
-      tools: tools,
-      streamFn: streamFn,
-    )
-
-    return try await followSessionStream(
-      sessionID: sessionID,
-      sinceCursor: detached.userEntry.parentEntryID,
-      sinceTime: nil,
-      stopAfterIdle: true,
-      timeoutSeconds: nil,
-    )
-  }
-
-  public func promptDetached(
-    sessionID: String,
-    input: String,
-    user: String? = nil,
-    tools: [AnyAgentTool]? = nil,
-    streamFn: @escaping StreamFn = PiAI.streamSimple,
-  ) async throws -> WuhuPromptDetachedResponse {
-    await ensureAsyncBashRouter()
-    let session = try await store.getSession(id: sessionID)
-
-    let resolvedTools = tools ?? WuhuTools.codingAgentTools(
-      cwd: session.cwd,
-      asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID, ownerID: instanceID),
-    )
-
-    let loggedStreamFn = llmRequestLogger?.makeLoggedStreamFn(base: streamFn, sessionID: sessionID, purpose: .agent) ?? streamFn
-
-    let runtime = runtime(for: sessionID)
-    await runtime.setContextCwd(session.cwd)
-    await runtime.setTools(resolvedTools)
-    await runtime.setStreamFn(loggedStreamFn)
-
-    let userEntry = try await runtime.enqueueFollowUp(input: input, user: user)
-    return .init(userEntry: userEntry)
-  }
-
   public func inProcessExecutionInfo(sessionID: String) async -> WuhuInProcessExecutionInfo {
     if let runtime = runtimes[sessionID] {
       return await runtime.inProcessExecutionInfo()
@@ -260,7 +216,17 @@ public actor WuhuService {
     let live = await eventHub.subscribe(sessionID: sessionID)
     let initial = try await store.getEntries(sessionID: sessionID, sinceCursor: sinceCursor, sinceTime: sinceTime)
     let lastInitialCursor = initial.last?.id ?? sinceCursor ?? 0
-    let initiallyIdle: Bool = if let runtime = runtimes[sessionID] { await runtime.isIdle() } else { true }
+    let status = try? await store.loadStatusSnapshot(sessionID: .init(rawValue: sessionID))
+    let initiallyIdle: Bool
+    if let runtime = runtimes[sessionID] {
+      if status?.status == .running {
+        initiallyIdle = false
+      } else {
+        initiallyIdle = await runtime.isIdle()
+      }
+    } else {
+      initiallyIdle = true
+    }
 
     return AsyncThrowingStream(WuhuSessionStreamEvent.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
       let forwardTask = Task {
@@ -321,8 +287,29 @@ public actor WuhuService {
 
 extension WuhuService: SessionCommanding, SessionSubscribing {
   public func enqueue(sessionID: SessionID, message: QueuedUserMessage, lane: UserQueueLane) async throws -> QueueItemID {
-    _ = try await store.getSession(id: sessionID.rawValue)
+    await ensureAsyncBashRouter()
+    let session = try await store.getSession(id: sessionID.rawValue)
+
+    let resolvedTools: [AnyAgentTool] = if let runnerName = session.runnerName, !runnerName.isEmpty {
+      if let remoteToolsProvider {
+        try await remoteToolsProvider(sessionID.rawValue, runnerName)
+      } else {
+        // Remote sessions require a server-provided tool executor; fail loudly.
+        throw PiAIError.unsupported("Session '\(sessionID.rawValue)' uses runner '\(runnerName)', but no remoteToolsProvider is configured")
+      }
+    } else {
+      WuhuTools.codingAgentTools(
+        cwd: session.cwd,
+        asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID.rawValue, ownerID: instanceID),
+      )
+    }
+
+    let streamFn = llmRequestLogger?.makeLoggedStreamFn(base: baseStreamFn, sessionID: sessionID.rawValue, purpose: .agent) ?? baseStreamFn
+
     let runtime = runtime(for: sessionID.rawValue)
+    await runtime.setContextCwd(session.cwd)
+    await runtime.setTools(resolvedTools)
+    await runtime.setStreamFn(streamFn)
     await runtime.ensureStarted()
     return try await runtime.enqueue(message: message, lane: lane)
   }

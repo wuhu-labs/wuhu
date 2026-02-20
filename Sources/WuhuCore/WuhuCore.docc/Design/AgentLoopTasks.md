@@ -10,8 +10,8 @@ This design keeps the agentic loop alive while still respecting structured concu
 - `WuhuService.startAgentLoopManager()` starts long-lived **background listeners** (for example async-bash completion routing).
 - Wuhu starts one long-lived **per-session actor** (`WuhuSessionRuntime`) per session (as needed).
 - `WuhuSessionRuntime` owns a persistent `AgentLoop<WuhuSessionBehavior>` and acts as the session’s execution loop.
-- `POST /v2/sessions/:id/prompt` should be modeled as a low-latency command that enqueues user input (steer or follow-up) without waiting for agent execution.
-- `GET /v2/sessions/:id/follow` is the canonical streaming channel for UI/CLI.
+- `POST /v1/sessions/:id/enqueue` should be modeled as a low-latency command that enqueues user input (steer or follow-up) without waiting for agent execution.
+- `GET /v1/sessions/:id/follow` is the canonical streaming channel for UI/CLI.
 
 For the target meaning boundary (queues + subscription), see the Session Contracts design article.
 
@@ -43,4 +43,4 @@ Clients that want live output should follow the session and render `WuhuSessionS
 ## Cancellation
 
 - Cancelling a follow stream **must not** cancel the agent loop.
-- Stopping a session (`POST /v2/sessions/:id/stop`) aborts the active agent execution and appends an “Execution stopped” entry.
+- Stopping a session (`POST /v1/sessions/:id/stop`) aborts the active agent execution and appends an “Execution stopped” entry.

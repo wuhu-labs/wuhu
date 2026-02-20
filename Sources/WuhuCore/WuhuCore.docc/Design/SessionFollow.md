@@ -25,13 +25,13 @@ Both the `prompt` and `get-session` commands surface these cursors so coding age
 
 ### Non-follow (query)
 
-- `GET /v2/sessions/:id?sinceCursor=…&sinceTime=…`
+- `GET /v1/sessions/:id?sinceCursor=…&sinceTime=…`
 
 Returns `WuhuGetSessionResponse` where `transcript` is filtered by the optional cursor/time constraints.
 
 ### Follow (SSE)
 
-- `GET /v2/sessions/:id/follow?sinceCursor=…&sinceTime=…&stopAfterIdle=1&timeoutSeconds=…`
+- `GET /v1/sessions/:id/follow?sinceCursor=…&sinceTime=…&stopAfterIdle=1&timeoutSeconds=…`
 
 Returns `text/event-stream` where each `data:` frame is a JSON-encoded `WuhuSessionStreamEvent`.
 

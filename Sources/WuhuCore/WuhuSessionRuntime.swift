@@ -94,20 +94,6 @@ actor WuhuSessionRuntime {
     try await loop.send(.cancelUser(id: id, lane: lane))
   }
 
-  func enqueueFollowUp(input: String, user: String?) async throws -> WuhuSessionEntry {
-    await ensureStarted()
-    let author: Author = {
-      let trimmed = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-      if trimmed.isEmpty { return .unknown }
-      return .participant(.init(rawValue: trimmed), kind: .human)
-    }()
-    let message = QueuedUserMessage(author: author, content: .text(input))
-
-    let id = QueueItemID(rawValue: UUID().uuidString.lowercased())
-    try await loop.send(.enqueueUser(id: id, message: message, lane: .followUp))
-    return try await waitForMaterialization(queueItemID: id, lane: .followUp)
-  }
-
   func enqueueSystem(input: SystemUrgentInput, enqueuedAt: Date = Date()) async throws {
     await ensureStarted()
     let id = QueueItemID(rawValue: UUID().uuidString.lowercased())
@@ -171,6 +157,7 @@ actor WuhuSessionRuntime {
   private func handleLoopEvent(_ event: AgentLoopEvent<WuhuSessionCommittedAction, WuhuSessionStreamAction>) async {
     switch event {
     case let .committed(action):
+      let wasIdle = isIdle()
       behavior.apply(action, to: &observedState)
       switch action {
       case let .entryAppended(entry):
@@ -222,7 +209,8 @@ actor WuhuSessionRuntime {
         await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .statusUpdated(status))
       }
 
-      if isIdle() {
+      let nowIdle = isIdle()
+      if nowIdle, !wasIdle {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .idle)
         // Best-effort: apply deferred model changes once idle.
         Task { [weak self] in
@@ -240,48 +228,13 @@ actor WuhuSessionRuntime {
       }
 
     case .streamEnded:
+      let wasIdle = isIdle()
       streaming = false
-      if isIdle() {
+      let nowIdle = isIdle()
+      if nowIdle, !wasIdle {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .idle)
       }
     }
   }
 
-  // MARK: - Waiting helpers
-
-  private func waitForMaterialization(queueItemID: QueueItemID, lane: UserQueueLane) async throws -> WuhuSessionEntry {
-    let timeoutNs: UInt64 = 120_000_000_000 // 120s
-    let start = DispatchTime.now().uptimeNanoseconds
-
-    while true {
-      if let transcriptEntryID = materializedTranscriptEntryID(queueItemID: queueItemID, lane: lane) {
-        if let entry = observedState.entries.first(where: { transcriptEntryID.rawValue == "\($0.id)" }) {
-          return entry
-        }
-      }
-
-      if DispatchTime.now().uptimeNanoseconds - start > timeoutNs {
-        throw PiAIError.unsupported("Timed out waiting for prompt materialization")
-      }
-      try await Task.sleep(nanoseconds: 10_000_000)
-    }
-  }
-
-  private func materializedTranscriptEntryID(queueItemID: QueueItemID, lane: UserQueueLane) -> TranscriptEntryID? {
-    let journal = switch lane {
-    case .steer:
-      observedState.steer.journal
-    case .followUp:
-      observedState.followUp.journal
-    }
-
-    for entry in journal.reversed() {
-      if case let .materialized(lane: _, id: id, transcriptEntryID: transcriptEntryID, at: _) = entry,
-         id == queueItemID
-      {
-        return transcriptEntryID
-      }
-    }
-    return nil
-  }
 }

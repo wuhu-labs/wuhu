@@ -71,7 +71,7 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
 
   public func enqueue(sessionID: SessionID, message: QueuedUserMessage, lane: UserQueueLane) async throws -> QueueItemID {
     let url = baseURL
-      .appending(path: "v3")
+      .appending(path: "v1")
       .appending(path: "sessions")
       .appending(path: sessionID.rawValue)
       .appending(path: "enqueue")
@@ -92,7 +92,7 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
     struct CancelBody: Codable, Sendable { var id: QueueItemID }
 
     let url = baseURL
-      .appending(path: "v3")
+      .appending(path: "v1")
       .appending(path: "sessions")
       .appending(path: sessionID.rawValue)
       .appending(path: "cancel")
@@ -229,11 +229,6 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
     connectionContinuation.onTermination = { _ in
       task.cancel()
     }
-    initialContinuation.onTermination = { termination in
-      if case .cancelled = termination {
-        task.cancel()
-      }
-    }
 
     var it = initialStream.makeAsyncIterator()
     guard let initial = try await it.next() else {
@@ -248,7 +243,7 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
 
   private func makeSubscribeRequest(sessionID: SessionID, request: SessionSubscriptionRequest) -> HTTPRequest {
     var url = baseURL
-      .appending(path: "v3")
+      .appending(path: "v1")
       .appending(path: "sessions")
       .appending(path: sessionID.rawValue)
       .appending(path: "subscribe")
@@ -333,7 +328,7 @@ public enum RemoteSessionSSETransportError: Error, Sendable, Equatable {
   case streamEnded
 }
 
-/// Wire format for `GET /v3/sessions/:id/subscribe`.
+/// Wire format for `GET /v1/sessions/:id/subscribe`.
 public enum SessionSubscriptionSSEFrame: Sendable, Hashable, Codable {
   case initial(SessionInitialState)
   case event(SessionEvent)

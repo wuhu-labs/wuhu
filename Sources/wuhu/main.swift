@@ -142,8 +142,8 @@ struct WuhuCLI: AsyncParsableCommand {
         )
 
         if detach {
-          let response = try await client.promptDetached(sessionID: sessionId, input: text, user: username)
-          printer.printEntryIfVisible(response.userEntry)
+          let qid = try await client.enqueue(sessionID: sessionId, input: text, user: username, lane: .followUp)
+          FileHandle.standardOutput.write(Data("enqueued  id=\(qid)\n".utf8))
           return
         }
 

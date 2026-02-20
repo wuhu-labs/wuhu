@@ -38,7 +38,7 @@ final class SessionsFeatureTests: XCTestCase {
 
     let http = MockHTTPClient(
       dataHandler: { request in
-        XCTAssertEqual(request.url.absoluteString, "http://127.0.0.1:5530/v2/sessions")
+        XCTAssertEqual(request.url.absoluteString, "http://127.0.0.1:5530/v1/sessions")
         XCTAssertEqual(request.method, "GET")
         let data = try WuhuJSON.encoder.encode([session])
         return (data, HTTPResponse(statusCode: 200))

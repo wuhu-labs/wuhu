@@ -22,16 +22,9 @@ struct AsyncBashTests {
   @Test func asyncBashAppendsCompletionMessageBeforeIdle() async throws {
     let store = try SQLiteSessionStore(path: ":memory:")
     let registry = WuhuAsyncBashRegistry()
-    let service = WuhuService(store: store, asyncBashRegistry: registry)
 
     let dir = try makeTempDir(prefix: "wuhu-async-bash")
-    let session = try await service.createSession(
-      sessionID: UUID().uuidString.lowercased(),
-      provider: .openai,
-      model: "mock",
-      systemPrompt: "You are helpful.",
-      environment: .init(name: "test", type: .local, path: dir),
-    )
+    let sessionID = UUID().uuidString.lowercased()
 
     actor TurnCounter {
       var n = 0
@@ -42,12 +35,10 @@ struct AsyncBashTests {
     }
     let turns = TurnCounter()
 
-    let stream = try await service.promptStream(
-      sessionID: session.id,
-      input: "run async",
-      user: "test",
-      tools: nil,
-      streamFn: { model, _, _ in
+    let service = WuhuService(
+      store: store,
+      asyncBashRegistry: registry,
+      baseStreamFn: { model, _, _ in
         let turn = await turns.next()
         if turn == 1 {
           return AsyncThrowingStream { continuation in
@@ -81,6 +72,29 @@ struct AsyncBashTests {
           }
         }
       },
+    )
+
+    let session = try await service.createSession(
+      sessionID: sessionID,
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "You are helpful.",
+      environment: .init(name: "test", type: .local, path: dir),
+    )
+
+    let baselineCursor = session.tailEntryID
+    _ = try await service.enqueue(
+      sessionID: .init(rawValue: session.id),
+      message: .init(author: .participant(.init(rawValue: "test"), kind: .human), content: .text("run async")),
+      lane: .followUp,
+    )
+
+    let stream = try await service.followSessionStream(
+      sessionID: session.id,
+      sinceCursor: baselineCursor,
+      sinceTime: nil,
+      stopAfterIdle: true,
+      timeoutSeconds: 10,
     )
 
     var eventIndex = 0
