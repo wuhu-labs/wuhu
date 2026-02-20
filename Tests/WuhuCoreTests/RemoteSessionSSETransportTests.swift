@@ -47,7 +47,7 @@ struct RemoteSessionSSETransportTests {
 
     let http = MockHTTPClient(
       sseHandler: { request in
-        #expect(request.url.absoluteString.contains("/v3/sessions/s1/subscribe"))
+        #expect(request.url.absoluteString.contains("/v1/sessions/s1/subscribe"))
         #expect(request.headers["Accept"] == "text/event-stream")
 
         return AsyncThrowingStream { continuation in
@@ -169,7 +169,7 @@ struct RemoteSessionSSETransportTests {
     let http = MockHTTPClient(
       dataHandler: { request in
         #expect(request.method == "POST")
-        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v3/sessions/s1/enqueue?lane=followUp")
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/sessions/s1/enqueue?lane=followUp")
         #expect(request.headers["Content-Type"] == "application/json")
 
         let decoded = try WuhuJSON.decoder.decode(QueuedUserMessage.self, from: request.body ?? Data())
@@ -197,7 +197,7 @@ struct RemoteSessionSSETransportTests {
     let http = MockHTTPClient(
       dataHandler: { request in
         #expect(request.method == "POST")
-        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v3/sessions/s1/cancel?lane=steer")
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/sessions/s1/cancel?lane=steer")
 
         struct Body: Decodable { var id: QueueItemID }
         let decoded = try WuhuJSON.decoder.decode(Body.self, from: request.body ?? Data())

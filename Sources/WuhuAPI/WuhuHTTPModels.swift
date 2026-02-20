@@ -29,18 +29,6 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   }
 }
 
-public struct WuhuPromptRequest: Sendable, Hashable, Codable {
-  public var input: String
-  public var user: String?
-  public var detach: Bool?
-
-  public init(input: String, user: String? = nil, detach: Bool? = nil) {
-    self.input = input
-    self.user = user
-    self.detach = detach
-  }
-}
-
 public struct WuhuSetSessionModelRequest: Sendable, Hashable, Codable {
   public var provider: WuhuProvider
   /// If nil/empty, the server uses its default model for this provider.
@@ -66,14 +54,6 @@ public struct WuhuSetSessionModelResponse: Sendable, Hashable, Codable {
     self.session = session
     self.selection = selection
     self.applied = applied
-  }
-}
-
-public struct WuhuPromptDetachedResponse: Sendable, Hashable, Codable {
-  public var userEntry: WuhuSessionEntry
-
-  public init(userEntry: WuhuSessionEntry) {
-    self.userEntry = userEntry
   }
 }
 

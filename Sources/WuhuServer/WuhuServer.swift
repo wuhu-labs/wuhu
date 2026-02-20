@@ -43,11 +43,21 @@ public struct WuhuServer: Sendable {
       return try? WuhuLLMRequestLogger(directoryURL: URL(fileURLWithPath: expanded, isDirectory: true))
     }
 
-    let service = WuhuService(store: store, llmRequestLogger: requestLogger)
-    await service.startAgentLoopManager()
-
     let envByName: [String: WuhuServerConfig.Environment] = Dictionary(uniqueKeysWithValues: config.environments.map { ($0.name, $0) })
     let runnerRegistry = RunnerRegistry()
+
+    let service = WuhuService(
+      store: store,
+      llmRequestLogger: requestLogger,
+      remoteToolsProvider: { sessionID, runnerName in
+        WuhuRemoteTools.makeTools(
+          sessionID: sessionID,
+          runnerName: runnerName,
+          runnerRegistry: runnerRegistry,
+        )
+      },
+    )
+    await service.startAgentLoopManager()
 
     let router = Router(context: WuhuRequestContext.self)
 
@@ -55,7 +65,7 @@ public struct WuhuServer: Sendable {
       "ok"
     }
 
-    router.get("v2/runners") { _, _ async -> [WuhuRunnerInfo] in
+    router.get("v1/runners") { _, _ async -> [WuhuRunnerInfo] in
       let configured = (config.runners ?? []).map(\.name)
       let connected = await runnerRegistry.listRunnerNames()
       let connectedSet = Set(connected)
@@ -63,17 +73,17 @@ public struct WuhuServer: Sendable {
       return all.map { .init(name: $0, connected: connectedSet.contains($0)) }
     }
 
-    router.get("v2/environments") { _, _ -> [WuhuEnvironmentInfo] in
+    router.get("v1/environments") { _, _ -> [WuhuEnvironmentInfo] in
       config.environments.map { .init(name: $0.name, type: $0.type) }
     }
 
-    router.get("v2/sessions") { request, context async throws -> [WuhuSession] in
+    router.get("v1/sessions") { request, context async throws -> [WuhuSession] in
       struct Query: Decodable { var limit: Int? }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
       return try await service.listSessions(limit: query.limit)
     }
 
-    router.get("v2/sessions/:id") { request, context async throws -> Response in
+    router.get("v1/sessions/:id") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       struct Query: Decodable {
         var sinceCursor: Int64?
@@ -92,7 +102,7 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
-    router.post("v2/sessions") { request, context async throws -> Response in
+    router.post("v1/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
       let model = (create.model?.isEmpty == false) ? create.model! : WuhuModelCatalog.defaultModelID(for: create.provider)
@@ -159,52 +169,21 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(session, from: request, context: context)
     }
 
-    router.post("v2/sessions/:id/model") { request, context async throws -> Response in
+    router.post("v1/sessions/:id/model") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       let setModel = try await request.decode(as: WuhuSetSessionModelRequest.self, context: context)
       let response = try await service.setSessionModel(sessionID: id, request: setModel)
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
-    router.post("v2/sessions/:id/prompt") { request, context async throws -> Response in
-      let id = try context.parameters.require("id")
-      let prompt = try await request.decode(as: WuhuPromptRequest.self, context: context)
-
-      let session = try await service.getSession(id: id)
-
-      let tools: [AnyAgentTool]? = {
-        guard let runnerName = session.runnerName, !runnerName.isEmpty else { return nil }
-        return WuhuRemoteTools.makeTools(
-          sessionID: session.id,
-          runnerName: runnerName,
-          runnerRegistry: runnerRegistry,
-        )
-      }()
-
-      do {
-        let response = try await service.promptDetached(
-          sessionID: id,
-          input: prompt.input,
-          user: prompt.user,
-          tools: tools,
-        )
-        return try context.responseEncoder.encode(response, from: request, context: context)
-      } catch let error as PiAIError {
-        if case let .unsupported(message) = error {
-          throw HTTPError(.conflict, message: message)
-        }
-        throw error
-      }
-    }
-
-    router.post("v2/sessions/:id/stop") { request, context async throws -> Response in
+    router.post("v1/sessions/:id/stop") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       let stopRequest = await (try? request.decode(as: WuhuStopSessionRequest.self, context: context)) ?? WuhuStopSessionRequest()
       let response = try await service.stopSession(sessionID: id, user: stopRequest.user)
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
-    router.get("v2/sessions/:id/follow") { request, context async throws -> Response in
+    router.get("v1/sessions/:id/follow") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       struct Query: Decodable {
         var sinceCursor: Int64?
@@ -260,9 +239,9 @@ public struct WuhuServer: Sendable {
       )
     }
 
-    // MARK: - V3 session contracts (commands + subscription)
+    // MARK: - Session contracts (commands + subscription)
 
-    router.post("v3/sessions/:id/enqueue") { request, context async throws -> Response in
+    router.post("v1/sessions/:id/enqueue") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       struct Query: Decodable { var lane: String }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
@@ -275,7 +254,7 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(qid, from: request, context: context)
     }
 
-    router.post("v3/sessions/:id/cancel") { request, context async throws -> Response in
+    router.post("v1/sessions/:id/cancel") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       struct Query: Decodable { var lane: String }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
@@ -290,7 +269,7 @@ public struct WuhuServer: Sendable {
       return Response(status: .ok)
     }
 
-    router.get("v3/sessions/:id/subscribe") { request, context async throws -> Response in
+    router.get("v1/sessions/:id/subscribe") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
 
       struct Query: Decodable {
@@ -359,7 +338,7 @@ public struct WuhuServer: Sendable {
       )
     }
 
-    router.ws("/v2/runners/ws") { _, _ in
+    router.ws("/v1/runners/ws") { _, _ in
       .upgrade()
     } onUpgrade: { inbound, outbound, wsContext in
       do {

@@ -32,15 +32,6 @@ struct AgentsContextTests {
     try agentsLocalContent.write(toFile: agentsLocalPath, atomically: true, encoding: .utf8)
 
     let store = try SQLiteSessionStore(path: ":memory:")
-    let service = WuhuService(store: store)
-
-    let session = try await service.createSession(
-      sessionID: UUID().uuidString.lowercased(),
-      provider: .openai,
-      model: "mock",
-      systemPrompt: "Base prompt.",
-      environment: .init(name: "test", type: .local, path: dir),
-    )
 
     actor Capture {
       var systemPrompt: String?
@@ -54,11 +45,9 @@ struct AgentsContextTests {
     }
     let capture = Capture()
 
-    let stream = try await service.promptStream(
-      sessionID: session.id,
-      input: "hello",
-      tools: [],
-      streamFn: { model, ctx, _ in
+    let service = WuhuService(
+      store: store,
+      baseStreamFn: { model, ctx, _ in
         await capture.set(ctx.systemPrompt)
         return AsyncThrowingStream { continuation in
           Task {
@@ -73,6 +62,29 @@ struct AgentsContextTests {
           }
         }
       },
+    )
+
+    let session = try await service.createSession(
+      sessionID: UUID().uuidString.lowercased(),
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "Base prompt.",
+      environment: .init(name: "test", type: .local, path: dir),
+    )
+
+    let baselineCursor = session.tailEntryID
+    _ = try await service.enqueue(
+      sessionID: .init(rawValue: session.id),
+      message: .init(author: .unknown, content: .text("hello")),
+      lane: .followUp,
+    )
+
+    let stream = try await service.followSessionStream(
+      sessionID: session.id,
+      sinceCursor: baselineCursor,
+      sinceTime: nil,
+      stopAfterIdle: true,
+      timeoutSeconds: 10,
     )
 
     for try await _ in stream {}
@@ -109,15 +121,6 @@ struct AgentsContextTests {
     try "v1".write(toFile: agentsMdPath, atomically: true, encoding: .utf8)
 
     let store = try SQLiteSessionStore(path: ":memory:")
-    let service = WuhuService(store: store)
-
-    let session = try await service.createSession(
-      sessionID: UUID().uuidString.lowercased(),
-      provider: .openai,
-      model: "mock",
-      systemPrompt: "Base prompt.",
-      environment: .init(name: "test", type: .local, path: dir),
-    )
 
     actor Capture {
       var prompts: [String] = []
@@ -131,26 +134,46 @@ struct AgentsContextTests {
     }
     let capture = Capture()
 
-    func runOnce() async throws {
-      let stream = try await service.promptStream(
-        sessionID: session.id,
-        input: "hello",
-        tools: [],
-        streamFn: { model, ctx, _ in
-          await capture.add(ctx.systemPrompt)
-          return AsyncThrowingStream { continuation in
-            Task {
-              let assistant = AssistantMessage(
-                provider: model.provider,
-                model: model.id,
-                content: [.text("ok")],
-                stopReason: .stop,
-              )
-              continuation.yield(.done(message: assistant))
-              continuation.finish()
-            }
+    let service = WuhuService(
+      store: store,
+      baseStreamFn: { model, ctx, _ in
+        await capture.add(ctx.systemPrompt)
+        return AsyncThrowingStream { continuation in
+          Task {
+            let assistant = AssistantMessage(
+              provider: model.provider,
+              model: model.id,
+              content: [.text("ok")],
+              stopReason: .stop,
+            )
+            continuation.yield(.done(message: assistant))
+            continuation.finish()
           }
-        },
+        }
+      },
+    )
+
+    let session = try await service.createSession(
+      sessionID: UUID().uuidString.lowercased(),
+      provider: .openai,
+      model: "mock",
+      systemPrompt: "Base prompt.",
+      environment: .init(name: "test", type: .local, path: dir),
+    )
+
+    func runOnce() async throws {
+      let baselineCursor = try await (service.getTranscript(sessionID: session.id).last?.id) ?? 0
+      _ = try await service.enqueue(
+        sessionID: .init(rawValue: session.id),
+        message: .init(author: .unknown, content: .text("hello")),
+        lane: .followUp,
+      )
+      let stream = try await service.followSessionStream(
+        sessionID: session.id,
+        sinceCursor: baselineCursor,
+        sinceTime: nil,
+        stopAfterIdle: true,
+        timeoutSeconds: 10,
       )
       for try await _ in stream {}
     }
@@ -162,6 +185,7 @@ struct AgentsContextTests {
 
     let prompts = await capture.all()
     #expect(prompts.count == 2)
+    guard prompts.count == 2 else { return }
     #expect(prompts[0].contains("v1"))
     #expect(prompts[1].contains("v2 (changed)"))
   }

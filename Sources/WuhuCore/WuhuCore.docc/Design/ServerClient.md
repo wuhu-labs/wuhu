@@ -27,21 +27,22 @@ Current schema (subset):
       - Optional `startup_script` runs in the copied workspace after the copy completes.
   - `path`: filesystem path (meaning depends on `type`)
 
-## HTTP API (v2)
+## HTTP API (v1)
 
 The server exposes a minimal command/query/event API:
 
 - **Queries (GET)**:
-  - `GET /v2/sessions?limit=…` — list sessions
-  - `GET /v2/sessions/:id` — session + transcript
+  - `GET /v1/sessions?limit=…` — list sessions
+  - `GET /v1/sessions/:id` — session + transcript
     - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
 - **Commands (POST)**:
-  - `POST /v2/sessions` — create session (requires `environment`)
-  - `POST /v2/sessions/:id/prompt` — enqueue prompt (serialized per session)
-    - Optional `user` field records the prompting user (see Client Identity below)
-    - Returns (`WuhuPromptDetachedResponse`). If a prompt is already running, the request waits until it becomes active and is appended; `detach` is accepted for backward compatibility but ignored
+  - `POST /v1/sessions` — create session (requires `environment`)
+  - `POST /v1/sessions/:id/enqueue?lane=…` — enqueue a user message (serialized per session)
+    - `lane` is `steer` or `followUp`
+    - Body is `QueuedUserMessage` (contracts)
+    - Returns `QueueItemID` (queued item identifier)
 - **Streaming (GET + SSE)**:
-  - `GET /v2/sessions/:id/follow` — stream session changes over SSE
+  - `GET /v1/sessions/:id/follow` — stream session changes over SSE
     - Optional filters: `sinceCursor`, `sinceTime`
     - Stop conditions: `stopAfterIdle=1`, `timeoutSeconds`
 
@@ -87,7 +88,7 @@ Username resolution order:
 3. `~/.wuhu/client.yml` `username`
 4. Default: `<osuser>@<hostname>`
 
-The client includes this identity in `POST /v2/sessions/:id/prompt` as `user`. The server persists it on `WuhuUserMessage.user`. If missing (or for historical rows), it defaults to `unknown_user`.
+The client includes this identity in `QueuedUserMessage.author` (typically `.participant(<id>, kind: .human)`). The server persists it on user message entries; if missing (or for historical rows), it defaults to `unknown_user`.
 
 ## Group Chat Escalation (Server-side)
 

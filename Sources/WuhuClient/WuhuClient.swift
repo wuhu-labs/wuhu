@@ -1,10 +1,16 @@
 import Foundation
 import PiAI
 import WuhuAPI
+import WuhuCore
 
 public struct WuhuClient: Sendable {
   public var baseURL: URL
   private let http: any HTTPClient
+
+  public enum EnqueueLane: String, Sendable, Hashable {
+    case steer
+    case followUp
+  }
 
   public init(baseURL: URL, http: any HTTPClient = AsyncHTTPClientTransport()) {
     self.baseURL = baseURL
@@ -12,21 +18,21 @@ public struct WuhuClient: Sendable {
   }
 
   public func listRunners() async throws -> [WuhuRunnerInfo] {
-    let url = baseURL.appending(path: "v2").appending(path: "runners")
+    let url = baseURL.appending(path: "v1").appending(path: "runners")
     let req = HTTPRequest(url: url, method: "GET")
     let (data, _) = try await http.data(for: req)
     return try WuhuJSON.decoder.decode([WuhuRunnerInfo].self, from: data)
   }
 
   public func listEnvironments() async throws -> [WuhuEnvironmentInfo] {
-    let url = baseURL.appending(path: "v2").appending(path: "environments")
+    let url = baseURL.appending(path: "v1").appending(path: "environments")
     let req = HTTPRequest(url: url, method: "GET")
     let (data, _) = try await http.data(for: req)
     return try WuhuJSON.decoder.decode([WuhuEnvironmentInfo].self, from: data)
   }
 
   public func createSession(_ request: WuhuCreateSessionRequest) async throws -> WuhuSession {
-    let url = baseURL.appending(path: "v2").appending(path: "sessions")
+    let url = baseURL.appending(path: "v1").appending(path: "sessions")
     var req = HTTPRequest(url: url, method: "POST")
     req.setHeader("application/json", for: "Content-Type")
     req.body = try WuhuJSON.encoder.encode(request)
@@ -42,7 +48,7 @@ public struct WuhuClient: Sendable {
     reasoningEffort: ReasoningEffort? = nil,
   ) async throws -> WuhuSetSessionModelResponse {
     let url = baseURL
-      .appending(path: "v2")
+      .appending(path: "v1")
       .appending(path: "sessions")
       .appending(path: sessionID)
       .appending(path: "model")
@@ -60,7 +66,7 @@ public struct WuhuClient: Sendable {
   }
 
   public func listSessions(limit: Int? = nil) async throws -> [WuhuSession] {
-    var url = baseURL.appending(path: "v2").appending(path: "sessions")
+    var url = baseURL.appending(path: "v1").appending(path: "sessions")
     if let limit {
       var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
       components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
@@ -77,7 +83,7 @@ public struct WuhuClient: Sendable {
     sinceCursor: Int64? = nil,
     sinceTime: Date? = nil,
   ) async throws -> WuhuGetSessionResponse {
-    var url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: id)
+    var url = baseURL.appending(path: "v1").appending(path: "sessions").appending(path: id)
     if sinceCursor != nil || sinceTime != nil {
       var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
       var items: [URLQueryItem] = []
@@ -91,34 +97,55 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode(WuhuGetSessionResponse.self, from: data)
   }
 
+  public func enqueue(
+    sessionID: String,
+    input: String,
+    user: String? = nil,
+    lane: EnqueueLane = .followUp,
+  ) async throws -> String {
+    let url = baseURL
+      .appending(path: "v1")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "enqueue")
+
+    var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    components?.queryItems = [URLQueryItem(name: "lane", value: lane.rawValue)]
+
+    let author: Author = {
+      let trimmed = (user ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      if trimmed.isEmpty { return .unknown }
+      return .participant(.init(rawValue: trimmed), kind: .human)
+    }()
+
+    let message = QueuedUserMessage(author: author, content: .text(input))
+
+    var req = HTTPRequest(url: components?.url ?? url, method: "POST")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(message)
+
+    let (data, _) = try await http.data(for: req)
+    let qid = try WuhuJSON.decoder.decode(QueueItemID.self, from: data)
+    return qid.rawValue
+  }
+
   public func promptStream(
     sessionID: String,
     input: String,
     user: String? = nil,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    let detached = try await promptDetached(sessionID: sessionID, input: input, user: user)
+    let baseline = try await getSession(id: sessionID)
+    let sinceCursor = baseline.transcript.last?.id
+
+    _ = try await enqueue(sessionID: sessionID, input: input, user: user, lane: .followUp)
     return try await followSessionStream(
       sessionID: sessionID,
-      sinceCursor: detached.userEntry.parentEntryID,
+      sinceCursor: sinceCursor,
       sinceTime: nil,
       stopAfterIdle: true,
       timeoutSeconds: nil,
     )
-  }
-
-  public func promptDetached(
-    sessionID: String,
-    input: String,
-    user: String? = nil,
-  ) async throws -> WuhuPromptDetachedResponse {
-    let url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: sessionID).appending(path: "prompt")
-    var req = HTTPRequest(url: url, method: "POST")
-    req.setHeader("application/json", for: "Content-Type")
-    req.setHeader("application/json", for: "Accept")
-    req.body = try WuhuJSON.encoder.encode(WuhuPromptRequest(input: input, user: user, detach: true))
-
-    let (data, _) = try await http.data(for: req)
-    return try WuhuJSON.decoder.decode(WuhuPromptDetachedResponse.self, from: data)
   }
 
   public func followSessionStream(
@@ -128,7 +155,7 @@ public struct WuhuClient: Sendable {
     stopAfterIdle: Bool? = nil,
     timeoutSeconds: Double? = nil,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error> {
-    var url = baseURL.appending(path: "v2").appending(path: "sessions").appending(path: sessionID).appending(path: "follow")
+    var url = baseURL.appending(path: "v1").appending(path: "sessions").appending(path: sessionID).appending(path: "follow")
     var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
     var items: [URLQueryItem] = []
     if let sinceCursor { items.append(.init(name: "sinceCursor", value: String(sinceCursor))) }
@@ -167,7 +194,7 @@ public struct WuhuClient: Sendable {
     user: String? = nil,
   ) async throws -> WuhuStopSessionResponse {
     let url = baseURL
-      .appending(path: "v2")
+      .appending(path: "v1")
       .appending(path: "sessions")
       .appending(path: sessionID)
       .appending(path: "stop")
