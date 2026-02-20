@@ -165,10 +165,8 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
                 continue
               }
 
-              if !state.transcriptPages.isEmpty {
-                for page in state.transcriptPages {
-                  eventsContinuation.yield(.transcriptAppended(page))
-                }
+              if !state.transcript.isEmpty {
+                eventsContinuation.yield(.transcriptAppended(state.transcript))
               }
 
               if !state.systemUrgent.journal.isEmpty {
@@ -282,8 +280,7 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
   }
 
   private func advanceSince(afterInitial initial: SessionInitialState, fallback: SessionSubscriptionRequest) -> SessionSubscriptionRequest {
-    let lastItemID = initial.transcriptPages.last?.items.last?.id.rawValue
-    let transcriptSince = lastItemID.map(TranscriptCursor.init(rawValue:)) ?? fallback.transcriptSince
+    let transcriptSince: TranscriptCursor? = initial.transcript.last.map { TranscriptCursor(rawValue: String($0.id)) } ?? fallback.transcriptSince
 
     return SessionSubscriptionRequest(
       transcriptSince: transcriptSince,
@@ -298,9 +295,9 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
     var next = fallback
 
     switch event {
-    case let .transcriptAppended(page):
-      if let id = page.items.last?.id.rawValue {
-        next.transcriptSince = .init(rawValue: id)
+    case let .transcriptAppended(entries):
+      if let id = entries.last?.id {
+        next.transcriptSince = .init(rawValue: String(id))
       }
 
     case let .systemUrgentQueue(cursor, entries: _):

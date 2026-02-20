@@ -1,41 +1,47 @@
 import Foundation
 import PiAI
 import Testing
+import WuhuAPI
 @testable import WuhuCore
 
 struct RemoteSessionSSETransportTests {
   @Test func subscribe_parsesInitialAndEvents() async throws {
     let baseURL = try #require(URL(string: "http://127.0.0.1:5530"))
 
+    let entry1 = WuhuSessionEntry(
+      id: 1,
+      sessionID: "s1",
+      parentEntryID: nil,
+      createdAt: Date(timeIntervalSince1970: 0),
+      payload: .message(.user(.init(
+        content: [.text(text: "hi", signature: nil)],
+        timestamp: Date(timeIntervalSince1970: 0),
+      ))),
+    )
+
     let initialState = SessionInitialState(
       settings: .init(effectiveModel: .init(provider: .openai, id: "m")),
       status: .init(status: .idle),
-      transcriptPages: [
-        .init(
-          items: [
-            .init(
-              id: .init(rawValue: "1"),
-              createdAt: Date(timeIntervalSince1970: 0),
-              entry: .message(.init(author: .unknown, content: .text("hi"))),
-            ),
-          ],
-          nextCursor: nil,
-        ),
-      ],
+      transcript: [entry1],
       systemUrgent: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
       steer: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
       followUp: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
     )
 
-    let appended = TranscriptItem(
-      id: .init(rawValue: "2"),
+    let appended = WuhuSessionEntry(
+      id: 2,
+      sessionID: "s1",
+      parentEntryID: 1,
       createdAt: Date(timeIntervalSince1970: 1),
-      entry: .message(.init(author: .unknown, content: .text("yo"))),
+      payload: .message(.user(.init(
+        content: [.text(text: "yo", signature: nil)],
+        timestamp: Date(timeIntervalSince1970: 1),
+      ))),
     )
 
     let frames: [SessionSubscriptionSSEFrame] = [
       .initial(initialState),
-      .event(.transcriptAppended(.init(items: [appended], nextCursor: nil))),
+      .event(.transcriptAppended([appended])),
       .event(.statusUpdated(.init(status: .running))),
     ]
 
@@ -68,7 +74,7 @@ struct RemoteSessionSSETransportTests {
     }.value
 
     #expect(received == [
-      .transcriptAppended(.init(items: [appended], nextCursor: nil)),
+      .transcriptAppended([appended]),
       .statusUpdated(.init(status: .running)),
     ])
   }
@@ -79,7 +85,7 @@ struct RemoteSessionSSETransportTests {
     let initialState = SessionInitialState(
       settings: .init(effectiveModel: .init(provider: .openai, id: "m")),
       status: .init(status: .idle),
-      transcriptPages: [],
+      transcript: [],
       systemUrgent: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
       steer: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),
       followUp: .init(cursor: .init(rawValue: "0"), pending: [], journal: []),

@@ -27,8 +27,7 @@ enum WuhuSessionCommittedAction: Sendable, Hashable {
   case statusUpdated(SessionStatusSnapshot)
 }
 
-struct WuhuSessionLoopState: AgentLoopState {
-  var transcript: [TranscriptItem]
+struct WuhuSessionLoopState: Sendable, Equatable {
   var toolCallStatus: [String: ToolCallStatus]
 
   var entries: [WuhuSessionEntry]
@@ -42,7 +41,6 @@ struct WuhuSessionLoopState: AgentLoopState {
 
   static var empty: WuhuSessionLoopState {
     .init(
-      transcript: [],
       toolCallStatus: [:],
       entries: [],
       settings: .init(effectiveModel: .init(provider: .openai, id: "unknown")),
@@ -61,6 +59,10 @@ struct WuhuSessionBehavior: AgentBehavior {
   typealias ExternalAction = WuhuSessionExternalAction
   typealias ToolResult = AgentToolResult
 
+  static var emptyState: WuhuSessionLoopState {
+    .empty
+  }
+
   let sessionID: SessionID
   let store: SQLiteSessionStore
   let runtimeConfig: WuhuSessionRuntimeConfig
@@ -68,7 +70,6 @@ struct WuhuSessionBehavior: AgentBehavior {
   func loadState() async throws -> State {
     let parts = try await store.loadLoopStateParts(sessionID: sessionID)
     return .init(
-      transcript: parts.entries.map(wuhuToTranscriptItem),
       toolCallStatus: parts.toolCallStatus,
       entries: parts.entries,
       settings: parts.settings,
@@ -87,7 +88,6 @@ struct WuhuSessionBehavior: AgentBehavior {
 
     case let .entryAppended(entry):
       state.entries.append(entry)
-      state.transcript.append(wuhuToTranscriptItem(entry))
 
     case let .toolCallStatusUpdated(id, status):
       state.toolCallStatus[id] = status

@@ -1,4 +1,5 @@
 import Foundation
+import WuhuAPI
 
 /// Parameters for establishing a session subscription.
 ///
@@ -31,7 +32,7 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
   public var settings: SessionSettingsSnapshot
   public var status: SessionStatusSnapshot
 
-  public var transcriptPages: [TranscriptPage]
+  public var transcript: [WuhuSessionEntry]
 
   public var systemUrgent: SystemUrgentQueueBackfill
   public var steer: UserQueueBackfill
@@ -40,14 +41,14 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
   public init(
     settings: SessionSettingsSnapshot,
     status: SessionStatusSnapshot,
-    transcriptPages: [TranscriptPage],
+    transcript: [WuhuSessionEntry],
     systemUrgent: SystemUrgentQueueBackfill,
     steer: UserQueueBackfill,
     followUp: UserQueueBackfill,
   ) {
     self.settings = settings
     self.status = status
-    self.transcriptPages = transcriptPages
+    self.transcript = transcript
     self.systemUrgent = systemUrgent
     self.steer = steer
     self.followUp = followUp
@@ -56,7 +57,7 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
 
 /// Live session events emitted after the initial state is produced.
 public enum SessionEvent: Sendable, Hashable, Codable {
-  case transcriptAppended(TranscriptPage)
+  case transcriptAppended([WuhuSessionEntry])
   case systemUrgentQueue(cursor: QueueCursor, entries: [SystemUrgentQueueJournalEntry])
   case userQueue(cursor: QueueCursor, entries: [UserQueueJournalEntry])
   case settingsUpdated(SessionSettingsSnapshot)

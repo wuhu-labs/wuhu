@@ -67,7 +67,6 @@ struct ContractSessionCoreTests {
       #expect(next.systemUrgent == reloaded.systemUrgent)
       #expect(next.steer == reloaded.steer)
       #expect(next.followUp == reloaded.followUp)
-      #expect(next.transcript == reloaded.transcript)
     }
     #expect(next == reloaded)
     return next

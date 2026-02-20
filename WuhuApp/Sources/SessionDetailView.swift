@@ -87,7 +87,7 @@ struct SessionDetailView: View {
               .padding(.horizontal)
           }
 
-          let items = SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
+          let items = WuhuSessionTranscriptFormatter(verbosity: store.verbosity).format(Array(store.transcript))
           ForEach(items) { item in
             TranscriptItemRow(item: item, verbosity: store.verbosity)
               .id(item.id)
@@ -98,9 +98,9 @@ struct SessionDetailView: View {
       .onChange(of: store.transcript.last?.id) { _, lastID in
         guard let lastID else { return }
         let lastVisibleID =
-          SessionSubscriptionTranscriptFormatter(verbosity: store.verbosity)
+          WuhuSessionTranscriptFormatter(verbosity: store.verbosity)
             .format(Array(store.transcript))
-            .last?.id ?? "entry.\(lastID.rawValue)"
+            .last?.id ?? "entry.\(lastID)"
         withAnimation(.easeOut(duration: 0.2)) {
           proxy.scrollTo(lastVisibleID, anchor: .bottom)
         }

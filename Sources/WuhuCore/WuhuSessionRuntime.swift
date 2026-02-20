@@ -177,7 +177,7 @@ actor WuhuSessionRuntime {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .entryAppended(entry))
         await subscriptionHub.publish(
           sessionID: sessionID.rawValue,
-          event: .transcriptAppended(.init(items: [wuhuToTranscriptItem(entry)], nextCursor: nil)),
+          event: .transcriptAppended([entry]),
         )
 
       case .sessionUpdated:
