@@ -12,7 +12,7 @@ This file is a scratchpad for refactors/architecture changes noted during intera
 
 ### Refactor in-progress
 
-- Introduced `WuhuSessionAgentActor` (per session) that owns a persistent `PiAgent.Agent` instance.
+- Introduced `WuhuSessionAgentActor` (per session) that owns a persistent legacy `Agent` instance.
 - Moved the bulk of legacy prompt preparation (context injection, request options, compaction) into the session actor (so `WuhuService` becomes a thin router).
 - For now it still refreshes agent context via `setSystemPrompt/setModel/setTools/replaceMessages` per prompt (safer, keeps semantics), but the end goal is to stop rebuilding context from transcript and instead make the session actor the source of truth (and write transcript entries as a projection).
 
