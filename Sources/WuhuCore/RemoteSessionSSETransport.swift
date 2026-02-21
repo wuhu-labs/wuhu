@@ -226,9 +226,6 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
     eventsContinuation.onTermination = { _ in
       task.cancel()
     }
-    connectionContinuation.onTermination = { _ in
-      task.cancel()
-    }
 
     var it = initialStream.makeAsyncIterator()
     guard let initial = try await it.next() else {

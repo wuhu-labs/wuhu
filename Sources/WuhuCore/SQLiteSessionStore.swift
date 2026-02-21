@@ -28,6 +28,13 @@ public actor SQLiteSessionStore: SessionStore {
     let now = Date()
     let sessionID = rawSessionID.lowercased()
 
+    let skills = WuhuSkillsLoader.load(environmentRoot: environment.path)
+    let effectiveSystemPrompt: String = {
+      if skills.isEmpty { return systemPrompt }
+      if systemPrompt.contains("<available_skills>") { return systemPrompt }
+      return systemPrompt + WuhuSkills.promptSection(skills: skills)
+    }()
+
     return try await dbQueue.write { db in
       var sessionRow = SessionRow(
         id: sessionID,
@@ -57,8 +64,11 @@ public actor SQLiteSessionStore: SessionStore {
       if let reasoningEffort {
         headerMetadata["reasoningEffort"] = .string(reasoningEffort.rawValue)
       }
+      if !skills.isEmpty {
+        headerMetadata[WuhuSkills.headerMetadataKey] = WuhuSkills.encodeForHeaderMetadata(skills)
+      }
       let headerPayload = WuhuEntryPayload.header(.init(
-        systemPrompt: systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         metadata: .object(headerMetadata),
       ))
       var headerRow = try EntryRow.new(
