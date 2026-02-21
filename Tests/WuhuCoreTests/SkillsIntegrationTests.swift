@@ -55,4 +55,3 @@ struct SkillsIntegrationTests {
     #expect(skills.first?.filePath.hasSuffix("/.wuhu/skills/hello-skill/SKILL.md") == true)
   }
 }
-

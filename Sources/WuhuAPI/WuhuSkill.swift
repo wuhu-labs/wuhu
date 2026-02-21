@@ -9,7 +9,9 @@ public struct WuhuSkill: Sendable, Hashable, Codable, Identifiable {
   public var source: String
   public var disableModelInvocation: Bool
 
-  public var id: String { name }
+  public var id: String {
+    name
+  }
 
   public init(
     name: String,
@@ -168,4 +170,3 @@ public enum WuhuSkills {
       .replacingOccurrences(of: "&amp;", with: "&")
   }
 }
-
