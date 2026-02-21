@@ -26,6 +26,12 @@ struct SessionDetailView: View {
         .disabled(!canStop || store.isStopping)
       }
       ToolbarItem(placement: .primaryAction) {
+        Button("Skills") {
+          store.send(.binding(.set(\.isShowingSkills, true)))
+        }
+        .disabled(store.skills.isEmpty)
+      }
+      ToolbarItem(placement: .primaryAction) {
         Button("Model") {
           store.send(.binding(.set(\.isShowingModelPicker, true)))
         }
@@ -38,6 +44,14 @@ struct SessionDetailView: View {
       ),
     ) {
       SessionModelPickerSheet(store: store)
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { store.isShowingSkills },
+        set: { store.send(.binding(.set(\.isShowingSkills, $0))) },
+      ),
+    ) {
+      SkillsSheet(skills: store.skills)
     }
     .alert(store: store.scope(state: \.$alert, action: \.alert))
     .task { await store.send(.onAppear).finish() }
@@ -131,6 +145,31 @@ struct SessionDetailView: View {
     }
     .padding(.horizontal)
     .padding(.vertical, 10)
+  }
+}
+
+private struct SkillsSheet: View {
+  let skills: [WuhuSkill]
+
+  var body: some View {
+    NavigationStack {
+      List {
+        ForEach(skills) { skill in
+          VStack(alignment: .leading, spacing: 6) {
+            Text(skill.name)
+              .font(.headline)
+            Text(skill.description)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+            Text(skill.filePath)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 4)
+        }
+      }
+      .navigationTitle("Skills")
+    }
   }
 }
 

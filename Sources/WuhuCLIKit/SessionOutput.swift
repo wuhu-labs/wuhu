@@ -307,6 +307,7 @@ public struct SessionTranscriptRenderer: Sendable {
     out += "updatedAt \(session.updatedAt)\n"
     out += "headEntryID \(session.headEntryID)\n"
     out += "tailEntryID \(session.tailEntryID)\n"
+    out += "skills \(WuhuSkills.extract(from: response.transcript).count)\n"
 
     var toolArgsById: [String: JSONValue] = [:]
     var toolEndsHandled: Set<String> = []

@@ -18,6 +18,7 @@ struct SessionDetailFeature {
     var username: String?
 
     var transcript: IdentifiedArrayOf<WuhuSessionEntry> = []
+    var skills: [WuhuSkill] = []
 
     var settings: SessionSettingsSnapshot?
     var status: SessionStatusSnapshot?
@@ -35,6 +36,7 @@ struct SessionDetailFeature {
     var isStopping = false
 
     var isShowingModelPicker = false
+    var isShowingSkills = false
     var isUpdatingModel = false
     var modelUpdateStatus: String?
 
@@ -185,6 +187,7 @@ struct SessionDetailFeature {
         state.followUp = initial.followUp
 
         state.transcript = IdentifiedArray(uniqueElements: initial.transcript)
+        state.skills = WuhuSkills.extract(from: initial.transcript)
 
         syncModelSelectionFromSettings(initial.settings, state: &state)
 
@@ -219,6 +222,9 @@ struct SessionDetailFeature {
       case let .subscriptionEvent(event):
         state.error = nil
         apply(event: event, to: &state)
+        if case .transcriptAppended = event {
+          state.skills = WuhuSkills.extract(from: Array(state.transcript))
+        }
         return .none
 
       case let .subscriptionFailed(message):
