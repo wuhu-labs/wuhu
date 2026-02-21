@@ -10,7 +10,7 @@ WUHU-0010 introduces two coding-agent tools:
 1. **Non-blocking tool call**: starting a long-running command should not block the agent loop.
 2. **Durable logs**: stdout and stderr are redirected to separate files so the agent can inspect output later.
 3. **Immediate completion signaling**: when a task finishes, Wuhu should append a user-level JSON message to the session transcript as soon as possible (even if the model is still streaming).
-4. **Leave space for steering queues**: completion signaling should integrate naturally with PiAgent’s steering mechanism.
+4. **Leave space for steering queues**: completion signaling should integrate naturally with Wuhu’s interrupt-priority queue and agent loop checkpoints.
 
 ## Implementation Overview
 
@@ -47,6 +47,4 @@ The `async_bash_status` tool:
 
 ### 4) Steering (future-friendly)
 
-When a completion event arrives, the router also steers the per-session agent (`PiAgent.Agent.steer(.user(…))`) for any active execution in the session.
-
-PiAgent polls steering messages at safe boundaries (between assistant turns / after tool execution), so this design leaves room for a future “steer queue” that can become more aggressive (e.g. interrupting a long stream) without changing the async task plumbing.
+Completion messages are enqueued onto the session’s interrupt-priority queue so they can be drained and appended at the next safe checkpoint in the agent loop (between inference/tool phases).

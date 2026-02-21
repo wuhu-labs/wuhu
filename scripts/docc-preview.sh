@@ -6,13 +6,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat >&2 <<EOF
 Usage:
-  $(basename "$0") [port] [WuhuCore|PiAgent|/path/to/catalog.docc]
-  $(basename "$0") --port <port> [WuhuCore|PiAgent|/path/to/catalog.docc]
+  $(basename "$0") [port] [WuhuCore|/path/to/catalog.docc]
+  $(basename "$0") --port <port> [WuhuCore|/path/to/catalog.docc]
 
 Examples:
   $(basename "$0")
   $(basename "$0") 8081
-  $(basename "$0") 8081 PiAgent
 EOF
 }
 
@@ -43,11 +42,6 @@ case "$catalog" in
     target="WuhuCore"
     catalog_path="$repo_root/Sources/WuhuCore/WuhuCore.docc"
     doc_path="/documentation/wuhucore"
-    ;;
-  PiAgent)
-    target="PiAgent"
-    catalog_path="$repo_root/Sources/PiAgent/PiAgent.docc"
-    doc_path="/documentation/piagent"
     ;;
   /*|./*|../*)
     target=""

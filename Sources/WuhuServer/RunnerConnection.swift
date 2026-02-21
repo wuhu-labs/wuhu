@@ -1,9 +1,9 @@
 import Foundation
 import Logging
-import PiAgent
 import PiAI
 import WSCore
 import WuhuAPI
+import WuhuCore
 
 final actor RunnerConnection {
   let runnerName: String
