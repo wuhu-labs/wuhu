@@ -42,7 +42,7 @@ struct MockMessage: Identifiable, Equatable {
     author: String? = nil,
     content: String,
     timestamp: Date,
-    toolCalls: [MockToolCall] = []
+    toolCalls: [MockToolCall] = [],
   ) {
     self.id = id
     self.role = role
