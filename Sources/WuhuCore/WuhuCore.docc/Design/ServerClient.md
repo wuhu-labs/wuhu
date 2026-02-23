@@ -7,7 +7,7 @@ Wuhu’s Swift pivot originally exposed its capabilities via a local CLI that ta
 - Run Wuhu as a daemon (`wuhu server`) with a stable HTTP API.
 - Keep the client (`wuhu client …`) “dumb”: it talks only to the server and never calls LLMs directly.
 - Preserve message-level streaming for agent responses.
-- Introduce **environments** as named, server-configured working directories.
+- Introduce **environments** as named, server-managed working directories.
 
 ## Configuration
 
@@ -19,24 +19,27 @@ The server reads a YAML config file:
 Current schema (subset):
 
 - `llm.openai` / `llm.anthropic`: optional API keys (if omitted, the server falls back to environment variables).
-- `workspaces_path`: optional root directory for per-session workspaces (default: `~/.wuhu/workspaces`).
-- `environments`: array of named environments.
-  - `type`:
-    - `local`: session working directory is `path` (resolved at session creation time).
-    - `folder-template`: at session creation time, Wuhu copies the template folder at `path` into `workspaces_path/<session-id>` and uses that copied folder as the working directory.
-      - Optional `startup_script` runs in the copied workspace after the copy completes.
-  - `path`: filesystem path (meaning depends on `type`)
+- `databasePath`: optional SQLite path (defaults to `~/.wuhu/server.sqlite`).
+- `llm_request_log_dir`: optional directory for request/response logs.
+- `host` / `port`: HTTP bind address (defaults to `127.0.0.1:5530`).
+- `runners`: optional list of runner names and WebSocket addresses.
 
 ## HTTP API (v1)
 
 The server exposes a minimal command/query/event API:
 
+- **Environment CRUD**:
+  - `GET /v1/environments` — list environments
+  - `POST /v1/environments` — create environment
+  - `GET /v1/environments/:identifier` — fetch by UUID or unique name
+  - `PATCH /v1/environments/:identifier` — update by UUID or unique name
+  - `DELETE /v1/environments/:identifier` — delete by UUID or unique name
 - **Queries (GET)**:
   - `GET /v1/sessions?limit=…` — list sessions
   - `GET /v1/sessions/:id` — session + transcript
     - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
 - **Commands (POST)**:
-  - `POST /v1/sessions` — create session (requires `environment`)
+  - `POST /v1/sessions` — create session (requires `environment`, a UUID or unique environment name)
   - `POST /v1/sessions/:id/enqueue?lane=…` — enqueue a user message (serialized per session)
     - `lane` is `steer` or `followUp`
     - Body is `QueuedUserMessage` (contracts)
@@ -63,14 +66,15 @@ Clients that want streaming should keep a `follow` stream open (or open one imme
 
 ## Environment Snapshots (Persistence Decision)
 
-Environment definitions live in a config file and can change at any time. To make sessions reproducible, Wuhu stores an **environment snapshot** in the database at session creation time:
+Canonical environment definitions are stored in SQLite and can be created/updated/deleted at runtime via the HTTP API. To make sessions reproducible, Wuhu stores an **environment snapshot** in the database at session creation time:
 
 - `WuhuSession.environment` is persisted alongside the session record.
-- The working directory used for tools is `WuhuSession.cwd` (equal to `environment.path`).
-  - For `local` environments, this is the resolved `path`.
-  - For `folder-template` environments, this is the copied workspace path under `workspaces_path`.
+- `WuhuSession.environmentID` stores the canonical environment id used to create the session.
+- The working directory used for tools is `WuhuSession.cwd`:
+  - For `local` environments, `cwd` is the resolved `environment.path`.
+  - For `folder-template` environments, `cwd` is the copied workspace path under the environment’s configured workspaces root.
 
-This follows the principle: *session execution should not change retroactively when config changes*.
+This follows the principle: *session execution should not change retroactively when the canonical environment definition changes*.
 
 ## Client Identity (Username)
 

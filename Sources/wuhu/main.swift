@@ -590,18 +590,20 @@ private func printEnvironment(_ env: WuhuEnvironmentDefinition, asJSON: Bool) th
 private func printEnvironmentTable(_ envs: [WuhuEnvironmentDefinition]) {
   let idHeader = "ID"
   let nameHeader = "NAME"
+  let typeHeader = "TYPE"
 
   let idWidth = max(idHeader.count, envs.map(\.id.count).max() ?? 0)
   let nameWidth = max(nameHeader.count, envs.map(\.name.count).max() ?? 0)
+  let typeWidth = max(typeHeader.count, envs.map(\.type.rawValue.count).max() ?? 0)
 
   func pad(_ s: String, to width: Int) -> String {
     if s.count >= width { return s }
     return s + String(repeating: " ", count: width - s.count)
   }
 
-  FileHandle.standardOutput.write(Data("\(pad(idHeader, to: idWidth))  \(pad(nameHeader, to: nameWidth))\n".utf8))
+  FileHandle.standardOutput.write(Data("\(pad(idHeader, to: idWidth))  \(pad(nameHeader, to: nameWidth))  \(pad(typeHeader, to: typeWidth))\n".utf8))
   for env in envs {
-    FileHandle.standardOutput.write(Data("\(pad(env.id, to: idWidth))  \(pad(env.name, to: nameWidth))\n".utf8))
+    FileHandle.standardOutput.write(Data("\(pad(env.id, to: idWidth))  \(pad(env.name, to: nameWidth))  \(pad(env.type.rawValue, to: typeWidth))\n".utf8))
   }
 }
 

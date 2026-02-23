@@ -38,7 +38,7 @@ private func runAsServer(
   config: WuhuRunnerConfig,
   store: SQLiteRunnerStore,
 ) async throws {
-  let router = RunnerRouter.make(runnerName: runnerName, config: config, store: store)
+  let router = RunnerRouter.make(runnerName: runnerName, store: store)
 
   let host = config.listen?.host?.isEmpty == false ? config.listen!.host! : "127.0.0.1"
   let port = config.listen?.port ?? 5531
@@ -68,7 +68,6 @@ private func runAsClient(
       outbound: outbound,
       logger: context.logger,
       runnerName: runnerName,
-      config: config,
       store: store,
     )
   }
@@ -76,7 +75,7 @@ private func runAsClient(
 }
 
 private enum RunnerRouter {
-  static func make(runnerName: String, config: WuhuRunnerConfig, store: SQLiteRunnerStore) -> Router<RunnerRequestContext> {
+  static func make(runnerName: String, store: SQLiteRunnerStore) -> Router<RunnerRequestContext> {
     let router = Router(context: RunnerRequestContext.self)
 
     router.get("healthz") { _, _ -> String in "ok" }
@@ -91,7 +90,6 @@ private enum RunnerRouter {
         outbound: outbound,
         logger: wsContext.logger,
         runnerName: runnerName,
-        config: config,
         store: store,
       )
     }
@@ -106,7 +104,6 @@ private enum RunnerMessageLoop {
     outbound: WebSocketOutboundWriter,
     logger: Logger,
     runnerName _: String,
-    config _: WuhuRunnerConfig,
     store: SQLiteRunnerStore,
   ) async throws {
     let sender = WebSocketSender(outbound: outbound)
