@@ -57,8 +57,7 @@ struct SessionsFeature {
         guard let scheme = url.scheme, scheme == "session" else { return .none }
         let sessionID: String = {
           if let host = url.host, !host.isEmpty { return host }
-          let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-          return path
+          return url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }()
         guard !sessionID.isEmpty else { return .none }
         state.path.append(.init(sessionID: sessionID, serverURL: sessionServerURL(state: state), username: state.username))
