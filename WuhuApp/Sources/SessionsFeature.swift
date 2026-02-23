@@ -13,16 +13,12 @@ struct SessionsFeature {
     var sessions: IdentifiedArrayOf<WuhuSession> = []
     var isLoading = false
     var error: String?
-
-    var path = StackState<SessionDetailFeature.State>()
-    @Presents var createSession: CreateSessionFeature.State?
+    var searchText: String = ""
   }
 
-  enum Action {
+  enum Action: BindableAction {
     case onAppear
     case onDisappear
-
-    case openURL(URL)
 
     case tabBecameVisible
     case tabBecameHidden
@@ -31,10 +27,12 @@ struct SessionsFeature {
     case refresh
     case refreshResponse(TaskResult<[WuhuSession]>)
 
-    case createButtonTapped
-    case createSession(PresentationAction<CreateSessionFeature.Action>)
+    case binding(BindingAction<State>)
+    case delegate(Delegate)
 
-    case path(StackAction<SessionDetailFeature.State, SessionDetailFeature.Action>)
+    enum Delegate: Equatable {
+      case sessionCreated(WuhuSession)
+    }
   }
 
   @Dependency(\.continuousClock) private var clock
@@ -45,6 +43,8 @@ struct SessionsFeature {
   }
 
   var body: some ReducerOf<Self> {
+    BindingReducer()
+
     Reduce { state, action in
       switch action {
       case .onAppear:
@@ -52,16 +52,6 @@ struct SessionsFeature {
 
       case .onDisappear:
         return .cancel(id: CancelID.refreshTimer)
-
-      case let .openURL(url):
-        guard let scheme = url.scheme, scheme == "session" else { return .none }
-        let sessionID: String = {
-          if let host = url.host, !host.isEmpty { return host }
-          return url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        }()
-        guard !sessionID.isEmpty else { return .none }
-        state.path.append(.init(sessionID: sessionID, serverURL: sessionServerURL(state: state), username: state.username))
-        return .none
 
       case .tabBecameVisible:
         return .merge(
@@ -106,41 +96,13 @@ struct SessionsFeature {
         state.error = "\(error)"
         return .none
 
-      case .createButtonTapped:
-        guard let serverURL = state.serverURL else { return .none }
-        state.createSession = .init(serverURL: serverURL, username: state.username)
+      case .binding:
         return .none
 
-      case let .createSession(.presented(.delegate(.created(session)))):
-        state.createSession = nil
-        state.sessions[id: session.id] = session
-        state.path.append(.init(sessionID: session.id, serverURL: sessionServerURL(state: state), username: state.username))
-        return .send(.refresh)
-
-      case .createSession(.presented(.delegate(.cancelled))):
-        state.createSession = nil
-        return .none
-
-      case .createSession:
-        return .none
-
-      case let .path(.element(_, .delegate(.didClose))):
-        return .send(.refresh)
-
-      case .path:
+      case .delegate:
         return .none
       }
     }
-    .ifLet(\.$createSession, action: \.createSession) {
-      CreateSessionFeature()
-    }
-    .forEach(\.path, action: \.path) {
-      SessionDetailFeature()
-    }
-  }
-
-  private func sessionServerURL(state: State) -> URL {
-    state.serverURL ?? URL(string: "http://127.0.0.1:5530")!
   }
 
   private func refreshTimerEffect() -> Effect<Action> {

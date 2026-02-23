@@ -22,6 +22,7 @@ struct SessionDetailFeature {
 
     var sessionType: WuhuSessionType = .coding
     var displayStartEntryID: Int64?
+    var parentSessionID: String?
 
     var settings: SessionSettingsSnapshot?
     var status: SessionStatusSnapshot?
@@ -76,6 +77,30 @@ struct SessionDetailFeature {
     var executionStatus: SessionExecutionStatus {
       status?.status ?? .idle
     }
+
+    var displayTitle: String {
+      let firstUserText = transcript.first(where: { entry in
+        if case let .message(m) = entry.payload, case let .user(u) = m {
+          let text = u.content.compactMap { block -> String? in
+            if case let .text(t, _) = block { return t }
+            return nil
+          }.joined()
+          return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return false
+      })
+
+      if let entry = firstUserText, case let .message(m) = entry.payload, case let .user(u) = m {
+        let text = u.content.compactMap { block -> String? in
+          if case let .text(t, _) = block { return t }
+          return nil
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        let truncated = String(text.prefix(50))
+        return truncated.count < text.count ? truncated + "..." : truncated
+      }
+
+      return String(sessionID.prefix(12)) + "..."
+    }
   }
 
   enum Action: BindableAction {
@@ -100,6 +125,8 @@ struct SessionDetailFeature {
 
     case applyModelTapped
     case setModelResponse(TaskResult<WuhuSetSessionModelResponse>)
+
+    case parentSessionTapped
 
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
@@ -154,6 +181,7 @@ struct SessionDetailFeature {
       case let .loadSessionInfoResponse(.success(response)):
         state.sessionType = response.session.type
         state.displayStartEntryID = response.session.displayStartEntryID
+        state.parentSessionID = response.session.parentSessionID
         if let start = state.displayStartEntryID {
           state.transcript = IdentifiedArray(uniqueElements: state.transcript.filter { $0.id >= start })
           state.skills = WuhuSkills.extract(from: Array(state.transcript))
@@ -161,7 +189,6 @@ struct SessionDetailFeature {
         return .none
 
       case let .loadSessionInfoResponse(.failure(error)):
-        // Best-effort: subscription still works without this.
         state.error = state.error ?? "\(error)"
         return .none
 
@@ -393,6 +420,10 @@ struct SessionDetailFeature {
       case let .setModelResponse(.failure(error)):
         state.isUpdatingModel = false
         state.error = "\(error)"
+        return .none
+
+      case .parentSessionTapped:
+        // Handled at the app level if needed
         return .none
 
       case .delegate:

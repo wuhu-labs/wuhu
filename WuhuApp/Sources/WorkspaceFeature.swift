@@ -7,23 +7,15 @@ import WuhuClient
 struct WorkspaceFeature {
   @ObservableState
   struct State: Equatable {
-    enum ViewMode: String, CaseIterable, Hashable {
-      case docs = "Docs"
-      case issues = "Issues"
-    }
-
     var serverURL: URL?
 
     var docs: IdentifiedArrayOf<WuhuWorkspaceDocSummary> = []
     var isLoading = false
     var error: String?
 
-    var viewMode: ViewMode = .docs
     var searchText: String = ""
     var filterKey: String?
     var filterValue: String?
-
-    var path = StackState<WorkspaceDocDetailFeature.State>()
   }
 
   enum Action: BindableAction {
@@ -41,8 +33,6 @@ struct WorkspaceFeature {
     case setFilter(key: String, value: String)
 
     case binding(BindingAction<State>)
-
-    case path(StackAction<WorkspaceDocDetailFeature.State, WorkspaceDocDetailFeature.Action>)
   }
 
   @Dependency(\.continuousClock) private var clock
@@ -117,13 +107,7 @@ struct WorkspaceFeature {
 
       case .binding:
         return .none
-
-      case .path:
-        return .none
       }
-    }
-    .forEach(\.path, action: \.path) {
-      WorkspaceDocDetailFeature()
     }
   }
 

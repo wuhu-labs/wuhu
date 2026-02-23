@@ -5,7 +5,7 @@ import WuhuAPI
 import WuhuCore
 
 struct SessionDetailView: View {
-  let store: StoreOf<SessionDetailFeature>
+  @Bindable var store: StoreOf<SessionDetailFeature>
 
   var body: some View {
     VStack(spacing: 0) {
@@ -15,12 +15,14 @@ struct SessionDetailView: View {
       Divider()
       composer
     }
-    .navigationTitle("Session")
+    .navigationTitle(store.displayTitle)
     .wuhuNavigationBarTitleDisplayModeInline()
     .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
+      ToolbarItem(placement: .automatic) {
+        statusIndicator
+      }
+      ToolbarItem(placement: .primaryAction) {
         let canStop = store.executionStatus == .running
-
         Button("Stop") {
           store.send(.stopTapped)
         }
@@ -59,6 +61,47 @@ struct SessionDetailView: View {
     .onDisappear { store.send(.onDisappear) }
   }
 
+  @ViewBuilder
+  private var statusIndicator: some View {
+    HStack(spacing: 6) {
+      if store.isSubscribing || store.isRetrying {
+        ProgressView()
+          .controlSize(.small)
+      }
+
+      if store.isRetrying {
+        Text(String(format: "Retrying (%.0fs)", store.retryDelaySeconds))
+          .font(.caption)
+          .foregroundStyle(.orange)
+      } else {
+        HStack(spacing: 4) {
+          Circle()
+            .fill(statusColor)
+            .frame(width: 8, height: 8)
+          Text(statusLabel)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+  }
+
+  private var statusColor: Color {
+    switch store.executionStatus {
+    case .running: .green
+    case .idle: .yellow
+    case .stopped: .gray
+    }
+  }
+
+  private var statusLabel: String {
+    switch store.executionStatus {
+    case .running: "Running"
+    case .idle: "Idle"
+    case .stopped: "Stopped"
+    }
+  }
+
   private var header: some View {
     HStack(spacing: 12) {
       Picker(
@@ -73,29 +116,28 @@ struct SessionDetailView: View {
         Text("Full").tag(WuhuSessionVerbosity.full)
       }
       .pickerStyle(.segmented)
+      .frame(maxWidth: 260)
 
-      if store.isSubscribing || store.isRetrying {
-        ProgressView()
-      }
+      Spacer()
 
-      if store.isRetrying {
-        Text(String(format: "Retrying (%.0fs)", store.retryDelaySeconds))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else if store.executionStatus == .running {
-        Text("Running")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      if let parentID = store.parentSessionID {
+        Button {
+          store.send(.parentSessionTapped)
+        } label: {
+          Label("Forked from \(String(parentID.prefix(8)))...", systemImage: "arrow.branch")
+            .font(.caption)
+        }
+        .buttonStyle(.borderless)
       }
     }
     .padding(.horizontal)
-    .padding(.vertical, 10)
+    .padding(.vertical, 8)
   }
 
   private var transcript: some View {
     ScrollViewReader { proxy in
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 8) {
           if let error = store.error {
             Text(error)
               .foregroundStyle(.red)
@@ -108,7 +150,7 @@ struct SessionDetailView: View {
               .id(item.id)
           }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
       }
       .onChange(of: store.transcript.last?.id) { _, lastID in
         guard let lastID else { return }
@@ -134,14 +176,19 @@ struct SessionDetailView: View {
         axis: .vertical,
       )
       .lineLimit(1 ... 6)
+      .textFieldStyle(.roundedBorder)
       .wuhuTextInputAutocapitalizationSentences()
+      .onSubmit {
+        store.send(.sendTapped)
+      }
 
       Button {
         store.send(.sendTapped)
       } label: {
         Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 22))
+          .font(.system(size: 24))
       }
+      .buttonStyle(.borderless)
       .disabled(store.isEnqueuing || store.isStopping || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
     .padding(.horizontal)
@@ -237,7 +284,7 @@ private struct SessionModelPickerSheet: View {
   }
 }
 
-private struct TranscriptItemRow: View {
+struct TranscriptItemRow: View {
   let item: WuhuSessionDisplayItem
   let verbosity: WuhuSessionVerbosity
 
@@ -250,17 +297,10 @@ private struct TranscriptItemRow: View {
         .padding(.horizontal)
 
     case .tool:
-      MessageBubble(
-        role: "tool",
-        title: item.title,
-        text: item.text,
-        isCompact: true,
-      )
-      .padding(.horizontal)
+      CollapsibleToolRow(item: item)
+        .padding(.horizontal)
 
     case .system, .user, .agent:
-      TranscriptSeparator()
-        .padding(.horizontal)
       MessageBubble(
         role: bubbleRole,
         title: item.title,
@@ -273,29 +313,71 @@ private struct TranscriptItemRow: View {
 
   private var bubbleRole: String {
     switch item.role {
-    case .user:
-      "user"
-    case .agent:
-      "assistant"
-    case .system:
-      "system"
-    case .tool:
-      "tool"
-    case .meta:
-      "meta"
+    case .user: "user"
+    case .agent: "assistant"
+    case .system: "system"
+    case .tool: "tool"
+    case .meta: "meta"
     }
   }
 }
 
-private struct TranscriptSeparator: View {
+private struct CollapsibleToolRow: View {
+  let item: WuhuSessionDisplayItem
+  @State private var isExpanded = false
+
   var body: some View {
-    Text("-----")
-      .font(.system(.caption2, design: .monospaced))
-      .foregroundStyle(.secondary)
+    VStack(alignment: .leading, spacing: 0) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.15)) {
+          isExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: 6) {
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(width: 12)
+
+          Text(summaryLine)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+
+          Spacer()
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+
+      if isExpanded, !detailText.isEmpty {
+        Text(detailText)
+          .font(.system(.caption2, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .textSelection(.enabled)
+          .padding(.leading, 18)
+          .padding(.top, 4)
+      }
+    }
+    .padding(.vertical, 2)
+    .padding(.horizontal, 10)
+    .background(Color.orange.opacity(0.06))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+  }
+
+  private var summaryLine: String {
+    let lines = item.text.split(separator: "\n", maxSplits: 1)
+    return String(lines.first ?? "")
+  }
+
+  private var detailText: String {
+    let lines = item.text.split(separator: "\n", maxSplits: 1)
+    guard lines.count > 1 else { return "" }
+    return String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 
-private struct MessageBubble: View {
+struct MessageBubble: View {
   let role: String
   let title: String
   let text: String
@@ -328,21 +410,16 @@ private struct MessageBubble: View {
 
   private var backgroundColor: Color {
     switch role {
-    case "user":
-      Color.blue.opacity(0.12)
-    case "assistant":
-      Color.green.opacity(0.12)
-    case "tool":
-      Color.orange.opacity(0.12)
-    case "system":
-      Color.gray.opacity(0.12)
-    default:
-      Color.secondary.opacity(0.08)
+    case "user": Color.blue.opacity(0.12)
+    case "assistant": Color.green.opacity(0.12)
+    case "tool": Color.orange.opacity(0.12)
+    case "system": Color.gray.opacity(0.12)
+    default: Color.secondary.opacity(0.08)
     }
   }
 }
 
-private func linkifySessionLinks(_ text: String) -> AttributedString {
+func linkifySessionLinks(_ text: String) -> AttributedString {
   var attributed = AttributedString(text)
   let pattern = #"session://[A-Za-z0-9-]+"#
   guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return attributed }

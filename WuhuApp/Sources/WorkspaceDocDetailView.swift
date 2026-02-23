@@ -74,18 +74,18 @@ struct WorkspaceDocDetailView: View {
   private func renderFrontmatterValue(_ value: JSONValue) -> String? {
     switch value {
     case .null:
-      nil
+      return nil
     case let .bool(v):
-      v ? "true" : "false"
+      return v ? "true" : "false"
     case let .number(v):
-      String(v)
+      return String(v)
     case let .string(v):
-      v
+      return v
     case let .array(values):
       let rendered = values.compactMap(renderFrontmatterValue).filter { !$0.isEmpty }
       return rendered.isEmpty ? nil : rendered.joined(separator: ", ")
     case .object:
-      nil
+      return nil
     }
   }
 }

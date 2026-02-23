@@ -13,7 +13,7 @@ struct CreateSessionFeature {
     var serverURL: URL
     var username: String?
 
-    var environments: [WuhuEnvironmentInfo] = []
+    var environments: [WuhuEnvironmentDefinition] = []
     var runners: [WuhuRunnerInfo] = []
     var isLoadingOptions = false
 
@@ -51,7 +51,7 @@ struct CreateSessionFeature {
     case onDisappear
     case binding(BindingAction<State>)
 
-    case loadOptionsResponse(TaskResult<(envs: [WuhuEnvironmentInfo], runners: [WuhuRunnerInfo])>)
+    case loadOptionsResponse(TaskResult<(envs: [WuhuEnvironmentDefinition], runners: [WuhuRunnerInfo])>)
     case createTapped
     case createResponse(TaskResult<WuhuSession>)
     case cancelTapped
