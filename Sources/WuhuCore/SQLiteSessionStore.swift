@@ -31,7 +31,6 @@ public actor SQLiteSessionStore: SessionStore {
     let skills = WuhuSkillsLoader.load(environmentRoot: environment.path)
     let effectiveSystemPrompt: String = {
       if skills.isEmpty { return systemPrompt }
-      if systemPrompt.contains("<available_skills>") { return systemPrompt }
       return systemPrompt + WuhuSkills.promptSection(skills: skills)
     }()
 
