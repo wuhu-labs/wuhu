@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import MarkdownUI
 import SwiftUI
 
 @Reducer
@@ -7,6 +8,7 @@ struct IssuesFeature {
   struct State {
     var issues: IdentifiedArrayOf<MockIssue> = MockData.issues
     var selectedIssueID: String?
+    var popoverIssueID: String?
 
     var selectedIssue: MockIssue? {
       guard let id = selectedIssueID else { return nil }
@@ -16,6 +18,7 @@ struct IssuesFeature {
 
   enum Action {
     case issueSelected(String?)
+    case popoverIssueChanged(String?)
   }
 
   var body: some ReducerOf<Self> {
@@ -23,6 +26,9 @@ struct IssuesFeature {
       switch action {
       case let .issueSelected(id):
         state.selectedIssueID = id
+        return .none
+      case let .popoverIssueChanged(id):
+        state.popoverIssueID = id
         return .none
       }
     }
@@ -109,6 +115,16 @@ struct IssuesDetailView: View {
       }
       .padding(20)
     }
+    .sheet(isPresented: Binding(
+      get: { store.popoverIssueID != nil },
+      set: { if !$0 { store.send(.popoverIssueChanged(nil)) } }
+    )) {
+      if let id = store.popoverIssueID, let issue = store.issues[id: id] {
+        IssuePopoverContent(issue: issue) {
+          store.send(.popoverIssueChanged(nil))
+        }
+      }
+    }
   }
 
   private func kanbanColumn(status: MockIssue.IssueStatus) -> some View {
@@ -128,8 +144,8 @@ struct IssuesDetailView: View {
       .padding(.bottom, 4)
 
       ForEach(filtered) { issue in
-        KanbanCard(issue: issue, isSelected: store.selectedIssueID == issue.id)
-          .onTapGesture { store.send(.issueSelected(issue.id)) }
+        KanbanCard(issue: issue, isSelected: store.popoverIssueID == issue.id)
+          .onTapGesture { store.send(.popoverIssueChanged(issue.id)) }
       }
 
       Spacer()
@@ -204,5 +220,35 @@ struct KanbanCard: View {
     case .medium: .yellow
     case .low: .gray
     }
+  }
+}
+
+// MARK: - Issue Popover Content
+
+struct IssuePopoverContent: View {
+  let issue: MockIssue
+  var onDismiss: () -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text(issue.title)
+          .font(.headline)
+        Spacer()
+        Button("Done") { onDismiss() }
+          .keyboardShortcut(.cancelAction)
+      }
+      .padding(16)
+
+      Divider()
+
+      ScrollView {
+        Markdown(issue.markdownContent)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(24)
+      }
+    }
+    .frame(width: 640, height: 560)
   }
 }

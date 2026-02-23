@@ -91,6 +91,7 @@ struct MockIssue: Identifiable, Equatable {
   var assignee: String?
   var priority: Priority
   var description: String
+  var markdownContent: String = ""
 
   enum IssueStatus: String, CaseIterable, Equatable {
     case open = "Open"
@@ -394,14 +395,177 @@ enum MockData {
   // MARK: Issues
 
   static let issues: IdentifiedArrayOf<MockIssue> = [
-    MockIssue(id: "issue-1", title: "Auth token refresh fails silently", status: .inProgress, assignee: "minsheng", priority: .high, description: "When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login."),
-    MockIssue(id: "issue-2", title: "WebSocket doesn't reconnect after sleep", status: .inProgress, assignee: "anna", priority: .critical, description: "Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made."),
-    MockIssue(id: "issue-3", title: "Login page shows stale error message", status: .open, assignee: nil, priority: .medium, description: "After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh."),
-    MockIssue(id: "issue-4", title: "Add rate limiting to API endpoints", status: .open, assignee: "kesou", priority: .low, description: "Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key."),
-    MockIssue(id: "issue-5", title: "Database migration for session metadata", status: .done, assignee: "yihan", priority: .high, description: "Migrate sessions table to schema v5, adding metadata JSONB column for extensible session properties."),
-    MockIssue(id: "issue-6", title: "Update CI to use Swift 6.2", status: .done, assignee: "kesou", priority: .medium, description: "Update GitHub Actions workflow to use Swift 6.2 toolchain and enable strict concurrency checking."),
-    MockIssue(id: "issue-7", title: "Runner timeout not respected for long tools", status: .open, assignee: nil, priority: .high, description: "When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating."),
-    MockIssue(id: "issue-8", title: "Add session fork UI", status: .open, assignee: "anna", priority: .medium, description: "Users need the ability to fork a session from any entry point to explore alternative approaches."),
+    MockIssue(
+      id: "issue-1", title: "Auth token refresh fails silently", status: .inProgress, assignee: "minsheng", priority: .high,
+      description: "When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login.",
+      markdownContent: """
+        ## Auth token refresh fails silently
+
+        **Priority:** High | **Assignee:** minsheng
+
+        ### Description
+        When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login.
+
+        ### Steps to reproduce
+        1. Log in and wait for the token to expire (or manually invalidate it)
+        2. Perform any authenticated action
+        3. Observe blank screen — no error, no redirect
+
+        ### Root cause
+        `AuthClient.refresh()` catches the 401 and returns `nil` instead of throwing. Callers treat `nil` as "no token needed" rather than "auth failed".
+
+        ### Fix
+        - Make `refresh()` throw on 401
+        - Add `.catch` handler in the middleware to redirect to `/login`
+        - Add a toast notification for the user
+        """
+    ),
+    MockIssue(
+      id: "issue-2", title: "WebSocket doesn't reconnect after sleep", status: .inProgress, assignee: "anna", priority: .critical,
+      description: "Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made.",
+      markdownContent: """
+        ## WebSocket doesn't reconnect after sleep
+
+        **Priority:** Critical | **Assignee:** anna
+
+        ### Description
+        Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made.
+
+        ### Analysis
+        The `NWConnection` state transitions to `.waiting` on sleep but we only observe `.ready` and `.failed`. The reconnection timer is based on explicit disconnects, not network path changes.
+
+        ### Plan
+        - Observe `NWPathMonitor` for `satisfiedConnectionRequired` → trigger reconnect
+        - Add exponential backoff: 1s, 2s, 4s, 8s, max 30s
+        - Cap at 10 retries before surfacing error to user
+
+        ```swift
+        // Proposed reconnect logic
+        func handlePathUpdate(_ path: NWPath) {
+          if path.status == .satisfied && connection.state != .ready {
+            reconnect(attempt: 0)
+          }
+        }
+        ```
+        """
+    ),
+    MockIssue(
+      id: "issue-3", title: "Login page shows stale error message", status: .open, assignee: nil, priority: .medium,
+      description: "After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh.",
+      markdownContent: """
+        ## Login page shows stale error message
+
+        **Priority:** Medium | **Unassigned**
+
+        ### Description
+        After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh.
+
+        ### Expected behavior
+        Error banner should clear when login is re-attempted.
+
+        ### Notes
+        Likely a state management issue — the error state isn't reset on new submission.
+        """
+    ),
+    MockIssue(
+      id: "issue-4", title: "Add rate limiting to API endpoints", status: .open, assignee: "kesou", priority: .low,
+      description: "Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key.",
+      markdownContent: """
+        ## Add rate limiting to API endpoints
+
+        **Priority:** Low | **Assignee:** kesou
+
+        ### Description
+        Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key.
+
+        ### Requirements
+        - Token bucket algorithm, 100 requests/minute per API key
+        - Return `429 Too Many Requests` with `Retry-After` header
+        - Store counters in Redis (or in-memory for single-node deploys)
+        - Exempt internal service-to-service calls
+
+        ### Open questions
+        - Should we differentiate read vs write rate limits?
+        - Do we need per-endpoint limits or just global per-key?
+        """
+    ),
+    MockIssue(
+      id: "issue-5", title: "Database migration for session metadata", status: .done, assignee: "yihan", priority: .high,
+      description: "Migrate sessions table to schema v5, adding metadata JSONB column for extensible session properties.",
+      markdownContent: """
+        ## Database migration for session metadata
+
+        **Priority:** High | **Assignee:** yihan | **Status:** Done
+
+        ### Description
+        Migrated sessions table to schema v5, adding metadata JSONB column for extensible session properties.
+
+        ### Migration details
+        - Added `metadata JSONB DEFAULT '{}'` column
+        - Backfilled existing rows with empty JSON
+        - Added GIN index on metadata for query performance
+        - Verified row counts: 12,847 sessions intact
+
+        ### Verification
+        Integrity check passed. All foreign keys valid, no orphaned entries.
+        """
+    ),
+    MockIssue(
+      id: "issue-6", title: "Update CI to use Swift 6.2", status: .done, assignee: "kesou", priority: .medium,
+      description: "Update GitHub Actions workflow to use Swift 6.2 toolchain and enable strict concurrency checking.",
+      markdownContent: """
+        ## Update CI to use Swift 6.2
+
+        **Priority:** Medium | **Assignee:** kesou | **Status:** Done
+
+        ### Changes
+        - Updated `.swift-version` to 6.2
+        - Updated GitHub Actions to `swift:6.2` Docker image
+        - Enabled `-strict-concurrency=complete`
+        - Fixed 3 sendability warnings in `WuhuRunner`
+        """
+    ),
+    MockIssue(
+      id: "issue-7", title: "Runner timeout not respected for long tools", status: .open, assignee: nil, priority: .high,
+      description: "When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating.",
+      markdownContent: """
+        ## Runner timeout not respected for long tools
+
+        **Priority:** High | **Unassigned**
+
+        ### Description
+        When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating.
+
+        ### Impact
+        On the staging server, we found 23 zombie `bash` processes from timed-out tool calls over 48 hours.
+
+        ### Proposed fix
+        - Send `SIGTERM` on timeout, wait 5s, then `SIGKILL`
+        - Track child PIDs in a process group
+        - Add `onTimeout` callback to `ToolRunner` for cleanup
+        """
+    ),
+    MockIssue(
+      id: "issue-8", title: "Add session fork UI", status: .open, assignee: "anna", priority: .medium,
+      description: "Users need the ability to fork a session from any entry point to explore alternative approaches.",
+      markdownContent: """
+        ## Add session fork UI
+
+        **Priority:** Medium | **Assignee:** anna
+
+        ### Description
+        Users need the ability to fork a session from any entry point to explore alternative approaches.
+
+        ### Design
+        - Right-click any message → "Fork from here"
+        - Creates a new session with all entries up to that point
+        - New session appears in the sidebar immediately
+        - Parent session shows a "forked" indicator at the fork point
+
+        ### Backend
+        The `fork` API already exists (`POST /sessions/:id/fork`). This is purely a UI task.
+        """
+    ),
   ]
 
   // MARK: Docs
