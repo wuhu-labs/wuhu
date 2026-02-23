@@ -198,19 +198,37 @@ public struct WuhuServer: Sendable {
     router.post("v1/sessions") { request, context async throws -> Response in
       let create = try await request.decode(as: WuhuCreateSessionRequest.self, context: context)
 
+      let sessionType = create.type ?? .coding
       let model = (create.model?.isEmpty == false) ? create.model! : WuhuModelCatalog.defaultModelID(for: create.provider)
-      let systemPrompt = (create.systemPrompt?.isEmpty == false) ? create.systemPrompt! : defaultSystemPrompt
+      let systemPrompt: String = if let prompt = create.systemPrompt, !prompt.isEmpty {
+        prompt
+      } else {
+        switch sessionType {
+        case .coding:
+          WuhuDefaultSystemPrompts.codingAgent
+        case .channel:
+          WuhuDefaultSystemPrompts.channelAgent
+        }
+      }
       let sessionID = UUID().uuidString.lowercased()
-      let environmentDefinition = try await resolveEnvironment(create.environment, missingStatus: .badRequest)
 
       let session: WuhuSession
       if let runnerName = create.runner, !runnerName.isEmpty {
+        if let directPath = create.environmentPath, !directPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          throw HTTPError(.badRequest, message: "environmentPath is not supported for runner sessions")
+        }
+
+        let envIdentifier = (create.environment ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !envIdentifier.isEmpty else { throw HTTPError(.badRequest, message: "Environment identifier is required") }
+        let environmentDefinition = try await resolveEnvironment(envIdentifier, missingStatus: .badRequest)
+
         guard let runner = await runnerRegistry.get(runnerName: runnerName) else {
           throw HTTPError(.badRequest, message: "Unknown or disconnected runner: \(runnerName)")
         }
         let environment = try await runner.resolveEnvironment(sessionID: sessionID, environment: environmentDefinition)
         session = try await service.createSession(
           sessionID: sessionID,
+          sessionType: sessionType,
           provider: create.provider,
           model: model,
           reasoningEffort: create.reasoningEffort,
@@ -223,38 +241,54 @@ public struct WuhuServer: Sendable {
         try await runner.registerSession(sessionID: session.id, environment: environment)
       } else {
         let environment: WuhuEnvironment
-        switch environmentDefinition.type {
-        case .local:
-          let resolvedPath = ToolPath.resolveToCwd(environmentDefinition.path, cwd: FileManager.default.currentDirectoryPath)
-          environment = WuhuEnvironment(name: environmentDefinition.name, type: .local, path: resolvedPath)
-        case .folderTemplate:
-          guard let templatePathRaw = environmentDefinition.templatePath else {
-            throw HTTPError(.badRequest, message: "folder-template requires templatePath")
+        var environmentID: String?
+
+        if let directPath = create.environmentPath, !directPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          let resolvedPath = ToolPath.resolveToCwd(directPath, cwd: FileManager.default.currentDirectoryPath)
+          let candidate = URL(fileURLWithPath: resolvedPath).lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+          let name = candidate.isEmpty ? "workspace" : candidate
+          environment = WuhuEnvironment(name: name, type: .local, path: resolvedPath)
+          environmentID = nil
+        } else {
+          let envIdentifier = (create.environment ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !envIdentifier.isEmpty else { throw HTTPError(.badRequest, message: "Environment identifier is required") }
+          let environmentDefinition = try await resolveEnvironment(envIdentifier, missingStatus: .badRequest)
+          environmentID = environmentDefinition.id
+
+          switch environmentDefinition.type {
+          case .local:
+            let resolvedPath = ToolPath.resolveToCwd(environmentDefinition.path, cwd: FileManager.default.currentDirectoryPath)
+            environment = WuhuEnvironment(name: environmentDefinition.name, type: .local, path: resolvedPath)
+          case .folderTemplate:
+            guard let templatePathRaw = environmentDefinition.templatePath else {
+              throw HTTPError(.badRequest, message: "folder-template requires templatePath")
+            }
+            let templatePath = ToolPath.resolveToCwd(templatePathRaw, cwd: FileManager.default.currentDirectoryPath)
+            let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(environmentDefinition.path)
+            let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
+              sessionID: sessionID,
+              templatePath: templatePath,
+              startupScript: environmentDefinition.startupScript,
+              workspacesPath: workspacesRoot,
+            )
+            environment = WuhuEnvironment(
+              name: environmentDefinition.name,
+              type: .folderTemplate,
+              path: workspacePath,
+              templatePath: templatePath,
+              startupScript: environmentDefinition.startupScript,
+            )
           }
-          let templatePath = ToolPath.resolveToCwd(templatePathRaw, cwd: FileManager.default.currentDirectoryPath)
-          let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(environmentDefinition.path)
-          let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
-            sessionID: sessionID,
-            templatePath: templatePath,
-            startupScript: environmentDefinition.startupScript,
-            workspacesPath: workspacesRoot,
-          )
-          environment = WuhuEnvironment(
-            name: environmentDefinition.name,
-            type: .folderTemplate,
-            path: workspacePath,
-            templatePath: templatePath,
-            startupScript: environmentDefinition.startupScript,
-          )
         }
 
         session = try await service.createSession(
           sessionID: sessionID,
+          sessionType: sessionType,
           provider: create.provider,
           model: model,
           reasoningEffort: create.reasoningEffort,
           systemPrompt: systemPrompt,
-          environmentID: environmentDefinition.id,
+          environmentID: environmentID,
           environment: environment,
           runnerName: nil,
           parentSessionID: create.parentSessionID,
@@ -469,15 +503,6 @@ public struct WuhuServer: Sendable {
     try await app.runService()
   }
 }
-
-private let defaultSystemPrompt = [
-  "You are a coding agent.",
-  "Use tools to inspect and modify the repository in your working directory.",
-  "Prefer read/grep/find/ls over guessing file contents.",
-  "When making changes, use edit for surgical replacements and write for new files.",
-  "Use bash to run builds/tests and gather precise outputs.",
-  "Use async_bash to start long-running commands in the background, and async_bash_status to check their status.",
-].joined(separator: "\n")
 
 private func ensureDirectoryExists(forDatabasePath path: String) throws {
   guard path != ":memory:" else { return }

@@ -20,6 +20,9 @@ struct SessionDetailFeature {
     var transcript: IdentifiedArrayOf<WuhuSessionEntry> = []
     var skills: [WuhuSkill] = []
 
+    var sessionType: WuhuSessionType = .coding
+    var displayStartEntryID: Int64?
+
     var settings: SessionSettingsSnapshot?
     var status: SessionStatusSnapshot?
 
@@ -80,6 +83,9 @@ struct SessionDetailFeature {
     case onDisappear
     case binding(BindingAction<State>)
 
+    case loadSessionInfo
+    case loadSessionInfoResponse(TaskResult<WuhuGetSessionResponse>)
+
     case startSubscription
     case subscriptionInitial(SessionInitialState)
     case subscriptionEvent(SessionEvent)
@@ -120,7 +126,10 @@ struct SessionDetailFeature {
       switch action {
       case .onAppear:
         state.error = nil
-        return .send(.startSubscription)
+        return .merge(
+          .send(.loadSessionInfo),
+          .send(.startSubscription),
+        )
 
       case .onDisappear:
         return .merge(
@@ -128,6 +137,33 @@ struct SessionDetailFeature {
           .cancel(id: CancelID.enqueue),
           .send(.delegate(.didClose)),
         )
+
+      case .loadSessionInfo:
+        guard let serverURL = state.serverURL else { return .none }
+        let sessionID = state.sessionID
+        return .run { send in
+          await send(
+            .loadSessionInfoResponse(
+              TaskResult {
+                try await wuhuClientProvider.make(serverURL).getSession(id: sessionID)
+              },
+            ),
+          )
+        }
+
+      case let .loadSessionInfoResponse(.success(response)):
+        state.sessionType = response.session.type
+        state.displayStartEntryID = response.session.displayStartEntryID
+        if let start = state.displayStartEntryID {
+          state.transcript = IdentifiedArray(uniqueElements: state.transcript.filter { $0.id >= start })
+          state.skills = WuhuSkills.extract(from: Array(state.transcript))
+        }
+        return .none
+
+      case let .loadSessionInfoResponse(.failure(error)):
+        // Best-effort: subscription still works without this.
+        state.error = state.error ?? "\(error)"
+        return .none
 
       case .startSubscription:
         guard let serverURL = state.serverURL else {
@@ -186,8 +222,13 @@ struct SessionDetailFeature {
         state.steer = initial.steer
         state.followUp = initial.followUp
 
-        state.transcript = IdentifiedArray(uniqueElements: initial.transcript)
-        state.skills = WuhuSkills.extract(from: initial.transcript)
+        let filtered: [WuhuSessionEntry] = if let start = state.displayStartEntryID {
+          initial.transcript.filter { $0.id >= start }
+        } else {
+          initial.transcript
+        }
+        state.transcript = IdentifiedArray(uniqueElements: filtered)
+        state.skills = WuhuSkills.extract(from: filtered)
 
         syncModelSelectionFromSettings(initial.settings, state: &state)
 
@@ -381,7 +422,12 @@ struct SessionDetailFeature {
   private func apply(event: SessionEvent, to state: inout State) {
     switch event {
     case let .transcriptAppended(entries):
-      for entry in entries {
+      let filtered: [WuhuSessionEntry] = if let start = state.displayStartEntryID {
+        entries.filter { $0.id >= start }
+      } else {
+        entries
+      }
+      for entry in filtered {
         state.transcript[id: entry.id] = entry
       }
 

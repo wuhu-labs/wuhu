@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Foundation
 import SwiftUI
 import WuhuAPI
 import WuhuCore
@@ -311,7 +312,7 @@ private struct MessageBubble: View {
           .font(.caption)
           .foregroundStyle(.secondary)
 
-        Text(text.isEmpty ? " " : text)
+        Text(linkifySessionLinks(text.isEmpty ? " " : text))
           .font(isCompact ? .system(.caption, design: .monospaced) : .body)
           .textSelection(.enabled)
       }
@@ -339,4 +340,23 @@ private struct MessageBubble: View {
       Color.secondary.opacity(0.08)
     }
   }
+}
+
+private func linkifySessionLinks(_ text: String) -> AttributedString {
+  var attributed = AttributedString(text)
+  let pattern = #"session://[A-Za-z0-9-]+"#
+  guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return attributed }
+
+  let nsRange = NSRange(text.startIndex ..< text.endIndex, in: text)
+  let matches = regex.matches(in: text, options: [], range: nsRange)
+
+  for match in matches.reversed() {
+    guard let range = Range(match.range, in: text) else { continue }
+    guard let attrRange = Range(range, in: attributed) else { continue }
+    let raw = String(text[range])
+    guard let url = URL(string: raw) else { continue }
+    attributed[attrRange].link = url
+  }
+
+  return attributed
 }

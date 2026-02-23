@@ -11,6 +11,7 @@ import Yams
 extension WuhuProvider: ExpressibleByArgument {}
 extension ReasoningEffort: ExpressibleByArgument {}
 extension WuhuEnvironmentType: ExpressibleByArgument {}
+extension WuhuSessionType: ExpressibleByArgument {}
 
 @main
 struct WuhuCLI: AsyncParsableCommand {
@@ -74,6 +75,9 @@ struct WuhuCLI: AsyncParsableCommand {
         abstract: "Create a new persisted session.",
       )
 
+      @Option(help: "Session type (coding, channel).")
+      var type: WuhuSessionType = .coding
+
       @Option(help: "Provider for this session.")
       var provider: WuhuProvider
 
@@ -101,6 +105,7 @@ struct WuhuCLI: AsyncParsableCommand {
       func run() async throws {
         let client = try makeClient(shared.server)
         let session = try await client.createSession(.init(
+          type: type,
           provider: provider,
           model: model,
           reasoningEffort: reasoningEffort,

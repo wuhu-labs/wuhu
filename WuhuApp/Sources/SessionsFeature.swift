@@ -22,6 +22,8 @@ struct SessionsFeature {
     case onAppear
     case onDisappear
 
+    case openURL(URL)
+
     case tabBecameVisible
     case tabBecameHidden
     case settingsChanged(serverURL: URL?, username: String?)
@@ -50,6 +52,17 @@ struct SessionsFeature {
 
       case .onDisappear:
         return .cancel(id: CancelID.refreshTimer)
+
+      case let .openURL(url):
+        guard let scheme = url.scheme, scheme == "session" else { return .none }
+        let sessionID: String = {
+          if let host = url.host, !host.isEmpty { return host }
+          let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+          return path
+        }()
+        guard !sessionID.isEmpty else { return .none }
+        state.path.append(.init(sessionID: sessionID, serverURL: sessionServerURL(state: state), username: state.username))
+        return .none
 
       case .tabBecameVisible:
         return .merge(

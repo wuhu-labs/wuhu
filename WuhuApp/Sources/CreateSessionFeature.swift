@@ -17,6 +17,7 @@ struct CreateSessionFeature {
     var runners: [WuhuRunnerInfo] = []
     var isLoadingOptions = false
 
+    var sessionType: WuhuSessionType = .coding
     var provider: WuhuProvider = .openai
     var environmentName: String = ""
     var runnerName: String = ""
@@ -122,6 +123,7 @@ struct CreateSessionFeature {
 
         let serverURL = state.serverURL
         let request = WuhuCreateSessionRequest(
+          type: state.sessionType,
           provider: state.provider,
           model: state.resolvedModelID,
           reasoningEffort: state.reasoningEffort,
