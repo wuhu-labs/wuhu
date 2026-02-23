@@ -36,9 +36,7 @@ public enum WuhuSkills {
   public static func extract(from entries: [WuhuSessionEntry]) -> [WuhuSkill] {
     for entry in entries {
       if case let .header(header) = entry.payload {
-        let fromMetadata = decodeFromHeaderMetadata(header.metadata)
-        if !fromMetadata.isEmpty { return fromMetadata }
-        return parseFromSystemPrompt(header.systemPrompt)
+        return decodeFromHeaderMetadata(header.metadata)
       }
     }
     return []
@@ -49,7 +47,6 @@ public enum WuhuSkills {
     guard let raw = obj[headerMetadataKey], case let .array(arr) = raw else { return [] }
 
     var skills: [WuhuSkill] = []
-    skills.reserveCapacity(arr.count)
 
     for item in arr {
       guard case let .object(o) = item else { continue }
@@ -91,7 +88,6 @@ public enum WuhuSkills {
     guard !visibleSkills.isEmpty else { return "" }
 
     var lines: [String] = []
-    lines.reserveCapacity(12 + visibleSkills.count * 8)
 
     lines.append("")
     lines.append("")
@@ -103,70 +99,13 @@ public enum WuhuSkills {
 
     for skill in visibleSkills {
       lines.append("  <skill>")
-      lines.append("    <name>\(escapeXml(skill.name))</name>")
-      lines.append("    <description>\(escapeXml(skill.description))</description>")
-      lines.append("    <location>\(escapeXml(skill.filePath))</location>")
+      lines.append("    <name>\(skill.name)</name>")
+      lines.append("    <description>\(skill.description)</description>")
+      lines.append("    <location>\(skill.filePath)</location>")
       lines.append("  </skill>")
     }
 
     lines.append("</available_skills>")
     return lines.joined(separator: "\n")
-  }
-
-  private static func parseFromSystemPrompt(_ prompt: String) -> [WuhuSkill] {
-    // Best-effort fallback for older sessions; prefers metadata.
-    guard let open = prompt.range(of: "<available_skills>"),
-          let close = prompt.range(of: "</available_skills>")
-    else { return [] }
-
-    let xml = String(prompt[open.upperBound ..< close.lowerBound])
-    var skills: [WuhuSkill] = []
-
-    let blocks = xml.components(separatedBy: "<skill>").dropFirst()
-    for blockWithRest in blocks {
-      guard let endRange = blockWithRest.range(of: "</skill>") else { continue }
-      let block = String(blockWithRest[..<endRange.lowerBound])
-      guard let name = extractXmlTag(block, tag: "name"),
-            let description = extractXmlTag(block, tag: "description"),
-            let location = extractXmlTag(block, tag: "location")
-      else { continue }
-
-      skills.append(.init(
-        name: name,
-        description: description,
-        filePath: location,
-        baseDir: (location as NSString).deletingLastPathComponent,
-        source: "unknown",
-        disableModelInvocation: false,
-      ))
-    }
-
-    return skills
-  }
-
-  private static func extractXmlTag(_ block: String, tag: String) -> String? {
-    guard let open = block.range(of: "<\(tag)>"),
-          let close = block.range(of: "</\(tag)>")
-    else { return nil }
-    let raw = String(block[open.upperBound ..< close.lowerBound])
-    return unescapeXml(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  private static func escapeXml(_ str: String) -> String {
-    str
-      .replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
-      .replacingOccurrences(of: "\"", with: "&quot;")
-      .replacingOccurrences(of: "'", with: "&apos;")
-  }
-
-  private static func unescapeXml(_ str: String) -> String {
-    str
-      .replacingOccurrences(of: "&lt;", with: "<")
-      .replacingOccurrences(of: "&gt;", with: ">")
-      .replacingOccurrences(of: "&quot;", with: "\"")
-      .replacingOccurrences(of: "&apos;", with: "'")
-      .replacingOccurrences(of: "&amp;", with: "&")
   }
 }
