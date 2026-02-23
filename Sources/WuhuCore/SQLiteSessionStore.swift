@@ -353,6 +353,27 @@ public actor SQLiteSessionStore: SessionStore {
     }
   }
 
+  func getEntriesReverse(
+    sessionID: String,
+    beforeEntryID: Int64?,
+    limit: Int,
+  ) async throws -> [WuhuSessionEntry] {
+    try await dbQueue.read { db in
+      guard let _ = try SessionRow.fetchOne(db, key: sessionID) else {
+        throw WuhuStoreError.sessionNotFound(sessionID)
+      }
+
+      var filter = Column("sessionID") == sessionID
+      if let beforeEntryID {
+        filter = filter && Column("id") < beforeEntryID
+      }
+
+      var req = EntryRow.filter(filter)
+      req = req.order(Column("id").desc).limit(limit)
+      return try req.fetchAll(db).map { $0.toModel() }
+    }
+  }
+
   public func getEntries(
     sessionID: String,
     sinceCursor: Int64?,
