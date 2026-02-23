@@ -5,7 +5,9 @@ public struct WuhuWorkspaceDocSummary: Sendable, Hashable, Codable, Identifiable
   public var path: String
   public var frontmatter: [String: JSONValue]
 
-  public var id: String { path }
+  public var id: String {
+    path
+  }
 
   public init(path: String, frontmatter: [String: JSONValue]) {
     self.path = path
