@@ -17,6 +17,10 @@ struct AppView: View {
         .tabItem { Label("Sessions", systemImage: "list.bullet.rectangle") }
         .tag(AppFeature.State.Tab.sessions)
 
+      WorkspaceView(store: store.scope(state: \.workspace, action: \.workspace))
+        .tabItem { Label("Workspace", systemImage: "square.grid.3x3") }
+        .tag(AppFeature.State.Tab.workspace)
+
       SettingsView(store: store.scope(state: \.settings, action: \.settings))
         .tabItem { Label("Settings", systemImage: "gear") }
         .tag(AppFeature.State.Tab.settings)

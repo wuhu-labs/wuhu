@@ -19,10 +19,14 @@ The server reads a YAML config file:
 Current schema (subset):
 
 - `llm.openai` / `llm.anthropic`: optional API keys (if omitted, the server falls back to environment variables).
-- `databasePath`: optional SQLite path (defaults to `~/.wuhu/server.sqlite`).
+- `databasePath`: optional SQLite path (defaults to `~/.wuhu/wuhu.sqlite`).
 - `llm_request_log_dir`: optional directory for request/response logs.
 - `host` / `port`: HTTP bind address (defaults to `127.0.0.1:5530`).
 - `runners`: optional list of runner names and WebSocket addresses.
+
+The server’s filesystem “data root” is the directory containing `databasePath`. The workspace knowledge base lives at:
+
+- `<data-root>/workspace/`
 
 ## HTTP API (v1)
 
@@ -38,6 +42,8 @@ The server exposes a minimal command/query/event API:
   - `GET /v1/sessions?limit=…` — list sessions
   - `GET /v1/sessions/:id` — session + transcript
     - Optional filters: `sinceCursor` (entry id), `sinceTime` (unix seconds)
+  - `GET /v1/workspace/docs` — list workspace docs (path + frontmatter attributes)
+  - `GET /v1/workspace/doc?path=…` — read a workspace doc (frontmatter + markdown body)
 - **Commands (POST)**:
   - `POST /v1/sessions` — create session (requires `environment`, a UUID or unique environment name)
   - `POST /v1/sessions/:id/enqueue?lane=…` — enqueue a user message (serialized per session)

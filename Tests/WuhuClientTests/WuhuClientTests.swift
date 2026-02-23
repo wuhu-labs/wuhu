@@ -342,6 +342,55 @@ struct WuhuClientTests {
     let response = try await client.stopSession(sessionID: "s1", user: "alice")
     #expect(response.stopEntry?.id == 2)
   }
+
+  @Test func listWorkspaceDocsDecodesResponse() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/workspace/docs")
+        #expect(request.method == "GET")
+        let data = try WuhuJSON.encoder.encode(
+          [
+            WuhuWorkspaceDocSummary(
+              path: "issues/0020.md",
+              frontmatter: [
+                "title": .string("Workspace docs"),
+                "status": .string("open"),
+              ],
+            ),
+          ],
+        )
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let docs = try await client.listWorkspaceDocs()
+    #expect(docs.map(\.path) == ["issues/0020.md"])
+    #expect(docs.first?.frontmatter["status"]?.stringValue == "open")
+  }
+
+  @Test func readWorkspaceDocEncodesPathQueryAndDecodes() async throws {
+    let http = MockHTTPClient(
+      dataHandler: { request in
+        #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/workspace/doc?path=issues/0020.md")
+        #expect(request.method == "GET")
+        let data = try WuhuJSON.encoder.encode(
+          WuhuWorkspaceDoc(
+            path: "issues/0020.md",
+            frontmatter: ["status": .string("open")],
+            body: "# Hello\n",
+          ),
+        )
+        return (data, HTTPResponse(statusCode: 200, headers: [:]))
+      },
+    )
+
+    let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
+    let doc = try await client.readWorkspaceDoc(path: "issues/0020.md")
+    #expect(doc.path == "issues/0020.md")
+    #expect(doc.frontmatter["status"]?.stringValue == "open")
+    #expect(doc.body.contains("Hello"))
+  }
 }
 
 private struct MockHTTPClient: HTTPClient {
