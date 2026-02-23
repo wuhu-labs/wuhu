@@ -25,7 +25,7 @@ public struct WuhuRunner: Sendable {
 
     let connectTo = (overrideConnectTo?.isEmpty == false) ? overrideConnectTo : config.connectTo
     if let connectTo, !connectTo.isEmpty {
-      try await runAsClient(runnerName: config.name, connectTo: connectTo, config: config, store: store)
+      try await runAsClient(runnerName: config.name, connectTo: connectTo, store: store)
       return
     }
 
@@ -54,7 +54,6 @@ private func runAsServer(
 private func runAsClient(
   runnerName: String,
   connectTo: String,
-  config: WuhuRunnerConfig,
   store: SQLiteRunnerStore,
 ) async throws {
   let wsURL = wsURLFromHTTP(connectTo, path: "/v1/runners/ws")
