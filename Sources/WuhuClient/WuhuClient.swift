@@ -24,11 +24,44 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode([WuhuRunnerInfo].self, from: data)
   }
 
-  public func listEnvironments() async throws -> [WuhuEnvironmentInfo] {
+  public func listEnvironments() async throws -> [WuhuEnvironmentDefinition] {
     let url = baseURL.appending(path: "v1").appending(path: "environments")
     let req = HTTPRequest(url: url, method: "GET")
     let (data, _) = try await http.data(for: req)
-    return try WuhuJSON.decoder.decode([WuhuEnvironmentInfo].self, from: data)
+    return try WuhuJSON.decoder.decode([WuhuEnvironmentDefinition].self, from: data)
+  }
+
+  public func createEnvironment(_ request: WuhuCreateEnvironmentRequest) async throws -> WuhuEnvironmentDefinition {
+    let url = baseURL.appending(path: "v1").appending(path: "environments")
+    var req = HTTPRequest(url: url, method: "POST")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(request)
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuEnvironmentDefinition.self, from: data)
+  }
+
+  public func getEnvironment(_ identifier: String) async throws -> WuhuEnvironmentDefinition {
+    let url = baseURL.appending(path: "v1").appending(path: "environments").appending(path: identifier)
+    let req = HTTPRequest(url: url, method: "GET")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuEnvironmentDefinition.self, from: data)
+  }
+
+  public func updateEnvironment(_ identifier: String, request: WuhuUpdateEnvironmentRequest) async throws -> WuhuEnvironmentDefinition {
+    let url = baseURL.appending(path: "v1").appending(path: "environments").appending(path: identifier)
+    var req = HTTPRequest(url: url, method: "PATCH")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(request)
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuEnvironmentDefinition.self, from: data)
+  }
+
+  public func deleteEnvironment(_ identifier: String) async throws {
+    let url = baseURL.appending(path: "v1").appending(path: "environments").appending(path: identifier)
+    let req = HTTPRequest(url: url, method: "DELETE")
+    _ = try await http.data(for: req)
   }
 
   public func createSession(_ request: WuhuCreateSessionRequest) async throws -> WuhuSession {

@@ -32,10 +32,27 @@ struct WuhuClientTests {
       dataHandler: { request in
         #expect(request.url.absoluteString == "http://127.0.0.1:5530/v1/environments")
         #expect(request.method == "GET")
+        let now = Date(timeIntervalSince1970: 0)
         let data = try WuhuJSON.encoder.encode(
           [
-            WuhuEnvironmentInfo(name: "local", type: "local"),
-            WuhuEnvironmentInfo(name: "template", type: "folder-template"),
+            WuhuEnvironmentDefinition(
+              id: "e1",
+              name: "local",
+              type: .local,
+              path: "/tmp/repo",
+              createdAt: now,
+              updatedAt: now,
+            ),
+            WuhuEnvironmentDefinition(
+              id: "e2",
+              name: "template",
+              type: .folderTemplate,
+              path: "/tmp/workspaces",
+              templatePath: "/tmp/template",
+              startupScript: "./startup.sh",
+              createdAt: now,
+              updatedAt: now,
+            ),
           ],
         )
         return (data, HTTPResponse(statusCode: 200, headers: [:]))
@@ -45,7 +62,7 @@ struct WuhuClientTests {
     let client = try WuhuClient(baseURL: #require(URL(string: "http://127.0.0.1:5530")), http: http)
     let envs = try await client.listEnvironments()
     #expect(envs.map(\.name) == ["local", "template"])
-    #expect(envs.map(\.type) == ["local", "folder-template"])
+    #expect(envs.map(\.type.rawValue) == ["local", "folder-template"])
   }
 
   @Test func promptStreamDecodesSSEEvents() async throws {

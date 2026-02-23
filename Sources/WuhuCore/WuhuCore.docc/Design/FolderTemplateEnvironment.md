@@ -10,26 +10,27 @@ Use cases:
 
 ## Configuration
 
-Both `server.yml` and `runner.yml` support:
+Environments are runtime-managed resources stored in the server SQLite database and managed via the HTTP API / CLI.
 
-- `workspaces_path` (optional): where Wuhu creates per-session workspaces.
-  - Default: `~/.wuhu/workspaces`
-- `environments[].type: folder-template`
-- `environments[].path`: the template folder to copy from
-- `environments[].startup_script` (optional): a script path executed **in the copied workspace**
+For `folder-template` definitions:
+
+- `type: folder-template`
+- `path`: the **workspaces root** directory (where per-session workspaces are created)
+- `templatePath`: the template folder to copy from
+- `startupScript` (optional): a script path executed **in the copied workspace**
 
 Example:
 
-```yaml
-workspaces_path: ~/.wuhu/workspaces
-environments:
-  - name: multi-repo
-    type: folder-template
-    path: /Users/alice/Templates/multi-repo
-    startup_script: ./startup.sh
+```bash
+wuhu env create \
+  --name multi-repo \
+  --type folder-template \
+  --path ~/.wuhu/workspaces \
+  --template-path /Users/alice/Templates/multi-repo \
+  --startup-script ./startup.sh
 ```
 
-`startup_script` is resolved like this:
+`startupScript` is resolved like this:
 
 - Absolute paths run as-is.
 - Relative paths are resolved relative to the copied workspace root.
@@ -59,4 +60,3 @@ This makes session execution reproducible even if config changes later.
 
 - The server includes `sessionID` in `resolve_environment_request` so a runner can create a session-specific workspace path.
 - SQLite migrations add columns for the extra environment metadata (`templatePath`, `startupScript`) without rewriting existing data.
-

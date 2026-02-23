@@ -69,6 +69,7 @@ struct AgentsContextTests {
       provider: .openai,
       model: "mock",
       systemPrompt: "Base prompt.",
+      environmentID: nil,
       environment: .init(name: "test", type: .local, path: dir),
     )
 
@@ -158,6 +159,7 @@ struct AgentsContextTests {
       provider: .openai,
       model: "mock",
       systemPrompt: "Base prompt.",
+      environmentID: nil,
       environment: .init(name: "test", type: .local, path: dir),
     )
 

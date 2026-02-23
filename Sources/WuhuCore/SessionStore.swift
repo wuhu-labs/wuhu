@@ -26,6 +26,7 @@ public protocol SessionStore: Sendable {
     model: String,
     reasoningEffort: ReasoningEffort?,
     systemPrompt: String,
+    environmentID: String?,
     environment: WuhuEnvironment,
     runnerName: String?,
     parentSessionID: String?,

@@ -77,7 +77,7 @@ actor RunnerRegistry {
     guard case let .hello(actualName, version) = hello else {
       throw PiAIError.decoding("First runner message must be hello")
     }
-    guard version == 1 else {
+    guard version == 2 else {
       throw PiAIError.unsupported("Unsupported runner protocol version \(version)")
     }
 

@@ -16,6 +16,7 @@ struct ContractSessionCoreTests {
       model: "mock",
       reasoningEffort: nil,
       systemPrompt: systemPrompt,
+      environmentID: nil,
       environment: .init(name: "test", type: .local, path: "/tmp"),
       runnerName: nil,
       parentSessionID: nil,

@@ -4,14 +4,24 @@ import WuhuAPI
 
 struct WuhuRunnerProtocolTests {
   @Test func runnerMessageJSONRoundTrip() throws {
+    let now = Date(timeIntervalSince1970: 0)
+    let envDef = WuhuEnvironmentDefinition(
+      id: "env-1",
+      name: "repo",
+      type: .local,
+      path: "/tmp/repo",
+      createdAt: now,
+      updatedAt: now,
+    )
+
     let toolResult = WuhuToolResult(
       content: [.text(text: "ok", signature: nil)],
       details: .object(["exitCode": .number(0)]),
     )
 
     let messages: [WuhuRunnerMessage] = [
-      .hello(runnerName: "vps-in-la", version: 1),
-      .resolveEnvironmentRequest(id: "req-1", sessionID: "sess-1", name: "repo"),
+      .hello(runnerName: "vps-in-la", version: 2),
+      .resolveEnvironmentRequest(id: "req-1", sessionID: "sess-1", environment: envDef),
       .resolveEnvironmentResponse(
         id: "req-1",
         environment: .init(name: "repo", type: .local, path: "/tmp/repo"),

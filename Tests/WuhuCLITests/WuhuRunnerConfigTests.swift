@@ -3,17 +3,14 @@ import Testing
 import WuhuRunner
 
 struct WuhuRunnerConfigTests {
-  @Test func loadsYAMLWithWorkspacesAndStartupScript() throws {
+  @Test func loadsYAML() throws {
     let yaml = """
     name: runner-1
     connectTo: http://127.0.0.1:5530
-    workspaces_path: /tmp/wuhu-workspaces
     databasePath: /tmp/runner.sqlite
-    environments:
-    - name: template
-      type: folder-template
-      path: /tmp/template
-      startup_script: ./startup.sh
+    listen:
+      host: 127.0.0.1
+      port: 5531
     """
 
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -24,12 +21,8 @@ struct WuhuRunnerConfigTests {
     let config = try WuhuRunnerConfig.load(path: tmp.path)
     #expect(config.name == "runner-1")
     #expect(config.connectTo == "http://127.0.0.1:5530")
-    #expect(config.workspacesPath == "/tmp/wuhu-workspaces")
     #expect(config.databasePath == "/tmp/runner.sqlite")
-    #expect(config.environments.count == 1)
-    #expect(config.environments[0].name == "template")
-    #expect(config.environments[0].type == "folder-template")
-    #expect(config.environments[0].path == "/tmp/template")
-    #expect(config.environments[0].startupScript == "./startup.sh")
+    #expect(config.listen?.host == "127.0.0.1")
+    #expect(config.listen?.port == 5531)
   }
 }
