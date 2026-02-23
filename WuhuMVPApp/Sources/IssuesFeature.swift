@@ -117,7 +117,7 @@ struct IssuesDetailView: View {
     }
     .sheet(isPresented: Binding(
       get: { store.popoverIssueID != nil },
-      set: { if !$0 { store.send(.popoverIssueChanged(nil)) } }
+      set: { if !$0 { store.send(.popoverIssueChanged(nil)) } },
     )) {
       if let id = store.popoverIssueID, let issue = store.issues[id: id] {
         IssuePopoverContent(issue: issue) {
@@ -207,7 +207,7 @@ struct KanbanCard: View {
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .overlay(
       RoundedRectangle(cornerRadius: 8)
-        .strokeBorder(isSelected ? .orange : .clear, lineWidth: 1.5)
+        .strokeBorder(isSelected ? .orange : .clear, lineWidth: 1.5),
     )
     .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
     .contentShape(Rectangle())

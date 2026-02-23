@@ -76,8 +76,8 @@ struct AppView: View {
   private var sidebar: some View {
     List(selection: $store.selection.sending(\.selectionChanged)) {
       sidebarRow("Home", icon: "house", tag: .home)
-      sidebarRow("Sessions", icon: "terminal", tag: .sessions, count: MockData.sessions.filter { $0.status == .running }.count)
-      sidebarRow("Issues", icon: "checklist", tag: .issues, count: MockData.issues.filter { $0.status == .open }.count)
+      sidebarRow("Sessions", icon: "terminal", tag: .sessions, count: MockData.sessions.count(where: { $0.status == .running }))
+      sidebarRow("Issues", icon: "checklist", tag: .issues, count: MockData.issues.count(where: { $0.status == .open }))
       sidebarRow("Docs", icon: "doc.text", tag: .docs)
 
       Section(isExpanded: $store.channelsExpanded.sending(\.channelsExpandedChanged)) {
@@ -190,7 +190,7 @@ struct WuhuMVPApp: App {
       AppView(
         store: Store(initialState: AppFeature.State()) {
           AppFeature()
-        }
+        },
       )
     }
     .windowStyle(.automatic)
@@ -202,6 +202,6 @@ struct WuhuMVPApp: App {
   AppView(
     store: Store(initialState: AppFeature.State()) {
       AppFeature()
-    }
+    },
   )
 }

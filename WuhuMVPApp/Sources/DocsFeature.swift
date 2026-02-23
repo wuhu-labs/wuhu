@@ -102,7 +102,7 @@ struct DocsDetailView: View {
       ContentUnavailableView(
         "No Document Selected",
         systemImage: "doc.text",
-        description: Text("Select a document to view")
+        description: Text("Select a document to view"),
       )
     }
   }

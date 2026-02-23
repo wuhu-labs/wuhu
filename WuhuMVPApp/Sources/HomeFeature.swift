@@ -60,7 +60,7 @@ struct HomeDetailView: View {
 
   var body: some View {
     if let eventID = store.selectedEventID,
-      let event = store.events.first(where: { $0.id == eventID })
+       let event = store.events.first(where: { $0.id == eventID })
     {
       VStack(spacing: 16) {
         Image(systemName: event.icon)
@@ -76,7 +76,7 @@ struct HomeDetailView: View {
       ContentUnavailableView(
         "Activity Feed",
         systemImage: "house",
-        description: Text("Select an event to see details")
+        description: Text("Select an event to see details"),
       )
     }
   }

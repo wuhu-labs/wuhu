@@ -30,7 +30,7 @@ struct ChannelChatView: View {
             ForEach(channel.messages) { message in
               ChannelMessageRow(
                 message: message,
-                showAuthor: shouldShowAuthor(for: message)
+                showAuthor: shouldShowAuthor(for: message),
               )
             }
           }
@@ -43,7 +43,7 @@ struct ChannelChatView: View {
         HStack(alignment: .bottom, spacing: 8) {
           TextField("Message \(channel.name)...", text: $draft, axis: .vertical)
             .textFieldStyle(.plain)
-            .lineLimit(1...5)
+            .lineLimit(1 ... 5)
             .padding(10)
             .background(.background.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))

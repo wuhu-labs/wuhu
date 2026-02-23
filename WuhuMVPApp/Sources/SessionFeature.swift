@@ -58,7 +58,7 @@ struct SessionDetailView: View {
       ContentUnavailableView(
         "No Session Selected",
         systemImage: "terminal",
-        description: Text("Select a session to view its thread")
+        description: Text("Select a session to view its thread"),
       )
     }
   }
@@ -149,7 +149,7 @@ struct SessionThreadView: View {
         HStack(alignment: .bottom, spacing: 8) {
           TextField("Message...", text: $draft, axis: .vertical)
             .textFieldStyle(.plain)
-            .lineLimit(1...5)
+            .lineLimit(1 ... 5)
             .padding(10)
             .background(.background.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))

@@ -137,7 +137,7 @@ enum MockData {
       model: "claude-sonnet-4-6",
       status: .running,
       updatedAt: Date().addingTimeInterval(-120),
-      messages: authSessionMessages
+      messages: authSessionMessages,
     ),
     MockSession(
       id: "s-002",
@@ -146,7 +146,7 @@ enum MockData {
       model: "claude-opus-4-6",
       status: .running,
       updatedAt: Date().addingTimeInterval(-300),
-      messages: websocketSessionMessages
+      messages: websocketSessionMessages,
     ),
     MockSession(
       id: "s-003",
@@ -158,7 +158,7 @@ enum MockData {
       messages: [
         MockMessage(role: .user, author: "yihan", content: "Can you refactor the DB migrations to use the new GRDB migration API?", timestamp: Date().addingTimeInterval(-50000)),
         MockMessage(role: .assistant, content: "I'll update the migration system. Let me check the current setup first.", timestamp: Date().addingTimeInterval(-49900)),
-      ]
+      ],
     ),
     MockSession(
       id: "s-004",
@@ -175,7 +175,7 @@ enum MockData {
         MockMessage(role: .assistant, content: "Build #847 failed due to a Swift 6 concurrency error in `SessionStore.swift`. The `nonisolated` access to a mutable property was flagged.", timestamp: Date().addingTimeInterval(-89800)),
         MockMessage(role: .user, author: "minsheng", content: "That's the strict concurrency stuff. Can you add the Sendable conformance?", timestamp: Date().addingTimeInterval(-89700)),
         MockMessage(role: .assistant, content: "Done. Added `@unchecked Sendable` to `SessionStore` and wrapped the mutable state in a lock. CI should pass now.", timestamp: Date().addingTimeInterval(-89600)),
-      ]
+      ],
     ),
     MockSession(
       id: "s-005",
@@ -183,11 +183,11 @@ enum MockData {
       environmentName: "sandbox",
       model: "claude-opus-4-6",
       status: .idle,
-      updatedAt: Date().addingTimeInterval(-172800),
+      updatedAt: Date().addingTimeInterval(-172_800),
       messages: [
-        MockMessage(role: .user, author: "anna", content: "We need a resolver that maps environment names to definitions. Start with local and folder-template types.", timestamp: Date().addingTimeInterval(-180000)),
-        MockMessage(role: .assistant, content: "I'll build the environment resolver. This needs to handle both static definitions and dynamic template instantiation.", timestamp: Date().addingTimeInterval(-179900)),
-      ]
+        MockMessage(role: .user, author: "anna", content: "We need a resolver that maps environment names to definitions. Start with local and folder-template types.", timestamp: Date().addingTimeInterval(-180_000)),
+        MockMessage(role: .assistant, content: "I'll build the environment resolver. This needs to handle both static definitions and dynamic template instantiation.", timestamp: Date().addingTimeInterval(-179_900)),
+      ],
     ),
     MockSession(
       id: "s-006",
@@ -195,8 +195,8 @@ enum MockData {
       environmentName: "wuhu-swift",
       model: "gpt-5",
       status: .idle,
-      updatedAt: Date().addingTimeInterval(-259200),
-      messages: []
+      updatedAt: Date().addingTimeInterval(-259_200),
+      messages: [],
     ),
     MockSession(
       id: "s-007",
@@ -204,8 +204,8 @@ enum MockData {
       environmentName: "wuhu-swift",
       model: "claude-haiku-4-5",
       status: .stopped,
-      updatedAt: Date().addingTimeInterval(-345600),
-      messages: []
+      updatedAt: Date().addingTimeInterval(-345_600),
+      messages: [],
     ),
     MockSession(
       id: "s-008",
@@ -213,8 +213,8 @@ enum MockData {
       environmentName: "sandbox",
       model: "claude-sonnet-4-6",
       status: .idle,
-      updatedAt: Date().addingTimeInterval(-432000),
-      messages: []
+      updatedAt: Date().addingTimeInterval(-432_000),
+      messages: [],
     ),
   ]
 
@@ -224,7 +224,7 @@ enum MockData {
     MockMessage(
       role: .user, author: "minsheng",
       content: "The auth token refresh is failing silently. When the access token expires, the refresh request returns 401 but we're not handling it. Can you investigate and fix?",
-      timestamp: Date().addingTimeInterval(-3600)
+      timestamp: Date().addingTimeInterval(-3600),
     ),
     MockMessage(
       role: .assistant,
@@ -234,9 +234,9 @@ enum MockData {
         MockToolCall(
           id: "tc-1", name: "read_file",
           arguments: "Sources/WuhuClient/Auth.swift",
-          result: "struct AuthManager {\n  func refreshToken() async throws -> Token {\n    let response = try await httpClient.post(\"/auth/refresh\", body: refreshBody)\n    return try decoder.decode(Token.self, from: response.body)\n  }\n}"
+          result: "struct AuthManager {\n  func refreshToken() async throws -> Token {\n    let response = try await httpClient.post(\"/auth/refresh\", body: refreshBody)\n    return try decoder.decode(Token.self, from: response.body)\n  }\n}",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .assistant,
@@ -246,19 +246,19 @@ enum MockData {
         MockToolCall(
           id: "tc-2", name: "bash",
           arguments: "grep -rn \"refreshToken\" Sources/",
-          result: "Sources/WuhuClient/Auth.swift:24:  func refreshToken()\nSources/WuhuClient/HTTPClient.swift:87:      try await authManager.refreshToken()\nSources/WuhuClient/HTTPClient.swift:91:      // retry original request"
+          result: "Sources/WuhuClient/Auth.swift:24:  func refreshToken()\nSources/WuhuClient/HTTPClient.swift:87:      try await authManager.refreshToken()\nSources/WuhuClient/HTTPClient.swift:91:      // retry original request",
         ),
         MockToolCall(
           id: "tc-3", name: "read_file",
           arguments: "Sources/WuhuClient/HTTPClient.swift:80-100",
-          result: "  private func executeWithRetry(_ request: Request) async throws -> Response {\n    let response = try await execute(request)\n    if response.status == .unauthorized {\n      try await authManager.refreshToken()\n      return try await execute(request)\n    }\n    return response\n  }"
+          result: "  private func executeWithRetry(_ request: Request) async throws -> Response {\n    let response = try await execute(request)\n    if response.status == .unauthorized {\n      try await authManager.refreshToken()\n      return try await execute(request)\n    }\n    return response\n  }",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .user, author: "anna",
       content: "Yeah I hit this too. The retry also doesn't distinguish between \"original 401\" vs \"refresh itself got 401\" — if the refresh token is expired we'd loop.",
-      timestamp: Date().addingTimeInterval(-3450)
+      timestamp: Date().addingTimeInterval(-3450),
     ),
     MockMessage(
       role: .assistant,
@@ -268,34 +268,34 @@ enum MockData {
         MockToolCall(
           id: "tc-4", name: "edit_file",
           arguments: "Sources/WuhuClient/Auth.swift",
-          result: "Applied 2 edits to Auth.swift"
+          result: "Applied 2 edits to Auth.swift",
         ),
         MockToolCall(
           id: "tc-5", name: "edit_file",
           arguments: "Sources/WuhuClient/HTTPClient.swift",
-          result: "Applied 1 edit to HTTPClient.swift"
+          result: "Applied 1 edit to HTTPClient.swift",
         ),
         MockToolCall(
           id: "tc-6", name: "bash",
           arguments: "swift test --filter AuthTests 2>&1 | tail -5",
-          result: "Test Suite 'AuthTests' passed.\n Executed 4 tests, with 0 failures in 0.832 seconds"
+          result: "Test Suite 'AuthTests' passed.\n Executed 4 tests, with 0 failures in 0.832 seconds",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .user, author: "kesou",
       content: "Looks clean. What about the case where the network is down entirely during refresh?",
-      timestamp: Date().addingTimeInterval(-3350)
+      timestamp: Date().addingTimeInterval(-3350),
     ),
     MockMessage(
       role: .assistant,
       content: "Good catch — network errors during refresh will now propagate as `AuthError.networkError(underlying:)` instead of being silently swallowed. The caller can retry or show a connectivity alert. All 4 auth tests pass.",
-      timestamp: Date().addingTimeInterval(-3300)
+      timestamp: Date().addingTimeInterval(-3300),
     ),
     MockMessage(
       role: .user, author: "minsheng",
       content: "Ship it.",
-      timestamp: Date().addingTimeInterval(-3200)
+      timestamp: Date().addingTimeInterval(-3200),
     ),
   ]
 
@@ -303,7 +303,7 @@ enum MockData {
     MockMessage(
       role: .user, author: "anna",
       content: "The WebSocket connection drops when the laptop sleeps and doesn't reconnect. Add exponential backoff reconnection.",
-      timestamp: Date().addingTimeInterval(-7200)
+      timestamp: Date().addingTimeInterval(-7200),
     ),
     MockMessage(
       role: .assistant,
@@ -313,9 +313,9 @@ enum MockData {
         MockToolCall(
           id: "tc-ws-1", name: "read_file",
           arguments: "Sources/WuhuClient/WebSocketTransport.swift",
-          result: "actor WebSocketTransport {\n  private var connection: WebSocket?\n  \n  func connect(to url: URL) async throws {\n    connection = try await WebSocket.connect(to: url)\n  }\n}"
+          result: "actor WebSocketTransport {\n  private var connection: WebSocket?\n  \n  func connect(to url: URL) async throws {\n    connection = try await WebSocket.connect(to: url)\n  }\n}",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .assistant,
@@ -325,14 +325,14 @@ enum MockData {
         MockToolCall(
           id: "tc-ws-2", name: "edit_file",
           arguments: "Sources/WuhuClient/WebSocketTransport.swift",
-          result: "Applied 3 edits — added ReconnectionManager, backoff logic, and connection state observer"
+          result: "Applied 3 edits — added ReconnectionManager, backoff logic, and connection state observer",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .user, author: "yihan",
       content: "Should we also handle the case where the server actively closes the connection with a close frame? That's different from a network drop.",
-      timestamp: Date().addingTimeInterval(-7000)
+      timestamp: Date().addingTimeInterval(-7000),
     ),
     MockMessage(
       role: .assistant,
@@ -342,14 +342,14 @@ enum MockData {
         MockToolCall(
           id: "tc-ws-3", name: "bash",
           arguments: "swift test --filter WebSocketTests",
-          result: "Test Suite 'WebSocketTests' passed.\n Executed 7 tests, with 0 failures in 1.204 seconds"
+          result: "Test Suite 'WebSocketTests' passed.\n Executed 7 tests, with 0 failures in 1.204 seconds",
         ),
-      ]
+      ],
     ),
     MockMessage(
       role: .user, author: "anna",
       content: "Perfect, merging.",
-      timestamp: Date().addingTimeInterval(-6800)
+      timestamp: Date().addingTimeInterval(-6800),
     ),
   ]
 
@@ -368,7 +368,7 @@ enum MockData {
         MockChannelMessage(id: "cm-7", author: "minsheng", isAgent: false, content: "Auth fix is done and tested. Pushing to main now.", timestamp: Date().addingTimeInterval(-3600)),
         MockChannelMessage(id: "cm-8", author: "Wuhu Agent", isAgent: true, content: "CI build #848 passed on main (3m 14s). All 147 tests green.", timestamp: Date().addingTimeInterval(-1800)),
         MockChannelMessage(id: "cm-9", author: "anna", isAgent: false, content: "WebSocket reconnect is also merged. Good day.", timestamp: Date().addingTimeInterval(-600)),
-      ]
+      ],
     ),
     MockChannel(
       id: "ch-backend", name: "#backend", unreadCount: 0,
@@ -379,16 +379,16 @@ enum MockData {
         MockChannelMessage(id: "cm-b4", author: "Wuhu Agent", isAgent: true, content: "Integrity check passed. All foreign keys valid, no orphaned entries, parent chain is consistent for all 284,103 entries.", timestamp: Date().addingTimeInterval(-75600)),
         MockChannelMessage(id: "cm-b5", author: "minsheng", isAgent: false, content: "Let's ship it. yihan can you do the prod migration during the maintenance window tonight?", timestamp: Date().addingTimeInterval(-72000)),
         MockChannelMessage(id: "cm-b6", author: "yihan", isAgent: false, content: "On it.", timestamp: Date().addingTimeInterval(-68400)),
-      ]
+      ],
     ),
     MockChannel(
       id: "ch-deployments", name: "#deployments", unreadCount: 1,
       messages: [
-        MockChannelMessage(id: "cm-d1", author: "Wuhu Agent", isAgent: true, content: "Build #846 failed (feat/websocket-reconnect, 1m 05s)\n\n2 test failures in `WebSocketTransportTests`.", timestamp: Date().addingTimeInterval(-172800)),
-        MockChannelMessage(id: "cm-d2", author: "anna", isAgent: false, content: "I see the failures — the mock clock wasn't advancing properly. Fixing.", timestamp: Date().addingTimeInterval(-169200)),
-        MockChannelMessage(id: "cm-d3", author: "Wuhu Agent", isAgent: true, content: "Build #847 succeeded (feat/websocket-reconnect, 2m 58s). All 142 tests passed.", timestamp: Date().addingTimeInterval(-162000)),
+        MockChannelMessage(id: "cm-d1", author: "Wuhu Agent", isAgent: true, content: "Build #846 failed (feat/websocket-reconnect, 1m 05s)\n\n2 test failures in `WebSocketTransportTests`.", timestamp: Date().addingTimeInterval(-172_800)),
+        MockChannelMessage(id: "cm-d2", author: "anna", isAgent: false, content: "I see the failures — the mock clock wasn't advancing properly. Fixing.", timestamp: Date().addingTimeInterval(-169_200)),
+        MockChannelMessage(id: "cm-d3", author: "Wuhu Agent", isAgent: true, content: "Build #847 succeeded (feat/websocket-reconnect, 2m 58s). All 142 tests passed.", timestamp: Date().addingTimeInterval(-162_000)),
         MockChannelMessage(id: "cm-d4", author: "Wuhu Agent", isAgent: true, content: "Build #848 succeeded (main, 3m 14s). All 147 tests passed.", timestamp: Date().addingTimeInterval(-1800)),
-      ]
+      ],
     ),
   ]
 
@@ -399,172 +399,172 @@ enum MockData {
       id: "issue-1", title: "Auth token refresh fails silently", status: .inProgress, assignee: "minsheng", priority: .high,
       description: "When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login.",
       markdownContent: """
-        ## Auth token refresh fails silently
+      ## Auth token refresh fails silently
 
-        **Priority:** High | **Assignee:** minsheng
+      **Priority:** High | **Assignee:** minsheng
 
-        ### Description
-        When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login.
+      ### Description
+      When the access token expires, the refresh request returns 401 but the error is swallowed. Users see a blank screen instead of being redirected to login.
 
-        ### Steps to reproduce
-        1. Log in and wait for the token to expire (or manually invalidate it)
-        2. Perform any authenticated action
-        3. Observe blank screen — no error, no redirect
+      ### Steps to reproduce
+      1. Log in and wait for the token to expire (or manually invalidate it)
+      2. Perform any authenticated action
+      3. Observe blank screen — no error, no redirect
 
-        ### Root cause
-        `AuthClient.refresh()` catches the 401 and returns `nil` instead of throwing. Callers treat `nil` as "no token needed" rather than "auth failed".
+      ### Root cause
+      `AuthClient.refresh()` catches the 401 and returns `nil` instead of throwing. Callers treat `nil` as "no token needed" rather than "auth failed".
 
-        ### Fix
-        - Make `refresh()` throw on 401
-        - Add `.catch` handler in the middleware to redirect to `/login`
-        - Add a toast notification for the user
-        """
+      ### Fix
+      - Make `refresh()` throw on 401
+      - Add `.catch` handler in the middleware to redirect to `/login`
+      - Add a toast notification for the user
+      """,
     ),
     MockIssue(
       id: "issue-2", title: "WebSocket doesn't reconnect after sleep", status: .inProgress, assignee: "anna", priority: .critical,
       description: "Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made.",
       markdownContent: """
-        ## WebSocket doesn't reconnect after sleep
+      ## WebSocket doesn't reconnect after sleep
 
-        **Priority:** Critical | **Assignee:** anna
+      **Priority:** Critical | **Assignee:** anna
 
-        ### Description
-        Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made.
+      ### Description
+      Closing laptop and reopening causes the WebSocket to stay disconnected. No automatic reconnection attempt is made.
 
-        ### Analysis
-        The `NWConnection` state transitions to `.waiting` on sleep but we only observe `.ready` and `.failed`. The reconnection timer is based on explicit disconnects, not network path changes.
+      ### Analysis
+      The `NWConnection` state transitions to `.waiting` on sleep but we only observe `.ready` and `.failed`. The reconnection timer is based on explicit disconnects, not network path changes.
 
-        ### Plan
-        - Observe `NWPathMonitor` for `satisfiedConnectionRequired` → trigger reconnect
-        - Add exponential backoff: 1s, 2s, 4s, 8s, max 30s
-        - Cap at 10 retries before surfacing error to user
+      ### Plan
+      - Observe `NWPathMonitor` for `satisfiedConnectionRequired` → trigger reconnect
+      - Add exponential backoff: 1s, 2s, 4s, 8s, max 30s
+      - Cap at 10 retries before surfacing error to user
 
-        ```swift
-        // Proposed reconnect logic
-        func handlePathUpdate(_ path: NWPath) {
-          if path.status == .satisfied && connection.state != .ready {
-            reconnect(attempt: 0)
-          }
+      ```swift
+      // Proposed reconnect logic
+      func handlePathUpdate(_ path: NWPath) {
+        if path.status == .satisfied && connection.state != .ready {
+          reconnect(attempt: 0)
         }
-        ```
-        """
+      }
+      ```
+      """,
     ),
     MockIssue(
       id: "issue-3", title: "Login page shows stale error message", status: .open, assignee: nil, priority: .medium,
       description: "After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh.",
       markdownContent: """
-        ## Login page shows stale error message
+      ## Login page shows stale error message
 
-        **Priority:** Medium | **Unassigned**
+      **Priority:** Medium | **Unassigned**
 
-        ### Description
-        After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh.
+      ### Description
+      After a successful login following a failed attempt, the error banner from the previous attempt persists until manual page refresh.
 
-        ### Expected behavior
-        Error banner should clear when login is re-attempted.
+      ### Expected behavior
+      Error banner should clear when login is re-attempted.
 
-        ### Notes
-        Likely a state management issue — the error state isn't reset on new submission.
-        """
+      ### Notes
+      Likely a state management issue — the error state isn't reset on new submission.
+      """,
     ),
     MockIssue(
       id: "issue-4", title: "Add rate limiting to API endpoints", status: .open, assignee: "kesou", priority: .low,
       description: "Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key.",
       markdownContent: """
-        ## Add rate limiting to API endpoints
+      ## Add rate limiting to API endpoints
 
-        **Priority:** Low | **Assignee:** kesou
+      **Priority:** Low | **Assignee:** kesou
 
-        ### Description
-        Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key.
+      ### Description
+      Public API endpoints have no rate limiting. Need to add token bucket rate limiter, 100 req/min per API key.
 
-        ### Requirements
-        - Token bucket algorithm, 100 requests/minute per API key
-        - Return `429 Too Many Requests` with `Retry-After` header
-        - Store counters in Redis (or in-memory for single-node deploys)
-        - Exempt internal service-to-service calls
+      ### Requirements
+      - Token bucket algorithm, 100 requests/minute per API key
+      - Return `429 Too Many Requests` with `Retry-After` header
+      - Store counters in Redis (or in-memory for single-node deploys)
+      - Exempt internal service-to-service calls
 
-        ### Open questions
-        - Should we differentiate read vs write rate limits?
-        - Do we need per-endpoint limits or just global per-key?
-        """
+      ### Open questions
+      - Should we differentiate read vs write rate limits?
+      - Do we need per-endpoint limits or just global per-key?
+      """,
     ),
     MockIssue(
       id: "issue-5", title: "Database migration for session metadata", status: .done, assignee: "yihan", priority: .high,
       description: "Migrate sessions table to schema v5, adding metadata JSONB column for extensible session properties.",
       markdownContent: """
-        ## Database migration for session metadata
+      ## Database migration for session metadata
 
-        **Priority:** High | **Assignee:** yihan | **Status:** Done
+      **Priority:** High | **Assignee:** yihan | **Status:** Done
 
-        ### Description
-        Migrated sessions table to schema v5, adding metadata JSONB column for extensible session properties.
+      ### Description
+      Migrated sessions table to schema v5, adding metadata JSONB column for extensible session properties.
 
-        ### Migration details
-        - Added `metadata JSONB DEFAULT '{}'` column
-        - Backfilled existing rows with empty JSON
-        - Added GIN index on metadata for query performance
-        - Verified row counts: 12,847 sessions intact
+      ### Migration details
+      - Added `metadata JSONB DEFAULT '{}'` column
+      - Backfilled existing rows with empty JSON
+      - Added GIN index on metadata for query performance
+      - Verified row counts: 12,847 sessions intact
 
-        ### Verification
-        Integrity check passed. All foreign keys valid, no orphaned entries.
-        """
+      ### Verification
+      Integrity check passed. All foreign keys valid, no orphaned entries.
+      """,
     ),
     MockIssue(
       id: "issue-6", title: "Update CI to use Swift 6.2", status: .done, assignee: "kesou", priority: .medium,
       description: "Update GitHub Actions workflow to use Swift 6.2 toolchain and enable strict concurrency checking.",
       markdownContent: """
-        ## Update CI to use Swift 6.2
+      ## Update CI to use Swift 6.2
 
-        **Priority:** Medium | **Assignee:** kesou | **Status:** Done
+      **Priority:** Medium | **Assignee:** kesou | **Status:** Done
 
-        ### Changes
-        - Updated `.swift-version` to 6.2
-        - Updated GitHub Actions to `swift:6.2` Docker image
-        - Enabled `-strict-concurrency=complete`
-        - Fixed 3 sendability warnings in `WuhuRunner`
-        """
+      ### Changes
+      - Updated `.swift-version` to 6.2
+      - Updated GitHub Actions to `swift:6.2` Docker image
+      - Enabled `-strict-concurrency=complete`
+      - Fixed 3 sendability warnings in `WuhuRunner`
+      """,
     ),
     MockIssue(
       id: "issue-7", title: "Runner timeout not respected for long tools", status: .open, assignee: nil, priority: .high,
       description: "When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating.",
       markdownContent: """
-        ## Runner timeout not respected for long tools
+      ## Runner timeout not respected for long tools
 
-        **Priority:** High | **Unassigned**
+      **Priority:** High | **Unassigned**
 
-        ### Description
-        When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating.
+      ### Description
+      When a tool execution exceeds the runner timeout, the process isn't killed. Leads to zombie processes accumulating.
 
-        ### Impact
-        On the staging server, we found 23 zombie `bash` processes from timed-out tool calls over 48 hours.
+      ### Impact
+      On the staging server, we found 23 zombie `bash` processes from timed-out tool calls over 48 hours.
 
-        ### Proposed fix
-        - Send `SIGTERM` on timeout, wait 5s, then `SIGKILL`
-        - Track child PIDs in a process group
-        - Add `onTimeout` callback to `ToolRunner` for cleanup
-        """
+      ### Proposed fix
+      - Send `SIGTERM` on timeout, wait 5s, then `SIGKILL`
+      - Track child PIDs in a process group
+      - Add `onTimeout` callback to `ToolRunner` for cleanup
+      """,
     ),
     MockIssue(
       id: "issue-8", title: "Add session fork UI", status: .open, assignee: "anna", priority: .medium,
       description: "Users need the ability to fork a session from any entry point to explore alternative approaches.",
       markdownContent: """
-        ## Add session fork UI
+      ## Add session fork UI
 
-        **Priority:** Medium | **Assignee:** anna
+      **Priority:** Medium | **Assignee:** anna
 
-        ### Description
-        Users need the ability to fork a session from any entry point to explore alternative approaches.
+      ### Description
+      Users need the ability to fork a session from any entry point to explore alternative approaches.
 
-        ### Design
-        - Right-click any message → "Fork from here"
-        - Creates a new session with all entries up to that point
-        - New session appears in the sidebar immediately
-        - Parent session shows a "forked" indicator at the fork point
+      ### Design
+      - Right-click any message → "Fork from here"
+      - Creates a new session with all entries up to that point
+      - New session appears in the sidebar immediately
+      - Parent session shows a "forked" indicator at the fork point
 
-        ### Backend
-        The `fork` API already exists (`POST /sessions/:id/fork`). This is purely a UI task.
-        """
+      ### Backend
+      The `fork` API already exists (`POST /sessions/:id/fork`). This is purely a UI task.
+      """,
     ),
   ]
 
@@ -618,12 +618,12 @@ enum MockData {
       ```
 
       A session starts in `Created` state, moves to `Running` when the agent loop begins processing, returns to `Idle` when waiting for input, and can be `Stopped` manually or on error.
-      """
+      """,
     ),
     MockDoc(
       id: "doc-2", title: "API Reference",
       tags: ["api", "reference"],
-      updatedAt: Date().addingTimeInterval(-172800),
+      updatedAt: Date().addingTimeInterval(-172_800),
       markdownContent: """
       # API Reference
 
@@ -678,12 +678,12 @@ enum MockData {
       ### `POST /environments`
 
       Create a new environment definition.
-      """
+      """,
     ),
     MockDoc(
       id: "doc-3", title: "Getting Started",
       tags: ["guide", "onboarding"],
-      updatedAt: Date().addingTimeInterval(-259200),
+      updatedAt: Date().addingTimeInterval(-259_200),
       markdownContent: """
       # Getting Started with Wuhu
 
@@ -728,12 +728,12 @@ enum MockData {
       - Read the **Architecture Overview** to understand the system design
       - Check the **API Reference** for programmatic access
       - See **Runner Protocol** for custom tool execution
-      """
+      """,
     ),
     MockDoc(
       id: "doc-4", title: "Runner Protocol",
       tags: ["protocol", "runner"],
-      updatedAt: Date().addingTimeInterval(-345600),
+      updatedAt: Date().addingTimeInterval(-345_600),
       markdownContent: """
       # Runner Protocol
 
@@ -776,7 +776,7 @@ enum MockData {
       2. Server sends `registerSession` when a session needs tool execution
       3. Tool calls flow as `toolRequest` → runner executes → `toolResponse`
       4. Runner can handle multiple sessions concurrently
-      """
+      """,
     ),
   ]
 
@@ -789,6 +789,6 @@ enum MockData {
     MockActivityEvent(id: "ev-4", description: "CI Build #848 passed on main", timestamp: Date().addingTimeInterval(-1800), icon: "checkmark.circle"),
     MockActivityEvent(id: "ev-5", description: "anna merged PR #41: WebSocket reconnection", timestamp: Date().addingTimeInterval(-3600), icon: "arrow.triangle.merge"),
     MockActivityEvent(id: "ev-6", description: "Doc 'Architecture Overview' updated by yihan", timestamp: Date().addingTimeInterval(-86400), icon: "doc.text"),
-    MockActivityEvent(id: "ev-7", description: "Issue 'Database migration' marked as Done", timestamp: Date().addingTimeInterval(-172800), icon: "checkmark.circle"),
+    MockActivityEvent(id: "ev-7", description: "Issue 'Database migration' marked as Done", timestamp: Date().addingTimeInterval(-172_800), icon: "checkmark.circle"),
   ]
 }
