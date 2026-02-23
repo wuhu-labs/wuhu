@@ -48,9 +48,6 @@ jobs:
       - name: Resolve
         run: swift package resolve
 
-      - name: SwiftFormat (lint)
-        run: swift package --allow-writing-to-package-directory swiftformat --lint .
-
       - name: Build tests
         run: swift build --build-tests
 
@@ -99,11 +96,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-${{ steps.toolchain.outputs.key }}-
 
+      - name: SwiftFormat (lint)
+        run: swiftformat --lint .
+
       - name: Resolve
         run: xcrun swift package resolve
-
-      - name: SwiftFormat (lint)
-        run: xcrun swift package --allow-writing-to-package-directory swiftformat --lint .
 
       - name: Build tests
         run: xcrun swift build --build-tests
