@@ -22,6 +22,7 @@ public enum WuhuStoreError: Error, Sendable, CustomStringConvertible {
 public protocol SessionStore: Sendable {
   func createSession(
     sessionID: String,
+    sessionType: WuhuSessionType,
     provider: WuhuProvider,
     model: String,
     reasoningEffort: ReasoningEffort?,

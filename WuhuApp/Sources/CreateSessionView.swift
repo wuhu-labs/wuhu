@@ -17,6 +17,18 @@ struct CreateSessionView: View {
         }
 
         Section {
+          Picker(
+            "Type",
+            selection: Binding(
+              get: { store.sessionType },
+              set: { store.send(.binding(.set(\.sessionType, $0))) },
+            ),
+          ) {
+            Text("Coding").tag(WuhuSessionType.coding)
+            Text("Channel").tag(WuhuSessionType.channel)
+          }
+          .pickerStyle(.segmented)
+
           ModelSelectionFields(
             provider: Binding(
               get: { store.provider },

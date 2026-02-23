@@ -130,6 +130,7 @@ public actor SQLiteSessionStore: SessionStore {
 
   public func createSession(
     sessionID rawSessionID: String,
+    sessionType: WuhuSessionType,
     provider: WuhuProvider,
     model: String,
     reasoningEffort: ReasoningEffort?,
@@ -151,6 +152,7 @@ public actor SQLiteSessionStore: SessionStore {
     return try await dbQueue.write { db in
       var sessionRow = SessionRow(
         id: sessionID,
+        sessionType: sessionType.rawValue,
         provider: provider.rawValue,
         model: model,
         effectiveReasoningEffort: reasoningEffort?.rawValue,
@@ -167,6 +169,7 @@ public actor SQLiteSessionStore: SessionStore {
         cwd: environment.path,
         runnerName: runnerName,
         parentSessionID: parentSessionID,
+        displayStartEntryID: nil,
         createdAt: now,
         updatedAt: now,
         headEntryID: nil,
@@ -221,6 +224,106 @@ public actor SQLiteSessionStore: SessionStore {
     }
   }
 
+  // MARK: - Channels / Forking
+
+  struct ChildSessionRecord: Sendable, Hashable {
+    var session: WuhuSession
+    var executionStatus: SessionExecutionStatus
+    var lastNotifiedFinalEntryID: Int64?
+    var lastReadFinalEntryID: Int64?
+
+    var hasUnreadFinalMessage: Bool {
+      guard let lastNotifiedFinalEntryID else { return false }
+      let lastRead = lastReadFinalEntryID ?? 0
+      return lastNotifiedFinalEntryID > lastRead
+    }
+  }
+
+  func listChildSessions(parentSessionID: String) async throws -> [ChildSessionRecord] {
+    try await dbQueue.read { db in
+      let sessionRows = try SessionRow
+        .filter(Column("parentSessionID") == parentSessionID)
+        .order(Column("updatedAt").desc)
+        .fetchAll(db)
+
+      let statusRows = try SessionChildStatusRow
+        .filter(Column("parentSessionID") == parentSessionID)
+        .fetchAll(db)
+      var statusByChild: [String: SessionChildStatusRow] = [:]
+      statusByChild.reserveCapacity(statusRows.count)
+      for row in statusRows {
+        statusByChild[row.childSessionID] = row
+      }
+
+      return try sessionRows.map { row in
+        let exec = SessionExecutionStatus(rawValue: row.executionStatus) ?? .idle
+        let session = try row.toModel()
+        let status = statusByChild[row.id]
+        return .init(
+          session: session,
+          executionStatus: exec,
+          lastNotifiedFinalEntryID: status?.lastNotifiedFinalEntryID,
+          lastReadFinalEntryID: status?.lastReadFinalEntryID,
+        )
+      }
+    }
+  }
+
+  func setChildFinalMessageNotified(
+    parentSessionID: String,
+    childSessionID: String,
+    finalEntryID: Int64,
+  ) async throws -> Bool {
+    let now = Date()
+    return try await dbQueue.write { db in
+      let existing = try SessionChildStatusRow
+        .filter(Column("parentSessionID") == parentSessionID && Column("childSessionID") == childSessionID)
+        .fetchOne(db)
+      if existing?.lastNotifiedFinalEntryID == finalEntryID {
+        return false
+      }
+
+      try db.execute(
+        sql: """
+        INSERT INTO session_child_status (parentSessionID, childSessionID, lastNotifiedFinalEntryID, lastReadFinalEntryID, updatedAt)
+        VALUES (?, ?, ?, COALESCE((SELECT lastReadFinalEntryID FROM session_child_status WHERE parentSessionID = ? AND childSessionID = ?), NULL), ?)
+        ON CONFLICT(parentSessionID, childSessionID)
+        DO UPDATE SET lastNotifiedFinalEntryID = excluded.lastNotifiedFinalEntryID, updatedAt = excluded.updatedAt
+        """,
+        arguments: [parentSessionID, childSessionID, finalEntryID, parentSessionID, childSessionID, now],
+      )
+      return true
+    }
+  }
+
+  func markChildFinalMessageRead(
+    parentSessionID: String,
+    childSessionID: String,
+    finalEntryID: Int64,
+  ) async throws {
+    let now = Date()
+    try await dbQueue.write { db in
+      try db.execute(
+        sql: """
+        INSERT INTO session_child_status (parentSessionID, childSessionID, lastNotifiedFinalEntryID, lastReadFinalEntryID, updatedAt)
+        VALUES (?, ?, NULL, ?, ?)
+        ON CONFLICT(parentSessionID, childSessionID)
+        DO UPDATE SET lastReadFinalEntryID = excluded.lastReadFinalEntryID, updatedAt = excluded.updatedAt
+        """,
+        arguments: [parentSessionID, childSessionID, finalEntryID, now],
+      )
+    }
+  }
+
+  func setDisplayStartEntryID(sessionID: String, entryID: Int64?) async throws {
+    try await dbQueue.write { db in
+      try db.execute(
+        sql: "UPDATE sessions SET displayStartEntryID = ?, updatedAt = ? WHERE id = ?",
+        arguments: [entryID, Date(), sessionID],
+      )
+    }
+  }
+
   @discardableResult
   public func appendEntry(sessionID: String, payload: WuhuEntryPayload) async throws -> WuhuSessionEntry {
     let (_, entry) = try await appendEntryWithSession(
@@ -247,6 +350,27 @@ public actor SQLiteSessionStore: SessionStore {
         headEntryID: session.headEntryID,
         tailEntryID: session.tailEntryID,
       )
+    }
+  }
+
+  func getEntriesReverse(
+    sessionID: String,
+    beforeEntryID: Int64?,
+    limit: Int,
+  ) async throws -> [WuhuSessionEntry] {
+    try await dbQueue.read { db in
+      guard let _ = try SessionRow.fetchOne(db, key: sessionID) else {
+        throw WuhuStoreError.sessionNotFound(sessionID)
+      }
+
+      var filter = Column("sessionID") == sessionID
+      if let beforeEntryID {
+        filter = filter && Column("id") < beforeEntryID
+      }
+
+      var req = EntryRow.filter(filter)
+      req = req.order(Column("id").desc).limit(limit)
+      return try req.fetchAll(db).map { $0.toModel() }
     }
   }
 
@@ -363,6 +487,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   static let databaseTableName = "sessions"
 
   var id: String
+  var sessionType: String
   var provider: String
   var model: String
   var effectiveReasoningEffort: String?
@@ -379,6 +504,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var cwd: String
   var runnerName: String?
   var parentSessionID: String?
+  var displayStartEntryID: Int64?
   var createdAt: Date
   var updatedAt: Date
   var headEntryID: Int64?
@@ -388,6 +514,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
     guard let provider = WuhuProvider(rawValue: provider) else {
       throw WuhuStoreError.sessionCorrupt("Unknown provider: \(self.provider)")
     }
+    let type = WuhuSessionType(rawValue: sessionType) ?? .coding
     guard let headEntryID, let tailEntryID else {
       throw WuhuStoreError.sessionCorrupt("Session \(id) missing head/tail entry ids")
     }
@@ -396,6 +523,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
     }
     return .init(
       id: id,
+      type: type,
       provider: provider,
       model: model,
       environmentID: environmentID,
@@ -409,6 +537,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       cwd: cwd,
       runnerName: runnerName,
       parentSessionID: parentSessionID,
+      displayStartEntryID: displayStartEntryID,
       createdAt: createdAt,
       updatedAt: updatedAt,
       headEntryID: headEntryID,
@@ -482,6 +611,7 @@ extension SQLiteSessionStore {
       try db.execute(sql: "DROP TABLE IF EXISTS user_queue_pending")
       try db.execute(sql: "DROP TABLE IF EXISTS user_queue_journal")
       try db.execute(sql: "DROP TABLE IF EXISTS session_entries")
+      try db.execute(sql: "DROP TABLE IF EXISTS session_child_status")
       try db.execute(sql: "DROP TABLE IF EXISTS sessions")
       try db.execute(sql: "DROP TABLE IF EXISTS environments")
 
@@ -579,6 +709,22 @@ extension SQLiteSessionStore {
 
       try db.alter(table: "sessions") { t in
         t.add(column: "environmentID", .text)
+      }
+    }
+
+    migrator.registerMigration("wuhu_contracts_v3_channels") { db in
+      try db.alter(table: "sessions") { t in
+        t.add(column: "sessionType", .text).notNull().defaults(to: WuhuSessionType.coding.rawValue)
+        t.add(column: "displayStartEntryID", .integer)
+      }
+
+      try db.create(table: "session_child_status") { t in
+        t.column("parentSessionID", .text).notNull().indexed().references("sessions", onDelete: .cascade)
+        t.column("childSessionID", .text).notNull().indexed().references("sessions", onDelete: .cascade)
+        t.column("lastNotifiedFinalEntryID", .integer)
+        t.column("lastReadFinalEntryID", .integer)
+        t.column("updatedAt", .datetime).notNull()
+        t.primaryKey(["parentSessionID", "childSessionID"])
       }
     }
 
@@ -1318,6 +1464,15 @@ private struct ToolCallStatusRow: Codable, FetchableRecord, TableRecord {
   var toolCallID: String
   var status: String
   var createdAt: Date
+  var updatedAt: Date
+}
+
+private struct SessionChildStatusRow: Codable, FetchableRecord, TableRecord {
+  static let databaseTableName = "session_child_status"
+  var parentSessionID: String
+  var childSessionID: String
+  var lastNotifiedFinalEntryID: Int64?
+  var lastReadFinalEntryID: Int64?
   var updatedAt: Date
 }
 

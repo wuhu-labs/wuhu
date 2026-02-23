@@ -3,7 +3,7 @@ import PiAI
 import WuhuAPI
 
 public actor WuhuService {
-  private let store: SQLiteSessionStore
+  let store: SQLiteSessionStore
   private let llmRequestLogger: WuhuLLMRequestLogger?
   private let retryPolicy: WuhuLLMRetryPolicy
   private let asyncBashRegistry: WuhuAsyncBashRegistry
@@ -66,6 +66,10 @@ public actor WuhuService {
       store: store,
       eventHub: eventHub,
       subscriptionHub: subscriptionHub,
+      onIdle: { [weak self] idleSessionID in
+        guard let self else { return }
+        await handleSessionIdle(sessionID: idleSessionID)
+      },
     )
     runtimes[sessionID] = runtime
     return runtime
@@ -74,6 +78,101 @@ public actor WuhuService {
   private func enqueueSystemJSON(sessionID: String, jsonText: String, timestamp: Date) async throws {
     let input = SystemUrgentInput(source: .asyncBashCallback, content: .text(jsonText))
     try await runtime(for: sessionID).enqueueSystem(input: input, enqueuedAt: timestamp)
+  }
+
+  private func handleSessionIdle(sessionID: String) async {
+    let childSession: WuhuSession
+    do {
+      childSession = try await store.getSession(id: sessionID)
+    } catch {
+      logServiceError("handleSessionIdle: failed to load child session '\(sessionID)'", error: error)
+      return
+    }
+
+    guard let parentSessionID = childSession.parentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !parentSessionID.isEmpty
+    else { return }
+
+    let parentSession: WuhuSession
+    do {
+      parentSession = try await store.getSession(id: parentSessionID)
+    } catch {
+      logServiceError("handleSessionIdle: failed to load parent session '\(parentSessionID)' for child '\(sessionID)'", error: error)
+      return
+    }
+    guard parentSession.type == .channel else { return }
+
+    let final: (entryID: Int64, text: String)
+    do {
+      final = try await loadFinalAssistantMessage(sessionID: sessionID)
+    } catch {
+      logServiceError("handleSessionIdle: failed to load final assistant message for child '\(sessionID)'", error: error)
+      return
+    }
+
+    let didUpdate: Bool
+    do {
+      didUpdate = try await store.setChildFinalMessageNotified(
+        parentSessionID: parentSessionID,
+        childSessionID: sessionID,
+        finalEntryID: final.entryID,
+      )
+    } catch {
+      logServiceError(
+        "handleSessionIdle: failed to mark final-message notified for parent '\(parentSessionID)' child '\(sessionID)' entryID=\(final.entryID)",
+        error: error,
+      )
+      return
+    }
+    guard didUpdate else { return }
+
+    let text = [
+      "Child session is idle: session://\(sessionID)",
+      "",
+      "Final message:",
+      final.text,
+    ].joined(separator: "\n")
+    let input = SystemUrgentInput(source: .asyncTaskNotification, content: .text(text))
+    do {
+      try await runtime(for: parentSessionID).enqueueSystem(input: input, enqueuedAt: Date())
+    } catch {
+      logServiceError("handleSessionIdle: failed to enqueue parent notification into '\(parentSessionID)'", error: error)
+    }
+  }
+
+  private func logServiceError(_ message: String, error: Error) {
+    let line = "[WuhuService] ERROR: \(message): \(String(describing: error))\n"
+    FileHandle.standardError.write(Data(line.utf8))
+  }
+
+  func loadFinalAssistantMessage(sessionID: String) async throws -> (entryID: Int64, text: String) {
+    var beforeEntryID: Int64?
+    while true {
+      let entries = try await store.getEntriesReverse(sessionID: sessionID, beforeEntryID: beforeEntryID, limit: 256)
+      guard !entries.isEmpty else { break }
+
+      for entry in entries {
+        guard case let .message(m) = entry.payload else { continue }
+        guard case let .assistant(a) = m else { continue }
+
+        let hasToolCalls = a.content.contains { block in
+          if case .toolCall = block { return true }
+          return false
+        }
+        if hasToolCalls { continue }
+
+        let text = a.content.compactMap { block -> String? in
+          if case let .text(text: text, signature: _) = block { return text }
+          return nil
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return (entryID: entry.id, text: text.isEmpty ? "(no text)" : text)
+      }
+
+      beforeEntryID = entries.last?.id
+    }
+
+    throw PiAIError.unsupported("No final assistant message found for session '\(sessionID)'")
   }
 
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
@@ -98,6 +197,7 @@ public actor WuhuService {
 
   public func createSession(
     sessionID: String,
+    sessionType: WuhuSessionType = .coding,
     provider: WuhuProvider,
     model: String,
     reasoningEffort: ReasoningEffort? = nil,
@@ -109,6 +209,7 @@ public actor WuhuService {
   ) async throws -> WuhuSession {
     try await store.createSession(
       sessionID: sessionID,
+      sessionType: sessionType,
       provider: provider,
       model: model,
       reasoningEffort: reasoningEffort,
@@ -290,19 +391,23 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
     await ensureAsyncBashRouter()
     let session = try await store.getSession(id: sessionID.rawValue)
 
-    let resolvedTools: [AnyAgentTool] = if let runnerName = session.runnerName, !runnerName.isEmpty {
+    let baseTools: [AnyAgentTool]
+    if let runnerName = session.runnerName, !runnerName.isEmpty {
       if let remoteToolsProvider {
-        try await remoteToolsProvider(sessionID.rawValue, runnerName)
+        baseTools = try await remoteToolsProvider(sessionID.rawValue, runnerName)
       } else {
         // Remote sessions require a server-provided tool executor; fail loudly.
         throw PiAIError.unsupported("Session '\(sessionID.rawValue)' uses runner '\(runnerName)', but no remoteToolsProvider is configured")
       }
     } else {
-      WuhuTools.codingAgentTools(
+      let asyncBash = WuhuAsyncBashToolContext(registry: asyncBashRegistry, sessionID: sessionID.rawValue, ownerID: instanceID)
+      baseTools = WuhuTools.codingAgentTools(
         cwd: session.cwd,
-        asyncBash: .init(registry: asyncBashRegistry, sessionID: sessionID.rawValue, ownerID: instanceID),
+        asyncBash: asyncBash,
       )
     }
+
+    let resolvedTools = agentToolset(session: session, baseTools: baseTools)
 
     let streamFn = llmRequestLogger?.makeLoggedStreamFn(base: baseStreamFn, sessionID: sessionID.rawValue, purpose: .agent) ?? baseStreamFn
 

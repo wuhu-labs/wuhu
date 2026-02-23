@@ -2,29 +2,36 @@ import Foundation
 import PiAI
 
 public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
+  public var type: WuhuSessionType?
   public var provider: WuhuProvider
   public var model: String?
   public var reasoningEffort: ReasoningEffort?
   public var systemPrompt: String?
   /// Environment identifier (UUID or unique name).
-  public var environment: String
+  public var environment: String?
+  /// Direct environment path (bypass environment definitions). Intended for channel-agent workflows.
+  public var environmentPath: String?
   public var runner: String?
   public var parentSessionID: String?
 
   public init(
+    type: WuhuSessionType? = nil,
     provider: WuhuProvider,
     model: String? = nil,
     reasoningEffort: ReasoningEffort? = nil,
     systemPrompt: String? = nil,
-    environment: String,
+    environment: String? = nil,
+    environmentPath: String? = nil,
     runner: String? = nil,
     parentSessionID: String? = nil,
   ) {
+    self.type = type
     self.provider = provider
     self.model = model
     self.reasoningEffort = reasoningEffort
     self.systemPrompt = systemPrompt
     self.environment = environment
+    self.environmentPath = environmentPath
     self.runner = runner
     self.parentSessionID = parentSessionID
   }

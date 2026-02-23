@@ -8,6 +8,7 @@ actor WuhuSessionRuntime {
   private let eventHub: WuhuLiveEventHub
   private let subscriptionHub: WuhuSessionSubscriptionHub
   private let runtimeConfig: WuhuSessionRuntimeConfig
+  private let onIdle: (@Sendable (_ sessionID: String) async -> Void)?
 
   private var publishedSystemCursor: QueueCursor = .init(rawValue: "0")
   private var publishedSteerCursor: QueueCursor = .init(rawValue: "0")
@@ -23,11 +24,18 @@ actor WuhuSessionRuntime {
   private var observedState: WuhuSessionLoopState = .empty
   private var observationReady: Bool = false
 
-  init(sessionID: SessionID, store: SQLiteSessionStore, eventHub: WuhuLiveEventHub, subscriptionHub: WuhuSessionSubscriptionHub) {
+  init(
+    sessionID: SessionID,
+    store: SQLiteSessionStore,
+    eventHub: WuhuLiveEventHub,
+    subscriptionHub: WuhuSessionSubscriptionHub,
+    onIdle: (@Sendable (_ sessionID: String) async -> Void)? = nil,
+  ) {
     self.sessionID = sessionID
     self.store = store
     self.eventHub = eventHub
     self.subscriptionHub = subscriptionHub
+    self.onIdle = onIdle
     runtimeConfig = WuhuSessionRuntimeConfig()
     behavior = WuhuSessionBehavior(sessionID: sessionID, store: store, runtimeConfig: runtimeConfig)
     loop = AgentLoop(behavior: behavior)
@@ -211,6 +219,9 @@ actor WuhuSessionRuntime {
       let nowIdle = isIdle()
       if nowIdle, !wasIdle {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .idle)
+        if let onIdle {
+          Task { await onIdle(sessionID.rawValue) }
+        }
         // Best-effort: apply deferred model changes once idle.
         Task { [weak self] in
           try? await self?.applyPendingModelIfPossible()
@@ -232,6 +243,9 @@ actor WuhuSessionRuntime {
       let nowIdle = isIdle()
       if nowIdle, !wasIdle {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .idle)
+        if let onIdle {
+          Task { await onIdle(sessionID.rawValue) }
+        }
       }
     }
   }

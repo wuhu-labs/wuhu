@@ -63,6 +63,9 @@ struct SessionsView: View {
     } destination: { store in
       SessionDetailView(store: store)
     }
+    .onOpenURL { url in
+      store.send(.openURL(url))
+    }
   }
 }
 
@@ -77,7 +80,7 @@ private struct SessionRowView: View {
         .truncationMode(.middle)
 
       HStack(spacing: 8) {
-        Text("\(session.provider.rawValue) · \(session.model)")
+        Text("\(session.type.rawValue) · \(session.provider.rawValue) · \(session.model)")
         Text("· \(session.environment.name)")
       }
       .font(.caption)
