@@ -56,7 +56,7 @@ struct AppFeature {
   }
 }
 
-// MARK: - App View (three-column NavigationSplitView)
+// MARK: - App View (two-column NavigationSplitView)
 
 struct AppView: View {
   @Bindable var store: StoreOf<AppFeature>
@@ -64,8 +64,6 @@ struct AppView: View {
   var body: some View {
     NavigationSplitView {
       sidebar
-    } content: {
-      contentColumn
     } detail: {
       detailColumn
     }
@@ -84,23 +82,19 @@ struct AppView: View {
 
       Section(isExpanded: $store.channelsExpanded.sending(\.channelsExpandedChanged)) {
         ForEach(store.channels) { channel in
-          Label {
-            HStack {
-              Text(channel.name)
-              Spacer()
-              if channel.unreadCount > 0 {
-                Text("\(channel.unreadCount)")
-                  .font(.caption2)
-                  .fontWeight(.bold)
-                  .padding(.horizontal, 5)
-                  .padding(.vertical, 1)
-                  .background(.orange)
-                  .foregroundStyle(.white)
-                  .clipShape(Capsule())
-              }
+          HStack {
+            Text(channel.name)
+            Spacer()
+            if channel.unreadCount > 0 {
+              Text("\(channel.unreadCount)")
+                .font(.caption2)
+                .fontWeight(.bold)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(.orange)
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
             }
-          } icon: {
-            Image(systemName: "number")
           }
           .tag(SidebarSelection.channel(channel.id))
         }
@@ -146,40 +140,37 @@ struct AppView: View {
     .tag(tag)
   }
 
-  // MARK: - Content (column 2 — list)
-
-  @ViewBuilder
-  private var contentColumn: some View {
-    switch store.selection {
-    case .home:
-      HomeListView(store: store.scope(state: \.home, action: \.home))
-    case .sessions:
-      SessionListView(store: store.scope(state: \.sessions, action: \.sessions))
-    case .issues:
-      IssuesListView(store: store.scope(state: \.issues, action: \.issues))
-    case .docs:
-      DocsListView(store: store.scope(state: \.docs, action: \.docs))
-    case .channel:
-      // Channels don't need a middle column — show placeholder
-      ContentUnavailableView("Channel", systemImage: "bubble.left.and.bubble.right", description: Text(""))
-    case nil:
-      Text("")
-    }
-  }
-
-  // MARK: - Detail (column 3 — main content)
+  // MARK: - Detail
 
   @ViewBuilder
   private var detailColumn: some View {
     switch store.selection {
     case .home:
-      HomeDetailView(store: store.scope(state: \.home, action: \.home))
+      HStack(spacing: 0) {
+        HomeListView(store: store.scope(state: \.home, action: \.home))
+          .frame(width: 280)
+        Divider()
+        HomeDetailView(store: store.scope(state: \.home, action: \.home))
+          .frame(maxWidth: .infinity)
+      }
     case .sessions:
-      SessionDetailView(store: store.scope(state: \.sessions, action: \.sessions))
+      HStack(spacing: 0) {
+        SessionListView(store: store.scope(state: \.sessions, action: \.sessions))
+          .frame(width: 280)
+        Divider()
+        SessionDetailView(store: store.scope(state: \.sessions, action: \.sessions))
+          .frame(maxWidth: .infinity)
+      }
     case .issues:
       IssuesDetailView(store: store.scope(state: \.issues, action: \.issues))
     case .docs:
-      DocsDetailView(store: store.scope(state: \.docs, action: \.docs))
+      HStack(spacing: 0) {
+        DocsListView(store: store.scope(state: \.docs, action: \.docs))
+          .frame(width: 280)
+        Divider()
+        DocsDetailView(store: store.scope(state: \.docs, action: \.docs))
+          .frame(maxWidth: .infinity)
+      }
     case let .channel(channelID):
       if let channel = store.channels[id: channelID] {
         ChannelChatView(channel: channel)

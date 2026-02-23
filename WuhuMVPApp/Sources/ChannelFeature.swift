@@ -23,42 +23,43 @@ struct ChannelChatView: View {
 
       Divider()
 
-      // Messages
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 2) {
-          ForEach(channel.messages) { message in
-            ChannelMessageRow(
-              message: message,
-              showAuthor: shouldShowAuthor(for: message)
-            )
+      // Messages + Input centered
+      VStack(spacing: 0) {
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 2) {
+            ForEach(channel.messages) { message in
+              ChannelMessageRow(
+                message: message,
+                showAuthor: shouldShowAuthor(for: message)
+              )
+            }
           }
+          .padding(.horizontal, 16)
+          .padding(.vertical, 12)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-      }
-      .frame(maxHeight: .infinity)
 
-      Divider()
+        Divider()
 
-      // Input
-      HStack(alignment: .bottom, spacing: 8) {
-        TextField("Message \(channel.name)...", text: $draft, axis: .vertical)
-          .textFieldStyle(.plain)
-          .lineLimit(1...5)
-          .padding(10)
-          .background(.background.secondary)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
-        Button {
-          // mockup no-op
-        } label: {
-          Image(systemName: "arrow.up.circle.fill")
-            .font(.title2)
-            .foregroundStyle(draft.isEmpty ? .gray : .orange)
+        HStack(alignment: .bottom, spacing: 8) {
+          TextField("Message \(channel.name)...", text: $draft, axis: .vertical)
+            .textFieldStyle(.plain)
+            .lineLimit(1...5)
+            .padding(10)
+            .background(.background.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+          Button {
+            // mockup no-op
+          } label: {
+            Image(systemName: "arrow.up.circle.fill")
+              .font(.title2)
+              .foregroundStyle(draft.isEmpty ? .gray : .orange)
+          }
+          .buttonStyle(.plain)
+          .disabled(draft.isEmpty)
         }
-        .buttonStyle(.plain)
-        .disabled(draft.isEmpty)
+        .padding(12)
       }
-      .padding(12)
+      .frame(maxWidth: 800)
     }
   }
 
@@ -80,7 +81,7 @@ struct ChannelMessageRow: View {
   var body: some View {
     HStack(alignment: .top, spacing: 8) {
       if showAuthor {
-        avatar
+        avatar.padding(.top, 10)
       } else {
         Spacer().frame(width: 32)
       }
@@ -105,15 +106,6 @@ struct ChannelMessageRow: View {
       }
 
       Spacer()
-    }
-    .padding(.leading, message.isAgent ? 0 : 0)
-    .overlay(alignment: .leading) {
-      if message.isAgent {
-        Rectangle()
-          .fill(.orange.opacity(0.4))
-          .frame(width: 3)
-          .padding(.vertical, showAuthor ? 8 : 0)
-      }
     }
   }
 
