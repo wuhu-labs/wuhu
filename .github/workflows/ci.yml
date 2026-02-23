@@ -52,7 +52,7 @@ jobs:
         run: swift package --allow-writing-to-package-directory swiftformat --lint .
 
       - name: Build tests
-        run: swift build --build-tests
+        run: swift build --build-tests -j 1
 
       - name: Build wuhu
         run: swift build --product wuhu

@@ -60,7 +60,7 @@ public struct WuhuServer: Sendable {
 
     let router = Router(context: WuhuRequestContext.self)
 
-    func resolveEnvironment(_ identifier: String, missingStatus: HTTPResponse.Status) async throws -> WuhuEnvironmentDefinition {
+    @Sendable func resolveEnvironment(_ identifier: String, missingStatus: HTTPResponse.Status) async throws -> WuhuEnvironmentDefinition {
       do {
         return try await store.getEnvironment(identifier: identifier)
       } catch let err as WuhuEnvironmentResolutionError {
