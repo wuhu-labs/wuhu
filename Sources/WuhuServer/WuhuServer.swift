@@ -31,6 +31,10 @@ public struct WuhuServer: Sendable {
     try ensureDirectoryExists(forDatabasePath: dbPath)
 
     let store = try SQLiteSessionStore(path: dbPath)
+    let workspaceDocsStore = WuhuWorkspaceDocsStore(
+      dataRoot: URL(fileURLWithPath: dbPath, isDirectory: false).deletingLastPathComponent(),
+    )
+    try workspaceDocsStore.ensureDefaultDirectories()
 
     let effectiveLogDir: String? = {
       if let llmRequestLogDir, !llmRequestLogDir.isEmpty { return llmRequestLogDir }
@@ -118,6 +122,26 @@ public struct WuhuServer: Sendable {
       let identifier = try context.parameters.require("identifier")
       let env = try await resolveEnvironment(identifier, missingStatus: .notFound)
       return try context.responseEncoder.encode(env, from: request, context: context)
+    }
+
+    router.get("v1/workspace/docs") { _, _ async throws -> [WuhuWorkspaceDocSummary] in
+      try workspaceDocsStore.listDocs()
+    }
+
+    router.get("v1/workspace/doc") { request, context async throws -> Response in
+      struct Query: Decodable { var path: String }
+      let query = try request.uri.decodeQuery(as: Query.self, context: context)
+      do {
+        let doc = try workspaceDocsStore.readDoc(relativePath: query.path)
+        return try context.responseEncoder.encode(doc, from: request, context: context)
+      } catch let err as WuhuWorkspaceDocsStoreError {
+        switch err {
+        case .notFound:
+          throw HTTPError(.notFound, message: err.description)
+        default:
+          throw HTTPError(.badRequest, message: err.description)
+        }
+      }
     }
 
     router.patch("v1/environments/:identifier") { request, context async throws -> Response in
