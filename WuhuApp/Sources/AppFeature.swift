@@ -11,7 +11,9 @@ struct AppFeature {
     case issues
     case docs
 
-    var id: String { rawValue }
+    var id: String {
+      rawValue
+    }
 
     var label: String {
       switch self {

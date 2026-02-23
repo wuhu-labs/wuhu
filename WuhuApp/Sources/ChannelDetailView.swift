@@ -47,7 +47,6 @@ struct ChannelDetailView: View {
     .onDisappear { store.send(.onDisappear) }
   }
 
-  @ViewBuilder
   private var chatStatusIndicator: some View {
     HStack(spacing: 6) {
       if store.isSubscribing || store.isRetrying {
