@@ -6,6 +6,7 @@ public struct WuhuCreateSessionRequest: Sendable, Hashable, Codable {
   public var model: String?
   public var reasoningEffort: ReasoningEffort?
   public var systemPrompt: String?
+  /// Environment identifier (UUID or unique name).
   public var environment: String
   public var runner: String?
   public var parentSessionID: String?
@@ -90,20 +91,6 @@ public struct WuhuRunnerInfo: Sendable, Hashable, Codable, Identifiable {
   public init(name: String, connected: Bool) {
     self.name = name
     self.connected = connected
-  }
-}
-
-public struct WuhuEnvironmentInfo: Sendable, Hashable, Codable, Identifiable {
-  public var name: String
-  public var type: String
-
-  public var id: String {
-    name
-  }
-
-  public init(name: String, type: String) {
-    self.name = name
-    self.type = type
   }
 }
 

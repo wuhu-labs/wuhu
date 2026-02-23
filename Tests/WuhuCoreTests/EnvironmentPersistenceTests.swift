@@ -21,6 +21,7 @@ struct EnvironmentPersistenceTests {
       provider: .openai,
       model: "mock",
       systemPrompt: "You are helpful.",
+      environmentID: nil,
       environment: env,
     )
 

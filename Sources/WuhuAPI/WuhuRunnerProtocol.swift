@@ -4,7 +4,7 @@ import PiAI
 public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
   case hello(runnerName: String, version: Int)
 
-  case resolveEnvironmentRequest(id: String, sessionID: String?, name: String)
+  case resolveEnvironmentRequest(id: String, sessionID: String?, environment: WuhuEnvironmentDefinition)
   case resolveEnvironmentResponse(id: String, environment: WuhuEnvironment?, error: String?)
 
   case registerSession(sessionID: String, environment: WuhuEnvironment)
@@ -17,7 +17,6 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
     case id
     case runnerName
     case version
-    case name
     case environment
     case error
     case sessionID
@@ -43,7 +42,7 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
       self = try .resolveEnvironmentRequest(
         id: c.decode(String.self, forKey: .id),
         sessionID: c.decodeIfPresent(String.self, forKey: .sessionID),
-        name: c.decode(String.self, forKey: .name),
+        environment: c.decode(WuhuEnvironmentDefinition.self, forKey: .environment),
       )
 
     case "resolve_environment_response":
@@ -91,11 +90,11 @@ public enum WuhuRunnerMessage: Sendable, Hashable, Codable {
       try c.encode(runnerName, forKey: .runnerName)
       try c.encode(version, forKey: .version)
 
-    case let .resolveEnvironmentRequest(id, sessionID, name):
+    case let .resolveEnvironmentRequest(id, sessionID, environment):
       try c.encode("resolve_environment_request", forKey: .type)
       try c.encode(id, forKey: .id)
       try c.encodeIfPresent(sessionID, forKey: .sessionID)
-      try c.encode(name, forKey: .name)
+      try c.encode(environment, forKey: .environment)
 
     case let .resolveEnvironmentResponse(id, environment, error):
       try c.encode("resolve_environment_response", forKey: .type)

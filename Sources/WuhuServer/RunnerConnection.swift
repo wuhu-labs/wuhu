@@ -30,11 +30,11 @@ final actor RunnerConnection {
     failAllPending(error)
   }
 
-  func resolveEnvironment(sessionID: String, name: String) async throws -> WuhuEnvironment {
+  func resolveEnvironment(sessionID: String, environment: WuhuEnvironmentDefinition) async throws -> WuhuEnvironment {
     let id = UUID().uuidString
     let response = try await requestResponse(
       requestId: id,
-      message: .resolveEnvironmentRequest(id: id, sessionID: sessionID, name: name),
+      message: .resolveEnvironmentRequest(id: id, sessionID: sessionID, environment: environment),
     )
     guard case let .resolveEnvironmentResponse(_, environment, error) = response else {
       throw PiAIError.decoding("Unexpected response")

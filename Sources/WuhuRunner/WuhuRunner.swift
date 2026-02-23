@@ -25,7 +25,7 @@ public struct WuhuRunner: Sendable {
 
     let connectTo = (overrideConnectTo?.isEmpty == false) ? overrideConnectTo : config.connectTo
     if let connectTo, !connectTo.isEmpty {
-      try await runAsClient(runnerName: config.name, connectTo: connectTo, config: config, store: store)
+      try await runAsClient(runnerName: config.name, connectTo: connectTo, store: store)
       return
     }
 
@@ -38,7 +38,7 @@ private func runAsServer(
   config: WuhuRunnerConfig,
   store: SQLiteRunnerStore,
 ) async throws {
-  let router = RunnerRouter.make(runnerName: runnerName, config: config, store: store)
+  let router = RunnerRouter.make(runnerName: runnerName, store: store)
 
   let host = config.listen?.host?.isEmpty == false ? config.listen!.host! : "127.0.0.1"
   let port = config.listen?.port ?? 5531
@@ -54,21 +54,19 @@ private func runAsServer(
 private func runAsClient(
   runnerName: String,
   connectTo: String,
-  config: WuhuRunnerConfig,
   store: SQLiteRunnerStore,
 ) async throws {
   let wsURL = wsURLFromHTTP(connectTo, path: "/v1/runners/ws")
 
   let logger = Logger(label: "WuhuRunner")
   let client = WebSocketClient(url: wsURL, logger: logger) { inbound, outbound, context in
-    let hello = WuhuRunnerMessage.hello(runnerName: runnerName, version: 1)
+    let hello = WuhuRunnerMessage.hello(runnerName: runnerName, version: 2)
     try await outbound.write(.text(encodeRunnerMessage(hello)))
     try await RunnerMessageLoop.handle(
       inbound: inbound,
       outbound: outbound,
       logger: context.logger,
       runnerName: runnerName,
-      config: config,
       store: store,
     )
   }
@@ -76,7 +74,7 @@ private func runAsClient(
 }
 
 private enum RunnerRouter {
-  static func make(runnerName: String, config: WuhuRunnerConfig, store: SQLiteRunnerStore) -> Router<RunnerRequestContext> {
+  static func make(runnerName: String, store: SQLiteRunnerStore) -> Router<RunnerRequestContext> {
     let router = Router(context: RunnerRequestContext.self)
 
     router.get("healthz") { _, _ -> String in "ok" }
@@ -84,14 +82,13 @@ private enum RunnerRouter {
     router.ws("/v1/runner/ws") { _, _ in
       .upgrade()
     } onUpgrade: { inbound, outbound, wsContext in
-      let hello = WuhuRunnerMessage.hello(runnerName: runnerName, version: 1)
+      let hello = WuhuRunnerMessage.hello(runnerName: runnerName, version: 2)
       try await outbound.write(.text(encodeRunnerMessage(hello)))
       try await RunnerMessageLoop.handle(
         inbound: inbound,
         outbound: outbound,
         logger: wsContext.logger,
         runnerName: runnerName,
-        config: config,
         store: store,
       )
     }
@@ -106,7 +103,6 @@ private enum RunnerMessageLoop {
     outbound: WebSocketOutboundWriter,
     logger: Logger,
     runnerName _: String,
-    config: WuhuRunnerConfig,
     store: SQLiteRunnerStore,
   ) async throws {
     let sender = WebSocketSender(outbound: outbound)
@@ -120,9 +116,9 @@ private enum RunnerMessageLoop {
       case .hello:
         continue
 
-      case let .resolveEnvironmentRequest(id, sessionID, name):
+      case let .resolveEnvironmentRequest(id, sessionID, environment):
         do {
-          let env = try await resolveEnvironment(config: config, sessionID: sessionID, name: name)
+          let env = try await resolveEnvironment(environment: environment, sessionID: sessionID)
           try await sender.send(.resolveEnvironmentResponse(id: id, environment: env, error: nil))
         } catch {
           try await sender.send(.resolveEnvironmentResponse(
@@ -194,43 +190,38 @@ private enum RunnerMessageLoop {
   }
 
   private static func resolveEnvironment(
-    config: WuhuRunnerConfig,
+    environment: WuhuEnvironmentDefinition,
     sessionID: String?,
-    name: String,
   ) async throws -> WuhuEnvironment {
-    guard let env = config.environments.first(where: { $0.name == name }) else {
-      throw WuhuEnvironmentResolutionError.unknownEnvironment(name)
-    }
+    switch environment.type {
+    case .local:
+      let resolvedPath = ToolPath.resolveToCwd(environment.path, cwd: FileManager.default.currentDirectoryPath)
+      return .init(name: environment.name, type: .local, path: resolvedPath)
 
-    switch env.type {
-    case "local":
-      let resolvedPath = ToolPath.resolveToCwd(env.path, cwd: FileManager.default.currentDirectoryPath)
-      return .init(name: env.name, type: .local, path: resolvedPath)
-
-    case "folder-template":
+    case .folderTemplate:
       let effectiveSessionID = (sessionID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
       guard !effectiveSessionID.isEmpty else {
         throw WuhuEnvironmentResolutionError.missingSessionIDForFolderTemplate
       }
+      guard let templatePathRaw = environment.templatePath else {
+        throw WuhuWorkspaceError.invalidPath("(missing templatePath)")
+      }
 
-      let templatePath = ToolPath.resolveToCwd(env.path, cwd: FileManager.default.currentDirectoryPath)
-      let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(config.workspacesPath)
+      let templatePath = ToolPath.resolveToCwd(templatePathRaw, cwd: FileManager.default.currentDirectoryPath)
+      let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(environment.path)
       let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
         sessionID: effectiveSessionID,
         templatePath: templatePath,
-        startupScript: env.startupScript,
+        startupScript: environment.startupScript,
         workspacesPath: workspacesRoot,
       )
       return .init(
-        name: env.name,
+        name: environment.name,
         type: .folderTemplate,
         path: workspacePath,
         templatePath: templatePath,
-        startupScript: env.startupScript,
+        startupScript: environment.startupScript,
       )
-
-    default:
-      throw WuhuEnvironmentResolutionError.unsupportedEnvironmentType(env.type)
     }
   }
 }

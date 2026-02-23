@@ -15,12 +15,126 @@ public actor SQLiteSessionStore: SessionStore {
     try Self.migrator.migrate(dbQueue)
   }
 
+  public func createEnvironment(_ request: WuhuCreateEnvironmentRequest) async throws -> WuhuEnvironmentDefinition {
+    let now = Date()
+    let id = UUID().uuidString.lowercased()
+
+    let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = request.path.trimmingCharacters(in: .whitespacesAndNewlines)
+    let templatePath = request.templatePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let startupScript = request.startupScript?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    return try await dbQueue.write { db in
+      var row = EnvironmentRow(
+        id: id,
+        name: name,
+        type: request.type.rawValue,
+        path: path,
+        templatePath: templatePath?.isEmpty == false ? templatePath : nil,
+        startupScript: startupScript?.isEmpty == false ? startupScript : nil,
+        createdAt: now,
+        updatedAt: now,
+      )
+      try row.insert(db)
+      return try row.toModel()
+    }
+  }
+
+  public func listEnvironments() async throws -> [WuhuEnvironmentDefinition] {
+    try await dbQueue.read { db in
+      try EnvironmentRow
+        .order(Column("name").asc)
+        .fetchAll(db)
+        .map { try $0.toModel() }
+    }
+  }
+
+  public func getEnvironment(identifier raw: String) async throws -> WuhuEnvironmentDefinition {
+    let identifier = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !identifier.isEmpty else { throw WuhuEnvironmentResolutionError.unknownEnvironment(raw) }
+
+    return try await dbQueue.read { db in
+      let row: EnvironmentRow? = if UUID(uuidString: identifier) != nil {
+        try EnvironmentRow.fetchOne(db, key: identifier.lowercased())
+      } else {
+        try EnvironmentRow.filter(Column("name") == identifier).fetchOne(db)
+      }
+
+      guard let row else {
+        throw WuhuEnvironmentResolutionError.unknownEnvironment(identifier)
+      }
+      return try row.toModel()
+    }
+  }
+
+  public func updateEnvironment(
+    identifier raw: String,
+    request: WuhuUpdateEnvironmentRequest,
+  ) async throws -> WuhuEnvironmentDefinition {
+    let identifier = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !identifier.isEmpty else { throw WuhuEnvironmentResolutionError.unknownEnvironment(raw) }
+
+    let now = Date()
+    return try await dbQueue.write { db in
+      let row: EnvironmentRow? = if UUID(uuidString: identifier) != nil {
+        try EnvironmentRow.fetchOne(db, key: identifier.lowercased())
+      } else {
+        try EnvironmentRow.filter(Column("name") == identifier).fetchOne(db)
+      }
+
+      guard var row else {
+        throw WuhuEnvironmentResolutionError.unknownEnvironment(identifier)
+      }
+
+      if let name = request.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+        row.name = name
+      }
+      if let type = request.type {
+        row.type = type.rawValue
+      }
+      if let path = request.path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+        row.path = path
+      }
+      if let templatePath = request.templatePath {
+        let trimmed = templatePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        row.templatePath = (trimmed?.isEmpty == false) ? trimmed : nil
+      }
+      if let startupScript = request.startupScript {
+        let trimmed = startupScript?.trimmingCharacters(in: .whitespacesAndNewlines)
+        row.startupScript = (trimmed?.isEmpty == false) ? trimmed : nil
+      }
+
+      row.updatedAt = now
+      try row.update(db)
+      return try row.toModel()
+    }
+  }
+
+  public func deleteEnvironment(identifier raw: String) async throws {
+    let identifier = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !identifier.isEmpty else { throw WuhuEnvironmentResolutionError.unknownEnvironment(raw) }
+
+    try await dbQueue.write { db in
+      let row: EnvironmentRow? = if UUID(uuidString: identifier) != nil {
+        try EnvironmentRow.fetchOne(db, key: identifier.lowercased())
+      } else {
+        try EnvironmentRow.filter(Column("name") == identifier).fetchOne(db)
+      }
+
+      guard let row else {
+        throw WuhuEnvironmentResolutionError.unknownEnvironment(identifier)
+      }
+      _ = try row.delete(db)
+    }
+  }
+
   public func createSession(
     sessionID rawSessionID: String,
     provider: WuhuProvider,
     model: String,
     reasoningEffort: ReasoningEffort?,
     systemPrompt: String,
+    environmentID: String?,
     environment: WuhuEnvironment,
     runnerName: String?,
     parentSessionID: String?,
@@ -44,6 +158,7 @@ public actor SQLiteSessionStore: SessionStore {
         pendingModel: nil,
         pendingReasoningEffort: nil,
         executionStatus: SessionExecutionStatus.idle.rawValue,
+        environmentID: environmentID?.lowercased(),
         environmentName: environment.name,
         environmentType: environment.type.rawValue,
         environmentPath: environment.path,
@@ -215,6 +330,35 @@ public actor SQLiteSessionStore: SessionStore {
   }
 }
 
+private struct EnvironmentRow: Codable, FetchableRecord, MutablePersistableRecord {
+  static let databaseTableName = "environments"
+
+  var id: String
+  var name: String
+  var type: String
+  var path: String
+  var templatePath: String?
+  var startupScript: String?
+  var createdAt: Date
+  var updatedAt: Date
+
+  func toModel() throws -> WuhuEnvironmentDefinition {
+    guard let envType = WuhuEnvironmentType(rawValue: type) else {
+      throw WuhuEnvironmentResolutionError.unsupportedEnvironmentType(type)
+    }
+    return .init(
+      id: id,
+      name: name,
+      type: envType,
+      path: path,
+      templatePath: templatePath,
+      startupScript: startupScript,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    )
+  }
+}
+
 private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   static let databaseTableName = "sessions"
 
@@ -226,6 +370,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var pendingModel: String?
   var pendingReasoningEffort: String?
   var executionStatus: String
+  var environmentID: String?
   var environmentName: String
   var environmentType: String
   var environmentPath: String
@@ -253,6 +398,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       id: id,
       provider: provider,
       model: model,
+      environmentID: environmentID,
       environment: .init(
         name: environmentName,
         type: envType,
@@ -337,6 +483,7 @@ extension SQLiteSessionStore {
       try db.execute(sql: "DROP TABLE IF EXISTS user_queue_journal")
       try db.execute(sql: "DROP TABLE IF EXISTS session_entries")
       try db.execute(sql: "DROP TABLE IF EXISTS sessions")
+      try db.execute(sql: "DROP TABLE IF EXISTS environments")
 
       try db.create(table: "sessions") { t in
         t.column("id", .text).primaryKey()
@@ -414,6 +561,24 @@ extension SQLiteSessionStore {
         t.column("sessionID", .text).notNull().indexed().references("sessions", onDelete: .cascade)
         t.column("payload", .blob).notNull()
         t.column("createdAt", .datetime).notNull().indexed()
+      }
+    }
+
+    migrator.registerMigration("wuhu_contracts_v2_environments") { db in
+      try db.create(table: "environments") { t in
+        t.column("id", .text).primaryKey()
+        t.column("name", .text).notNull()
+        t.column("type", .text).notNull()
+        t.column("path", .text).notNull()
+        t.column("templatePath", .text)
+        t.column("startupScript", .text)
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+      try db.create(index: "environments_unique_name", on: "environments", columns: ["name"], unique: true)
+
+      try db.alter(table: "sessions") { t in
+        t.add(column: "environmentID", .text)
       }
     }
 

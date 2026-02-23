@@ -4,6 +4,8 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
   public var id: String
   public var provider: WuhuProvider
   public var model: String
+  /// UUID of the canonical environment definition used to create this session, if known.
+  public var environmentID: String?
   public var environment: WuhuEnvironment
   public var cwd: String
   public var runnerName: String?
@@ -17,6 +19,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     id: String,
     provider: WuhuProvider,
     model: String,
+    environmentID: String? = nil,
     environment: WuhuEnvironment,
     cwd: String,
     runnerName: String? = nil,
@@ -29,6 +32,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     self.id = id
     self.provider = provider
     self.model = model
+    self.environmentID = environmentID
     self.environment = environment
     self.cwd = cwd
     self.runnerName = runnerName
