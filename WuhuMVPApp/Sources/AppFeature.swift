@@ -29,6 +29,8 @@ struct AppFeature {
     var workspaceName = "Wuhu"
     var isLoading = false
     var hasLoaded = false
+    @Presents var createChannel: CreateChannelFeature.State?
+    @Presents var createSession: CreateChannelFeature.State?
   }
 
   enum Action {
@@ -45,6 +47,10 @@ struct AppFeature {
     case channelSendMessage(channelID: String, message: String)
     case channelUpdated(MockChannel)
     case channelLoadTranscript(String)
+    case createChannelTapped
+    case createChannel(PresentationAction<CreateChannelFeature.Action>)
+    case createSessionTapped
+    case createSession(PresentationAction<CreateChannelFeature.Action>)
     case docs(DocsFeature.Action)
     case home(HomeFeature.Action)
     case issues(IssuesFeature.Action)
@@ -60,7 +66,7 @@ struct AppFeature {
     Scope(state: \.issues, action: \.issues) { IssuesFeature() }
     Scope(state: \.docs, action: \.docs) { DocsFeature() }
 
-    Reduce { state, action in
+    Reduce<State, Action> { state, action in
       switch action {
       case .onAppear:
         guard !state.hasLoaded else { return .none }
@@ -189,9 +195,24 @@ struct AppFeature {
           timestamp: Date(),
         ))
         return .run { send in
-          _ = try await apiClient.enqueue(channelID, message, nil)
-          // Wait briefly for server processing, then re-fetch
-          try await Task.sleep(for: .seconds(1))
+          let user: String? = {
+            let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
+            return v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : v
+          }()
+          _ = try await apiClient.enqueue(channelID, message, user)
+          let stream = try await apiClient.followSessionStream(channelID, nil)
+          for try await event in stream {
+            switch event {
+            case .idle, .done:
+              let response = try await apiClient.getSession(channelID)
+              let channel = MockChannel.from(response)
+              await send(.channelUpdated(channel))
+              return
+            case .entryAppended, .assistantTextDelta:
+              break
+            }
+          }
+          // Stream ended without idle/done — re-fetch anyway
           let response = try await apiClient.getSession(channelID)
           let channel = MockChannel.from(response)
           await send(.channelUpdated(channel))
@@ -201,9 +222,52 @@ struct AppFeature {
         state.channels[id: channel.id] = channel
         return .none
 
+      case .createChannelTapped:
+        state.createChannel = CreateChannelFeature.State()
+        return .none
+
+      case let .createChannel(.presented(.delegate(.created(session)))):
+        state.createChannel = nil
+        let channel = MockChannel.from(session)
+        state.channels.append(channel)
+        state.selection = .channel(channel.id)
+        return .none
+
+      case .createChannel(.presented(.delegate(.cancelled))):
+        state.createChannel = nil
+        return .none
+
+      case .createChannel:
+        return .none
+
+      case .createSessionTapped:
+        state.createSession = CreateChannelFeature.State(sessionType: .coding)
+        return .none
+
+      case let .createSession(.presented(.delegate(.created(session)))):
+        state.createSession = nil
+        let mockSession = MockSession.from(session)
+        state.sessions.sessions.insert(mockSession, at: 0)
+        state.selection = .sessions
+        state.sessions.selectedSessionID = mockSession.id
+        return .none
+
+      case .createSession(.presented(.delegate(.cancelled))):
+        state.createSession = nil
+        return .none
+
+      case .createSession:
+        return .none
+
       case .docs, .home, .issues, .sessions:
         return .none
       }
+    }
+    .ifLet(\.$createChannel, action: \.createChannel) {
+      CreateChannelFeature()
+    }
+    .ifLet(\.$createSession, action: \.createSession) {
+      CreateChannelFeature()
     }
   }
 }
@@ -222,6 +286,12 @@ struct AppView: View {
     .tint(.orange)
     .frame(minWidth: 900, minHeight: 600)
     .task { store.send(.onAppear) }
+    .sheet(item: $store.scope(state: \.createChannel, action: \.createChannel)) { store in
+      CreateChannelView(store: store)
+    }
+    .sheet(item: $store.scope(state: \.createSession, action: \.createSession)) { store in
+      CreateChannelView(store: store)
+    }
   }
 
   // MARK: - Sidebar (column 1)
@@ -257,6 +327,16 @@ struct AppView: View {
           }
           .tag(SidebarSelection.channel(channel.id))
         }
+        Button {
+          store.send(.createChannelTapped)
+        } label: {
+          HStack {
+            Image(systemName: "plus")
+            Text("New Channel")
+          }
+          .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
       } header: {
         Text("Channels")
       }
@@ -275,6 +355,16 @@ struct AppView: View {
       .padding(.vertical, 8)
     }
     .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          store.send(.createSessionTapped)
+        } label: {
+          Image(systemName: "plus")
+        }
+        .help("New Session")
+      }
+    }
   }
 
   private func sidebarRow(_ title: String, icon: String, tag: SidebarSelection, count: Int = 0) -> some View {
@@ -366,6 +456,7 @@ struct WuhuMVPApp: App {
 
 struct SettingsView: View {
   @AppStorage("wuhuServerURL") private var serverURL = "http://localhost:8080"
+  @AppStorage("wuhuUsername") private var username = ""
 
   var body: some View {
     Form {
@@ -373,6 +464,13 @@ struct SettingsView: View {
         TextField("Wuhu Server URL", text: $serverURL)
           .textFieldStyle(.roundedBorder)
         Text("Restart the app after changing the server URL.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Section("Identity") {
+        TextField("Username", text: $username)
+          .textFieldStyle(.roundedBorder)
+        Text("Displayed as the author of your messages.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }

@@ -1,3 +1,4 @@
+import MarkdownUI
 import SwiftUI
 
 // MARK: - Channel Chat View (group chat style)
@@ -110,8 +111,7 @@ struct ChannelMessageRow: View {
           .padding(.top, 8)
         }
 
-        Text(message.content)
-          .font(.callout)
+        Markdown(message.content)
           .textSelection(.enabled)
       }
 
