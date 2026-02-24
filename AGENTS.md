@@ -12,14 +12,14 @@ Quick primer: `docs/what-is-a-coding-agent.md`.
 
 ## Status
 
-This repo is the Swift pivot of Wuhu. It’s currently a Swift Package with:
+This repo is the Swift pivot of Wuhu. It's currently a Swift Package with:
 
-- `PiAI`: a unified LLM client library (ported from `pi-mono`’s `pi-ai`)
+- `PiAI`: a unified LLM client library (ported from `pi-mono`'s `pi-ai`)
 - `wuhu`: a small CLI that demonstrates `PiAI` providers
 
 ## Project Structure
 
-Never add a “project structure diagram” (tree listing) to this file. It always drifts from reality.
+Never add a "project structure diagram" (tree listing) to this file. It always drifts from reality.
 
 If you need to understand the current layout, inspect the repo directly (or use `Package.swift` / `swift package describe` as the source of truth).
 
@@ -50,7 +50,7 @@ Environment variables:
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 
-For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don’t rely on a local `.env`).
+For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don't rely on a local `.env`).
 
 WuhuMVPApp (active development):
 
@@ -68,27 +68,11 @@ WuhuApp (legacy, do not modify without explicit instruction):
 
 ## Workspace + Issues
 
-This project manages issues in a dedicated workspace repo: `wuhu-labs/wuhu-workspace`.
-
-When working in this repo, clone any related repos you need as siblings next to this repo (same parent directory). Example: clone `wuhu-workspace` to `../wuhu-workspace`.
-
-Common sibling repos (clone on demand, next to this repo):
-
-- `../wuhu-workspace` (issue tracker + project management; issues are `WUHU-####`)
-- `../wuhu` (main Wuhu repo)
-- `../wuhu-terragon` (reference implementations and patterns)
-- `../pi-mono` (reference harness + model/provider lists)
-- `../codex` (OpenAI Codex repo, for integration experiments)
-- `../axiia-website` (reference patterns)
-
-Starting new work:
-
-- Clone sibling repos on demand (only what you need).
-- Refresh a sibling repo with `git pull` only if you are on its default branch (usually `main`) and the working tree is clean (no local edits). If not, stop and ask for human intervention.
+This project manages issues locally at `~/.wuhu/workspace/issues/`. Each issue is a Markdown file named by its number (e.g., `0001.md`).
 
 ## Issue Workflow
 
-Issues use the format `WUHU-####` (four digits) and live in `../wuhu-workspace/issues/*.md`. If you see “Fix WUHU-0001”, assume it refers to an issue in `wuhu-workspace` (not GitHub Issues).
+Issues use the format `WUHU-####` (four digits) and live in `~/.wuhu/workspace/issues/*.md`. If you see "Fix WUHU-0001", assume it refers to an issue at that path (not GitHub Issues).
 
 When you are assigned to work on a `WUHU-####` issue, you must create a new branch:
 
@@ -111,7 +95,7 @@ General documentation lives in `docs/`.
 
 When the user is interactively asking questions while reviewing code:
 
-- Treat the user’s questions/concerns as likely-valid signals, not as “user error”.
-- Take a neutral stance: verify by inspecting the repo before concluding who’s right.
-- Correct the user only when there’s a clear factual mismatch, and cite the exact file/symbol you’re relying on.
+- Treat the user's questions/concerns as likely-valid signals, not as "user error".
+- Take a neutral stance: verify by inspecting the repo before concluding who's right.
+- Correct the user only when there's a clear factual mismatch, and cite the exact file/symbol you're relying on.
 - Assume parts of the codebase may be sloppy/LLM-generated; prioritize clarity and maintainability over defending the status quo.
