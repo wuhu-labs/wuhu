@@ -10,6 +10,8 @@ import WuhuClient
 struct APIClient: Sendable {
   var listSessions: @Sendable () async throws -> [WuhuSession]
   var getSession: @Sendable (_ id: String) async throws -> WuhuGetSessionResponse
+  var createSession: @Sendable (_ request: WuhuCreateSessionRequest) async throws -> WuhuSession
+  var listEnvironments: @Sendable () async throws -> [WuhuEnvironmentDefinition]
   var listWorkspaceDocs: @Sendable () async throws -> [WuhuWorkspaceDocSummary]
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
   var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?) async throws -> String
@@ -28,6 +30,8 @@ extension APIClient: DependencyKey {
     return APIClient(
       listSessions: { try await client.listSessions() },
       getSession: { try await client.getSession(id: $0) },
+      createSession: { try await client.createSession($0) },
+      listEnvironments: { try await client.listEnvironments() },
       listWorkspaceDocs: { try await client.listWorkspaceDocs() },
       readWorkspaceDoc: { try await client.readWorkspaceDoc(path: $0) },
       enqueue: { sessionID, input, user in
@@ -59,6 +63,21 @@ extension APIClient: DependencyKey {
         transcript: [],
       )
     },
+    createSession: { _ in
+      WuhuSession(
+        id: "preview",
+        provider: .anthropic,
+        model: "claude-sonnet-4-6",
+        environment: WuhuEnvironment(name: "preview", type: .local, path: "/tmp"),
+        cwd: "/tmp",
+        parentSessionID: nil,
+        createdAt: Date(),
+        updatedAt: Date(),
+        headEntryID: 0,
+        tailEntryID: 0,
+      )
+    },
+    listEnvironments: { [] },
     listWorkspaceDocs: { [] },
     readWorkspaceDoc: { _ in WuhuWorkspaceDoc(path: "", frontmatter: [:], body: "") },
     enqueue: { _, _, _ in "" },

@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import MarkdownUI
 import SwiftUI
 
 @Reducer
@@ -69,7 +70,11 @@ struct SessionFeature {
           timestamp: Date(),
         ))
         return .run { send in
-          _ = try await apiClient.enqueue(sessionID, content, nil)
+          let user: String? = {
+            let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
+            return v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : v
+          }()
+          _ = try await apiClient.enqueue(sessionID, content, user)
           let stream = try await apiClient.followSessionStream(sessionID, sinceCursor)
           for try await event in stream {
             switch event {
@@ -282,8 +287,7 @@ struct SessionThreadView: View {
         ProgressView()
           .controlSize(.mini)
       }
-      Text(streamingText)
-        .font(.body)
+      Markdown(streamingText)
         .textSelection(.enabled)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,8 +350,7 @@ struct SessionMessageView: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
-      Text(message.content)
-        .font(.body)
+      Markdown(message.content)
         .textSelection(.enabled)
 
       ForEach(message.toolCalls) { tc in

@@ -52,8 +52,16 @@ Environment variables:
 
 For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don’t rely on a local `.env`).
 
-WuhuApp / XcodeGen:
+WuhuMVPApp (active development):
 
+- `WuhuMVPApp` is the primary macOS app target. New features go here unless explicitly directed otherwise.
+- `WuhuMVPApp.xcodeproj` is generated, not source-of-truth. Source-of-truth is `WuhuMVPApp/project.yml`.
+- Before building, check whether `WuhuMVPApp/WuhuMVPApp.xcodeproj` exists. If not, run `cd WuhuMVPApp && xcodegen generate` first.
+- Build: `xcodebuild build -project WuhuMVPApp/WuhuMVPApp.xcodeproj -scheme WuhuMVPApp -destination 'platform=macOS' -quiet`
+
+WuhuApp (legacy, do not modify without explicit instruction):
+
+- `WuhuApp` is the older macOS/iOS app. Do not add features or make changes to it unless explicitly asked.
 - `WuhuApp.xcodeproj` is generated, not source-of-truth. Source-of-truth is `WuhuApp/project.yml`.
 - Before running any Xcode/iOS command that expects the project file (`xcodebuild`, opening the project, TestFlight scripts), check whether `WuhuApp/WuhuApp.xcodeproj` exists.
 - If it does not exist, run `cd WuhuApp && xcodegen generate` first.
