@@ -578,7 +578,7 @@ extension WuhuService {
       provider: parent.provider,
       model: parent.model,
       reasoningEffort: reasoningEffort,
-      systemPrompt: WuhuDefaultSystemPrompts.channelAgent,
+      systemPrompt: WuhuDefaultSystemPrompts.forkedChannelAgent,
       environmentID: parent.environmentID,
       environment: parent.environment,
       runnerName: parent.runnerName,
@@ -656,16 +656,17 @@ extension WuhuService {
     let envDef = try await store.getEnvironment(identifier: environmentIdentifier)
     let childSessionID = UUID().uuidString.lowercased()
 
+    let serverCwd = FileManager.default.currentDirectoryPath
     let environment: WuhuEnvironment
     switch envDef.type {
     case .local:
-      let resolvedPath = ToolPath.resolveToCwd(envDef.path, cwd: parent.cwd)
+      let resolvedPath = ToolPath.resolveToCwd(envDef.path, cwd: serverCwd)
       environment = WuhuEnvironment(name: envDef.name, type: .local, path: resolvedPath)
     case .folderTemplate:
       guard let templatePathRaw = envDef.templatePath else {
         throw WuhuToolExecutionError(message: "folder-template environment '\(envDef.name)' requires templatePath")
       }
-      let templatePath = ToolPath.resolveToCwd(templatePathRaw, cwd: parent.cwd)
+      let templatePath = ToolPath.resolveToCwd(templatePathRaw, cwd: serverCwd)
       let workspacesRoot = WuhuWorkspaceManager.resolveWorkspacesPath(envDef.path)
       let workspacePath = try await WuhuWorkspaceManager.materializeFolderTemplateWorkspace(
         sessionID: childSessionID,

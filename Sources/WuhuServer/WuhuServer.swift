@@ -230,8 +230,10 @@ public struct WuhuServer: Sendable {
         switch sessionType {
         case .coding:
           WuhuDefaultSystemPrompts.codingAgent
-        case .channel, .forkedChannel:
+        case .channel:
           WuhuDefaultSystemPrompts.channelAgent
+        case .forkedChannel:
+          WuhuDefaultSystemPrompts.forkedChannelAgent
         }
       }
       let sessionID = UUID().uuidString.lowercased()
