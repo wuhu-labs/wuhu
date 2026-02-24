@@ -16,6 +16,7 @@ struct APIClient: Sendable {
   var listWorkspaceDocs: @Sendable () async throws -> [WuhuWorkspaceDocSummary]
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
   var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?) async throws -> String
+  var renameSession: @Sendable (_ sessionID: String, _ title: String) async throws -> WuhuRenameSessionResponse
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
   var setSessionModel: @Sendable (
     _ sessionID: String,
@@ -39,6 +40,9 @@ extension APIClient: DependencyKey {
       readWorkspaceDoc: { try await client.readWorkspaceDoc(path: $0) },
       enqueue: { sessionID, input, user in
         try await client.enqueue(sessionID: sessionID, input: input, user: user)
+      },
+      renameSession: { sessionID, title in
+        try await client.renameSession(id: sessionID, title: title)
       },
       stopSession: { try await client.stopSession(sessionID: $0) },
       setSessionModel: { sessionID, provider, model, reasoningEffort in
@@ -86,6 +90,20 @@ extension APIClient: DependencyKey {
     listWorkspaceDocs: { [] },
     readWorkspaceDoc: { _ in WuhuWorkspaceDoc(path: "", frontmatter: [:], body: "") },
     enqueue: { _, _, _ in "" },
+    renameSession: { _, _ in
+      WuhuRenameSessionResponse(session: WuhuSession(
+        id: "preview",
+        provider: .anthropic,
+        model: "claude-sonnet-4-6",
+        environment: WuhuEnvironment(name: "preview", type: .local, path: "/tmp"),
+        cwd: "/tmp",
+        parentSessionID: nil,
+        createdAt: Date(),
+        updatedAt: Date(),
+        headEntryID: 0,
+        tailEntryID: 0,
+      ))
+    },
     stopSession: { _ in WuhuStopSessionResponse(repairedEntries: [], stopEntry: nil) },
     setSessionModel: { _, _, _, _ in
       WuhuSetSessionModelResponse(
@@ -323,9 +341,13 @@ extension MockSession {
     } else {
       .stopped
     }
+    let displayTitle = session.customTitle
+      ?? TranscriptConverter.deriveSessionTitle(from: [])
+      ?? session.environment.name + " session"
     return MockSession(
       id: session.id,
-      title: TranscriptConverter.deriveSessionTitle(from: []) ?? session.environment.name + " session",
+      title: displayTitle,
+      customTitle: session.customTitle,
       environmentName: session.environment.name,
       model: session.model,
       status: status,
@@ -339,13 +361,15 @@ extension MockSession {
       response.transcript,
       displayStartEntryID: response.session.displayStartEntryID,
     )
-    let title = TranscriptConverter.deriveSessionTitle(from: response.transcript)
+    let displayTitle = response.session.customTitle
+      ?? TranscriptConverter.deriveSessionTitle(from: response.transcript)
       ?? response.session.environment.name + " session"
     let status = TranscriptConverter.sessionStatus(from: response)
 
     return MockSession(
       id: response.session.id,
-      title: title,
+      title: displayTitle,
+      customTitle: response.session.customTitle,
       environmentName: response.session.environment.name,
       model: response.session.model,
       status: status,
