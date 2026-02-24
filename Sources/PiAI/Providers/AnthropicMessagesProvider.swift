@@ -2,6 +2,7 @@ import Foundation
 
 public struct AnthropicMessagesProvider: Sendable {
   private let http: any HTTPClient
+  private let promptCachingBetaFeature = "prompt-caching-2024-07-31"
 
   public init(http: any HTTPClient = AsyncHTTPClientTransport()) {
     self.http = http
@@ -22,6 +23,14 @@ public struct AnthropicMessagesProvider: Sendable {
     request.setHeader("2023-06-01", for: "anthropic-version")
     for (k, v) in options.headers {
       request.setHeader(v, for: k)
+    }
+    if let caching = options.anthropicPromptCaching,
+       caching.sendBetaHeader
+    {
+      let existing = getHeaderValue(request.headers, name: "anthropic-beta")
+      let merged = mergeCSVHeader(existing, adding: promptCachingBetaFeature)
+      normalizeHeaderKey(&request.headers, name: "anthropic-beta")
+      request.setHeader(merged, for: "anthropic-beta")
     }
 
     let body = try JSONSerialization.data(withJSONObject: buildBody(model: model, context: context, options: options))
@@ -125,11 +134,35 @@ public struct AnthropicMessagesProvider: Sendable {
       "max_tokens": options.maxTokens ?? 1024,
     ]
 
-    if let system = context.systemPrompt, !system.isEmpty {
-      body["system"] = system
-    }
     if let temperature = options.temperature {
       body["temperature"] = temperature
+    }
+
+    if let caching = options.anthropicPromptCaching {
+      switch caching.mode {
+      case .automatic:
+        body["cache_control"] = ["type": "ephemeral"]
+        if let system = context.systemPrompt, !system.isEmpty {
+          body["system"] = system
+        }
+
+      case .explicitBreakpoints:
+        if let system = context.systemPrompt, !system.isEmpty {
+          body["system"] = [
+            [
+              "type": "text",
+              "text": system,
+              "cache_control": ["type": "ephemeral"],
+            ],
+          ]
+        }
+        if var messages = body["messages"] as? [[String: Any]] {
+          applyExplicitPromptCachingToLastUserTurn(messages: &messages)
+          body["messages"] = messages
+        }
+      }
+    } else if let system = context.systemPrompt, !system.isEmpty {
+      body["system"] = system
     }
 
     if let tools = context.tools, !tools.isEmpty {
@@ -143,6 +176,64 @@ public struct AnthropicMessagesProvider: Sendable {
     }
 
     return body
+  }
+
+  private func applyExplicitPromptCachingToLastUserTurn(messages: inout [[String: Any]]) {
+    for idx in stride(from: messages.count - 1, through: 0, by: -1) {
+      var message = messages[idx]
+      guard let role = message["role"] as? String, role == "user" else { continue }
+
+      if var blocks = message["content"] as? [[String: Any]] {
+        guard !blocks.isEmpty else { continue }
+        var last = blocks[blocks.count - 1]
+        if last["cache_control"] == nil {
+          last["cache_control"] = ["type": "ephemeral"]
+          blocks[blocks.count - 1] = last
+          message["content"] = blocks
+          messages[idx] = message
+        }
+        return
+      }
+
+      if var contentAny = message["content"] as? [Any], !contentAny.isEmpty {
+        if var last = contentAny[contentAny.count - 1] as? [String: Any], last["cache_control"] == nil {
+          last["cache_control"] = ["type": "ephemeral"]
+          contentAny[contentAny.count - 1] = last
+          message["content"] = contentAny
+          messages[idx] = message
+        }
+        return
+      }
+    }
+  }
+
+  private func getHeaderValue(_ headers: [String: String], name: String) -> String? {
+    headers.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value
+  }
+
+  private func normalizeHeaderKey(_ headers: inout [String: String], name: String) {
+    for key in headers.keys where key.caseInsensitiveCompare(name) == .orderedSame && key != name {
+      let value = headers.removeValue(forKey: key)
+      if let value {
+        headers[name] = value
+      }
+      break
+    }
+  }
+
+  private func mergeCSVHeader(_ existing: String?, adding feature: String) -> String {
+    guard let existing, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return feature
+    }
+
+    var items = existing
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    if !items.contains(feature) {
+      items.append(feature)
+    }
+    return items.joined(separator: ", ")
   }
 
   private func mapAnthropicSSE(

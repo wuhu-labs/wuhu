@@ -478,6 +478,9 @@ private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot)
   {
     requestOptions.reasoningEffort = .low
   }
+  if model.provider == .anthropic {
+    requestOptions.anthropicPromptCaching = .init(mode: .automatic)
+  }
   return requestOptions
 }
 

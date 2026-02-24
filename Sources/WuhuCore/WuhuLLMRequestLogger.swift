@@ -220,6 +220,8 @@ public struct WuhuLLMOptionsSnapshot: Sendable, Codable, Hashable {
   public var maxTokens: Int?
   public var sessionId: String?
   public var reasoningEffort: ReasoningEffort?
+  public var anthropicPromptCachingMode: String?
+  public var anthropicPromptCachingSendBetaHeader: Bool?
   public var headerKeys: [String]
 
   public init(
@@ -227,12 +229,16 @@ public struct WuhuLLMOptionsSnapshot: Sendable, Codable, Hashable {
     maxTokens: Int?,
     sessionId: String?,
     reasoningEffort: ReasoningEffort?,
+    anthropicPromptCachingMode: String? = nil,
+    anthropicPromptCachingSendBetaHeader: Bool? = nil,
     headerKeys: [String],
   ) {
     self.temperature = temperature
     self.maxTokens = maxTokens
     self.sessionId = sessionId
     self.reasoningEffort = reasoningEffort
+    self.anthropicPromptCachingMode = anthropicPromptCachingMode
+    self.anthropicPromptCachingSendBetaHeader = anthropicPromptCachingSendBetaHeader
     self.headerKeys = headerKeys
   }
 
@@ -241,6 +247,8 @@ public struct WuhuLLMOptionsSnapshot: Sendable, Codable, Hashable {
     maxTokens = options.maxTokens
     sessionId = options.sessionId
     reasoningEffort = options.reasoningEffort
+    anthropicPromptCachingMode = options.anthropicPromptCaching?.mode.rawValue
+    anthropicPromptCachingSendBetaHeader = options.anthropicPromptCaching?.sendBetaHeader
     headerKeys = options.headers.keys.sorted()
   }
 }
