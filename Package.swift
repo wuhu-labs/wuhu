@@ -10,11 +10,7 @@ let strictConcurrency: [SwiftSetting] = [
   ]),
 ]
 
-#if os(Linux)
-  let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", branch: "development")
-#else
-  let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.9.0")
-#endif
+let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0")
 
 let package = Package(
   name: "wuhu",
