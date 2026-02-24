@@ -21,6 +21,7 @@ actor WuhuSessionRuntime {
   private var observeTask: Task<Void, Never>?
 
   private var streaming: Bool = false
+  private var inflightText: String = ""
   private var observedState: WuhuSessionLoopState = .empty
   private var observationReady: Bool = false
 
@@ -83,6 +84,12 @@ actor WuhuSessionRuntime {
     !streaming && !behavior.hasWork(state: observedState)
   }
 
+  /// Returns accumulated streaming text if inference is in progress, nil otherwise.
+  func currentInflightText() -> String? {
+    guard streaming else { return nil }
+    return inflightText
+  }
+
   func inProcessExecutionInfo() -> WuhuInProcessExecutionInfo {
     let queued = observedState.followUp.pending.count
     let active = streaming ? 1 : 0
@@ -141,6 +148,7 @@ actor WuhuSessionRuntime {
     observeTask = nil
     observationReady = false
     streaming = false
+    inflightText = ""
     observedState = .empty
 
     publishedSystemCursor = .init(rawValue: "0")
@@ -153,6 +161,17 @@ actor WuhuSessionRuntime {
   private func setInitialObservationState(_ observation: AgentLoopObservation<WuhuSessionBehavior>) async {
     observedState = observation.state
     streaming = observation.inflight != nil
+
+    // Seed inflight text from the loop's accumulated stream actions.
+    if let actions = observation.inflight {
+      inflightText = actions.map { action in
+        switch action {
+        case let .assistantTextDelta(text): text
+        }
+      }.joined()
+    } else {
+      inflightText = ""
+    }
 
     publishedSystemCursor = observation.state.systemUrgent.cursor
     publishedSteerCursor = observation.state.steer.cursor
@@ -230,16 +249,22 @@ actor WuhuSessionRuntime {
 
     case .streamBegan:
       streaming = true
+      inflightText = ""
+      await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .streamBegan)
 
     case let .streamDelta(delta):
       switch delta {
       case let .assistantTextDelta(text):
+        inflightText += text
         await eventHub.publish(sessionID: sessionID.rawValue, event: .assistantTextDelta(text))
+        await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .streamDelta(text))
       }
 
     case .streamEnded:
       let wasIdle = isIdle()
       streaming = false
+      inflightText = ""
+      await subscriptionHub.publish(sessionID: sessionID.rawValue, event: .streamEnded)
       let nowIdle = isIdle()
       if nowIdle, !wasIdle {
         await eventHub.publish(sessionID: sessionID.rawValue, event: .idle)

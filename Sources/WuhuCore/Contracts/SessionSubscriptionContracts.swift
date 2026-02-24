@@ -38,6 +38,10 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
   public var steer: UserQueueBackfill
   public var followUp: UserQueueBackfill
 
+  /// Accumulated streaming text if inference is mid-flight at subscription time.
+  /// Not part of the stable patch — ephemeral state for reconnection.
+  public var inflightStreamText: String?
+
   public init(
     settings: SessionSettingsSnapshot,
     status: SessionStatusSnapshot,
@@ -45,6 +49,7 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
     systemUrgent: SystemUrgentQueueBackfill,
     steer: UserQueueBackfill,
     followUp: UserQueueBackfill,
+    inflightStreamText: String? = nil,
   ) {
     self.settings = settings
     self.status = status
@@ -52,6 +57,7 @@ public struct SessionInitialState: Sendable, Hashable, Codable {
     self.systemUrgent = systemUrgent
     self.steer = steer
     self.followUp = followUp
+    self.inflightStreamText = inflightStreamText
   }
 }
 
@@ -62,6 +68,13 @@ public enum SessionEvent: Sendable, Hashable, Codable {
   case userQueue(cursor: QueueCursor, entries: [UserQueueJournalEntry])
   case settingsUpdated(SessionSettingsSnapshot)
   case statusUpdated(SessionStatusSnapshot)
+
+  /// Inference streaming has begun. Ephemeral — not persisted.
+  case streamBegan
+  /// An ephemeral text delta during inference streaming.
+  case streamDelta(String)
+  /// Inference streaming has ended. Ephemeral — not persisted.
+  case streamEnded
 }
 
 /// A subscription established with "subscribe first, then backfill" semantics.

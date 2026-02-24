@@ -46,6 +46,7 @@ struct SessionDetailFeature {
     var error: String?
 
     var draft: String = ""
+    var streamingText: String = ""
 
     var verbosity: WuhuSessionVerbosity = .minimal
 
@@ -229,6 +230,9 @@ struct SessionDetailFeature {
         }
         state.transcript = IdentifiedArray(uniqueElements: filtered)
         state.skills = WuhuSkills.extract(from: filtered)
+
+        // Seed streaming text for mid-stream reconnection.
+        state.streamingText = initial.inflightStreamText ?? ""
 
         syncModelSelectionFromSettings(initial.settings, state: &state)
 
@@ -465,6 +469,15 @@ struct SessionDetailFeature {
       if status.status == .idle {
         state.isStopping = false
       }
+
+    case .streamBegan:
+      state.streamingText = ""
+
+    case let .streamDelta(text):
+      state.streamingText += text
+
+    case .streamEnded:
+      state.streamingText = ""
     }
   }
 

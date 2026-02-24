@@ -436,7 +436,11 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
     let runtime = runtime(for: sessionID.rawValue)
     await runtime.ensureStarted()
 
-    let initial = try await loadInitialState(sessionID: sessionID, request: request)
+    var initial = try await loadInitialState(sessionID: sessionID, request: request)
+
+    // Seed inflight streaming text for mid-stream reconnection.
+    let inflightText = await runtime.currentInflightText()
+    initial.inflightStreamText = inflightText
 
     let lastTranscriptID0: Int64 = {
       let fromRequest = Int64(request.transcriptSince?.rawValue ?? "") ?? 0
@@ -493,6 +497,9 @@ extension WuhuService: SessionCommanding, SessionSubscribing {
 
           case let .statusUpdated(status):
             continuation.yield(.statusUpdated(status))
+
+          case .streamBegan, .streamDelta, .streamEnded:
+            continuation.yield(event)
           }
         }
         continuation.finish()
