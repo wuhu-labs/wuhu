@@ -3,6 +3,9 @@ import Foundation
 public enum WuhuSessionType: String, Sendable, Hashable, Codable {
   case coding
   case channel
+  /// A forked coding session that preserves the parent channel's tool schema in the prompt
+  /// so cached KV entries carry over, while having coding-level execution permissions.
+  case forkedChannel = "forked-channel"
 }
 
 public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {

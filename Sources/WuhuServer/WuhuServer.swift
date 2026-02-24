@@ -230,7 +230,7 @@ public struct WuhuServer: Sendable {
         switch sessionType {
         case .coding:
           WuhuDefaultSystemPrompts.codingAgent
-        case .channel:
+        case .channel, .forkedChannel:
           WuhuDefaultSystemPrompts.channelAgent
         }
       }

@@ -80,7 +80,7 @@ struct AppFeature {
           let allDocs = try await docsResult
 
           // Split sessions into coding sessions and channel sessions
-          let codingSessions = allSessions.filter { $0.type == .coding }
+          let codingSessions = allSessions.filter { $0.type == .coding || $0.type == .forkedChannel }
           let channelSessions = allSessions.filter { $0.type == .channel }
 
           let sortedCodingSessions = codingSessions.sorted(by: { $0.updatedAt > $1.updatedAt })
@@ -127,7 +127,7 @@ struct AppFeature {
             .enumerated()
             .map { index, session in
               let description = switch session.type {
-              case .coding:
+              case .coding, .forkedChannel:
                 "Session in \(session.environment.name) updated"
               case .channel:
                 "Activity in #\(session.environment.name)"
@@ -136,7 +136,7 @@ struct AppFeature {
                 id: "ev-\(index)",
                 description: description,
                 timestamp: session.updatedAt,
-                icon: session.type == .coding ? "terminal" : "bubble.left.and.bubble.right",
+                icon: session.type == .channel ? "bubble.left.and.bubble.right" : "terminal",
               )
             }
 
