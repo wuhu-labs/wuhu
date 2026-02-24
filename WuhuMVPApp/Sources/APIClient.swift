@@ -17,6 +17,12 @@ struct APIClient: Sendable {
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
   var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?) async throws -> String
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
+  var setSessionModel: @Sendable (
+    _ sessionID: String,
+    _ provider: WuhuProvider,
+    _ model: String?,
+    _ reasoningEffort: ReasoningEffort?
+  ) async throws -> WuhuSetSessionModelResponse
 }
 
 extension APIClient: DependencyKey {
@@ -35,6 +41,11 @@ extension APIClient: DependencyKey {
         try await client.enqueue(sessionID: sessionID, input: input, user: user)
       },
       stopSession: { try await client.stopSession(sessionID: $0) },
+      setSessionModel: { sessionID, provider, model, reasoningEffort in
+        try await client.setSessionModel(
+          sessionID: sessionID, provider: provider, model: model, reasoningEffort: reasoningEffort
+        )
+      },
     )
   }()
 
@@ -76,6 +87,24 @@ extension APIClient: DependencyKey {
     readWorkspaceDoc: { _ in WuhuWorkspaceDoc(path: "", frontmatter: [:], body: "") },
     enqueue: { _, _, _ in "" },
     stopSession: { _ in WuhuStopSessionResponse(repairedEntries: [], stopEntry: nil) },
+    setSessionModel: { _, _, _, _ in
+      WuhuSetSessionModelResponse(
+        session: WuhuSession(
+          id: "preview",
+          provider: .anthropic,
+          model: "claude-sonnet-4-6",
+          environment: WuhuEnvironment(name: "preview", type: .local, path: "/tmp"),
+          cwd: "/tmp",
+          parentSessionID: nil,
+          createdAt: Date(),
+          updatedAt: Date(),
+          headEntryID: 0,
+          tailEntryID: 0
+        ),
+        selection: WuhuSessionSettings(provider: .anthropic, model: "claude-sonnet-4-6"),
+        applied: true
+      )
+    },
   )
 }
 

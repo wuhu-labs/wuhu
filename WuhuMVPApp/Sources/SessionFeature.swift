@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import IdentifiedCollections
 import MarkdownUI
+import PiAI
 import SwiftUI
 import WuhuAPI
 import WuhuCore
@@ -22,6 +23,26 @@ struct SessionFeature {
     var steer: UserQueueBackfill?
     var followUp: UserQueueBackfill?
 
+    // Model picker state
+    var provider: WuhuProvider = .anthropic
+    var modelSelection: String = ""
+    var customModel: String = ""
+    var reasoningEffort: ReasoningEffort?
+    var isShowingModelPicker = false
+    var isUpdatingModel = false
+    var modelUpdateStatus: String?
+
+    var resolvedModelID: String? {
+      switch modelSelection {
+      case "":
+        nil
+      case ModelSelectionUI.customModelSentinel:
+        customModel.trimmedNonEmpty
+      default:
+        modelSelection
+      }
+    }
+
     // Connection state
     var isSubscribing = false
     var isRetrying = false
@@ -39,7 +60,8 @@ struct SessionFeature {
     }
   }
 
-  enum Action {
+  enum Action: BindableAction {
+    case binding(BindingAction<State>)
     case sessionSelected(String?)
     case sessionInfoLoaded(WuhuGetSessionResponse)
     case sessionInfoFailed
@@ -55,6 +77,10 @@ struct SessionFeature {
     case sendMessage(String)
     case enqueueSucceeded
     case enqueueFailed(String)
+
+    // Model switching
+    case applyModelTapped
+    case setModelResponse(Result<WuhuSetSessionModelResponse, any Error>)
   }
 
   @Dependency(\.apiClient) var apiClient
@@ -65,8 +91,24 @@ struct SessionFeature {
   }
 
   var body: some ReducerOf<Self> {
+    BindingReducer()
+
     Reduce { state, action in
       switch action {
+      case let .binding(binding):
+        if binding.keyPath == \State.provider {
+          state.modelSelection = ""
+          state.customModel = ""
+          state.reasoningEffort = nil
+        }
+        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
+          provider: state.provider, modelID: state.resolvedModelID
+        )
+        if let current = state.reasoningEffort, !supportedEfforts.contains(current) {
+          state.reasoningEffort = nil
+        }
+        return .none
+
       case let .sessionSelected(id):
         let previousID = state.selectedSessionID
         state.selectedSessionID = id
@@ -185,6 +227,9 @@ struct SessionFeature {
           updateSelectedSessionStatus(status, state: &state)
         }
 
+        // Sync model picker from server settings
+        syncModelSelectionFromSettings(initial.settings, state: &state)
+
         return .none
 
       case let .subscriptionEvent(event):
@@ -196,6 +241,10 @@ struct SessionFeature {
         }
         if case let .statusUpdated(status) = event {
           updateSelectedSessionStatus(status, state: &state)
+        }
+        if case let .settingsUpdated(settings) = event {
+          syncModelSelectionFromSettings(settings, state: &state)
+          state.modelUpdateStatus = nil
         }
 
         return .none
@@ -261,6 +310,39 @@ struct SessionFeature {
 
       case let .enqueueFailed(message):
         state.subscriptionError = message
+        return .none
+
+      // MARK: - Model Switching
+
+      case .applyModelTapped:
+        guard let sessionID = state.selectedSessionID else { return .none }
+        state.isUpdatingModel = true
+        state.modelUpdateStatus = nil
+
+        let provider = state.provider
+        let model = state.resolvedModelID
+        let effort = state.reasoningEffort
+
+        return .run { send in
+          await send(
+            .setModelResponse(
+              Result {
+                try await apiClient.setSessionModel(sessionID, provider, model, effort)
+              }
+            )
+          )
+        }
+
+      case let .setModelResponse(.success(response)):
+        state.isUpdatingModel = false
+        state.modelUpdateStatus = response.applied
+          ? "Applied."
+          : "Pending (will apply when session is idle)."
+        return .none
+
+      case let .setModelResponse(.failure(error)):
+        state.isUpdatingModel = false
+        state.subscriptionError = "\(error)"
         return .none
       }
     }
@@ -339,6 +421,37 @@ struct SessionFeature {
     }
   }
 
+  private func syncModelSelectionFromSettings(_ settings: SessionSettingsSnapshot, state: inout State) {
+    guard !state.isShowingModelPicker else { return }
+    guard !state.isUpdatingModel else { return }
+
+    state.provider = wuhuProviderFromSettings(settings)
+    let model = settings.effectiveModel.id
+    let knownIDs = Set(WuhuModelCatalog.models(for: state.provider).map(\.id))
+    if knownIDs.contains(model) {
+      state.modelSelection = model
+      state.customModel = ""
+    } else {
+      state.modelSelection = ModelSelectionUI.customModelSentinel
+      state.customModel = model
+    }
+    state.reasoningEffort = settings.effectiveReasoningEffort
+
+    // Update session model display
+    if let sessionID = state.selectedSessionID {
+      state.sessions[id: sessionID]?.model = model
+    }
+  }
+
+  private func wuhuProviderFromSettings(_ settings: SessionSettingsSnapshot) -> WuhuProvider {
+    switch settings.effectiveModel.provider {
+    case .openai: .openai
+    case .openaiCodex: .openaiCodex
+    case .anthropic: .anthropic
+    default: .openai
+    }
+  }
+
   private func updateSelectedSessionStatus(_ status: SessionStatusSnapshot, state: inout State) {
     guard let sessionID = state.selectedSessionID else { return }
     let mockStatus: MockSession.SessionStatus = switch status.status {
@@ -373,27 +486,96 @@ struct SessionDetailView: View {
   @Bindable var store: StoreOf<SessionFeature>
 
   var body: some View {
-    if store.isLoadingDetail {
-      ProgressView()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else if let session = store.selectedSession {
-      SessionThreadView(
-        session: session,
-        isRunning: store.executionStatus == .running,
-        isRetrying: store.isRetrying,
-        retryAttempt: store.retryAttempt,
-        retryDelaySeconds: store.retryDelaySeconds,
-        onSend: { message in
-          store.send(.sendMessage(message))
-        },
-      )
-    } else {
-      ContentUnavailableView(
-        "No Session Selected",
-        systemImage: "terminal",
-        description: Text("Select a session to view its thread"),
-      )
+    Group {
+      if store.isLoadingDetail {
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let session = store.selectedSession {
+        SessionThreadView(
+          session: session,
+          isRunning: store.executionStatus == .running,
+          isRetrying: store.isRetrying,
+          retryAttempt: store.retryAttempt,
+          retryDelaySeconds: store.retryDelaySeconds,
+          onSend: { message in
+            store.send(.sendMessage(message))
+          },
+        )
+      } else {
+        ContentUnavailableView(
+          "No Session Selected",
+          systemImage: "terminal",
+          description: Text("Select a session to view its thread"),
+        )
+      }
     }
+    .toolbar {
+      if store.selectedSession != nil {
+        ToolbarItem(placement: .primaryAction) {
+          Button("Model") {
+            store.isShowingModelPicker = true
+          }
+        }
+      }
+    }
+    .sheet(isPresented: $store.isShowingModelPicker) {
+      SessionModelPickerSheet(store: store)
+    }
+  }
+}
+
+// MARK: - Model Picker Sheet
+
+private struct SessionModelPickerSheet: View {
+  @Bindable var store: StoreOf<SessionFeature>
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        if let status = store.modelUpdateStatus {
+          Section {
+            Text(status)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        if let error = store.subscriptionError {
+          Section {
+            Text(error)
+              .foregroundStyle(.red)
+          }
+        }
+
+        Section("Model") {
+          ModelSelectionFields(
+            provider: $store.provider,
+            modelSelection: $store.modelSelection,
+            customModel: $store.customModel,
+            reasoningEffort: $store.reasoningEffort,
+          )
+        }
+
+        Section {
+          Button("Apply") { store.send(.applyModelTapped) }
+            .disabled(store.isUpdatingModel)
+        }
+      }
+      .formStyle(.grouped)
+      .navigationTitle("Model")
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") {
+            store.isShowingModelPicker = false
+          }
+        }
+        if store.isUpdatingModel {
+          ToolbarItem(placement: .confirmationAction) {
+            ProgressView()
+          }
+        }
+      }
+    }
+    .frame(minWidth: 350, minHeight: 300)
   }
 }
 

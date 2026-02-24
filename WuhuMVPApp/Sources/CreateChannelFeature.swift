@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import PiAI
 import SwiftUI
 import WuhuAPI
 
@@ -9,16 +10,31 @@ struct CreateChannelFeature {
     var sessionType: WuhuSessionType = .channel
     var environments: [WuhuEnvironmentDefinition] = []
     var selectedEnvironment: String = ""
+    var provider: WuhuProvider = .anthropic
+    var modelSelection: String = ""
+    var customModel: String = ""
+    var reasoningEffort: ReasoningEffort?
     var isLoading = false
     var isCreating = false
     var error: String?
+
+    var resolvedModelID: String? {
+      switch modelSelection {
+      case "":
+        nil
+      case ModelSelectionUI.customModelSentinel:
+        customModel.trimmedNonEmpty
+      default:
+        modelSelection
+      }
+    }
   }
 
-  enum Action {
+  enum Action: BindableAction {
     case onAppear
+    case binding(BindingAction<State>)
     case environmentsLoaded([WuhuEnvironmentDefinition])
     case loadFailed(String)
-    case selectedEnvironmentChanged(String)
     case createTapped
     case createResponse(WuhuSession)
     case createFailed(String)
@@ -34,6 +50,8 @@ struct CreateChannelFeature {
   @Dependency(\.apiClient) var apiClient
 
   var body: some ReducerOf<Self> {
+    BindingReducer()
+
     Reduce { state, action in
       switch action {
       case .onAppear:
@@ -58,10 +76,6 @@ struct CreateChannelFeature {
         state.error = message
         return .none
 
-      case let .selectedEnvironmentChanged(name):
-        state.selectedEnvironment = name
-        return .none
-
       case .createTapped:
         guard !state.selectedEnvironment.isEmpty else {
           state.error = "Select an environment."
@@ -69,12 +83,15 @@ struct CreateChannelFeature {
         }
         state.isCreating = true
         state.error = nil
-        let env = state.selectedEnvironment
-        let sessionType = state.sessionType
+        let request = WuhuCreateSessionRequest(
+          type: state.sessionType,
+          provider: state.provider,
+          model: state.resolvedModelID,
+          reasoningEffort: state.reasoningEffort,
+          environment: state.selectedEnvironment,
+        )
         return .run { send in
-          let session = try await apiClient.createSession(
-            WuhuCreateSessionRequest(type: sessionType, provider: .anthropic, environment: env),
-          )
+          let session = try await apiClient.createSession(request)
           await send(.createResponse(session))
         } catch: { error, send in
           await send(.createFailed("\(error)"))
@@ -91,6 +108,21 @@ struct CreateChannelFeature {
 
       case .cancelTapped:
         return .send(.delegate(.cancelled))
+
+      case let .binding(binding):
+        state.error = nil
+        if binding.keyPath == \.provider {
+          state.modelSelection = ""
+          state.customModel = ""
+          state.reasoningEffort = nil
+        }
+        let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
+          provider: state.provider, modelID: state.resolvedModelID
+        )
+        if let current = state.reasoningEffort, !supportedEfforts.contains(current) {
+          state.reasoningEffort = nil
+        }
+        return .none
 
       case .delegate:
         return .none
@@ -118,12 +150,24 @@ struct CreateChannelView: View {
           }
         } else {
           Section("Environment") {
-            Picker("Environment", selection: $store.selectedEnvironment.sending(\.selectedEnvironmentChanged)) {
+            Picker(
+              "Environment",
+              selection: $store.selectedEnvironment
+            ) {
               ForEach(store.environments, id: \.name) { env in
                 Text(env.name).tag(env.name)
               }
             }
             .labelsHidden()
+          }
+
+          Section("Model") {
+            ModelSelectionFields(
+              provider: $store.provider,
+              modelSelection: $store.modelSelection,
+              customModel: $store.customModel,
+              reasoningEffort: $store.reasoningEffort,
+            )
           }
         }
 
@@ -151,7 +195,7 @@ struct CreateChannelView: View {
         }
       }
     }
-    .frame(minWidth: 350, minHeight: 200)
+    .frame(minWidth: 350, minHeight: 250)
     .task { store.send(.onAppear) }
   }
 }
