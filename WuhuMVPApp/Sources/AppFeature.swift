@@ -2,6 +2,7 @@ import ComposableArchitecture
 import IdentifiedCollections
 import SwiftUI
 import WuhuAPI
+import WuhuCore
 
 // MARK: - Sidebar Selection
 
@@ -32,6 +33,15 @@ struct AppFeature {
     var channelStreamingText: [String: String] = [:]
     @Presents var createChannel: CreateChannelFeature.State?
     @Presents var createSession: CreateChannelFeature.State?
+
+    // Channel subscription state
+    var activeChannelID: String?
+    var channelTranscript: IdentifiedArrayOf<WuhuSessionEntry> = []
+    var channelDisplayStartEntryID: Int64?
+    var channelSubscribing = false
+    var channelRetrying = false
+    var channelRetryAttempt = 0
+    var channelRetryDelaySeconds: Double = 0
   }
 
   enum Action {
@@ -55,8 +65,7 @@ struct AppFeature {
     case channelRefreshTick(String)
     case channelsExpandedChanged(Bool)
     case channelSendMessage(channelID: String, message: String)
-    case channelStreamDelta(channelID: String, delta: String)
-    case channelStreamCompleted(channelID: String)
+    case channelEnqueueSucceeded
     case channelUpdated(MockChannel)
     case channelLoadTranscript(String)
     case createChannelTapped
@@ -68,15 +77,25 @@ struct AppFeature {
     case issues(IssuesFeature.Action)
     case selectionChanged(SidebarSelection?)
     case sessions(SessionFeature.Action)
+
+    // Channel subscription lifecycle
+    case channelStartSubscription(String)
+    case channelInfoLoaded(WuhuGetSessionResponse)
+    case channelSubscriptionInitial(SessionInitialState)
+    case channelSubscriptionEvent(SessionEvent)
+    case channelConnectionStateChanged(SSEConnectionState)
+    case channelSubscriptionFailed(String)
   }
 
   private enum CancelID {
     case refreshTimer
     case channelRefreshTimer
+    case channelSubscription
   }
 
   @Dependency(\.apiClient) var apiClient
   @Dependency(\.continuousClock) var clock
+  @Dependency(\.sessionTransportProvider) var sessionTransportProvider
 
   var body: some ReducerOf<Self> {
     Scope(state: \.home, action: \.home) { HomeFeature() }
@@ -317,78 +336,169 @@ struct AppFeature {
           await send(.channelUpdated(channel))
         } catch: { _, _ in }
 
+      case let .channelUpdated(channel):
+        state.channels[id: channel.id] = channel
+        return .none
+
       case let .channelsExpandedChanged(expanded):
         state.channelsExpanded = expanded
         return .none
 
       case let .selectionChanged(selection):
+        let previousSelection = state.selection
         state.selection = selection
-        if case let .channel(channelID) = selection {
-          if let channel = state.channels[id: channelID], channel.messages.isEmpty {
-            return .merge(
-              .send(.channelLoadTranscript(channelID)),
-              channelRefreshTimerEffect(channelID),
-            )
-          }
-          return channelRefreshTimerEffect(channelID)
+
+        // Cancel channel subscription when navigating away from a channel
+        var effects: [Effect<Action>] = []
+        if case .channel = previousSelection, selection != previousSelection {
+          state.activeChannelID = nil
+          state.channelTranscript = []
+          state.channelDisplayStartEntryID = nil
+          state.channelSubscribing = false
+          state.channelRetrying = false
+          effects.append(.cancel(id: CancelID.channelSubscription))
         }
-        return .cancel(id: CancelID.channelRefreshTimer)
+
+        // Start subscription when selecting a channel
+        if case let .channel(channelID) = selection {
+          effects.append(.send(.channelStartSubscription(channelID)))
+        }
+
+        return effects.isEmpty ? .none : .merge(effects)
+
+      case let .channelStartSubscription(channelID):
+        state.activeChannelID = channelID
+        state.channelTranscript = []
+        state.channelDisplayStartEntryID = nil
+        state.channelSubscribing = true
+
+        // First fetch session info for displayStartEntryID, then subscribe
+        return .merge(
+          .cancel(id: CancelID.channelSubscription),
+          .run { send in
+            let response = try await apiClient.getSession(channelID)
+            await send(.channelInfoLoaded(response))
+          } catch: { error, send in
+            await send(.channelSubscriptionFailed("\(error)"))
+          },
+        )
+
+      case let .channelInfoLoaded(response):
+        state.channelDisplayStartEntryID = response.session.displayStartEntryID
+
+        // Pre-populate messages from REST while subscription connects
+        let channel = MockChannel.from(response)
+        state.channels[id: channel.id] = channel
+
+        guard let channelID = state.activeChannelID else { return .none }
+        let since = makeChannelSinceRequest(from: state)
+        let transport = sessionTransportProvider.make()
+
+        return .run { send in
+          let result = try await transport.subscribeWithConnectionState(
+            sessionID: .init(rawValue: channelID),
+            since: since,
+          )
+          await send(.channelSubscriptionInitial(result.subscription.initial))
+
+          await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+              for await connectionState in result.connectionStates {
+                await send(.channelConnectionStateChanged(connectionState))
+              }
+            }
+            group.addTask {
+              do {
+                for try await event in result.subscription.events {
+                  await send(.channelSubscriptionEvent(event))
+                }
+              } catch {
+                if Task.isCancelled { return }
+                await send(.channelSubscriptionFailed("\(error)"))
+              }
+            }
+            await group.waitForAll()
+          }
+        } catch: { error, send in
+          if Task.isCancelled { return }
+          await send(.channelSubscriptionFailed("\(error)"))
+        }
+        .cancellable(id: CancelID.channelSubscription, cancelInFlight: true)
+
+      case let .channelSubscriptionInitial(initial):
+        state.channelSubscribing = false
+
+        let filtered: [WuhuSessionEntry] = if let start = state.channelDisplayStartEntryID {
+          initial.transcript.filter { $0.id >= start }
+        } else {
+          initial.transcript
+        }
+        state.channelTranscript = IdentifiedArray(uniqueElements: filtered)
+
+        updateActiveChannelMessages(state: &state)
+        return .none
+
+      case let .channelSubscriptionEvent(event):
+        applyChannelEvent(event, to: &state)
+        if case .transcriptAppended = event {
+          updateActiveChannelMessages(state: &state)
+        }
+        return .none
+
+      case let .channelConnectionStateChanged(connectionState):
+        switch connectionState {
+        case .connecting:
+          state.channelSubscribing = true
+          state.channelRetrying = false
+        case .connected:
+          state.channelSubscribing = false
+          state.channelRetrying = false
+          state.channelRetryAttempt = 0
+          state.channelRetryDelaySeconds = 0
+        case let .retrying(attempt, delaySeconds):
+          state.channelSubscribing = false
+          state.channelRetrying = true
+          state.channelRetryAttempt = attempt
+          state.channelRetryDelaySeconds = delaySeconds
+        case .closed:
+          state.channelSubscribing = false
+          state.channelRetrying = false
+        }
+        return .none
+
+      case let .channelSubscriptionFailed(message):
+        state.channelSubscribing = false
+        state.channelRetrying = false
+        // Could surface this to UI if needed
+        _ = message
+        return .none
 
       case let .channelLoadTranscript(channelID):
-        return .run { send in
-          let response = try await apiClient.getSession(channelID)
-          let channel = MockChannel.from(response)
-          await send(.channelUpdated(channel))
-        } catch: { _, _ in }
+        // Now handled by channelStartSubscription
+        return .send(.channelStartSubscription(channelID))
 
       case let .channelSendMessage(channelID, message):
         // Optimistically add the user message
+        let username = UserDefaults.standard.string(forKey: "wuhuUsername")
+        let trimmedUser = (username ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         state.channels[id: channelID]?.messages.append(MockChannelMessage(
           id: UUID().uuidString,
-          author: "You",
+          author: trimmedUser.isEmpty ? "You" : trimmedUser,
           isAgent: false,
           content: message,
           timestamp: Date(),
         ))
-        state.channelStreamingText[channelID] = ""
+        // Just enqueue — subscription handles the response
         return .run { send in
           let user: String? = {
             let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
             return v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : v
           }()
           _ = try await apiClient.enqueue(channelID, message, user)
-          let stream = try await apiClient.followSessionStream(channelID, nil)
-          for try await event in stream {
-            switch event {
-            case .idle, .done:
-              await send(.channelStreamCompleted(channelID: channelID))
-              return
-            case let .assistantTextDelta(delta):
-              await send(.channelStreamDelta(channelID: channelID, delta: delta))
-            case .entryAppended:
-              break
-            }
-          }
-          // Stream ended without idle/done — re-fetch anyway
-          await send(.channelStreamCompleted(channelID: channelID))
-        } catch: { _, send in
-          await send(.channelStreamCompleted(channelID: channelID))
-        }
-
-      case let .channelStreamDelta(channelID, delta):
-        state.channelStreamingText[channelID, default: ""] += delta
-        return .none
-
-      case let .channelStreamCompleted(channelID):
-        state.channelStreamingText[channelID] = nil
-        return .run { send in
-          let response = try await apiClient.getSession(channelID)
-          let channel = MockChannel.from(response)
-          await send(.channelUpdated(channel))
+          await send(.channelEnqueueSucceeded)
         } catch: { _, _ in }
 
-      case let .channelUpdated(channel):
-        state.channels[id: channel.id] = channel
+      case .channelEnqueueSucceeded:
         return .none
 
       case .createChannelTapped:
@@ -399,8 +509,8 @@ struct AppFeature {
         state.createChannel = nil
         let channel = MockChannel.from(session)
         state.channels.append(channel)
-        state.selection = .channel(channel.id)
-        return .none
+        // Dispatch through selectionChanged so channel subscription starts
+        return .send(.selectionChanged(.channel(channel.id)))
 
       case .createChannel(.presented(.delegate(.cancelled))):
         state.createChannel = nil
@@ -418,8 +528,8 @@ struct AppFeature {
         let mockSession = MockSession.from(session)
         state.sessions.sessions.insert(mockSession, at: 0)
         state.selection = .sessions
-        state.sessions.selectedSessionID = mockSession.id
-        return .none
+        // Dispatch the action so SessionFeature starts the subscription
+        return .send(.sessions(.sessionSelected(mockSession.id)))
 
       case .createSession(.presented(.delegate(.cancelled))):
         state.createSession = nil
@@ -456,6 +566,44 @@ struct AppFeature {
       }
     }
     .cancellable(id: CancelID.channelRefreshTimer, cancelInFlight: true)
+  }
+
+  // MARK: - Channel Helpers
+
+  private func makeChannelSinceRequest(from state: State) -> SessionSubscriptionRequest {
+    let transcriptSince = state.channelTranscript.last.map {
+      TranscriptCursor(rawValue: String($0.id))
+    }
+    return SessionSubscriptionRequest(
+      transcriptSince: transcriptSince,
+      transcriptPageSize: 200,
+    )
+  }
+
+  private func applyChannelEvent(_ event: SessionEvent, to state: inout State) {
+    switch event {
+    case let .transcriptAppended(entries):
+      let filtered: [WuhuSessionEntry] = if let start = state.channelDisplayStartEntryID {
+        entries.filter { $0.id >= start }
+      } else {
+        entries
+      }
+      for entry in filtered {
+        state.channelTranscript[id: entry.id] = entry
+      }
+    case .systemUrgentQueue, .userQueue, .settingsUpdated, .statusUpdated,
+         .streamBegan, .streamDelta, .streamEnded:
+      break
+    }
+  }
+
+  private func updateActiveChannelMessages(state: inout State) {
+    guard let channelID = state.activeChannelID else { return }
+    let messages = TranscriptConverter.convertToChannelMessages(
+      Array(state.channelTranscript),
+      displayStartEntryID: state.channelDisplayStartEntryID,
+    )
+    state.channels[id: channelID]?.messages = messages
   }
 }
 

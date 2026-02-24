@@ -128,7 +128,7 @@ struct IssuesDetailView: View {
   @Bindable var store: StoreOf<IssuesFeature>
 
   var body: some View {
-    ScrollView(.horizontal) {
+    ScrollView([.horizontal, .vertical]) {
       HStack(alignment: .top, spacing: 16) {
         ForEach(MockIssue.IssueStatus.allCases, id: \.rawValue) { status in
           kanbanColumn(status: status)
@@ -222,6 +222,11 @@ struct KanbanCard: View {
             .clipShape(Capsule())
         }
       }
+
+      Text((issue.id.components(separatedBy: "/").last ?? issue.id).replacingOccurrences(of: ".md", with: ""))
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
     }
     .padding(10)
     .background(isSelected ? Color.orange.opacity(0.08) : Color(.windowBackgroundColor))

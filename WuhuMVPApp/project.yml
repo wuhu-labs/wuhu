@@ -50,6 +50,8 @@ targets:
         product: WuhuAPI
       - package: Wuhu
         product: WuhuClient
+      - package: Wuhu
+        product: WuhuCore
       - package: ComposableArchitecture
         product: ComposableArchitecture
       - package: IdentifiedCollections
