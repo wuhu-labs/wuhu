@@ -1125,6 +1125,19 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
     process.executableURL = URL(fileURLWithPath: "/bin/bash")
     process.arguments = ["-lc", command]
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+    process.standardInput = FileHandle.nullDevice
+
+    // Run tools in a non-interactive environment. Some CLIs (notably `gh`) will attempt to prompt
+    // via the controlling TTY, which can hang an agent loop indefinitely.
+    var env = ProcessInfo.processInfo.environment
+    env["CI"] = "1"
+    env["TERM"] = env["TERM"]?.nilIfEqual("") ?? "dumb"
+    env["PAGER"] = "cat"
+    env["GIT_PAGER"] = "cat"
+    env["GH_PAGER"] = "cat"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GH_PROMPT_DISABLED"] = "1"
+    process.environment = env
 
     let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("wuhu-bash-\(UUID().uuidString.lowercased()).log")
     FileManager.default.createFile(atPath: outputURL.path, contents: nil)
@@ -1136,13 +1149,24 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
 
     let start = Date()
     var timedOut = false
-    while process.isRunning {
-      if let timeoutSeconds, timeoutSeconds > 0, Date().timeIntervalSince(start) > timeoutSeconds {
-        timedOut = true
-        process.terminate()
-        break
+    var terminated = false
+    do {
+      while process.isRunning {
+        if Task.isCancelled {
+          terminated = true
+          process.terminate()
+          break
+        }
+        if let timeoutSeconds, timeoutSeconds > 0, Date().timeIntervalSince(start) > timeoutSeconds {
+          timedOut = true
+          process.terminate()
+          break
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
       }
-      try await Task.sleep(nanoseconds: 50_000_000)
+    } catch is CancellationError {
+      terminated = true
+      process.terminate()
     }
 
     process.waitUntilExit()
@@ -1150,7 +1174,7 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
 
     let data = (try? Data(contentsOf: outputURL)) ?? Data()
     let output = String(decoding: data, as: UTF8.self)
-    return .init(exitCode: process.terminationStatus, output: output, timedOut: timedOut, terminated: false, fullOutputPath: outputURL.path)
+    return .init(exitCode: process.terminationStatus, output: output, timedOut: timedOut, terminated: terminated, fullOutputPath: outputURL.path)
   #else
     throw PiAIError.unsupported("bash is not supported on this platform")
   #endif

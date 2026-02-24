@@ -193,6 +193,19 @@ public struct WuhuAsyncBashCompletion: Sendable, Hashable {
       process.executableURL = URL(fileURLWithPath: "/bin/bash")
       process.arguments = ["-lc", command]
       process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+      process.standardInput = FileHandle.nullDevice
+
+      // Run in a non-interactive environment. Some CLIs (notably `gh`) will attempt to prompt via
+      // the controlling TTY, which can hang indefinitely when run as an agent tool.
+      var env = ProcessInfo.processInfo.environment
+      env["CI"] = "1"
+      env["TERM"] = env["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEqual("") ?? "dumb"
+      env["PAGER"] = "cat"
+      env["GIT_PAGER"] = "cat"
+      env["GH_PAGER"] = "cat"
+      env["GIT_TERMINAL_PROMPT"] = "0"
+      env["GH_PROMPT_DISABLED"] = "1"
+      process.environment = env
       process.standardOutput = stdoutHandle
       process.standardError = stderrHandle
 
@@ -333,6 +346,12 @@ public struct WuhuAsyncBashCompletion: Sendable, Hashable {
   }
 
 #endif
+
+private extension String {
+  func nilIfEqual(_ other: String) -> String? {
+    self == other ? nil : self
+  }
+}
 
 func wuhuEncodeToolJSON(_ object: JSONValue) -> String {
   let any = object.toAny()
