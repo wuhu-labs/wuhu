@@ -75,7 +75,7 @@ struct WuhuCLI: AsyncParsableCommand {
         abstract: "Create a new persisted session.",
       )
 
-      @Option(help: "Session type (coding, channel).")
+      @Option(help: "Session type (coding, channel, forked-channel).")
       var type: WuhuSessionType = .coding
 
       @Option(help: "Provider for this session.")

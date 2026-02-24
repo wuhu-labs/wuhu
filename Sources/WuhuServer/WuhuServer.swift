@@ -232,6 +232,8 @@ public struct WuhuServer: Sendable {
           WuhuDefaultSystemPrompts.codingAgent
         case .channel:
           WuhuDefaultSystemPrompts.channelAgent
+        case .forkedChannel:
+          WuhuDefaultSystemPrompts.forkedChannelAgent
         }
       }
       let sessionID = UUID().uuidString.lowercased()

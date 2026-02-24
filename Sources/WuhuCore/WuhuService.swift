@@ -100,7 +100,7 @@ public actor WuhuService {
       logServiceError("handleSessionIdle: failed to load parent session '\(parentSessionID)' for child '\(sessionID)'", error: error)
       return
     }
-    guard parentSession.type == .channel else { return }
+    guard parentSession.type == .channel || parentSession.type == .forkedChannel else { return }
 
     let final: (entryID: Int64, text: String)
     do {
