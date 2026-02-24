@@ -35,7 +35,10 @@ struct SessionFeature {
       case let .sessionSelected(id):
         state.selectedSessionID = id
         state.streamingText = ""
-        guard let id else { return .none }
+        guard let id else {
+          state.isLoadingDetail = false
+          return .none
+        }
         state.isLoadingDetail = true
         return .run { send in
           let response = try await apiClient.getSession(id)

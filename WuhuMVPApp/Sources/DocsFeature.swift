@@ -29,7 +29,10 @@ struct DocsFeature {
       switch action {
       case let .docSelected(id):
         state.selectedDocID = id
-        guard let id else { return .none }
+        guard let id else {
+          state.isLoadingContent = false
+          return .none
+        }
         guard let doc = state.docs[id: id] else { return .none }
         // If content is already loaded, don't re-fetch
         if !doc.markdownContent.isEmpty { return .none }

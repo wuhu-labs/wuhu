@@ -77,10 +77,25 @@ struct AppFeature {
           let codingSessions = allSessions.filter { $0.type == .coding }
           let channelSessions = allSessions.filter { $0.type == .channel }
 
+          let sortedCodingSessions = codingSessions.sorted(by: { $0.updatedAt > $1.updatedAt })
+          // Fetch session details concurrently for accurate running status
+          let detailedSessions = await withTaskGroup(of: MockSession.self) { group in
+            for session in sortedCodingSessions {
+              group.addTask {
+                if let response = try? await apiClient.getSession(session.id) {
+                  return MockSession.from(response)
+                }
+                return MockSession.from(session)
+              }
+            }
+            var results: [MockSession] = []
+            for await session in group {
+              results.append(session)
+            }
+            return results.sorted(by: { $0.updatedAt > $1.updatedAt })
+          }
           let mockSessions: IdentifiedArrayOf<MockSession> = IdentifiedArray(
-            uniqueElements: codingSessions
-              .sorted(by: { $0.updatedAt > $1.updatedAt })
-              .map { MockSession.from($0) },
+            uniqueElements: detailedSessions,
           )
           let mockChannels: IdentifiedArrayOf<MockChannel> = IdentifiedArray(
             uniqueElements: channelSessions
@@ -341,6 +356,29 @@ struct WuhuMVPApp: App {
     }
     .windowStyle(.automatic)
     .defaultSize(width: 1200, height: 750)
+    Settings {
+      SettingsView()
+    }
+  }
+}
+
+// MARK: - Settings
+
+struct SettingsView: View {
+  @AppStorage("wuhuServerURL") private var serverURL = "http://localhost:8080"
+
+  var body: some View {
+    Form {
+      Section("Server") {
+        TextField("Wuhu Server URL", text: $serverURL)
+          .textFieldStyle(.roundedBorder)
+        Text("Restart the app after changing the server URL.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
+    .frame(width: 400)
   }
 }
 

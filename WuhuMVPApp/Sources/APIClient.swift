@@ -22,7 +22,9 @@ struct APIClient: Sendable {
 
 extension APIClient: DependencyKey {
   static let liveValue: APIClient = {
-    let client = WuhuClient(baseURL: URL(string: "http://localhost:8080")!)
+    let urlString = UserDefaults.standard.string(forKey: "wuhuServerURL") ?? "http://localhost:8080"
+    let baseURL = URL(string: urlString) ?? URL(string: "http://localhost:8080")!
+    let client = WuhuClient(baseURL: baseURL)
     return APIClient(
       listSessions: { try await client.listSessions() },
       getSession: { try await client.getSession(id: $0) },
@@ -141,9 +143,17 @@ enum TranscriptConverter {
     return messages
   }
 
-  static func convertToChannelMessages(_ entries: [WuhuSessionEntry]) -> [MockChannelMessage] {
+  static func convertToChannelMessages(
+    _ entries: [WuhuSessionEntry],
+    displayStartEntryID: Int64? = nil,
+  ) -> [MockChannelMessage] {
+    let visibleEntries: [WuhuSessionEntry] = if let start = displayStartEntryID {
+      entries.filter { $0.id >= start }
+    } else {
+      entries
+    }
     var messages: [MockChannelMessage] = []
-    for entry in entries {
+    for entry in visibleEntries {
       guard case let .message(msg) = entry.payload else { continue }
       switch msg {
       case let .user(userMsg):
@@ -237,12 +247,18 @@ enum TranscriptConverter {
 
 extension MockSession {
   static func from(_ session: WuhuSession, messages: [MockMessage] = []) -> MockSession {
-    MockSession(
+    let idleThreshold: TimeInterval = 3600
+    let status: SessionStatus = if Date().timeIntervalSince(session.updatedAt) < idleThreshold {
+      .idle
+    } else {
+      .stopped
+    }
+    return MockSession(
       id: session.id,
       title: TranscriptConverter.deriveSessionTitle(from: []) ?? session.environment.name + " session",
       environmentName: session.environment.name,
       model: session.model,
-      status: .idle,
+      status: status,
       updatedAt: session.updatedAt,
       messages: messages,
     )
@@ -283,7 +299,10 @@ extension MockChannel {
   }
 
   static func from(_ response: WuhuGetSessionResponse) -> MockChannel {
-    let messages = TranscriptConverter.convertToChannelMessages(response.transcript)
+    let messages = TranscriptConverter.convertToChannelMessages(
+      response.transcript,
+      displayStartEntryID: response.session.displayStartEntryID,
+    )
     let name = "#\(response.session.environment.name)"
     return MockChannel(
       id: response.session.id,
