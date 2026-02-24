@@ -43,6 +43,15 @@ struct AppFeature {
       events: [MockActivityEvent],
     )
     case loadFailed
+    case refreshTick
+    case refreshDataLoaded(
+      sessions: IdentifiedArrayOf<MockSession>,
+      channels: IdentifiedArrayOf<MockChannel>,
+      docs: IdentifiedArrayOf<MockDoc>,
+      issues: IdentifiedArrayOf<MockIssue>,
+      events: [MockActivityEvent],
+    )
+    case channelRefreshTick(String)
     case channelsExpandedChanged(Bool)
     case channelSendMessage(channelID: String, message: String)
     case channelUpdated(MockChannel)
@@ -58,7 +67,13 @@ struct AppFeature {
     case sessions(SessionFeature.Action)
   }
 
+  private enum CancelID {
+    case refreshTimer
+    case channelRefreshTimer
+  }
+
   @Dependency(\.apiClient) var apiClient
+  @Dependency(\.continuousClock) var clock
 
   var body: some ReducerOf<Self> {
     Scope(state: \.home, action: \.home) { HomeFeature() }
@@ -158,11 +173,146 @@ struct AppFeature {
         state.docs.docs = docs
         state.issues.issues = issues
         state.home.events = events
-        return .none
+        return refreshTimerEffect()
 
       case .loadFailed:
         state.isLoading = false
         return .none
+
+      case .refreshTick:
+        return .run { send in
+          async let sessionsResult = apiClient.listSessions()
+          async let docsResult = apiClient.listWorkspaceDocs()
+
+          let allSessions = try await sessionsResult
+          let allDocs = try await docsResult
+
+          let codingSessions = allSessions.filter { $0.type == .coding || $0.type == .forkedChannel }
+          let channelSessions = allSessions.filter { $0.type == .channel }
+
+          let mockSessions: IdentifiedArrayOf<MockSession> = IdentifiedArray(
+            uniqueElements: codingSessions
+              .sorted(by: { $0.updatedAt > $1.updatedAt })
+              .map { MockSession.from($0) },
+          )
+          let mockChannels: IdentifiedArrayOf<MockChannel> = IdentifiedArray(
+            uniqueElements: channelSessions
+              .sorted(by: { $0.updatedAt > $1.updatedAt })
+              .map { MockChannel.from($0) },
+          )
+
+          var docsList: [MockDoc] = []
+          var issuesList: [MockIssue] = []
+          for doc in allDocs {
+            if let issue = MockIssue.from(doc) {
+              issuesList.append(issue)
+            } else {
+              docsList.append(MockDoc.from(doc))
+            }
+          }
+
+          let events: [MockActivityEvent] = allSessions
+            .sorted(by: { $0.updatedAt > $1.updatedAt })
+            .prefix(10)
+            .enumerated()
+            .map { index, session in
+              let description = switch session.type {
+              case .coding, .forkedChannel:
+                "Session in \(session.environment.name) updated"
+              case .channel:
+                "Activity in #\(session.environment.name)"
+              }
+              return MockActivityEvent(
+                id: "ev-\(index)",
+                description: description,
+                timestamp: session.updatedAt,
+                icon: session.type == .channel ? "bubble.left.and.bubble.right" : "terminal",
+              )
+            }
+
+          await send(.refreshDataLoaded(
+            sessions: mockSessions,
+            channels: mockChannels,
+            docs: IdentifiedArray(uniqueElements: docsList),
+            issues: IdentifiedArray(uniqueElements: issuesList),
+            events: events,
+          ))
+        } catch: { _, _ in }
+
+      case let .refreshDataLoaded(sessions, channels, docs, issues, events):
+        // Merge sessions: preserve messages and detailed titles
+        var mergedSessions: IdentifiedArrayOf<MockSession> = []
+        for session in sessions {
+          if var existing = state.sessions.sessions[id: session.id] {
+            // Preserve running status: the list-sessions heuristic cannot detect
+            // running state (only getSession can), so don't downgrade it.
+            if existing.status != .running || session.status == .stopped {
+              existing.status = session.status
+            }
+            existing.updatedAt = session.updatedAt
+            existing.model = session.model
+            existing.environmentName = session.environmentName
+            mergedSessions.append(existing)
+          } else {
+            mergedSessions.append(session)
+          }
+        }
+        state.sessions.sessions = mergedSessions
+
+        // Merge channels: update metadata but preserve loaded messages
+        var mergedChannels: IdentifiedArrayOf<MockChannel> = []
+        for channel in channels {
+          if let existing = state.channels[id: channel.id] {
+            var updated = channel
+            updated.messages = existing.messages
+            mergedChannels.append(updated)
+          } else {
+            mergedChannels.append(channel)
+          }
+        }
+        state.channels = mergedChannels
+
+        // Merge docs: preserve loaded markdownContent
+        var mergedDocs: IdentifiedArrayOf<MockDoc> = []
+        for doc in docs {
+          if let existing = state.docs.docs[id: doc.id], !existing.markdownContent.isEmpty {
+            var updated = doc
+            updated.markdownContent = existing.markdownContent
+            mergedDocs.append(updated)
+          } else {
+            mergedDocs.append(doc)
+          }
+        }
+        state.docs.docs = mergedDocs
+
+        // Merge issues: preserve loaded markdownContent
+        var mergedIssues: IdentifiedArrayOf<MockIssue> = []
+        for issue in issues {
+          if let existing = state.issues.issues[id: issue.id], !existing.markdownContent.isEmpty {
+            var updated = issue
+            updated.markdownContent = existing.markdownContent
+            mergedIssues.append(updated)
+          } else {
+            mergedIssues.append(issue)
+          }
+        }
+        state.issues.issues = mergedIssues
+
+        state.home.events = events
+        return .none
+
+      case let .channelRefreshTick(channelID):
+        // If selection changed, just ignore this stale tick. Don't cancel the
+        // shared timer — selectionChanged already cancels and restarts it for
+        // the new channel, so cancelling here would kill the new timer.
+        guard state.selection == .channel(channelID) else {
+          return .none
+        }
+        return .run { send in
+          let response = try await apiClient.getSession(channelID)
+          let channel = MockChannel.from(response)
+          await send(.channelUpdated(channel))
+        } catch: { _, _ in }
 
       case let .channelsExpandedChanged(expanded):
         state.channelsExpanded = expanded
@@ -170,13 +320,16 @@ struct AppFeature {
 
       case let .selectionChanged(selection):
         state.selection = selection
-        // When a channel is selected, load its transcript if needed
         if case let .channel(channelID) = selection {
           if let channel = state.channels[id: channelID], channel.messages.isEmpty {
-            return .send(.channelLoadTranscript(channelID))
+            return .merge(
+              .send(.channelLoadTranscript(channelID)),
+              channelRefreshTimerEffect(channelID),
+            )
           }
+          return channelRefreshTimerEffect(channelID)
         }
-        return .none
+        return .cancel(id: CancelID.channelRefreshTimer)
 
       case let .channelLoadTranscript(channelID):
         return .run { send in
@@ -270,6 +423,24 @@ struct AppFeature {
       CreateChannelFeature()
     }
   }
+
+  private func refreshTimerEffect() -> Effect<Action> {
+    .run { send in
+      for await _ in clock.timer(interval: .seconds(20)) {
+        await send(.refreshTick)
+      }
+    }
+    .cancellable(id: CancelID.refreshTimer, cancelInFlight: true)
+  }
+
+  private func channelRefreshTimerEffect(_ channelID: String) -> Effect<Action> {
+    .run { send in
+      for await _ in clock.timer(interval: .seconds(10)) {
+        await send(.channelRefreshTick(channelID))
+      }
+    }
+    .cancellable(id: CancelID.channelRefreshTimer, cancelInFlight: true)
+  }
 }
 
 // MARK: - App View (two-column NavigationSplitView)
@@ -356,6 +527,14 @@ struct AppView: View {
     }
     .navigationSplitViewColumnWidth(min: 180, ideal: 220)
     .toolbar {
+      ToolbarItem(placement: .automatic) {
+        Button {
+          store.send(.refreshTick)
+        } label: {
+          Image(systemName: "arrow.clockwise")
+        }
+        .help("Refresh")
+      }
       ToolbarItem(placement: .primaryAction) {
         Button {
           store.send(.createSessionTapped)
