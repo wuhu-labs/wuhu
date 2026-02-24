@@ -691,21 +691,22 @@ struct AppView: View {
     }
     .navigationSplitViewColumnWidth(min: 180, ideal: 220)
     .toolbar {
-      ToolbarItem(placement: .automatic) {
-        Button {
-          store.send(.refreshTick)
-        } label: {
-          Image(systemName: "arrow.clockwise")
+      ToolbarItemGroup(placement: .primaryAction) {
+        HStack(spacing: 4) {
+          Button {
+            store.send(.refreshTick)
+          } label: {
+            Image(systemName: "arrow.clockwise")
+          }
+          .help("Refresh")
+
+          Button {
+            store.send(.createSessionTapped)
+          } label: {
+            Image(systemName: "plus")
+          }
+          .help("New Session")
         }
-        .help("Refresh")
-      }
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          store.send(.createSessionTapped)
-        } label: {
-          Image(systemName: "plus")
-        }
-        .help("New Session")
       }
     }
   }

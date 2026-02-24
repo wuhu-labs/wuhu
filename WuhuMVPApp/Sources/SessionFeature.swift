@@ -514,7 +514,7 @@ struct SessionDetailView: View {
     }
     .toolbar {
       if store.selectedSession != nil {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
           Button("Model") {
             store.isShowingModelPicker = true
           }
