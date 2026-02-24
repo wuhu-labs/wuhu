@@ -46,27 +46,9 @@ struct ChannelChatView: View {
 
         Divider()
 
-        HStack(alignment: .bottom, spacing: 8) {
-          TextField("Message \(channel.name)...", text: $draft, axis: .vertical)
-            .textFieldStyle(.plain)
-            .lineLimit(1 ... 5)
-            .padding(10)
-            .background(.background.secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .onSubmit {
-              sendDraft()
-            }
-          Button {
-            sendDraft()
-          } label: {
-            Image(systemName: "arrow.up.circle.fill")
-              .font(.title2)
-              .foregroundStyle(draft.isEmpty ? .gray : .orange)
-          }
-          .buttonStyle(.plain)
-          .disabled(draft.isEmpty)
+        ChatInputField(draft: $draft, placeholder: "Message \(channel.name)...") {
+          sendDraft()
         }
-        .padding(12)
       }
       .frame(maxWidth: 800)
     }
