@@ -262,7 +262,7 @@ struct AppFeature {
         } catch: { _, _ in }
 
       case let .refreshDataLoaded(sessions, channels, docs, issues, events):
-        // Merge sessions: preserve messages and detailed titles
+        // Merge sessions: preserve messages, detailed titles, and custom titles
         var mergedSessions: IdentifiedArrayOf<MockSession> = []
         for session in sessions {
           if var existing = state.sessions.sessions[id: session.id] {
@@ -274,6 +274,12 @@ struct AppFeature {
             existing.updatedAt = session.updatedAt
             existing.model = session.model
             existing.environmentName = session.environmentName
+            // If the server returns a custom title, adopt it; otherwise preserve
+            // any locally-set custom title from a prior rename.
+            if let serverCustomTitle = session.customTitle {
+              existing.customTitle = serverCustomTitle
+              existing.title = serverCustomTitle
+            }
             mergedSessions.append(existing)
           } else {
             mergedSessions.append(session)

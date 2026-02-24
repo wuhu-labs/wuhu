@@ -92,6 +92,20 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode(WuhuSession.self, from: data)
   }
 
+  public func renameSession(id: String, title: String) async throws -> WuhuRenameSessionResponse {
+    let url = baseURL
+      .appending(path: "v1")
+      .appending(path: "sessions")
+      .appending(path: id)
+    var req = HTTPRequest(url: url, method: "PATCH")
+    req.setHeader("application/json", for: "Content-Type")
+    req.setHeader("application/json", for: "Accept")
+    req.body = try WuhuJSON.encoder.encode(WuhuRenameSessionRequest(title: title))
+
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuRenameSessionResponse.self, from: data)
+  }
+
   public func setSessionModel(
     sessionID: String,
     provider: WuhuProvider,

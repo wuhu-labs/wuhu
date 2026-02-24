@@ -505,6 +505,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var runnerName: String?
   var parentSessionID: String?
   var displayStartEntryID: Int64?
+  var customTitle: String?
   var createdAt: Date
   var updatedAt: Date
   var headEntryID: Int64?
@@ -538,6 +539,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       runnerName: runnerName,
       parentSessionID: parentSessionID,
       displayStartEntryID: displayStartEntryID,
+      customTitle: customTitle,
       createdAt: createdAt,
       updatedAt: updatedAt,
       headEntryID: headEntryID,
@@ -725,6 +727,12 @@ extension SQLiteSessionStore {
         t.column("lastReadFinalEntryID", .integer)
         t.column("updatedAt", .datetime).notNull()
         t.primaryKey(["parentSessionID", "childSessionID"])
+      }
+    }
+
+    migrator.registerMigration("wuhu_v4_custom_title") { db in
+      try db.alter(table: "sessions") { t in
+        t.add(column: "customTitle", .text)
       }
     }
 
@@ -1248,6 +1256,21 @@ extension SQLiteSessionStore {
       }
       let entryRow = try Self.appendEntryWithSession(db: db, sessionRow: &sessionRow, payload: payload, createdAt: createdAt)
       return try (sessionRow.toModel(), entryRow.toModel())
+    }
+  }
+
+  // MARK: - Rename
+
+  public func renameSession(id: String, title: String) async throws -> WuhuSession {
+    try await dbQueue.write { db in
+      guard var row = try SessionRow.fetchOne(db, key: id) else {
+        throw WuhuStoreError.sessionNotFound(id)
+      }
+      let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+      row.customTitle = trimmed.isEmpty ? nil : trimmed
+      row.updatedAt = Date()
+      try row.update(db)
+      return try row.toModel()
     }
   }
 

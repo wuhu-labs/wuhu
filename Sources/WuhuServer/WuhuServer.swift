@@ -323,6 +323,14 @@ public struct WuhuServer: Sendable {
       return try context.responseEncoder.encode(session, from: request, context: context)
     }
 
+    router.patch("v1/sessions/:id") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      let rename = try await request.decode(as: WuhuRenameSessionRequest.self, context: context)
+      let session = try await service.renameSession(sessionID: id, title: rename.title)
+      let response = WuhuRenameSessionResponse(session: session)
+      return try context.responseEncoder.encode(response, from: request, context: context)
+    }
+
     router.post("v1/sessions/:id/model") { request, context async throws -> Response in
       let id = try context.parameters.require("id")
       let setModel = try await request.decode(as: WuhuSetSessionModelRequest.self, context: context)

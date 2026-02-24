@@ -175,6 +175,10 @@ public actor WuhuService {
     throw PiAIError.unsupported("No final assistant message found for session '\(sessionID)'")
   }
 
+  public func renameSession(sessionID: String, title: String) async throws -> WuhuSession {
+    try await store.renameSession(id: sessionID, title: title)
+  }
+
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
     _ = try await store.getSession(id: sessionID)
 
