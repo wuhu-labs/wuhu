@@ -185,9 +185,11 @@ public actor RemoteSessionSSETransport: SessionCommanding, SessionSubscribing {
               eventsContinuation.yield(.statusUpdated(state.status))
 
               // Replay inflight streaming state on reconnection.
-              if let inflight = state.inflightStreamText, !inflight.isEmpty {
+              if let inflight = state.inflightStreamText {
                 eventsContinuation.yield(.streamBegan)
-                eventsContinuation.yield(.streamDelta(inflight))
+                if !inflight.isEmpty {
+                  eventsContinuation.yield(.streamDelta(inflight))
+                }
               }
 
             case let .event(event):
