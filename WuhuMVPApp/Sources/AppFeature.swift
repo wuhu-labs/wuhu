@@ -356,7 +356,8 @@ struct AppFeature {
 
         // Cancel channel subscription when navigating away from a channel
         var effects: [Effect<Action>] = []
-        if case .channel = previousSelection, selection != previousSelection {
+        if case let .channel(prevChannelID) = previousSelection, selection != previousSelection {
+          state.channelStreamingText[prevChannelID] = nil
           state.activeChannelID = nil
           state.channelTranscript = []
           state.channelDisplayStartEntryID = nil
@@ -442,6 +443,16 @@ struct AppFeature {
         state.channelTranscript = IdentifiedArray(uniqueElements: filtered)
 
         updateActiveChannelMessages(state: &state)
+
+        // Restore in-flight streaming text on (re)connection
+        if let channelID = state.activeChannelID {
+          if let inflight = initial.inflightStreamText {
+            state.channelStreamingText[channelID] = inflight
+          } else {
+            state.channelStreamingText[channelID] = nil
+          }
+        }
+
         return .none
 
       case let .channelSubscriptionEvent(event):
@@ -597,9 +608,24 @@ struct AppFeature {
       for entry in filtered {
         state.channelTranscript[id: entry.id] = entry
       }
-    case .systemUrgentQueue, .userQueue, .settingsUpdated, .statusUpdated,
-         .streamBegan, .streamDelta, .streamEnded:
+
+    case .systemUrgentQueue, .userQueue, .settingsUpdated, .statusUpdated:
       break
+
+    case .streamBegan:
+      if let channelID = state.activeChannelID {
+        state.channelStreamingText[channelID] = ""
+      }
+
+    case let .streamDelta(delta):
+      if let channelID = state.activeChannelID {
+        state.channelStreamingText[channelID, default: ""] += delta
+      }
+
+    case .streamEnded:
+      if let channelID = state.activeChannelID {
+        state.channelStreamingText[channelID] = nil
+      }
     }
   }
 

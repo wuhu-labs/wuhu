@@ -48,6 +48,9 @@ struct SessionFeature {
       }
     }
 
+    /// Streaming state
+    var streamingText: String = ""
+
     // Connection state
     var isSubscribing = false
     var isRetrying = false
@@ -134,6 +137,7 @@ struct SessionFeature {
           state.systemUrgent = nil
           state.steer = nil
           state.followUp = nil
+          state.streamingText = ""
           state.isSubscribing = false
           state.isRetrying = false
         }
@@ -240,6 +244,13 @@ struct SessionFeature {
 
         // Sync model picker from server settings
         syncModelSelectionFromSettings(initial.settings, state: &state)
+
+        // Restore in-flight streaming text on (re)connection
+        if let inflight = initial.inflightStreamText {
+          state.streamingText = inflight
+        } else {
+          state.streamingText = ""
+        }
 
         return .none
 
@@ -462,8 +473,14 @@ struct SessionFeature {
     case let .statusUpdated(status):
       state.status = status
 
-    case .streamBegan, .streamDelta, .streamEnded:
-      break
+    case .streamBegan:
+      state.streamingText = ""
+
+    case let .streamDelta(delta):
+      state.streamingText += delta
+
+    case .streamEnded:
+      state.streamingText = ""
     }
   }
 
@@ -571,6 +588,7 @@ struct SessionDetailView: View {
       } else if let session = store.selectedSession {
         SessionThreadView(
           session: session,
+          streamingText: store.streamingText,
           isRunning: store.executionStatus == .running,
           isRetrying: store.isRetrying,
           retryAttempt: store.retryAttempt,
@@ -700,6 +718,7 @@ struct SessionRow: View {
 
 struct SessionThreadView: View {
   let session: MockSession
+  var streamingText: String = ""
   var isRunning: Bool = false
   var isRetrying: Bool = false
   var retryAttempt: Int = 0
@@ -747,7 +766,9 @@ struct SessionThreadView: View {
             ForEach(session.messages) { message in
               SessionMessageView(message: message)
             }
-            if isRunning {
+            if !streamingText.isEmpty {
+              agentStreamingView
+            } else if isRunning {
               agentThinkingView
             }
           }
@@ -786,6 +807,22 @@ struct SessionThreadView: View {
     guard !draft.isEmpty else { return }
     onSend?(draft)
     draft = ""
+  }
+
+  private var agentStreamingView: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 6) {
+        Text("Agent")
+          .font(.caption)
+          .fontWeight(.semibold)
+          .foregroundStyle(.purple)
+        ProgressView()
+          .controlSize(.mini)
+      }
+      Markdown(streamingText)
+        .textSelection(.enabled)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var agentThinkingView: some View {
