@@ -29,6 +29,7 @@ struct AppFeature {
     var workspaceName = "Wuhu"
     var isLoading = false
     var hasLoaded = false
+    var channelStreamingText: [String: String] = [:]
     @Presents var createChannel: CreateChannelFeature.State?
     @Presents var createSession: CreateChannelFeature.State?
   }
@@ -54,6 +55,8 @@ struct AppFeature {
     case channelRefreshTick(String)
     case channelsExpandedChanged(Bool)
     case channelSendMessage(channelID: String, message: String)
+    case channelStreamDelta(channelID: String, delta: String)
+    case channelStreamCompleted(channelID: String)
     case channelUpdated(MockChannel)
     case channelLoadTranscript(String)
     case createChannelTapped
@@ -347,6 +350,7 @@ struct AppFeature {
           content: message,
           timestamp: Date(),
         ))
+        state.channelStreamingText[channelID] = ""
         return .run { send in
           let user: String? = {
             let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
@@ -357,15 +361,27 @@ struct AppFeature {
           for try await event in stream {
             switch event {
             case .idle, .done:
-              let response = try await apiClient.getSession(channelID)
-              let channel = MockChannel.from(response)
-              await send(.channelUpdated(channel))
+              await send(.channelStreamCompleted(channelID: channelID))
               return
-            case .entryAppended, .assistantTextDelta:
+            case let .assistantTextDelta(delta):
+              await send(.channelStreamDelta(channelID: channelID, delta: delta))
+            case .entryAppended:
               break
             }
           }
           // Stream ended without idle/done — re-fetch anyway
+          await send(.channelStreamCompleted(channelID: channelID))
+        } catch: { _, send in
+          await send(.channelStreamCompleted(channelID: channelID))
+        }
+
+      case let .channelStreamDelta(channelID, delta):
+        state.channelStreamingText[channelID, default: ""] += delta
+        return .none
+
+      case let .channelStreamCompleted(channelID):
+        state.channelStreamingText[channelID] = nil
+        return .run { send in
           let response = try await apiClient.getSession(channelID)
           let channel = MockChannel.from(response)
           await send(.channelUpdated(channel))
@@ -601,9 +617,13 @@ struct AppView: View {
       }
     case let .channel(channelID):
       if let channel = store.channels[id: channelID] {
-        ChannelChatView(channel: channel, onSend: { message in
-          store.send(.channelSendMessage(channelID: channelID, message: message))
-        })
+        ChannelChatView(
+          channel: channel,
+          streamingText: store.channelStreamingText[channelID] ?? "",
+          onSend: { message in
+            store.send(.channelSendMessage(channelID: channelID, message: message))
+          },
+        )
       }
     case nil:
       ContentUnavailableView("Select an item", systemImage: "sidebar.left", description: Text("Choose something from the sidebar"))

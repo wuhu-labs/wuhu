@@ -5,6 +5,7 @@ import SwiftUI
 
 struct ChannelChatView: View {
   let channel: MockChannel
+  var streamingText: String = ""
   var onSend: ((String) -> Void)?
   @State private var draft = ""
 
@@ -34,6 +35,9 @@ struct ChannelChatView: View {
                 message: message,
                 showAuthor: shouldShowAuthor(for: message),
               )
+            }
+            if !streamingText.isEmpty {
+              streamingMessageView
             }
           }
           .padding(.horizontal, 16)
@@ -72,6 +76,33 @@ struct ChannelChatView: View {
     guard !draft.isEmpty else { return }
     onSend?(draft)
     draft = ""
+  }
+
+  private var streamingMessageView: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Text("W")
+        .font(.caption2)
+        .fontWeight(.bold)
+        .foregroundStyle(.white)
+        .frame(width: 32, height: 32)
+        .background(.orange)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.top, 10)
+      VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 6) {
+          Text("Wuhu Agent")
+            .font(.callout)
+            .fontWeight(.semibold)
+            .foregroundStyle(.orange)
+          ProgressView()
+            .controlSize(.mini)
+        }
+        .padding(.top, 8)
+        Markdown(streamingText)
+          .textSelection(.enabled)
+      }
+      Spacer()
+    }
   }
 
   private func shouldShowAuthor(for message: MockChannelMessage) -> Bool {
