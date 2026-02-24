@@ -117,7 +117,7 @@ struct CreateChannelFeature {
           state.reasoningEffort = nil
         }
         let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
-          provider: state.provider, modelID: state.resolvedModelID
+          provider: state.provider, modelID: state.resolvedModelID,
         )
         if let current = state.reasoningEffort, !supportedEfforts.contains(current) {
           state.reasoningEffort = nil
@@ -152,7 +152,7 @@ struct CreateChannelView: View {
           Section("Environment") {
             Picker(
               "Environment",
-              selection: $store.selectedEnvironment
+              selection: $store.selectedEnvironment,
             ) {
               ForEach(store.environments, id: \.name) { env in
                 Text(env.name).tag(env.name)

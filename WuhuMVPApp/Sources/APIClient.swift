@@ -21,7 +21,7 @@ struct APIClient: Sendable {
     _ sessionID: String,
     _ provider: WuhuProvider,
     _ model: String?,
-    _ reasoningEffort: ReasoningEffort?
+    _ reasoningEffort: ReasoningEffort?,
   ) async throws -> WuhuSetSessionModelResponse
 }
 
@@ -43,7 +43,7 @@ extension APIClient: DependencyKey {
       stopSession: { try await client.stopSession(sessionID: $0) },
       setSessionModel: { sessionID, provider, model, reasoningEffort in
         try await client.setSessionModel(
-          sessionID: sessionID, provider: provider, model: model, reasoningEffort: reasoningEffort
+          sessionID: sessionID, provider: provider, model: model, reasoningEffort: reasoningEffort,
         )
       },
     )
@@ -99,10 +99,10 @@ extension APIClient: DependencyKey {
           createdAt: Date(),
           updatedAt: Date(),
           headEntryID: 0,
-          tailEntryID: 0
+          tailEntryID: 0,
         ),
         selection: WuhuSessionSettings(provider: .anthropic, model: "claude-sonnet-4-6"),
-        applied: true
+        applied: true,
       )
     },
   )

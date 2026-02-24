@@ -380,7 +380,7 @@ struct AppFeature {
             await send(.channelInfoLoaded(response))
           } catch: { error, send in
             await send(.channelSubscriptionFailed("\(error)"))
-          }
+          },
         )
 
       case let .channelInfoLoaded(response):
@@ -397,7 +397,7 @@ struct AppFeature {
         return .run { send in
           let result = try await transport.subscribeWithConnectionState(
             sessionID: .init(rawValue: channelID),
-            since: since
+            since: since,
           )
           await send(.channelSubscriptionInitial(result.subscription.initial))
 
@@ -591,7 +591,8 @@ struct AppFeature {
       for entry in filtered {
         state.channelTranscript[id: entry.id] = entry
       }
-    case .systemUrgentQueue, .userQueue, .settingsUpdated, .statusUpdated:
+    case .systemUrgentQueue, .userQueue, .settingsUpdated, .statusUpdated,
+         .streamBegan, .streamDelta, .streamEnded:
       break
     }
   }

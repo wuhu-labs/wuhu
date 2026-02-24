@@ -32,7 +32,7 @@ struct ModelSelectionFields: View {
     }
 
     let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
-      provider: provider, modelID: resolvedModelID
+      provider: provider, modelID: resolvedModelID,
     )
     if !supportedEfforts.isEmpty {
       Picker("Reasoning effort", selection: $reasoningEffort) {

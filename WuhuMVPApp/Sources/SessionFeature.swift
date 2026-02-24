@@ -102,7 +102,7 @@ struct SessionFeature {
           state.reasoningEffort = nil
         }
         let supportedEfforts = WuhuModelCatalog.supportedReasoningEfforts(
-          provider: state.provider, modelID: state.resolvedModelID
+          provider: state.provider, modelID: state.resolvedModelID,
         )
         if let current = state.reasoningEffort, !supportedEfforts.contains(current) {
           state.reasoningEffort = nil
@@ -140,7 +140,7 @@ struct SessionFeature {
             await send(.sessionInfoLoaded(response))
           } catch: { _, send in
             await send(.sessionInfoFailed)
-          }
+          },
         )
 
       case let .sessionInfoLoaded(response):
@@ -176,7 +176,7 @@ struct SessionFeature {
         return .run { send in
           let result = try await transport.subscribeWithConnectionState(
             sessionID: .init(rawValue: sessionID),
-            since: since
+            since: since,
           )
           await send(.subscriptionInitial(result.subscription.initial))
 
@@ -328,8 +328,8 @@ struct SessionFeature {
             .setModelResponse(
               Result {
                 try await apiClient.setSessionModel(sessionID, provider, model, effort)
-              }
-            )
+              },
+            ),
           )
         }
 
@@ -404,6 +404,9 @@ struct SessionFeature {
 
     case let .statusUpdated(status):
       state.status = status
+
+    case .streamBegan, .streamDelta, .streamEnded:
+      break
     }
   }
 
