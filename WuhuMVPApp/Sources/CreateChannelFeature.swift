@@ -73,7 +73,7 @@ struct CreateChannelFeature {
         let sessionType = state.sessionType
         return .run { send in
           let session = try await apiClient.createSession(
-            WuhuCreateSessionRequest(type: sessionType, provider: .anthropic, environment: env),
+            WuhuCreateSessionRequest(type: sessionType, provider: .anthropic, environment: env)
           )
           await send(.createResponse(session))
         } catch: { error, send in
