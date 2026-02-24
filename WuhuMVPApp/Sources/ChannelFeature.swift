@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ChannelChatView: View {
   let channel: MockChannel
+  var onSend: ((String) -> Void)?
   @State private var draft = ""
 
   var body: some View {
@@ -47,8 +48,11 @@ struct ChannelChatView: View {
             .padding(10)
             .background(.background.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .onSubmit {
+              sendDraft()
+            }
           Button {
-            // mockup no-op
+            sendDraft()
           } label: {
             Image(systemName: "arrow.up.circle.fill")
               .font(.title2)
@@ -61,6 +65,12 @@ struct ChannelChatView: View {
       }
       .frame(maxWidth: 800)
     }
+  }
+
+  private func sendDraft() {
+    guard !draft.isEmpty else { return }
+    onSend?(draft)
+    draft = ""
   }
 
   private func shouldShowAuthor(for message: MockChannelMessage) -> Bool {

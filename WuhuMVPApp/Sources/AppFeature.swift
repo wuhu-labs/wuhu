@@ -1,5 +1,7 @@
 import ComposableArchitecture
+import IdentifiedCollections
 import SwiftUI
+import WuhuAPI
 
 // MARK: - Sidebar Selection
 
@@ -23,17 +25,34 @@ struct AppFeature {
     var sessions = SessionFeature.State()
     var issues = IssuesFeature.State()
     var docs = DocsFeature.State()
-    var channels: IdentifiedArrayOf<MockChannel> = MockData.channels
+    var channels: IdentifiedArrayOf<MockChannel> = []
+    var workspaceName = "Wuhu"
+    var isLoading = false
+    var hasLoaded = false
   }
 
   enum Action {
+    case onAppear
+    case dataLoaded(
+      sessions: IdentifiedArrayOf<MockSession>,
+      channels: IdentifiedArrayOf<MockChannel>,
+      docs: IdentifiedArrayOf<MockDoc>,
+      issues: IdentifiedArrayOf<MockIssue>,
+      events: [MockActivityEvent],
+    )
+    case loadFailed
     case channelsExpandedChanged(Bool)
+    case channelSendMessage(channelID: String, message: String)
+    case channelUpdated(MockChannel)
+    case channelLoadTranscript(String)
     case docs(DocsFeature.Action)
     case home(HomeFeature.Action)
     case issues(IssuesFeature.Action)
     case selectionChanged(SidebarSelection?)
     case sessions(SessionFeature.Action)
   }
+
+  @Dependency(\.apiClient) var apiClient
 
   var body: some ReducerOf<Self> {
     Scope(state: \.home, action: \.home) { HomeFeature() }
@@ -43,12 +62,130 @@ struct AppFeature {
 
     Reduce { state, action in
       switch action {
+      case .onAppear:
+        guard !state.hasLoaded else { return .none }
+        state.isLoading = true
+        state.hasLoaded = true
+        return .run { send in
+          async let sessionsResult = apiClient.listSessions()
+          async let docsResult = apiClient.listWorkspaceDocs()
+
+          let allSessions = try await sessionsResult
+          let allDocs = try await docsResult
+
+          // Split sessions into coding sessions and channel sessions
+          let codingSessions = allSessions.filter { $0.type == .coding }
+          let channelSessions = allSessions.filter { $0.type == .channel }
+
+          let mockSessions: IdentifiedArrayOf<MockSession> = IdentifiedArray(
+            uniqueElements: codingSessions
+              .sorted(by: { $0.updatedAt > $1.updatedAt })
+              .map { MockSession.from($0) },
+          )
+          let mockChannels: IdentifiedArrayOf<MockChannel> = IdentifiedArray(
+            uniqueElements: channelSessions
+              .sorted(by: { $0.updatedAt > $1.updatedAt })
+              .map { MockChannel.from($0) },
+          )
+
+          // Parse workspace docs into docs and issues
+          var docsList: [MockDoc] = []
+          var issuesList: [MockIssue] = []
+          for doc in allDocs {
+            if let issue = MockIssue.from(doc) {
+              issuesList.append(issue)
+            } else {
+              docsList.append(MockDoc.from(doc))
+            }
+          }
+
+          // Derive activity feed from recent sessions
+          let events: [MockActivityEvent] = allSessions
+            .sorted(by: { $0.updatedAt > $1.updatedAt })
+            .prefix(10)
+            .enumerated()
+            .map { index, session in
+              let description = switch session.type {
+              case .coding:
+                "Session in \(session.environment.name) updated"
+              case .channel:
+                "Activity in #\(session.environment.name)"
+              }
+              return MockActivityEvent(
+                id: "ev-\(index)",
+                description: description,
+                timestamp: session.updatedAt,
+                icon: session.type == .coding ? "terminal" : "bubble.left.and.bubble.right",
+              )
+            }
+
+          await send(.dataLoaded(
+            sessions: mockSessions,
+            channels: mockChannels,
+            docs: IdentifiedArray(uniqueElements: docsList),
+            issues: IdentifiedArray(uniqueElements: issuesList),
+            events: events,
+          ))
+        } catch: { _, send in
+          await send(.loadFailed)
+        }
+
+      case let .dataLoaded(sessions, channels, docs, issues, events):
+        state.isLoading = false
+        state.sessions.sessions = sessions
+        state.channels = channels
+        state.docs.docs = docs
+        state.issues.issues = issues
+        state.home.events = events
+        return .none
+
+      case .loadFailed:
+        state.isLoading = false
+        return .none
+
       case let .channelsExpandedChanged(expanded):
         state.channelsExpanded = expanded
         return .none
+
       case let .selectionChanged(selection):
         state.selection = selection
+        // When a channel is selected, load its transcript if needed
+        if case let .channel(channelID) = selection {
+          if let channel = state.channels[id: channelID], channel.messages.isEmpty {
+            return .send(.channelLoadTranscript(channelID))
+          }
+        }
         return .none
+
+      case let .channelLoadTranscript(channelID):
+        return .run { send in
+          let response = try await apiClient.getSession(channelID)
+          let channel = MockChannel.from(response)
+          await send(.channelUpdated(channel))
+        } catch: { _, _ in }
+
+      case let .channelSendMessage(channelID, message):
+        // Optimistically add the user message
+        state.channels[id: channelID]?.messages.append(MockChannelMessage(
+          id: UUID().uuidString,
+          author: "You",
+          isAgent: false,
+          content: message,
+          timestamp: Date(),
+        ))
+        return .run { send in
+          _ = try await apiClient.enqueue(channelID, message, nil)
+          // Wait briefly for server processing, then re-fetch
+          try await Task.sleep(for: .seconds(1))
+          let response = try await apiClient.getSession(channelID)
+          let channel = MockChannel.from(response)
+          await send(.channelUpdated(channel))
+        } catch: { _, _ in }
+
+      case let .channelUpdated(channel):
+        state.channels[id: channel.id] = channel
+        return .none
+
       case .docs, .home, .issues, .sessions:
         return .none
       }
@@ -69,6 +206,7 @@ struct AppView: View {
     }
     .tint(.orange)
     .frame(minWidth: 900, minHeight: 600)
+    .task { store.send(.onAppear) }
   }
 
   // MARK: - Sidebar (column 1)
@@ -76,8 +214,14 @@ struct AppView: View {
   private var sidebar: some View {
     List(selection: $store.selection.sending(\.selectionChanged)) {
       sidebarRow("Home", icon: "house", tag: .home)
-      sidebarRow("Sessions", icon: "terminal", tag: .sessions, count: MockData.sessions.count(where: { $0.status == .running }))
-      sidebarRow("Issues", icon: "checklist", tag: .issues, count: MockData.issues.count(where: { $0.status == .open }))
+      sidebarRow(
+        "Sessions", icon: "terminal", tag: .sessions,
+        count: store.sessions.sessions.count(where: { $0.status == .running }),
+      )
+      sidebarRow(
+        "Issues", icon: "checklist", tag: .issues,
+        count: store.issues.issues.count(where: { $0.status == .open }),
+      )
       sidebarRow("Docs", icon: "doc.text", tag: .docs)
 
       Section(isExpanded: $store.channelsExpanded.sending(\.channelsExpandedChanged)) {
@@ -105,7 +249,7 @@ struct AppView: View {
     .listStyle(.sidebar)
     .safeAreaInset(edge: .top) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(MockData.workspaceName)
+        Text(store.workspaceName)
           .font(.headline)
         Text("Workspace")
           .font(.caption)
@@ -173,7 +317,9 @@ struct AppView: View {
       }
     case let .channel(channelID):
       if let channel = store.channels[id: channelID] {
-        ChannelChatView(channel: channel)
+        ChannelChatView(channel: channel, onSend: { message in
+          store.send(.channelSendMessage(channelID: channelID, message: message))
+        })
       }
     case nil:
       ContentUnavailableView("Select an item", systemImage: "sidebar.left", description: Text("Choose something from the sidebar"))
