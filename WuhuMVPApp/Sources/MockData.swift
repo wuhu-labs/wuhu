@@ -6,6 +6,8 @@ import IdentifiedCollections
 struct MockSession: Identifiable, Equatable {
   let id: String
   var title: String
+  /// When non-nil, this is a user-supplied title that should take priority over auto-derived titles.
+  var customTitle: String?
   var environmentName: String
   var model: String
   var status: SessionStatus

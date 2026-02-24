@@ -23,6 +23,9 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
   /// Used for forked sessions to keep inherited history out of the visible UI while still
   /// providing full context to the LLM.
   public var displayStartEntryID: Int64?
+  /// User-supplied custom title. When non-nil, clients should display this instead of the
+  /// auto-derived title (e.g., first user message).
+  public var customTitle: String?
   public var createdAt: Date
   public var updatedAt: Date
   public var headEntryID: Int64
@@ -39,6 +42,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     runnerName: String? = nil,
     parentSessionID: String?,
     displayStartEntryID: Int64? = nil,
+    customTitle: String? = nil,
     createdAt: Date,
     updatedAt: Date,
     headEntryID: Int64,
@@ -54,6 +58,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     self.runnerName = runnerName
     self.parentSessionID = parentSessionID
     self.displayStartEntryID = displayStartEntryID
+    self.customTitle = customTitle
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.headEntryID = headEntryID
@@ -71,6 +76,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     case runnerName
     case parentSessionID
     case displayStartEntryID
+    case customTitle
     case createdAt
     case updatedAt
     case headEntryID
@@ -89,6 +95,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     runnerName = try c.decodeIfPresent(String.self, forKey: .runnerName)
     parentSessionID = try c.decodeIfPresent(String.self, forKey: .parentSessionID)
     displayStartEntryID = try c.decodeIfPresent(Int64.self, forKey: .displayStartEntryID)
+    customTitle = try c.decodeIfPresent(String.self, forKey: .customTitle)
     createdAt = try c.decode(Date.self, forKey: .createdAt)
     updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     headEntryID = try c.decode(Int64.self, forKey: .headEntryID)
@@ -107,6 +114,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     try c.encodeIfPresent(runnerName, forKey: .runnerName)
     try c.encodeIfPresent(parentSessionID, forKey: .parentSessionID)
     try c.encodeIfPresent(displayStartEntryID, forKey: .displayStartEntryID)
+    try c.encodeIfPresent(customTitle, forKey: .customTitle)
     try c.encode(createdAt, forKey: .createdAt)
     try c.encode(updatedAt, forKey: .updatedAt)
     try c.encode(headEntryID, forKey: .headEntryID)

@@ -157,6 +157,22 @@ public enum WuhuSessionStreamEvent: Sendable, Hashable, Codable {
   }
 }
 
+public struct WuhuRenameSessionRequest: Sendable, Hashable, Codable {
+  public var title: String
+
+  public init(title: String) {
+    self.title = title
+  }
+}
+
+public struct WuhuRenameSessionResponse: Sendable, Hashable, Codable {
+  public var session: WuhuSession
+
+  public init(session: WuhuSession) {
+    self.session = session
+  }
+}
+
 public struct WuhuStopSessionRequest: Sendable, Hashable, Codable {
   public var user: String?
 

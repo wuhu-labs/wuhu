@@ -23,6 +23,11 @@ struct SessionFeature {
     var steer: UserQueueBackfill?
     var followUp: UserQueueBackfill?
 
+    // Rename state
+    var isShowingRenameDialog = false
+    var renameSessionID: String?
+    var renameText: String = ""
+
     // Model picker state
     var provider: WuhuProvider = .anthropic
     var modelSelection: String = ""
@@ -72,6 +77,12 @@ struct SessionFeature {
     case subscriptionEvent(SessionEvent)
     case connectionStateChanged(SSEConnectionState)
     case subscriptionFailed(String)
+
+    // Rename
+    case renameMenuTapped(String)
+    case renameConfirmed
+    case renameCancelled
+    case renameResponse(Result<WuhuRenameSessionResponse, any Error>)
 
     // Commands
     case sendMessage(String)
@@ -278,6 +289,52 @@ struct SessionFeature {
         state.subscriptionError = message
         return .none
 
+      // MARK: - Rename
+
+      case let .renameMenuTapped(sessionID):
+        state.renameSessionID = sessionID
+        state.renameText = state.sessions[id: sessionID]?.title ?? ""
+        state.isShowingRenameDialog = true
+        return .none
+
+      case .renameConfirmed:
+        guard let sessionID = state.renameSessionID else { return .none }
+        let newTitle = state.renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.isShowingRenameDialog = false
+        state.renameSessionID = nil
+
+        guard !newTitle.isEmpty else { return .none }
+
+        // Optimistically update
+        state.sessions[id: sessionID]?.title = newTitle
+        state.sessions[id: sessionID]?.customTitle = newTitle
+
+        return .run { send in
+          await send(
+            .renameResponse(
+              Result { try await apiClient.renameSession(sessionID, newTitle) },
+            ),
+          )
+        }
+
+      case .renameCancelled:
+        state.isShowingRenameDialog = false
+        state.renameSessionID = nil
+        state.renameText = ""
+        return .none
+
+      case let .renameResponse(.success(response)):
+        // Sync server's canonical title back
+        let sessionID = response.session.id
+        if let customTitle = response.session.customTitle {
+          state.sessions[id: sessionID]?.title = customTitle
+        }
+        return .none
+
+      case let .renameResponse(.failure(error)):
+        state.subscriptionError = "Rename failed: \(error)"
+        return .none
+
       // MARK: - Commands
 
       case let .sendMessage(content):
@@ -418,8 +475,10 @@ struct SessionFeature {
     )
     state.sessions[id: sessionID]?.messages = messages
 
-    // Update title from transcript if we have one
-    if let title = TranscriptConverter.deriveSessionTitle(from: Array(state.transcript)) {
+    // Update title from transcript only when there is no user-supplied custom title
+    if state.sessions[id: sessionID]?.customTitle == nil,
+       let title = TranscriptConverter.deriveSessionTitle(from: Array(state.transcript))
+    {
       state.sessions[id: sessionID]?.title = title
     }
   }
@@ -476,10 +535,26 @@ struct SessionListView: View {
       ForEach(store.sessions) { session in
         SessionRow(session: session)
           .tag(session.id)
+          .contextMenu {
+            Button("Rename…") {
+              store.send(.renameMenuTapped(session.id))
+            }
+          }
       }
     }
     .listStyle(.inset)
     .navigationTitle("Sessions")
+    .alert("Rename Session", isPresented: $store.isShowingRenameDialog) {
+      TextField("Session title", text: $store.renameText)
+      Button("Rename") {
+        store.send(.renameConfirmed)
+      }
+      Button("Cancel", role: .cancel) {
+        store.send(.renameCancelled)
+      }
+    } message: {
+      Text("Enter a new title for this session.")
+    }
   }
 }
 
