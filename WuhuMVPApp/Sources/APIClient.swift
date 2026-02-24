@@ -15,7 +15,7 @@ struct APIClient: Sendable {
   var listEnvironments: @Sendable () async throws -> [WuhuEnvironmentDefinition]
   var listWorkspaceDocs: @Sendable () async throws -> [WuhuWorkspaceDocSummary]
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
-  var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?) async throws -> String
+  var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?, _ lane: UserQueueLane) async throws -> String
   var renameSession: @Sendable (_ sessionID: String, _ title: String) async throws -> WuhuRenameSessionResponse
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
   var setSessionModel: @Sendable (
@@ -38,8 +38,12 @@ extension APIClient: DependencyKey {
       listEnvironments: { try await client.listEnvironments() },
       listWorkspaceDocs: { try await client.listWorkspaceDocs() },
       readWorkspaceDoc: { try await client.readWorkspaceDoc(path: $0) },
-      enqueue: { sessionID, input, user in
-        try await client.enqueue(sessionID: sessionID, input: input, user: user)
+      enqueue: { sessionID, input, user, lane in
+        let clientLane: WuhuClient.EnqueueLane = switch lane {
+        case .steer: .steer
+        case .followUp: .followUp
+        }
+        return try await client.enqueue(sessionID: sessionID, input: input, user: user, lane: clientLane)
       },
       renameSession: { sessionID, title in
         try await client.renameSession(id: sessionID, title: title)
@@ -89,7 +93,7 @@ extension APIClient: DependencyKey {
     listEnvironments: { [] },
     listWorkspaceDocs: { [] },
     readWorkspaceDoc: { _ in WuhuWorkspaceDoc(path: "", frontmatter: [:], body: "") },
-    enqueue: { _, _, _ in "" },
+    enqueue: { _, _, _, _ in "" },
     renameSession: { _, _ in
       WuhuRenameSessionResponse(session: WuhuSession(
         id: "preview",

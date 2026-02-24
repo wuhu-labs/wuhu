@@ -23,6 +23,9 @@ struct SessionFeature {
     var steer: UserQueueBackfill?
     var followUp: UserQueueBackfill?
 
+    /// Lane selection for enqueue
+    var selectedLane: UserQueueLane = .followUp
+
     // Rename state
     var isShowingRenameDialog = false
     var renameSessionID: String?
@@ -351,6 +354,8 @@ struct SessionFeature {
       case let .sendMessage(content):
         guard let sessionID = state.selectedSessionID else { return .none }
 
+        let lane = state.selectedLane
+
         // Optimistically add user message to the UI
         let username = UserDefaults.standard.string(forKey: "wuhuUsername")
         let trimmedUser = (username ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -366,7 +371,7 @@ struct SessionFeature {
             let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
             return v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : v
           }()
-          _ = try await apiClient.enqueue(sessionID, content, user)
+          _ = try await apiClient.enqueue(sessionID, content, user, lane)
           await send(.enqueueSucceeded)
         } catch: { error, send in
           await send(.enqueueFailed("\(error)"))
@@ -451,20 +456,36 @@ struct SessionFeature {
       }
 
     case let .userQueue(cursor, entries):
-      guard let lane = entries.first?.lane else { break }
-      switch lane {
-      case .steer:
+      // Split entries by lane and apply to the correct backfill
+      let steerEntries = entries.filter { $0.lane == .steer }
+      let followUpEntries = entries.filter { $0.lane == .followUp }
+
+      if !steerEntries.isEmpty {
         if var backfill = state.steer {
           backfill.cursor = cursor
-          backfill.journal.append(contentsOf: entries)
+          backfill.journal.append(contentsOf: steerEntries)
+          Self.applyJournalEntriesToPending(steerEntries, pending: &backfill.pending)
           state.steer = backfill
         }
-      case .followUp:
+      }
+
+      if !followUpEntries.isEmpty {
         if var backfill = state.followUp {
           backfill.cursor = cursor
-          backfill.journal.append(contentsOf: entries)
+          backfill.journal.append(contentsOf: followUpEntries)
+          Self.applyJournalEntriesToPending(followUpEntries, pending: &backfill.pending)
           state.followUp = backfill
         }
+      }
+
+      // If all entries belong to one lane, still update cursor for the other backfills
+      if steerEntries.isEmpty, var backfill = state.steer {
+        backfill.cursor = cursor
+        state.steer = backfill
+      }
+      if followUpEntries.isEmpty, var backfill = state.followUp {
+        backfill.cursor = cursor
+        state.followUp = backfill
       }
 
     case let .settingsUpdated(settings):
@@ -481,6 +502,28 @@ struct SessionFeature {
 
     case .streamEnded:
       state.streamingText = ""
+    }
+  }
+
+  /// Apply journal entries to a pending items list:
+  /// - `.enqueued` → insert the pending item
+  /// - `.canceled` / `.materialized` → remove by id
+  private static func applyJournalEntriesToPending(
+    _ entries: [UserQueueJournalEntry],
+    pending: inout [UserQueuePendingItem],
+  ) {
+    for entry in entries {
+      switch entry {
+      case let .enqueued(_, item):
+        // Only add if not already present
+        if !pending.contains(where: { $0.id == item.id }) {
+          pending.append(item)
+        }
+      case let .canceled(_, id, _):
+        pending.removeAll { $0.id == id }
+      case let .materialized(_, id, _, _):
+        pending.removeAll { $0.id == id }
+      }
     }
   }
 
@@ -593,6 +636,9 @@ struct SessionDetailView: View {
           isRetrying: store.isRetrying,
           retryAttempt: store.retryAttempt,
           retryDelaySeconds: store.retryDelaySeconds,
+          selectedLane: $store.selectedLane,
+          steerBackfill: store.steer,
+          followUpBackfill: store.followUp,
           onSend: { message in
             store.send(.sendMessage(message))
           },
@@ -723,6 +769,9 @@ struct SessionThreadView: View {
   var isRetrying: Bool = false
   var retryAttempt: Int = 0
   var retryDelaySeconds: Double = 0
+  @Binding var selectedLane: UserQueueLane
+  var steerBackfill: UserQueueBackfill?
+  var followUpBackfill: UserQueueBackfill?
   var onSend: ((String) -> Void)?
   @State private var draft = ""
 
@@ -775,10 +824,26 @@ struct SessionThreadView: View {
           .padding(16)
         }
 
+        // Pending queues display
+        PendingQueuesBar(
+          steerBackfill: steerBackfill,
+          followUpBackfill: followUpBackfill,
+        )
+
         Divider()
 
-        ChatInputField(draft: $draft) {
-          sendDraft()
+        ChatInputField(draft: $draft, onSend: { sendDraft() }) {
+          Picker("", selection: $selectedLane) {
+            Text("Steer").tag(UserQueueLane.steer)
+            Text("Follow-up").tag(UserQueueLane.followUp)
+          }
+          .pickerStyle(.segmented)
+          .frame(width: 160)
+          .help(
+            selectedLane == .steer
+              ? "Steer: interrupts the agent at the next checkpoint"
+              : "Follow-up: queued for after the agent finishes",
+          )
         }
       }
       .frame(maxWidth: 800)
@@ -827,6 +892,75 @@ struct SessionThreadView: View {
     case .running: .green
     case .idle: .gray
     case .stopped: .red
+    }
+  }
+}
+
+// MARK: - Pending Queues Bar
+
+struct PendingQueuesBar: View {
+  var steerBackfill: UserQueueBackfill?
+  var followUpBackfill: UserQueueBackfill?
+
+  private var steerPending: [UserQueuePendingItem] {
+    steerBackfill?.pending ?? []
+  }
+
+  private var followUpPending: [UserQueuePendingItem] {
+    followUpBackfill?.pending ?? []
+  }
+
+  private var hasPending: Bool {
+    !steerPending.isEmpty || !followUpPending.isEmpty
+  }
+
+  var body: some View {
+    if hasPending {
+      VStack(alignment: .leading, spacing: 6) {
+        if !steerPending.isEmpty {
+          PendingQueueSection(title: "Steer Queue", items: steerPending, color: .red)
+        }
+        if !followUpPending.isEmpty {
+          PendingQueueSection(title: "Follow-up Queue", items: followUpPending, color: .blue)
+        }
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .background(.bar)
+    }
+  }
+}
+
+private struct PendingQueueSection: View {
+  let title: String
+  let items: [UserQueuePendingItem]
+  let color: Color
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 4) {
+        Circle()
+          .fill(color)
+          .frame(width: 6, height: 6)
+        Text("\(title) (\(items.count))")
+          .font(.caption)
+          .fontWeight(.semibold)
+          .foregroundStyle(color)
+      }
+      ForEach(items, id: \.id) { item in
+        Text(pendingItemPreview(item))
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .padding(.leading, 10)
+      }
+    }
+  }
+
+  private func pendingItemPreview(_ item: UserQueuePendingItem) -> String {
+    switch item.message.content {
+    case let .text(text):
+      String(text.prefix(80))
     }
   }
 }

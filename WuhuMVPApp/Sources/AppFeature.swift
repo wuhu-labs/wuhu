@@ -511,7 +511,7 @@ struct AppFeature {
             let v = UserDefaults.standard.string(forKey: "wuhuUsername") ?? ""
             return v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : v
           }()
-          _ = try await apiClient.enqueue(channelID, message, user)
+          _ = try await apiClient.enqueue(channelID, message, user, .followUp)
           await send(.channelEnqueueSucceeded)
         } catch: { _, _ in }
 
