@@ -45,11 +45,19 @@ actor WuhuSessionRuntime {
   func ensureStarted() async {
     if startTask != nil { return }
 
-    startTask = Task { [loop] in
-      do {
-        try await loop.start()
-      } catch {
-        // Best-effort: loop runs for process lifetime; ignore failures here.
+    startTask = Task { [loop, sessionID = sessionID.rawValue] in
+      while !Task.isCancelled {
+        do {
+          try await loop.start()
+          return
+        } catch is CancellationError {
+          return
+        } catch {
+          // Best-effort: keep the per-session loop alive for the process lifetime.
+          let line = "[WuhuSessionRuntime] loop.start() failed for session '\(sessionID)': \(String(describing: error))\n"
+          FileHandle.standardError.write(Data(line.utf8))
+          try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
       }
     }
 
