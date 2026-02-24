@@ -1451,6 +1451,14 @@ extension SQLiteSessionStore {
       }
     }
 
+    if case let .message(message) = payload,
+       case .toolResult = message
+    {
+      // Tool results imply the agent should take another turn. Mark the session running so the
+      // loop can resume (especially after crash/restart scenarios).
+      try setExecutionStatus(db: db, sessionID: sessionRow.id, status: .running)
+    }
+
     guard let fetched = try EntryRow.fetchOne(db, key: newID) else {
       throw WuhuStoreError.sessionCorrupt("Failed to re-fetch inserted entry \(newID)")
     }
