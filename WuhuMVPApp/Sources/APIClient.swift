@@ -16,7 +16,7 @@ struct APIClient: Sendable {
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
   var followSessionStream: @Sendable (
     _ sessionID: String,
-    _ sinceCursor: Int64?
+    _ sinceCursor: Int64?,
   ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error>
 }
 
@@ -77,7 +77,7 @@ extension DependencyValues {
 enum TranscriptConverter {
   static func convertTranscript(
     _ entries: [WuhuSessionEntry],
-    displayStartEntryID: Int64? = nil
+    displayStartEntryID: Int64? = nil,
   ) -> [MockMessage] {
     let visibleEntries: [WuhuSessionEntry] = if let start = displayStartEntryID {
       entries.filter { $0.id >= start }
