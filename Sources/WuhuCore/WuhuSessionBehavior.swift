@@ -480,6 +480,7 @@ private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot)
   }
   if model.provider == .anthropic {
     requestOptions.anthropicPromptCaching = .init(mode: .automatic)
+    requestOptions.maxTokens = requestOptions.maxTokens ?? 4096
   }
   return requestOptions
 }
