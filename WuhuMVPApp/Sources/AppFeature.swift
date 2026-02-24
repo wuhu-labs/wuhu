@@ -244,7 +244,11 @@ struct AppFeature {
         var mergedSessions: IdentifiedArrayOf<MockSession> = []
         for session in sessions {
           if var existing = state.sessions.sessions[id: session.id] {
-            existing.status = session.status
+            // Preserve running status: the list-sessions heuristic cannot detect
+            // running state (only getSession can), so don't downgrade it.
+            if existing.status != .running || session.status == .stopped {
+              existing.status = session.status
+            }
             existing.updatedAt = session.updatedAt
             existing.model = session.model
             existing.environmentName = session.environmentName
@@ -255,11 +259,13 @@ struct AppFeature {
         }
         state.sessions.sessions = mergedSessions
 
-        // Merge channels: preserve loaded messages
+        // Merge channels: update metadata but preserve loaded messages
         var mergedChannels: IdentifiedArrayOf<MockChannel> = []
         for channel in channels {
           if let existing = state.channels[id: channel.id] {
-            mergedChannels.append(existing)
+            var updated = channel
+            updated.messages = existing.messages
+            mergedChannels.append(updated)
           } else {
             mergedChannels.append(channel)
           }
@@ -296,8 +302,11 @@ struct AppFeature {
         return .none
 
       case let .channelRefreshTick(channelID):
+        // If selection changed, just ignore this stale tick. Don't cancel the
+        // shared timer — selectionChanged already cancels and restarts it for
+        // the new channel, so cancelling here would kill the new timer.
         guard state.selection == .channel(channelID) else {
-          return .cancel(id: CancelID.channelRefreshTimer)
+          return .none
         }
         return .run { send in
           let response = try await apiClient.getSession(channelID)
