@@ -48,7 +48,7 @@ struct SessionFeature {
       }
     }
 
-    // Streaming state
+    /// Streaming state
     var streamingText: String = ""
 
     // Connection state
