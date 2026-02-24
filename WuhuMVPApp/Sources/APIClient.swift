@@ -4,6 +4,7 @@ import IdentifiedCollections
 import PiAI
 import WuhuAPI
 import WuhuClient
+import WuhuCore
 
 // MARK: - API Client Dependency
 
@@ -16,10 +17,6 @@ struct APIClient: Sendable {
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
   var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?) async throws -> String
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
-  var followSessionStream: @Sendable (
-    _ sessionID: String,
-    _ sinceCursor: Int64?,
-  ) async throws -> AsyncThrowingStream<WuhuSessionStreamEvent, any Error>
 }
 
 extension APIClient: DependencyKey {
@@ -38,9 +35,6 @@ extension APIClient: DependencyKey {
         try await client.enqueue(sessionID: sessionID, input: input, user: user)
       },
       stopSession: { try await client.stopSession(sessionID: $0) },
-      followSessionStream: { sessionID, sinceCursor in
-        try await client.followSessionStream(sessionID: sessionID, sinceCursor: sinceCursor)
-      },
     )
   }()
 
@@ -82,7 +76,6 @@ extension APIClient: DependencyKey {
     readWorkspaceDoc: { _ in WuhuWorkspaceDoc(path: "", frontmatter: [:], body: "") },
     enqueue: { _, _, _ in "" },
     stopSession: { _ in WuhuStopSessionResponse(repairedEntries: [], stopEntry: nil) },
-    followSessionStream: { _, _ in AsyncThrowingStream { $0.finish() } },
   )
 }
 
@@ -90,6 +83,35 @@ extension DependencyValues {
   var apiClient: APIClient {
     get { self[APIClient.self] }
     set { self[APIClient.self] = newValue }
+  }
+}
+
+// MARK: - Session Transport Provider
+
+struct SessionTransportProvider: Sendable {
+  var make: @Sendable () -> RemoteSessionSSETransport
+}
+
+extension SessionTransportProvider: DependencyKey {
+  static let liveValue: SessionTransportProvider = {
+    let urlString = UserDefaults.standard.string(forKey: "wuhuServerURL") ?? "http://localhost:8080"
+    let baseURL = URL(string: urlString) ?? URL(string: "http://localhost:8080")!
+    return SessionTransportProvider(
+      make: { RemoteSessionSSETransport(baseURL: baseURL) },
+    )
+  }()
+}
+
+extension SessionTransportProvider: TestDependencyKey {
+  static let testValue = SessionTransportProvider(
+    make: { RemoteSessionSSETransport(baseURL: URL(string: "http://localhost:8080")!) },
+  )
+}
+
+extension DependencyValues {
+  var sessionTransportProvider: SessionTransportProvider {
+    get { self[SessionTransportProvider.self] }
+    set { self[SessionTransportProvider.self] = newValue }
   }
 }
 
