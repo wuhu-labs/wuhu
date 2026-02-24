@@ -5,8 +5,11 @@ import SwiftUI
 struct SessionFeature {
   @ObservableState
   struct State {
-    var sessions: IdentifiedArrayOf<MockSession> = MockData.sessions
+    var sessions: IdentifiedArrayOf<MockSession> = []
     var selectedSessionID: String?
+    var isLoadingDetail = false
+    var streamingText = ""
+    var headEntryID: Int64?
 
     var selectedSession: MockSession? {
       guard let id = selectedSessionID else { return nil }
@@ -16,13 +19,90 @@ struct SessionFeature {
 
   enum Action {
     case sessionSelected(String?)
+    case sessionDetailLoaded(MockSession, headEntryID: Int64)
+    case sessionDetailLoadFailed
+    case sendMessage(String)
+    case streamDelta(String)
+    case streamCompleted(String)
+    case streamFailed
   }
+
+  @Dependency(\.apiClient) var apiClient
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
       switch action {
       case let .sessionSelected(id):
         state.selectedSessionID = id
+        state.streamingText = ""
+        guard let id else {
+          state.isLoadingDetail = false
+          return .none
+        }
+        state.isLoadingDetail = true
+        return .run { send in
+          let response = try await apiClient.getSession(id)
+          let session = MockSession.from(response)
+          await send(.sessionDetailLoaded(session, headEntryID: response.session.headEntryID))
+        } catch: { _, send in
+          await send(.sessionDetailLoadFailed)
+        }
+
+      case let .sessionDetailLoaded(session, headEntryID):
+        state.isLoadingDetail = false
+        state.headEntryID = headEntryID
+        state.sessions[id: session.id] = session
+        return .none
+
+      case .sessionDetailLoadFailed:
+        state.isLoadingDetail = false
+        return .none
+
+      case let .sendMessage(content):
+        guard let sessionID = state.selectedSessionID else { return .none }
+        let sinceCursor = state.headEntryID
+        state.streamingText = ""
+        // Optimistically add user message
+        state.sessions[id: sessionID]?.messages.append(MockMessage(
+          role: .user,
+          content: content,
+          timestamp: Date(),
+        ))
+        return .run { send in
+          _ = try await apiClient.enqueue(sessionID, content, nil)
+          let stream = try await apiClient.followSessionStream(sessionID, sinceCursor)
+          for try await event in stream {
+            switch event {
+            case let .assistantTextDelta(delta):
+              await send(.streamDelta(delta))
+            case .idle, .done:
+              await send(.streamCompleted(sessionID))
+              return
+            case .entryAppended:
+              break
+            }
+          }
+          await send(.streamCompleted(sessionID))
+        } catch: { _, send in
+          await send(.streamFailed)
+        }
+
+      case let .streamDelta(delta):
+        state.streamingText += delta
+        return .none
+
+      case let .streamCompleted(sessionID):
+        state.streamingText = ""
+        return .run { send in
+          let response = try await apiClient.getSession(sessionID)
+          let session = MockSession.from(response)
+          await send(.sessionDetailLoaded(session, headEntryID: response.session.headEntryID))
+        } catch: { _, send in
+          await send(.streamFailed)
+        }
+
+      case .streamFailed:
+        state.streamingText = ""
         return .none
       }
     }
@@ -49,11 +129,20 @@ struct SessionListView: View {
 // MARK: - Session Detail (detail column)
 
 struct SessionDetailView: View {
-  let store: StoreOf<SessionFeature>
+  @Bindable var store: StoreOf<SessionFeature>
 
   var body: some View {
-    if let session = store.selectedSession {
-      SessionThreadView(session: session)
+    if store.isLoadingDetail {
+      ProgressView()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if let session = store.selectedSession {
+      SessionThreadView(
+        session: session,
+        streamingText: store.streamingText,
+        onSend: { message in
+          store.send(.sendMessage(message))
+        },
+      )
     } else {
       ContentUnavailableView(
         "No Session Selected",
@@ -107,6 +196,8 @@ struct SessionRow: View {
 
 struct SessionThreadView: View {
   let session: MockSession
+  var streamingText: String = ""
+  var onSend: ((String) -> Void)?
   @State private var draft = ""
 
   var body: some View {
@@ -140,6 +231,9 @@ struct SessionThreadView: View {
             ForEach(session.messages) { message in
               SessionMessageView(message: message)
             }
+            if !streamingText.isEmpty {
+              streamingMessageView
+            }
           }
           .padding(16)
         }
@@ -153,8 +247,11 @@ struct SessionThreadView: View {
             .padding(10)
             .background(.background.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .onSubmit {
+              sendDraft()
+            }
           Button {
-            // mockup no-op
+            sendDraft()
           } label: {
             Image(systemName: "arrow.up.circle.fill")
               .font(.title2)
@@ -167,6 +264,29 @@ struct SessionThreadView: View {
       }
       .frame(maxWidth: 800)
     }
+  }
+
+  private func sendDraft() {
+    guard !draft.isEmpty else { return }
+    onSend?(draft)
+    draft = ""
+  }
+
+  private var streamingMessageView: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 6) {
+        Text("Agent")
+          .font(.caption)
+          .fontWeight(.semibold)
+          .foregroundStyle(.purple)
+        ProgressView()
+          .controlSize(.mini)
+      }
+      Text(streamingText)
+        .font(.body)
+        .textSelection(.enabled)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var statusColor: Color {

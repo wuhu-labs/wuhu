@@ -48,6 +48,8 @@ targets:
     dependencies:
       - package: Wuhu
         product: WuhuAPI
+      - package: Wuhu
+        product: WuhuClient
       - package: ComposableArchitecture
         product: ComposableArchitecture
       - package: IdentifiedCollections

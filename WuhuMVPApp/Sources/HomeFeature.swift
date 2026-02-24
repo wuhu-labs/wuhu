@@ -5,7 +5,7 @@ import SwiftUI
 struct HomeFeature {
   @ObservableState
   struct State {
-    var events: [MockActivityEvent] = MockData.activityFeed
+    var events: [MockActivityEvent] = []
     var selectedEventID: String?
   }
 
