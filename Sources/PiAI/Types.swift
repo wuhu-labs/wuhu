@@ -166,6 +166,7 @@ public struct RequestOptions: Sendable, Hashable {
   public var headers: [String: String]
   public var sessionId: String?
   public var reasoningEffort: ReasoningEffort?
+  public var anthropicPromptCaching: AnthropicPromptCachingOptions?
 
   public init(
     temperature: Double? = nil,
@@ -174,6 +175,7 @@ public struct RequestOptions: Sendable, Hashable {
     headers: [String: String] = [:],
     sessionId: String? = nil,
     reasoningEffort: ReasoningEffort? = nil,
+    anthropicPromptCaching: AnthropicPromptCachingOptions? = nil,
   ) {
     self.temperature = temperature
     self.maxTokens = maxTokens
@@ -181,6 +183,26 @@ public struct RequestOptions: Sendable, Hashable {
     self.headers = headers
     self.sessionId = sessionId
     self.reasoningEffort = reasoningEffort
+    self.anthropicPromptCaching = anthropicPromptCaching
+  }
+}
+
+public enum AnthropicPromptCachingMode: String, Sendable, Hashable {
+  /// Uses Anthropic's "automatic caching" behavior: `cache_control` at the request top-level.
+  case automatic
+  /// Uses explicit cache breakpoints, by placing `cache_control` on individual content blocks.
+  case explicitBreakpoints
+}
+
+public struct AnthropicPromptCachingOptions: Sendable, Hashable {
+  public var mode: AnthropicPromptCachingMode
+  /// Historically, prompt caching required setting `anthropic-beta: prompt-caching-2024-07-31`.
+  /// Some deployments may still expect it.
+  public var sendBetaHeader: Bool
+
+  public init(mode: AnthropicPromptCachingMode = .automatic, sendBetaHeader: Bool = false) {
+    self.mode = mode
+    self.sendBetaHeader = sendBetaHeader
   }
 }
 
