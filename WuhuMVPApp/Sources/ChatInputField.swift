@@ -3,10 +3,14 @@ import SwiftUI
 /// A multi-line chat input field that sends on ⌘Enter and inserts newlines on
 /// bare Enter. Always shows at least 3 lines of height with a placeholder
 /// overlay when the draft is empty.
-struct ChatInputField: View {
+///
+/// An optional `toolbar` view is rendered above the text editor inside the
+/// input area (e.g. a lane picker).
+struct ChatInputField<Toolbar: View>: View {
   @Binding var draft: String
   var placeholder: String = "Message..."
   var onSend: () -> Void
+  @ViewBuilder var toolbar: Toolbar
 
   /// Approximate height of a single line of body text.
   private let lineHeight: CGFloat = 20
@@ -17,31 +21,35 @@ struct ChatInputField: View {
 
   var body: some View {
     HStack(alignment: .bottom, spacing: 8) {
-      ZStack(alignment: .topLeading) {
-        TextEditor(text: $draft)
-          .font(.body)
-          .scrollContentBackground(.hidden)
-          .frame(
-            minHeight: lineHeight * CGFloat(minLines),
-            maxHeight: lineHeight * CGFloat(maxLines),
-          )
-          .fixedSize(horizontal: false, vertical: true)
-          .onKeyPress(.return, phases: .down) { press in
-            if press.modifiers.contains(.command) {
-              onSend()
-              return .handled
-            }
-            return .ignored
-          }
+      VStack(alignment: .leading, spacing: 4) {
+        toolbar
 
-        // Placeholder overlay
-        if draft.isEmpty {
-          Text("⌘Enter to send · Enter for newline")
-            .foregroundStyle(.tertiary)
+        ZStack(alignment: .topLeading) {
+          TextEditor(text: $draft)
             .font(.body)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 8)
-            .allowsHitTesting(false)
+            .scrollContentBackground(.hidden)
+            .frame(
+              minHeight: lineHeight * CGFloat(minLines),
+              maxHeight: lineHeight * CGFloat(maxLines),
+            )
+            .fixedSize(horizontal: false, vertical: true)
+            .onKeyPress(.return, phases: .down) { press in
+              if press.modifiers.contains(.command) {
+                onSend()
+                return .handled
+              }
+              return .ignored
+            }
+
+          // Placeholder overlay
+          if draft.isEmpty {
+            Text("⌘Enter to send · Enter for newline")
+              .foregroundStyle(.tertiary)
+              .font(.body)
+              .padding(.horizontal, 5)
+              .padding(.vertical, 8)
+              .allowsHitTesting(false)
+          }
         }
       }
       .padding(6)
@@ -59,5 +67,19 @@ struct ChatInputField: View {
       .disabled(draft.isEmpty)
     }
     .padding(12)
+  }
+}
+
+extension ChatInputField where Toolbar == EmptyView {
+  /// Convenience initialiser with no toolbar.
+  init(
+    draft: Binding<String>,
+    placeholder: String = "Message...",
+    onSend: @escaping () -> Void,
+  ) {
+    _draft = draft
+    self.placeholder = placeholder
+    self.onSend = onSend
+    toolbar = EmptyView()
   }
 }
