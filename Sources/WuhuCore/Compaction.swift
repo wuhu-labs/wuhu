@@ -11,13 +11,14 @@ struct WuhuCompactionSettings: Sendable, Hashable {
   static func load(model: Model, env: [String: String] = ProcessInfo.processInfo.environment) -> WuhuCompactionSettings {
     let enabled = (env["WUHU_COMPACTION_ENABLED"] ?? "1") != "0"
     let reserveTokens = Int(env["WUHU_COMPACTION_RESERVE_TOKENS"] ?? "") ?? 16384
-    let keepRecentTokens = Int(env["WUHU_COMPACTION_KEEP_RECENT_TOKENS"] ?? "") ?? 20000
 
     let contextWindowTokens: Int = if let v = Int(env["WUHU_COMPACTION_CONTEXT_WINDOW_TOKENS"] ?? "") {
       v
     } else {
       defaultContextWindowTokens(model: model)
     }
+
+    let keepRecentTokens = Int(env["WUHU_COMPACTION_KEEP_RECENT_TOKENS"] ?? "") ?? defaultKeepRecentTokens(contextWindowTokens: contextWindowTokens)
 
     return .init(
       enabled: enabled,
@@ -28,12 +29,19 @@ struct WuhuCompactionSettings: Sendable, Hashable {
   }
 
   private static func defaultContextWindowTokens(model: Model) -> Int {
-    switch model.provider {
+    if let spec = WuhuModelCatalog.specs[model.id] {
+      return spec.maxInputTokens
+    }
+    return switch model.provider {
     case .openai, .openaiCodex:
       128_000
     case .anthropic:
       200_000
     }
+  }
+
+  private static func defaultKeepRecentTokens(contextWindowTokens: Int) -> Int {
+    max(20000, contextWindowTokens / 10)
   }
 }
 

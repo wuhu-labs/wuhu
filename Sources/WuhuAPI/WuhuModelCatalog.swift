@@ -29,7 +29,34 @@ public struct WuhuModelSpec: Sendable, Hashable {
   }
 }
 
+// MARK: - Model alias resolution
+
+public struct ResolvedModelAlias: Sendable, Hashable {
+  public var apiModelID: String
+  public var betaFeatures: [String]
+
+  public init(apiModelID: String, betaFeatures: [String] = []) {
+    self.apiModelID = apiModelID
+    self.betaFeatures = betaFeatures
+  }
+}
+
 public enum WuhuModelCatalog {
+  // MARK: - Alias resolution
+
+  private static let contextBeta1M = "context-1m-2025-08-07"
+
+  private static let aliases: [String: ResolvedModelAlias] = [
+    "claude-opus-4-6[1m]": .init(apiModelID: "claude-opus-4-6", betaFeatures: [contextBeta1M]),
+    "claude-sonnet-4-6[1m]": .init(apiModelID: "claude-sonnet-4-6", betaFeatures: [contextBeta1M]),
+  ]
+
+  /// Resolves a user-facing model ID to its API model ID and any required beta headers.
+  /// Returns an identity mapping (no beta features) for non-alias model IDs.
+  public static func resolveAlias(_ modelID: String) -> ResolvedModelAlias {
+    aliases[modelID] ?? .init(apiModelID: modelID)
+  }
+
   // MARK: - Model specs (hardcoded token limits)
 
   /// All known model specs, keyed by model ID.
@@ -48,6 +75,10 @@ public enum WuhuModelCatalog {
     .init(modelID: "claude-sonnet-4-5", maxInputTokens: 200_000, maxOutputTokens: 64000),
     .init(modelID: "claude-sonnet-4-6", maxInputTokens: 200_000, maxOutputTokens: 64000),
     .init(modelID: "claude-haiku-4-5", maxInputTokens: 200_000, maxOutputTokens: 64000),
+
+    // Anthropic — 1M input (beta)
+    .init(modelID: "claude-opus-4-6[1m]", maxInputTokens: 1_000_000, maxOutputTokens: 128_000),
+    .init(modelID: "claude-sonnet-4-6[1m]", maxInputTokens: 1_000_000, maxOutputTokens: 64000),
 
     // OpenAI — 400k input, 128k output
     .init(modelID: "gpt-5", maxInputTokens: 400_000, maxOutputTokens: 128_000),
@@ -110,7 +141,9 @@ public enum WuhuModelCatalog {
         .init(id: "claude-sonnet-4-5", displayName: "Claude Sonnet 4.5"),
         .init(id: "claude-opus-4-5", displayName: "Claude Opus 4.5"),
         .init(id: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6"),
+        .init(id: "claude-sonnet-4-6[1m]", displayName: "Claude Sonnet 4.6 (1M)"),
         .init(id: "claude-opus-4-6", displayName: "Claude Opus 4.6"),
+        .init(id: "claude-opus-4-6[1m]", displayName: "Claude Opus 4.6 (1M)"),
       ]
     }
   }
