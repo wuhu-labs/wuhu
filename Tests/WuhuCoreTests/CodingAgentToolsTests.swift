@@ -319,7 +319,7 @@ struct CodingAgentToolsTests {
             toolCallId: "conc-\(i)",
             args: .object(["command": .string("echo 'run \(i)'")]),
           )
-          let out = self.textOutput(result)
+          let out = textOutput(result)
           #expect(out.contains("run \(i)"))
         }
       }
