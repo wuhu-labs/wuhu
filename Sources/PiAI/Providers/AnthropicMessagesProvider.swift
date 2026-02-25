@@ -131,7 +131,7 @@ public struct AnthropicMessagesProvider: Sendable {
       "model": model.id,
       "stream": true,
       "messages": params,
-      "max_tokens": options.maxTokens ?? 1024,
+      "max_tokens": options.maxTokens ?? 16384,
     ]
 
     if let temperature = options.temperature {

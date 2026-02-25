@@ -11,7 +11,64 @@ public struct WuhuModelOption: Sendable, Hashable, Identifiable {
   }
 }
 
+/// Token limits for a known model.
+public struct WuhuModelSpec: Sendable, Hashable {
+  public var modelID: String
+  public var maxInputTokens: Int
+  public var maxOutputTokens: Int
+
+  public init(modelID: String, maxInputTokens: Int, maxOutputTokens: Int) {
+    self.modelID = modelID
+    self.maxInputTokens = maxInputTokens
+    self.maxOutputTokens = maxOutputTokens
+  }
+
+  /// Default max tokens to request, following the pi-coding-agent heuristic: maxOutputTokens / 3.
+  public var defaultMaxTokens: Int {
+    maxOutputTokens / 3
+  }
+}
+
 public enum WuhuModelCatalog {
+  // MARK: - Model specs (hardcoded token limits)
+
+  /// All known model specs, keyed by model ID.
+  public static let specs: [String: WuhuModelSpec] = {
+    var table: [String: WuhuModelSpec] = [:]
+    for spec in allSpecs {
+      table[spec.modelID] = spec
+    }
+    return table
+  }()
+
+  private static let allSpecs: [WuhuModelSpec] = [
+    // Anthropic — 200k input
+    .init(modelID: "claude-opus-4-5", maxInputTokens: 200_000, maxOutputTokens: 128_000),
+    .init(modelID: "claude-opus-4-6", maxInputTokens: 200_000, maxOutputTokens: 128_000),
+    .init(modelID: "claude-sonnet-4-5", maxInputTokens: 200_000, maxOutputTokens: 64000),
+    .init(modelID: "claude-sonnet-4-6", maxInputTokens: 200_000, maxOutputTokens: 64000),
+    .init(modelID: "claude-haiku-4-5", maxInputTokens: 200_000, maxOutputTokens: 64000),
+
+    // OpenAI — 400k input, 128k output
+    .init(modelID: "gpt-5", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+    .init(modelID: "gpt-5.1", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+    .init(modelID: "gpt-5.2", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+    .init(modelID: "gpt-5-codex", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+    .init(modelID: "gpt-5.1-codex", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+    .init(modelID: "gpt-5.2-codex", maxInputTokens: 400_000, maxOutputTokens: 128_000),
+  ]
+
+  /// Fallback default max tokens when the model is not in the spec table.
+  public static let fallbackDefaultMaxTokens = 16384
+
+  /// Returns the default max tokens for a given model ID.
+  /// Uses model's maxOutputTokens / 3 if known, otherwise `fallbackDefaultMaxTokens`.
+  public static func defaultMaxTokens(for modelID: String) -> Int {
+    specs[modelID]?.defaultMaxTokens ?? fallbackDefaultMaxTokens
+  }
+
+  // MARK: - Default model IDs
+
   public static func defaultModelID(for provider: WuhuProvider) -> String {
     switch provider {
     case .openai:
@@ -23,6 +80,8 @@ public enum WuhuModelCatalog {
     }
   }
 
+  // MARK: - Model lists
+
   public static func models(for provider: WuhuProvider) -> [WuhuModelOption] {
     switch provider {
     case .openai:
@@ -31,8 +90,6 @@ public enum WuhuModelCatalog {
         .init(id: "gpt-5-codex", displayName: "GPT-5 Codex"),
         .init(id: "gpt-5.1", displayName: "GPT-5.1"),
         .init(id: "gpt-5.1-codex", displayName: "GPT-5.1 Codex"),
-        .init(id: "gpt-5.1-codex-mini", displayName: "GPT-5.1 Codex mini"),
-        .init(id: "gpt-5.1-codex-max", displayName: "GPT-5.1 Codex max"),
         .init(id: "gpt-5.2", displayName: "GPT-5.2"),
         .init(id: "gpt-5.2-codex", displayName: "GPT-5.2 Codex"),
       ]
@@ -41,8 +98,7 @@ public enum WuhuModelCatalog {
       [
         .init(id: "codex-mini-latest", displayName: "Codex mini (latest)"),
         .init(id: "gpt-5.1", displayName: "GPT-5.1"),
-        .init(id: "gpt-5.1-codex-mini", displayName: "GPT-5.1 Codex mini"),
-        .init(id: "gpt-5.1-codex-max", displayName: "GPT-5.1 Codex max"),
+        .init(id: "gpt-5.1-codex", displayName: "GPT-5.1 Codex"),
         .init(id: "gpt-5.2", displayName: "GPT-5.2"),
         .init(id: "gpt-5.2-codex", displayName: "GPT-5.2 Codex"),
         .init(id: "gpt-5.3-codex", displayName: "GPT-5.3 Codex"),
@@ -53,12 +109,13 @@ public enum WuhuModelCatalog {
         .init(id: "claude-haiku-4-5", displayName: "Claude Haiku 4.5"),
         .init(id: "claude-sonnet-4-5", displayName: "Claude Sonnet 4.5"),
         .init(id: "claude-opus-4-5", displayName: "Claude Opus 4.5"),
-        .init(id: "claude-haiku-4-6", displayName: "Claude Haiku 4.6"),
         .init(id: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6"),
         .init(id: "claude-opus-4-6", displayName: "Claude Opus 4.6"),
       ]
     }
   }
+
+  // MARK: - Reasoning efforts
 
   public static func supportedReasoningEfforts(provider: WuhuProvider, modelID: String?) -> [ReasoningEffort] {
     guard let modelID, !modelID.isEmpty else { return [] }
@@ -69,10 +126,6 @@ public enum WuhuModelCatalog {
       return []
     case .openai, .openaiCodex:
       guard modelID.hasPrefix("gpt-5") else { return [] }
-
-      if modelID == "gpt-5.1-codex-mini" {
-        return [.medium, .high]
-      }
 
       let supportsXhigh = modelID.hasPrefix("gpt-5.2") || modelID.hasPrefix("gpt-5.3")
       var efforts: [ReasoningEffort] = [.minimal, .low, .medium, .high]
