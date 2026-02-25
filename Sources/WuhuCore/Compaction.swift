@@ -41,7 +41,7 @@ struct WuhuCompactionSettings: Sendable, Hashable {
   }
 
   private static func defaultKeepRecentTokens(contextWindowTokens: Int) -> Int {
-    max(20_000, contextWindowTokens / 10)
+    max(20000, contextWindowTokens / 10)
   }
 }
 
