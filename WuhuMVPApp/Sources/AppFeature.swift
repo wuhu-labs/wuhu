@@ -146,11 +146,13 @@ struct AppFeature {
               .map { MockChannel.from($0) },
           )
 
-          // Parse workspace docs into docs and issues
+          // Parse workspace docs into docs and issues.
+          // Use file path as the primary signal: files under "issues/" are
+          // issues, everything else is a doc.
           var docsList: [MockDoc] = []
           var issuesList: [MockIssue] = []
           for doc in allDocs {
-            if let issue = MockIssue.from(doc) {
+            if doc.path.hasPrefix("issues/"), let issue = MockIssue.from(doc) {
               issuesList.append(issue)
             } else {
               docsList.append(MockDoc.from(doc))
@@ -226,7 +228,7 @@ struct AppFeature {
           var docsList: [MockDoc] = []
           var issuesList: [MockIssue] = []
           for doc in allDocs {
-            if let issue = MockIssue.from(doc) {
+            if doc.path.hasPrefix("issues/"), let issue = MockIssue.from(doc) {
               issuesList.append(issue)
             } else {
               docsList.append(MockDoc.from(doc))
