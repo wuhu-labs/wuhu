@@ -143,4 +143,42 @@ struct AsyncBashTests {
     #expect(json["duration"] != nil)
     #expect(json["output"] != nil)
   }
+
+  /// Regression test: The reap watchdog catches processes whose termination
+  /// handler didn't fire. This tests that the subscription still delivers
+  /// completions for fast-exiting commands via the reap fallback.
+  @Test func reapWatchdogDeliversCompletionForFastExit() async throws {
+    let registry = WuhuAsyncBashRegistry()
+    let dir = try makeTempDir(prefix: "wuhu-reap-watchdog")
+
+    let stream = await registry.subscribeCompletions()
+    await registry.startReapWatchdog()
+
+    // Start a command that exits instantly
+    let started = try await registry.start(
+      command: "true",
+      cwd: dir,
+      sessionID: "test-session",
+      ownerID: "test-owner",
+    )
+
+    // Wait for the completion (should arrive via terminationHandler or watchdog)
+    var completion: WuhuAsyncBashCompletion?
+    let deadline = Date().addingTimeInterval(10)
+    for await c in stream {
+      if c.id == started.id {
+        completion = c
+        break
+      }
+      if Date() > deadline { break }
+    }
+
+    await registry.stopReapWatchdog()
+
+    let comp = try #require(completion)
+    #expect(comp.id == started.id)
+    #expect(comp.sessionID == "test-session")
+    #expect(comp.ownerID == "test-owner")
+    #expect(comp.exitCode == 0)
+  }
 }
