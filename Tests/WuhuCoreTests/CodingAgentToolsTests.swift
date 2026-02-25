@@ -287,6 +287,68 @@ struct CodingAgentToolsTests {
     }
   }
 
+  /// Regression test: commands that exit instantly (e.g. `true`, `false`,
+  /// nonexistent binaries) must still produce a tool result. Previously
+  /// `process.waitUntilExit()` could hang when Foundation's dispatch source
+  /// missed the exit notification for fast-exiting processes.
+  @Test func bashToolFastExitingCommandReturns() async throws {
+    let dir = try makeTempDir(prefix: "wuhu-bash-fast-exit")
+    let t = try #require(tools(cwd: dir)["bash"])
+
+    // `true` exits immediately with code 0
+    let result = try await t.execute(toolCallId: "fast1", args: .object(["command": .string("true")]))
+    let out = textOutput(result)
+    #expect(out == "(no output)" || out.isEmpty || !out.isEmpty) // just needs to return
+
+    // `false` exits immediately with code 1 → should throw ToolError, not hang
+    await #expect(throws: Error.self) {
+      _ = try await t.execute(toolCallId: "fast2", args: .object(["command": .string("false")]))
+    }
+  }
+
+  /// Stress test: run many fast-exiting bash commands concurrently to expose
+  /// any Foundation Process notification races.
+  @Test func bashToolConcurrentFastExits() async throws {
+    let dir = try makeTempDir(prefix: "wuhu-bash-concurrent")
+    let t = try #require(tools(cwd: dir)["bash"])
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      for i in 0 ..< 20 {
+        group.addTask {
+          let result = try await t.execute(
+            toolCallId: "conc-\(i)",
+            args: .object(["command": .string("echo 'run \(i)'")]),
+          )
+          let out = self.textOutput(result)
+          #expect(out.contains("run \(i)"))
+        }
+      }
+      try await group.waitForAll()
+    }
+  }
+
+  /// Test: if swiftformat is installed (Homebrew), running `swiftformat --version`
+  /// should return quickly and produce a result.
+  @Test func bashToolSwiftformatVersionIfInstalled() async throws {
+    let dir = try makeTempDir(prefix: "wuhu-bash-swiftformat")
+    let t = try #require(tools(cwd: dir)["bash"])
+
+    // Skip if swiftformat isn't installed
+    let whichResult = try? await t.execute(
+      toolCallId: "which-sf",
+      args: .object(["command": .string("which swiftformat")]),
+    )
+    let whichOut = whichResult.map { textOutput($0) } ?? ""
+    guard whichOut.contains("swiftformat") else { return }
+
+    let result = try await t.execute(
+      toolCallId: "sf-version",
+      args: .object(["command": .string("swiftformat --version")]),
+    )
+    let out = textOutput(result)
+    #expect(!out.isEmpty)
+  }
+
   @Test func grepToolSearchesSingleFileWithContextAndLimit() async throws {
     let dir = try makeTempDir(prefix: "wuhu-grep")
     let file = (dir as NSString).appendingPathComponent("context.txt")

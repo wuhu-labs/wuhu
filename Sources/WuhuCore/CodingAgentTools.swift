@@ -1146,6 +1146,7 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
     process.standardError = outputHandle
 
     try process.run()
+    let pid = process.processIdentifier
 
     let start = Date()
     var timedOut = false
@@ -1163,13 +1164,30 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
           break
         }
         try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Fallback: Foundation's Process.isRunning relies on a dispatch source
+        // that can miss fast exits in rare cases. If the process no longer exists
+        // at the OS level, break out instead of polling forever.
+        if process.isRunning, !processExistsAtOSLevel(pid) {
+          break
+        }
       }
     } catch is CancellationError {
       terminated = true
       process.terminate()
     }
 
-    process.waitUntilExit()
+    // Async-safe wait: avoid process.waitUntilExit() which is a synchronous
+    // blocking call that can hang when Foundation's dispatch source misses
+    // the process exit notification.
+    if terminated || timedOut {
+      // Process was terminated/timed-out; give it up to 10s to actually exit.
+      let waitDeadline = Date().addingTimeInterval(10)
+      while process.isRunning, Date() < waitDeadline {
+        try? await Task.sleep(nanoseconds: 100_000_000)
+      }
+    }
+
     try? outputHandle.close()
 
     let data = (try? Data(contentsOf: outputURL)) ?? Data()
@@ -1178,6 +1196,16 @@ private func runBash(command: String, cwd: String, timeoutSeconds: Double?) asyn
   #else
     throw PiAIError.unsupported("bash is not supported on this platform")
   #endif
+}
+
+/// Check whether a process still exists at the OS level, bypassing Foundation's
+/// internal bookkeeping. Returns false when the PID no longer refers to a live
+/// process (ESRCH). This catches the rare case where Foundation's dispatch-source
+/// based termination detection misses a fast exit.
+private func processExistsAtOSLevel(_ pid: Int32) -> Bool {
+  // kill(pid, 0) sends no signal but checks for process existence.
+  // Returns 0 if the process exists (or is a zombie); -1/ESRCH if gone.
+  kill(pid, 0) != -1 || errno != ESRCH
 }
 
 private extension String {

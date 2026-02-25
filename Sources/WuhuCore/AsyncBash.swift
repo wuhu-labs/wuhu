@@ -149,6 +149,7 @@ public struct WuhuAsyncBashCompletion: Sendable, Hashable {
 
     private var tasks: [String: TaskRecord] = [:]
     private var subscribers: [UUID: AsyncStream<WuhuAsyncBashCompletion>.Continuation] = [:]
+    private var reapTask: Task<Void, Never>?
 
     public func subscribeCompletions() -> AsyncStream<WuhuAsyncBashCompletion> {
       AsyncStream(WuhuAsyncBashCompletion.self, bufferingPolicy: .bufferingNewest(4096)) { continuation in
@@ -162,6 +163,35 @@ public struct WuhuAsyncBashCompletion: Sendable, Hashable {
 
     private func removeSubscriber(token: UUID) {
       subscribers[token] = nil
+    }
+
+    /// Start a background watchdog that periodically checks for processes whose
+    /// termination handler didn't fire. Foundation's dispatch-source-based
+    /// notification can miss fast exits; this reaper catches those cases.
+    public func startReapWatchdog() {
+      guard reapTask == nil else { return }
+      reapTask = Task { [weak self] in
+        while !Task.isCancelled {
+          try? await Task.sleep(nanoseconds: 2_000_000_000) // every 2s
+          await self?.reapFinishedTasks()
+        }
+      }
+    }
+
+    public func stopReapWatchdog() {
+      reapTask?.cancel()
+      reapTask = nil
+    }
+
+    /// Scan all tracked tasks for processes that have exited but whose
+    /// terminationHandler never fired. Same logic as the fallback in status().
+    private func reapFinishedTasks() {
+      for (id, record) in tasks {
+        guard record.endedAt == nil else { continue }
+        if !record.process.isRunning {
+          markFinished(id: id)
+        }
+      }
     }
 
     public func start(

@@ -34,9 +34,12 @@ public actor WuhuService {
   }
 
   deinit {
-    if let router = asyncBashRouter {
+    let router = asyncBashRouter
+    let registry = asyncBashRegistry
+    if let router {
       Task { await router.stop() }
     }
+    Task { await registry.stopReapWatchdog() }
   }
 
   public func startAgentLoopManager() async {
@@ -52,11 +55,17 @@ public actor WuhuService {
       instanceID: instanceID,
       enqueueSystemJSON: { [weak self] sessionID, jsonText, timestamp in
         guard let self else { return }
-        try? await enqueueSystemJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
+        do {
+          try await enqueueSystemJSON(sessionID: sessionID, jsonText: jsonText, timestamp: timestamp)
+        } catch {
+          let line = "[WuhuService] ERROR: failed to enqueue async bash completion for session '\(sessionID)': \(String(describing: error))\n"
+          FileHandle.standardError.write(Data(line.utf8))
+        }
       },
     )
     asyncBashRouter = router
     await router.start()
+    await asyncBashRegistry.startReapWatchdog()
   }
 
   private func runtime(for sessionID: String) -> WuhuSessionRuntime {
