@@ -32,18 +32,16 @@ extension WuhuService {
 
     switch session.type {
     case .channel:
-      // Management/control-plane tools are only available for channel sessions.
+      // Management/control-plane tools are available for all session types.
       tools.append(contentsOf: agentManagementTools(currentSessionID: session.id))
       // Enforce channel runtime restrictions via tool executor errors (keep schema identical).
       tools = applyChannelRestrictions(tools)
 
-    case .forkedChannel:
-      // Forked channels keep the same tool schema as the parent channel (preserving prefix cache)
-      // but have coding-level execution permissions — no restrictions applied.
+    case .forkedChannel, .coding:
+      // Both forked channels and coding sessions get full management tools
+      // without execution restrictions. This enables multi-session coordination
+      // patterns where coding sessions can spawn and manage child sessions.
       tools.append(contentsOf: agentManagementTools(currentSessionID: session.id))
-
-    case .coding:
-      break
     }
 
     return tools
