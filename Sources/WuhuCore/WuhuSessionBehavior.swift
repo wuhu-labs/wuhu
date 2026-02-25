@@ -471,6 +471,10 @@ struct WuhuSessionBehavior: AgentBehavior {
 
 private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot) -> RequestOptions {
   var requestOptions = RequestOptions()
+
+  // Max tokens: use model spec (maxOutput / 3) or a generous fallback.
+  requestOptions.maxTokens = WuhuModelCatalog.defaultMaxTokens(for: model.id)
+
   if let effort = settings.effectiveReasoningEffort {
     requestOptions.reasoningEffort = effort
   } else if model.provider == .openai || model.provider == .openaiCodex,
