@@ -206,8 +206,10 @@ struct WuhuSessionBehavior: AgentBehavior {
     let session = try await store.getSession(id: sessionID.rawValue)
     let settings = try await store.loadSettingsSnapshot(sessionID: sessionID)
 
-    let baseModel = Model(id: session.model, provider: session.provider.piProvider)
-    let requestOptions = makeRequestOptions(model: baseModel, settings: settings)
+    let resolved = WuhuModelCatalog.resolveAlias(session.model)
+    let apiModel = Model(id: resolved.apiModelID, provider: session.provider.piProvider)
+    var requestOptions = makeRequestOptions(model: apiModel, settings: settings, userModelID: session.model)
+    mergeBetaFeatures(resolved.betaFeatures, into: &requestOptions)
 
     let tools = await runtimeConfig.tools()
     let streamFn = await runtimeConfig.streamFn()
@@ -225,7 +227,7 @@ struct WuhuSessionBehavior: AgentBehavior {
       tools: tools.map(\.tool),
     )
 
-    let events = try await streamFn(baseModel, effectiveContext, requestOptions)
+    let events = try await streamFn(apiModel, effectiveContext, requestOptions)
 
     var partial: AssistantMessage?
     var final: AssistantMessage?
@@ -356,18 +358,23 @@ struct WuhuSessionBehavior: AgentBehavior {
 
   func performCompaction(state: State) async throws -> [CommittedAction] {
     let session = try await store.getSession(id: sessionID.rawValue)
-    let model = Model(id: session.model, provider: session.provider.piProvider)
-    let settings = WuhuCompactionSettings.load(model: model)
+    // Use user-facing model ID for compaction settings (picks up 1M context window for aliases).
+    let settingsModel = Model(id: session.model, provider: session.provider.piProvider)
+    let settings = WuhuCompactionSettings.load(model: settingsModel)
 
     guard let prep = WuhuCompactionEngine.prepareCompaction(transcript: state.entries, settings: settings) else {
       return []
     }
 
+    // Use resolved API model ID for the actual summarization call.
+    let resolved = WuhuModelCatalog.resolveAlias(session.model)
+    let apiModel = Model(id: resolved.apiModelID, provider: session.provider.piProvider)
     let streamFn = await runtimeConfig.streamFn()
-    let requestOptions = makeRequestOptions(model: model, settings: state.settings)
+    var requestOptions = makeRequestOptions(model: apiModel, settings: state.settings, userModelID: session.model)
+    mergeBetaFeatures(resolved.betaFeatures, into: &requestOptions)
     let summary = try await WuhuCompactionEngine.generateSummary(
       preparation: prep,
-      model: model,
+      model: apiModel,
       settings: settings,
       requestOptions: requestOptions,
       streamFn: streamFn,
@@ -469,11 +476,13 @@ struct WuhuSessionBehavior: AgentBehavior {
   }
 }
 
-private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot) -> RequestOptions {
+private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot, userModelID: String? = nil) -> RequestOptions {
   var requestOptions = RequestOptions()
 
   // Max tokens: use model spec (maxOutput / 3) or a generous fallback.
-  requestOptions.maxTokens = WuhuModelCatalog.defaultMaxTokens(for: model.id)
+  // Look up by user-facing model ID first (for alias specs), then fall back to API model ID.
+  let specLookupID = userModelID ?? model.id
+  requestOptions.maxTokens = WuhuModelCatalog.defaultMaxTokens(for: specLookupID)
 
   if let effort = settings.effectiveReasoningEffort {
     requestOptions.reasoningEffort = effort
@@ -487,6 +496,16 @@ private func makeRequestOptions(model: Model, settings: SessionSettingsSnapshot)
     requestOptions.maxTokens = requestOptions.maxTokens ?? 4096
   }
   return requestOptions
+}
+
+private func mergeBetaFeatures(_ features: [String], into options: inout RequestOptions) {
+  guard !features.isEmpty else { return }
+  let existing = options.headers["anthropic-beta"] ?? ""
+  var items = existing.isEmpty ? [] : existing.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+  for feature in features where !items.contains(feature) {
+    items.append(feature)
+  }
+  options.headers["anthropic-beta"] = items.joined(separator: ", ")
 }
 
 private func modelFromSettings(_ settings: SessionSettingsSnapshot) -> Model {
