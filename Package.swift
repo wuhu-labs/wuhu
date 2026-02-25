@@ -22,6 +22,7 @@ let package = Package(
     .library(name: "PiAI", targets: ["PiAI"]),
     .library(name: "WuhuAPI", targets: ["WuhuAPI"]),
     .library(name: "WuhuCLIKit", targets: ["WuhuCLIKit"]),
+    .library(name: "WuhuCoreClient", targets: ["WuhuCoreClient"]),
     .library(name: "WuhuCore", targets: ["WuhuCore"]),
     .library(name: "WuhuClient", targets: ["WuhuClient"]),
     .library(name: "WuhuServer", targets: ["WuhuServer"]),
@@ -63,8 +64,17 @@ let package = Package(
       swiftSettings: strictConcurrency,
     ),
     .target(
+      name: "WuhuCoreClient",
+      dependencies: [
+        "WuhuAPI",
+        "PiAI",
+      ],
+      swiftSettings: strictConcurrency,
+    ),
+    .target(
       name: "WuhuCore",
       dependencies: [
+        "WuhuCoreClient",
         "WuhuAPI",
         "PiAI",
         .product(name: "GRDB", package: "GRDB.swift"),
@@ -75,7 +85,7 @@ let package = Package(
       name: "WuhuClient",
       dependencies: [
         "WuhuAPI",
-        "WuhuCore",
+        "WuhuCoreClient",
       ],
       swiftSettings: strictConcurrency,
     ),
@@ -133,6 +143,7 @@ let package = Package(
       name: "WuhuCoreTests",
       dependencies: [
         "WuhuCore",
+        "WuhuCoreClient",
         .product(name: "Testing", package: "swift-testing"),
       ],
       swiftSettings: strictConcurrency,

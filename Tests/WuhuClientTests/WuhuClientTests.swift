@@ -3,7 +3,7 @@ import PiAI
 import Testing
 import WuhuAPI
 import WuhuClient
-import WuhuCore
+import WuhuCoreClient
 
 struct WuhuClientTests {
   @Test func listRunnersDecodesResponse() async throws {

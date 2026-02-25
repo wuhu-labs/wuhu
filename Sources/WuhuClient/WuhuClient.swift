@@ -1,7 +1,7 @@
 import Foundation
 import PiAI
 import WuhuAPI
-import WuhuCore
+import WuhuCoreClient
 
 public struct WuhuClient: Sendable {
   public var baseURL: URL

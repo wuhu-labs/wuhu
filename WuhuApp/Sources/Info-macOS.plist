@@ -24,5 +24,7 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSMainStoryboardFile</key>
+	<string></string>
 </dict>
 </plist>

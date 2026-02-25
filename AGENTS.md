@@ -52,19 +52,13 @@ Environment variables:
 
 For local manual testing, `wuhu` loads API keys from its server config. Check whether `~/.wuhu` exists; if it does, assume it has the keys and use that (don't rely on a local `.env`).
 
-WuhuMVPApp (active development):
+WuhuApp (active development):
 
-- `WuhuMVPApp` is the primary macOS app target. New features go here unless explicitly directed otherwise.
-- `WuhuMVPApp.xcodeproj` is generated, not source-of-truth. Source-of-truth is `WuhuMVPApp/project.yml`.
-- Before building, check whether `WuhuMVPApp/WuhuMVPApp.xcodeproj` exists. If not, run `cd WuhuMVPApp && xcodegen generate` first.
-- Build: `xcodebuild build -project WuhuMVPApp/WuhuMVPApp.xcodeproj -scheme WuhuMVPApp -destination 'platform=macOS' -quiet`
-
-WuhuApp (legacy, do not modify without explicit instruction):
-
-- `WuhuApp` is the older macOS/iOS app. Do not add features or make changes to it unless explicitly asked.
+- `WuhuApp` is the primary app target (macOS + iOS). New features go here unless explicitly directed otherwise.
 - `WuhuApp.xcodeproj` is generated, not source-of-truth. Source-of-truth is `WuhuApp/project.yml`.
-- Before running any Xcode/iOS command that expects the project file (`xcodebuild`, opening the project, TestFlight scripts), check whether `WuhuApp/WuhuApp.xcodeproj` exists.
-- If it does not exist, run `cd WuhuApp && xcodegen generate` first.
+- Before building, check whether `WuhuApp/WuhuApp.xcodeproj` exists. If not, run `cd WuhuApp && xcodegen generate` first.
+- Build macOS: `xcodebuild build -project WuhuApp/WuhuApp.xcodeproj -scheme WuhuAppMac -destination 'platform=macOS' -quiet`
+- Build iOS: `xcodebuild build -project WuhuApp/WuhuApp.xcodeproj -scheme WuhuApp -destination 'generic/platform=iOS' -quiet`
 
 ## Workspace + Issues
 
@@ -81,11 +75,13 @@ When you are assigned to work on a `WUHU-####` issue, you must create a new bran
 3. If the current branch (either you created or already present) is behind `origin/main`, bring it up to the latest `main` before you start your work.
 4. After you finish your work and perform validations, create a PR and make sure all checks pass before you finish your work.
 
-## WuhuCore
+## WuhuCore / WuhuCoreClient
 
 Before modifying anything in `Sources/WuhuCore/`, read the DocC index (`Sources/WuhuCore/WuhuCore.docc/WuhuCore.md`) to understand the module's architecture and contract boundaries.
 
-Files under `Sources/WuhuCore/Contracts/` are the human-authored alignment surface. **Do not add, remove, or modify contract types without explicit human approval.**
+`WuhuCoreClient` contains the client-safe subset of WuhuCore: session contracts, queue types, identifiers, and `RemoteSessionSSETransport`. It has no GRDB or server-side dependencies and is safe to use on iOS. `WuhuCore` re-exports `WuhuCoreClient`, so server-side code can use everything from either module.
+
+Files under `Sources/WuhuCoreClient/Contracts/` and `Sources/WuhuCore/Contracts/` are the human-authored alignment surface. **Do not add, remove, or modify contract types without explicit human approval.**
 
 ## Notes
 

@@ -195,7 +195,9 @@ struct CreateChannelView: View {
         }
       }
     }
+    #if os(macOS)
     .frame(minWidth: 350, minHeight: 250)
+    #endif
     .task { store.send(.onAppear) }
   }
 }

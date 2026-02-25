@@ -4,7 +4,7 @@ import MarkdownUI
 import PiAI
 import SwiftUI
 import WuhuAPI
-import WuhuCore
+import WuhuCoreClient
 
 @Reducer
 struct SessionFeature {
@@ -717,7 +717,9 @@ private struct SessionModelPickerSheet: View {
         }
       }
     }
+    #if os(macOS)
     .frame(minWidth: 350, minHeight: 300)
+    #endif
   }
 }
 
