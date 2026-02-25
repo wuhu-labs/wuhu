@@ -645,6 +645,9 @@ struct AppFeature {
 
 struct AppView: View {
   @Bindable var store: StoreOf<AppFeature>
+  #if os(iOS)
+    @State private var isShowingSettings = false
+  #endif
 
   var body: some View {
     NavigationSplitView {
@@ -663,6 +666,19 @@ struct AppView: View {
       .sheet(item: $store.scope(state: \.createSession, action: \.createSession)) { store in
         CreateChannelView(store: store)
       }
+    #if os(iOS)
+      .sheet(isPresented: $isShowingSettings) {
+        NavigationStack {
+          SettingsView()
+            .navigationTitle("Settings")
+            .toolbar {
+              ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { isShowingSettings = false }
+              }
+            }
+        }
+      }
+    #endif
   }
 
   // MARK: - Sidebar (column 1)
@@ -742,6 +758,15 @@ struct AppView: View {
             Image(systemName: "plus")
           }
           .help("New Session")
+
+          #if os(iOS)
+            Button {
+              isShowingSettings = true
+            } label: {
+              Image(systemName: "gearshape")
+            }
+            .help("Settings")
+          #endif
         }
       }
     }
@@ -879,7 +904,9 @@ struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 400)
+    #if os(macOS)
+      .frame(width: 400)
+    #endif
   }
 }
 
