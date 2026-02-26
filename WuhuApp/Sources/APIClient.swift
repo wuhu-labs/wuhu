@@ -9,7 +9,7 @@ import WuhuCoreClient
 // MARK: - API Client Dependency
 
 struct APIClient: Sendable {
-  var listSessions: @Sendable () async throws -> [WuhuSession]
+  var listSessions: @Sendable (_ includeArchived: Bool) async throws -> [WuhuSession]
   var getSession: @Sendable (_ id: String) async throws -> WuhuGetSessionResponse
   var createSession: @Sendable (_ request: WuhuCreateSessionRequest) async throws -> WuhuSession
   var listEnvironments: @Sendable () async throws -> [WuhuEnvironmentDefinition]
@@ -17,6 +17,8 @@ struct APIClient: Sendable {
   var readWorkspaceDoc: @Sendable (_ path: String) async throws -> WuhuWorkspaceDoc
   var enqueue: @Sendable (_ sessionID: String, _ input: String, _ user: String?, _ lane: UserQueueLane) async throws -> String
   var renameSession: @Sendable (_ sessionID: String, _ title: String) async throws -> WuhuRenameSessionResponse
+  var archiveSession: @Sendable (_ sessionID: String) async throws -> WuhuArchiveSessionResponse
+  var unarchiveSession: @Sendable (_ sessionID: String) async throws -> WuhuArchiveSessionResponse
   var stopSession: @Sendable (_ sessionID: String) async throws -> WuhuStopSessionResponse
   var setSessionModel: @Sendable (
     _ sessionID: String,
@@ -32,7 +34,7 @@ extension APIClient: DependencyKey {
     let baseURL = URL(string: urlString) ?? URL(string: "http://localhost:8080")!
     let client = WuhuClient(baseURL: baseURL)
     return APIClient(
-      listSessions: { try await client.listSessions() },
+      listSessions: { try await client.listSessions(includeArchived: $0) },
       getSession: { try await client.getSession(id: $0) },
       createSession: { try await client.createSession($0) },
       listEnvironments: { try await client.listEnvironments() },
@@ -48,6 +50,8 @@ extension APIClient: DependencyKey {
       renameSession: { sessionID, title in
         try await client.renameSession(id: sessionID, title: title)
       },
+      archiveSession: { try await client.archiveSession(sessionID: $0) },
+      unarchiveSession: { try await client.unarchiveSession(sessionID: $0) },
       stopSession: { try await client.stopSession(sessionID: $0) },
       setSessionModel: { sessionID, provider, model, reasoningEffort in
         try await client.setSessionModel(
@@ -58,7 +62,7 @@ extension APIClient: DependencyKey {
   }()
 
   static let previewValue = APIClient(
-    listSessions: { [] },
+    listSessions: { _ in [] },
     getSession: { _ in
       WuhuGetSessionResponse(
         session: WuhuSession(
@@ -96,6 +100,35 @@ extension APIClient: DependencyKey {
     enqueue: { _, _, _, _ in "" },
     renameSession: { _, _ in
       WuhuRenameSessionResponse(session: WuhuSession(
+        id: "preview",
+        provider: .anthropic,
+        model: "claude-sonnet-4-6",
+        environment: WuhuEnvironment(name: "preview", type: .local, path: "/tmp"),
+        cwd: "/tmp",
+        parentSessionID: nil,
+        createdAt: Date(),
+        updatedAt: Date(),
+        headEntryID: 0,
+        tailEntryID: 0,
+      ))
+    },
+    archiveSession: { _ in
+      WuhuArchiveSessionResponse(session: WuhuSession(
+        id: "preview",
+        provider: .anthropic,
+        model: "claude-sonnet-4-6",
+        environment: WuhuEnvironment(name: "preview", type: .local, path: "/tmp"),
+        cwd: "/tmp",
+        parentSessionID: nil,
+        isArchived: true,
+        createdAt: Date(),
+        updatedAt: Date(),
+        headEntryID: 0,
+        tailEntryID: 0,
+      ))
+    },
+    unarchiveSession: { _ in
+      WuhuArchiveSessionResponse(session: WuhuSession(
         id: "preview",
         provider: .anthropic,
         model: "claude-sonnet-4-6",
@@ -355,6 +388,7 @@ extension MockSession {
       environmentName: session.environment.name,
       model: session.model,
       status: status,
+      isArchived: session.isArchived,
       updatedAt: session.updatedAt,
       messages: messages,
     )
@@ -377,6 +411,7 @@ extension MockSession {
       environmentName: response.session.environment.name,
       model: response.session.model,
       status: status,
+      isArchived: response.session.isArchived,
       updatedAt: response.session.updatedAt,
       messages: messages,
     )

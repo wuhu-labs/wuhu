@@ -26,6 +26,9 @@ struct SessionFeature {
     /// Lane selection for enqueue
     var selectedLane: UserQueueLane = .followUp
 
+    /// Archive state
+    var showArchived = false
+
     // Rename state
     var isShowingRenameDialog = false
     var renameSessionID: String?
@@ -89,6 +92,13 @@ struct SessionFeature {
     case renameConfirmed
     case renameCancelled
     case renameResponse(Result<WuhuRenameSessionResponse, any Error>)
+
+    // Archive
+    case archiveSession(String)
+    case unarchiveSession(String)
+    case archiveResponse(Result<WuhuArchiveSessionResponse, any Error>)
+    case unarchiveResponse(Result<WuhuArchiveSessionResponse, any Error>)
+    case toggleShowArchived
 
     // Commands
     case sendMessage(String)
@@ -349,6 +359,53 @@ struct SessionFeature {
         state.subscriptionError = "Rename failed: \(error)"
         return .none
 
+      // MARK: - Archive
+
+      case let .archiveSession(sessionID):
+        // Optimistically remove from visible list
+        state.sessions[id: sessionID]?.isArchived = true
+        if !state.showArchived {
+          state.sessions.remove(id: sessionID)
+          if state.selectedSessionID == sessionID {
+            state.selectedSessionID = nil
+          }
+        }
+        return .run { send in
+          await send(
+            .archiveResponse(
+              Result { try await apiClient.archiveSession(sessionID) },
+            ),
+          )
+        }
+
+      case .archiveResponse(.success):
+        return .none
+
+      case let .archiveResponse(.failure(error)):
+        state.subscriptionError = "Archive failed: \(error)"
+        return .none
+
+      case let .unarchiveSession(sessionID):
+        state.sessions[id: sessionID]?.isArchived = false
+        return .run { send in
+          await send(
+            .unarchiveResponse(
+              Result { try await apiClient.unarchiveSession(sessionID) },
+            ),
+          )
+        }
+
+      case .unarchiveResponse(.success):
+        return .none
+
+      case let .unarchiveResponse(.failure(error)):
+        state.subscriptionError = "Unarchive failed: \(error)"
+        return .none
+
+      case .toggleShowArchived:
+        state.showArchived.toggle()
+        return .none
+
       // MARK: - Commands
 
       case let .sendMessage(content):
@@ -590,20 +647,49 @@ struct SessionFeature {
 struct SessionListView: View {
   @Bindable var store: StoreOf<SessionFeature>
 
+  private var visibleSessions: IdentifiedArrayOf<MockSession> {
+    if store.showArchived {
+      store.sessions
+    } else {
+      store.sessions.filter { !$0.isArchived }
+    }
+  }
+
   var body: some View {
     List(selection: $store.selectedSessionID.sending(\.sessionSelected)) {
-      ForEach(store.sessions) { session in
+      ForEach(visibleSessions) { session in
         SessionRow(session: session)
           .tag(session.id)
           .contextMenu {
             Button("Rename…") {
               store.send(.renameMenuTapped(session.id))
             }
+            Divider()
+            if session.isArchived {
+              Button("Unarchive") {
+                store.send(.unarchiveSession(session.id))
+              }
+            } else {
+              Button("Archive") {
+                store.send(.archiveSession(session.id))
+              }
+            }
           }
       }
     }
     .listStyle(.inset)
     .navigationTitle("Sessions")
+    .toolbar {
+      ToolbarItem(placement: .automatic) {
+        Toggle(isOn: Binding(
+          get: { store.showArchived },
+          set: { _ in store.send(.toggleShowArchived) },
+        )) {
+          Label("Show Archived", systemImage: "archivebox")
+        }
+        .help("Show archived sessions")
+      }
+    }
     .alert("Rename Session", isPresented: $store.isShowingRenameDialog) {
       TextField("Session title", text: $store.renameText)
       Button("Rename") {
@@ -739,6 +825,11 @@ struct SessionRow: View {
             .font(.callout)
             .fontWeight(.semibold)
             .lineLimit(1)
+          if session.isArchived {
+            Image(systemName: "archivebox")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
           Spacer()
           Text(session.updatedAt, style: .relative)
             .font(.caption2)
@@ -751,6 +842,7 @@ struct SessionRow: View {
       }
     }
     .padding(.vertical, 4)
+    .opacity(session.isArchived ? 0.6 : 1.0)
   }
 
   private var statusColor: Color {

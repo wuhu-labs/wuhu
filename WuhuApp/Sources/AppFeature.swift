@@ -109,8 +109,9 @@ struct AppFeature {
         guard !state.hasLoaded else { return .none }
         state.isLoading = true
         state.hasLoaded = true
+        let showArchived = state.sessions.showArchived
         return .run { send in
-          async let sessionsResult = apiClient.listSessions()
+          async let sessionsResult = apiClient.listSessions(showArchived)
           async let docsResult = apiClient.listWorkspaceDocs()
 
           let allSessions = try await sessionsResult
@@ -204,8 +205,9 @@ struct AppFeature {
         return .none
 
       case .refreshTick:
+        let showArchived = state.sessions.showArchived
         return .run { send in
-          async let sessionsResult = apiClient.listSessions()
+          async let sessionsResult = apiClient.listSessions(showArchived)
           async let docsResult = apiClient.listWorkspaceDocs()
 
           let allSessions = try await sessionsResult
@@ -276,6 +278,7 @@ struct AppFeature {
             existing.updatedAt = session.updatedAt
             existing.model = session.model
             existing.environmentName = session.environmentName
+            existing.isArchived = session.isArchived
             // If the server returns a custom title, adopt it; otherwise preserve
             // any locally-set custom title from a prior rename.
             if let serverCustomTitle = session.customTitle {
