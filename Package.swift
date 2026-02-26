@@ -19,7 +19,6 @@ let package = Package(
     .iOS(.v16),
   ],
   products: [
-    .library(name: "PiAI", targets: ["PiAI"]),
     .library(name: "WuhuAPI", targets: ["WuhuAPI"]),
     .library(name: "WuhuCLIKit", targets: ["WuhuCLIKit"]),
     .library(name: "WuhuCoreClient", targets: ["WuhuCoreClient"]),
@@ -31,9 +30,9 @@ let package = Package(
     .executable(name: "wuhu-bench-find", targets: ["WuhuBenchFind"]),
   ],
   dependencies: [
+    .package(url: "https://github.com/wuhu-labs/wuhu-ai.git", from: "0.1.0"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "48a471ab313e858258ab0b9b0bf2cea55a50cefb"),
-    .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.27.0"),
     .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
     .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
     .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
@@ -41,23 +40,16 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "PiAI",
-      dependencies: [
-        .product(name: "AsyncHTTPClient", package: "async-http-client"),
-      ],
-      swiftSettings: strictConcurrency,
-    ),
-    .target(
       name: "WuhuAPI",
       dependencies: [
-        "PiAI",
+        .product(name: "PiAI", package: "wuhu-ai"),
       ],
       swiftSettings: strictConcurrency,
     ),
     .target(
       name: "WuhuCLIKit",
       dependencies: [
-        "PiAI",
+        .product(name: "PiAI", package: "wuhu-ai"),
         "WuhuAPI",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ],
@@ -67,7 +59,7 @@ let package = Package(
       name: "WuhuCoreClient",
       dependencies: [
         "WuhuAPI",
-        "PiAI",
+        .product(name: "PiAI", package: "wuhu-ai"),
       ],
       swiftSettings: strictConcurrency,
     ),
@@ -76,7 +68,7 @@ let package = Package(
       dependencies: [
         "WuhuCoreClient",
         "WuhuAPI",
-        "PiAI",
+        .product(name: "PiAI", package: "wuhu-ai"),
         .product(name: "GRDB", package: "GRDB.swift"),
       ],
       swiftSettings: strictConcurrency,
@@ -127,15 +119,7 @@ let package = Package(
       name: "WuhuBenchFind",
       dependencies: [
         "WuhuCore",
-        "PiAI",
-      ],
-      swiftSettings: strictConcurrency,
-    ),
-    .testTarget(
-      name: "PiAITests",
-      dependencies: [
-        "PiAI",
-        .product(name: "Testing", package: "swift-testing"),
+        .product(name: "PiAI", package: "wuhu-ai"),
       ],
       swiftSettings: strictConcurrency,
     ),
