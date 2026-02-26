@@ -835,8 +835,7 @@ struct AppView: View {
   }
 
   /// On macOS, renders a fixed-width list alongside the detail view.
-  /// On iOS, renders only the list (detail is handled by NavigationLink or
-  /// further navigation).
+  /// On iOS, renders the list with a navigation push to the detail.
   private func dualPane(
     @ViewBuilder list: () -> some View,
     @ViewBuilder detail: () -> some View,
@@ -850,9 +849,39 @@ struct AppView: View {
           .frame(maxWidth: .infinity)
       }
     #else
-      list()
+      NavigationStack {
+        list()
+          .navigationDestination(isPresented: Binding(
+            get: { hasDetailSelection },
+            set: { if !$0 { clearDetailSelection() } },
+          )) {
+            detail()
+          }
+      }
     #endif
   }
+
+  #if os(iOS)
+    /// Whether the current top-level section has a selected detail item.
+    private var hasDetailSelection: Bool {
+      switch store.selection {
+      case .sessions: store.sessions.selectedSessionID != nil
+      case .home: store.home.selectedEventID != nil
+      case .docs: store.docs.selectedDocID != nil
+      default: false
+      }
+    }
+
+    /// Clear the detail selection for the current section (on back navigation).
+    private func clearDetailSelection() {
+      switch store.selection {
+      case .sessions: store.send(.sessions(.sessionSelected(nil)))
+      case .home: store.send(.home(.eventSelected(nil)))
+      case .docs: store.send(.docs(.docSelected(nil)))
+      default: break
+      }
+    }
+  #endif
 }
 
 // MARK: - Entry Point
