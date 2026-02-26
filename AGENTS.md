@@ -12,10 +12,8 @@ Quick primer: `docs/what-is-a-coding-agent.md`.
 
 ## Status
 
-This repo is the Swift pivot of Wuhu. It's currently a Swift Package with:
-
-- `PiAI`: a unified LLM client library (ported from `pi-mono`'s `pi-ai`)
-- `wuhu`: a small CLI that demonstrates `PiAI` providers
+This repo is the main Wuhu server, CLI, and integration package. It depends on
+[wuhu-ai](https://github.com/wuhu-labs/wuhu-ai) (PiAI) as an external package.
 
 ## Project Structure
 
@@ -59,21 +57,6 @@ WuhuApp (active development):
 - Before building, check whether `WuhuApp/WuhuApp.xcodeproj` exists. If not, run `cd WuhuApp && xcodegen generate` first.
 - Build macOS: `xcodebuild build -project WuhuApp/WuhuApp.xcodeproj -scheme WuhuAppMac -destination 'platform=macOS' -quiet`
 - Build iOS: `xcodebuild build -project WuhuApp/WuhuApp.xcodeproj -scheme WuhuApp -destination 'generic/platform=iOS' -quiet`
-
-## Workspace + Issues
-
-This project manages issues locally at `~/.wuhu/workspace/issues/`. Each issue is a Markdown file named by its number (e.g., `0001.md`).
-
-## Issue Workflow
-
-Issues use the format `WUHU-####` (four digits) and live in `~/.wuhu/workspace/issues/*.md`. If you see "Fix WUHU-0001", assume it refers to an issue at that path (not GitHub Issues).
-
-When you are assigned to work on a `WUHU-####` issue, you must create a new branch:
-
-1. If you are already on a new branch that has no changes and has no new commits ahead of `main`, assume that branch is for you.
-2. If you are in a dirty place (uncommitted changes), stop and ask for human intervention.
-3. If the current branch (either you created or already present) is behind `origin/main`, bring it up to the latest `main` before you start your work.
-4. After you finish your work and perform validations, create a PR and make sure all checks pass before you finish your work.
 
 ## WuhuCore / WuhuCoreClient
 
