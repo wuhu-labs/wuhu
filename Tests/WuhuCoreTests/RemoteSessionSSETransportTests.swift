@@ -2,7 +2,7 @@ import Foundation
 import PiAI
 import Testing
 import WuhuAPI
-@testable import WuhuCore
+@testable import WuhuCoreClient
 
 struct RemoteSessionSSETransportTests {
   @Test func subscribe_parsesInitialAndEvents() async throws {

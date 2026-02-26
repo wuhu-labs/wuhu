@@ -4,7 +4,7 @@ import IdentifiedCollections
 import PiAI
 import WuhuAPI
 import WuhuClient
-import WuhuCore
+import WuhuCoreClient
 
 // MARK: - API Client Dependency
 

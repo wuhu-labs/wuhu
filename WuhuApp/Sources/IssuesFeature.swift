@@ -229,7 +229,7 @@ struct KanbanCard: View {
         .lineLimit(1)
     }
     .padding(10)
-    .background(isSelected ? Color.orange.opacity(0.08) : Color(.windowBackgroundColor))
+    .background(isSelected ? Color.orange.opacity(0.08) : cardBackgroundColor)
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .overlay(
       RoundedRectangle(cornerRadius: 8)
@@ -237,6 +237,14 @@ struct KanbanCard: View {
     )
     .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
     .contentShape(Rectangle())
+  }
+
+  private var cardBackgroundColor: Color {
+    #if os(macOS)
+      Color(.windowBackgroundColor)
+    #else
+      Color(.systemBackground)
+    #endif
   }
 
   private var priorityColor: Color {
@@ -275,6 +283,8 @@ struct IssuePopoverContent: View {
           .padding(24)
       }
     }
+    #if os(macOS)
     .frame(width: 640, height: 560)
+    #endif
   }
 }
