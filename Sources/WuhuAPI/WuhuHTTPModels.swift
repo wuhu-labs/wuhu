@@ -190,3 +190,11 @@ public struct WuhuStopSessionResponse: Sendable, Hashable, Codable {
     self.stopEntry = stopEntry
   }
 }
+
+public struct WuhuArchiveSessionResponse: Sendable, Hashable, Codable {
+  public var session: WuhuSession
+
+  public init(session: WuhuSession) {
+    self.session = session
+  }
+}

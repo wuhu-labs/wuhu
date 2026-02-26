@@ -11,6 +11,7 @@ struct MockSession: Identifiable, Equatable {
   var environmentName: String
   var model: String
   var status: SessionStatus
+  var isArchived: Bool = false
   var updatedAt: Date
   var messages: [MockMessage]
 

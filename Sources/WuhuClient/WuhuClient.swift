@@ -130,13 +130,18 @@ public struct WuhuClient: Sendable {
     return try WuhuJSON.decoder.decode(WuhuSetSessionModelResponse.self, from: data)
   }
 
-  public func listSessions(limit: Int? = nil) async throws -> [WuhuSession] {
+  public func listSessions(limit: Int? = nil, includeArchived: Bool = false) async throws -> [WuhuSession] {
     var url = baseURL.appending(path: "v1").appending(path: "sessions")
+    var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    var items: [URLQueryItem] = []
     if let limit {
-      var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-      components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
-      url = components?.url ?? url
+      items.append(URLQueryItem(name: "limit", value: String(limit)))
     }
+    if includeArchived {
+      items.append(URLQueryItem(name: "includeArchived", value: "true"))
+    }
+    components?.queryItems = items.isEmpty ? nil : items
+    url = components?.url ?? url
 
     let req = HTTPRequest(url: url, method: "GET")
     let (data, _) = try await http.data(for: req)
@@ -252,6 +257,28 @@ public struct WuhuClient: Sendable {
         task.cancel()
       }
     }
+  }
+
+  public func archiveSession(sessionID: String) async throws -> WuhuArchiveSessionResponse {
+    let url = baseURL
+      .appending(path: "v1")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "archive")
+    let req = HTTPRequest(url: url, method: "POST")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuArchiveSessionResponse.self, from: data)
+  }
+
+  public func unarchiveSession(sessionID: String) async throws -> WuhuArchiveSessionResponse {
+    let url = baseURL
+      .appending(path: "v1")
+      .appending(path: "sessions")
+      .appending(path: sessionID)
+      .appending(path: "unarchive")
+    let req = HTTPRequest(url: url, method: "POST")
+    let (data, _) = try await http.data(for: req)
+    return try WuhuJSON.decoder.decode(WuhuArchiveSessionResponse.self, from: data)
   }
 
   public func stopSession(

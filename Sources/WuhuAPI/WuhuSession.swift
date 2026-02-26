@@ -26,6 +26,9 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
   /// User-supplied custom title. When non-nil, clients should display this instead of the
   /// auto-derived title (e.g., first user message).
   public var customTitle: String?
+  /// When `true` the session is archived. Archived sessions are hidden from
+  /// the default list view but remain in the database and can be unarchived.
+  public var isArchived: Bool
   public var createdAt: Date
   public var updatedAt: Date
   public var headEntryID: Int64
@@ -43,6 +46,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     parentSessionID: String?,
     displayStartEntryID: Int64? = nil,
     customTitle: String? = nil,
+    isArchived: Bool = false,
     createdAt: Date,
     updatedAt: Date,
     headEntryID: Int64,
@@ -59,6 +63,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     self.parentSessionID = parentSessionID
     self.displayStartEntryID = displayStartEntryID
     self.customTitle = customTitle
+    self.isArchived = isArchived
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.headEntryID = headEntryID
@@ -77,6 +82,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     case parentSessionID
     case displayStartEntryID
     case customTitle
+    case isArchived
     case createdAt
     case updatedAt
     case headEntryID
@@ -96,6 +102,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     parentSessionID = try c.decodeIfPresent(String.self, forKey: .parentSessionID)
     displayStartEntryID = try c.decodeIfPresent(Int64.self, forKey: .displayStartEntryID)
     customTitle = try c.decodeIfPresent(String.self, forKey: .customTitle)
+    isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     createdAt = try c.decode(Date.self, forKey: .createdAt)
     updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     headEntryID = try c.decode(Int64.self, forKey: .headEntryID)
@@ -115,6 +122,7 @@ public struct WuhuSession: Sendable, Hashable, Codable, Identifiable {
     try c.encodeIfPresent(parentSessionID, forKey: .parentSessionID)
     try c.encodeIfPresent(displayStartEntryID, forKey: .displayStartEntryID)
     try c.encodeIfPresent(customTitle, forKey: .customTitle)
+    try c.encode(isArchived, forKey: .isArchived)
     try c.encode(createdAt, forKey: .createdAt)
     try c.encode(updatedAt, forKey: .updatedAt)
     try c.encode(headEntryID, forKey: .headEntryID)

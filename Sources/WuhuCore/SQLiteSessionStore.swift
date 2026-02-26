@@ -170,6 +170,7 @@ public actor SQLiteSessionStore: SessionStore {
         runnerName: runnerName,
         parentSessionID: parentSessionID,
         displayStartEntryID: nil,
+        isArchived: false,
         createdAt: now,
         updatedAt: now,
         headEntryID: nil,
@@ -216,9 +217,12 @@ public actor SQLiteSessionStore: SessionStore {
     }
   }
 
-  public func listSessions(limit: Int? = nil) async throws -> [WuhuSession] {
+  public func listSessions(limit: Int? = nil, includeArchived: Bool = false) async throws -> [WuhuSession] {
     try await dbQueue.read { db in
       var req = SessionRow.order(Column("updatedAt").desc)
+      if !includeArchived {
+        req = req.filter(Column("isArchived") == false)
+      }
       if let limit { req = req.limit(limit) }
       return try req.fetchAll(db).map { try $0.toModel() }
     }
@@ -506,6 +510,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
   var parentSessionID: String?
   var displayStartEntryID: Int64?
   var customTitle: String?
+  var isArchived: Bool
   var createdAt: Date
   var updatedAt: Date
   var headEntryID: Int64?
@@ -540,6 +545,7 @@ private struct SessionRow: Codable, FetchableRecord, MutablePersistableRecord {
       parentSessionID: parentSessionID,
       displayStartEntryID: displayStartEntryID,
       customTitle: customTitle,
+      isArchived: isArchived,
       createdAt: createdAt,
       updatedAt: updatedAt,
       headEntryID: headEntryID,
@@ -733,6 +739,12 @@ extension SQLiteSessionStore {
     migrator.registerMigration("wuhu_v4_custom_title") { db in
       try db.alter(table: "sessions") { t in
         t.add(column: "customTitle", .text)
+      }
+    }
+
+    migrator.registerMigration("wuhu_v5_archive") { db in
+      try db.alter(table: "sessions") { t in
+        t.add(column: "isArchived", .boolean).notNull().defaults(to: false)
       }
     }
 
@@ -1268,6 +1280,32 @@ extension SQLiteSessionStore {
       }
       let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
       row.customTitle = trimmed.isEmpty ? nil : trimmed
+      row.updatedAt = Date()
+      try row.update(db)
+      return try row.toModel()
+    }
+  }
+
+  // MARK: - Archive
+
+  public func archiveSession(id: String) async throws -> WuhuSession {
+    try await dbQueue.write { db in
+      guard var row = try SessionRow.fetchOne(db, key: id) else {
+        throw WuhuStoreError.sessionNotFound(id)
+      }
+      row.isArchived = true
+      row.updatedAt = Date()
+      try row.update(db)
+      return try row.toModel()
+    }
+  }
+
+  public func unarchiveSession(id: String) async throws -> WuhuSession {
+    try await dbQueue.write { db in
+      guard var row = try SessionRow.fetchOne(db, key: id) else {
+        throw WuhuStoreError.sessionNotFound(id)
+      }
+      row.isArchived = false
       row.updatedAt = Date()
       try row.update(db)
       return try row.toModel()

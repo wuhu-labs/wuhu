@@ -188,6 +188,14 @@ public actor WuhuService {
     try await store.renameSession(id: sessionID, title: title)
   }
 
+  public func archiveSession(sessionID: String) async throws -> WuhuSession {
+    try await store.archiveSession(id: sessionID)
+  }
+
+  public func unarchiveSession(sessionID: String) async throws -> WuhuSession {
+    try await store.unarchiveSession(id: sessionID)
+  }
+
   public func setSessionModel(sessionID: String, request: WuhuSetSessionModelRequest) async throws -> WuhuSetSessionModelResponse {
     _ = try await store.getSession(id: sessionID)
 
@@ -234,8 +242,8 @@ public actor WuhuService {
     )
   }
 
-  public func listSessions(limit: Int? = nil) async throws -> [WuhuSession] {
-    try await store.listSessions(limit: limit)
+  public func listSessions(limit: Int? = nil, includeArchived: Bool = false) async throws -> [WuhuSession] {
+    try await store.listSessions(limit: limit, includeArchived: includeArchived)
   }
 
   public func getSession(id: String) async throws -> WuhuSession {

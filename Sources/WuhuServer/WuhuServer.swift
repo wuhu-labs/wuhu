@@ -195,9 +195,12 @@ public struct WuhuServer: Sendable {
     }
 
     router.get("v1/sessions") { request, context async throws -> [WuhuSession] in
-      struct Query: Decodable { var limit: Int? }
+      struct Query: Decodable {
+        var limit: Int?
+        var includeArchived: Bool?
+      }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
-      return try await service.listSessions(limit: query.limit)
+      return try await service.listSessions(limit: query.limit, includeArchived: query.includeArchived ?? false)
     }
 
     router.get("v1/sessions/:id") { request, context async throws -> Response in
@@ -342,6 +345,20 @@ public struct WuhuServer: Sendable {
       let id = try context.parameters.require("id")
       let stopRequest = await (try? request.decode(as: WuhuStopSessionRequest.self, context: context)) ?? WuhuStopSessionRequest()
       let response = try await service.stopSession(sessionID: id, user: stopRequest.user)
+      return try context.responseEncoder.encode(response, from: request, context: context)
+    }
+
+    router.post("v1/sessions/:id/archive") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      let session = try await service.archiveSession(sessionID: id)
+      let response = WuhuArchiveSessionResponse(session: session)
+      return try context.responseEncoder.encode(response, from: request, context: context)
+    }
+
+    router.post("v1/sessions/:id/unarchive") { request, context async throws -> Response in
+      let id = try context.parameters.require("id")
+      let session = try await service.unarchiveSession(sessionID: id)
+      let response = WuhuArchiveSessionResponse(session: session)
       return try context.responseEncoder.encode(response, from: request, context: context)
     }
 
