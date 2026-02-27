@@ -31,10 +31,11 @@ public struct WuhuServer: Sendable {
     try ensureDirectoryExists(forDatabasePath: dbPath)
 
     let store = try SQLiteSessionStore(path: dbPath)
-    let workspaceDocsStore = WuhuWorkspaceDocsStore(
+    let workspaceDocsStore = try WuhuWorkspaceDocsStore(
       dataRoot: URL(fileURLWithPath: dbPath, isDirectory: false).deletingLastPathComponent(),
     )
     try workspaceDocsStore.ensureDefaultDirectories()
+    workspaceDocsStore.startWatching()
 
     let effectiveLogDir: String? = {
       if let llmRequestLogDir, !llmRequestLogDir.isEmpty { return llmRequestLogDir }
@@ -125,14 +126,14 @@ public struct WuhuServer: Sendable {
     }
 
     router.get("v1/workspace/docs") { _, _ async throws -> [WuhuWorkspaceDocSummary] in
-      try workspaceDocsStore.listDocs()
+      try await workspaceDocsStore.listDocs()
     }
 
     router.get("v1/workspace/doc") { request, context async throws -> Response in
       struct Query: Decodable { var path: String }
       let query = try request.uri.decodeQuery(as: Query.self, context: context)
       do {
-        let doc = try workspaceDocsStore.readDoc(relativePath: query.path)
+        let doc = try await workspaceDocsStore.readDoc(relativePath: query.path)
         return try context.responseEncoder.encode(doc, from: request, context: context)
       } catch let err as WuhuWorkspaceDocsStoreError {
         switch err {

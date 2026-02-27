@@ -31,6 +31,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/wuhu-labs/wuhu-ai.git", from: "0.1.0"),
+    .package(url: "https://github.com/wuhu-labs/wuhu-workspace-engine.git", from: "0.1.0"),
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "48a471ab313e858258ab0b9b0bf2cea55a50cefb"),
     .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
@@ -89,6 +90,8 @@ let package = Package(
         .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
         .product(name: "HummingbirdWSClient", package: "hummingbird-websocket"),
         .product(name: "Yams", package: "Yams"),
+        .product(name: "WorkspaceEngine", package: "wuhu-workspace-engine"),
+        .product(name: "WorkspaceScanner", package: "wuhu-workspace-engine"),
       ],
       swiftSettings: strictConcurrency,
     ),
