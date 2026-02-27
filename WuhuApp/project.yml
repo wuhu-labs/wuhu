@@ -100,6 +100,7 @@ targets:
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         NSMainStoryboardFile: ""
+        LSApplicationCategoryType: public.app-category.developer-tools
     entitlements:
       path: Sources/WuhuAppMac.entitlements
       properties:
@@ -112,6 +113,7 @@ targets:
         SWIFT_VERSION: "6.0"
         DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC: YES
         ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: YES
     dependencies:
       - package: Wuhu
