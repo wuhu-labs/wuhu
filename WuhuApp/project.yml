@@ -36,6 +36,7 @@ targets:
       - path: Sources
         excludes:
           - Info-macOS.plist
+          - WuhuAppMac.entitlements
     info:
       path: Sources/Info.plist
       properties:
@@ -53,12 +54,19 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+    entitlements:
+      path: Sources/WuhuApp.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ms.liu.wuhu.ios
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         SWIFT_VERSION: "6.0"
         DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC: YES
+        ENABLE_APP_SANDBOX: YES
+        CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: YES
     dependencies:
       - package: Wuhu
         product: WuhuAPI
@@ -84,6 +92,7 @@ targets:
       - path: Sources
         excludes:
           - Info.plist
+          - WuhuApp.entitlements
     info:
       path: Sources/Info-macOS.plist
       properties:
@@ -91,11 +100,21 @@ targets:
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         NSMainStoryboardFile: ""
+        LSApplicationCategoryType: public.app-category.developer-tools
+    entitlements:
+      path: Sources/WuhuAppMac.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ms.liu.wuhu.macos
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         SWIFT_VERSION: "6.0"
+        DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC: YES
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: YES
     dependencies:
       - package: Wuhu
         product: WuhuAPI
