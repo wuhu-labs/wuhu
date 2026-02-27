@@ -5,12 +5,12 @@ import WuhuAPI
 @testable import WuhuServer
 
 struct WuhuWorkspaceDocsStoreTests {
-  @Test func listDocsFindsMarkdownAndParsesFrontmatter() throws {
+  @Test func listDocsFindsMarkdownAndParsesFrontmatter() async throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
       .appendingPathComponent("wuhu-workspace-docs-\(UUID().uuidString.lowercased())", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = WuhuWorkspaceDocsStore(dataRoot: root)
+    let store = try WuhuWorkspaceDocsStore(dataRoot: root)
     try store.ensureDefaultDirectories()
 
     let issuePath = store.workspaceRoot
@@ -24,9 +24,6 @@ struct WuhuWorkspaceDocsStoreTests {
     title: Workspace docs
     status: open
     assignee: alice
-    tags:
-      - docs
-      - workspace
     ---
     # Hello
     """
@@ -34,21 +31,25 @@ struct WuhuWorkspaceDocsStoreTests {
     try issue.write(to: issuePath, atomically: true, encoding: .utf8)
     try "Just a note\n".write(to: notePath, atomically: true, encoding: .utf8)
 
-    let docs = try store.listDocs()
+    // Perform a scan so the engine picks up the files.
+    try await store.scanner.scan(into: store.engine)
+
+    let docs = try await store.listDocs()
     #expect(docs.map(\.path) == ["issues/0020.md", "note.md"])
 
     let issueDoc = try #require(docs.first(where: { $0.path == "issues/0020.md" }))
     #expect(issueDoc.frontmatter["status"]?.stringValue == "open")
     #expect(issueDoc.frontmatter["assignee"]?.stringValue == "alice")
-    #expect(issueDoc.frontmatter["tags"]?.array?.compactMap(\.stringValue) == ["docs", "workspace"])
+    // The engine stores properties as flat [String: String]; array values are not preserved.
+    #expect(issueDoc.frontmatter["kind"]?.stringValue == "issue")
   }
 
-  @Test func readDocReturnsBodyWithoutFrontmatter() throws {
+  @Test func readDocReturnsBodyWithoutFrontmatter() async throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
       .appendingPathComponent("wuhu-workspace-docs-\(UUID().uuidString.lowercased())", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = WuhuWorkspaceDocsStore(dataRoot: root)
+    let store = try WuhuWorkspaceDocsStore(dataRoot: root)
     try store.ensureDefaultDirectories()
 
     let path = store.workspaceRoot
@@ -63,22 +64,25 @@ struct WuhuWorkspaceDocsStoreTests {
     """
     try raw.write(to: path, atomically: true, encoding: .utf8)
 
-    let doc = try store.readDoc(relativePath: "issues/x.md")
+    // Perform a scan so the engine picks up the files.
+    try await store.scanner.scan(into: store.engine)
+
+    let doc = try await store.readDoc(relativePath: "issues/x.md")
     #expect(doc.frontmatter["status"]?.stringValue == "open")
     #expect(doc.body.contains("Body line 1"))
     #expect(!doc.body.contains("status: open"))
   }
 
-  @Test func readDocRejectsTraversal() throws {
+  @Test func readDocRejectsTraversal() async throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
       .appendingPathComponent("wuhu-workspace-docs-\(UUID().uuidString.lowercased())", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let store = WuhuWorkspaceDocsStore(dataRoot: root)
+    let store = try WuhuWorkspaceDocsStore(dataRoot: root)
     try store.ensureDefaultDirectories()
 
-    #expect(throws: WuhuWorkspaceDocsStoreError.self) {
-      _ = try store.readDoc(relativePath: "../secrets.md")
+    await #expect(throws: WuhuWorkspaceDocsStoreError.self) {
+      _ = try await store.readDoc(relativePath: "../secrets.md")
     }
   }
 }

@@ -1,7 +1,9 @@
 import Foundation
 import PiAI
+import WorkspaceContracts
+import WorkspaceEngine
+import WorkspaceScanner
 import WuhuAPI
-import Yams
 
 enum WuhuWorkspaceDocsStoreError: Error, Sendable, CustomStringConvertible {
   case invalidRelativePath(String)
@@ -26,10 +28,15 @@ enum WuhuWorkspaceDocsStoreError: Error, Sendable, CustomStringConvertible {
 struct WuhuWorkspaceDocsStore: Sendable {
   let dataRoot: URL
   let workspaceRoot: URL
+  let engine: WorkspaceEngine
+  let scanner: WorkspaceScanner
 
-  init(dataRoot: URL) {
+  init(dataRoot: URL) throws {
     self.dataRoot = dataRoot
     workspaceRoot = dataRoot.appendingPathComponent("workspace", isDirectory: true)
+    scanner = WorkspaceScanner(root: workspaceRoot)
+    let config = try scanner.loadConfiguration()
+    engine = try WorkspaceEngine(configuration: config)
   }
 
   func ensureDefaultDirectories() throws {
@@ -39,49 +46,52 @@ struct WuhuWorkspaceDocsStore: Sendable {
       at: workspaceRoot.appendingPathComponent("issues", isDirectory: true),
       withIntermediateDirectories: true,
     )
+
+    // Create a default wuhu.yml if one doesn't exist.
+    let configURL = workspaceRoot.appendingPathComponent("wuhu.yml")
+    if !fm.fileExists(atPath: configURL.path) {
+      let defaultConfig = """
+      kinds:
+        - kind: issue
+          properties:
+            - status
+            - priority
+            - assignee
+
+      rules:
+        - path: "issues/**"
+          kind: issue
+
+      """
+      try defaultConfig.write(to: configURL, atomically: true, encoding: .utf8)
+    }
   }
 
-  func listDocs() throws -> [WuhuWorkspaceDocSummary] {
-    let fm = FileManager.default
-    var isDir: ObjCBool = false
-    guard fm.fileExists(atPath: workspaceRoot.path, isDirectory: &isDir), isDir.boolValue else {
-      return []
+  /// Starts the file watcher in a background task. Call once at server startup.
+  func startWatching() {
+    Task {
+      try await scanner.watch(engine: engine)
     }
-
-    let keys: [URLResourceKey] = [.isRegularFileKey]
-    let enumerator = fm.enumerator(
-      at: workspaceRoot,
-      includingPropertiesForKeys: keys,
-      options: [.skipsHiddenFiles],
-    )
-
-    var out: [WuhuWorkspaceDocSummary] = []
-    if let enumerator {
-      for case let url as URL in enumerator {
-        guard url.pathExtension.lowercased() == "md" else { continue }
-        let values = try? url.resourceValues(forKeys: Set(keys))
-        guard values?.isRegularFile == true else { continue }
-
-        let rel = relativePath(for: url)
-        guard let raw = try? String(contentsOf: url, encoding: .utf8) else {
-          out.append(.init(path: rel, frontmatter: [:]))
-          continue
-        }
-
-        let parsed = parseMarkdown(raw: raw)
-        out.append(.init(path: rel, frontmatter: parsed.frontmatter))
-      }
-    }
-
-    return out.sorted { $0.path < $1.path }
   }
 
-  func readDoc(relativePath rawRelativePath: String) throws -> WuhuWorkspaceDoc {
+  func listDocs() async throws -> [WuhuWorkspaceDocSummary] {
+    let documents = try await engine.allDocuments()
+    return documents.map { doc in
+      WuhuWorkspaceDocSummary(path: doc.path, frontmatter: buildFrontmatter(from: doc))
+    }
+  }
+
+  func readDoc(relativePath rawRelativePath: String) async throws -> WuhuWorkspaceDoc {
     let relativePath = try sanitizeRelativePath(rawRelativePath)
     guard relativePath.lowercased().hasSuffix(".md") else {
       throw WuhuWorkspaceDocsStoreError.notMarkdown(relativePath)
     }
 
+    guard let doc = try await engine.document(at: relativePath) else {
+      throw WuhuWorkspaceDocsStoreError.notFound(relativePath)
+    }
+
+    // Read the body from disk — the engine intentionally does not store bodies.
     let docURL = workspaceRoot.appendingPathComponent(relativePath)
     let standardizedDoc = docURL.standardizedFileURL
     let standardizedRoot = workspaceRoot.standardizedFileURL
@@ -91,12 +101,6 @@ struct WuhuWorkspaceDocsStore: Sendable {
       throw WuhuWorkspaceDocsStoreError.invalidRelativePath(rawRelativePath)
     }
 
-    let fm = FileManager.default
-    var isDir: ObjCBool = false
-    guard fm.fileExists(atPath: standardizedDoc.path, isDirectory: &isDir), !isDir.boolValue else {
-      throw WuhuWorkspaceDocsStoreError.notFound(relativePath)
-    }
-
     let raw: String
     do {
       raw = try String(contentsOf: standardizedDoc, encoding: .utf8)
@@ -104,19 +108,24 @@ struct WuhuWorkspaceDocsStore: Sendable {
       throw WuhuWorkspaceDocsStoreError.failedToRead(relativePath, underlying: String(describing: error))
     }
 
-    let parsed = parseMarkdown(raw: raw)
-    return .init(path: relativePath, frontmatter: parsed.frontmatter, body: parsed.body)
+    // Strip frontmatter from the raw content to get the body.
+    let body = stripFrontmatter(raw)
+
+    return WuhuWorkspaceDoc(path: relativePath, frontmatter: buildFrontmatter(from: doc), body: body)
   }
 
-  private func relativePath(for absoluteURL: URL) -> String {
-    let root = workspaceRoot.standardizedFileURL.path
-    let abs = absoluteURL.standardizedFileURL.path
-    if abs == root { return "" }
-    let prefix = root.hasSuffix("/") ? root : (root + "/")
-    if abs.hasPrefix(prefix) {
-      return String(abs.dropFirst(prefix.count))
+  // MARK: - Private
+
+  private func buildFrontmatter(from doc: WorkspaceDocument) -> [String: JSONValue] {
+    var frontmatter: [String: JSONValue] = [:]
+    frontmatter["kind"] = .string(doc.record.kind.rawValue)
+    if let title = doc.record.title {
+      frontmatter["title"] = .string(title)
     }
-    return absoluteURL.lastPathComponent
+    for (key, value) in doc.properties {
+      frontmatter[key] = .string(value)
+    }
+    return frontmatter
   }
 
   private func sanitizeRelativePath(_ raw: String) throws -> String {
@@ -141,37 +150,18 @@ struct WuhuWorkspaceDocsStore: Sendable {
     return components.joined(separator: "/")
   }
 
-  private struct ParsedMarkdown: Sendable, Hashable {
-    var frontmatter: [String: JSONValue]
-    var body: String
-  }
-
-  private func parseMarkdown(raw: String) -> ParsedMarkdown {
+  private func stripFrontmatter(_ raw: String) -> String {
     var lines = raw.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
     guard let first = lines.first, first.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
-      return .init(frontmatter: [:], body: raw)
+      return raw
     }
     lines.removeFirst()
 
-    var fmLines: [Substring] = []
     while let line = lines.first {
       lines.removeFirst()
       if line.trimmingCharacters(in: .whitespacesAndNewlines) == "---" { break }
-      fmLines.append(line)
     }
 
-    let fmText = fmLines.map(String.init).joined(separator: "\n")
-
-    let frontmatter: [String: JSONValue] = {
-      guard !fmText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [:] }
-      do {
-        return try YAMLDecoder().decode([String: JSONValue].self, from: fmText)
-      } catch {
-        return [:]
-      }
-    }()
-
-    let body = lines.map(String.init).joined(separator: "\n")
-    return .init(frontmatter: frontmatter, body: body)
+    return lines.map(String.init).joined(separator: "\n")
   }
 }
