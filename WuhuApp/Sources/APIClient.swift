@@ -28,33 +28,84 @@ struct APIClient: Sendable {
   ) async throws -> WuhuSetSessionModelResponse
 }
 
+// MARK: - Shared Base URL Holder
+
+/// A sendable holder for the current workspace's base URL.
+/// Updated by AppFeature when the active workspace changes.
+final class BaseURLHolder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var _url: URL
+
+  init(_ url: URL) {
+    _url = url
+  }
+
+  var url: URL {
+    lock.lock()
+    defer { lock.unlock() }
+    return _url
+  }
+
+  func update(_ url: URL) {
+    lock.lock()
+    defer { lock.unlock() }
+    _url = url
+  }
+}
+
+/// Shared instance read by live API client and transport provider.
+/// Initialised from the persisted active workspace (or legacy UserDefaults key).
+let sharedBaseURL: BaseURLHolder = {
+  let workspaces = _loadWorkspacesSync()
+  let activeID = _loadActiveWorkspaceIDSync()
+  let ws = workspaces.first(where: { $0.id == activeID }) ?? workspaces.first ?? .default
+  let url = URL(string: ws.serverURL) ?? URL(string: "http://localhost:8080")!
+  return BaseURLHolder(url)
+}()
+
+/// Non-MainActor helpers for the shared initialiser. Only used at process start.
+private func _loadWorkspacesSync() -> [Workspace] {
+  guard let data = UserDefaults.standard.data(forKey: "wuhuWorkspaces"),
+        let ws = try? JSONDecoder().decode([Workspace].self, from: data),
+        !ws.isEmpty
+  else {
+    return [.default]
+  }
+  return ws
+}
+
+private func _loadActiveWorkspaceIDSync() -> UUID? {
+  guard let str = UserDefaults.standard.string(forKey: "wuhuActiveWorkspaceID") else { return nil }
+  return UUID(uuidString: str)
+}
+
 extension APIClient: DependencyKey {
   static let liveValue: APIClient = {
-    let urlString = UserDefaults.standard.string(forKey: "wuhuServerURL") ?? "http://localhost:8080"
-    let baseURL = URL(string: urlString) ?? URL(string: "http://localhost:8080")!
-    let client = WuhuClient(baseURL: baseURL)
+    let makeClient: @Sendable () -> WuhuClient = {
+      WuhuClient(baseURL: sharedBaseURL.url)
+    }
     return APIClient(
-      listSessions: { try await client.listSessions(includeArchived: $0) },
-      getSession: { try await client.getSession(id: $0) },
-      createSession: { try await client.createSession($0) },
-      listEnvironments: { try await client.listEnvironments() },
-      listWorkspaceDocs: { try await client.listWorkspaceDocs() },
-      readWorkspaceDoc: { try await client.readWorkspaceDoc(path: $0) },
+      listSessions: { try await makeClient().listSessions(includeArchived: $0) },
+      getSession: { try await makeClient().getSession(id: $0) },
+      createSession: { try await makeClient().createSession($0) },
+      listEnvironments: { try await makeClient().listEnvironments() },
+      listWorkspaceDocs: { try await makeClient().listWorkspaceDocs() },
+      readWorkspaceDoc: { try await makeClient().readWorkspaceDoc(path: $0) },
       enqueue: { sessionID, input, user, lane in
         let clientLane: WuhuClient.EnqueueLane = switch lane {
         case .steer: .steer
         case .followUp: .followUp
         }
-        return try await client.enqueue(sessionID: sessionID, input: input, user: user, lane: clientLane)
+        return try await makeClient().enqueue(sessionID: sessionID, input: input, user: user, lane: clientLane)
       },
       renameSession: { sessionID, title in
-        try await client.renameSession(id: sessionID, title: title)
+        try await makeClient().renameSession(id: sessionID, title: title)
       },
-      archiveSession: { try await client.archiveSession(sessionID: $0) },
-      unarchiveSession: { try await client.unarchiveSession(sessionID: $0) },
-      stopSession: { try await client.stopSession(sessionID: $0) },
+      archiveSession: { try await makeClient().archiveSession(sessionID: $0) },
+      unarchiveSession: { try await makeClient().unarchiveSession(sessionID: $0) },
+      stopSession: { try await makeClient().stopSession(sessionID: $0) },
       setSessionModel: { sessionID, provider, model, reasoningEffort in
-        try await client.setSessionModel(
+        try await makeClient().setSessionModel(
           sessionID: sessionID, provider: provider, model: model, reasoningEffort: reasoningEffort,
         )
       },
@@ -177,13 +228,9 @@ struct SessionTransportProvider: Sendable {
 }
 
 extension SessionTransportProvider: DependencyKey {
-  static let liveValue: SessionTransportProvider = {
-    let urlString = UserDefaults.standard.string(forKey: "wuhuServerURL") ?? "http://localhost:8080"
-    let baseURL = URL(string: urlString) ?? URL(string: "http://localhost:8080")!
-    return SessionTransportProvider(
-      make: { RemoteSessionSSETransport(baseURL: baseURL) },
-    )
-  }()
+  static let liveValue = SessionTransportProvider(
+    make: { RemoteSessionSSETransport(baseURL: sharedBaseURL.url) },
+  )
 }
 
 extension SessionTransportProvider: TestDependencyKey {

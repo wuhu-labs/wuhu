@@ -42,6 +42,11 @@ struct AppFeature {
     var channelRetrying = false
     var channelRetryAttempt = 0
     var channelRetryDelaySeconds: Double = 0
+
+    // Workspace state
+    var workspaces: [Workspace] = []
+    var activeWorkspace: Workspace = .default
+    var isShowingWorkspaceSwitcher = false
   }
 
   enum Action {
@@ -85,6 +90,11 @@ struct AppFeature {
     case channelSubscriptionEvent(SessionEvent)
     case channelConnectionStateChanged(SSEConnectionState)
     case channelSubscriptionFailed(String)
+
+    // Workspace
+    case workspacesLoaded([Workspace], active: Workspace)
+    case switchWorkspace(Workspace)
+    case workspaceSwitcherToggled(Bool)
   }
 
   private enum CancelID {
@@ -109,6 +119,21 @@ struct AppFeature {
         guard !state.hasLoaded else { return .none }
         state.isLoading = true
         state.hasLoaded = true
+
+        // Load workspaces from storage
+        let workspaces = WorkspaceStorage.loadWorkspaces()
+        let activeID = WorkspaceStorage.loadActiveWorkspaceID()
+        let active = workspaces.first(where: { $0.id == activeID }) ?? workspaces.first ?? .default
+        state.workspaces = workspaces
+        state.activeWorkspace = active
+        state.workspaceName = active.name
+
+        // Update the shared base URL
+        if let url = URL(string: active.serverURL) {
+          sharedBaseURL.update(url)
+        }
+        WorkspaceStorage.saveActiveWorkspaceID(active.id)
+
         let showArchived = state.sessions.showArchived
         return .run { send in
           async let sessionsResult = apiClient.listSessions(showArchived)
@@ -560,6 +585,135 @@ struct AppFeature {
       case .createSession:
         return .none
 
+      // MARK: - Workspace
+
+      case let .workspacesLoaded(workspaces, active):
+        state.workspaces = workspaces
+        state.activeWorkspace = active
+        state.workspaceName = active.name
+        return .none
+
+      case let .switchWorkspace(workspace):
+        guard workspace.id != state.activeWorkspace.id else { return .none }
+
+        // Update shared base URL
+        if let url = URL(string: workspace.serverURL) {
+          sharedBaseURL.update(url)
+        }
+
+        // Persist selection
+        WorkspaceStorage.saveActiveWorkspaceID(workspace.id)
+
+        // Update state
+        state.activeWorkspace = workspace
+        state.workspaceName = workspace.name
+        state.isShowingWorkspaceSwitcher = false
+
+        // Reset all loaded data
+        state.selection = .home
+        state.sessions.sessions = []
+        state.sessions.selectedSessionID = nil
+        state.channels = []
+        state.docs.docs = []
+        state.docs.selectedDocID = nil
+        state.issues.issues = []
+        state.issues.selectedIssueID = nil
+        state.home.events = []
+        state.activeChannelID = nil
+        state.channelTranscript = []
+        state.channelStreamingText = [:]
+
+        // Mark as needing reload and trigger it
+        state.hasLoaded = false
+        state.isLoading = true
+        state.hasLoaded = true
+
+        // Cancel existing subscriptions and timers, then reload
+        let showArchived = state.sessions.showArchived
+        return .merge(
+          .cancel(id: CancelID.refreshTimer),
+          .cancel(id: CancelID.channelRefreshTimer),
+          .cancel(id: CancelID.channelSubscription),
+          .run { send in
+            async let sessionsResult = apiClient.listSessions(showArchived)
+            async let docsResult = apiClient.listWorkspaceDocs()
+
+            let allSessions = try await sessionsResult
+            let allDocs = try await docsResult
+
+            let codingSessions = allSessions.filter { $0.type == .coding || $0.type == .forkedChannel }
+            let channelSessions = allSessions.filter { $0.type == .channel }
+
+            let sortedCodingSessions = codingSessions.sorted(by: { $0.updatedAt > $1.updatedAt })
+            let detailedSessions = await withTaskGroup(of: MockSession.self) { group in
+              for session in sortedCodingSessions {
+                group.addTask {
+                  if let response = try? await apiClient.getSession(session.id) {
+                    return MockSession.from(response)
+                  }
+                  return MockSession.from(session)
+                }
+              }
+              var results: [MockSession] = []
+              for await session in group {
+                results.append(session)
+              }
+              return results.sorted(by: { $0.updatedAt > $1.updatedAt })
+            }
+            let mockSessions: IdentifiedArrayOf<MockSession> = IdentifiedArray(
+              uniqueElements: detailedSessions,
+            )
+            let mockChannels: IdentifiedArrayOf<MockChannel> = IdentifiedArray(
+              uniqueElements: channelSessions
+                .sorted(by: { $0.updatedAt > $1.updatedAt })
+                .map { MockChannel.from($0) },
+            )
+
+            var docsList: [MockDoc] = []
+            var issuesList: [MockIssue] = []
+            for doc in allDocs {
+              if doc.path.hasPrefix("issues/"), let issue = MockIssue.from(doc) {
+                issuesList.append(issue)
+              } else {
+                docsList.append(MockDoc.from(doc))
+              }
+            }
+
+            let events: [MockActivityEvent] = allSessions
+              .sorted(by: { $0.updatedAt > $1.updatedAt })
+              .prefix(10)
+              .enumerated()
+              .map { index, session in
+                let description = switch session.type {
+                case .coding, .forkedChannel:
+                  "Session in \(session.environment.name) updated"
+                case .channel:
+                  "Activity in #\(session.environment.name)"
+                }
+                return MockActivityEvent(
+                  id: "ev-\(index)",
+                  description: description,
+                  timestamp: session.updatedAt,
+                  icon: session.type == .channel ? "bubble.left.and.bubble.right" : "terminal",
+                )
+              }
+
+            await send(.dataLoaded(
+              sessions: mockSessions,
+              channels: mockChannels,
+              docs: IdentifiedArray(uniqueElements: docsList),
+              issues: IdentifiedArray(uniqueElements: issuesList),
+              events: events,
+            ))
+          } catch: { _, send in
+            await send(.loadFailed)
+          },
+        )
+
+      case let .workspaceSwitcherToggled(shown):
+        state.isShowingWorkspaceSwitcher = shown
+        return .none
+
       case .docs, .home, .issues, .sessions:
         return .none
       }
@@ -672,13 +826,17 @@ struct AppView: View {
     #if os(iOS)
       .sheet(isPresented: $isShowingSettings) {
         NavigationStack {
-          SettingsView()
-            .navigationTitle("Settings")
-            .toolbar {
-              ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { isShowingSettings = false }
-              }
+          SettingsView(
+            workspaces: store.workspaces,
+            activeWorkspace: store.activeWorkspace,
+            onSwitchWorkspace: { ws in store.send(.switchWorkspace(ws)) },
+          )
+          .navigationTitle("Settings")
+          .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+              Button("Done") { isShowingSettings = false }
             }
+          }
         }
       }
     #endif
@@ -733,16 +891,7 @@ struct AppView: View {
     }
     .listStyle(.sidebar)
     .safeAreaInset(edge: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(store.workspaceName)
-          .font(.headline)
-        Text("Workspace")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
+      workspaceSwitcherHeader
     }
     .navigationSplitViewColumnWidth(min: 180, ideal: 220)
     .toolbar {
@@ -773,6 +922,45 @@ struct AppView: View {
         }
       }
     }
+  }
+
+  // MARK: - Workspace Switcher Header
+
+  private var workspaceSwitcherHeader: some View {
+    Menu {
+      ForEach(store.workspaces, id: \.id) { workspace in
+        Button {
+          store.send(.switchWorkspace(workspace))
+        } label: {
+          HStack {
+            Text(workspace.name)
+            if workspace.id == store.activeWorkspace.id {
+              Image(systemName: "checkmark")
+            }
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 1) {
+          Text(store.workspaceName)
+            .font(.headline)
+            .foregroundStyle(.primary)
+          Text(store.activeWorkspace.serverURL)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+        }
+        Spacer()
+        Image(systemName: "chevron.up.chevron.down")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 
   private func sidebarRow(_ title: String, icon: String, tag: SidebarSelection, count: Int = 0) -> some View {
@@ -906,7 +1094,15 @@ struct WuhuApp: App {
 
     #if os(macOS)
       Settings {
-        SettingsView()
+        SettingsView(
+          workspaces: WorkspaceStorage.loadWorkspaces(),
+          activeWorkspace: {
+            let ws = WorkspaceStorage.loadWorkspaces()
+            let id = WorkspaceStorage.loadActiveWorkspaceID()
+            return ws.first(where: { $0.id == id }) ?? ws.first ?? .default
+          }(),
+          onSwitchWorkspace: nil,
+        )
       }
     #endif
   }
@@ -915,18 +1111,89 @@ struct WuhuApp: App {
 // MARK: - Settings
 
 struct SettingsView: View {
-  @AppStorage("wuhuServerURL") private var serverURL = "http://localhost:8080"
   @AppStorage("wuhuUsername") private var username = ""
+  @State private var workspaces: [Workspace]
+  @State private var activeWorkspace: Workspace
+  var onSwitchWorkspace: ((Workspace) -> Void)?
+
+  @State private var isAddingWorkspace = false
+  @State private var newWorkspaceName = ""
+  @State private var newWorkspaceURL = "http://localhost:8080"
+
+  @State private var editingWorkspace: Workspace?
+  @State private var editName = ""
+  @State private var editURL = ""
+
+  init(
+    workspaces: [Workspace],
+    activeWorkspace: Workspace,
+    onSwitchWorkspace: ((Workspace) -> Void)?,
+  ) {
+    _workspaces = State(initialValue: workspaces)
+    _activeWorkspace = State(initialValue: activeWorkspace)
+    self.onSwitchWorkspace = onSwitchWorkspace
+  }
 
   var body: some View {
     Form {
-      Section("Server") {
-        TextField("Wuhu Server URL", text: $serverURL)
-          .textFieldStyle(.roundedBorder)
-        Text("Restart the app after changing the server URL.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      Section("Workspaces") {
+        ForEach(workspaces, id: \.id) { workspace in
+          HStack {
+            VStack(alignment: .leading, spacing: 2) {
+              HStack(spacing: 6) {
+                Text(workspace.name)
+                  .fontWeight(workspace.id == activeWorkspace.id ? .semibold : .regular)
+                if workspace.id == activeWorkspace.id {
+                  Text("Active")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange.opacity(0.15))
+                    .foregroundStyle(.orange)
+                    .clipShape(Capsule())
+                }
+              }
+              Text(workspace.serverURL)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if workspace.id != activeWorkspace.id {
+              Button("Switch") {
+                switchTo(workspace)
+              }
+              .buttonStyle(.borderless)
+            }
+            Button {
+              editingWorkspace = workspace
+              editName = workspace.name
+              editURL = workspace.serverURL
+            } label: {
+              Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless)
+            if workspaces.count > 1 {
+              Button(role: .destructive) {
+                removeWorkspace(workspace)
+              } label: {
+                Image(systemName: "trash")
+              }
+              .buttonStyle(.borderless)
+            }
+          }
+          .padding(.vertical, 2)
+        }
+
+        Button {
+          isAddingWorkspace = true
+          newWorkspaceName = ""
+          newWorkspaceURL = "http://localhost:8080"
+        } label: {
+          Label("Add Workspace", systemImage: "plus")
+        }
       }
+
       Section("Identity") {
         TextField("Username", text: $username)
           .textFieldStyle(.roundedBorder)
@@ -937,8 +1204,75 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     #if os(macOS)
-      .frame(width: 400)
+      .frame(width: 480)
     #endif
+      .alert("Add Workspace", isPresented: $isAddingWorkspace) {
+        TextField("Name", text: $newWorkspaceName)
+        TextField("Server URL", text: $newWorkspaceURL)
+        Button("Add") { addWorkspace() }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Enter a name and server URL for the new workspace.")
+      }
+      .alert("Edit Workspace", isPresented: Binding(
+        get: { editingWorkspace != nil },
+        set: { if !$0 { editingWorkspace = nil } },
+      )) {
+        TextField("Name", text: $editName)
+        TextField("Server URL", text: $editURL)
+        Button("Save") { saveEditedWorkspace() }
+        Button("Cancel", role: .cancel) { editingWorkspace = nil }
+      } message: {
+        Text("Update the workspace name and server URL.")
+      }
+  }
+
+  private func addWorkspace() {
+    let name = newWorkspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let url = newWorkspaceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !url.isEmpty else { return }
+    let workspace = Workspace(name: name, serverURL: url)
+    workspaces.append(workspace)
+    WorkspaceStorage.saveWorkspaces(workspaces)
+  }
+
+  private func removeWorkspace(_ workspace: Workspace) {
+    workspaces.removeAll { $0.id == workspace.id }
+    WorkspaceStorage.saveWorkspaces(workspaces)
+    // If we removed the active one, switch to the first available
+    if workspace.id == activeWorkspace.id, let first = workspaces.first {
+      switchTo(first)
+    }
+  }
+
+  private func switchTo(_ workspace: Workspace) {
+    activeWorkspace = workspace
+    WorkspaceStorage.saveActiveWorkspaceID(workspace.id)
+    onSwitchWorkspace?(workspace)
+  }
+
+  private func saveEditedWorkspace() {
+    guard let editing = editingWorkspace else { return }
+    let name = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let url = editURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !url.isEmpty else { return }
+
+    if let index = workspaces.firstIndex(where: { $0.id == editing.id }) {
+      workspaces[index].name = name
+      workspaces[index].serverURL = url
+      WorkspaceStorage.saveWorkspaces(workspaces)
+
+      // If we edited the active workspace, update it and notify
+      if editing.id == activeWorkspace.id {
+        activeWorkspace = workspaces[index]
+        // Update shared URL and notify reducer
+        if let parsedURL = URL(string: url) {
+          sharedBaseURL.update(parsedURL)
+        }
+        onSwitchWorkspace?(workspaces[index])
+      }
+    }
+    editingWorkspace = nil
   }
 }
 
