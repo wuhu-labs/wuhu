@@ -1,0 +1,29 @@
+{
+  "owner": "wuhu",
+  "exclude": [
+    "build",
+    "dist"
+  ],
+  "compilerOptions": {
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022",
+      "deno.ns"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "imports": {
+    "@std/path": "jsr:@std/path@1.0.8"
+  },
+  "tasks": {
+    "dev": "deno run -A npm:vite",
+    "fmt": "deno fmt --check .",
+    "typecheck": "deno check src vite.config.ts",
+    "lint": "deno lint src"
+  }
+}

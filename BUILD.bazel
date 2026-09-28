@@ -1,0 +1,6 @@
+exports_files([
+    ".bazelrc",
+    "MODULE.bazel.template",
+    "deno.json",
+    "deno.lock",
+])

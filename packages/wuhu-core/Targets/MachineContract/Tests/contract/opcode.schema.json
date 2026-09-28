@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Opcode","type":"string","enum":["control","exec-start","stdin","stdin-eof","output","exec-exit","ack","kill","vfs-request","vfs-response","search-request","search-response","vault-set","vault-remove","vault-list"]}

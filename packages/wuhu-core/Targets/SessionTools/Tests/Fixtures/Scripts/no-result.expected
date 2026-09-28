@@ -1,0 +1,6 @@
+=== run_script
+failed: script 00000000 finished without calling result()
+
+console:
+looked at everything
+warn: found nothing worth returning

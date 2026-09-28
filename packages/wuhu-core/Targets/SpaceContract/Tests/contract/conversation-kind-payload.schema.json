@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ConversationKindPayload","type":"string","enum":["users","box","dm_user","dm_session"]}

@@ -1,0 +1,1107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wuhu design tokens</title>
+    <style>
+    :root {
+      color-scheme: light;
+      --ink: #101318;
+      --muted: #61686f;
+      --faint: #8a9095;
+      --paper: #f6f7f2;
+      --mint: #59c9a5;
+      --blue: #5da2e8;
+      --violet: #8068ed;
+      --rose: #ba69a4;
+      --sidebar-w: 272px;
+      --rail-w: 64px;
+      --chrome-gap: 14px;
+      --content-left: calc(var(--sidebar-w) + var(--chrome-gap) * 2 + 34px);
+      --material: rgba(250, 251, 247, 0.6);
+      --material-strong: rgba(252, 253, 250, 0.88);
+      --material-border: rgba(255, 255, 255, 0.65);
+      --material-edge: rgba(16, 21, 28, 0.06);
+      --material-shadow: 0 18px 50px rgba(22, 28, 38, 0.12), 0 2px 8px rgba(22, 28, 38, 0.05);
+      --ease: cubic-bezier(0.22, 0.9, 0.24, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+        sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    button,
+    input {
+      font: inherit;
+      color: inherit;
+    }
+
+    .canvas {
+      position: fixed;
+      inset: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background:
+        radial-gradient(1100px 700px at 85% -10%, rgba(89, 201, 165, 0.2),
+        transparent 62%),
+        radial-gradient(900px 700px at -8% 62%, rgba(128, 104, 237, 0.11),
+        transparent 60%),
+        radial-gradient(800px 600px at 88% 105%, rgba(199, 104, 163, 0.1),
+        transparent 58%),
+        linear-gradient(150deg, #f8f8f2, #f2f7f2 52%, #f9f6f2);
+    }
+
+    .canvas::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.14;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+
+    .surface {
+      position: relative;
+      min-height: 100%;
+      padding: 128px var(--chrome-gap) 200px var(--content-left);
+      transition: padding 480ms var(--ease);
+    }
+
+    .surface-inner {
+      max-width: 1120px;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 26px;
+      color: #3c9478;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 26px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--mint);
+    }
+
+    h1.display {
+      margin: 0;
+      max-width: 16ch;
+      font-size: clamp(40px, 4.6vw, 64px);
+      font-weight: 800;
+      line-height: 1.04;
+      letter-spacing: -0.035em;
+    }
+
+    .lede {
+      max-width: 62ch;
+      margin: 22px 0 0;
+      color: #4a515a;
+      font-size: clamp(15px, 1.4vw, 17px);
+      line-height: 1.55;
+      letter-spacing: -0.008em;
+    }
+
+    .board {
+      margin-top: 26px;
+    }
+
+    .board h2 {
+      margin: 44px 0 0;
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .swatch {
+      margin: 0;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 10px 34px rgba(22, 28, 38, 0.05);
+    }
+
+    .chip {
+      height: 108px;
+    }
+
+    .swatch figcaption {
+      display: grid;
+      gap: 2px;
+      padding: 10px 12px 11px;
+    }
+
+    .swatch .name {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .swatch .value {
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .swatch.wide {
+      grid-column: span 2;
+    }
+
+    .chip.hairline {
+      border-bottom: 1px solid rgba(16, 21, 28, 0.07);
+    }
+
+    .chip.glass {
+      border-bottom: 1px solid var(--material-border);
+      backdrop-filter: blur(22px) saturate(1.7);
+      -webkit-backdrop-filter: blur(22px) saturate(1.7);
+    }
+
+    .ramp {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      height: 64px;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      margin-top: 14px;
+    }
+
+    .ramp > div {
+      position: relative;
+    }
+
+    .ramp span {
+      position: absolute;
+      left: 10px;
+      bottom: 8px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9px;
+      color: rgba(16, 19, 24, 0.55);
+    }
+
+    .ramp.on-dark {
+      background: #111420;
+    }
+    .ramp.on-dark span {
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .ramp-label {
+      margin-top: 8px;
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .material {
+      border: 1px solid var(--material-border);
+      outline: 1px solid var(--material-edge);
+      background: var(--material);
+      box-shadow: var(--material-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      backdrop-filter: blur(22px) saturate(1.7);
+      -webkit-backdrop-filter: blur(22px) saturate(1.7);
+    }
+
+    .sidebar {
+      position: fixed;
+      z-index: 10;
+      top: var(--chrome-gap);
+      bottom: var(--chrome-gap);
+      left: var(--chrome-gap);
+      display: flex;
+      flex-direction: column;
+      width: var(--sidebar-w);
+      overflow: hidden;
+      border-radius: 22px;
+      transition: width 420ms var(--ease), transform 420ms var(--ease), opacity
+        280ms ease;
+    }
+
+    .sidebar-header {
+      display: flex;
+      flex: none;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      padding: 0 12px 0 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      color: white;
+      background: #14171d;
+      font-size: 13px;
+      font-weight: 650;
+      box-shadow: 0 6px 16px rgba(20, 23, 29, 0.18);
+    }
+
+    .icon-button {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      cursor: pointer;
+      color: var(--muted);
+      transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+    }
+
+    .icon-button:hover {
+      background: rgba(16, 19, 24, 0.06);
+      color: var(--ink);
+    }
+    .icon-button:active {
+      transform: scale(0.94);
+    }
+
+    svg.i {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .sidebar-actions {
+      display: grid;
+      flex: none;
+      gap: 8px;
+      padding: 2px 12px 12px;
+    }
+
+    .new-session,
+    .search-field {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      height: 38px;
+      border-radius: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .new-session {
+      padding: 0 13px;
+      border: 0;
+      color: white;
+      background: #14171d;
+      box-shadow: 0 8px 20px rgba(20, 23, 29, 0.16);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .new-session .kbd {
+      margin-left: auto;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 11px;
+    }
+
+    .search-field {
+      padding: 0 12px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.5);
+      font-size: 12.5px;
+      text-align: left;
+    }
+
+    .search-field .kbd {
+      margin-left: auto;
+      padding: 2px 6px;
+      border: 1px solid rgba(16, 21, 28, 0.09);
+      border-radius: 5px;
+      color: var(--faint);
+      background: rgba(255, 255, 255, 0.5);
+      font-size: 10px;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 2px 10px 14px;
+      scrollbar-width: none;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 30px;
+      padding: 0 8px;
+      color: var(--faint);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .section-head .count {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9.5px;
+      letter-spacing: 0;
+    }
+
+    .tree {
+      display: grid;
+      gap: 1px;
+      margin-bottom: 14px;
+    }
+
+    .row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      height: 34px;
+      padding: 0 9px;
+      border-radius: 9px;
+      color: #40474e;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      text-decoration: none;
+      transition: background 140ms ease, color 140ms ease;
+    }
+
+    .row:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .row.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 2px 10px rgba(22, 28, 38, 0.05), inset 0 0 0 1px rgba(255, 255,
+        255, 0.7);
+      font-weight: 600;
+    }
+
+    .row.child {
+      margin-left: 22px;
+    }
+
+    .row.child::before {
+      content: "";
+      position: absolute;
+      top: -5px;
+      bottom: 16px;
+      left: -9px;
+      width: 9px;
+      border-bottom: 1px solid rgba(40, 48, 57, 0.16);
+      border-left: 1px solid rgba(40, 48, 57, 0.16);
+      border-bottom-left-radius: 6px;
+    }
+
+    .dot {
+      flex: none;
+      width: 7px;
+      height: 7px;
+      margin: 0 4px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 0 3px rgba(89, 201, 165, 0.14);
+    }
+
+    .dot.blue {
+      background: #619ee4;
+      box-shadow: 0 0 0 3px rgba(97, 158, 228, 0.14);
+    }
+    .dot.violet {
+      background: #7d6ce8;
+      box-shadow: 0 0 0 3px rgba(125, 108, 232, 0.14);
+    }
+    .dot.idle {
+      background: #b9bec3;
+      box-shadow: 0 0 0 3px rgba(150, 156, 162, 0.1);
+    }
+
+    .row-icon {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 17px;
+      height: 17px;
+      color: #767d84;
+    }
+
+    .row-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .row-meta {
+      margin-left: auto;
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9.5px;
+    }
+
+    .row.quiet {
+      color: var(--faint);
+      font-size: 12px;
+      height: 30px;
+    }
+    .row.quiet:hover {
+      color: var(--muted);
+    }
+
+    .sidebar-footer {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 10px;
+      min-height: 58px;
+      padding: 9px 12px 9px 14px;
+      border-top: 1px solid rgba(16, 21, 28, 0.05);
+      white-space: nowrap;
+    }
+
+    .avatar {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(140deg, #57c3a1, #7570e6 62%, #b3679d);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .account {
+      min-width: 0;
+      line-height: 1.2;
+    }
+    .account strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .account span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 10.5px;
+    }
+    .sidebar-footer .icon-button {
+      margin-left: auto;
+    }
+
+    .topbar {
+      position: fixed;
+      z-index: 9;
+      top: var(--chrome-gap);
+      right: var(--chrome-gap);
+      left: calc(var(--sidebar-w) + var(--chrome-gap) * 2);
+      display: flex;
+      align-items: center;
+      height: 50px;
+      padding: 0 8px 0 16px;
+      border-radius: 16px;
+      transition: left 420ms var(--ease), transform 420ms var(--ease), opacity 280ms
+        ease, box-shadow 300ms ease;
+    }
+
+    .crumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .crumbs .sep {
+      color: #b3b7ba;
+    }
+
+    .crumbs strong {
+      max-width: 300px;
+      overflow: hidden;
+      color: var(--ink);
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .surface-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 10px;
+      padding: 4px 9px;
+      border: 1px solid rgba(16, 21, 28, 0.06);
+      border-radius: 99px;
+      color: #5c6a62;
+      background: rgba(255, 255, 255, 0.45);
+      font-size: 10.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .surface-pill::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4fbc94;
+      box-shadow: 0 0 0 3px rgba(79, 188, 148, 0.13);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: auto;
+    }
+
+    .composer-zone {
+      position: fixed;
+      z-index: 9;
+      right: 0;
+      bottom: 18px;
+      left: var(--content-left);
+      display: flex;
+      justify-content: center;
+      padding: 0 var(--chrome-gap);
+      pointer-events: none;
+      transition: left 420ms var(--ease), transform 420ms var(--ease), opacity 280ms
+        ease;
+    }
+
+    .composer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: min(720px, 100%);
+      height: 56px;
+      padding: 6px 7px 6px 8px;
+      border-radius: 18px;
+      pointer-events: auto;
+    }
+
+    .session-chip {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 8px;
+      height: 42px;
+      max-width: 220px;
+      padding: 0 12px 0 9px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.55);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .session-chip .dot {
+      margin: 0;
+    }
+
+    .composer input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font-size: 13.5px;
+    }
+
+    .composer input::placeholder {
+      color: var(--faint);
+    }
+
+    .send-button {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      border: 0;
+      border-radius: 12px;
+      color: white;
+      background: #14171d;
+      box-shadow: 0 8px 18px rgba(20, 23, 29, 0.2);
+      cursor: pointer;
+    }
+
+    @media (max-width: 1360px) {
+      .composer-zone {
+        justify-content: flex-start;
+      }
+      .composer {
+        width: min(680px, calc(100% - 258px));
+      }
+    }
+
+    @media (max-width: 960px) {
+      :root {
+        --sidebar-w: var(--rail-w);
+        --content-left: calc(var(--rail-w) + var(--chrome-gap) * 2 + 18px);
+      }
+
+      .sidebar-header {
+        justify-content: center;
+        padding: 0;
+      }
+      .brand-name,
+      .collapse-button,
+      .new-session .row-label,
+      .new-session .kbd,
+      .search-field .row-label,
+      .search-field .kbd,
+      .section-head,
+      .row .row-label,
+      .row .row-meta,
+      .row.child,
+      .row.quiet,
+      .account,
+      .sidebar-footer .icon-button {
+        display: none;
+      }
+      .sidebar-actions {
+        padding: 2px 11px 12px;
+      }
+      .new-session,
+      .search-field,
+      .row {
+        justify-content: center;
+        padding: 0;
+      }
+      .sidebar-footer {
+        justify-content: center;
+        padding: 9px 0;
+      }
+
+      .swatch.wide {
+        grid-column: span 1;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 0.01ms !important;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <div class="canvas" id="canvas">
+      <main class="surface">
+        <div class="surface-inner">
+          <section>
+            <div class="eyebrow">Design tokens · Moodboard</div>
+            <h1 class="display">Thirty-two colors, <br>one temperament.</h1>
+            <p
+              class="lede">Canonical values ratified from the app-chrome v2 study. Warm paper, decisive ink, and a sparse mint-to-violet ramp that only appears where life is happening.</p>
+          </section>
+
+          <section class="board">
+            <h2>Ink &amp; neutrals</h2>
+            <div class="swatches">
+              <figure class="swatch">
+                <div class="chip" style="background:#101318"></div>
+                <figcaption><span class="name">Ink</span><span class="value">#101318 · text, marks</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#111420"></div>
+                <figcaption><span class="name">Ink surface</span><span class="value">#111420 · dark cards</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#333a42"></div>
+                <figcaption><span class="name">Grey strong</span><span class="value">#333a42 · emphasis body</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#4a515a"></div>
+                <figcaption><span class="name">Grey lede</span><span class="value">#4a515a · ledes, subtitles</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#61686f"></div>
+                <figcaption><span class="name">Grey muted</span><span class="value">#61686f · secondary text</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#8a9095"></div>
+                <figcaption><span class="name">Grey faint</span><span class="value">#8a9095 · labels, meta</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#b9bec3"></div>
+                <figcaption><span class="name">Grey idle</span><span class="value">#b9bec3 · disabled, idle dots</span></figcaption>
+              </figure>
+            </div>
+
+            <h2>Paper &amp; canvas</h2>
+            <div class="swatches">
+              <figure class="swatch">
+                <div class="chip hairline" style="background:#f6f7f2"></div>
+                <figcaption><span class="name">Paper</span><span class="value">#f6f7f2 · base</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip hairline" style="background:#f8f8f2"></div>
+                <figcaption><span class="name">Canvas warm</span><span class="value">#f8f8f2 · gradient start</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip hairline" style="background:#f2f7f2"></div>
+                <figcaption><span class="name">Canvas green</span><span class="value">#f2f7f2 · gradient mid</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip hairline" style="background:#f9f6f2"></div>
+                <figcaption><span class="name">Canvas rose</span><span class="value">#f9f6f2 · gradient end</span></figcaption>
+              </figure>
+            </div>
+
+            <h2>Accents</h2>
+            <div class="swatches">
+              <figure class="swatch">
+                <div class="chip" style="background:#59c9a5"></div>
+                <figcaption><span class="name">Mint</span><span class="value">#59c9a5 · brand, live</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#3c9478"></div>
+                <figcaption><span class="name">Mint deep</span><span class="value">#3c9478 · eyebrow text</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#35b991"></div>
+                <figcaption><span class="name">Green confirm</span><span class="value">#35b991 · checks, success</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#5da2e8"></div>
+                <figcaption><span class="name">Blue</span><span class="value">#5da2e8 · agents, links</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#8068ed"></div>
+                <figcaption><span class="name">Violet</span><span class="value">#8068ed · agents alt</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#6d73e6"></div>
+                <figcaption><span class="name">Indigo chart</span><span class="value">#6d73e6 · chart fills only</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip" style="background:#ba69a4"></div>
+                <figcaption><span class="name">Rose</span><span class="value">#ba69a4 · gradient tail</span></figcaption>
+              </figure>
+            </div>
+
+            <h2>Brand ramp</h2>
+            <div class="ramp"
+              style="grid-auto-flow: row; grid-auto-columns: unset; display: block; background: linear-gradient(92deg, #4cb999 4%, #5b9be2 46%, #8468ea 74%, #ba69a4 96%); height: 88px;"></div>
+            <div
+              class="ramp-label">linear-gradient(92deg, mint 4% → blue 46% → violet 74% → rose 96%) · display text and progress only</div>
+
+            <h2>Materials · blur only where layers meet</h2>
+            <div class="swatches">
+              <figure class="swatch wide">
+                <div class="chip glass"
+                  style="background: var(--material)"></div>
+                <figcaption><span class="name">Material edge</span><span class="value">rgba(250,251,247,.60) + blur 22 sat 1.7 · bars, sidebar, composer</span></figcaption>
+              </figure>
+              <figure class="swatch wide">
+                <div class="chip glass"
+                  style="background: var(--material-strong)"></div>
+                <figcaption><span class="name">Material strong</span><span class="value">rgba(252,253,250,.88) + blur 22 sat 1.7 · text over busy content</span></figcaption>
+              </figure>
+              <figure class="swatch">
+                <div class="chip"
+                  style="background: linear-gradient(180deg, rgba(255,255,255,0.65), rgba(255,255,255,0.65)), linear-gradient(90deg, #d8dcd4, #d8dcd4)"></div>
+                <figcaption><span class="name">Hairline</span><span class="value">rgba(255,255,255,.65) · panel edges</span></figcaption>
+              </figure>
+            </div>
+
+            <h2>White alpha ramp · on ink surface</h2>
+            <div class="ramp on-dark">
+              <div
+                style="background:rgba(255,255,255,0.08)"><span>.08 track</span></div>
+              <div
+                style="background:rgba(255,255,255,0.14)"><span>.14 faint</span></div>
+              <div
+                style="background:rgba(255,255,255,0.40)"><span>.40 kbd</span></div>
+              <div
+                style="background:rgba(255,255,255,0.55)"><span>.55 field</span></div>
+              <div
+                style="background:rgba(255,255,255,0.70)"><span>.70 hover</span></div>
+              <div
+                style="background:rgba(255,255,255,0.85)"><span>.85 active</span></div>
+            </div>
+            <div
+              class="ramp-label">rgba(255,255,255,α) · six steps: track / faint fill / kbd / field / hover / active</div>
+
+            <h2>Border ink ramp · on paper</h2>
+            <div class="ramp">
+              <div
+                style="background:rgba(16,21,28,0.04)"><span>.04 wash</span></div>
+              <div
+                style="background:rgba(16,21,28,0.05)"><span>.05 divider</span></div>
+              <div
+                style="background:rgba(16,21,28,0.07)"><span>.07 border</span></div>
+              <div
+                style="background:rgba(16,21,28,0.09)"><span>.09 control</span></div>
+              <div
+                style="background:rgba(16,21,28,0.16)"><span>.16 connector</span></div>
+              <div
+                style="background:rgba(16,21,28,0.22)"><span>.22 scaffold</span></div>
+            </div>
+            <div
+              class="ramp-label">rgba(16,21,28,α) · one ink, six alphas: wash / divider / border / control / connector / scaffold</div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <aside class="sidebar material" id="sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <span class="brand-mark">w</span>
+          <span class="brand-name">wuhu</span>
+        </div>
+        <button class="icon-button collapse-button" id="collapseButton"
+          aria-label="Collapse to rail" title="Collapse to rail">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="sidebar-actions">
+        <button class="new-session" type="button" title="New session">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span class="row-label">New session</span>
+          <span class="kbd">⌘N</span>
+        </button>
+        <button class="search-field" type="button" title="Search this space">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <span class="row-label">Search this space</span>
+          <span class="kbd">⌘K</span>
+        </button>
+      </div>
+
+      <div class="sidebar-scroll">
+        <div
+          class="section-head"><span>Sessions</span><span class="count">5 active</span></div>
+        <div class="tree">
+          <div class="row" title="Wuhu redesign">
+            <span class="dot"></span>
+            <span class="row-label">Wuhu redesign</span>
+            <span class="row-meta">3</span>
+          </div>
+          <div class="row child" title="Chrome direction">
+            <span class="dot blue"></span>
+            <span class="row-label">Chrome direction</span>
+          </div>
+          <div class="row child" title="Session tree">
+            <span class="dot violet"></span>
+            <span class="row-label">Session tree</span>
+          </div>
+          <div class="row child" title="Artifact depth">
+            <span class="dot"></span>
+            <span class="row-label">Artifact depth</span>
+          </div>
+          <div class="row" title="Ship v0">
+            <span class="dot blue"></span>
+            <span class="row-label">Ship v0</span>
+            <span class="row-meta">2</span>
+          </div>
+          <div class="row" title="Bounded views research">
+            <span class="dot idle"></span>
+            <span class="row-label">Bounded views research</span>
+          </div>
+          <div class="row quiet" title="Archived sessions">
+            <span class="row-icon">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 8h14v11H5zM4 5h16v3H4zM10 12h4" />
+              </svg>
+            </span>
+            <span class="row-label">Archived</span>
+            <span class="row-meta">12</span>
+          </div>
+        </div>
+
+        <div class="section-head"><span>Space</span></div>
+        <div class="tree">
+          <a class="row" href="./v2.html" title="Home">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v9H4zM9 19v-6h6v6"/></svg></span>
+            <span class="row-label">Home</span>
+          </a>
+          <div class="row" title="Issues">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l2 2h8v10H4z"/></svg></span>
+            <span class="row-label">Issues</span>
+            <span class="row-meta">55</span>
+          </div>
+          <div class="row" title="Notes">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 12h7M9 16h5"/></svg></span>
+            <span class="row-label">Notes</span>
+          </div>
+          <div class="row" title="Plans">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg></span>
+            <span class="row-label">Plans</span>
+          </div>
+          <a class="row active" href="./tokens.html" title="Tokens">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3.5"/><circle cx="16" cy="15" r="3.5"/></svg></span>
+            <span class="row-label">Tokens</span>
+          </a>
+        </div>
+      </div>
+
+      <footer class="sidebar-footer">
+        <div class="avatar">AM</div>
+        <div class="account">
+          <strong>Alex Morgan</strong>
+          <span>space.example.com · connected</span>
+        </div>
+        <button class="icon-button" aria-label="Space settings"
+          title="Space settings">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19 12a7 7 0 0 0-.08-1l2-1.5-2-3.5-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 8.8 7L6.5 6l-2 3.5L6.6 11a7 7 0 0 0 0 2L4.5 14.5l2 3.5 2.3-1a8 8 0 0 0 1.6 1l.3 2.6h4L15 18a8 8 0 0 0 1.5-1l2.4 1 2-3.5-2-1.5a7 7 0 0 0 .1-1Z" />
+          </svg>
+        </button>
+      </footer>
+    </aside>
+
+    <header class="topbar material" id="topbar">
+      <div class="crumbs">
+        <span>design</span>
+        <span class="sep">/</span>
+        <strong>tokens</strong>
+        <span class="surface-pill">HTML artifact</span>
+      </div>
+      <div class="top-actions">
+        <button class="icon-button" aria-label="Share" title="Share">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15V4M8 8l4-4 4 4M5 13v7h14v-7" />
+          </svg>
+        </button>
+        <button class="icon-button" aria-label="More" title="More">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+            <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="composer-zone">
+      <div class="composer material">
+        <button class="session-chip" type="button" title="Session">
+          <span class="dot"></span>
+          <span class="row-label">Wuhu redesign</span>
+        </button>
+        <input aria-label="Message this session"
+          placeholder="Ask Wuhu about these tokens…">
+        <button class="send-button" aria-label="Send">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m5 12 14-7-5 14-2.5-5.5zM11.5 13.5 19 5" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <script>
+    const canvas = document.getElementById('canvas')
+    const topbar = document.getElementById('topbar')
+    const body = document.body
+    document.getElementById('collapseButton').addEventListener('click', () => {
+      const compact =
+        getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w')
+          .trim() === '64px'
+      document.documentElement.style.setProperty(
+        '--sidebar-w',
+        compact ? '272px' : '64px',
+      )
+    })
+    canvas.addEventListener('scroll', () => {
+      topbar.style.boxShadow = canvas.scrollTop > 8
+        ? 'var(--material-shadow), inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 0 rgba(16,21,28,0.04)'
+        : ''
+    }, { passive: true })
+    </script>
+  </body>
+</html>

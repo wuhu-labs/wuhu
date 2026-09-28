@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+real="${BAZEL_REAL:-}"
+
+if [[ -z "$real" ]]; then
+  echo "tools/bazel is a Bazelisk workspace wrapper; BAZEL_REAL is unset" >&2
+  exit 2
+fi
+
+stamp="$repo/.wuhu/manifest-stamp"
+outputs="$repo/.wuhu/manifest-outputs"
+provenance="$repo/.wuhu/manifest-provenance"
+lock="$repo/.wuhu/manifest-lock"
+lock_held=0
+
+release_lock() {
+  if [[ "$lock_held" == "1" ]]; then
+    rm -f "$lock/pid"
+    rmdir "$lock" 2>/dev/null || true
+    lock_held=0
+  fi
+}
+
+acquire_lock() {
+  while ! mkdir "$lock" 2>/dev/null; do
+    if [[ -f "$lock/pid" ]]; then
+      owner="$(<"$lock/pid")"
+      if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+        stale="$lock.stale.$$"
+        if mv "$lock" "$stale" 2>/dev/null; then
+          rm -rf "$stale"
+        fi
+      fi
+    fi
+    sleep 0.05
+  done
+  printf '%s\n' "$$" >"$lock/pid"
+  lock_held=1
+}
+
+generated_output_missing() {
+  [[ -s "$outputs" ]] || return 0
+  while IFS= read -r output; do
+    [[ -n "$output" && -e "$repo/$output" ]] || return 0
+  done <"$outputs"
+  while IFS= read -r manifest; do
+    [[ -e "${manifest%/package.yml}/BUILD.bazel" ]] || return 0
+  done < <(find "$repo/packages" -mindepth 2 -maxdepth 2 -name package.yml -type f)
+  return 1
+}
+
+manifests_stale() {
+  [[ -e "$stamp" ]] || return 0
+  [[ -s "$provenance" ]] || return 0
+  generated_output_missing && return 0
+  snapshot="$(
+    cd "$repo"
+    deno run --quiet --allow-read tools/manifest-gen/provenance.ts \
+      --newer-than "$stamp"
+  )"
+  current="${snapshot%%$'\n'*}"
+  freshness="${snapshot#*$'\n'}"
+  recorded="$(<"$provenance")"
+  [[ "$current" != "$recorded" || "$freshness" == "newer" ]]
+}
+
+if [[ "${WUHU_BAZEL_RAW:-0}" != "1" ]]; then
+  mkdir -p "$(dirname "$stamp")"
+  if manifests_stale; then
+    acquire_lock
+    trap release_lock EXIT HUP INT TERM
+    if manifests_stale; then
+      (cd "$repo" && deno task generate-manifests) >&2
+      if manifests_stale; then
+        echo "manifest generation did not publish current provenance" >&2
+        exit 1
+      fi
+    fi
+    release_lock
+    trap - EXIT HUP INT TERM
+  fi
+fi
+
+# Bazel keys its output base on the workspace path. The CI runner mints a
+# random workspace directory per job, so without a pin every job leaks a fresh
+# multi-gigabyte output base that nothing ever prunes.
+# `bazel --version` is answered by the client without a server and rejects any
+# startup option before it, so that one form stays bare.
+if [[ -n "${WUHU_BAZEL_OUTPUT_BASE:-}" && "${1:-}" != "--version" ]]; then
+  exec "$real" --output_base="$WUHU_BAZEL_OUTPUT_BASE" "$@"
+fi
+
+exec "$real" "$@"

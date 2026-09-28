@@ -1,0 +1,25 @@
+name: MachineAgent
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - MachineContract
+  - MachineChannel
+  - SpaceFS
+  - JSONValue
+  - OrderedCollections
+  - Logging
+  - Dependencies
+  - Subprocess
+  - SystemPackage
+tests:
+  dependencies:
+    - MachineContract
+    - MachineChannel
+    - JSONValue
+    - Dependencies
+    - DependenciesTestSupport
+    - Clocks
+    - Scratch

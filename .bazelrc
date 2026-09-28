@@ -1,0 +1,68 @@
+# .bazelrc — Wuhu project Bazel configuration
+
+# Machine-local and LAN-only configuration (the remote cache behind
+# --config=remote-cache) lives in private/, which the public export leaves out.
+try-import %workspace%/private/remote-cache.bazelrc
+
+# Throttle progress output. This was a `--config=ci` for months, which meant every
+# invocation everywhere had to opt in to a cosmetic flag; it applies always now.
+common --show_progress_rate_limit=0.2
+
+# Apple platform package checks. Setting the target platform (rather than the
+# legacy --cpu/--apple_platform_type pair) is what makes these lanes real: a
+# simulator platform retargets every swift_library in the graph, so iOS-only
+# API and #if os(...) branches are actually compiled. The mac and linux lanes
+# stay on the host platform so neither is pinned to an architecture.
+common:ios --platforms=@build_bazel_apple_support//platforms:ios_sim_arm64
+common:ios-device --platforms=@build_bazel_apple_support//platforms:ios_arm64 --apple_platform_type=ios --cpu=ios_arm64
+test:ios --local_resources=simulators=1
+test:ios --test_env=LAKERIDGE_SIM
+common:tvos --platforms=@build_bazel_apple_support//platforms:tvos_sim_arm64
+common:tvos-device --platforms=@build_bazel_apple_support//platforms:tvos_arm64 --apple_platform_type=tvos --cpu=tvos_arm64
+test:tvos --local_resources=simulators=1
+test:tvos --test_env=LAKERIDGE_SIM
+
+# A rule's `tags` reach every action it generates, so the simulator lease that
+# belongs to the test run would also serialize that target's bundling, plist and
+# codesign actions against every other running test. Strip it everywhere but the
+# runner.
+test:ios --modify_execution_info=^(?!TestRunner$).*=-resources:simulators:1
+test:tvos --modify_execution_info=^(?!TestRunner$).*=-resources:simulators:1
+common:visionos --platforms=@build_bazel_apple_support//platforms:visionos_sim_arm64
+test:visionos --local_resources=simulators=1
+test:visionos --test_env=LAKERIDGE_SIM
+test:visionos --modify_execution_info=^(?!TestRunner$).*=-resources:simulators:1
+common:visionos-device --platforms=@build_bazel_apple_support//platforms:visionos_arm64 --apple_platform_type=visionos --cpu=visionos_arm64
+common:watchos --platforms=@build_bazel_apple_support//platforms:watchos_arm64
+common:watchos-device --platforms=@build_bazel_apple_support//platforms:watchos_arm64_32 --apple_platform_type=watchos --cpu=watchos_arm64_32
+
+# `common:`, like ios-device: a `build:` config makes `bazel query --config=sign-store`
+# error out, and the analysis-shaped signing checks query before they build.
+common:sign-adhoc --//bazel/signing:variant=adhoc
+common:sign-store --//bazel/signing:variant=store
+
+# Version stamping. Always on, for all builds including local: BuildStamp
+# skew detection only works if every binary carries its true provenance.
+build --workspace_status_command=tools/workspace-status.sh
+
+# Swift-specific
+build --features=swift.use_global_module_cache
+
+# Output
+common --symlink_prefix=.bazel/
+build --show_result=10
+build --verbose_failures
+
+# Warnings from code we do not own. `--output_filter` gates warnings and the output of
+# *succeeding* actions by owning rule label, and `^//` matches the main repository only, so every
+# external repository's diagnostics stop reaching the log while ours keep arriving. It is a display
+# filter, not a compiler flag: no action, cache key or diagnostic is changed, and a failing action
+# is an ERROR event, which is never filtered — its command line and full stderr still print.
+build --output_filter=^//
+
+# Performance
+build --jobs=auto
+
+# Test output
+test --test_output=errors
+test --test_summary=terse

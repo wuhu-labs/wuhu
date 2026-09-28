@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"EnrollConsumeOutput","type":"object","properties":{"account":{"type":"string"},"capabilities":{"type":"array","items":{"type":"string"}},"machine":{"type":["string","null"]},"machineName":{"type":["string","null"]}},"required":["account","capabilities"],"additionalProperties":false}

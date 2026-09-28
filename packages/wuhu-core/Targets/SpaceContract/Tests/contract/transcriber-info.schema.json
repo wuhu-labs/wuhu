@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"TranscriberInfo","type":"object","properties":{"available":{"type":"boolean"},"provider":{"type":["string","null"]},"model":{"type":["string","null"]}},"required":["available"],"additionalProperties":false}

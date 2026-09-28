@@ -1,0 +1,14 @@
+--- a/tools/test_observer/SwiftTestingRunner.swift
++++ b/tools/test_observer/SwiftTestingRunner.swift
+@@ -144,7 +144,10 @@
+   /// - Parameter selectedTests: If this parameter is not nil, only the given list of tests will be
+   ///   run by passing them as filters to the entry point. If nil, all tests will be run.
+   private func runTests(selectedTests: [Test]?) async throws {
+-    var runTestsConfiguration: [String: JSON] = [:]
++    // Verbosity -1: swift-testing's console recorder drops the started/passed events for runs,
++    // suites, tests and parameterized cases, and keeps issues, their source locations and the run
++    // summary. The xUnit records below come from the event stream and are unaffected.
++    var runTestsConfiguration: [String: JSON] = ["quiet": true]
+     if let selectedTests {
+       // If we applied a test filter and no tests were selected, setting the `filter` configuration
+       // value to an empty array will be treated by the runner as if there were no filter (and thus

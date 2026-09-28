@@ -1,0 +1,39 @@
+name: wuhu-ai
+owner: shared
+swiftToolsVersion: "6.2"
+packageName: WuhuAI
+products:
+  - WuhuAI
+platforms:
+  macOS: "26.0"
+  iOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]
+externalPackages:
+  wuhu-json:
+    path: ../wuhu-json
+    products: [JSONValue]
+  wuhu-fetch:
+    path: ../wuhu-fetch
+    products: [Fetch, FetchSSE]
+  wuhu-test-support:
+    path: ../wuhu-test-support
+    products: [WuhuRecordReplay]
+  swift-clocks:
+    url: https://github.com/pointfreeco/swift-clocks
+    branch: clocks-2
+    products: [Clocks]
+  swift-dependencies:
+    url: https://github.com/pointfreeco/swift-dependencies.git
+    from: "1.14.1"
+    products: [Dependencies]
+  swift-http-types:
+    url: https://github.com/apple/swift-http-types.git
+    from: "1.5.1"
+    products: [HTTPTypes]
+  swift-collections:
+    url: https://github.com/apple/swift-collections
+    from: "1.1.0"
+    products: [OrderedCollections]

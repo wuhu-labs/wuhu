@@ -1,0 +1,6 @@
+name: SpaceFS
+kind: library
+sources: Sources
+dependencies:
+  - SpaceContract
+tests: {}

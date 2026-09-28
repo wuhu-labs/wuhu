@@ -1,0 +1,123 @@
+# macOS / editors
+.DS_Store
+.vscode/
+__pycache__/
+**/__pycache__/
+
+# Local agent context overrides
+AGENTS.local.md
+**/AGENTS.local.md
+AGENTS.*.local.md
+**/AGENTS.*.local.md
+state.md
+**/state.md
+TASK.md
+
+# Swift / SwiftPM
+.build/
+.swiftpm/
+*.xcodeproj
+*.trace/
+Benchmarks/
+# Generated manifests. Source of truth is package.yml / target.yml / app.yml;
+# run deno task generate-manifests before invoking build tools.
+packages/*/Package.swift
+.bazelignore
+packages/*/BUILD.bazel
+packages/*/*/BUILD.bazel
+packages/*/Apps/*/**/BazelInfo*.plist
+packages/*/Apps/*/*-dev.entitlements
+packages/*/Apps/*/*-release.entitlements
+bazel/umbrella/Package.swift
+# Per-package Package.resolved files churn locally and are derived
+# state; they're re-resolved from each package's manifest.
+packages/*/Package.resolved
+# OpenAPI-generated contract sources. Produced in the Bazel build graph by the
+# `wuhu_openapi_sources` rule (bazel/rules/rules.bzl) into the output tree, and
+# materialized into Sources/ only by the manual `deno task generate-openapi`
+# SwiftPM escape hatch. Never checked in — the document is the source of truth.
+packages/wuhu-contract/Targets/ContractTypes/Sources/Types.swift
+packages/wuhu-contract/Targets/ContractClient/Sources/Client.swift
+packages/wuhu-contract/Targets/ContractServer/Sources/Server.swift
+# Scenario content compiled from packages/*/Scenarios/ by tools/scenario-compile,
+# run as part of `deno task generate-manifests`. The YAML/Markdown is the source
+# of truth.
+packages/*/Targets/*/Sources/Generated/
+
+# VSCode + Swift LSP + Bazel
+# No idea why not in .build
+*.d
+*.dia
+*.o
+*.swiftdeps
+*.swiftmodule
+
+# Xcode
+DerivedData/
+**/xcuserdata/
+*.xcuserstate
+
+# Generated projects / local Xcode state. `generate-manifests --workspace <pkg>`
+# writes the XcodeGen spec, the app-shell project, and the workspace; all three
+# are derived from package.yml/app.yml and interactive-only.
+*.xcworkspace
+packages/*/Apps/*/.xcodegen.json
+packages/*/Apps/*/.xcodegen/
+packages/*/Apps/*/.xcodegen-local.yml
+
+# Tuist (legacy, to be removed)
+Derived/
+packages/wuhu-app/Derived/
+packages/wuhu-app/WuhuAppKit.xcodeproj
+
+# Build artifacts
+build-mac/
+build-archives/
+dist/
+# The workspace-root convenience symlinks only: unanchored, this also swallows
+# any nested directory named bazel-*, such as ci/images/bazel-linux.
+/bazel-*
+.bazel/
+
+# Wallet state written by `wuhu use` in any checkout or worktree. Only the
+# skills symlink is tracked.
+.wuhu/*
+!.wuhu/skills
+
+# CI intermediate results (xcresult bundles etc.)
+.ci/
+
+# Locally generated public interface snapshots (published to R2 by CI).
+interfaces/
+
+# Locally generated alignment SVG (published to R2 by CI).
+products/wuhu/notes/alignment-status.svg
+
+.wrangler/
+
+# Local SPM package build artifacts
+packages/*/.build/
+# cTarget-lowering upstream checkouts fetched by generate-manifests --swiftpm
+packages/*/.upstream/
+
+# Tuist
+Tuist/.build/
+Tuist/.package.resolved
+.alignment-snapshot/
+
+# Generated Bazel module manifest
+MODULE.bazel
+node_modules/
+packages/wuhu-web/build/
+packages/wuhu-web/.react-router/
+packages/wuhu-web/app/lib/contract.gen.ts
+packages/wuhu-web/app/app/lib/space-url.vectors.json
+
+.local/
+
+# Local secrets (TMDB key etc.)
+.env
+
+# Agent worktrees (isolation mode). Untracked, and a stray `git add -A` during an
+# agent run would otherwise commit them as embedded repos.
+/.claude/worktrees/

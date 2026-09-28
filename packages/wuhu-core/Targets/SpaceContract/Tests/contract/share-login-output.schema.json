@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ShareLoginOutput","type":"object","properties":{"token":{"type":"string"},"expiresAt":{"type":"number"},"space":{"type":"string"},"fingerprint":{"type":["string","null"]}},"required":["token","expiresAt","space"],"additionalProperties":false}

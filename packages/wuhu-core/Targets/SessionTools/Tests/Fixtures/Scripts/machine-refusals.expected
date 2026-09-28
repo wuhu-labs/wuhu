@@ -1,0 +1,18 @@
+=== run_script
+unknown machine: no machine named nowhere
+detached machine: machine away is not attached
+relative path: readText takes an absolute path on the machine
+relative cwd: cwd must be an absolute path on the machine
+placeholder in the command: the command holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
+placeholder in env: env AUTH holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
+bad env name: exec: 'A-B' is not a usable environment variable name
+placeholder on stdin: stdin holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
+stdin not asked for: process ex_acg7ja0l was spawned without { stdin: true }
+a ninth process: a script runs at most 8 machine processes at once; wait for one to exit or kill it first
+once one exits: ok
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+killed when the script ended: 10 of 10
+=== probe
+owner rows left: 0

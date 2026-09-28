@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineEntry","type":"object","properties":{"name":{"type":"string"},"kind":{"type":"string","enum":["file","directory","symlink"]},"size":{"type":"integer"},"token":{"type":"string"},"mtime":{"type":"number"}},"required":["name","kind","size","token","mtime"],"additionalProperties":false}

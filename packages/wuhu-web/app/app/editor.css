@@ -1,0 +1,137 @@
+/* Editor chrome: the selection and table menus borrow the tooltip's ink chip,
+   the slash palette borrows the menu material, the handle sits in the gutter. */
+.wuhu-editor-frame {
+  position: relative;
+}
+
+.wuhu-editor-menu {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  color: var(--wui-tooltip-fg);
+  background: var(--wui-tooltip-bg);
+  box-shadow: var(--wui-tooltip-shadow);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.wuhu-editor-menu-button {
+  min-width: 26px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--wui-tooltip-fg);
+  background: transparent;
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.wuhu-editor-menu-button:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.wuhu-editor-menu-button[data-on='true'] {
+  opacity: 1;
+  color: var(--wui-tooltip-bg);
+  background: var(--wui-tooltip-fg);
+}
+
+.wuhu-editor-menu-gap {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.wuhu-editor-handle {
+  display: grid;
+  width: 20px;
+  height: 24px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--color-grey-idle);
+  font-size: 12px;
+  letter-spacing: -0.15em;
+  cursor: grab;
+  user-select: none;
+}
+
+.wuhu-editor-handle:hover {
+  color: var(--color-grey-muted);
+  background: var(--wui-hover);
+}
+
+.wuhu-editor-handle:active {
+  cursor: grabbing;
+}
+
+.wuhu-slash-host {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+}
+
+.wuhu-slash {
+  width: 250px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 12px;
+  background: var(--wui-material-strong);
+  box-shadow: var(--wui-material-shadow);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  backdrop-filter: blur(20px);
+}
+
+.wuhu-slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--color-ink);
+  cursor: default;
+  user-select: none;
+}
+
+.wuhu-slash-item[data-selected='true'] {
+  background: var(--wui-hover);
+}
+
+.wuhu-slash-item small {
+  display: block;
+  color: var(--color-grey-faint);
+  font-size: 11px;
+  font-weight: 450;
+}
+
+.wuhu-slash-glyph {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(var(--wui-border-ink), 0.12);
+  border-radius: 7px;
+  color: var(--color-grey-muted);
+  background: var(--wui-field);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wuhu-slash-empty {
+  padding: 8px;
+  color: var(--color-grey-faint);
+}

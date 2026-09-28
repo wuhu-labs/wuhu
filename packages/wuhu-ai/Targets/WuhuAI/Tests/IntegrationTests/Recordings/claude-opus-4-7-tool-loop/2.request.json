@@ -1,0 +1,81 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Use the double_number tool to double 21.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "id" : "toolu_011MGejK5aZjkTnUxzUgJ17g",
+            "input" : {
+              "number" : 21
+            },
+            "name" : "double_number",
+            "type" : "tool_use"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "content" : "42",
+            "is_error" : false,
+            "tool_use_id" : "toolu_011MGejK5aZjkTnUxzUgJ17g",
+            "type" : "tool_result"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now say the result in a sentence.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-opus-4-7",
+    "stream" : true,
+    "thinking" : {
+      "display" : "summarized",
+      "type" : "adaptive"
+    },
+    "tools" : [
+      {
+        "description" : "Doubles a number and returns the result.",
+        "input_schema" : {
+          "properties" : {
+            "number" : {
+              "description" : "The number to double",
+              "type" : "integer"
+            }
+          },
+          "required" : [
+            "number"
+          ],
+          "type" : "object"
+        },
+        "name" : "double_number"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

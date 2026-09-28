@@ -1,0 +1,17 @@
+{
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true,
+    "proseWrap": "preserve"
+  },
+  "tasks": {
+    "generate-manifests": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar,which,xcodegen tools/manifest-gen/generate.ts --apply --all --umbrella --module --apps --public-tree",
+    "generate-schemes": "deno run --allow-read --allow-write --allow-net=github.com,codeload.github.com,objects.githubusercontent.com,release-assets.githubusercontent.com --allow-run=git,tar tools/manifest-gen/generate.ts --apply --all --schemes --public-tree"
+  },
+  "imports": {
+    "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
+    "@std/path": "jsr:@std/path@1.0.8",
+    "@std/yaml": "jsr:@std/yaml@1.0.5",
+    "jose": "npm:jose@6.1.0"
+  }
+}

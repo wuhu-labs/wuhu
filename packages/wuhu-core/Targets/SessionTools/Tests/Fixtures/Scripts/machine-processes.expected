@@ -1,0 +1,17 @@
+=== run_script
+machines: [{"name":"box","attached":true}]
+out: compiling
+err: warning: slow disk
+out: linking
+out: done
+build: {"code":0,"signal":null}
+process <id> already has a reader
+out: 255,0,65
+err: 10
+upper: HELLO WORLD
+exec: {"code":3,"signal":null,"stdout":"cwd /work; env [\"CI=1\"]; vault [\"TOKEN<-GITHUB_TOKEN\"]\n","stderr":"timeout 1.5\n","truncated":false}
+flood: 1048576, 1048576, 1048576, 0, 3
+killed: {"code":null,"signal":15}
+process <id> was spawned without { stdin: true }
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

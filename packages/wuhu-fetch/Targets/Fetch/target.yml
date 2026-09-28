@@ -1,0 +1,11 @@
+name: Fetch
+kind: library
+sources: Sources
+dependencies:
+  - Dependencies
+  - HTTPTypes
+tests:
+  dependencies:
+    - FetchSSE
+    - FetchTesting
+    - DependenciesTestSupport

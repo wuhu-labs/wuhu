@@ -1,0 +1,6 @@
+=== run_script
+["shared","shared"]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== run_script
+failed: script 00000000 threw before calling result(): script → wuhu://other.localspace/skills/lib.js: not found: wuhu://other.localspace/skills/lib.js

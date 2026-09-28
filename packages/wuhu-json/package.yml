@@ -1,0 +1,20 @@
+name: wuhu-json
+owner: shared
+swiftToolsVersion: "6.2"
+packageName: WuhuJSON
+products:
+  - JSONValue
+# Floors match arcroom's (the lowest consumer); the sources are pure Swift.
+platforms:
+  iOS: "18.4"
+  macOS: "15.4"
+  tvOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [linux, mac, ios, tvos, visionos]
+  test: [linux, mac]
+externalPackages:
+  swift-collections:
+    url: https://github.com/apple/swift-collections
+    from: "1.1.0"
+    products: [OrderedCollections]

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ToolDescriptor","type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"parameters":{}},"required":["name","description","parameters"],"additionalProperties":false}

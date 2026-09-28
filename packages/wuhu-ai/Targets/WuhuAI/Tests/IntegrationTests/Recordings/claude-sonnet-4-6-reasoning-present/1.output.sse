@@ -1,0 +1,60 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01M2wcGkcAmvf52Qvff7GXdr","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}              }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"If the shirt costs $25 after a 20% discount, I need to find the original price.\n\nA 20% discount means the customer pays 80% of the original"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" price.\n\nSo: Original Price × 0.80 = $25\n\nOriginal Price = $25 ÷ 0.80 = $31.25"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpkDClsIDRgCKkCUhaev9bfGl7NUIizhwHIjGi6Q9SjEGGhpWLlwZ7mGXbYh2jf9jmh15T+oMVjWodprum60X2engT10mYCjPZPxMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzgYirYEUwdjkcWwboaDOmnH1Akn4iPjSIzMiIwBpP4X7FhFs1H07GARrP92g5tl2OFpUYAZ+lF6g6/10wgOtY91C4hIOMTcWBt189mKusBvnqJJra+6kNFrXJuFEz4yxZlV80Ou+IqqcJan39/85zZpV4hJu9/3Lr63aH78PctZrdil5d+q5a1/I78G4/5188rzVlU0ILyTa2x2jxfyQ05047agSIa4ExTXOk/sBwiYsLCXvXI9ZXZ9rpiztJxxJEzywLh0iOq6NZc6MFLJELg/+PspT2Z24xHdqgGKbefCqL91wX8m7ldrCYp/ofp2GblbQWSNm9ITb5n2yTHl9YXCgbvML8nSdkEIIlHkU7dA8szPWhQ8JiZymUW8iSbTLD9fDmMPz0oM6YJhrkbL4GcNI8MOShOfDDWjhgB"}            }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0          }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"## Finding the Original Price\n\n### Setting Up the Problem\nA 20% discount means you"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'re **paying 80%** of the original price.\n\n$$\\text{Original Price} \\times 0.80 ="}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \\$25$$\n\n### Solving for Original Price\n\n$$\\text{Original Price} = \\frac{\\$25}{0.80}$$\n\n$$\\text{Original Price"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"} = \\$31.25$$\n\n### Verification ✓\n- Original price: **$31.25**\n- 20% discount: $"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"31.25 × 0.20 = **$6.25**\n- Final price: $31.25 − $6.25 = **$25."}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"00** ✓\n\nThe original price was **$31.25**.\n\n> ⚠️ **Common mistake to avoid:** Don"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t add 20% to $25 ($30), because the 20% should"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" be calculated on the *original* price, not the discounted price."}   }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1     }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":315}       }
+
+event: message_stop
+data: {"type":"message_stop"       }
+

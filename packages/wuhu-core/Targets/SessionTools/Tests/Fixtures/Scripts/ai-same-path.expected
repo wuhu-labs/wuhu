@@ -1,0 +1,8 @@
+=== run_script
+{"batch":["/art/twin.png","/art/twin.png already exists; generate_image never overwrites","machines://mc_aaaaaaaa/tmp/twin.png","machines://mc_aaaaaaaa/tmp/twin.png already exists; generate_image never overwrites"],"failed":"image generation failed with status 400: {\"error\":{\"message\":\"rejected by the safety system\"}}","retried":"machines://mc_aaaaaaaa/tmp/retry.png"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+prompts: ["forbidden", "machine twin", "retry", "space twin", "space twin"]
+=== probe
+machine files: ["/tmp/retry.png", "/tmp/twin.png"]

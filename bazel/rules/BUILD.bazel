@@ -1,0 +1,61 @@
+load(":docc.bzl", "wuhu_host_tool")
+
+exports_files([
+    "docc.bzl",
+    "sim_runner.bzl",
+    "sim_test_runner.template.sh",
+])
+
+wuhu_host_tool(
+    name = "docc",
+    src = "docc.sh",
+    visibility = ["//visibility:public"],
+)
+
+# Release (optimized) builds. The tag-driven release path builds with
+# `--compilation_mode=opt` (see tools/release/build-archive.ts), so this matches
+# exactly the shipped configuration and nothing else. Used to compile out the
+# dev-only controllable-clock server mode in release: the
+# `WUHU_ALLOW_CONTROLLABLE_CLOCK` define is added for every other compilation
+# mode (fastbuild/dbg — i.e. local `deno task check` and CI) and is absent here.
+config_setting(
+    name = "release_opt",
+    values = {"compilation_mode": "opt"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+# Resolved under cfg = "exec" by the deno rules, so the select keys on the
+# machine running the action, not the target platform.
+alias(
+    name = "deno",
+    actual = select({
+        ":darwin_arm64": "@deno_darwin_arm64//:deno",
+        ":linux_arm64": "@deno_linux_arm64//:deno",
+        ":linux_x86_64": "@deno_linux_x86_64//:deno",
+    }),
+    visibility = ["//visibility:public"],
+)

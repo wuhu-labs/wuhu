@@ -1,0 +1,11 @@
+name: ServeSSE
+kind: library
+sources: Sources
+dependencies:
+  - Serve
+  - Fetch
+  - HTTPTypes
+tests:
+  dependencies:
+    - Fetch
+    - HTTPTypes

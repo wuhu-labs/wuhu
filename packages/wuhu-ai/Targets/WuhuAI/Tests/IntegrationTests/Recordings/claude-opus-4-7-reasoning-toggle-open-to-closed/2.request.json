@@ -1,0 +1,44 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Explain quantum computing in one paragraph.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Quantum computing is a form of computation that harnesses the principles of quantum mechanics—such as superposition, entanglement, and interference—to process information in fundamentally new ways. Unlike classical computers, which use bits that are either 0 or 1, quantum computers use qubits that can exist in multiple states simultaneously, allowing them to explore many possible solutions in parallel. Entanglement links qubits so that the state of one instantly influences another, enabling complex correlations that classical systems cannot efficiently replicate. By carefully orchestrating these quantum behaviors through algorithms like Shor's or Grover's, quantum computers can, in theory, solve certain problems—such as factoring large numbers, simulating molecules, or optimizing complex systems—exponentially faster than the best classical machines, though building reliable, large-scale quantum hardware remains a major scientific and engineering challenge.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now explain it to a five-year-old.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-opus-4-7",
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

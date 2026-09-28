@@ -1,0 +1,234 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BAZELISK_VERSION: 1.29.0
+  DENO_VERSION: 2.9.1
+
+jobs:
+  linux:
+    name: Linux (Swift 6.3)
+    runs-on: ubuntu-24.04
+    container: swift:6.3-noble
+    steps:
+      # The container runs as root. Builds and tests run as `builder`, an
+      # unprivileged user that doesn't own the checkout.
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates clang curl git libcurl4-openssl-dev \
+            libsqlite3-dev libssl-dev libxml2-dev libzstd-dev \
+            openjdk-21-jdk-headless pkg-config python3 unzip zip zstd
+          useradd --create-home --home-dir /opt/builder builder
+
+      # Full history and tags: tools/workspace-status.sh stamps the version
+      # from `git describe --match 'wuhu/v*'`.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Bazelisk
+        run: |
+          curl -fsSL -o /usr/local/bin/bazel \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-linux-amd64"
+          echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c -
+          chmod +x /usr/local/bin/bazel
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
+      # Keyed by commit, so every branch run saves what it fetched; restored
+      # from the newest entry with the same lockfiles, else the newest of any.
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            /opt/builder/.cache/bazel-disk
+            /opt/builder/.cache/bazel-repo
+            /opt/builder/.cache/deno
+          key: linux-${{ hashFiles('.bazelversion', 'MODULE.bazel.template', 'bazel/umbrella/Package.resolved', '**/deno.lock') }}-${{ github.sha }}
+          restore-keys: |
+            linux-${{ hashFiles('.bazelversion', 'MODULE.bazel.template', 'bazel/umbrella/Package.resolved', '**/deno.lock') }}-
+            linux-
+
+      # Bazel gets the caches, and DENO_DIR for deno actions and tests the way
+      # tools/check/check.ts passes it. The builder writes to the root-owned
+      # checkout and trusts it by safe.directory.
+      - name: Set up the builder
+        run: |
+          cache=/opt/builder/.cache
+          mkdir -p "$cache/bazel-disk" "$cache/bazel-repo" "$cache/deno"
+          {
+            echo "common --disk_cache=$cache/bazel-disk"
+            echo "common --repository_cache=$cache/bazel-repo"
+            echo "common --action_env=DENO_DIR=$cache/deno"
+            echo "common --test_env=DENO_DIR=$cache/deno"
+            echo "common --sandbox_writable_path=$cache/deno"
+          } > /opt/builder/.bazelrc
+          chown -R builder: /opt/builder
+          chmod -R a+rwX "$GITHUB_WORKSPACE"
+          runuser -u builder -- git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          {
+            echo '#!/bin/sh'
+            echo "exec runuser -u builder -- env \"PATH=\$PATH\" HOME=/opt/builder DENO_DIR=$cache/deno CC=clang \"\$@\""
+          } > /usr/local/bin/as-builder
+          chmod +x /usr/local/bin/as-builder
+
+      - name: Test
+        run: as-builder bazel test //...
+
+      - name: Run the CLI
+        run: |
+          as-builder bash -euo pipefail -c '
+            version=$(bazel run //packages/wuhu-core:wuhu -- --version | tail -n 1)
+            echo "$version"
+            if [[ $GITHUB_REF == refs/tags/wuhu/v* && $version != "wuhu ${GITHUB_REF#refs/tags/wuhu/v} "* ]]; then
+              echo "the build is not stamped ${GITHUB_REF#refs/tags/}" >&2
+              exit 1
+            fi
+            bazel run //packages/wuhu-core:wuhu -- --help
+          '
+
+      # A tag run only restores. A branch run trims the disk cache to its most
+      # recently used 4 GiB (Bazel refreshes an entry's mtime on every hit;
+      # --experimental_disk_cache_gc_max_size collects only once the server
+      # has idled, which a CI job never waits for), then saves.
+      - name: Trim the disk cache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          python3 - "/opt/builder/.cache/bazel-disk" 4 <<'EOF'
+          import os, sys
+          root, limit = sys.argv[1], int(sys.argv[2]) << 30
+          entries = []
+          for parent, _, names in os.walk(root):
+              for name in names:
+                  path = os.path.join(parent, name)
+                  info = os.lstat(path)
+                  entries.append((info.st_mtime, info.st_size, path))
+          total = sum(size for _, size, _ in entries)
+          for _, size, path in sorted(entries):
+              if total <= limit:
+                  break
+              os.remove(path)
+              total -= size
+          print(f"disk cache: {total >> 20} MiB")
+          EOF
+
+      - uses: actions/cache/save@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          path: |
+            /opt/builder/.cache/bazel-disk
+            /opt/builder/.cache/bazel-repo
+            /opt/builder/.cache/deno
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  macos:
+    name: macOS (Xcode 26.4)
+    runs-on: macos-26
+    steps:
+      # Full history and tags: tools/workspace-status.sh stamps the version
+      # from `git describe --match 'wuhu/v*'`.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 26.4
+        run: sudo xcode-select -s /Applications/Xcode_26.4.app
+
+      - name: Install Bazelisk
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/bazel" \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-darwin-arm64"
+          echo "cee851f726789227d5561004e9904a52be45c3efb56f8b38b6993d6adbaa0409  $HOME/.local/bin/bazel" | shasum -a 256 -c -
+          chmod +x "$HOME/.local/bin/bazel"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
+      # Bazel gets the caches, and DENO_DIR for deno actions and tests the way
+      # tools/check/check.ts passes it.
+      - name: Point Bazel at the cached directories
+        run: |
+          cache=$HOME/.cache
+          mkdir -p "$cache/bazel-disk" "$cache/bazel-repo" "$cache/deno"
+          {
+            echo "common --disk_cache=$cache/bazel-disk"
+            echo "common --repository_cache=$cache/bazel-repo"
+            echo "common --action_env=DENO_DIR=$cache/deno"
+            echo "common --test_env=DENO_DIR=$cache/deno"
+            echo "common --sandbox_writable_path=$cache/deno"
+          } >> "$HOME/.bazelrc"
+          echo "DENO_DIR=$cache/deno" >> "$GITHUB_ENV"
+
+      # Keyed by commit, so every branch run saves what it fetched; restored
+      # from the newest entry with the same lockfiles, else the newest of any.
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            ~/.cache/bazel-disk
+            ~/.cache/bazel-repo
+            ~/.cache/deno
+          key: macos-${{ hashFiles('.bazelversion', 'MODULE.bazel.template', 'bazel/umbrella/Package.resolved', '**/deno.lock') }}-${{ github.sha }}
+          restore-keys: |
+            macos-${{ hashFiles('.bazelversion', 'MODULE.bazel.template', 'bazel/umbrella/Package.resolved', '**/deno.lock') }}-
+            macos-
+
+      - name: Test
+        run: bazel test //...
+
+      - name: Run the CLI
+        run: |
+          version=$(bazel run //packages/wuhu-core:wuhu -- --version | tail -n 1)
+          echo "$version"
+          if [[ $GITHUB_REF == refs/tags/wuhu/v* && $version != "wuhu ${GITHUB_REF#refs/tags/wuhu/v} "* ]]; then
+            echo "the build is not stamped ${GITHUB_REF#refs/tags/}" >&2
+            exit 1
+          fi
+          bazel run //packages/wuhu-core:wuhu -- --help
+
+      # A tag run only restores. A branch run trims the disk cache to its most
+      # recently used 4 GiB (Bazel refreshes an entry's mtime on every hit;
+      # --experimental_disk_cache_gc_max_size collects only once the server
+      # has idled, which a CI job never waits for), then saves.
+      - name: Trim the disk cache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          python3 - "$HOME/.cache/bazel-disk" 4 <<'EOF'
+          import os, sys
+          root, limit = sys.argv[1], int(sys.argv[2]) << 30
+          entries = []
+          for parent, _, names in os.walk(root):
+              for name in names:
+                  path = os.path.join(parent, name)
+                  info = os.lstat(path)
+                  entries.append((info.st_mtime, info.st_size, path))
+          total = sum(size for _, size, _ in entries)
+          for _, size, path in sorted(entries):
+              if total <= limit:
+                  break
+              os.remove(path)
+              total -= size
+          print(f"disk cache: {total >> 20} MiB")
+          EOF
+
+      - uses: actions/cache/save@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          path: |
+            ~/.cache/bazel-disk
+            ~/.cache/bazel-repo
+            ~/.cache/deno
+          key: ${{ steps.cache.outputs.cache-primary-key }}

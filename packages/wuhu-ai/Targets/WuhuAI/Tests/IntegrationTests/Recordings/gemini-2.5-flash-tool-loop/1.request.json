@@ -1,0 +1,47 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Use the double_number tool to double 21."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true
+      }
+    },
+    "tools" : [
+      {
+        "functionDeclarations" : [
+          {
+            "description" : "Doubles a number and returns the result.",
+            "name" : "double_number",
+            "parameters" : {
+              "properties" : {
+                "number" : {
+                  "description" : "The number to double",
+                  "type" : "integer"
+                }
+              },
+              "required" : [
+                "number"
+              ],
+              "type" : "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-2.5-flash:streamGenerateContent?alt=sse"
+}

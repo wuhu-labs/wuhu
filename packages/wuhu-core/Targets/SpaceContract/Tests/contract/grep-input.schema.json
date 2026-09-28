@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GrepInput","type":"object","properties":{"pattern":{"type":"string"},"path":{"type":["string","null"]},"matchLimit":{"type":["integer","null"]},"entryLimit":{"type":["integer","null"]},"step":{"type":["string","null"]}},"required":["pattern"],"additionalProperties":false}

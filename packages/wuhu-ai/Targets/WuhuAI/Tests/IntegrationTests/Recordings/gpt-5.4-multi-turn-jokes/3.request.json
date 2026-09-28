@@ -1,0 +1,90 @@
+{
+  "body" : {
+    "include" : [
+      "reasoning.encrypted_content"
+    ],
+    "input" : [
+      {
+        "content" : [
+          {
+            "text" : "Tell me a short joke.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "annotations" : [
+
+            ],
+            "text" : "Why don’t skeletons fight each other?\n\nThey don’t have the guts.",
+            "type" : "output_text"
+          }
+        ],
+        "id" : "msg_0",
+        "phase" : "final_answer",
+        "role" : "assistant",
+        "status" : "completed",
+        "type" : "message"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Tell me a better joke.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "encrypted_content" : "gAAAAABqE8RkyeLFATICvd2P3fx-BDid86AY7q6l5W6i74BP8m49c3iLfY0KV5Wbs7LDEwgR7t46XGggZBI-r79JAwpD3zQFsG5x-tfGGvmmtl2F1SIw0cQMl7fd0bewlg6X1AXvF7u-1j3-xCAriccG7bybhbf1IIwn1DY-uIVQGcoJRVAZcK4zlF8ve1v5W130vhSOeVfCibylZ-WuYBe1auAw4HRkVmL2dxYgExfA_hFYBiLKKvBCyWKO29wmZ-3ZoBxMikQSXD_KyXeMHI5PBGbucsHGeTkeep5WOUNtHhRyuO1QrpgT30ijwwfXfpuVr2oqgmQSUdcfTwjf11v6A6MLhDXTHCvoRuZZL1BUieT5apKu3ENx1ZntgH8BNpLy8UZMdJ5wGz9La94wkNsgvx78AhRPZ9dHw8GLJDAVxRI9MqhhDzGAaEqRnZdUJuImMQHq8avbEE0bUvvBA8Vu8LO43ujnN5Oloz1RbylBS5gNAobuA9bIPJL5GuvA5-zsd2gUePUg6rW-uVrTMtwmt5J3EUUlAq0ZgR1d-3Fy9BfUvOAK5dmm2t-UvBjSgkn1CguxT_-_Ktb_1cPCKPMhRAWWAE-nOkOvFsNkBUyi0QCDLkJ6r-7omZM3doDMeC6BJYXsdYobexsA-jF5dA4ARYADTNkwog9nbzmNslqIYh_H9IXVxxMda-hly9hZiOS2Oez5DruRqVuS5a4zYMjO_qP4HE7Ok5YP4xLyvTLJQ3HG6rtmEogmX27XCF3i6oimeIoyblo40Qgh4hwpCy40Bfdm5-22OFSvAelRC1g6GwFwyzo9eXcWXyh0jwh55QNp9kvgODaQ0vsSspjOJzQPA5NzdercO9gq6IVuCaxQpFjZo0dCZG0EtNCmURx1cjbtWesaT7emPn3l0dY-5H6ADW7rwb_Ia8WhdKrt7OcwokRdodLb58zd0eZ-b-4vYjPV3xlNYamAvo5EAgCY4w6HN-QrmJlR-C8zmjuAsLAVvNQ6rnWb7v6u6cRHzjPFfTHQyR_E4ifxyTQCx3Xl2jmbkM5SQl_JeGb6uHMAgUjip7HQ9hNiHELqNJJhLHJUDH1G8XbLtpfyeryPuMViQumnYfgE4HtX4jsNyurCae62RcwzJeugFlUiQ7y6MY4mJEBVtQAFQ-CR_1dpH-Um2unk8hdwe6qRSvElVG7wdq11HASux3CCgEVmbT18b-mMjBt6jTLMmnaT",
+        "id" : "rs_01fda39490fde3c8016a13c4614f08819bbb7f26b4f19e908d",
+        "summary" : [
+
+        ],
+        "type" : "reasoning"
+      },
+      {
+        "content" : [
+          {
+            "annotations" : [
+
+            ],
+            "text" : "I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised.",
+            "type" : "output_text"
+          }
+        ],
+        "id" : "msg_1",
+        "phase" : "final_answer",
+        "role" : "assistant",
+        "status" : "completed",
+        "type" : "message"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Tell me an even better joke.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "gpt-5.4",
+    "reasoning" : {
+      "effort" : "high",
+      "summary" : "auto"
+    },
+    "store" : false,
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:6f329108d16c6fb7cabe0189b18335e170449ce04c2b8663b8fde66dc8c9235e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.openai.com\/v1\/responses"
+}

@@ -1,0 +1,6 @@
+=== run_script
+[{"path":"/art/fine.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},"Error: image generation failed with status 400: {\"error\":{\"message\":\"rejected by the safety system\"}}","Error: /art/kept.png already exists; generate_image never overwrites","Error: unauthorized: /_/sessions/someone-else/elsewhere.png is in the home of session someone-else; only someone-else itself and humans write there (propose the change to someone-else by message instead)","Error: unknown machine: nowhere","Error: art/relative.png is a relative path; start a path in this group with /, another group's with wuhu://<group>.localspace/, a machine path with machines://<machine>/ and a system path with wuhu://system/","TypeError: generateImage needs { destination }"]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+prompts: ["fine", "forbidden"]

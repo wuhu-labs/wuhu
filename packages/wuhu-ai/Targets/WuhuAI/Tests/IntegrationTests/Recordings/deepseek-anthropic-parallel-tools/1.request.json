@@ -1,0 +1,67 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Fetch the weather for BOTH Paris and Tokyo. Call get_weather twice, in parallel, in this single turn — one call per city.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "output_config" : {
+      "effort" : "high"
+    },
+    "stream" : true,
+    "system" : "You are a helpful assistant.",
+    "thinking" : {
+      "type" : "enabled"
+    },
+    "tools" : [
+      {
+        "description" : "Returns the current weather for a city.",
+        "input_schema" : {
+          "properties" : {
+            "city" : {
+              "description" : "City name",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "city"
+          ],
+          "type" : "object"
+        },
+        "name" : "get_weather"
+      },
+      {
+        "description" : "Folds the conversation so far into a durable summary. Call with a summary of everything above.",
+        "input_schema" : {
+          "properties" : {
+            "summary" : {
+              "description" : "Summary of the conversation so far",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "summary"
+          ],
+          "type" : "object"
+        },
+        "name" : "compact"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/anthropic\/messages"
+}

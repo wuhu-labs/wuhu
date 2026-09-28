@@ -1,0 +1,6 @@
+name: JSONValue
+kind: library
+sources: Sources
+dependencies:
+  - OrderedCollections
+tests: {}

@@ -1,0 +1,18 @@
+name: MachineContract
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]
+dependencies:
+  - Contract
+  - JSONValue
+tests:
+  exclude:
+    - contract/**
+  resources:
+    - path: contract
+      mode: copy
+  dependencies:
+    - Contract
+    - JSONValue

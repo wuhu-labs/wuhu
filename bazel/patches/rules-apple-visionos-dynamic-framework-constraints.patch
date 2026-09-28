@@ -1,0 +1,45 @@
+--- a/apple/internal/visionos_rules.bzl
++++ b/apple/internal/visionos_rules.bzl
+@@ -612,6 +612,7 @@ def _visionos_dynamic_framework_impl(ctx):
+         partials.codesigning_dossier_partial(
+             actions = actions,
+             apple_mac_toolchain_info = apple_mac_toolchain_info,
++            apple_xplat_toolchain_info = apple_xplat_toolchain_info,
+             bundle_extension = bundle_extension,
+             bundle_location = processor.location.framework,
+             bundle_name = bundle_name,
+@@ -622,6 +623,7 @@ def _visionos_dynamic_framework_impl(ctx):
+             label_name = label.name,
+             platform_prerequisites = platform_prerequisites,
++            predeclared_outputs = predeclared_outputs,
+             provisioning_profile = provisioning_profile,
+             rule_descriptor = rule_descriptor,
+         ),
+@@ -750,18 +752,15 @@ def _visionos_dynamic_framework_impl(ctx):
+                 libraries = provider.framework_files.to_list(),
+             )
+-            additional_providers.extend([
+-                apple_common.new_objc_provider(
+-                    dynamic_framework_file = provider.framework_files,
+-                ),
++            additional_providers.append(
+                 CcInfo(
+                     linking_context = cc_common.create_linking_context(
+                         linker_inputs = depset([
+@@ -771,8 +770,8 @@ def _visionos_dynamic_framework_impl(ctx):
+                         ]),
+                     ),
+                 ),
+-            ])
++            )
+     providers.extend(additional_providers)
+
+     return [
+@@ -1544,6 +1543,7 @@ visionos_dynamic_framework = rule_factory.create_apple_rule(
+     implementation = _visionos_dynamic_framework_impl,
+     predeclared_outputs = {"archive": "%{name}.zip"},
+     attrs = [
++        apple_support.platform_constraint_attrs(),
+         rule_attrs.binary_linking_attrs(
+             deps_cfg = transition_support.apple_platform_split_transition,
+             extra_deps_aspects = [

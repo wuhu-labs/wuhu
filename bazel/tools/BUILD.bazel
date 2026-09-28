@@ -1,0 +1,1 @@
+exports_files(["generate_embedded_directory.py"])

@@ -1,0 +1,630 @@
+/* Content plane: every block wuhu renders inside a document, transcript or
+   data view. Theme v1 tokens (the ones a space's /theme.css sets on
+   .wuhu-content) win when a space sets them; the --_ fallbacks freeze the
+   untheme look on the wuhu-ui palette. */
+.wuhu-content {
+  --_fg: var(--color-ink);
+  --_fg-muted: var(--color-grey-muted);
+  --_quote-fg: var(--color-grey-lede);
+  --_accent: var(--color-mint-deep);
+  --_border: rgba(var(--wui-border-ink), 0.11);
+  --_border-strong: rgba(var(--wui-border-ink), 0.2);
+  --_border-faint: rgba(var(--wui-border-ink), 0.06);
+  --_code-bg: rgba(var(--wui-border-ink), 0.05);
+  --_block: 1.2rem;
+
+  color: var(--fg, var(--_fg));
+  font-family: var(--font-text, var(--font-sans));
+}
+
+.wuhu-content ::selection,
+.wuhu-content::selection {
+  background-color: var(--selection, color-mix(in srgb, var(--color-mint) 30%,
+    transparent));
+}
+
+.wuhu-text {
+  overflow-x: auto;
+  padding: 1.05rem 1.25rem;
+  border-radius: var(--radius, 12px);
+  background: var(--code-bg, var(--_code-bg));
+  font-family: var(--font-mono);
+  font-size: var(--font-size, 0.83rem);
+  line-height: 1.6;
+}
+
+/* ---------- markdown ---------- */
+
+.wuhu-markdown {
+  font-size: var(--font-size, 1rem);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.wuhu-markdown > :first-child {
+  margin-top: 0;
+}
+
+.wuhu-markdown :is(p, ul, ol, blockquote, pre, hr, figure, .wuhu-table-wrap, .tableWrapper) {
+  margin: var(--_block) 0 0;
+}
+
+.wuhu-markdown h1 {
+  margin: 2.6rem 0 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.wuhu-markdown h2 {
+  margin: 2.4rem 0 0;
+  font-size: 1.4rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.wuhu-markdown h3 {
+  margin: 1.9rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.wuhu-markdown :is(h4, h5, h6) {
+  margin: 1.6rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.wuhu-markdown :is(h1, h2, h3, h4, h5, h6) + * {
+  margin-top: 0.85rem;
+}
+
+.wuhu-markdown strong {
+  font-weight: 650;
+}
+
+.wuhu-markdown del {
+  color: var(--fg-muted, var(--_fg-muted));
+}
+
+.wuhu-markdown a {
+  color: var(--accent, var(--_accent));
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.wuhu-markdown code {
+  padding: 0.1em 0.36em;
+  border-radius: var(--radius, 5px);
+  background: var(--code-bg, var(--_code-bg));
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.wuhu-mention {
+  padding: 0.05em 0.35em;
+  border-radius: 6px;
+  color: var(--accent, var(--_accent));
+  background: color-mix(in srgb, var(--accent, var(--_accent)) 12%,
+    transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wuhu-markdown :is(ul, ol) {
+  padding-left: 1.5rem;
+}
+
+.wuhu-markdown ul {
+  list-style: disc;
+}
+
+.wuhu-markdown ol {
+  list-style: decimal;
+}
+
+.wuhu-markdown li::marker {
+  color: var(--fg-muted, var(--_fg-muted));
+}
+
+.wuhu-markdown li + li,
+.wuhu-markdown li > :is(ul, ol) {
+  margin-top: 0.3rem;
+}
+
+.wuhu-markdown li > p {
+  margin-top: 0.3rem;
+}
+
+.wuhu-markdown li > p:first-child {
+  margin-top: 0;
+}
+
+.wuhu-markdown ul.contains-task-list {
+  padding-left: 0.2rem;
+  list-style: none;
+}
+
+.wuhu-markdown li.task-list-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+}
+
+.wuhu-markdown li.task-list-item input[type='checkbox'] {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  translate: 0 0.12em;
+  border: 1.5px solid var(--border, var(--_border-strong));
+  border-radius: 4px;
+  background: transparent;
+  appearance: none;
+}
+
+.wuhu-markdown li.task-list-item input[type='checkbox']:checked {
+  border-color: var(--accent, var(--_accent));
+  background: var(--accent, var(--_accent))
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 0.8em no-repeat;
+}
+
+.wuhu-markdown li.task-list-item:has(> input:checked) {
+  color: var(--fg-muted, var(--_fg-muted));
+}
+
+/* Tiptap's task list: ul[data-type] > li[data-type] > label + div, the same
+   look as remark's ul.contains-task-list. */
+.wuhu-markdown ul[data-type='taskList'] {
+  padding-left: 0.2rem;
+  list-style: none;
+}
+
+.wuhu-markdown li[data-type='taskItem'] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+}
+
+.wuhu-markdown li[data-type='taskItem'] > label {
+  flex: none;
+  display: inline-flex;
+}
+
+.wuhu-markdown li[data-type='taskItem'] > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.wuhu-markdown li[data-type='taskItem'] > div > p {
+  margin-top: 0;
+}
+
+.wuhu-markdown li[data-type='taskItem'] input[type='checkbox'] {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  translate: 0 0.12em;
+  border: 1.5px solid var(--border, var(--_border-strong));
+  border-radius: 4px;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+
+.wuhu-markdown li[data-type='taskItem'] input[type='checkbox']:checked {
+  border-color: var(--accent, var(--_accent));
+  background: var(--accent, var(--_accent))
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 0.8em no-repeat;
+}
+
+.wuhu-markdown li[data-type='taskItem'][data-checked='true'] > div {
+  color: var(--fg-muted, var(--_fg-muted));
+}
+
+.wuhu-markdown blockquote {
+  padding: 0.1rem 0 0.1rem 1rem;
+  border-left: 2px solid var(--border, var(--_border-strong));
+  color: var(--fg-muted, var(--_quote-fg));
+}
+
+.wuhu-markdown blockquote > :first-child {
+  margin-top: 0;
+}
+
+.wuhu-markdown blockquote.wuhu-callout {
+  --_tone: var(--color-blue);
+  padding: 0.8rem 1.05rem 0.9rem;
+  border: 0;
+  border-radius: var(--radius, 12px);
+  background: color-mix(in srgb, var(--_tone) 9%, transparent);
+  color: var(--fg, var(--_fg));
+  font-size: 0.95em;
+}
+
+.wuhu-markdown blockquote.wuhu-callout::before {
+  content: attr(data-title);
+  display: block;
+  margin-bottom: 0.35rem;
+  color: color-mix(in srgb, var(--_tone) 72%, var(--fg, var(--_fg)));
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wuhu-markdown blockquote.wuhu-callout[data-kind='tip'] {
+  --_tone: var(--color-mint-deep);
+}
+
+.wuhu-markdown blockquote.wuhu-callout[data-kind='important'] {
+  --_tone: var(--color-violet);
+}
+
+.wuhu-markdown blockquote.wuhu-callout[data-kind='warning'] {
+  --_tone: var(--color-amber);
+}
+
+.wuhu-markdown blockquote.wuhu-callout[data-kind='caution'] {
+  --_tone: var(--color-alert);
+}
+
+/* In the editor the marker stays in the text so the source survives; it only
+   shows while editing, dimmed. */
+.wuhu-callout-marker {
+  color: var(--fg-muted, var(--_fg-muted));
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}
+
+.wuhu-editor-frame[data-editable='false'] .wuhu-callout-marker {
+  display: none;
+}
+
+.wuhu-code {
+  position: relative;
+  margin: var(--_block) 0 0;
+  border-radius: var(--radius, 12px);
+  background: var(--code-bg, var(--_code-bg));
+}
+
+.wuhu-code figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.9rem;
+  padding: 0.35rem 0.5rem 0 1.1rem;
+  color: var(--fg-muted, var(--_fg-muted));
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.wuhu-code-copy {
+  padding: 0.15rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg-muted, var(--_fg-muted));
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.wuhu-code:hover .wuhu-code-copy,
+.wuhu-code-copy:focus-visible,
+.wuhu-code-copy[data-copied='true'] {
+  opacity: 1;
+}
+
+.wuhu-code-copy:hover {
+  color: var(--fg, var(--_fg));
+  background: var(--wui-hover);
+}
+
+@media (hover: none) {
+  .wuhu-code-copy {
+    opacity: 1;
+  }
+}
+
+.wuhu-markdown .wuhu-code pre {
+  margin: 0;
+  padding: 0.35rem 1.1rem 0.95rem;
+}
+
+.wuhu-markdown pre {
+  overflow-x: auto;
+  padding: 0.95rem 1.1rem;
+  border-radius: var(--radius, 12px);
+  background: var(--code-bg, var(--_code-bg));
+  font-family: var(--font-mono);
+  font-size: 0.83rem;
+  line-height: 1.6;
+}
+
+.wuhu-markdown pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.wuhu-markdown .wuhu-table-wrap {
+  overflow-x: auto;
+}
+
+.wuhu-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  line-height: 1.45;
+  overflow-wrap: normal;
+}
+
+.wuhu-markdown th {
+  padding: 0 1rem 0.5rem 0;
+  border-bottom: 1px solid var(--border, var(--_border-strong));
+  color: var(--fg-muted, var(--_fg-muted));
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.wuhu-markdown td {
+  padding: 0.5rem 1rem 0.5rem 0;
+  border-bottom: 1px solid var(--border, var(--_border-faint));
+  vertical-align: top;
+}
+
+.wuhu-markdown :is(th, td):last-child {
+  padding-right: 0;
+}
+
+.wuhu-markdown hr {
+  height: 0;
+  margin-top: 2.2rem;
+  border: 0;
+  border-top: 1px solid var(--border, var(--_border));
+}
+
+.wuhu-markdown hr + * {
+  margin-top: 2.2rem;
+}
+
+.wuhu-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius, 10px);
+}
+
+.wuhu-markdown figure.wuhu-figure {
+  margin-top: 1.5rem;
+}
+
+.wuhu-markdown figure.wuhu-figure img {
+  display: block;
+  margin: 0 auto;
+}
+
+.wuhu-markdown figure.wuhu-figure figcaption {
+  margin-top: 0.55rem;
+  color: var(--fg-muted, var(--_fg-muted));
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.wuhu-markdown sup a[data-footnote-ref] {
+  padding: 0 0.15em;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  text-decoration: none;
+}
+
+.wuhu-markdown section[data-footnotes] {
+  margin-top: 2.4rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border, var(--_border));
+  color: var(--fg-muted, var(--_fg-muted));
+  font-size: 0.85rem;
+}
+
+.wuhu-markdown section[data-footnotes] > h2 {
+  display: none;
+}
+
+.wuhu-markdown section[data-footnotes] ol {
+  margin: 0;
+  padding-left: 1.3rem;
+}
+
+.wuhu-markdown section[data-footnotes] li > p {
+  margin: 0;
+}
+
+.wuhu-markdown a[data-footnote-backref] {
+  text-decoration: none;
+}
+
+/* ---------- data table view ---------- */
+
+.wuhu-table {
+  overflow-x: auto;
+  font-size: var(--font-size, 0.88rem);
+}
+
+.wuhu-table table {
+  min-width: 100%;
+  border-collapse: collapse;
+  line-height: 1.4;
+}
+
+.wuhu-table th {
+  padding: 0 1.2rem 0.5rem 0;
+  border-bottom: 1px solid var(--border, var(--_border-strong));
+  color: var(--fg-muted, var(--_fg-muted));
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.wuhu-table td {
+  padding: 0.45rem 1.2rem 0.45rem 0;
+  border-bottom: 1px solid var(--border, var(--_border-faint));
+  vertical-align: top;
+}
+
+.wuhu-table :is(th, td):last-child {
+  padding-right: 0;
+}
+
+.wuhu-table td[data-type='number'],
+.wuhu-table td[data-type='boolean'],
+.wuhu-table td[data-type='json'] {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+.wuhu-table td[data-type='null']::before {
+  content: '—';
+  color: var(--fg-muted, var(--_fg-muted));
+  opacity: 0.6;
+}
+
+.wuhu-table a {
+  color: var(--accent, var(--_accent));
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wuhu-table-foot {
+  margin: 0.7rem 0 0;
+  color: var(--fg-muted, var(--_fg-muted));
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+/* ---------- editor (Tiptap over .wuhu-markdown) ---------- */
+
+.wuhu-editor {
+  outline: none;
+  caret-color: var(--accent, var(--_accent));
+  /* ProseMirror defaults to break-spaces, which paints hard-wrapped source as
+     line breaks; markdown folds those into spaces. */
+  white-space: normal;
+}
+
+.wuhu-editor pre {
+  white-space: pre;
+}
+
+/* The app's focus ring is for controls; Tiptap's root carries tabindex, and a
+   whole document is not a control. */
+.wuhu-editor:focus-visible {
+  outline: none;
+}
+
+.wuhu-editor .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--color-grey-idle);
+  pointer-events: none;
+}
+
+.wuhu-editor .ProseMirror-selectednode {
+  outline: 2px solid color-mix(in srgb, var(--accent, var(--_accent)) 45%,
+    transparent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.wuhu-editor .tableWrapper {
+  overflow-x: auto;
+}
+
+.wuhu-editor .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent, var(--_accent));
+  pointer-events: none;
+}
+
+.wuhu-editor table {
+  position: relative;
+}
+
+.wuhu-editor .selectedCell {
+  background: color-mix(in srgb, var(--accent, var(--_accent)) 10%,
+    transparent);
+}
+
+.wuhu-editor :is(th, td) {
+  min-width: 4em;
+}
+
+.wuhu-editor [data-type='block-math'] {
+  display: block;
+  margin: var(--_block) 0 0;
+  text-align: center;
+}
+
+.wuhu-editor [data-type='block-math'] .katex {
+  font-size: 1.15em;
+}
+
+.wuhu-editor .tiptap-mathematics-render--editable {
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.wuhu-editor .tiptap-mathematics-render--editable:hover {
+  background: var(--code-bg, var(--_code-bg));
+}
+
+.wuhu-editor pre .hljs-comment,
+.wuhu-editor pre .hljs-quote {
+  color: var(--fg-muted, var(--_fg-muted));
+  font-style: italic;
+}
+
+.wuhu-editor pre :is(.hljs-keyword, .hljs-selector-tag, .hljs-meta) {
+  color: var(--color-violet);
+}
+
+.wuhu-editor pre :is(.hljs-string, .hljs-attr, .hljs-regexp, .hljs-addition) {
+  color: var(--color-mint-deep);
+}
+
+.wuhu-editor pre :is(.hljs-number, .hljs-literal, .hljs-symbol, .hljs-deletion) {
+  color: var(--color-amber-deep);
+}
+
+.wuhu-editor pre :is(.hljs-title, .hljs-section, .hljs-name) {
+  color: var(--color-blue);
+}
+
+.wuhu-editor pre :is(.hljs-built_in, .hljs-type, .hljs-variable) {
+  color: var(--color-rose);
+}

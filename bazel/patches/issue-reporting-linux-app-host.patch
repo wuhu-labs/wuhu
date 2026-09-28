@@ -1,0 +1,20 @@
+--- a/Sources/IssueReporting/Internal/AppHostWarning.swift
++++ b/Sources/IssueReporting/Internal/AppHostWarning.swift
+@@ -15,7 +15,7 @@
+ extension String {
+   @usableFromInline
+   func withAppHostWarningIfNeeded() -> String {
+-    #if os(WASI)
++    #if os(WASI) || !canImport(ObjectiveC)
+       return self
+     #else
+       guard
+@@ -52,7 +52,7 @@
+     #endif
+   }
+ 
+-  #if !os(WASI)
++  #if !os(WASI) && canImport(ObjectiveC)
+     @usableFromInline
+     var isTestFrame: Bool {
+       guard let xcTestCase = NSClassFromString("XCTestCase")

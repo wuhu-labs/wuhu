@@ -1,0 +1,33 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Tell me a short joke.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-sonnet-4-6",
+    "output_config" : {
+      "effort" : "high"
+    },
+    "stream" : true,
+    "thinking" : {
+      "display" : "summarized",
+      "type" : "adaptive"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

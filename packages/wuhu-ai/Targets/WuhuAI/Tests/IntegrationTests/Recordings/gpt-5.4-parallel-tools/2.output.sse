@@ -1,0 +1,306 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_09bded74a956f018016a4aa73fe3dc8198aa56617b06598870","object":"response","created_at":1783277375,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_09bded74a956f018016a4aa73fe3dc8198aa56617b06598870","object":"response","created_at":1783277375,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqdAwc9ms8P7ezqIiCB1mWDZSNFcCTwDO17lTgGjiLsyjCX16u5bLrv_ASPFr7rzsDdZUl0fRyf7BgjRZSu4ih9W8kCgBGkjcOiC12nSbv4Rry3FZCrcPHGbGXuIE4IrFoMIjb77ewsBkcO690GRbUTZyBFZOos1dVVvKbIzQV1LtcLmwO7q744rv0FuV2m_kf9t-MxnWXNdZxWBlyl18el6SGM0cqyBlBSW7tj4TQ1VPlHtzIPF2cq3xUmzjyG0x56er3FBJvmoeTmdIe7uxBU845vE2gpCsTIDCp8HgbGs8K2iQY-CZnsECHn87B_XU9wIOCCbcUO70PWHxypBJOu_fHOQL15q4q7oXyHIbo6ukwKSF3F1VgXR4WPLQIr0050c_GhwTeKYcYRjOFcFTtNwNCasxRgD9JXVA06akcB2lZWRoNaESACNu5IiLoKSo1BNw7CqwXqbRr1WsKFvr0t125DWu66LHQIjmUjNzwz52v4X-Vcj-ttNXnhACsEkufcYJyuzDdzz-JLjFX5KQAFKPlRrhYvSKEEtJhd3PT3qwFQOGHi1541BlhcDQNSR9eSZ3SnN5_YnLSfd24DxNI2Byl4WCG9q1KVb0H2orE4KPKf5T7MWOLd5HA9Vund6Dci39qcq294Bk-kShoguomySpT0wd9dcr6XS1iUB2aiBiP9V2BT8y5S023Z8uGKjQjFmV8AYdamkV-V6rIX5zUTRt42B5FBHT5wGkOlmOT61oEZv6kFcSrgRfNo3noJzVKA5kwLUiSZz3NSuQUnkJbay3NtCqaXKwZOJPv-SiDUfKwUIC1NvkKxaIy1StOdbxEWH0vdmi_Mm7gPV5GPsWi8zNug1FhS18vUkzA1KJ7LXQ2ICv_3ODDowljUlCohVF3QW6nfQL6PpJfvebV0kvbUQpQ==","summary":[]},"output_index":0,"sequence_number":2}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","output_index":0,"part":{"type":"summary_text","text":""},"sequence_number":3,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"**Comparing temperatures**\n\nI","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"m2r","output_index":0,"sequence_number":4,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"’m","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"D8Z8ic0i4bpFoj","output_index":0,"sequence_number":5,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" thinking","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"Xatapaj","output_index":0,"sequence_number":6,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" about","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"jAEXV6Wrbr","output_index":0,"sequence_number":7,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" the","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"NelbbUaptmDC","output_index":0,"sequence_number":8,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" conversation","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"m1P","output_index":0,"sequence_number":9,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" we","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"wDN4ofKgX3hDb","output_index":0,"sequence_number":10,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" had","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"vHoN2HgOB3Us","output_index":0,"sequence_number":11,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" earlier","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"0da5dyII","output_index":0,"sequence_number":12,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":".","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"T6BurgeYUoC9ssS","output_index":0,"sequence_number":13,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" I","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"P9yk7IFrgf7B0C","output_index":0,"sequence_number":14,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" don","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"tYSslKc3WNQj","output_index":0,"sequence_number":15,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"’t","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"grM3QexqbXUGxw","output_index":0,"sequence_number":16,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" need","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"7h3scYHr5Wn","output_index":0,"sequence_number":17,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" to","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"Skfq8ArKkclgS","output_index":0,"sequence_number":18,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" use","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"UOi2kEkssj13","output_index":0,"sequence_number":19,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" a","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"lhSoC9UndoZkWw","output_index":0,"sequence_number":20,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" tool","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"5mjqtfBZRZi","output_index":0,"sequence_number":21,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" for","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"KYRmzDDY9I69","output_index":0,"sequence_number":22,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" this","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"NeywOII0JS8","output_index":0,"sequence_number":23,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" part","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"LYArlgybTGP","output_index":0,"sequence_number":24,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":".","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"f5W3WdrwvL36krR","output_index":0,"sequence_number":25,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" I","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"WXeJsBtE8zWVFX","output_index":0,"sequence_number":26,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" just","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"tT52WlDzcCI","output_index":0,"sequence_number":27,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" need","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"f11BpBZxVxf","output_index":0,"sequence_number":28,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" to","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"p9mgbMxULKJFD","output_index":0,"sequence_number":29,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" mention","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"0ehiHm5V","output_index":0,"sequence_number":30,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" that","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"3YXOPwWYIlP","output_index":0,"sequence_number":31,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" Paris","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"FIqaL17Gea","output_index":0,"sequence_number":32,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" is","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"6YIiE6qTnHB9B","output_index":0,"sequence_number":33,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" warmer","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"8HAPKLLqg","output_index":0,"sequence_number":34,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" because","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"BLSkPcIf","output_index":0,"sequence_number":35,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" 24","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"o0bJnjv9515dM","output_index":0,"sequence_number":36,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"°C","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"SP4CKAY0oANSkF","output_index":0,"sequence_number":37,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" is","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"kxMtOes3TFQn6","output_index":0,"sequence_number":38,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" greater","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"En9uNo4M","output_index":0,"sequence_number":39,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" than","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"lYMlRDwVtAv","output_index":0,"sequence_number":40,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" 19","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"63aL2LgUlWFND","output_index":0,"sequence_number":41,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"°C","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"koNXlQ9RBFVFxB","output_index":0,"sequence_number":42,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":".","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"VPvnFwKljEvmktq","output_index":0,"sequence_number":43,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" It","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"TSQ1PsNthRMBr","output_index":0,"sequence_number":44,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"’s","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"o1976fZNPSQko9","output_index":0,"sequence_number":45,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" pretty","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"vnvIFV71s","output_index":0,"sequence_number":46,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" straightforward","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"","output_index":0,"sequence_number":47,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":",","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"VPeyBKxZUtbGyXG","output_index":0,"sequence_number":48,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" so","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"ZTKfg1PIewc0P","output_index":0,"sequence_number":49,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" I","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"XCRCHXEyhYRiVN","output_index":0,"sequence_number":50,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"’ll","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"LFJf19zOYYNCR","output_index":0,"sequence_number":51,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" keep","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"Pkne1k6pBTs","output_index":0,"sequence_number":52,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" my","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"bry02nVuOSB1u","output_index":0,"sequence_number":53,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" explanation","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"oEmg","output_index":0,"sequence_number":54,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" concise","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"eHHiv62s","output_index":0,"sequence_number":55,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" to","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"N795DWpwdlnZH","output_index":0,"sequence_number":56,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" make","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"focwqXg6eMj","output_index":0,"sequence_number":57,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" it","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"Ps7JvMvErxerx","output_index":0,"sequence_number":58,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" clear","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"t2k9Ugrr1J","output_index":0,"sequence_number":59,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":".","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"sPmq7ZgPzlHOrnT","output_index":0,"sequence_number":60,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" Just","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"LrPEQdq0KDn","output_index":0,"sequence_number":61,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" highlighting","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"qRe","output_index":0,"sequence_number":62,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" that","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"wevb9mXbbaF","output_index":0,"sequence_number":63,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" difference","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"8vuVw","output_index":0,"sequence_number":64,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" should","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"WuAkOIHZO","output_index":0,"sequence_number":65,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" do","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"9gj2C2GR7L89G","output_index":0,"sequence_number":66,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" the","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"FxaO3Odranyx","output_index":0,"sequence_number":67,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" trick","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"SC3uZ0zCaM","output_index":0,"sequence_number":68,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"!","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"AeiYbtqCdphjVsq","output_index":0,"sequence_number":69,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" Let","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"aALBfzFITOm4","output_index":0,"sequence_number":70,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"’s","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"DvkO5ZkJg2VuQM","output_index":0,"sequence_number":71,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" focus","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"AhTbKhsmCl","output_index":0,"sequence_number":72,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" on","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"n0BZSdgsNKDFT","output_index":0,"sequence_number":73,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" delivering","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"S66Nh","output_index":0,"sequence_number":74,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" that","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"5AsLzm3HnYq","output_index":0,"sequence_number":75,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" information","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"oHrH","output_index":0,"sequence_number":76,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":" effectively","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"bkja","output_index":0,"sequence_number":77,"summary_index":0}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":".","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","obfuscation":"lyr1XGAn6c434NY","output_index":0,"sequence_number":78,"summary_index":0}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","output_index":0,"sequence_number":79,"summary_index":0,"text":"**Comparing temperatures**\n\nI’m thinking about the conversation we had earlier. I don’t need to use a tool for this part. I just need to mention that Paris is warmer because 24°C is greater than 19°C. It’s pretty straightforward, so I’ll keep my explanation concise to make it clear. Just highlighting that difference should do the trick! Let’s focus on delivering that information effectively."}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","item_id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","output_index":0,"part":{"type":"summary_text","text":"**Comparing temperatures**\n\nI’m thinking about the conversation we had earlier. I don’t need to use a tool for this part. I just need to mention that Paris is warmer because 24°C is greater than 19°C. It’s pretty straightforward, so I’ll keep my explanation concise to make it clear. Just highlighting that difference should do the trick! Let’s focus on delivering that information effectively."},"sequence_number":80,"summary_index":0}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqdCqN3V64n1W0CKhOxRU37VZbSz8i3Sq-CzL906hAYL2AMH77vmtXoys4QgbxywGmQz--z46voWY53iFgL-NqCqyh46puGneEfdqgtNQ580gJek1Iy7M8kiAUeNm52mais16w5lCmIArbmG2MkIsCO9Rx0vQ4xasOJQDjNed3cqhAQU4Ljic56a_kG6qPQ277dpDbqCMFuc5HrR96dTRC9zHziuPXZL_ppqAWaj6PoVwDmS-0YhsUxOtgdmMZxdbxMHHX7vTsWMIFeJOtLA78YIU2fsvUCn-DGny5RMsBlDe_ogwBJlZjSeCE9Xb1v0rCl4wf1z3MLbZwL1tpdkY_k0VZQco25prNZ-ksu5Dh0_pIhZADswKzjJ17xzAMj-i4dN7HY2zdoqUcv3e5iV5mSBWE-RdNX5iwIIafhXHPA1XZuX9oFURzIiWJaXSF1uemCgK0RNhbe0ZSjQ0dfzCBXIwiXaYW7GLhTcJfE1CaoLq6lnnxiO8SlQutPpL9JrVOi88C5BFBKbWkoDXFrPWqTQRH3TtKr9kdhlFJuDAb4AG-WVGNjwfgKcA1GFXmE6VPhxJ9fyPfLoWnTYS-KEWGkfUg7qOYxIXRnV2Dribg7DDRdrYIPnT9O2svbrcl5Gqxxxyrfa9jk_sMaL800Vbou8bavn1uXAtBS1Aa4wRtBpdefYVwF23c9XwHcJTf-p0eHPRVZTE_ROgyeKM9sbQ_7QkQOxJ0BSaNltodnP29L60et1xmR3Y2exQsYdI3HhYoy7WxSVK_R8jEDWTHguqct4UOHmj0bDSu1N-RCuuMJwxQuMUMAR3l0FnB8vAF9esvahA3qxjDSDArCeC6-GndFtsxAQ8Jh3bqRjvtYnNeWheSRnny-4nqIpiMP_tBq_5n0viXnx6pIlyspczfDPtiA87nvgfzYDGGZxB2eoCkHF6LVg4BnMwAEIcigs0viqpkJw3oQUSs1vunP9HXFvox_JDiILnvBKwkDNcdrNckPt8jnNK-ss5KpkFFeVmh-AP6rDxF9DzJgR02xliIwrFuM0I87MBfJPZfMWn8Ym_daug_Q11TPChGIbac1oHRqtMbqSrnzzvpFa9cK7yAeWopBSjxgdTzvy8ZftROfSnczO9bQ=","summary":[{"type":"summary_text","text":"**Comparing temperatures**\n\nI’m thinking about the conversation we had earlier. I don’t need to use a tool for this part. I just need to mention that Paris is warmer because 24°C is greater than 19°C. It’s pretty straightforward, so I’ll keep my explanation concise to make it clear. Just highlighting that difference should do the trick! Let’s focus on delivering that information effectively."}]},"output_index":0,"sequence_number":81}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":82}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":83}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Paris","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"rZ4R7K1pWlw","output_index":1,"sequence_number":84}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"mh89V3FAnqJaC","output_index":1,"sequence_number":85}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" warmer","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"5Br2w5AHe","output_index":1,"sequence_number":86}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":":","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"cG05Dzr2orxyGBq","output_index":1,"sequence_number":87}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"NUu9w2ePQSm0wPV","output_index":1,"sequence_number":88}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"24","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"d0jSCD0dXuultR","output_index":1,"sequence_number":89}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"°C","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"JPQyZf8q96YigM","output_index":1,"sequence_number":90}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" vs","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"1pYFQQ3iJUYv4","output_index":1,"sequence_number":91}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Tokyo","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"sFOoXAq5gz","output_index":1,"sequence_number":92}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"’s","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"XI27FJQW7QM7hy","output_index":1,"sequence_number":93}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"VlsTfCLwFF0WR4G","output_index":1,"sequence_number":94}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"19","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"eqiKnBU4iVqRj6","output_index":1,"sequence_number":95}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"°C","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"VVWRR8gfcuvuRH","output_index":1,"sequence_number":96}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"obfuscation":"q7QQCporLTmfgfC","output_index":1,"sequence_number":97}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","logprobs":[],"output_index":1,"sequence_number":98,"text":"Paris is warmer: 24°C vs Tokyo’s 19°C."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris is warmer: 24°C vs Tokyo’s 19°C."},"sequence_number":99}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris is warmer: 24°C vs Tokyo’s 19°C."}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":100}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_09bded74a956f018016a4aa73fe3dc8198aa56617b06598870","object":"response","created_at":1783277375,"status":"completed","background":false,"completed_at":1783277378,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"rs_09bded74a956f018016a4aa7406e58819893c2e7c22c193a22","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqdCStFPmn_Wi5u8iAHgXifzP2VMtiW6SX6_ClwvH5Ks6YRqr3Bmmz0rNwd7pT2wbUfjW6nwEKXKS3LMvJmlM9PaT-esLjvBEzXWuz03AXCSKW_EoLNTHmJacvUU3rBtixcQuk8fXlWQOhKG32v9CpPVR-1OcEBSAqfkRKS3MdJHlnvnc1Qg3RFaagUf8MSxIkxUGk7q2P_XhXyl39qY3BSwxq3hh8PiEIfqmQ-uhef5KUpsC6r0O554zlzXya9-ZZw_NUkg3q64JJxGVdIzUTc8n2KNn4jrJpajyLBLzpO_E7u0tZRBAUkEibT0ZoDNQdVmG-RsF7VNJbppkF85Akb1VjLMIThaMvqsTNetKbb3q3ogqA9-ibIa-fQGYMDwq4HnKtkAjrV1CET7E-FeS1Y7eQivK7NtX5FwpLuz9tOqLOAbh4dNcDXj0Y3Eh12wtKlLjU09A9ln53Nubx2BW2SazbBasDdawJYb6pF-SMkKb2H6o0SlgEuRllCgrUuCqRDVj8HIhPpjrJnD4fMi1-SgUczTTarqeZNCDIMRFSu4pVjXjsnAAJYNQgfSsGrjfihpLfdVjs-EnaXHjJcXMo5CcJ4ux8uIsEwFDDPDSza18rdGPSSpyACvQaDZJvjfzp0es0QC4ncjxxeFd15UTtJY9kYL23oV5eZYCPFtVrT3PjiE1VhD9uDX30NWoH9gIqqaZmDaYEcoT_-IC13GK_liq1yV7enMyvjS_E02fSW2ragikUC3tgLS9Z5aE6M1x_RlHPGJ1u-gw4xD8GLzpVJmgtiSMxMDdMHG0-wixAL7xVJ1ETZOObjSmIQWHdK6dcWeAmNDEN-Gw6bs-2UVLWogUqOqJncuzHPmhwTz0mdlitmC31k8oGUfPMe_s-knHKGNCQ0Z288iGy4fMGLotOecVZkR8sRS8kUj6LneOfTD995BduZHPoNTcHbvlmeVS8V-Q7d8mLfaT1OZo1pL5fui52j9RBoV8os0r-c3fUJq3nFt4ED4oH5GQtoEfcTLVzEfvJn7L5_w0QooH9qpdapHLj6ucz0x_CxcaBiiw3MKWQ5btiDYll5HsQ--HmvZlEvEQ7I9Zo6PJDz-MH1jepMln8OcAYjD1FB0kM6Pld0D9XI=","summary":[{"type":"summary_text","text":"**Comparing temperatures**\n\nI’m thinking about the conversation we had earlier. I don’t need to use a tool for this part. I just need to mention that Paris is warmer because 24°C is greater than 19°C. It’s pretty straightforward, so I’ll keep my explanation concise to make it clear. Just highlighting that difference should do the trick! Let’s focus on delivering that information effectively."}]},{"id":"msg_09bded74a956f018016a4aa74200d08198a06d084abf1d4df2","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris is warmer: 24°C vs Tokyo’s 19°C."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":218,"input_tokens_details":{"cached_tokens":0},"output_tokens":56,"output_tokens_details":{"reasoning_tokens":36},"total_tokens":274},"user":null,"metadata":{}},"sequence_number":101}
+

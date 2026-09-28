@@ -1,0 +1,22 @@
+name: wuhu
+kind: executable
+sources: Sources
+stamp: true
+info:
+  CFBundleIdentifier: ai.wuhu.cli
+  CFBundleName: wuhu
+  NSLocalNetworkUsageDescription: Wuhu reaches machines and services on your local network.
+release:
+  teamID: "97W7A3Y9GD"
+checks:
+  build: [linux, mac]
+dependencies:
+  - CLIKit
+  - PinnedTLS
+  - Dependencies
+  - SpaceCore
+  - SpaceServer
+  - Fetch
+  - FetchAsyncHTTPClient
+  - AsyncHTTPClient
+  - Logging

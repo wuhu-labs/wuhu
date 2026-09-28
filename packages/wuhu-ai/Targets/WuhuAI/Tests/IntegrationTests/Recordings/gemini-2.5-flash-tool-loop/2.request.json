@@ -1,0 +1,86 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Use the double_number tool to double 21."
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "**Calculating the Target Number**\n\nI've decided to use the `double_number` tool to address the doubling request. It seems straightforward: the tool accepts an integer input, which in this case is 21. I'll need to call the tool with `number=21` to get the result.\n\n\n",
+            "thought" : true
+          },
+          {
+            "functionCall" : {
+              "args" : {
+                "number" : 21
+              },
+              "name" : "double_number"
+            },
+            "thoughtSignature" : "CiQBDDnWx9C1aPZD9F3YdpxlgLXSuYaoA6LMa4gHLSpmdLtKhiUKXgEMOdbHnL801qDRHQGkylbVylmiG5iD0NmKVIO9ItzXueIn5bAlR6mfwz3GyLiUyJY+y9e09eoc\/qXo1pvHGQv6eJRHWvLvIs4dIESJKyr14n5k4JKOmLSI5SyCPkIKnAEBDDnWx+7YDYdW8Ggnf5u075s5eX4YehVYRbe1ZxfO4THdk0CnQg7xBu\/W42b8X4Qrs9xkucatY0P5ke\/TFlmghD6vLi1p0BC4p9SdgSjlFxyt7\/JmtIGRUfK59W\/I8Ep7s5zzcEzSDzSXuvoUvpN0DoUbCBn2jXpgLbTkCQh1FyZNfVbsCCoG6t\/Kl\/imhmaPVHKXLaoLxaGG7bw="
+          }
+        ],
+        "role" : "model"
+      },
+      {
+        "parts" : [
+          {
+            "functionResponse" : {
+              "name" : "double_number",
+              "response" : {
+                "result" : "42"
+              }
+            }
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Now say the result in a sentence."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true
+      }
+    },
+    "tools" : [
+      {
+        "functionDeclarations" : [
+          {
+            "description" : "Doubles a number and returns the result.",
+            "name" : "double_number",
+            "parameters" : {
+              "properties" : {
+                "number" : {
+                  "description" : "The number to double",
+                  "type" : "integer"
+                }
+              },
+              "required" : [
+                "number"
+              ],
+              "type" : "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-2.5-flash:streamGenerateContent?alt=sse"
+}

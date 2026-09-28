@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ExitStatus","oneOf":[{"type":"object","properties":{"kind":{"const":"exited"},"code":{"type":"integer"}},"required":["kind","code"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"signaled"},"signal":{"type":"integer"}},"required":["kind","signal"],"additionalProperties":false}]}

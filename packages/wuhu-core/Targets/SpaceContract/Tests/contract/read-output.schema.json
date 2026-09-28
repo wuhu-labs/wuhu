@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ReadOutput","type":"object","properties":{"token":{"type":"string"},"content":{"type":"string"}},"required":["token","content"],"additionalProperties":false}

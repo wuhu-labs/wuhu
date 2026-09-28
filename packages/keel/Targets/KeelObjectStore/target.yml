@@ -1,0 +1,16 @@
+name: KeelObjectStore
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - HTTPTypes
+  - Crypto
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Fetch
+    - FetchAsyncHTTPClient
+    - AsyncHTTPClient
+    - HTTPTypes

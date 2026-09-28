@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"WatermarkInput","type":"object","properties":{"source":{"type":"string"},"identity":{"type":["string","null"]}},"required":["source"],"additionalProperties":false}

@@ -1,0 +1,32 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Think step by step: what is 25 × 4?",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "output_config" : {
+      "effort" : "high"
+    },
+    "stream" : true,
+    "thinking" : {
+      "type" : "enabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/anthropic\/messages"
+}

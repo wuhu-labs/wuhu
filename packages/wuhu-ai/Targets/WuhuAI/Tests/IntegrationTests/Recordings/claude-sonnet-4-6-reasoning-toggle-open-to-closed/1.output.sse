@@ -1,0 +1,63 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01DARQjSUYzqs8HT3iXwBAm3","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}          }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants a concise explanation of quantum computing in one paragraph."}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EogCClsIDRgCKkDyqtLXO2nk7Kh7CMY40kYUwOUdkefFlkQNRzEbOtO71P925k7ZthZ0KFW9MXEuvFkr7TJmGqgDs6ozKzu06+9ZMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzwpjvsDyz+hfy2OXcaDHtX1R+cTxovhPyqUiIw0vIXNoAXAEgxmQF7t/7o3X/Ynmtbk+R3na1ZND8z6t5LxT9g68BQrTQzyxHgr8z2KlseBZyj1f4q9KBIL0ZALQTgPgydJm2RiX9Ks6e9WRN6oqaKkNGojjsqBKLGP3Gh5+mZe8NTCopuMp3H4J5QXFjHodWmSHL+vKMsaqB63cK5jWSUgiNMPAy+TLCBGAE="}      }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0           }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Quantum computing is a type"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of computation that harnesses the principles of quantum mechanics to process information in fundamentally different ways than classical computers. While classical computers use bits that exist as"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" either 0 or 1, quantum computers use **quantum bits (qubits)**, which can exist in a state of **superposition** —"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" effectively being 0 and 1 simultaneously until measured. Qubits can also"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" be **entangled**, meaning the state of one qubit can instantly influence another regardless of distance, allowing quantum computers to process vast combinations"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of possibilities in parallel. Additionally, quantum algorithms use **interference** to ampl"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ify correct answers and cancel out wrong ones. This makes quantum computers potentially exponentially more"}          }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" powerful than classical computers for specific problems, such as breaking encryption, simulating molecular behavior"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for drug discovery, and optimizing complex systems — though they remain fragile, error"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-prone, and limited in practical application for now, as the field is still in its early"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stages of development."} }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1        }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":15,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":236}              }
+
+event: message_stop
+data: {"type":"message_stop"               }
+

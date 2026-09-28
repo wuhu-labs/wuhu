@@ -1,0 +1,33 @@
+name: QuickJSKit
+kind: library
+sources: Sources
+# quickjs-ng enters the graph here and nowhere else. Bazel compiles the pinned
+# http_archive (MODULE.bazel.template, `quickjs`); SwiftPM compiles the same
+# pinned tarball as a local C target fetched into .upstream/ (local because
+# -funsigned-char is an unsafeFlags cSetting, which SwiftPM rejects in remote
+# dependencies). The sources, copts and defines mirror the Bazel build.
+dependencies:
+  - JSONValue
+  - OrderedCollections
+  - name: "@quickjs//:quickjs"
+    swiftpm:
+      cTarget:
+        module: CQuickJS
+        fetch:
+          url: https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz
+          sha256: c4e813951b7c46845096a948e978c620b11ab4cf5fd622ca09c727ec31f42623
+          stripPrefix: quickjs-0.15.1
+        sources: [dtoa.c, libregexp.c, libunicode.c, quickjs.c]
+        publicHeader: quickjs.h
+        defines: [_GNU_SOURCE]
+        unsafeFlags:
+          - "-funsigned-char"
+          - "-Wno-array-bounds"
+          - "-Wno-implicit-fallthrough"
+          - "-Wno-missing-field-initializers"
+          - "-Wno-sign-compare"
+          - "-Wno-unused-but-set-variable"
+          - "-Wno-unused-parameter"
+          - "-Wno-unused-result"
+        linuxLibraries: [m, dl, pthread]
+tests: {}

@@ -1,0 +1,144 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_02df1f5a581b040e016a4aa73ecc748199b40cc8da60ab5798","object":"response","created_at":1783277374,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":{"type":"function","name":"compact"},"tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_02df1f5a581b040e016a4aa73ecc748199b40cc8da60ab5798","object":"response","created_at":1783277374,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":{"type":"function","name":"compact"},"tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"rs_02df1f5a581b040e016a4aa73f7b148199ab8609dde168dbd5","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqc__zf8zW6_7QdGlMYnu8eIqC6n9fdyaEzRQfCTWW48rkrSSsY_FNQTu9clUxMvJEfibBvtcbBIEgEiD8c6_7ausWzvUW7678kHPdLCashf3O7sErafHzA8vjj8914qnUozMEWEx6DWxjkT-SE2XXSLhbwqi-lCI_IvLefW902_GH9s8XUQs1Lxum6YCxj_hyS1mi_Ywz9nyD6qAFOqBc38C_HY9E1VVrtK4aKjwfnw_QzYIuSr7aPaU1TNB3PM7MY6DX8hl7IwXAo-8jeivmR8du2OCw8adXe0s6dLSBVTeaZUsCVncgJhzFlAA9SH26xbYEuexeOZ1onWOCoIaPY1Jl8D5gXAla0OfRBqmB7YdMy-v129EbshqptEqgbKxxCjPcscs55xetgN_wJux5m9gMb63PtMcJOFnzqE2So_MmtLOdfpAlB2OHNJkuZEzRkhbVwflAAoPk6doHD_Pvwwp8kULQ0Gy1HccPshwnO0wtknQqVrVj-qFGOZ5xg6arUm-asoDfbEmnG1yKkKckNRshwVdkxO8Ac1uU6h8KDWhgt8jsuZ0nQ--Gtf71DWVlaWGMzwEJDkikEOt7Ze_JhN7lSEKUCnhb71J1qke5TTJ4VpsQ-G95SVrcnyd5AjuIlIzLWMHHyn_DpF-5-kUH8X8Ju3wGqtse8NKzmq1iiwIhE7_EgUzNvl3UVqy6_1AXeXq9EO29CnBrCHjFT2ZgdIVAzXh71W1kFe4t3QXBuLkrQNCeoS3dygNAqf3IYd4Jyu7CmiAn6MTsDpXWK9YycVKpXMd6qv2EAQ6JuUqo2xQmhgv8E8HU3hXmIuKmxssOt44_y1KKHvQUKwe7Y346A4-QIPVYlSvpMjqTifmCoHpKujcEAwRwZdeV-4SVeLtl7a1S4B6kJXcAZklQnBsG8QpA==","summary":[]},"output_index":0,"sequence_number":2}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"rs_02df1f5a581b040e016a4aa73f7b148199ab8609dde168dbd5","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqdBeEBw_kJjmqXJ9J36qL6H1VeeqcUvUjkqbR46vPDj3hDMn0bznH5xu1bHTntfZXFHbJYXy3i5-8u6RFAkZok8Um9YMX87Nomt8sVo9Tq_eksItd98-MGQ7zrsSqDKwcMOFuTkEfrKDfT0Pcy4A53482y0skYuItk1pBL-ChHdFDe5Yufz9YaMwc3zgnlreHvwaorE-fY1YBjpSwxnteObbpAbobTqA7pgzQ2kqTjyUqU9LnFCG7r7vV6AY34ikqDV5X0TMR609DZn3OIFRv4hLnDqj6q8TQBlbl7YxvGMRKzftFnmS7cY4KgQnAPv2ZTf6RA9XI84Yr8sK1UAiIQp8fKjT0zLBGPnghsQztPlWoVV8LAIRjt7rpwX2HndiORH9TlCFtR6G4Q04cD-8rQ24HfLOGmdsDpzy99UEnc2sJFnm5w5hhAV-GpRl8UcNgED_J5kjcpbD4swTU3mvcyKCzGpgqnqHdd1DLw_icQsRz-d4xtS7eBHX7YzseVd3qSJ5cQFIua3ZVyoaiWhJHhKaJnEdTD4Ab64VcoP0nBNmTKR5wOD4IupLVcO8Buf3QyjN5ErjfOk0hpi_tyb4r2jXOQHZJxPKwpOMiORdO2CSkNz0KJWNvXQIE54TOPJx9UJjyeawrngjuG6ms-b8hVnkymrO8cz9Pq1gZHiAlg0yL1JOVthlBTbdapTwjlvI8gEFRQWg9zr7gk4yutjROldUR7asGUm2eILIFBSbNvrAw8To3ifJIKlJRBQna1G3lmrCWO9xGdSkVjpNkb-Z01kWITDu_dYQO3aPkt4sbDCK-oD8TeR7jScXCElzBdn3zED1b1BRCTP5h5a0zyzsLkNziHfqqW6E8eD06oVuL4EBRdyXMdg3Nhf441Dz1n3y8E2HXc-yFUHopxKJ4CN0rJjWUT6RleUMHTzDElK3o1hyQxDWSslYTXR6zSaORTp3VoQ4yIvCBgPB9cy4Y60T7Dr_0a2J58brwZim_as1bJWplw8fBi3wrnOr3GzgKJDn4XRbLs4veEqGBL4iFotx8Uar8jsFOZIA77Zg-q4d2_uD3_fuN5kXcRuHbYnUrQhbaWDS3rW3DFib3FFSoJhLQbC_Yyt_2dzmh-fh5l3CnPM3b2vG6RuhAczlA903Aw0rpN0RwXcX230OUlTdt2gWHfFxQt8Ar9sSSUcjG3KfSXodlIDoxReKcvsIEk8zKhxPKk3IffA2ewuh92rqimzYkaTuwnBOgKTEOlOkGUm67pEwAT0zmq4li3oZzGaFj2S1PUulhL89RsjRtOJ2V2mpdhMXwNu0lHg6lu2QmfJumrsC0nTzhrcgLQlFvBKgqnnmBOhftDWAhQr9fFddaBZ8pMD7XT_6pP6vfqJJaiUtGAyzXRhmVAyhtClaEOf1cos1UzIi3GXlrvl4j1HHfKgJT1aVK8fhbZ1z6lZYohdA2L9PVWfzCsORFamURq5MnpjSix0X50ulIR5534A3lJveb2wh0KHvj1_r4UpJM_FVt4XS0C4EWTOv0ToPfvOugZ6iNCGP37gz1ZUJKWQPqwWVM4s5Gk2RSFSrlU1Y2HBvnX9t5y8BfrXawJDXwLrDX3FuGYmitatvkalJ4-AcnK61HK5ECLEi6uoDaeTQoojiABHiGSh-AAn2PcRV3Eq3T3H8UpMk3shWHtsqJ5JDqLA9-iG133LO38V7q0uslaYZPK2Fr-O0YRzWMizztPNbKFe-47xQZCT5CpMKDhakIeJkShKLmuZWMXSboatQkc-cVc4RKtQfd6jBG15IgLfPYZ8kZgbg_tTeb3FvFNfjDX10ohSWo1qhx5jd_gdGH7mfk5uQ3hC6_9jsHspAg8y-QkIAjtg7svPNZN1sNhY2SYKKc9YH8Mk4Bbe8_quiqJ86O3DAU10eCuoANtBJmq2MD53cOYSCxJlfUd6K5mc6oDTH74-P4cri9aTTe7nosbzL5kNNssQgatjk2gmSQohBbg5r5E26HDucpphDpNfyuNaC1kl6S2RH25fV_EGLRwOERx-GErRtXhibTQfLSrvA9pItqsst9SX-2LZm3ii3Wx8jcSH-VBv8hn83RbGB9lgHJldgw8BNs0-q6bqEZUAroZl_lZ2Cu8B6ILb8592r-AYdUL_-vAoAIEbbDXrsGbBNr2IAOEia6lWyZYrF3N4CVShJ6gsoygTp7DXkKqy1XqJiYGp2SBzEvIbTZ5O1VqOqrSF9LdnsPjWzAez0w9pom1HUwczCpW5UsfYgIXJOV-RBcBeeU7u_k9Dfd_-GaNBKQ0PKDudIDEpErqFbh3nlPMWO5uWo_UbKDx_8XFoy4BHTEj2_b0ex2t6j7qKSZR4wERc7TA=","summary":[]},"output_index":0,"sequence_number":3}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","type":"function_call","status":"in_progress","arguments":"","call_id":"call_YcLp78ekZVZq1F2xF0Bgbja8","name":"compact"},"output_index":1,"sequence_number":4}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"39NsECLO8D15xw","output_index":1,"sequence_number":5}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"summary","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"l9x9XSZY4","output_index":1,"sequence_number":6}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"SGuIZPr2v2ydV","output_index":1,"sequence_number":7}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"The","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"pSmVHmzp11vdp","output_index":1,"sequence_number":8}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" user","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"2l5YLhVEM9V","output_index":1,"sequence_number":9}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" asked","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"X9dpg0kM8E","output_index":1,"sequence_number":10}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":",","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"XPZyZlvRccrUigw","output_index":1,"sequence_number":11}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" '","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"AIuUlcUVkBcmgc","output_index":1,"sequence_number":12}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"What","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"VexD5Fxt8yz2","output_index":1,"sequence_number":13}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" is","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"zwz83Gsji962t","output_index":1,"sequence_number":14}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" the","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"rCOG7AUSTB1s","output_index":1,"sequence_number":15}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" capital","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"CFpqxpg4","output_index":1,"sequence_number":16}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" of","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"RxRyyJmju6Mxw","output_index":1,"sequence_number":17}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" France","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"lLfytnZCL","output_index":1,"sequence_number":18}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"?'","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"ZvB9bQVoOm6fFz","output_index":1,"sequence_number":19}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" and","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"CUG1dmtZMDzw","output_index":1,"sequence_number":20}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" I","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"fL9EcTBPeyczzp","output_index":1,"sequence_number":21}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" answered","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"W0wR6v9","output_index":1,"sequence_number":22}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":",","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"6ebHPpaswVnwxto","output_index":1,"sequence_number":23}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" '","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"kfu4hCNiCCPjW1","output_index":1,"sequence_number":24}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"The","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"uQK8LW3nUDlEC","output_index":1,"sequence_number":25}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" capital","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"xcrJciBn","output_index":1,"sequence_number":26}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" of","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"NN8mN6R3wVKL7","output_index":1,"sequence_number":27}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" France","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"8ZBZtCcsV","output_index":1,"sequence_number":28}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" is","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"1xolN7nP5JcXR","output_index":1,"sequence_number":29}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" Paris","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"tbnTPX3bEw","output_index":1,"sequence_number":30}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":".'","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"9h5gRJXqjdgNxk","output_index":1,"sequence_number":31}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" The","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"lf2ykCQPxGoD","output_index":1,"sequence_number":32}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" user","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"gVAIUmP4F7n","output_index":1,"sequence_number":33}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" then","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"v98eFDjrJaO","output_index":1,"sequence_number":34}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" said","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"n4vZ3baJUR8","output_index":1,"sequence_number":35}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":",","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"LSOukw4PQdAxEnQ","output_index":1,"sequence_number":36}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" '","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"f0Bl8lhFb6JJ7w","output_index":1,"sequence_number":37}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"Please","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"2G9J3jrqez","output_index":1,"sequence_number":38}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" continue","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"hXpPtnx","output_index":1,"sequence_number":39}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" with","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"aiMaIRHn34O","output_index":1,"sequence_number":40}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" your","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"U17IxPs2DNw","output_index":1,"sequence_number":41}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" tasks","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"P4gZzf1Ou6","output_index":1,"sequence_number":42}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":".'","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"A5rYv070r1mAjs","output_index":1,"sequence_number":43}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","obfuscation":"Vnr2WZyrOuURTR","output_index":1,"sequence_number":44}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","arguments":"{\"summary\":\"The user asked, 'What is the capital of France?' and I answered, 'The capital of France is Paris.' The user then said, 'Please continue with your tasks.'\"}","item_id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","output_index":1,"sequence_number":45}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","type":"function_call","status":"completed","arguments":"{\"summary\":\"The user asked, 'What is the capital of France?' and I answered, 'The capital of France is Paris.' The user then said, 'Please continue with your tasks.'\"}","call_id":"call_YcLp78ekZVZq1F2xF0Bgbja8","name":"compact"},"output_index":1,"sequence_number":46}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_02df1f5a581b040e016a4aa73ecc748199b40cc8da60ab5798","object":"response","created_at":1783277374,"status":"completed","background":false,"completed_at":1783277377,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"rs_02df1f5a581b040e016a4aa73f7b148199ab8609dde168dbd5","type":"reasoning","content":[],"encrypted_content":"gAAAAABqSqdBQH7dIRa58j23KnsHSggLSxGM5Z5FflyjXo1cV6fCua7f14E4TCwP5JvHKAn-nPWKDyu_-_g9m6bBQ-U16wzbMidFgK-qZ5DqEqrH2eIuHMyKVyvCguJiA54dmRWoNKLZEb37OSrKOiPtKfvX6I1EtuLf0ndcS5Q3XXZrMw2OJlvtXC3csH_wSzM4C8BxDY-vNyaQb3SA5CUt1wikpJ2Nbty8iHf6HNmv4ktF_EigWdF0uQW4xh5h-yaQEfhsLpMKhuchAXRWHmn9ww9PmdQ955WgqkTK-1Qb_IWZ6Px_Jc8TDExwv9HHVfW5rcOR6QkpLGXOax1_wS0Mn90EQ0lwBestwl8c6V5UD38QuiKgvdORNj47tBu20rQ2HCdsNUGYW2csi8WtD0znrPdPXZVJNytxlutw0Wg0bZFZtOkUH5ezDHfr2XH9osh3CDfQmtea9eiaDI9lFzSbYucSfEhNYob1qdlkddTrmlL36fp9uLuDDWXAF8v8g_0nTNNpzry5okE6hXZ4ww2mARgEqL1hCziETYkRa8sUq907oOjYiAaXE1BXeXvTuGIvfbVrEDfAPyRXPKa6QpLKcNJB7UFMYXs9_bSwkQXEICnXcqZE6foFPK3CVBFYAcO8PTRscxHbIKe3j8yfjsmyxy0T3fMVYM5pOP83pmuqCwqn-8Vk3pvyQtfoKGEuYp-MfFq5WArZZ2JBBBhh3r-qbSz2IgwN580iPrCo5wvOTcgpFxzB2BYCVo4V8pZGOXs2bQ38JDgkoxD9bYbB-ET1rvkgUZxz7VngrswKGvYGtRA5sjbbZ8CbpL29iT9ovlTLbMgs1bNXbJ5iI2s3jTXFfZx6gbWTXkBCBPOgexukXRp4-_T70thzIW3nPUmpJwLa4SSj5ZDmLyfk8edV6UVY9zAoxPBZJaSlr9wm3Jw-Gmlfk3u4RVXBsTHtYFM5jGtTUzzoBEAgXusn9rhulv8tQ9tL-4yEpjYBsV6yHz2i36uSSDBGDG3MJae7H1KBMgMc40qfQQiKNm8TBdL3-37FTKi4Pq5FMMYkQLco75WjrVkEn8ZaIYcp00kDZmZaN8jhmDxGO-MSYmlmawMYKtV7VwYRkhviojZjsGIj_nk30ISxPcU3_w4fTxtFAG7UHM3hX-be9rKHh1rUc7uDt9dq6FcW10TfCXs6jlAM0tMxKB7gZqJdh66C2IZgAqcRehNAWmq1ml2_hzJmd-MLc7-oLu3u1dL8s3FPtdsP8xDxF1NtB4NBirLVtiRzTfqFokTHwlz1Q7DwCNHncrJpMbsSSad0l_8fMzXodfelFZSrs-J7nlTmrRUw1mVOjh2msx4W1GVcwOOquCbLRdxffcWKgorTfKOrBZZhGEws5VqmCfDgQ7xmCfEMwXI_EZmtZun5qc6Mo5AwRFs53MHC6NkY-CBFB4RYi0Ff56ujEGpflmiSfyjjUnZM3aErYCwnrKI_R0F8sgYg7-FYSz9M2o97u2AHFo4LbVm5XhwvGQhcM8XzjasKi55hKd8Z0p-vj_siZzRb03vxuciTu9MkCk-JMt1YhxAP5BneOSlYYaMZtlU91d_4SPb75QffMQl_p0NKRoV13UndecypzGCLH1cLO4Z-Ph2Z_tBj5Psj0tCqFoY5KaWURDUHRhxrH0LDFUGwbUWybh8VulcIpDtfIwjdAtXO-bo4nL1NnqzENY6UIjsQkITEASe4V-MQJ2bBX_6sy2ASZAw2SJrsbFYTCHoCRAw8PE5HOG23s8D9s2wlb44h3R4x0mkC6UqPE0rSUbWQToq6cbtEQOPVWj9lIVmTUxG5Q4rEEk5nCvITfWAzYHvKvTRS-fktRA9pYN2Q2aKfhugCaoMxuLu6QCl11qlyUX-1dxO6Q_KFrW4e_Bb71rbxrT69VNOmyXnSenMBq7eYghBXXujypbD3d2M514GMsT7EBl1zXkOfW74otAo9yaU6ilRWVYc4k6rLkkaRkh822qnoh3HgCSFNDb3GD3tu6GJD_zuBBGi0loi0bvExk4IpBsFNU0VYUDAc0ceuPHzPNOnl9sexgIzfBSwtZYcRCZZX7bvMWTxRqKGMln7akdJNAOem7TYId_-Ukj6k2WEalbqrme37pRKJgtUa7ygMMa3NCRfDSo_HXdAX6Uxps4Ab52eg3WbvP92_-OOHnGGe-uMTlUsYe5haV4u534btVwaWQCyPu9NKm-yqa4O4xGlR3PxblnaSJcpqi8KnuiGHTPpsqLD84nXTbpEbWZybSy6BXqpm0mYs-OKAGt1UEh6pKkq8-iRSOmmSWfq_gxjkMLayHq1vilmdmrBCvLUb2YPWBLBDc0FdPWXUrjVBy07QiItirRQ=","summary":[]},{"id":"fc_02df1f5a581b040e016a4aa7411fac8199b747ec92d801ab48","type":"function_call","status":"completed","arguments":"{\"summary\":\"The user asked, 'What is the capital of France?' and I answered, 'The capital of France is Paris.' The user then said, 'Please continue with your tasks.'\"}","call_id":"call_YcLp78ekZVZq1F2xF0Bgbja8","name":"compact"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"high","mode":"standard","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":{"type":"function","name":"compact"},"tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Returns the current weather for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"]},"strict":false},{"type":"function","description":"Folds the conversation so far into a durable summary. Call with a summary of everything above.","name":"compact","parameters":{"type":"object","properties":{"summary":{"type":"string","description":"Summary of the conversation so far"}},"required":["summary"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":136,"input_tokens_details":{"cached_tokens":0},"output_tokens":258,"output_tokens_details":{"reasoning_tokens":203},"total_tokens":394},"user":null,"metadata":{}},"sequence_number":47}
+

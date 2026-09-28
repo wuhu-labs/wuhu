@@ -1,0 +1,51 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Explain quantum computing in one paragraph.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Quantum computing is a form of computation that harnesses the principles of quantum mechanics—such as superposition, entanglement, and interference—to process information in fundamentally different ways than classical computers. While classical bits represent either 0 or 1, quantum bits (qubits) can exist in a superposition of both states simultaneously, allowing a quantum computer to explore many possibilities in parallel. Entanglement links qubits so that the state of one instantly influences another, enabling complex correlations, while interference is used to amplify correct answers and cancel out wrong ones. This makes quantum computers potentially powerful for specific tasks like factoring large numbers, simulating molecules, and optimizing complex systems, though they remain difficult to build because qubits are extremely fragile and prone to errors from environmental noise.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now explain it to a five-year-old.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-opus-4-7",
+    "output_config" : {
+      "effort" : "high"
+    },
+    "stream" : true,
+    "thinking" : {
+      "display" : "summarized",
+      "type" : "adaptive"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

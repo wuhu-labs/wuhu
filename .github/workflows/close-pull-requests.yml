@@ -1,0 +1,24 @@
+name: Close pull requests
+
+# This repository is published from a private monorepo and takes no pull
+# requests. pull_request_target runs in the base repository's context and
+# never checks out the pull request's code.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Close with a pointer to the README
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+        run: |
+          gh pr close "$PR" --repo "$REPO" --comment "Thanks for the interest. This repository does not accept pull requests; see ${SERVER}/${REPO}#contributing."

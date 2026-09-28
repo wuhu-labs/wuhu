@@ -1,0 +1,14 @@
+name: ContractMacros
+kind: macro
+sources: Sources
+checks:
+  build: [mac, linux, ios]
+  test: [mac, linux]
+dependencies:
+  - SwiftSyntax
+  - SwiftSyntaxMacros
+  - SwiftSyntaxBuilder
+  - SwiftCompilerPlugin
+tests:
+  dependencies:
+    - SwiftSyntaxMacrosTestSupport

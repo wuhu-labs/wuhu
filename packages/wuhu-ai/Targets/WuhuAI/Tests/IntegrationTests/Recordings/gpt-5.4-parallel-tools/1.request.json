@@ -1,0 +1,74 @@
+{
+  "body" : {
+    "include" : [
+      "reasoning.encrypted_content"
+    ],
+    "input" : [
+      {
+        "content" : "You are a helpful assistant.",
+        "role" : "system"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Fetch the weather for BOTH Paris and Tokyo. Call get_weather twice, in parallel, in this single turn — one call per city.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "gpt-5.4",
+    "reasoning" : {
+      "effort" : "high",
+      "summary" : "auto"
+    },
+    "store" : false,
+    "stream" : true,
+    "tools" : [
+      {
+        "description" : "Returns the current weather for a city.",
+        "name" : "get_weather",
+        "parameters" : {
+          "properties" : {
+            "city" : {
+              "description" : "City name",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "city"
+          ],
+          "type" : "object"
+        },
+        "strict" : false,
+        "type" : "function"
+      },
+      {
+        "description" : "Folds the conversation so far into a durable summary. Call with a summary of everything above.",
+        "name" : "compact",
+        "parameters" : {
+          "properties" : {
+            "summary" : {
+              "description" : "Summary of the conversation so far",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "summary"
+          ],
+          "type" : "object"
+        },
+        "strict" : false,
+        "type" : "function"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:6f329108d16c6fb7cabe0189b18335e170449ce04c2b8663b8fde66dc8c9235e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.openai.com\/v1\/responses"
+}

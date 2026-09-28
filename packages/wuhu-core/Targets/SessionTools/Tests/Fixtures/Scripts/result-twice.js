@@ -1,0 +1,2 @@
+result("first")
+result("second")

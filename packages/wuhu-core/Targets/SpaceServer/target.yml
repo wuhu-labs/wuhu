@@ -1,0 +1,96 @@
+name: SpaceServer
+kind: library
+sources: Sources
+embeddedResources:
+  - name: WebApp
+    target: //packages/wuhu-web/app:bundle
+    typeName: EmbeddedWebApp
+    symbolName: webapp
+  - name: ViewProviders
+    path: ViewProviders
+    typeName: EmbeddedViewProviders
+    symbolName: viewproviders
+  - name: ShellSDK
+    target: //packages/wuhu-web/app:shell-sdk
+    typeName: EmbeddedShellSDK
+    symbolName: shellsdk
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Assertion
+  - ClaudeStream
+  - Credentials
+  - MachineContract
+  - MachineChannel
+  - SessionDomain
+  - SessionTools
+  - LoopCore
+  - InferenceKit
+  - SpaceContract
+  - SpaceTools
+  - SpaceCore
+  - SpaceFS
+  - SystemFiles
+  - WuhuAI
+  - Crypto
+  - JSONValue
+  - OrderedCollections
+  - Fetch
+  - Serve
+  - ServeRouting
+  - ServeSSE
+  - ServeNIO
+  - ServeTLS
+  - HTTPTypes
+  - Logging
+  - Dependencies
+  - AsyncHTTPClient
+  - NIOCore
+  - Subprocess
+  - WebPush
+tests:
+  size: large
+  dependencies:
+    - Assertion
+    - ClaudeStream
+    - Credentials
+    - Crypto
+    - MachineContract
+    - MachineChannel
+    - MachineAgent
+    - SessionDomain
+    - SessionTools
+    - LoopCore
+    - InferenceKit
+    - WuhuAI
+    - SpaceContract
+    - SpaceTools
+    - SpaceCore
+    - SpaceFS
+    - SystemFiles
+    - JSONValue
+    - Fetch
+    - FetchSSE
+    - FetchAsyncHTTPClient
+    - AsyncHTTPClient
+    - NIOCore
+    - Serve
+    - ServeNIO
+    - ServeTesting
+    - HTTPTypes
+    - Dependencies
+    - DependenciesTestSupport
+    - Clocks
+    - ControlledTime
+    - WuhuRecordReplay
+    - Logging
+    - WebPush
+    - GRDB
+    - Scratch
+    - ScratchTesting
+  resources:
+    - path: Recordings
+      mode: copy
+    - path: Backcompat
+      mode: copy

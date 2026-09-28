@@ -1,0 +1,21 @@
+name: PinnedTLS
+kind: library
+sources: Sources
+dependencies:
+  - Crypto
+  - Fetch
+  - HTTPTypes
+  - NIOCore
+  - NIOHTTP1
+  - NIOPosix
+  - NIOSSL
+  - NIOTLS
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Crypto
+    - NIOCore
+    - NIOPosix
+    - NIOSSL

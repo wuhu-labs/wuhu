@@ -1,0 +1,357 @@
+{
+  "accepted": [
+    {
+      "spelling": "https://space.example:5530/_/sessions/zebra-forest-bike",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "session",
+        "id": "zebra-forest-bike"
+      },
+      "https": "https://space.example:5530/_/sessions/zebra-forest-bike",
+      "wuhu": "wuhu://space.example:5530/_/sessions/zebra-forest-bike"
+    },
+    {
+      "spelling": "wuhu://space.example:5530/_/conversations/0199a0d6-8680",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "conversation",
+        "id": "0199a0d6-8680"
+      },
+      "https": "https://space.example:5530/_/conversations/0199a0d6-8680",
+      "wuhu": "wuhu://space.example:5530/_/conversations/0199a0d6-8680"
+    },
+    {
+      "spelling": "https://space.example:5530/_/sessions/a?view=transcript",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "session",
+        "id": "a"
+      },
+      "query": "view=transcript",
+      "https": "https://space.example:5530/_/sessions/a?view=transcript",
+      "wuhu": "wuhu://space.example:5530/_/sessions/a?view=transcript"
+    },
+    {
+      "spelling": "https://Box.Local/notes/My%20Plan.md?q=a%2Fb#part%201",
+      "host": "box.local",
+      "destination": {
+        "kind": "path",
+        "path": "/notes/My Plan.md"
+      },
+      "query": "q=a%2Fb",
+      "fragment": "part%201",
+      "https": "https://box.local/notes/My%20Plan.md?q=a%2Fb#part%201",
+      "wuhu": "wuhu://box.local/notes/My%20Plan.md?q=a%2Fb#part%201"
+    },
+    {
+      "spelling": "https://box.local",
+      "host": "box.local",
+      "destination": {
+        "kind": "path",
+        "path": "/"
+      },
+      "https": "https://box.local/",
+      "wuhu": "wuhu://box.local/"
+    },
+    {
+      "spelling": "wuhu://box.local/notes/",
+      "host": "box.local",
+      "destination": {
+        "kind": "path",
+        "path": "/notes"
+      },
+      "https": "https://box.local/notes",
+      "wuhu": "wuhu://box.local/notes"
+    },
+    {
+      "spelling": "https://box.local:443/.agents/skills",
+      "host": "box.local",
+      "destination": {
+        "kind": "path",
+        "path": "/.agents/skills"
+      },
+      "https": "https://box.local/.agents/skills",
+      "wuhu": "wuhu://box.local/.agents/skills"
+    },
+    {
+      "spelling": "https://[::1]:5530/%E4%B8%AD%E6%96%87/a%20b%23%3F.md",
+      "host": "[::1]:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/中文/a b#?.md"
+      },
+      "https": "https://[::1]:5530/%E4%B8%AD%E6%96%87/a%20b%23%3F.md",
+      "wuhu": "wuhu://[::1]:5530/%E4%B8%AD%E6%96%87/a%20b%23%3F.md"
+    },
+    {
+      "spelling": "https://h/a(1)'s.md",
+      "host": "h",
+      "destination": {
+        "kind": "path",
+        "path": "/a(1)'s.md"
+      },
+      "https": "https://h/a%281%29%27s.md",
+      "wuhu": "wuhu://h/a%281%29%27s.md"
+    },
+    {
+      "spelling": "wuhu://h/_/sessions/a%20b",
+      "host": "h",
+      "destination": {
+        "kind": "session",
+        "id": "a b"
+      },
+      "https": "https://h/_/sessions/a%20b",
+      "wuhu": "wuhu://h/_/sessions/a%20b"
+    },
+    {
+      "spelling": "https://h/_/sessions/zebra-forest-bike/AGENTS.md",
+      "host": "h",
+      "destination": {
+        "kind": "path",
+        "path": "/_/sessions/zebra-forest-bike/AGENTS.md"
+      },
+      "https": "https://h/_/sessions/zebra-forest-bike/AGENTS.md",
+      "wuhu": "wuhu://h/_/sessions/zebra-forest-bike/AGENTS.md"
+    },
+    {
+      "spelling": "https://h/_/conversations/c1/attachments/a.png",
+      "host": "h",
+      "destination": {
+        "kind": "path",
+        "path": "/_/conversations/c1/attachments/a.png"
+      },
+      "https": "https://h/_/conversations/c1/attachments/a.png",
+      "wuhu": "wuhu://h/_/conversations/c1/attachments/a.png"
+    },
+    {
+      "spelling": "https://h/_/sessions/",
+      "host": "h",
+      "destination": {
+        "kind": "path",
+        "path": "/_/sessions"
+      },
+      "https": "https://h/_/sessions",
+      "wuhu": "wuhu://h/_/sessions"
+    },
+    {
+      "spelling": "https://h/_/sessions/s1/",
+      "host": "h",
+      "destination": {
+        "kind": "session",
+        "id": "s1"
+      },
+      "https": "https://h/_/sessions/s1",
+      "wuhu": "wuhu://h/_/sessions/s1"
+    },
+    {
+      "spelling": "https://h/_/login",
+      "host": "h",
+      "destination": {
+        "kind": "path",
+        "path": "/_/login"
+      },
+      "https": "https://h/_/login",
+      "wuhu": "wuhu://h/_/login"
+    },
+    {
+      "spelling": "wuhu://system:5530/x",
+      "host": "system:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/x"
+      },
+      "https": "https://system:5530/x",
+      "wuhu": "wuhu://system:5530/x"
+    },
+    {
+      "spelling": "https://SYSTEM:5530",
+      "host": "system:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/"
+      },
+      "https": "https://system:5530/",
+      "wuhu": "wuhu://system:5530/"
+    },
+    {
+      "spelling": "wuhu://system.example/x",
+      "host": "system.example",
+      "destination": {
+        "kind": "path",
+        "path": "/x"
+      },
+      "https": "https://system.example/x",
+      "wuhu": "wuhu://system.example/x"
+    },
+    {
+      "spelling": "wuhu://systems/x",
+      "host": "systems",
+      "destination": {
+        "kind": "path",
+        "path": "/x"
+      },
+      "https": "https://systems/x",
+      "wuhu": "wuhu://systems/x"
+    }
+  ],
+  "rejected": [
+    "wuhu:/docs/a.md",
+    "wuhu:///docs/a.md",
+    "wuhu:docs/a.md",
+    "http://h/a",
+    "ftp://h/a",
+    "https://user@h/a",
+    "https://h:/a",
+    "https://h:x/a",
+    "https:// h/a",
+    "https://h/a/../b",
+    "https://h/a/./b",
+    "https://h/a//b",
+    "https://h/a%2Fb",
+    "https://h/a%5Cb",
+    "https://h/a%00b",
+    "https://h/a%ZZ",
+    "https://h/a%E4",
+    "https://h/_/sessions/a%2Fb",
+    "wuhu://system/AGENTS.md",
+    "https://system/skills/x/SKILL.md",
+    "wuhu://SYSTEM/x",
+    "wuhu://system",
+    "https://system:443/"
+  ],
+  "origins": [
+    {
+      "origin": "https://Space.example:5530",
+      "host": "space.example:5530"
+    },
+    {
+      "origin": "https://box.local/",
+      "host": "box.local"
+    },
+    {
+      "origin": "https://box.local:443",
+      "host": "box.local"
+    },
+    {
+      "origin": "https://box.local/notes",
+      "host": null
+    },
+    {
+      "origin": "http://box.local:5530",
+      "host": "box.local:5530"
+    },
+    {
+      "origin": "wuhu://box.local",
+      "host": "box.local"
+    },
+    {
+      "origin": "ftp://box.local",
+      "host": null
+    },
+    {
+      "origin": "https://system",
+      "host": null
+    },
+    {
+      "origin": "https://system:443",
+      "host": null
+    },
+    {
+      "origin": "https://system:5530",
+      "host": "system:5530"
+    }
+  ],
+  "contextual": [
+    {
+      "spelling": "wuhu:/_/sessions/zebra-forest-bike",
+      "contextHost": "Space.example:5530",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "session",
+        "id": "zebra-forest-bike"
+      },
+      "https": "https://space.example:5530/_/sessions/zebra-forest-bike",
+      "wuhu": "wuhu://space.example:5530/_/sessions/zebra-forest-bike"
+    },
+    {
+      "spelling": "WUHU:/notes/My%20Plan.md?q=1#top",
+      "contextHost": "space.example:5530",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/notes/My Plan.md"
+      },
+      "query": "q=1",
+      "fragment": "top",
+      "https": "https://space.example:5530/notes/My%20Plan.md?q=1#top",
+      "wuhu": "wuhu://space.example:5530/notes/My%20Plan.md?q=1#top"
+    },
+    {
+      "spelling": "wuhu:/",
+      "contextHost": "space.example:5530",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/"
+      },
+      "https": "https://space.example:5530/",
+      "wuhu": "wuhu://space.example:5530/"
+    },
+    {
+      "spelling": "/_/conversations/c1",
+      "contextHost": "space.example:5530",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "conversation",
+        "id": "c1"
+      },
+      "https": "https://space.example:5530/_/conversations/c1",
+      "wuhu": "wuhu://space.example:5530/_/conversations/c1"
+    },
+    {
+      "spelling": "https://space.example:5530/a.md",
+      "contextHost": "elsewhere.test",
+      "host": "space.example:5530",
+      "destination": {
+        "kind": "path",
+        "path": "/a.md"
+      },
+      "https": "https://space.example:5530/a.md",
+      "wuhu": "wuhu://space.example:5530/a.md"
+    }
+  ],
+  "contextualRejected": [
+    {
+      "spelling": "wuhu:///docs/a.md",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "wuhu:docs/a.md",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "wuhu:/docs/../a.md",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "//h/a.md",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "docs/a.md",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "mailto:a@b.c",
+      "contextHost": "h"
+    },
+    {
+      "spelling": "wuhu:/a.md",
+      "contextHost": "user@h"
+    },
+    {
+      "spelling": "/AGENTS.md",
+      "contextHost": "system"
+    }
+  ]
+}

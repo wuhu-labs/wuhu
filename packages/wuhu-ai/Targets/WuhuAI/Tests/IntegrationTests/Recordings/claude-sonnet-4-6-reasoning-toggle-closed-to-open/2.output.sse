@@ -1,0 +1,72 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01SQBPHG8QmhnVn3AtnGxU9a","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":247,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}         }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants me to explain quantum computing in a very simple, child-friendly way that a five-year-old could understand."}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErgCClsIDRgCKkB206uxt5BKLkQgoMIIcJpRYr3whNOXPkkLAiH3PMqGPjeZx5c3S6AN3O1rHE1R58odcUdnmxW6pd8EWjLsvC6KMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgy+aFjI4ZccLe9SvKMaDDQEy7RE0L1q5aJNvSIwP8vpLulaONff7u3L0c/XWyrvwKaZTlpJ731c4p/vZcyfiC2+nhqDEnV+kpQpZU1MKooBlapat1J2y0VoGhHXFDBPLCob3srZJJTdGK/uMRLya1wAjFz6GOp2lwmiu3aTzXKGqCv/GamgEhcyH+4H3HEBA7iLmcUIRO9RFKr98lf9sp29fdayAc/xgKlFMbqn1ozFLsx22FsRfwcfq9/SQLsnB/WUz0OAVPJktZ8Ziox6IdnCjGgOx/Rs561lGAE="}        }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Okay, imagine you have a magical coin. A normal coin is"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" either **heads or tails**, right? But this magical coin,"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" while it's spinning in the air, is kind of **both heads AND tails at"}             }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the same time** — it's not one or the other until it lands. Quantum computers use"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" something like that magical spinning coin instead of regular coins. This"}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" means they can try **lots and lots of answers to"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a problem all at the same time**, instead of trying them one by"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" one like a normal computer does. So if you were trying"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to find your lost toy in a giant pile,"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a normal computer would dig through one toy at a time, but a quantum computer could look"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" through **all the toys at once**! It's a super special"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and very tricky kind of computer that scientists are still working really hard to build,"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" because these magical coins are very delicate and stop being magical"}         }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" if you're not super careful with them."}          }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1          }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":247,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":240}               }
+
+event: message_stop
+data: {"type":"message_stop"      }
+

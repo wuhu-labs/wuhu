@@ -1,0 +1,12 @@
+name: ServeRouting
+kind: library
+sources: Sources
+dependencies:
+  - Serve
+  - Fetch
+  - HTTPTypes
+tests:
+  dependencies:
+    - Serve
+    - Fetch
+    - HTTPTypes

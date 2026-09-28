@@ -1,0 +1,1512 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wuhu app chrome study</title>
+    <style>
+    :root {
+      color-scheme: light;
+      --ink: #0d0f12;
+      --muted: #636970;
+      --paper: #f7f8f3;
+      --mint: #68d5b0;
+      --blue: #5da2e8;
+      --violet: #8068ed;
+      --rose: #c768a3;
+      --sidebar-width: 276px;
+      --chrome-left: 310px;
+      --material: rgba(249, 250, 246, 0.72);
+      --material-strong: rgba(252, 253, 250, 0.86);
+      --hairline: rgba(255, 255, 255, 0.72);
+      --shadow: 0 24px 70px rgba(24, 31, 42, 0.14), 0 3px 12px rgba(24, 31, 42, 0.06);
+      --ease: cubic-bezier(.2, .8, .2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+        "SF Pro Text", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      letter-spacing: -0.012em;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .artifact {
+      position: fixed;
+      inset: 0;
+      overflow: auto;
+      background:
+        radial-gradient(circle at 82% 5%, rgba(91, 218, 181, 0.32), transparent
+        29%),
+        radial-gradient(circle at 12% 54%, rgba(115, 105, 235, 0.2), transparent
+        32%),
+        radial-gradient(circle at 78% 88%, rgba(217, 110, 163, 0.17), transparent
+        28%),
+        linear-gradient(145deg, #f8f8f2 0%, #f1f7f2 48%, #faf7f3 100%);
+    }
+
+    .artifact::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.17;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.86' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.16'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+
+    .artifact-content {
+      position: relative;
+      z-index: 1;
+      min-height: 100%;
+      padding: 142px 6vw 120px var(--chrome-left);
+      transition: padding 520ms var(--ease);
+    }
+
+    .artifact-heading {
+      max-width: 850px;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 24px;
+      color: #429c7d;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 24px;
+      height: 2px;
+      content: "";
+      border-radius: 2px;
+      background: var(--mint);
+    }
+
+    .artifact h1 {
+      margin: 0;
+      max-width: 820px;
+      font-size: clamp(54px, 7vw, 102px);
+      font-weight: 760;
+      line-height: 0.94;
+      letter-spacing: -0.07em;
+    }
+
+    .gradient-text {
+      color: transparent;
+      background: linear-gradient(90deg, #58bda0 0%, #5c99df 49%, #8768ed 78%,
+        #bf69a6 100%);
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+
+    .lede {
+      max-width: 680px;
+      margin: 30px 0 0;
+      color: #4e555c;
+      font-size: clamp(17px, 2vw, 21px);
+      line-height: 1.48;
+      letter-spacing: -0.025em;
+    }
+
+    .lede strong {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .artifact-grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+      max-width: 1080px;
+      margin-top: 58px;
+    }
+
+    .artifact-card {
+      position: relative;
+      min-height: 190px;
+      padding: 22px;
+      overflow: hidden;
+      border: 1px solid rgba(14, 19, 24, 0.08);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.62);
+      box-shadow: 0 16px 50px rgba(24, 31, 42, 0.05);
+    }
+
+    .artifact-card h2,
+    .artifact-card p {
+      position: relative;
+      z-index: 1;
+    }
+
+    .artifact-card h2 {
+      margin: 8px 0 8px;
+      font-size: 19px;
+      letter-spacing: -0.035em;
+    }
+
+    .artifact-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .artifact-card.large {
+      grid-column: span 7;
+      min-height: 270px;
+    }
+
+    .artifact-card.medium {
+      grid-column: span 5;
+      min-height: 270px;
+    }
+
+    .artifact-card.third {
+      grid-column: span 4;
+    }
+
+    .card-label {
+      color: #6c747b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .chart {
+      position: absolute;
+      right: 20px;
+      bottom: 17px;
+      left: 20px;
+      height: 125px;
+    }
+
+    .chart svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .agent-map {
+      position: absolute;
+      inset: 95px 26px 24px;
+    }
+
+    .agent-map::before,
+    .agent-map::after {
+      position: absolute;
+      height: 1px;
+      content: "";
+      background: rgba(55, 66, 77, 0.16);
+      transform-origin: left center;
+    }
+
+    .agent-map::before {
+      width: 58%;
+      top: 38%;
+      left: 20%;
+      transform: rotate(18deg);
+    }
+
+    .agent-map::after {
+      width: 48%;
+      top: 63%;
+      left: 30%;
+      transform: rotate(-21deg);
+    }
+
+    .node {
+      position: absolute;
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      color: white;
+      background: #11151b;
+      box-shadow: 0 9px 24px rgba(32, 41, 51, 0.18);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .node:nth-child(1) {
+      top: 8%;
+      left: 8%;
+      background: #15181d;
+    }
+    .node:nth-child(2) {
+      top: 4%;
+      right: 6%;
+      background: #58bda0;
+    }
+    .node:nth-child(3) {
+      bottom: 2%;
+      left: 36%;
+      background: #7969e7;
+    }
+    .node:nth-child(4) {
+      right: 18%;
+      bottom: 6%;
+      background: #5d9ee7;
+    }
+
+    .dark-card {
+      color: white;
+      border-color: rgba(255, 255, 255, 0.08);
+      background: #10131a;
+      box-shadow: 0 20px 52px rgba(19, 24, 32, 0.2);
+    }
+
+    .dark-card p,
+    .dark-card .card-label {
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    .progress {
+      position: absolute;
+      right: 22px;
+      bottom: 24px;
+      left: 22px;
+      height: 7px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .progress::after {
+      display: block;
+      width: 72%;
+      height: 100%;
+      content: "";
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--mint), var(--blue), var(--violet));
+    }
+
+    .markdown-artifact {
+      display: none;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: clamp(1rem, 0.96rem + 0.2vw, 1.0625rem);
+      line-height: 1.72;
+      letter-spacing: 0;
+    }
+
+    .markdown-document {
+      max-width: 52rem;
+      margin: 0 auto;
+    }
+
+    .markdown-document > * {
+      max-width: 70ch;
+    }
+
+    .markdown-document > .doc-figure,
+    .markdown-document > .doc-table-wrap {
+      max-width: none;
+    }
+
+    .markdown-document h1 {
+      max-width: 17ch;
+      margin: 0;
+      font-size: clamp(2.15rem, 1.55rem + 2.7vw, 3.15rem);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.045em;
+    }
+
+    .doc-dateline {
+      margin: 0.95rem 0 0;
+      color: #8a91a0;
+      font-size: 0.9375rem;
+      font-style: italic;
+    }
+
+    .markdown-document h2 {
+      margin: clamp(3.5rem, 8vw, 5rem) 0 0;
+      font-size: clamp(1.4rem, 1.2rem + 0.9vw, 1.65rem);
+      font-weight: 600;
+      line-height: 1.2;
+      letter-spacing: -0.018em;
+    }
+
+    .markdown-document h3 {
+      margin: clamp(2.25rem, 5vw, 3rem) 0 0;
+      font-size: 1.125rem;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .markdown-document h2 + p,
+    .markdown-document h3 + p,
+    .markdown-document h2 + .doc-figure,
+    .markdown-document h3 + .doc-figure,
+    .markdown-document h2 + .doc-table-wrap,
+    .markdown-document h3 + .doc-table-wrap {
+      margin-top: 1.1rem;
+    }
+
+    .markdown-document p {
+      margin: 1.35rem 0 0;
+      color: #0b0d12;
+    }
+
+    .markdown-document strong {
+      font-weight: 650;
+    }
+
+    .markdown-document code {
+      padding: 0.12em 0.38em;
+      border-radius: 5px;
+      background: rgba(11, 13, 18, 0.05);
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.86em;
+    }
+
+    .doc-figure {
+      margin: 1.6rem 0 0;
+      padding: 1.1rem 1.3rem;
+      overflow-x: auto;
+      border-radius: 12px;
+      background: rgba(11, 13, 18, 0.038);
+    }
+
+    .doc-figure pre {
+      margin: 0;
+      color: #0b0d12;
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.84rem;
+      line-height: 1.62;
+      white-space: pre;
+    }
+
+    .doc-figure pre code {
+      padding: 0;
+      background: none;
+      font-size: inherit;
+    }
+
+    .doc-table-wrap {
+      margin: 1.6rem 0 0;
+      overflow-x: auto;
+    }
+
+    .doc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9375rem;
+    }
+
+    .doc-table th {
+      padding: 0 1.5rem 0.7rem 0;
+      border-bottom: 1px solid rgba(11, 13, 18, 0.08);
+      color: #4b5261;
+      font-weight: 600;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .doc-table td {
+      padding: 0.72rem 1.5rem 0.72rem 0;
+      vertical-align: top;
+      line-height: 1.5;
+    }
+
+    .doc-callout {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 13px;
+      margin-top: 1.6rem;
+      padding: 17px 19px;
+      border-radius: 12px;
+      background: rgba(16, 201, 154, 0.08);
+      color: #3f4e49;
+      font-size: 0.93rem;
+      line-height: 1.55;
+    }
+
+    .doc-callout::before {
+      display: grid;
+      width: 22px;
+      height: 22px;
+      place-items: center;
+      border-radius: 50%;
+      content: "✓";
+      color: white;
+      background: #35b991;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    body.view-markdown .artifact {
+      background: #f7f7f4;
+    }
+
+    body.view-markdown .artifact::before {
+      opacity: 0;
+    }
+
+    body.view-markdown .custom-artifact {
+      display: none;
+    }
+
+    body.view-markdown .markdown-artifact {
+      display: block;
+    }
+
+    .material {
+      border: 1px solid var(--hairline);
+      background: var(--material);
+      box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.56);
+      backdrop-filter: blur(26px) saturate(150%);
+      -webkit-backdrop-filter: blur(26px) saturate(150%);
+    }
+
+    .sidebar {
+      position: fixed;
+      z-index: 10;
+      top: 16px;
+      bottom: 16px;
+      left: 16px;
+      display: flex;
+      width: var(--sidebar-width);
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 24px;
+      transition: width 480ms var(--ease), transform 480ms var(--ease), opacity
+        300ms ease;
+    }
+
+    .sidebar-header {
+      display: flex;
+      height: 62px;
+      flex: none;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 13px 0 17px;
+    }
+
+    .brand {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 760;
+      letter-spacing: -0.04em;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 29px;
+      height: 29px;
+      flex: none;
+      place-items: center;
+      border-radius: 9px;
+      color: white;
+      background: #111318;
+      font-size: 13px;
+      box-shadow: 0 7px 18px rgba(17, 19, 24, 0.16);
+    }
+
+    .icon-button {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: none;
+      padding: 0;
+      place-items: center;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      cursor: pointer;
+      transition: background 160ms ease, transform 160ms ease;
+    }
+
+    .icon-button:hover {
+      background: rgba(13, 15, 18, 0.06);
+    }
+
+    .icon-button:active {
+      transform: scale(0.95);
+    }
+
+    .icon-button svg,
+    .row-icon svg,
+    .new-session svg,
+    .search-button svg,
+    .composer svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.8;
+    }
+
+    .sidebar-actions {
+      display: grid;
+      gap: 8px;
+      padding: 2px 11px 13px;
+    }
+
+    .new-session,
+    .search-button {
+      display: flex;
+      width: 100%;
+      height: 40px;
+      align-items: center;
+      gap: 10px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    .new-session {
+      padding: 0 13px;
+      border: 0;
+      color: white;
+      background: #111318;
+      box-shadow: 0 9px 24px rgba(17, 19, 24, 0.14);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .new-session .shortcut {
+      margin-left: auto;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 11px;
+    }
+
+    .search-button {
+      padding: 0 12px;
+      border: 1px solid rgba(18, 22, 28, 0.07);
+      color: #656c73;
+      background: rgba(255, 255, 255, 0.46);
+      font-size: 12px;
+      text-align: left;
+    }
+
+    .search-button .shortcut {
+      margin-left: auto;
+      padding: 2px 6px;
+      border: 1px solid rgba(18, 22, 28, 0.08);
+      border-radius: 6px;
+      color: #858b91;
+      background: rgba(255, 255, 255, 0.45);
+      font-size: 10px;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 3px 9px 16px;
+      scrollbar-width: none;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .section-title {
+      display: flex;
+      height: 28px;
+      align-items: center;
+      padding: 0 10px;
+      color: #8a9095;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    .tree {
+      display: grid;
+      gap: 2px;
+      margin-bottom: 16px;
+    }
+
+    .tree-row {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      height: 35px;
+      align-items: center;
+      gap: 9px;
+      padding: 0 10px;
+      border-radius: 10px;
+      color: #3f464d;
+      font-size: 12.5px;
+      cursor: pointer;
+      transition: color 150ms ease, background 150ms ease;
+    }
+
+    .tree-row:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.48);
+    }
+
+    .tree-row.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 3px 12px rgba(24, 31, 42, 0.045), inset 0 0 0 1px rgba(255, 255,
+        255, 0.6);
+      font-weight: 620;
+    }
+
+    .tree-row.child {
+      margin-left: 20px;
+    }
+
+    .tree-row.child::before {
+      position: absolute;
+      top: -4px;
+      bottom: 17px;
+      left: -7px;
+      width: 10px;
+      content: "";
+      border-bottom: 1px solid rgba(40, 48, 57, 0.14);
+      border-left: 1px solid rgba(40, 48, 57, 0.14);
+      border-bottom-left-radius: 6px;
+    }
+
+    .row-icon {
+      display: grid;
+      width: 18px;
+      height: 18px;
+      flex: none;
+      place-items: center;
+      color: #737a81;
+    }
+
+    .session-dot {
+      width: 7px;
+      height: 7px;
+      margin: 0 5px;
+      flex: none;
+      border-radius: 50%;
+      background: #62c8a8;
+      box-shadow: 0 0 0 3px rgba(98, 200, 168, 0.12);
+    }
+
+    .session-dot.blue {
+      background: #659fe3;
+      box-shadow: 0 0 0 3px rgba(101, 159, 227, 0.12);
+    }
+    .session-dot.violet {
+      background: #7d6ce8;
+      box-shadow: 0 0 0 3px rgba(125, 108, 232, 0.12);
+    }
+
+    .row-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row-meta {
+      margin-left: auto;
+      color: #999ea3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 9px;
+    }
+
+    .sidebar-footer {
+      display: flex;
+      min-height: 61px;
+      flex: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-top: 1px solid rgba(19, 24, 30, 0.055);
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    .avatar {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      flex: none;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(145deg, #5ac5a3, #756fe8 65%, #b7679f);
+      font-size: 11px;
+      font-weight: 700;
+      box-shadow: 0 6px 16px rgba(76, 94, 121, 0.2);
+    }
+
+    .account {
+      min-width: 0;
+      line-height: 1.15;
+    }
+
+    .account strong,
+    .account span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account strong {
+      font-size: 12px;
+    }
+
+    .account span {
+      margin-top: 3px;
+      color: #848a90;
+      font-size: 10px;
+    }
+
+    .topbar {
+      position: fixed;
+      z-index: 9;
+      top: 16px;
+      right: 16px;
+      left: var(--chrome-left);
+      display: flex;
+      height: 54px;
+      align-items: center;
+      padding: 0 9px 0 16px;
+      border-radius: 18px;
+      transition: left 480ms var(--ease), transform 480ms var(--ease), opacity 300ms
+        ease;
+    }
+
+    .breadcrumbs {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+      color: #6b7177;
+      font-size: 12px;
+    }
+
+    .breadcrumbs strong {
+      max-width: 280px;
+      overflow: hidden;
+      color: var(--ink);
+      font-weight: 620;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .slash {
+      color: #a6aaae;
+    }
+
+    .live-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+      padding: 5px 8px;
+      border: 1px solid rgba(18, 22, 28, 0.06);
+      border-radius: 99px;
+      color: #647068;
+      background: rgba(255, 255, 255, 0.4);
+      font-size: 10px;
+      font-weight: 620;
+    }
+
+    .live-pill::before {
+      width: 6px;
+      height: 6px;
+      content: "";
+      border-radius: 50%;
+      background: #55be96;
+      box-shadow: 0 0 0 3px rgba(85, 190, 150, 0.12);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: auto;
+    }
+
+    .mode-picker,
+    .view-picker {
+      display: flex;
+      align-items: center;
+      padding: 3px;
+      border: 1px solid rgba(18, 22, 28, 0.06);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.34);
+    }
+
+    .mode-button,
+    .view-button {
+      height: 28px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 8px;
+      color: #747a80;
+      background: transparent;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .mode-button.active,
+    .view-button.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 2px 7px rgba(25, 31, 39, 0.08);
+      font-weight: 650;
+    }
+
+    .composer {
+      position: fixed;
+      z-index: 9;
+      right: max(5vw, 36px);
+      bottom: 24px;
+      left: max(calc(var(--chrome-left) + 4vw), 340px);
+      display: flex;
+      max-width: 780px;
+      height: 58px;
+      align-items: center;
+      gap: 10px;
+      margin: auto;
+      padding: 7px 8px 7px 10px;
+      border-radius: 19px;
+      transition: left 480ms var(--ease), transform 480ms var(--ease), opacity 300ms
+        ease;
+    }
+
+    .composer .icon-button {
+      width: 38px;
+      height: 38px;
+      color: #5c636a;
+    }
+
+    .composer input {
+      min-width: 0;
+      height: 100%;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      color: var(--ink);
+      background: transparent;
+      font-size: 13px;
+    }
+
+    .composer input::placeholder {
+      color: #7d8389;
+    }
+
+    .send-button {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      flex: none;
+      padding: 0;
+      place-items: center;
+      border: 0;
+      border-radius: 13px;
+      color: white;
+      background: #111318;
+      box-shadow: 0 8px 20px rgba(17, 19, 24, 0.18);
+      cursor: pointer;
+    }
+
+    .immersive-return {
+      position: fixed;
+      z-index: 20;
+      top: 16px;
+      left: 16px;
+      display: flex;
+      height: 42px;
+      align-items: center;
+      gap: 9px;
+      padding: 0 13px 0 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 14px;
+      opacity: 0;
+      color: var(--ink);
+      background: rgba(249, 250, 246, 0.66);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
+      pointer-events: none;
+      transform: translateY(-8px);
+      transition: opacity 260ms ease, transform 380ms var(--ease);
+      cursor: pointer;
+    }
+
+    .immersive-return .brand-mark {
+      width: 27px;
+      height: 27px;
+      border-radius: 8px;
+      box-shadow: none;
+    }
+
+    .immersive-return span:last-child {
+      font-size: 11px;
+      font-weight: 620;
+    }
+
+    body.compact {
+      --sidebar-width: 68px;
+      --chrome-left: 100px;
+    }
+
+    body.compact .sidebar-header {
+      justify-content: center;
+      padding: 0;
+    }
+
+    body.compact .brand-name,
+    body.compact #collapseButton,
+    body.compact .new-session .row-label,
+    body.compact .new-session .shortcut,
+    body.compact .search-button .row-label,
+    body.compact .search-button .shortcut,
+    body.compact .section-title,
+    body.compact .tree-row .row-label,
+    body.compact .tree-row .row-meta,
+    body.compact .account,
+    body.compact .sidebar-footer .icon-button {
+      display: none;
+    }
+
+    body.compact .sidebar-actions {
+      padding: 2px 9px 13px;
+    }
+
+    body.compact .new-session,
+    body.compact .search-button {
+      justify-content: center;
+      padding: 0;
+    }
+
+    body.compact .tree-row {
+      justify-content: center;
+      padding: 0;
+    }
+
+    body.compact .tree-row.child {
+      display: none;
+    }
+
+    body.compact .sidebar-footer {
+      justify-content: center;
+      padding: 10px 0;
+    }
+
+    body.compact .mode-button[data-mode="compact"] {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 2px 7px rgba(25, 31, 39, 0.08);
+      font-weight: 650;
+    }
+
+    body.compact .mode-button[data-mode="full"] {
+      color: #747a80;
+      background: transparent;
+      box-shadow: none;
+      font-weight: 400;
+    }
+
+    body.immersive {
+      --chrome-left: 0px;
+    }
+
+    body.immersive .sidebar {
+      opacity: 0;
+      transform: translateX(-28px) scale(0.98);
+      pointer-events: none;
+    }
+
+    body.immersive .topbar {
+      opacity: 0;
+      transform: translateY(-18px) scale(0.99);
+      pointer-events: none;
+    }
+
+    body.immersive .composer {
+      opacity: 0;
+      transform: translateY(18px) scale(0.98);
+      pointer-events: none;
+    }
+
+    body.immersive .immersive-return {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    body.immersive .artifact-content {
+      padding-left: 8vw;
+    }
+
+    @media (max-width: 900px) {
+      :root {
+        --sidebar-width: 68px;
+        --chrome-left: 100px;
+      }
+
+      .brand-name,
+      #collapseButton,
+      .new-session .row-label,
+      .new-session .shortcut,
+      .search-button .row-label,
+      .search-button .shortcut,
+      .section-title,
+      .tree-row .row-label,
+      .tree-row .row-meta,
+      .account,
+      .sidebar-footer .icon-button {
+        display: none;
+      }
+
+      .sidebar-header,
+      .sidebar-footer,
+      .new-session,
+      .search-button,
+      .tree-row {
+        justify-content: center;
+      }
+
+      .sidebar-header,
+      .sidebar-footer,
+      .new-session,
+      .search-button,
+      .tree-row {
+        padding-right: 0;
+        padding-left: 0;
+      }
+
+      .tree-row.child {
+        display: none;
+      }
+
+      .artifact-card.large,
+      .artifact-card.medium,
+      .artifact-card.third {
+        grid-column: span 12;
+      }
+
+      .mode-button {
+        padding: 0 7px;
+      }
+
+      .view-button {
+        padding: 0 7px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <div class="artifact">
+      <main class="artifact-content custom-artifact">
+        <section class="artifact-heading">
+          <div class="eyebrow">Living artifact · Design field notes</div>
+          <h1>The space stays yours.<br><span class="gradient-text">The chrome knows when to leave.</span></h1>
+          <p
+            class="lede">A customized artifact should feel <strong>full-bleed and sovereign</strong>. Wuhu remains present as a quiet material layer—navigation, context, and conversation suspended above the work.</p>
+        </section>
+
+        <section class="artifact-grid" aria-label="Example artifact content">
+          <article class="artifact-card large">
+            <span class="card-label">Momentum · last 14 days</span>
+            <h2>Work is converging</h2>
+            <p>Active threads are narrowing toward one product language.</p>
+            <div class="chart" aria-hidden="true">
+              <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#6d73e6" stop-opacity=".28" />
+                    <stop offset="1" stop-color="#6d73e6" stop-opacity="0" />
+                  </linearGradient>
+                  <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#58bda0" />
+                    <stop offset=".52" stop-color="#5d9ee7" />
+                    <stop offset="1" stop-color="#8a68eb" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M0 122 C70 118, 75 104, 128 107 S210 85, 265 92 S338 64, 395 71 S475 35, 600 22 L600 140 L0 140 Z"
+                  fill="url(#fill)" />
+                <path
+                  d="M0 122 C70 118, 75 104, 128 107 S210 85, 265 92 S338 64, 395 71 S475 35, 600 22"
+                  fill="none" stroke="url(#line)" stroke-width="4"
+                  stroke-linecap="round" />
+              </svg>
+            </div>
+          </article>
+
+          <article class="artifact-card medium">
+            <span class="card-label">Session constellation</span>
+            <h2>One thought, four agents</h2>
+            <p>Sub-sessions remain visibly related without becoming a table.</p>
+            <div class="agent-map" aria-hidden="true">
+              <div class="node">YOU</div>
+              <div class="node">A1</div>
+              <div class="node">A2</div>
+              <div class="node">A3</div>
+            </div>
+          </article>
+
+          <article class="artifact-card third dark-card">
+            <span class="card-label">Ship v0</span>
+            <h2>72% of the way there</h2>
+            <p>Six open decisions. Three are waiting on this design pass.</p>
+            <div class="progress" aria-hidden="true"></div>
+          </article>
+
+          <article class="artifact-card third">
+            <span class="card-label">Today</span>
+            <h2>Make the frame disappear</h2>
+            <p>Keep system context available without shrinking the artifact into an app-shaped rectangle.</p>
+          </article>
+
+          <article class="artifact-card third">
+            <span class="card-label">Material rule</span>
+            <h2>Blur only where layers meet</h2>
+            <p>Translucency belongs to chrome. Content surfaces stay crisp, opaque, and authored.</p>
+          </article>
+        </section>
+      </main>
+
+      <main class="artifact-content markdown-artifact">
+        <article class="markdown-document">
+          <h1>Nightly backups with restic</h1>
+          <p
+            class="doc-dateline">2026-03-04 — Running on the office file server.</p>
+
+          <h2>Summary</h2>
+          <p>Backups now run nightly with restic, replacing the previous rsync mirror. The key fix was one flag:</p>
+
+          <div class="doc-figure">
+            <pre><code>restic backup --one-file-system /srv</code></pre>
+          </div>
+
+          <p>The root cause was <code>/srv/cache</code> — a bind mount of a scratch volume that the old mirror followed into. Without the flag, every run re-read the scratch volume and the repository grew by its full size each night.</p>
+
+          <div
+            class="doc-callout">This document surface is derived from yesterday’s “breathing room” mockup: a narrow reading measure, generous section rhythm, and quiet figures instead of card chrome.</div>
+
+          <h3>Why restic over rsync</h3>
+          <p>A mirror only keeps the latest state. Restic keeps deduplicated, encrypted snapshots — enabling point-in-time restores, retention policies, and offsite copies without a second full copy.</p>
+
+          <h2>Production setup</h2>
+          <h3>Files</h3>
+          <div class="doc-table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/etc/restic/env</code></td>
+                  <td>Repository location and password file</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/restic/excludes.txt</code></td>
+                  <td>Paths every run skips</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/systemd/system/restic.service</code></td>
+                  <td>One backup and prune run</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/systemd/system/restic.timer</code></td>
+                  <td>Nightly schedule</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>How it works</h3>
+          <div class="doc-figure">
+            <pre><code>File server                  Object storage
+    │                              │
+    │  restic backup               │
+    ├─────────────────────────────►│ store new chunks only
+    │◄─────────────────────────────┤ returns snapshot id
+    │                              │
+    │  restic forget --prune       │
+    ├─────────────────────────────►│ drop expired snapshots
+    │                              │ repack → reclaim space
+    │◄─────────────────────────────┤</code></pre>
+          </div>
+
+          <h2>The <code>--one-file-system</code> gap</h2>
+          <p>Without <code>--one-file-system</code>, restic crosses into every mount below the backup root. For a scratch volume that changes completely every day, each run chunks fresh data and deduplication saves nothing.</p>
+
+          <div class="doc-figure">
+            <pre><code>restic backup --one-file-system --exclude-file=/etc/restic/excludes.txt /srv</code></pre>
+          </div>
+        </article>
+      </main>
+    </div>
+
+    <aside class="sidebar material" id="sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <span class="brand-mark">w</span>
+          <span class="brand-name">wuhu</span>
+        </div>
+        <button class="icon-button" id="collapseButton"
+          aria-label="Collapse sidebar" title="Collapse sidebar">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="sidebar-actions">
+        <button class="new-session" type="button" title="New session">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span class="row-label">New session</span>
+          <span class="shortcut">⌘N</span>
+        </button>
+        <button class="search-button" type="button" title="Search this space">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <span class="row-label">Search this space</span>
+          <span class="shortcut">⌘K</span>
+        </button>
+      </div>
+
+      <div class="sidebar-scroll">
+        <div class="section-title">Sessions</div>
+        <div class="tree">
+          <div class="tree-row active" title="Wuhu redesign">
+            <span class="session-dot"></span>
+            <span class="row-label">Wuhu redesign</span>
+            <span class="row-meta">3</span>
+          </div>
+          <div class="tree-row child" title="Chrome direction">
+            <span class="session-dot blue"></span>
+            <span class="row-label">Chrome direction</span>
+          </div>
+          <div class="tree-row child" title="Session tree">
+            <span class="session-dot violet"></span>
+            <span class="row-label">Session tree</span>
+          </div>
+          <div class="tree-row child" title="Artifact depth">
+            <span class="session-dot"></span>
+            <span class="row-label">Artifact depth</span>
+          </div>
+          <div class="tree-row" title="Ship v0">
+            <span class="session-dot blue"></span>
+            <span class="row-label">Ship v0</span>
+            <span class="row-meta">2</span>
+          </div>
+          <div class="tree-row" title="Bounded views research">
+            <span class="session-dot violet"></span>
+            <span class="row-label">Bounded views research</span>
+          </div>
+          <div class="tree-row" title="Archived sessions">
+            <span class="row-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 8h14v11H5zM4 5h16v3H4zM9 12h6" />
+              </svg>
+            </span>
+            <span class="row-label">Archived</span>
+          </div>
+        </div>
+
+        <div class="section-title">Space</div>
+        <div class="tree">
+          <div class="tree-row" title="Home">
+            <span
+              class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v9H4zM9 19v-6h6v6"/></svg></span>
+            <span class="row-label">Home</span>
+          </div>
+          <div class="tree-row" title="Issues">
+            <span
+              class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l2 2h8v10H4z"/></svg></span>
+            <span class="row-label">Issues</span>
+            <span class="row-meta">55</span>
+          </div>
+          <div class="tree-row" title="Notes">
+            <span
+              class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 12h7M9 16h5"/></svg></span>
+            <span class="row-label">Notes</span>
+          </div>
+          <div class="tree-row" title="Plans">
+            <span
+              class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg></span>
+            <span class="row-label">Plans</span>
+          </div>
+          <div class="tree-row" title="Models">
+            <span
+              class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg></span>
+            <span class="row-label">Models</span>
+          </div>
+        </div>
+      </div>
+
+      <footer class="sidebar-footer">
+        <div class="avatar">AM</div>
+        <div class="account">
+          <strong>Alex Morgan</strong>
+          <span>space.example.com · connected</span>
+        </div>
+        <button class="icon-button" aria-label="Space settings"
+          title="Space settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19 12a7 7 0 0 0-.08-1l2-1.5-2-3.5-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 8.8 7L6.5 6l-2 3.5L6.6 11a7 7 0 0 0 0 2L4.5 14.5l2 3.5 2.3-1a8 8 0 0 0 1.6 1l.3 2.6h4L15 18a8 8 0 0 0 1.5-1l2.4 1 2-3.5-2-1.5a7 7 0 0 0 .1-1Z" />
+          </svg>
+        </button>
+      </footer>
+    </aside>
+
+    <header class="topbar material">
+      <div class="breadcrumbs">
+        <span id="pathRoot">design</span>
+        <span class="slash">/</span>
+        <strong id="pathLeaf">app chrome study</strong>
+        <span class="live-pill" id="surfacePill">HTML artifact</span>
+      </div>
+      <div class="top-actions">
+        <div class="view-picker" aria-label="Content surface">
+          <button class="view-button active" data-view="custom"
+            type="button">Custom</button>
+          <button class="view-button" data-view="markdown"
+            type="button">Markdown</button>
+        </div>
+        <div class="mode-picker" aria-label="Chrome mode">
+          <button class="mode-button active" data-mode="full"
+            type="button">Sidebar</button>
+          <button class="mode-button" data-mode="compact"
+            type="button">Rail</button>
+          <button class="mode-button" data-mode="immersive"
+            type="button">Artifact</button>
+        </div>
+        <button class="icon-button" aria-label="Share" title="Share">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4M8 8l4-4 4 4M5 13v7h14v-7" />
+          </svg>
+        </button>
+        <button class="icon-button" aria-label="More" title="More">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="5" cy="12" r="1" fill="currentColor" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" />
+            <circle cx="19" cy="12" r="1" fill="currentColor" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="composer material">
+      <button class="icon-button" aria-label="Add context" title="Add context">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+      <input aria-label="Message this session"
+        placeholder="Ask Wuhu about this artifact…">
+      <button class="send-button" aria-label="Send">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m5 12 14-7-5 14-2.5-5.5zM11.5 13.5 19 5" />
+        </svg>
+      </button>
+    </div>
+
+    <button class="immersive-return" id="immersiveReturn" type="button">
+      <span class="brand-mark">w</span>
+      <span>Show Wuhu</span>
+    </button>
+
+    <script>
+    const body = document.body
+    const modeButtons = [...document.querySelectorAll('.mode-button')]
+    const viewButtons = [...document.querySelectorAll('.view-button')]
+    const collapseButton = document.getElementById('collapseButton')
+    const immersiveReturn = document.getElementById('immersiveReturn')
+    const pathRoot = document.getElementById('pathRoot')
+    const pathLeaf = document.getElementById('pathLeaf')
+    const surfacePill = document.getElementById('surfacePill')
+
+    function setMode(mode) {
+      body.classList.toggle('compact', mode === 'compact')
+      body.classList.toggle('immersive', mode === 'immersive')
+      modeButtons.forEach((button) =>
+        button.classList.toggle('active', button.dataset.mode === mode)
+      )
+      collapseButton.setAttribute(
+        'aria-label',
+        mode === 'compact' ? 'Expand sidebar' : 'Collapse sidebar',
+      )
+    }
+
+    function setView(view) {
+      const markdown = view === 'markdown'
+      body.classList.toggle('view-markdown', markdown)
+      viewButtons.forEach((button) =>
+        button.classList.toggle('active', button.dataset.view === view)
+      )
+      pathRoot.textContent = markdown ? 'ops' : 'design'
+      pathLeaf.textContent = markdown ? 'backups.md' : 'app chrome study'
+      surfacePill.textContent = markdown ? 'Markdown' : 'HTML artifact'
+    }
+
+    modeButtons.forEach((button) =>
+      button.addEventListener('click', () => setMode(button.dataset.mode))
+    )
+    viewButtons.forEach((button) =>
+      button.addEventListener('click', () => setView(button.dataset.view))
+    )
+    collapseButton.addEventListener(
+      'click',
+      () => setMode(body.classList.contains('compact') ? 'full' : 'compact'),
+    )
+    immersiveReturn.addEventListener('click', () => setMode('full'))
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && body.classList.contains('immersive')) {
+        setMode('full')
+      }
+    })
+    </script>
+  </body>
+</html>

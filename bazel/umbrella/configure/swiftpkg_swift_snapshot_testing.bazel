@@ -1,0 +1,14 @@
+# swift-snapshot-testing has no visionOS support at all: its `Image` typealias
+# and its whole `Diffing<UIImage>` file are gated on `os(iOS) || os(tvOS)`,
+# while the Swift Testing attachment path is gated on `canImport(UIKit)` — true
+# on visionOS — so the package does not even compile for xrOS. Verified against
+# upstream main, so an upstream gap rather than our configuration. The patch
+# only widens those gates and gives `UIScreen.main.scale` (unavailable on
+# visionOS) the trait-collection answer; the comparison itself is CoreGraphics
+# and CoreImage and is platform-agnostic. Reached by any visionOS snapshot
+# test.
+swift_deps.configure_package(
+    name = "swiftpkg_swift_snapshot_testing",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:snapshot-testing-visionos-image.patch"],
+)

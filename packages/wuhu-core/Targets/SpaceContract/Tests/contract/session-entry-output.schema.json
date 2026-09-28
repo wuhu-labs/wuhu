@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionEntryOutput","type":"object","properties":{"item":{"type":"object","properties":{"ref":{"type":"string"},"receivedAt":{"type":["number","null"]},"emittedAt":{"type":["number","null"]},"item":{}},"required":["ref","item"],"additionalProperties":false}},"required":["item"],"additionalProperties":false}

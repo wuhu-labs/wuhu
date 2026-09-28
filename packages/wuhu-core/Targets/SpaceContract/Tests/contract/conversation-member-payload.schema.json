@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ConversationMemberPayload","type":"object","properties":{"member":{"type":"string"},"memberHandle":{"type":["string","null"]},"kind":{"type":"string"}},"required":["member","kind"],"additionalProperties":false}

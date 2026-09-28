@@ -1,0 +1,26 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Think step by step: if a shirt costs $25 after a 20% discount, what was the original price?"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true,
+        "thinkingBudget" : 2048
+      }
+    }
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-2.5-flash:streamGenerateContent?alt=sse"
+}

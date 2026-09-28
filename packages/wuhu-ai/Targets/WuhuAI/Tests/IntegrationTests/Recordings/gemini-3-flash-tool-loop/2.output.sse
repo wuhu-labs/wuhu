@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"text": "The result of doubling 21 is 42."}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 107,"candidatesTokenCount": 12,"totalTokenCount": 119,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 107}],"serviceTier": "standard"},"modelVersion": "gemini-3-flash-preview","responseId": "MWMBarOFHdCN_PUPrM6IiQs"}
+
+data: {"candidates": [{"content": {"parts": [{"text": "","thoughtSignature": "EjQKMgEMOdbHi4BymJXcN1yL1JHSw4S3kdWP7HeY55S3s/VY++CGATfBMX177D0vU/Z2q5LX"}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 107,"candidatesTokenCount": 12,"totalTokenCount": 119,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 107}],"serviceTier": "standard"},"modelVersion": "gemini-3-flash-preview","responseId": "MWMBarOFHdCN_PUPrM6IiQs"}
+

@@ -1,0 +1,10 @@
+name: WuhuRecordReplay
+kind: library
+sources: Sources
+dependencies:
+  - Dependencies
+  - Fetch
+  - FetchURLSession
+  - HTTPTypes
+  - JSONValue
+  - Crypto

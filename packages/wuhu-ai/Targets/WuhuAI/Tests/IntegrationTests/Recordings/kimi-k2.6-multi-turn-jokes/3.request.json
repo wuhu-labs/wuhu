@@ -1,0 +1,40 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Tell me a short joke.",
+        "role" : "user"
+      },
+      {
+        "content" : "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field.",
+        "reasoning_content" : "The user wants a short joke. I should provide something clean, simple, and hopefully amusing. I'll go with a classic short joke.\n\n\"Why don't scientists trust atoms? Because they make up everything.\"\n\nOr maybe something even shorter:\n\n\"I told my wife she was drawing her eyebrows too high. She looked surprised.\"\n\nOr:\n\n\"What do you call a fake noodle? An impasta.\"\n\nI'll go with the atoms one or the impasta one. The eyebrows one is also good. Let me pick one. The \"impasta\" one is short and punchy.\n\nActually, let me go with a very short one:\n\n\"Why did the scarecrow win an award? He was outstanding in his field.\"\n\nThat's a good, harmless, short joke. I'll use that.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Tell me a better joke.",
+        "role" : "user"
+      },
+      {
+        "content" : "I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised.",
+        "reasoning_content" : "The user wants a \"better\" joke than the previous scarecrow joke. Since humor is subjective, I should pick something with a bit more complexity or wordplay, maybe something a little unexpected or clever. A classic well-structured joke with a good punchline.\n\nOptions:\n1. A programming joke (might be too niche)\n2. A dark humor joke (risky, better avoid)\n3. A clever wordplay joke\n4. A classic setup-punchline joke\n\nLet's go with something universally understood but witty.\n\nOption: \"I told my wife she was drawing her eyebrows too high. She looked surprised.\"\n\nThis is short, visual, has a double meaning (\"looked surprised\"), and is generally considered a step up from the corny scarecrow joke. It's clean and safe.\n\nAnother option: \"What’s the difference between a well-dressed man on a unicycle and a poorly dressed man on a bicycle? Attire.\" (Attire \/ a tire). That's clever.\n\nOr: \"A man walks into a bar and orders a glass of whiskey. He downs it and peeks inside his shirt pocket, then orders another. He downs that and peeks again. The bartender asks, 'What are you doing?' The man says, 'I have a picture of my wife in there. When she starts looking good, I know it's time to go home.'\" - Classic but a bit long.\n\nThe eyebrow one is concise and clever. I'll go with that.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Tell me an even better joke.",
+        "role" : "user"
+      }
+    ],
+    "model" : "kimi-k2.6",
+    "reasoning" : {
+      "enabled" : true
+    },
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:36e52862b4d30ffd9b9e051c9d67ae99bb803572494a300e8d06bdad2789653d",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.moonshot.cn\/v1\/chat\/completions"
+}

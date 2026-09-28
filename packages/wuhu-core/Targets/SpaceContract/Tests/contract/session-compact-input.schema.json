@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionCompactInput","type":"object","properties":{"instructions":{"type":["string","null"]}},"required":[],"additionalProperties":false}

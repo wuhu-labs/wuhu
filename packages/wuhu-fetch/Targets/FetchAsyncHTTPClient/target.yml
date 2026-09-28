@@ -1,0 +1,23 @@
+name: FetchAsyncHTTPClient
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - AsyncHTTPClient
+  - NIOCore
+  - NIOHTTP1
+  - NIOHTTP2
+  - Logging
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Fetch
+    - FetchTesting
+    - AsyncHTTPClient
+    - NIOCore
+    - NIOEmbedded
+    - NIOPosix
+    - NIOSSL
+    - NIOHTTP2

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"PushRelayGrantInput","type":"object","properties":{"endpoint":{"type":"string"},"grant":{"type":"string"},"token":{"type":"string"}},"required":["endpoint","grant","token"],"additionalProperties":false}

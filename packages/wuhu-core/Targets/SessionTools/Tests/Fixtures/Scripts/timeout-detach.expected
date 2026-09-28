@@ -1,0 +1,5 @@
+=== run_script
+script 00000000 has not called result() within 30 s and keeps running; its result arrives as a message. stop_script ends it.
+=== message
+result of script 00000000:
+done after two minutes

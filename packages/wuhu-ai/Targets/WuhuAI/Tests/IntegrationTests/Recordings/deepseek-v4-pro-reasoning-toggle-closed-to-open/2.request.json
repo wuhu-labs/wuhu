@@ -1,0 +1,31 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Explain quantum computing in one paragraph.",
+        "role" : "user"
+      },
+      {
+        "content" : "Quantum computing is a paradigm that harnesses the principles of quantum mechanics—such as superposition, entanglement, and interference—to process information in fundamentally new ways, using quantum bits (qubits) that can exist in multiple states simultaneously rather than being limited to binary 0s and 1s. Unlike classical bits, qubits can perform many calculations in parallel due to superposition, while entanglement allows qubits to be correlated in such a way that the state of one instantly influences another, enabling exponential scaling in computational power for specific problems. This allows quantum computers to potentially solve certain complex tasks—like factoring large numbers, simulating molecular interactions for drug discovery, optimizing large systems, and enhancing machine learning—exponentially faster than even the most powerful classical supercomputers, though current quantum systems remain error-prone and are in the early stages of overcoming decoherence and scalability challenges.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Now explain it to a five-year-old.",
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "reasoning_effort" : "high",
+    "stream" : true,
+    "thinking" : {
+      "type" : "enabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/v1\/chat\/completions"
+}

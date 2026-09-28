@@ -1,0 +1,21 @@
+name: quickjs-kit
+owner: shared
+swiftToolsVersion: "6.3"
+packageName: QuickJSKit
+products:
+  - QuickJSKit
+platforms:
+  iOS: "26.0"
+  macOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+externalPackages:
+  wuhu-json:
+    path: ../wuhu-json
+    products: [JSONValue]
+  swift-collections:
+    url: https://github.com/apple/swift-collections
+    from: "1.1.0"
+    products: [OrderedCollections]

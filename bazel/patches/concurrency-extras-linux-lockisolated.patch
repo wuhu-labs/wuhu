@@ -1,0 +1,23 @@
+--- a/Sources/ConcurrencyExtras/LockIsolated.swift
++++ b/Sources/ConcurrencyExtras/LockIsolated.swift
+@@ -109,11 +109,13 @@
+   }
+ #endif
+ 
+-extension NSRecursiveLock {
+-  @inlinable @discardableResult
+-  @_spi(Internals) public func sync<R>(work: () throws -> R) rethrows -> R {
+-    self.lock()
+-    defer { self.unlock() }
+-    return try work()
++#if canImport(Darwin)
++  extension NSRecursiveLock {
++    @inlinable @discardableResult
++    @_spi(Internals) public func sync<R>(work: () throws -> R) rethrows -> R {
++      self.lock()
++      defer { self.unlock() }
++      return try work()
++    }
+   }
+-}
++#endif

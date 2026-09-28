@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineErrorCode","type":"string","enum":["machineLost","execNotFound","tokenInvalid","tokenRevoked","windowExceeded","protocolViolation","notFound","conflict","invalidArgument","io","tooLarge"]}

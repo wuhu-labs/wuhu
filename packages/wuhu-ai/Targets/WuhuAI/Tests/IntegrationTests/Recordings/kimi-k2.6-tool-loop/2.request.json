@@ -1,0 +1,67 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Use the double_number tool to double 21.",
+        "role" : "user"
+      },
+      {
+        "content" : null,
+        "reasoning_content" : "The user wants me to use the double_number tool to double 21. I'll call the function with number=21.",
+        "role" : "assistant",
+        "tool_calls" : [
+          {
+            "function" : {
+              "arguments" : "{}",
+              "name" : "double_number"
+            },
+            "id" : "wuhu_048866d14e9bd2ddd6e99fb1cc23860a",
+            "type" : "function"
+          }
+        ]
+      },
+      {
+        "content" : "42",
+        "role" : "tool",
+        "tool_call_id" : "wuhu_048866d14e9bd2ddd6e99fb1cc23860a"
+      },
+      {
+        "content" : "Now say the result in a sentence.",
+        "role" : "user"
+      }
+    ],
+    "model" : "kimi-k2.6",
+    "reasoning" : {
+      "enabled" : true
+    },
+    "stream" : true,
+    "tools" : [
+      {
+        "function" : {
+          "description" : "Doubles a number and returns the result.",
+          "name" : "double_number",
+          "parameters" : {
+            "properties" : {
+              "number" : {
+                "description" : "The number to double",
+                "type" : "integer"
+              }
+            },
+            "required" : [
+              "number"
+            ],
+            "type" : "object"
+          }
+        },
+        "type" : "function"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:36e52862b4d30ffd9b9e051c9d67ae99bb803572494a300e8d06bdad2789653d",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.moonshot.cn\/v1\/chat\/completions"
+}

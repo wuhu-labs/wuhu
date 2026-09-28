@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>List</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body.wuhu-list {
+    --_paper: light-dark(#f6f7f2, #0c0e11);
+    --_fg: light-dark(#101318, #edf0f2);
+    --_fg-muted: light-dark(#61686f, #949ba1);
+    --_faint: light-dark(#8a9095, #737a81);
+    --_row: light-dark(rgba(16, 21, 28, 0.05), rgba(236, 240, 244, 0.05));
+    --_border: light-dark(rgba(16, 21, 28, 0.08), rgba(236, 240, 244, 0.08));
+    background: var(--bg, var(--_paper));
+    color: var(--fg, var(--_fg));
+    font-family: var(--font-text, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+    font-size: var(--font-size, 1rem);
+    min-height: 100dvh;
+    padding: 1rem;
+  }
+  body.wuhu-list ::selection { background: var(--selection, rgba(89, 201, 165, 0.3)); }
+  .list-status {
+    color: var(--fg-muted, var(--_fg-muted));
+    font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+    font-size: 0.72rem;
+  }
+  .list-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-width: var(--content-width, 46rem);
+  }
+  .list-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border, var(--_border));
+    border-radius: var(--radius, 10px);
+    background: var(--code-bg, var(--_row));
+    color: inherit;
+    text-decoration: none;
+  }
+  a.list-row:hover, a.list-row:focus-visible {
+    border-color: var(--accent, currentColor);
+  }
+  .list-title {
+    color: var(--fg, var(--_fg));
+    font-size: 0.92rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .list-subtitle {
+    color: var(--fg-muted, var(--_fg-muted));
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+  .list-path {
+    color: var(--fg-muted, var(--_faint));
+    font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+    font-size: 0.7rem;
+  }
+  .list-empty {
+    padding: 0.7rem;
+    border: 1px dashed var(--border, var(--_border));
+    border-radius: var(--radius, 10px);
+    color: var(--fg-muted, var(--_faint));
+    font-size: 0.78rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body class="wuhu-content wuhu-list">
+<p class="list-status" id="status">Loading…</p>
+<main class="list-rows" id="rows"></main>
+<script type="module">
+  const rows = document.getElementById("rows");
+  const status = document.getElementById("status");
+  const path = new URLSearchParams(location.search).get("path");
+
+  const shapes = {
+    list: { path: "path", title: "cardTitle", subtitle: "subtitle", parent: null },
+    wall: { path: "path", title: "title", subtitle: null, parent: null },
+    map: { path: "nodeID", title: "nodeTitle", subtitle: null, parent: "parentID" },
+  };
+
+  function fail(message) {
+    status.hidden = false;
+    status.textContent = message;
+  }
+
+  function text(cell) {
+    return cell == null ? "" : String(cell);
+  }
+
+  function depths(output, pathIndex, parentIndex) {
+    const parents = new Map();
+    for (const row of output.rows) parents.set(text(row[pathIndex]), text(row[parentIndex]));
+    return output.rows.map((row) => {
+      let depth = 0;
+      let cursor = parents.get(text(row[pathIndex]));
+      while (cursor && parents.has(cursor) && depth < 8) {
+        depth += 1;
+        cursor = parents.get(cursor);
+      }
+      return depth;
+    });
+  }
+
+  function render(output, shape, config) {
+    const pathIndex = output.columns.indexOf(config[shape.path]);
+    const titleIndex = output.columns.indexOf(config[shape.title]);
+    if (pathIndex < 0 || titleIndex < 0) {
+      rows.replaceChildren();
+      return fail(`query result has no column named ${pathIndex < 0 ? config[shape.path] : config[shape.title]}`);
+    }
+    const subtitleKey = shape.subtitle == null ? null : config[shape.subtitle];
+    const subtitleIndex = subtitleKey == null ? -1 : output.columns.indexOf(subtitleKey);
+    const parentKey = shape.parent == null ? null : config[shape.parent];
+    const parentIndex = parentKey == null ? -1 : output.columns.indexOf(parentKey);
+    const indents = parentIndex < 0 ? null : depths(output, pathIndex, parentIndex);
+    status.hidden = true;
+    if (output.rows.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "list-empty";
+      empty.textContent = "Empty";
+      return rows.replaceChildren(empty);
+    }
+    rows.replaceChildren(...output.rows.map((row, index) => {
+      const destination = text(row[pathIndex]);
+      const item = document.createElement(destination === "" ? "article" : "a");
+      item.className = "list-row";
+      if (destination !== "") item.href = destination;
+      if (indents !== null) item.style.marginInlineStart = `${indents[index] * 1.1}rem`;
+      const title = document.createElement("p");
+      title.className = "list-title";
+      title.textContent = text(row[titleIndex]);
+      item.append(title);
+      if (subtitleIndex >= 0 && text(row[subtitleIndex]) !== "") {
+        const subtitle = document.createElement("p");
+        subtitle.className = "list-subtitle";
+        subtitle.textContent = text(row[subtitleIndex]);
+        item.append(subtitle);
+      }
+      const trail = document.createElement("p");
+      trail.className = "list-path";
+      trail.textContent = destination;
+      item.append(trail);
+      return item;
+    }));
+  }
+
+  async function boot() {
+    if (!path) return fail("missing ?path= target");
+    const response = await fetch(path, { cache: "no-cache" });
+    if (!response.ok) return fail(`cannot load ${path}: HTTP ${response.status}`);
+    let doc;
+    try {
+      doc = await response.json();
+    } catch {
+      return fail(`${path} is not valid JSON`);
+    }
+    const shape = shapes[doc.view];
+    if (shape === undefined) return fail(`unsupported view kind: ${JSON.stringify(doc.view)}`);
+    const config = doc.config;
+    if (typeof doc.sql !== "string" || typeof config?.[shape.path] !== "string" || typeof config?.[shape.title] !== "string") {
+      return fail(`a ${doc.view} view needs sql, config.${shape.path}, and config.${shape.title}`);
+    }
+    const source = new EventSource(`/_/observe?sql=${encodeURIComponent(doc.sql)}`);
+    source.onmessage = (message) => render(JSON.parse(message.data), shape, config);
+    source.onerror = () => fail("data stream interrupted — retrying…");
+  }
+
+  boot();
+</script>
+</body>
+</html>

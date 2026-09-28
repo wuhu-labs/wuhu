@@ -1,0 +1,959 @@
+@import 'tailwindcss';
+@import '@wuhu/ui/tokens.css';
+@import '@wuhu/ui/content.css';
+@import './settings.css';
+@import './templates.css';
+@import './session-context.css';
+@import './turns.css';
+@import './editor.css';
+
+@source '../../ui/src';
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+a,
+button,
+summary,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+:where(a, button, summary, input, select, textarea, [tabindex]):focus {
+  outline: none;
+}
+
+:where(a, button, summary, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-mint-deep);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  :where(a, button, summary, input, select, textarea, [tabindex]):focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+button,
+summary,
+.wui-sidebar,
+.wui-topbar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+@media (hover: none) {
+  [data-wuhu-copy] {
+    opacity: 1;
+  }
+}
+
+.wuhu-scroll {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wuhu-standalone {
+  min-height: 100dvh;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-right: max(1.5rem, env(safe-area-inset-right));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  padding-left: max(1.5rem, env(safe-area-inset-left));
+}
+
+/* Surface: the reading column a route body sits in, centred inside the canvas
+   the way the design lab's document study is. */
+.wuhu-page {
+  max-width: var(--content-width, 52rem);
+  margin: 0 auto;
+}
+
+.wuhu-page-wide {
+  max-width: none;
+}
+
+.wuhu-eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--color-grey-faint);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.wuhu-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 1.1rem + 1.6vw, 2.3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.wuhu-heading {
+  margin: 0;
+}
+
+.wuhu-subtitle {
+  margin: 0.35rem 0 0;
+  color: var(--fg-muted, var(--_fg-muted));
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.wuhu-muted {
+  color: var(--fg-muted, var(--_fg-muted));
+  font-size: 0.85rem;
+}
+
+.wuhu-alert {
+  color: var(--color-alert-deep);
+  font-size: 0.85rem;
+}
+
+.wuhu-card {
+  padding: 1.15rem 1.35rem;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 16px;
+  background: var(--wui-material-strong);
+  box-shadow: var(--wui-material-shadow);
+}
+
+.wuhu-frame {
+  width: 100%;
+  min-height: calc(100dvh - 260px);
+  border: 1px solid var(--wui-material-border);
+  border-radius: var(--radius, 16px);
+  background: var(--bg, white);
+  box-shadow: var(--wui-material-shadow);
+}
+
+.wuhu-document-toolbar {
+  display: flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.wuhu-document-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.wuhu-document-conflict {
+  display: grid;
+  gap: 0.65rem;
+  margin-bottom: 1.2rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-alert-deep) 30%,
+    transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-alert-deep) 7%, transparent);
+  color: var(--color-alert-deep);
+  font-size: 0.85rem;
+}
+
+.wuhu-document-conflict .wuhu-document-actions {
+  justify-content: flex-start;
+}
+
+.wuhu-doc-title {
+  margin-bottom: 1.1rem;
+}
+
+/* Frontmatter renders as the document's dateline, not as body text. */
+.wuhu-frontmatter {
+  margin: 0.9rem 0 2.4rem;
+  padding-bottom: 1.3rem;
+  border-bottom: 1px solid var(--border, var(--_border));
+}
+
+.wuhu-frontmatter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.9rem;
+}
+
+.wuhu-attrs {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr);
+  gap: 0.35rem 1.1rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.wuhu-attrs dt {
+  color: var(--color-grey-faint);
+  font-weight: 600;
+}
+
+.wuhu-attrs dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--fg-muted, var(--_quote-fg));
+  overflow-wrap: anywhere;
+}
+
+.wuhu-attr-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wuhu-attr-json {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--code-bg, var(--_code-bg));
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.wuhu-sessions-error {
+  margin-top: 1rem;
+}
+
+.wuhu-session-list {
+  margin-top: 1.7rem;
+}
+
+.wuhu-session-list-head {
+  margin-top: 2.6rem;
+}
+
+.wuhu-session-list-head + .wuhu-session-list {
+  margin-top: 0.4rem;
+}
+
+.wuhu-session-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.15rem;
+  border-bottom: 1px solid var(--border, var(--_border-faint));
+}
+
+.wuhu-session-item-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 0.65rem;
+}
+
+.wuhu-session-item-main a {
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.92rem;
+  font-weight: 550;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wuhu-session-item-main a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wuhu-session-item-model {
+  overflow: hidden;
+  color: var(--color-grey-faint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wuhu-session-item-time {
+  flex: none;
+  color: var(--color-grey-faint);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.wuhu-session-item .wuhu-quiet-button {
+  flex: none;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.wuhu-session-item:hover .wuhu-quiet-button,
+.wuhu-session-item .wuhu-quiet-button:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wuhu-session-item .wuhu-quiet-button {
+    opacity: 1;
+  }
+}
+
+.wuhu-session-list-archived .wuhu-session-item {
+  opacity: 0.6;
+}
+
+.wuhu-session-list-archived .wuhu-session-item:hover {
+  opacity: 1;
+}
+
+.wuhu-session-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 1.6rem;
+}
+
+.wuhu-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+}
+
+.wuhu-mono {
+  color: var(--color-grey-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.wuhu-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--wui-field);
+}
+
+.wuhu-tabs :is(a, button) {
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-grey-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.wuhu-tabs :is(a, button):hover {
+  color: var(--color-ink);
+}
+
+.wuhu-tabs :is(a, button).active {
+  color: var(--color-ink);
+  background: var(--wui-selected);
+  font-weight: 600;
+}
+
+:root {
+  --sent-bubble: #e1eee5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sent-bubble: rgb(48, 62, 59);
+  }
+}
+
+/* A box reads like native's: other senders' bubbles on the left under their
+   photo and name, the reader's own on the right, tinted. */
+.wuhu-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.wuhu-message {
+  --bubble-inset: min(64px, 12%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-right: var(--bubble-inset);
+  scroll-margin-top: 5rem;
+}
+
+.wuhu-message[data-own] {
+  padding-right: 0;
+  padding-left: var(--bubble-inset);
+}
+
+.wuhu-bubble {
+  padding: 0.7rem 1rem 0.75rem;
+  border-radius: 18px 18px 18px 6px;
+  background: var(--wui-selected);
+}
+
+.wuhu-message[data-own] .wuhu-bubble {
+  border-radius: 18px 18px 6px 18px;
+  background: var(--sent-bubble);
+}
+
+.wuhu-bubble .wuhu-markdown {
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.wuhu-bubble .wuhu-markdown > :first-child {
+  margin-top: 0;
+}
+
+.wuhu-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 28px;
+  color: var(--color-grey-faint);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.wuhu-message[data-own] .wuhu-entry-head {
+  justify-content: flex-end;
+}
+
+.wuhu-entry-head strong {
+  overflow: hidden;
+  color: var(--color-grey-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.wuhu-sender-group {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--wui-hover);
+  color: var(--color-grey-muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.wuhu-entry-head .wuhu-id {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+.wuhu-message-actions {
+  display: flex;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.wuhu-message[data-own] .wuhu-message-actions {
+  order: -1;
+  margin-right: auto;
+  margin-left: 0;
+}
+
+.wuhu-message:hover .wuhu-message-actions,
+.wuhu-message-actions:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wuhu-message-actions {
+    opacity: 1;
+  }
+}
+
+.wuhu-quiet-button {
+  padding: 0.15rem 0.45rem;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-grey-faint);
+  background: transparent;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.wuhu-quiet-button:hover {
+  color: var(--color-ink);
+  background: var(--wui-hover);
+}
+
+.wuhu-quote {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+  padding: 0.3rem 0.55rem;
+  border-left: 2px solid var(--color-mint);
+  border-radius: 0 8px 8px 0;
+  background: var(--wui-field);
+  color: var(--color-grey-muted);
+  font-size: 0.7rem;
+}
+
+.wuhu-quote-sender {
+  color: var(--color-ink);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.wuhu-quote-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wuhu-quote-clear {
+  margin-left: auto;
+  border: 0;
+  padding: 0 0.2rem;
+  background: transparent;
+  color: var(--color-grey-faint);
+  cursor: pointer;
+}
+
+.wuhu-quote-missing {
+  font-style: italic;
+}
+
+.wuhu-quote-link {
+  display: block;
+  text-decoration: none;
+}
+
+.wuhu-session-child {
+  margin-left: 1.5rem;
+  border-left: 1px solid var(--wui-hairline);
+  padding-left: 0.75rem;
+}
+
+/* A narrow list gives the title and model a line of their own and moves the
+   pills, time and action to the line under it, so a deep row keeps its name. */
+@media (max-width: 47.999rem) {
+  .wuhu-session-item {
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
+  }
+
+  .wuhu-session-item-main {
+    flex: 1 0 calc(100% - 26px - 0.7rem);
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .wuhu-session-item-main a,
+  .wuhu-session-item-model {
+    max-width: 100%;
+  }
+
+  .wuhu-session-item-main + * {
+    margin-left: calc(26px + 0.7rem);
+  }
+
+  .wuhu-session-child {
+    margin-left: 0.8rem;
+    padding-left: 0.5rem;
+  }
+}
+
+.wuhu-kind-choice {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.wuhu-kind-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-grey-muted);
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wuhu-kind-option strong {
+  color: var(--color-ink);
+  font-size: 0.85rem;
+}
+
+.wuhu-kind-option[data-selected='true'] {
+  border-color: var(--color-mint);
+  background: var(--wui-selected);
+}
+
+.wuhu-jump {
+  position: fixed;
+  z-index: 8;
+  bottom: calc(var(--wui-composer-h, 56px) + 24px + var(--wui-dock-gap));
+  left: 50%;
+  translate: -50% 0;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 99px;
+  background: var(--wui-material-strong);
+  box-shadow: var(--wui-material-shadow);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.wuhu-button {
+  padding: 0.5rem 0.9rem;
+  border: 0;
+  border-radius: 10px;
+  color: var(--wui-on-solid);
+  background: var(--wui-solid);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wuhu-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wuhu-button-danger {
+  color: white;
+  background: var(--color-alert);
+}
+
+.wuhu-composer-dialog {
+  width: min(44rem, 100dvw);
+  margin: auto;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 16px;
+  background: var(--color-paper);
+  color: inherit;
+  padding: 0;
+  box-shadow: var(--wui-material-shadow);
+}
+
+.wuhu-composer-dialog::backdrop {
+  background: rgba(8, 10, 13, 0.4);
+}
+
+.wuhu-composer-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.25rem;
+}
+
+.wuhu-dialog-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.wuhu-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.wuhu-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.wuhu-field {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 8rem;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.wuhu-field-wide {
+  flex-basis: 100%;
+}
+
+.wuhu-field > span {
+  color: var(--color-grey-faint);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.wuhu-field :is(input, select, textarea) {
+  min-width: 0;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(var(--wui-border-ink), 0.12);
+  border-radius: 10px;
+  background: var(--wui-field);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.wuhu-field textarea {
+  min-height: 4.5rem;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.wuhu-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+@media (max-width: 47.999rem), (pointer: coarse) and (max-height: 47.999rem) {
+  .wuhu-composer-dialog {
+    width: 100dvw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .wuhu-composer-dialog-body {
+    height: 100dvh;
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+  }
+}
+
+/* Standalone auth pages: login, enroll */
+.wuhu-standalone code {
+  padding: 0.05em 0.3em;
+  border-radius: 5px;
+  background: rgba(var(--wui-border-ink), 0.05);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.wuhu-standalone a {
+  color: var(--color-mint-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wuhu-button-block {
+  display: block;
+  width: 100%;
+}
+
+.wuhu-button-secondary {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid rgba(var(--wui-border-ink), 0.12);
+  border-radius: 10px;
+  color: var(--color-ink);
+  background: var(--wui-field);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wuhu-button-secondary:hover {
+  background: var(--wui-hover);
+}
+
+.wuhu-field-mono input {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.wuhu-panel {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--wui-material-border);
+  border-radius: 12px;
+  background: var(--wui-field);
+}
+
+.wuhu-panel-code {
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.wuhu-dropzone {
+  padding: 1rem;
+  border: 1px dashed rgba(var(--wui-border-ink), 0.18);
+  border-radius: 12px;
+  color: var(--color-grey-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.wuhu-dropzone[data-dragging='true'] {
+  border-color: var(--color-mint);
+  background: var(--wui-selected);
+}
+
+.wuhu-scan-preview {
+  width: 100%;
+  border-radius: 12px;
+}
+
+.wuhu-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.wuhu-attachment-media {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+}
+
+.wuhu-attachment-tile {
+  flex: none;
+  height: 132px;
+  max-width: 234px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #14171d;
+}
+
+.wuhu-attachment-tile img {
+  display: block;
+  height: 100%;
+  max-width: 208px;
+  object-fit: cover;
+}
+
+.wuhu-attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 360px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border, var(--_border));
+  border-radius: 10px;
+  color: var(--color-ink);
+  text-decoration: none;
+}
+
+.wuhu-attachment-file > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.wuhu-attachment-file strong {
+  overflow: hidden;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wuhu-attachment-file > span > span {
+  color: var(--color-grey-muted);
+  font-size: 0.72rem;
+}
+
+.wuhu-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wuhu-pending > li {
+  position: relative;
+  height: 56px;
+  border: 1px solid rgba(var(--wui-border-ink), 0.08);
+  border-radius: 10px;
+  background: var(--wui-field);
+  overflow: hidden;
+}
+
+.wuhu-pending-image {
+  width: 56px;
+}
+
+.wuhu-pending-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wuhu-pending-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 220px;
+  padding: 0 1.9rem 0 0.65rem;
+}
+
+.wuhu-pending-file > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.wuhu-pending-file strong {
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wuhu-pending-file > span > span {
+  color: var(--color-grey-muted);
+  font-size: 0.68rem;
+}
+
+.wuhu-pending-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  color: var(--wui-on-solid);
+  background: color-mix(in srgb, var(--wui-solid) 72%, transparent);
+  cursor: pointer;
+}
+
+.wuhu-pending-remove .wui-icon {
+  width: 11px;
+  height: 11px;
+}

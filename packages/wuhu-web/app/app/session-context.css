@@ -1,0 +1,59 @@
+.wuhu-context {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.wuhu-context-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.wuhu-context-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.wuhu-context-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wuhu-context-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wuhu-system-head {
+  margin-bottom: 1.6rem;
+}
+
+.wuhu-context-path {
+  overflow-wrap: anywhere;
+  color: var(--color-grey-faint);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+a.wuhu-context-path:hover {
+  color: var(--color-ink);
+}
+
+.wuhu-context-name {
+  font-size: 0.92rem;
+  font-weight: 550;
+}
+
+.wuhu-context-row .wuhu-session-item-main {
+  flex-wrap: wrap;
+}
+
+.wuhu-context-toggle {
+  align-self: flex-start;
+}

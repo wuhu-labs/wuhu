@@ -1,0 +1,6 @@
+=== run_script
+{"own":"alice","common":"shared","moved":"number","removed":"number"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== run_script
+failed: script 00000000 threw before calling result(): script → wuhu:/skills/shared-only.js: not found: /skills/shared-only.js

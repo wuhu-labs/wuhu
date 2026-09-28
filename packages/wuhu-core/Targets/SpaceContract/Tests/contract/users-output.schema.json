@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"UsersOutput","type":"object","properties":{"users":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"handle":{"type":["string","null"]},"displayName":{"type":["string","null"]}},"required":["id"],"additionalProperties":false}}},"required":["users"],"additionalProperties":false}

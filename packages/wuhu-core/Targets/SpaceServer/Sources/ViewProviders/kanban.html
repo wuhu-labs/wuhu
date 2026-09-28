@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Kanban</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body.wuhu-kanban {
+    --_paper: light-dark(#f6f7f2, #0c0e11);
+    --_fg: light-dark(#101318, #edf0f2);
+    --_fg-muted: light-dark(#61686f, #949ba1);
+    --_faint: light-dark(#8a9095, #737a81);
+    --_lane: light-dark(rgba(16, 21, 28, 0.05), rgba(236, 240, 244, 0.05));
+    --_border: light-dark(rgba(16, 21, 28, 0.08), rgba(236, 240, 244, 0.08));
+    --_dashed: light-dark(rgba(16, 21, 28, 0.16), rgba(236, 240, 244, 0.16));
+    background: var(--bg, var(--_paper));
+    color: var(--fg, var(--_fg));
+    font-family: var(--font-text, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+    font-size: var(--font-size, 1rem);
+    min-height: 100dvh;
+    padding: 1rem;
+  }
+  body.wuhu-kanban ::selection { background: var(--selection, rgba(89, 201, 165, 0.3)); }
+  .kanban-status {
+    color: var(--fg-muted, var(--_fg-muted));
+    font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+    font-size: 0.72rem;
+  }
+  .kanban-board {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+  .kanban-lane {
+    display: flex;
+    flex: 0 0 16rem;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.65rem;
+    border-radius: 14px;
+    background: var(--code-bg, var(--_lane));
+  }
+  .kanban-lane-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0.1rem 0.3rem 0.25rem;
+    color: var(--fg, var(--_fg));
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .kanban-lane-count {
+    color: var(--fg-muted, var(--_faint));
+    font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  .kanban-card {
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border, var(--_border));
+    border-radius: var(--radius, 10px);
+    background: var(--bg, var(--_paper));
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+  a.kanban-card {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+  }
+  a.kanban-card:hover, a.kanban-card:focus-visible {
+    border-color: var(--accent, currentColor);
+  }
+  .kanban-empty {
+    padding: 0.7rem;
+    border: 1px dashed var(--border, var(--_dashed));
+    border-radius: var(--radius, 10px);
+    color: var(--fg-muted, var(--_faint));
+    font-size: 0.78rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body class="wuhu-content wuhu-kanban">
+<p class="kanban-status" id="status">Loading…</p>
+<main class="kanban-board" id="board"></main>
+<script type="module">
+  const board = document.getElementById("board");
+  const status = document.getElementById("status");
+  const path = new URLSearchParams(location.search).get("path");
+
+  function fail(message) {
+    status.hidden = false;
+    status.textContent = message;
+  }
+
+  function render(output, config) {
+    const group = output.columns.indexOf(config.groupBy);
+    const title = output.columns.indexOf(config.cardTitle);
+    const sort = config.sort == null ? -1 : output.columns.indexOf(config.sort);
+    const pathIndex = config.path == null ? -1 : output.columns.indexOf(config.path);
+    if (group < 0 || title < 0 || (config.sort != null && sort < 0)) {
+      board.replaceChildren();
+      return fail(`query result has no column named ${group < 0 ? config.groupBy : title < 0 ? config.cardTitle : config.sort}`);
+    }
+    const lanes = new Map();
+    for (const row of output.rows) {
+      const key = row[group] == null ? "" : String(row[group]);
+      if (!lanes.has(key)) lanes.set(key, []);
+      lanes.get(key).push(row);
+    }
+    if (sort >= 0) {
+      for (const cards of lanes.values()) {
+        cards.sort((a, b) => {
+          const [x, y] = [a[sort], b[sort]];
+          if (typeof x === "number" && typeof y === "number") return x - y;
+          return String(x ?? "").localeCompare(String(y ?? ""));
+        });
+      }
+    }
+    status.hidden = true;
+    board.replaceChildren(...[...lanes].map(([key, cards]) => {
+      const lane = document.createElement("section");
+      lane.className = "kanban-lane";
+      lane.dataset.lane = key;
+      const heading = document.createElement("h2");
+      heading.className = "kanban-lane-title";
+      heading.append(key === "" ? "—" : key);
+      const count = document.createElement("span");
+      count.className = "kanban-lane-count";
+      count.textContent = String(cards.length);
+      heading.append(count);
+      const empty = document.createElement("p");
+      empty.className = "kanban-empty";
+      empty.textContent = "Empty";
+      lane.append(heading, ...(cards.length === 0 ? [empty] : cards.map((row) => {
+        const destination = pathIndex < 0 || row[pathIndex] == null ? "" : String(row[pathIndex]);
+        const card = document.createElement(destination === "" ? "article" : "a");
+        if (destination !== "") card.href = destination;
+        card.className = "kanban-card";
+        card.textContent = row[title] == null ? "" : String(row[title]);
+        card.dataset.card = card.textContent;
+        return card;
+      })));
+      return lane;
+    }));
+  }
+
+  async function boot() {
+    if (!path) return fail("missing ?path= target");
+    const response = await fetch(path, { cache: "no-cache" });
+    if (!response.ok) return fail(`cannot load ${path}: HTTP ${response.status}`);
+    let doc;
+    try {
+      doc = await response.json();
+    } catch {
+      return fail(`${path} is not valid JSON`);
+    }
+    if (doc.view !== "kanban") return fail(`unsupported view kind: ${JSON.stringify(doc.view)}`);
+    const config = doc.config;
+    if (typeof doc.sql !== "string" || typeof config?.groupBy !== "string" || typeof config?.cardTitle !== "string") {
+      return fail("a kanban view needs sql, config.groupBy, and config.cardTitle");
+    }
+    const source = new EventSource(`/_/observe?sql=${encodeURIComponent(doc.sql)}`);
+    source.onmessage = (message) => render(JSON.parse(message.data), config);
+    source.onerror = () => fail("data stream interrupted — retrying…");
+  }
+
+  boot();
+</script>
+</body>
+</html>

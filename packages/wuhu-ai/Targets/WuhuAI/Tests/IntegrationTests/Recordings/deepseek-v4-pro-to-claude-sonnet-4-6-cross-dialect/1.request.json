@@ -1,0 +1,26 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "You are a helpful assistant. Answer concisely.",
+        "role" : "system"
+      },
+      {
+        "content" : "What is the capital of France?",
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "stream" : true,
+    "thinking" : {
+      "type" : "enabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/v1\/chat\/completions"
+}

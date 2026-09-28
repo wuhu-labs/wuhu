@@ -1,0 +1,65 @@
+name: CLIKit
+kind: library
+sources: Sources
+embeddedResources:
+  - name: Skills
+    path: Skills
+    typeName: EmbeddedSkills
+    symbolName: skills
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Assertion
+  - ClaudeStream
+  - Credentials
+  - InferenceKit
+  - SpaceClient
+  - PinnedTLS
+  - QRCode
+  - Crypto
+  - WuhuVFS
+  - FetchWebSocket
+  - NIOCore
+  - SpaceContract
+  - SessionDomain
+  - WuhuAI
+  - MachineContract
+  - MachineChannel
+  - MachineAgent
+  - Subprocess
+  - JSONValue
+  - Fetch
+  - FetchSSE
+  - Dependencies
+tests:
+  size: large
+  dependencies:
+    - Assertion
+    - Credentials
+    - SpaceContract
+    - SessionDomain
+    - SessionTools
+    - LoopCore
+    - InferenceKit
+    - WuhuAI
+    - MachineContract
+    - MachineChannel
+    - MachineAgent
+    - SpaceServer
+    - Serve
+    - ServeNIO
+    - ServeTLS
+    - ServeTesting
+    - PinnedTLS
+    - SpaceCore
+    - JSONValue
+    - Fetch
+    - FetchSSE
+    - Dependencies
+    - Clocks
+    - QRCode
+    - Crypto
+    - WuhuVFS
+    - Scratch
+    - ScratchTesting

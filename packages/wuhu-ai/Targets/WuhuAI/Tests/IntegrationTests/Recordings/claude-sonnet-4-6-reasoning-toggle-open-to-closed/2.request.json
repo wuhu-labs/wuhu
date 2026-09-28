@@ -1,0 +1,49 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Explain quantum computing in one paragraph.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "signature" : "EogCClsIDRgCKkDyqtLXO2nk7Kh7CMY40kYUwOUdkefFlkQNRzEbOtO71P925k7ZthZ0KFW9MXEuvFkr7TJmGqgDs6ozKzu06+9ZMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzwpjvsDyz+hfy2OXcaDHtX1R+cTxovhPyqUiIw0vIXNoAXAEgxmQF7t\/7o3X\/Ynmtbk+R3na1ZND8z6t5LxT9g68BQrTQzyxHgr8z2KlseBZyj1f4q9KBIL0ZALQTgPgydJm2RiX9Ks6e9WRN6oqaKkNGojjsqBKLGP3Gh5+mZe8NTCopuMp3H4J5QXFjHodWmSHL+vKMsaqB63cK5jWSUgiNMPAy+TLCBGAE=",
+            "thinking" : "The user wants a concise explanation of quantum computing in one paragraph.",
+            "type" : "thinking"
+          },
+          {
+            "text" : "Quantum computing is a type of computation that harnesses the principles of quantum mechanics to process information in fundamentally different ways than classical computers. While classical computers use bits that exist as either 0 or 1, quantum computers use **quantum bits (qubits)**, which can exist in a state of **superposition** — effectively being 0 and 1 simultaneously until measured. Qubits can also be **entangled**, meaning the state of one qubit can instantly influence another regardless of distance, allowing quantum computers to process vast combinations of possibilities in parallel. Additionally, quantum algorithms use **interference** to amplify correct answers and cancel out wrong ones. This makes quantum computers potentially exponentially more powerful than classical computers for specific problems, such as breaking encryption, simulating molecular behavior for drug discovery, and optimizing complex systems — though they remain fragile, error-prone, and limited in practical application for now, as the field is still in its early stages of development.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now explain it to a five-year-old.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-sonnet-4-6",
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

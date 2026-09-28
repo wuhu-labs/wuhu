@@ -1,0 +1,36 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_018WsUUSbTmLp5iaL4gSNd32","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":703,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The result of doubling 21 is 42."}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Et0BClsIDRgCKkC7jB/2HVsezGbiiwcJz+UrCUvBj4ZqbWA5RlRFOZsL5DRO+9GfYWK2abV56K5u7BTnNDGj/svY9xFMmzi+gCs9MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgwRm+43quroMJ1vW6saDDtUr15DXcIdlhO2USIwBirEIesylDsVUMY5lNeEdFG4wXtHN/4CbHf/EnvnMrFRRY5f4yPEE7A25swOowszKjDQdY2GaT5ghdk3+Z60BInr20UnLQI3MBhqNhZzkSDBIMUavGbdakJ3InPI/yl6XXkYAQ=="}              }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0        }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The result of doubling 21 is **42**"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"!"}           }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1             }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":703,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":43}               }
+
+event: message_stop
+data: {"type":"message_stop"   }
+

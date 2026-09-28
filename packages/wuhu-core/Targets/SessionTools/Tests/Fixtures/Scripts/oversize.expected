@@ -1,0 +1,4 @@
+=== run_script
+SpaceError invalidArgument: query result does not fit in the 64 MB this script may buffer (unread response bodies and machine process output together); narrow the query (fewer columns, a filter, a LIMIT), or read earlier response bodies first
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

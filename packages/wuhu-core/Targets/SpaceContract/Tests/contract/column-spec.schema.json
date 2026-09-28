@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ColumnSpec","type":"object","properties":{"name":{"type":"string"},"type":{"type":"string","enum":["string","integer","number","boolean","json"]}},"required":["name","type"],"additionalProperties":false}

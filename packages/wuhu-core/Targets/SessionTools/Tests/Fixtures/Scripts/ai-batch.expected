@@ -1,0 +1,6 @@
+=== run_script
+[{"path":"/art/moon.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},{"path":"/art/sun.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},{"path":"/art/comet.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},{"path":"/art/star.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},{"path":"/art/nebula.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024},{"path":"machines://mc_aaaaaaaa/tmp/void.png","mimeType":"image/png","bytes":29,"width":1536,"height":1024}]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+prompts: ["comet", "moon", "nebula", "star", "sun", "void"], peak in flight: 4

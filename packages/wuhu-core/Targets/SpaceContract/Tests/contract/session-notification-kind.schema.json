@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionNotificationKind","type":"string","enum":["conversation_message","child_failed","request_deadline","session_settled","session_errored","session_disconnected","contractor_disconnected"]}

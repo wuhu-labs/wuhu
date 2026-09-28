@@ -1,0 +1,16 @@
+name: ServeTLS
+kind: library
+sources: Sources
+dependencies:
+  - Crypto
+  - PinnedTLS
+  - SwiftASN1
+  - X509
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Crypto
+    - SwiftASN1
+    - X509

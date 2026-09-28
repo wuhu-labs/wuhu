@@ -1,0 +1,91 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "What is the capital of France?",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "signature" : "521ef47f-8464-41cb-945f-9b01c463484a",
+            "thinking" : "The user is asking a simple factual question: \"What is the capital of France?\" I don't need any tools for this. I can answer directly.",
+            "type" : "thinking"
+          },
+          {
+            "text" : "The capital of France is Paris.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Please continue with your tasks.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "stream" : true,
+    "system" : "You are a long-running session agent. Keep answers to one sentence.",
+    "thinking" : {
+      "type" : "disabled"
+    },
+    "tool_choice" : {
+      "name" : "compact",
+      "type" : "tool"
+    },
+    "tools" : [
+      {
+        "description" : "Returns the current weather for a city.",
+        "input_schema" : {
+          "properties" : {
+            "city" : {
+              "description" : "City name",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "city"
+          ],
+          "type" : "object"
+        },
+        "name" : "get_weather"
+      },
+      {
+        "description" : "Folds the conversation so far into a durable summary. Call with a summary of everything above.",
+        "input_schema" : {
+          "properties" : {
+            "summary" : {
+              "description" : "Summary of the conversation so far",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "summary"
+          ],
+          "type" : "object"
+        },
+        "name" : "compact"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/anthropic\/messages"
+}

@@ -1,0 +1,22 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Think step by step: if a shirt costs $25 after a 20% discount, what was the original price?",
+        "role" : "user"
+      }
+    ],
+    "model" : "kimi-k2.6",
+    "reasoning" : {
+      "enabled" : true
+    },
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:36e52862b4d30ffd9b9e051c9d67ae99bb803572494a300e8d06bdad2789653d",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.moonshot.cn\/v1\/chat\/completions"
+}

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ProviderModel","type":"object","properties":{"id":{"type":"string"},"effortLevels":{"type":"array","items":{"type":"string"}},"defaultEffort":{"type":["string","null"]}},"required":["id","effortLevels"],"additionalProperties":false}

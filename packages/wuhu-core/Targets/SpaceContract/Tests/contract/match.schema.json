@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Match","type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"text":{"type":"string"},"context":{"type":"array","items":{"type":"string"}}},"required":["path","line","text","context"],"additionalProperties":false}

@@ -1,0 +1,78 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_01fda39490fde3c8016a13c460ea20819bb45d87b839ef55fd","object":"response","created_at":1779680352,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"current_turn","effort":"high","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_01fda39490fde3c8016a13c460ea20819bb45d87b839ef55fd","object":"response","created_at":1779680352,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"current_turn","effort":"high","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"rs_01fda39490fde3c8016a13c4614f08819bbb7f26b4f19e908d","type":"reasoning","encrypted_content":"gAAAAABqE8Rhi_5pUXN7y9UKxmBtUYuBsmNlS1iI1ssUTUPCP7TMsvSTDKZW0Xf-5XX6IWnup6-v8krdkayuUFs_K7g25p8iddTqqD8sBwOx3ZWsRZZWxt0bKnBtKqT1O0loi3Yfifn5HixqRGULQkg-7kGH-oNXhFlyVf5Sw88yWKz_aZuAs_VCvEweA3maWzscB_TfnSaJexl-qdajcKLIEtfnchP0gPLrrfLBQQm5mb915cxRdhiBYqVAXKxwuGJvJ-Y78qrnlA-2SHDbA_duKOxY4RSOEeWcPam6VazFxdqterBKMs8WV8UntzciNEWgPedwAeDK-IhabChGL0fUnQiAny_geLDV08XXyavgANtJpw5OFfOP5sKsopgqAlieKHJGfttuqq7xiomdHPvO8E1CUZT5L6ZKOQwnwCa3CoDjbnoTtsd_-7LpQm1YXTHiUmLdGXbVHXvr9Bue7TIMYlCN8gj8Z6GW6DCDJwXEdnqxo5iioI5gTKoT42LJ9xatN1iwttseouTf3Qc_8548YSwbL8CTxVxwtd4tfZz2BEn5BogUMO7_OAxm6jW4TfCFFA1iZH9Aodrwg-24EL_frs7UVzTnC4_Fr8Q9nffnbOVvSwEIxXIiQmVIqyeW0AtFeoGYepr8aCJewZnW47i7a25GWKEt2VEMoewiN1C3DwIHFqpCi9hMGXna3e-0WY-xZcHqeDhWZEEAbw-eXr6dB_ZWi7Kr1xH8zBj_tWjbvTYoE1YRyEz4h0S7y0H3vi-sAeAKRvxRPPZv9oUiFc-FqcLsy0kb4ogbpEiSqb_ns9EqB7pxroPdKonA8y-so2H67naaPSKc10odaOnEFtyf8mpGzj3wk1kxU_JL3nI2BQNgSM1YX1BGSXfvt5wxw-MPEPXrEMmEmqCUfV7TFZlQl1fIjKKrGQ==","summary":[]},"output_index":0,"sequence_number":2}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"rs_01fda39490fde3c8016a13c4614f08819bbb7f26b4f19e908d","type":"reasoning","encrypted_content":"gAAAAABqE8RkyeLFATICvd2P3fx-BDid86AY7q6l5W6i74BP8m49c3iLfY0KV5Wbs7LDEwgR7t46XGggZBI-r79JAwpD3zQFsG5x-tfGGvmmtl2F1SIw0cQMl7fd0bewlg6X1AXvF7u-1j3-xCAriccG7bybhbf1IIwn1DY-uIVQGcoJRVAZcK4zlF8ve1v5W130vhSOeVfCibylZ-WuYBe1auAw4HRkVmL2dxYgExfA_hFYBiLKKvBCyWKO29wmZ-3ZoBxMikQSXD_KyXeMHI5PBGbucsHGeTkeep5WOUNtHhRyuO1QrpgT30ijwwfXfpuVr2oqgmQSUdcfTwjf11v6A6MLhDXTHCvoRuZZL1BUieT5apKu3ENx1ZntgH8BNpLy8UZMdJ5wGz9La94wkNsgvx78AhRPZ9dHw8GLJDAVxRI9MqhhDzGAaEqRnZdUJuImMQHq8avbEE0bUvvBA8Vu8LO43ujnN5Oloz1RbylBS5gNAobuA9bIPJL5GuvA5-zsd2gUePUg6rW-uVrTMtwmt5J3EUUlAq0ZgR1d-3Fy9BfUvOAK5dmm2t-UvBjSgkn1CguxT_-_Ktb_1cPCKPMhRAWWAE-nOkOvFsNkBUyi0QCDLkJ6r-7omZM3doDMeC6BJYXsdYobexsA-jF5dA4ARYADTNkwog9nbzmNslqIYh_H9IXVxxMda-hly9hZiOS2Oez5DruRqVuS5a4zYMjO_qP4HE7Ok5YP4xLyvTLJQ3HG6rtmEogmX27XCF3i6oimeIoyblo40Qgh4hwpCy40Bfdm5-22OFSvAelRC1g6GwFwyzo9eXcWXyh0jwh55QNp9kvgODaQ0vsSspjOJzQPA5NzdercO9gq6IVuCaxQpFjZo0dCZG0EtNCmURx1cjbtWesaT7emPn3l0dY-5H6ADW7rwb_Ia8WhdKrt7OcwokRdodLb58zd0eZ-b-4vYjPV3xlNYamAvo5EAgCY4w6HN-QrmJlR-C8zmjuAsLAVvNQ6rnWb7v6u6cRHzjPFfTHQyR_E4ifxyTQCx3Xl2jmbkM5SQl_JeGb6uHMAgUjip7HQ9hNiHELqNJJhLHJUDH1G8XbLtpfyeryPuMViQumnYfgE4HtX4jsNyurCae62RcwzJeugFlUiQ7y6MY4mJEBVtQAFQ-CR_1dpH-Um2unk8hdwe6qRSvElVG7wdq11HASux3CCgEVmbT18b-mMjBt6jTLMmnaT","summary":[]},"output_index":0,"sequence_number":3}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":4}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"I","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"XczFNxUYRMVNSE2","output_index":1,"sequence_number":6}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" told","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"mS3ggzuMA47","output_index":1,"sequence_number":7}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" my","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"dm8B8151yAhKy","output_index":1,"sequence_number":8}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" wife","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"kMKpEyOyEfa","output_index":1,"sequence_number":9}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" she","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"Q6rDTJXwFwm4","output_index":1,"sequence_number":10}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" was","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"amcajTwiweml","output_index":1,"sequence_number":11}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" drawing","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"n55MHhCa","output_index":1,"sequence_number":12}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" her","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"0LOrmQAsq85o","output_index":1,"sequence_number":13}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" eyebrows","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"DP8jhMr","output_index":1,"sequence_number":14}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" too","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"URRfOBzQm3JW","output_index":1,"sequence_number":15}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" high","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"YW4G4D3bcwD","output_index":1,"sequence_number":16}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".\n\n","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"eJ2quhM19M0wK","output_index":1,"sequence_number":17}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"She","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"IdMvgmaY0lmtp","output_index":1,"sequence_number":18}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" looked","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"kHhXMciX1","output_index":1,"sequence_number":19}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" surprised","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"lMt87S","output_index":1,"sequence_number":20}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"obfuscation":"5kdzk9aIYoRpo5C","output_index":1,"sequence_number":21}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","logprobs":[],"output_index":1,"sequence_number":22,"text":"I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised."},"sequence_number":23}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised."}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":24}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_01fda39490fde3c8016a13c460ea20819bb45d87b839ef55fd","object":"response","created_at":1779680352,"status":"completed","background":false,"completed_at":1779680356,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"rs_01fda39490fde3c8016a13c4614f08819bbb7f26b4f19e908d","type":"reasoning","encrypted_content":"gAAAAABqE8RkZPEfvSAYc1meKdxmAkTKO1fOF_i3yK1dJGiVHeWn52xCk8lG5ohWpl30BZNCNlDrGJPknA6xGj2j4ik7nkRcG5phV3HYG7lE9g8MJ4-fA0Yrpbt2sRzRIuHD-g_-vSCUKOlRC2hyoVqbdhSUsDPNa6Nur8UmY2FdsiGmauHUCNrScykZoP7Dd1XPSHdQDcY30RKiCwYe6z5Eg6YgolyPhVbwoL9svZuOsVBIgOhK4GPHs2vwKcbIbZUXdJh3Hf_JQqI-ux1-ghf8fh_Q302DWx-LLvPQmbDt5Mj_0ROgcUep4VjIyqB5KzeOKEM4X_siSmGjPu_GzZ91GSOmHvUOgg2F4d3qVU5cKA_UBs4EwASzHfL2ONOjJFaUwbEqnwyXaCp1ksHAx0Lc9HcZ4mRLnwGg_dnEoRJP0r7_o6pzZNOh3BBRf6zTA4lNlNEEO9Q6_wapNKjpeC1AVpJe2zXySG-ASIMV78tyTyq5o-N4ly4ioiq8XQG3Q03jbGAb6wWCy625MyiHv4AUkqpNI11RUy726ljtUxIuNzroDpN4LJY7JKSIOcJqu1PiddRY5bvFvm-mYdV7gjHblXMCd97Ca-5QPq8Vv6CG7-UxU63ttaIPco0qCpqYWPqXmq-VE4WtToecxRo3gqK8SErlrNpxh0Yu53fpw9fmpHHtRK8UjuCLfYhySuIcIAQ7720Nz1veh1S3WTDuyXpexqbmqMnm9zY3qyOsMQg6g0WZLE9B4bjmt85buO9vi6uACLlFdutTPQBf0g023n_quLUV8ri4aYC9JcEktlMjWS0TdaqdHzacd2CGOri4iKUDZ76iotjFUuT2UZZ-dre4w21_V3sju1eS1D7RkVju99rOsHMLiJ8a7q7Irqmt5lh6nxtO5wUo6YANY9GmTGDLEgPjSySkKTpkkwBmGHECzQ_BdslLkvjO0rjSRQ_7dxvp4_L3Ku4z4I1kCDeB3AXmwQu6n0Iv9dfulpkGnkYaaSxdXQ3FbBQcmQSXaKjZw1LvMooET9djS9TnK2zeXbctGzLm5rKG4yEj8p-O17yBXqdOpQNl8OfwaB-SgLGbbjOVA2kxxqekRLkuOj4jDhYAEBQreV93t-v8Sl_FLFXV2S71SwqUsxRZw7WD1WH6e_cJTHId3MVRSmv0hNDkJuGb2Mn_qfdllYFV4TaXRCI35Eg72akDQXI4iGNR099OW-YyocTFYVbo","summary":[]},{"id":"msg_01fda39490fde3c8016a13c4640af4819b9bbda89f0e2a8eeb","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"I told my wife she was drawing her eyebrows too high.\n\nShe looked surprised."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"current_turn","effort":"high","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":44,"input_tokens_details":{"cached_tokens":0},"output_tokens":70,"output_tokens_details":{"reasoning_tokens":48},"total_tokens":114},"user":null,"metadata":{}},"sequence_number":25}
+

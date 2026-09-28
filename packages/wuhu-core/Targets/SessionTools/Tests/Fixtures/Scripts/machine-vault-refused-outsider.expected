@@ -1,0 +1,6 @@
+=== run_script
+["setting a vault entry on box needs an admin of group shared; you are a top-level agent of group alice, not of shared",[]]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+box vault: []

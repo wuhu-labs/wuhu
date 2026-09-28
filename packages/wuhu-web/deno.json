@@ -1,0 +1,25 @@
+{
+  "workspace": [
+    "./app",
+    "./ui",
+    "./lab"
+  ],
+  "links": [
+    "../vite-deno-resolver"
+  ],
+  "owner": "wuhu",
+  "nodeModulesDir": "manual",
+  "nodeModulesLinker": "hoisted",
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true
+  },
+  "lint": {
+    "rules": {
+      "tags": [
+        "recommended",
+        "react"
+      ]
+    }
+  }
+}

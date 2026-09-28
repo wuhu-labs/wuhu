@@ -1,0 +1,25 @@
+name: WuhuAI
+kind: library
+sources: Sources
+dependencies:
+  - Dependencies
+  - Fetch
+  - FetchSSE
+  - HTTPTypes
+  - JSONValue
+  - OrderedCollections
+tests:
+  dependencies:
+    - WuhuRecordReplay
+    - Fetch
+    - HTTPTypes
+    - JSONValue
+    - OrderedCollections
+    - Clocks
+  exclude:
+    - TestHelpers/RECORDING.md
+  resources:
+    - path: IntegrationTests/Recordings
+      mode: copy
+    - path: IntegrationTests/panda.jpg
+      mode: copy

@@ -1,0 +1,61 @@
+diff --git a/Sources/SnapshotTesting/Common/Internal.swift b/Sources/SnapshotTesting/Common/Internal.swift
+--- a/Sources/SnapshotTesting/Common/Internal.swift
++++ b/Sources/SnapshotTesting/Common/Internal.swift
+@@ -3,7 +3,7 @@
+   typealias Image = NSImage
+   typealias ImageView = NSImageView
+   typealias View = NSView
+-#elseif os(iOS) || os(tvOS)
++#elseif os(iOS) || os(tvOS) || os(visionOS)
+   import UIKit
+   typealias Image = UIImage
+   typealias ImageView = UIImageView
+diff --git a/Sources/SnapshotTesting/Snapshotting/UIImage.swift b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+--- a/Sources/SnapshotTesting/Snapshotting/UIImage.swift
++++ b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+@@ -1,4 +1,4 @@
+-#if os(iOS) || os(tvOS)
++#if os(iOS) || os(tvOS) || os(visionOS)
+   import UIKit
+ 
+   extension Diffing where Value == UIImage {
+@@ -23,7 +23,11 @@
+       if let scale = scale, scale != 0.0 {
+         imageScale = scale
+       } else {
+-        imageScale = UIScreen.main.scale
++        #if os(visionOS)
++          imageScale = UITraitCollection.current.displayScale
++        #else
++          imageScale = UIScreen.main.scale
++        #endif
+       }
+       let toData: (UIImage) -> Data = { $0.pngData() ?? emptyImage().pngData()! }
+       return .diff(
+@@ -57,7 +61,16 @@
+         "Error: No image could be generated for this view as its size was zero. Please set an explicit size in the test."
+       label.textAlignment = .center
+       label.numberOfLines = 3
+-      return label.asImage()
++      #if os(visionOS)
++        // `View.asImage()` lives behind View.swift's iOS/macOS/tvOS gate, and
++        // that file is UIApplication/UIWindow-shaped throughout. This is the
++        // same two lines it would have run.
++        return UIGraphicsImageRenderer(bounds: label.bounds).image { context in
++          label.layer.render(in: context.cgContext)
++        }
++      #else
++        return label.asImage()
++      #endif
+     }
+   }
+ 
+@@ -286,7 +299,7 @@
+ }
+ #endif
+ 
+-#if os(iOS) || os(tvOS) || os(macOS)
++#if os(iOS) || os(tvOS) || os(visionOS) || os(macOS)
+   import Accelerate.vImage
+   import CoreImage.CIKernel
+   import MetalPerformanceShaders

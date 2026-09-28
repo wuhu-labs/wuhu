@@ -1,0 +1,11 @@
+name: FetchTesting
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+checks:
+  build: [linux, mac]
+resources:
+  - path: Resources/integration_server.py
+    mode: process
+tests: false

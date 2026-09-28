@@ -1,0 +1,31 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Explain quantum computing in one paragraph.",
+        "role" : "user"
+      },
+      {
+        "content" : "Quantum computing harnesses the principles of quantum mechanics—such as superposition, entanglement, and interference—to process information in fundamentally new ways. Unlike classical bits that are strictly 0 or 1, quantum bits (qubits) can exist in a blend of both states simultaneously, allowing a quantum computer to explore many possible solutions at once. By entangling qubits, the state of one becomes correlated with another, enabling complex, interconnected calculations that scale exponentially. Through clever algorithms and interference, correct answers are amplified while wrong ones cancel out, making it possible to solve certain problems—like factoring large numbers, simulating molecular interactions, or optimizing complex systems—vastly faster than any conventional computer ever could.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Now explain it to a five-year-old.",
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "reasoning_effort" : "low",
+    "stream" : true,
+    "thinking" : {
+      "type" : "enabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/v1\/chat\/completions"
+}

@@ -1,0 +1,8 @@
+=== run_script
+watching
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== stop_script
+script 00000000 stopped
+=== message
+AbortError: stopped by stop_script

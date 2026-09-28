@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"DeviceCommandOutput","type":"object","properties":{"n":{"type":"integer"}},"required":["n"],"additionalProperties":false}

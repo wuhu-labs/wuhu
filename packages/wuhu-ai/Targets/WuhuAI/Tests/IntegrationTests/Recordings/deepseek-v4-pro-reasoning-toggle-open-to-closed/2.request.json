@@ -1,0 +1,31 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Explain quantum computing in one paragraph.",
+        "role" : "user"
+      },
+      {
+        "content" : "Quantum computing is a fundamentally new approach to computation that harnesses the principles of quantum mechanics—such as superposition, entanglement, and interference—to process information. Unlike classical bits that are strictly 0 or 1, quantum bits (qubits) can exist in a blend of states, allowing them to represent and manipulate many possibilities simultaneously. By choreographing quantum gates to perform coordinated operations on entangled qubits, quantum algorithms can amplify correct answers and cancel out wrong ones, enabling certain problems—like factoring large numbers or simulating molecular interactions—to be solved exponentially faster than on any classical supercomputer. While large-scale, fault-tolerant quantum computers are still years away, today’s noisy intermediate-scale quantum devices are already exploring applications in optimization, drug discovery, and cryptography, promising to revolutionize industries once the hardware matures.",
+        "reasoning_content" : "We need to explain quantum computing in one paragraph. The user likely wants a concise, high-level overview that covers the key ideas: qubits, superposition, entanglement, quantum gates, potential speedups over classical computing, and maybe mention applications like cryptography, optimization, simulation. Must be one paragraph. No fluff. Keep it clear and accessible.\n\nI'll structure it: Start with what it is (a type of computation harnessing quantum mechanics), explain qubits and superposition (can be 0 and 1 simultaneously), entanglement, quantum gates manipulating qubits, how quantum algorithms exploit interference to amplify correct answers, leading to exponential speedups for certain problems like factoring (Shor) and search (Grover), and potential applications in chemistry, materials, AI. End with current state (noisy intermediate-scale quantum devices). Make sure it's a single paragraph, cohesive.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Now explain it to a five-year-old.",
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "stream" : true,
+    "thinking" : {
+      "type" : "disabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/v1\/chat\/completions"
+}

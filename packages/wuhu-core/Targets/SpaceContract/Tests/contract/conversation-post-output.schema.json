@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ConversationPostOutput","type":"object","properties":{"messageId":{"type":"string"},"conversationId":{"type":"string"},"n":{"type":"integer"},"delivered":{"type":"array","items":{"type":"string"}}},"required":["messageId","conversationId","n","delivered"],"additionalProperties":false}

@@ -1,0 +1,26 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Explain quantum computing in one paragraph."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true,
+        "thinkingBudget" : 0
+      }
+    }
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-3-flash-preview:streamGenerateContent?alt=sse"
+}

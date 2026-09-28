@@ -1,0 +1,56 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+
+string_flag(
+    name = "variant",
+    build_setting_default = "dev",
+    values = [
+        "dev",
+        "adhoc",
+        "store",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "dev",
+    flag_values = {":variant": "dev"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "adhoc",
+    flag_values = {":variant": "adhoc"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "store",
+    flag_values = {":variant": "store"},
+    visibility = ["//visibility:public"],
+)
+
+# A simulator bundle carries its entitlements directly and never validates a
+# profile, so an app's `provisioning_profile` select drops to None here. Each
+# one strictly specializes the bare variant above, which is what lets both keys
+# sit in the same select without an ambiguous match.
+
+config_setting(
+    name = "dev_simulator",
+    constraint_values = ["@build_bazel_apple_support//constraints:simulator"],
+    flag_values = {":variant": "dev"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "adhoc_simulator",
+    constraint_values = ["@build_bazel_apple_support//constraints:simulator"],
+    flag_values = {":variant": "adhoc"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "store_simulator",
+    constraint_values = ["@build_bazel_apple_support//constraints:simulator"],
+    flag_values = {":variant": "store"},
+    visibility = ["//visibility:public"],
+)

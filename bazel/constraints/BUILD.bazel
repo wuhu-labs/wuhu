@@ -1,0 +1,37 @@
+package(default_visibility = ["//visibility:public"])
+
+# The CI lanes, expressed as config_settings so `target_compatible_with` can skip
+# a target the lane does not check. Each lane sets `--platforms` (see .bazelrc),
+# so the lane is legible from the target platform's own OS constraint and a
+# target's declared `checks:` platforms mean what they say: iOS-checked code is
+# compiled for iOS, not for macOS with an iOS-shaped flag set.
+
+config_setting(
+    name = "linux",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+config_setting(
+    name = "mac",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+config_setting(
+    name = "ios",
+    constraint_values = ["@platforms//os:ios"],
+)
+
+config_setting(
+    name = "tvos",
+    constraint_values = ["@platforms//os:tvos"],
+)
+
+config_setting(
+    name = "visionos",
+    constraint_values = ["@platforms//os:visionos"],
+)
+
+config_setting(
+    name = "watchos",
+    constraint_values = ["@platforms//os:watchos"],
+)

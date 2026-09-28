@@ -1,0 +1,13 @@
+name: SpaceClient
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac, ios, visionos]
+dependencies:
+  - SpaceContract
+  - MachineContract
+  - MachineChannel
+  - JSONValue
+  - Fetch
+  - FetchSSE
+  - Dependencies

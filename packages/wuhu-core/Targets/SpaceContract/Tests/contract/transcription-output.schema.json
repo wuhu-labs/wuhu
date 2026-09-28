@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"TranscriptionOutput","type":"object","properties":{"text":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"language":{"type":["string","null"]},"durationSeconds":{"type":["number","null"]}},"required":["text","provider","model"],"additionalProperties":false}

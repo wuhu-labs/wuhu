@@ -1,0 +1,72 @@
+{
+  "body" : {
+    "include" : [
+      "reasoning.encrypted_content"
+    ],
+    "input" : [
+      {
+        "content" : [
+          {
+            "text" : "Use the double_number tool to double 21.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "arguments" : "{\"number\":21}",
+        "call_id" : "call_xolrzik74lsC9YRs6vcCwfdb",
+        "name" : "double_number",
+        "type" : "function_call"
+      },
+      {
+        "call_id" : "call_xolrzik74lsC9YRs6vcCwfdb",
+        "output" : "42",
+        "type" : "function_call_output"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now say the result in a sentence.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "gpt-5.4",
+    "reasoning" : {
+      "effort" : "medium",
+      "summary" : "auto"
+    },
+    "store" : false,
+    "stream" : true,
+    "tools" : [
+      {
+        "description" : "Doubles a number and returns the result.",
+        "name" : "double_number",
+        "parameters" : {
+          "properties" : {
+            "number" : {
+              "description" : "The number to double",
+              "type" : "integer"
+            }
+          },
+          "required" : [
+            "number"
+          ],
+          "type" : "object"
+        },
+        "strict" : false,
+        "type" : "function"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:6f329108d16c6fb7cabe0189b18335e170449ce04c2b8663b8fde66dc8c9235e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.openai.com\/v1\/responses"
+}

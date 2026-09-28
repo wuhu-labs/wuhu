@@ -1,0 +1,1750 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wuhu app chrome study · v2</title>
+    <style>
+    :root {
+      color-scheme: light;
+      --ink: #101318;
+      --muted: #61686f;
+      --faint: #8a9095;
+      --paper: #f6f7f2;
+      --mint: #59c9a5;
+      --blue: #5da2e8;
+      --violet: #8068ed;
+      --sidebar-w: 272px;
+      --rail-w: 64px;
+      --chrome-gap: 14px;
+      --content-left: calc(var(--sidebar-w) + var(--chrome-gap) * 2 + 34px);
+      --material: rgba(250, 251, 247, 0.6);
+      --material-strong: rgba(252, 253, 250, 0.88);
+      --material-border: rgba(255, 255, 255, 0.65);
+      --material-edge: rgba(16, 21, 28, 0.06);
+      --material-shadow: 0 18px 50px rgba(22, 28, 38, 0.12), 0 2px 8px rgba(22, 28, 38, 0.05);
+      --ease: cubic-bezier(0.22, 0.9, 0.24, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+        sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    button,
+    input {
+      font: inherit;
+      color: inherit;
+    }
+
+    .canvas {
+      position: fixed;
+      inset: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background:
+        radial-gradient(1100px 700px at 85% -10%, rgba(89, 201, 165, 0.2),
+        transparent 62%),
+        radial-gradient(900px 700px at -8% 62%, rgba(128, 104, 237, 0.11),
+        transparent 60%),
+        radial-gradient(800px 600px at 88% 105%, rgba(199, 104, 163, 0.1),
+        transparent 58%),
+        linear-gradient(150deg, #f8f8f2, #f2f7f2 52%, #f9f6f2);
+    }
+
+    .canvas::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.14;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+
+    .surface {
+      position: relative;
+      min-height: 100%;
+      padding: 128px var(--chrome-gap) 200px var(--content-left);
+      transition: padding 480ms var(--ease);
+    }
+
+    .surface-inner {
+      max-width: 1120px;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 26px;
+      color: #3c9478;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 26px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--mint);
+    }
+
+    h1.display {
+      margin: 0;
+      max-width: 16ch;
+      font-size: clamp(48px, 6.2vw, 88px);
+      font-weight: 800;
+      line-height: 1.02;
+      letter-spacing: -0.035em;
+    }
+
+    .gradient-text {
+      background: linear-gradient(92deg, #4cb999 4%, #5b9be2 46%, #8468ea 74%,
+        #ba69a4 96%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .lede {
+      max-width: 62ch;
+      margin: 28px 0 0;
+      color: #4a515a;
+      font-size: clamp(16px, 1.6vw, 19px);
+      line-height: 1.55;
+      letter-spacing: -0.008em;
+    }
+
+    .lede strong {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .bento {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 56px;
+    }
+
+    .card {
+      position: relative;
+      overflow: hidden;
+      min-height: 188px;
+      padding: 22px 24px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 10px 34px rgba(22, 28, 38, 0.05);
+    }
+
+    .card-label {
+      display: block;
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .card h2 {
+      position: relative;
+      z-index: 1;
+      margin: 10px 0 8px;
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .card p {
+      position: relative;
+      z-index: 1;
+      margin: 0;
+      max-width: 42ch;
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+
+    .card.w7 {
+      grid-column: span 7;
+      min-height: 264px;
+    }
+    .card.w5 {
+      grid-column: span 5;
+      min-height: 264px;
+    }
+    .card.w4 {
+      grid-column: span 4;
+    }
+
+    .chart {
+      position: absolute;
+      inset: auto 22px 18px;
+      height: 118px;
+    }
+
+    .chart svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+
+    .constellation {
+      position: absolute;
+      inset: 108px 28px 26px;
+    }
+
+    .constellation svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .node {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      box-shadow: 0 8px 22px rgba(30, 40, 52, 0.18);
+    }
+
+    .node.you {
+      top: 6%;
+      left: 6%;
+      background: #14171d;
+    }
+    .node.a1 {
+      top: 0%;
+      right: 8%;
+      background: #53b394;
+    }
+    .node.a2 {
+      bottom: 0%;
+      left: 34%;
+      background: #7a68e5;
+    }
+    .node.a3 {
+      right: 16%;
+      bottom: 8%;
+      background: #5b98e0;
+    }
+
+    .card.dark {
+      color: white;
+      border-color: rgba(255, 255, 255, 0.08);
+      background: #111420;
+      box-shadow: 0 18px 44px rgba(17, 20, 32, 0.22);
+    }
+
+    .card.dark p,
+    .card.dark .card-label {
+      color: rgba(255, 255, 255, 0.56);
+    }
+
+    .progress {
+      position: absolute;
+      inset: auto 24px 24px;
+      height: 6px;
+      border-radius: 99px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .progress::after {
+      content: "";
+      display: block;
+      width: 72%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--mint), var(--blue), var(--violet));
+    }
+
+    .markdown-surface {
+      display: none;
+    }
+
+    body.view-markdown .custom-surface {
+      display: none;
+    }
+    body.view-markdown .markdown-surface {
+      display: block;
+    }
+    body.view-markdown .canvas::before {
+      opacity: 0.05;
+    }
+    body.view-markdown .canvas {
+      background:
+        radial-gradient(900px 600px at 90% -14%, rgba(89, 201, 165, 0.1),
+        transparent 60%),
+        linear-gradient(160deg, #f8f8f3, #f6f6f2);
+    }
+
+    .doc {
+      max-width: 46rem;
+      margin: 0 auto;
+      font-family: "Helvetica Neue", Helvetica, -apple-system, sans-serif;
+      font-size: 1.03rem;
+      line-height: 1.72;
+    }
+
+    .doc h1 {
+      margin: 0;
+      max-width: 18ch;
+      font-size: clamp(2.1rem, 1.5rem + 2.4vw, 3rem);
+      font-weight: 700;
+      line-height: 1.06;
+      letter-spacing: -0.03em;
+    }
+
+    .doc-dateline {
+      margin: 1rem 0 0;
+      color: var(--faint);
+      font-size: 0.92rem;
+      font-style: italic;
+    }
+
+    .doc h2 {
+      margin: clamp(3.2rem, 7vw, 4.6rem) 0 0;
+      font-size: 1.55rem;
+      font-weight: 650;
+      line-height: 1.2;
+      letter-spacing: -0.015em;
+    }
+
+    .doc h3 {
+      margin: 2.4rem 0 0;
+      font-size: 1.1rem;
+      font-weight: 650;
+    }
+
+    .doc h2 + p,
+    .doc h3 + p,
+    .doc h2 + .doc-figure,
+    .doc h3 + .doc-figure,
+    .doc h2 + .doc-table-wrap,
+    .doc h3 + .doc-table-wrap {
+      margin-top: 1.05rem;
+    }
+
+    .doc p {
+      margin: 1.3rem 0 0;
+      color: #14171d;
+    }
+
+    .doc code {
+      padding: 0.1em 0.36em;
+      border-radius: 5px;
+      background: rgba(16, 19, 24, 0.055);
+      font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      font-size: 0.85em;
+    }
+
+    .doc-figure {
+      margin: 1.55rem 0 0;
+      padding: 1.05rem 1.25rem;
+      overflow-x: auto;
+      border-radius: 12px;
+      background: rgba(16, 19, 24, 0.04);
+    }
+
+    .doc-figure pre {
+      margin: 0;
+      font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      font-size: 0.83rem;
+      line-height: 1.6;
+    }
+
+    .doc-figure code {
+      padding: 0;
+      background: none;
+      font-size: inherit;
+    }
+
+    .doc-table-wrap {
+      margin: 1.55rem 0 0;
+      overflow-x: auto;
+    }
+
+    .doc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.93rem;
+    }
+
+    .doc-table th {
+      padding: 0 1.4rem 0.65rem 0;
+      border-bottom: 1px solid rgba(16, 19, 24, 0.09);
+      color: #4b5261;
+      font-weight: 600;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .doc-table td {
+      padding: 0.68rem 1.4rem 0.68rem 0;
+      vertical-align: top;
+      line-height: 1.5;
+    }
+
+    .doc-callout {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 13px;
+      margin-top: 1.55rem;
+      padding: 16px 18px;
+      border-radius: 12px;
+      background: rgba(38, 178, 137, 0.09);
+      color: #3d4d47;
+      font-size: 0.92rem;
+      line-height: 1.55;
+    }
+
+    .doc-callout::before {
+      content: "✓";
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      color: white;
+      background: #35b991;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .material {
+      border: 1px solid var(--material-border);
+      outline: 1px solid var(--material-edge);
+      background: var(--material);
+      box-shadow: var(--material-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      backdrop-filter: blur(22px) saturate(1.7);
+      -webkit-backdrop-filter: blur(22px) saturate(1.7);
+    }
+
+    .sidebar {
+      position: fixed;
+      z-index: 10;
+      top: var(--chrome-gap);
+      bottom: var(--chrome-gap);
+      left: var(--chrome-gap);
+      display: flex;
+      flex-direction: column;
+      width: var(--sidebar-w);
+      overflow: hidden;
+      border-radius: 22px;
+      transition: width 420ms var(--ease), transform 420ms var(--ease), opacity
+        280ms ease;
+    }
+
+    .sidebar-header {
+      display: flex;
+      flex: none;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      padding: 0 12px 0 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      color: white;
+      background: #14171d;
+      font-size: 13px;
+      font-weight: 650;
+      box-shadow: 0 6px 16px rgba(20, 23, 29, 0.18);
+    }
+
+    .icon-button {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      cursor: pointer;
+      color: var(--muted);
+      transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+    }
+
+    .icon-button:hover {
+      background: rgba(16, 19, 24, 0.06);
+      color: var(--ink);
+    }
+    .icon-button:active {
+      transform: scale(0.94);
+    }
+    .icon-button.active {
+      background: rgba(16, 19, 24, 0.08);
+      color: var(--ink);
+    }
+
+    svg.i {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .sidebar-actions {
+      display: grid;
+      flex: none;
+      gap: 8px;
+      padding: 2px 12px 12px;
+    }
+
+    .new-session,
+    .search-field {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      height: 38px;
+      border-radius: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .new-session {
+      padding: 0 13px;
+      border: 0;
+      color: white;
+      background: #14171d;
+      box-shadow: 0 8px 20px rgba(20, 23, 29, 0.16);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .new-session .kbd {
+      margin-left: auto;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 11px;
+    }
+
+    .search-field {
+      padding: 0 12px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.5);
+      font-size: 12.5px;
+      text-align: left;
+    }
+
+    .search-field .kbd {
+      margin-left: auto;
+      padding: 2px 6px;
+      border: 1px solid rgba(16, 21, 28, 0.09);
+      border-radius: 5px;
+      color: var(--faint);
+      background: rgba(255, 255, 255, 0.5);
+      font-size: 10px;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 2px 10px 14px;
+      scrollbar-width: none;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 30px;
+      padding: 0 8px;
+      color: var(--faint);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .section-head .count {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9.5px;
+      letter-spacing: 0;
+    }
+
+    .tree {
+      display: grid;
+      gap: 1px;
+      margin-bottom: 14px;
+    }
+
+    .row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      height: 34px;
+      padding: 0 9px;
+      border-radius: 9px;
+      color: #40474e;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      text-decoration: none;
+      transition: background 140ms ease, color 140ms ease;
+    }
+
+    .row:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .row.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 2px 10px rgba(22, 28, 38, 0.05), inset 0 0 0 1px rgba(255, 255,
+        255, 0.7);
+      font-weight: 600;
+    }
+
+    .row.child {
+      margin-left: 22px;
+    }
+
+    .row.child::before {
+      content: "";
+      position: absolute;
+      top: -5px;
+      bottom: 16px;
+      left: -9px;
+      width: 9px;
+      border-bottom: 1px solid rgba(40, 48, 57, 0.16);
+      border-left: 1px solid rgba(40, 48, 57, 0.16);
+      border-bottom-left-radius: 6px;
+    }
+
+    .dot {
+      flex: none;
+      width: 7px;
+      height: 7px;
+      margin: 0 4px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 0 3px rgba(89, 201, 165, 0.14);
+    }
+
+    .dot.blue {
+      background: #619ee4;
+      box-shadow: 0 0 0 3px rgba(97, 158, 228, 0.14);
+    }
+    .dot.violet {
+      background: #7d6ce8;
+      box-shadow: 0 0 0 3px rgba(125, 108, 232, 0.14);
+    }
+    .dot.idle {
+      background: #b9bec3;
+      box-shadow: 0 0 0 3px rgba(150, 156, 162, 0.1);
+    }
+
+    .row-icon {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 17px;
+      height: 17px;
+      color: #767d84;
+    }
+
+    .row-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .row-meta {
+      margin-left: auto;
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9.5px;
+    }
+
+    .row.quiet {
+      color: var(--faint);
+      font-size: 12px;
+      height: 30px;
+    }
+    .row.quiet:hover {
+      color: var(--muted);
+    }
+
+    .sidebar-footer {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 10px;
+      min-height: 58px;
+      padding: 9px 12px 9px 14px;
+      border-top: 1px solid rgba(16, 21, 28, 0.05);
+      white-space: nowrap;
+    }
+
+    .avatar {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(140deg, #57c3a1, #7570e6 62%, #b3679d);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .account {
+      min-width: 0;
+      line-height: 1.2;
+    }
+    .account strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .account span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 10.5px;
+    }
+    .sidebar-footer .icon-button {
+      margin-left: auto;
+    }
+
+    .topbar {
+      position: fixed;
+      z-index: 9;
+      top: var(--chrome-gap);
+      right: var(--chrome-gap);
+      left: calc(var(--sidebar-w) + var(--chrome-gap) * 2);
+      display: flex;
+      align-items: center;
+      height: 50px;
+      padding: 0 8px 0 16px;
+      border-radius: 16px;
+      transition: left 420ms var(--ease), transform 420ms var(--ease), opacity 280ms
+        ease, box-shadow 300ms ease;
+    }
+
+    .crumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+
+    .crumbs .sep {
+      color: #b3b7ba;
+    }
+
+    .crumbs strong {
+      max-width: 300px;
+      overflow: hidden;
+      color: var(--ink);
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .surface-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 10px;
+      padding: 4px 9px;
+      border: 1px solid rgba(16, 21, 28, 0.06);
+      border-radius: 99px;
+      color: #5c6a62;
+      background: rgba(255, 255, 255, 0.45);
+      font-size: 10.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .surface-pill::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4fbc94;
+      box-shadow: 0 0 0 3px rgba(79, 188, 148, 0.13);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: auto;
+    }
+
+    .focus-button {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 34px;
+      padding: 0 12px;
+      margin-right: 3px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      border-radius: 10px;
+      color: #4a515a;
+      background: rgba(255, 255, 255, 0.5);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 150ms ease, color 150ms ease;
+    }
+
+    .focus-button:hover {
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--ink);
+    }
+
+    .thread {
+      position: fixed;
+      z-index: 9;
+      right: 0;
+      bottom: 84px;
+      left: var(--content-left);
+      display: flex;
+      justify-content: center;
+      padding: 0 var(--chrome-gap);
+      pointer-events: none;
+      transition: left 420ms var(--ease);
+    }
+
+    .thread-sheet {
+      width: min(720px, 100%);
+      padding: 16px 18px 14px;
+      border-radius: 18px;
+      background: var(--material-strong);
+      opacity: 0;
+      transform: translateY(14px) scale(0.99);
+      pointer-events: none;
+      transition: opacity 240ms ease, transform 340ms var(--ease);
+    }
+
+    body.thread-open .thread-sheet {
+      opacity: 1;
+      transform: none;
+      pointer-events: auto;
+    }
+
+    .thread-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .thread-head .spacer {
+      flex: 1;
+    }
+
+    .msg {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .msg-avatar {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      color: white;
+      background: #14171d;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .msg.you .msg-avatar {
+      border-radius: 50%;
+      background: linear-gradient(140deg, #57c3a1, #7570e6 62%, #b3679d);
+    }
+
+    .msg-body {
+      min-width: 0;
+      padding-top: 3px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #333a42;
+    }
+    .msg-body strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--ink);
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+
+    .composer-zone {
+      position: fixed;
+      z-index: 9;
+      right: 0;
+      bottom: 18px;
+      left: var(--content-left);
+      display: flex;
+      justify-content: center;
+      padding: 0 var(--chrome-gap);
+      pointer-events: none;
+      transition: left 420ms var(--ease), transform 420ms var(--ease), opacity 280ms
+        ease;
+    }
+
+    .composer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: min(720px, 100%);
+      height: 56px;
+      padding: 6px 7px 6px 8px;
+      border-radius: 18px;
+      pointer-events: auto;
+    }
+
+    .session-chip {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 8px;
+      height: 42px;
+      max-width: 220px;
+      padding: 0 12px 0 9px;
+      border: 1px solid rgba(16, 21, 28, 0.07);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.55);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 150ms ease;
+    }
+
+    .session-chip:hover {
+      background: rgba(255, 255, 255, 0.9);
+    }
+    .session-chip .dot {
+      margin: 0;
+    }
+    .session-chip .chevron {
+      color: var(--faint);
+      transition: transform 240ms var(--ease);
+    }
+    body.thread-open .session-chip .chevron {
+      transform: rotate(180deg);
+    }
+
+    .composer input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font-size: 13.5px;
+    }
+
+    .composer input::placeholder {
+      color: var(--faint);
+    }
+
+    .send-button {
+      display: grid;
+      flex: none;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      border: 0;
+      border-radius: 12px;
+      color: white;
+      background: #14171d;
+      box-shadow: 0 8px 18px rgba(20, 23, 29, 0.2);
+      cursor: pointer;
+    }
+
+    .focus-return {
+      position: fixed;
+      z-index: 20;
+      top: var(--chrome-gap);
+      left: var(--chrome-gap);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      height: 42px;
+      padding: 0 13px 0 8px;
+      border-radius: 13px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      opacity: 0;
+      transform: translateY(-10px);
+      pointer-events: none;
+      cursor: pointer;
+      transition: opacity 240ms ease, transform 340ms var(--ease);
+    }
+
+    .focus-return .kbd {
+      padding: 2px 5px;
+      border: 1px solid rgba(16, 21, 28, 0.1);
+      border-radius: 5px;
+      color: var(--faint);
+      font-size: 9.5px;
+    }
+
+    body.focus .focus-return {
+      opacity: 1;
+      transform: none;
+      pointer-events: auto;
+    }
+
+    body.rail {
+      --sidebar-w: var(--rail-w);
+      --content-left: calc(var(--rail-w) + var(--chrome-gap) * 2 + 26px);
+    }
+
+    body.rail .sidebar-header {
+      justify-content: center;
+      padding: 0;
+    }
+    body.rail .brand {
+      justify-content: center;
+    }
+    body.rail .brand-name,
+    body.rail .collapse-button,
+    body.rail .new-session .row-label,
+    body.rail .new-session .kbd,
+    body.rail .search-field .row-label,
+    body.rail .search-field .kbd,
+    body.rail .section-head,
+    body.rail .row .row-label,
+    body.rail .row .row-meta,
+    body.rail .row.child,
+    body.rail .row.quiet,
+    body.rail .account,
+    body.rail .sidebar-footer .icon-button {
+      display: none;
+    }
+
+    body.rail .sidebar-actions {
+      padding: 2px 11px 12px;
+    }
+    body.rail .new-session,
+    body.rail .search-field {
+      justify-content: center;
+      padding: 0;
+    }
+    body.rail .row {
+      justify-content: center;
+      padding: 0;
+    }
+    body.rail .sidebar-footer {
+      justify-content: center;
+      padding: 9px 0;
+    }
+
+    body.focus {
+      --content-left: calc(var(--chrome-gap) + 34px);
+    }
+
+    body.focus .sidebar {
+      opacity: 0;
+      transform: translateX(-24px) scale(0.985);
+      pointer-events: none;
+    }
+    body.focus .topbar {
+      opacity: 0;
+      transform: translateY(-16px);
+      pointer-events: none;
+    }
+    body.focus .composer-zone {
+      opacity: 0;
+      transform: translateY(16px);
+      pointer-events: none;
+    }
+    body.focus .thread {
+      display: none;
+    }
+    body.focus .surface {
+      padding-left: max(var(--content-left), 7vw);
+      padding-right: max(var(--chrome-gap), 7vw);
+    }
+
+    .study {
+      position: fixed;
+      z-index: 30;
+      right: 16px;
+      bottom: 16px;
+      display: grid;
+      gap: 9px;
+      padding: 12px 13px;
+      border: 1px dashed rgba(16, 21, 28, 0.22);
+      border-radius: 14px;
+      background: rgba(250, 251, 247, 0.82);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 10px 30px rgba(22, 28, 38, 0.1);
+      font-size: 10px;
+      transition: opacity 200ms ease, transform 240ms ease;
+    }
+
+    .study.tucked {
+      opacity: 0.25;
+      transform: translateX(4px);
+    }
+    .study.tucked:hover {
+      opacity: 1;
+      transform: none;
+    }
+
+    .study-title {
+      color: var(--faint);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .study-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .study-row .study-label {
+      width: 52px;
+      color: var(--muted);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .seg {
+      display: flex;
+      padding: 2px;
+      border: 1px solid rgba(16, 21, 28, 0.08);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .seg button {
+      height: 24px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 10.5px;
+      cursor: pointer;
+    }
+
+    .seg button.active {
+      color: var(--ink);
+      background: white;
+      box-shadow: 0 1px 5px rgba(22, 28, 38, 0.12);
+      font-weight: 600;
+    }
+
+    @media (max-width: 1360px) {
+      .composer-zone,
+      .thread {
+        justify-content: flex-start;
+      }
+      .composer,
+      .thread-sheet {
+        width: min(680px, calc(100% - 258px));
+      }
+    }
+
+    @media (max-width: 960px) {
+      :root {
+        --sidebar-w: var(--rail-w);
+        --content-left: calc(var(--rail-w) + var(--chrome-gap) * 2 + 18px);
+      }
+
+      .sidebar-header {
+        justify-content: center;
+        padding: 0;
+      }
+      .brand-name,
+      .collapse-button,
+      .new-session .row-label,
+      .new-session .kbd,
+      .search-field .row-label,
+      .search-field .kbd,
+      .section-head,
+      .row .row-label,
+      .row .row-meta,
+      .row.child,
+      .row.quiet,
+      .account,
+      .sidebar-footer .icon-button {
+        display: none;
+      }
+      .sidebar-actions {
+        padding: 2px 11px 12px;
+      }
+      .new-session,
+      .search-field,
+      .row {
+        justify-content: center;
+        padding: 0;
+      }
+      .sidebar-footer {
+        justify-content: center;
+        padding: 9px 0;
+      }
+
+      .card.w7,
+      .card.w5,
+      .card.w4 {
+        grid-column: span 12;
+      }
+      .session-chip .row-label {
+        display: none;
+      }
+      .focus-button span {
+        display: none;
+      }
+      .focus-button {
+        padding: 0 9px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 0.01ms !important;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <div class="canvas" id="canvas">
+      <main class="surface custom-surface">
+        <div class="surface-inner">
+          <section>
+            <div class="eyebrow">Living artifact · Design field notes</div>
+            <h1
+              class="display">The space stays yours. <span class="gradient-text">The chrome knows when to leave.</span></h1>
+            <p
+              class="lede">A customized artifact should feel <strong>full-bleed and sovereign</strong>. Wuhu stays present as a quiet material layer — navigation, context, and conversation floating above the work, never carving it into an app-shaped rectangle.</p>
+          </section>
+
+          <section class="bento" aria-label="Example artifact content">
+            <article class="card w7">
+              <span class="card-label">Momentum · last 14 days</span>
+              <h2>Work is converging</h2>
+              <p>Active threads are narrowing toward one product language.</p>
+              <div class="chart" aria-hidden="true">
+                <svg viewBox="0 0 600 140" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" stop-color="#6d73e6"
+                        stop-opacity=".26" />
+                      <stop offset="1" stop-color="#6d73e6" stop-opacity="0" />
+                    </linearGradient>
+                    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0" stop-color="#54b89a" />
+                      <stop offset=".52" stop-color="#5d9ee7" />
+                      <stop offset="1" stop-color="#8a68eb" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M0 122 C70 118, 75 104, 128 107 S210 85, 265 92 S338 64, 395 71 S475 35, 600 22 L600 140 L0 140 Z"
+                    fill="url(#fill)" />
+                  <path
+                    d="M0 122 C70 118, 75 104, 128 107 S210 85, 265 92 S338 64, 395 71 S475 35, 600 22"
+                    fill="none" stroke="url(#line)" stroke-width="3.5"
+                    stroke-linecap="round" />
+                </svg>
+              </div>
+            </article>
+
+            <article class="card w5">
+              <span class="card-label">Session constellation</span>
+              <h2>One thought, four agents</h2>
+              <p>Sub-sessions stay visibly related without becoming a table.</p>
+              <div class="constellation" aria-hidden="true">
+                <svg preserveAspectRatio="none" viewBox="0 0 100 100">
+                  <path d="M14 16 L82 12 M14 16 L44 88 M14 16 L74 78"
+                    stroke="rgba(55,66,77,0.18)" stroke-width="0.6"
+                    fill="none" />
+                </svg>
+                <div class="node you">YOU</div>
+                <div class="node a1">A1</div>
+                <div class="node a2">A2</div>
+                <div class="node a3">A3</div>
+              </div>
+            </article>
+
+            <article class="card w4 dark">
+              <span class="card-label">Ship v0</span>
+              <h2>72% of the way there</h2>
+              <p>Six open decisions. Three are waiting on this design pass.</p>
+              <div class="progress" aria-hidden="true"></div>
+            </article>
+
+            <article class="card w4">
+              <span class="card-label">Today</span>
+              <h2>Make the frame disappear</h2>
+              <p>Keep system context available without shrinking the artifact into an app-shaped rectangle.</p>
+            </article>
+
+            <article class="card w4">
+              <span class="card-label">Material rule</span>
+              <h2>Blur only where layers meet</h2>
+              <p>Translucency belongs to chrome. Content surfaces stay crisp, opaque, and authored.</p>
+            </article>
+          </section>
+        </div>
+      </main>
+
+      <main class="surface markdown-surface">
+        <article class="doc">
+          <h1>Nightly backups with restic</h1>
+          <p
+            class="doc-dateline">2026-03-04 — Running on the office file server.</p>
+
+          <h2>Summary</h2>
+          <p>Backups now run nightly with restic, replacing the previous rsync mirror. The key fix was one flag:</p>
+
+          <div class="doc-figure">
+            <pre><code>restic backup --one-file-system /srv</code></pre>
+          </div>
+
+          <p>The root cause was <code>/srv/cache</code> — a bind mount of a scratch volume that the old mirror followed into. Without the flag, every run re-read the scratch volume and the repository grew by its full size each night.</p>
+
+          <div
+            class="doc-callout">This document surface keeps the “breathing room” direction: a narrow reading measure, generous section rhythm, and quiet figures instead of card chrome.</div>
+
+          <h3>Why restic over rsync</h3>
+          <p>A mirror only keeps the latest state. Restic keeps deduplicated, encrypted snapshots — enabling point-in-time restores, retention policies, and offsite copies without a second full copy.</p>
+
+          <h2>Production setup</h2>
+          <h3>Files</h3>
+          <div class="doc-table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/etc/restic/env</code></td>
+                  <td>Repository location and password file</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/restic/excludes.txt</code></td>
+                  <td>Paths every run skips</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/systemd/system/restic.service</code></td>
+                  <td>One backup and prune run</td>
+                </tr>
+                <tr>
+                  <td><code>/etc/systemd/system/restic.timer</code></td>
+                  <td>Nightly schedule</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>How it works</h3>
+          <div class="doc-figure">
+            <pre><code>File server                  Object storage
+    │                              │
+    │  restic backup               │
+    ├─────────────────────────────►│ store new chunks only
+    │◄─────────────────────────────┤ returns snapshot id
+    │                              │
+    │  restic forget --prune       │
+    ├─────────────────────────────►│ drop expired snapshots
+    │                              │ repack → reclaim space
+    │◄─────────────────────────────┤</code></pre>
+          </div>
+
+          <h2>The <code>--one-file-system</code> gap</h2>
+          <p>Without <code>--one-file-system</code>, restic crosses into every mount below the backup root. For a scratch volume that changes completely every day, each run chunks fresh data and deduplication saves nothing.</p>
+
+          <div class="doc-figure">
+            <pre><code>restic backup --one-file-system --exclude-file=/etc/restic/excludes.txt /srv</code></pre>
+          </div>
+        </article>
+      </main>
+    </div>
+
+    <aside class="sidebar material" id="sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <span class="brand-mark">w</span>
+          <span class="brand-name">wuhu</span>
+        </div>
+        <button class="icon-button collapse-button" id="collapseButton"
+          aria-label="Collapse to rail" title="Collapse to rail">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
+      </header>
+
+      <div class="sidebar-actions">
+        <button class="new-session" type="button" title="New session">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span class="row-label">New session</span>
+          <span class="kbd">⌘N</span>
+        </button>
+        <button class="search-field" type="button" title="Search this space">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <span class="row-label">Search this space</span>
+          <span class="kbd">⌘K</span>
+        </button>
+      </div>
+
+      <div class="sidebar-scroll">
+        <div
+          class="section-head"><span>Sessions</span><span class="count">5 active</span></div>
+        <div class="tree">
+          <div class="row active" title="Wuhu redesign">
+            <span class="dot"></span>
+            <span class="row-label">Wuhu redesign</span>
+            <span class="row-meta">3</span>
+          </div>
+          <div class="row child" title="Chrome direction">
+            <span class="dot blue"></span>
+            <span class="row-label">Chrome direction</span>
+          </div>
+          <div class="row child" title="Session tree">
+            <span class="dot violet"></span>
+            <span class="row-label">Session tree</span>
+          </div>
+          <div class="row child" title="Artifact depth">
+            <span class="dot"></span>
+            <span class="row-label">Artifact depth</span>
+          </div>
+          <div class="row" title="Ship v0">
+            <span class="dot blue"></span>
+            <span class="row-label">Ship v0</span>
+            <span class="row-meta">2</span>
+          </div>
+          <div class="row" title="Bounded views research">
+            <span class="dot idle"></span>
+            <span class="row-label">Bounded views research</span>
+          </div>
+          <div class="row quiet" title="Archived sessions">
+            <span class="row-icon">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 8h14v11H5zM4 5h16v3H4zM10 12h4" />
+              </svg>
+            </span>
+            <span class="row-label">Archived</span>
+            <span class="row-meta">12</span>
+          </div>
+        </div>
+
+        <div class="section-head"><span>Space</span></div>
+        <div class="tree">
+          <div class="row" title="Home">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 10 8-6 8 6v9H4zM9 19v-6h6v6"/></svg></span>
+            <span class="row-label">Home</span>
+          </div>
+          <div class="row" title="Issues">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l2 2h8v10H4z"/></svg></span>
+            <span class="row-label">Issues</span>
+            <span class="row-meta">55</span>
+          </div>
+          <div class="row" title="Notes">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 12h7M9 16h5"/></svg></span>
+            <span class="row-label">Notes</span>
+          </div>
+          <div class="row" title="Plans">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg></span>
+            <span class="row-label">Plans</span>
+          </div>
+          <a class="row" href="./tokens.html" title="Tokens">
+            <span
+              class="row-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3.5"/><circle cx="16" cy="15" r="3.5"/></svg></span>
+            <span class="row-label">Tokens</span>
+          </a>
+        </div>
+      </div>
+
+      <footer class="sidebar-footer">
+        <div class="avatar">AM</div>
+        <div class="account">
+          <strong>Alex Morgan</strong>
+          <span>space.example.com · connected</span>
+        </div>
+        <button class="icon-button" aria-label="Space settings"
+          title="Space settings">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19 12a7 7 0 0 0-.08-1l2-1.5-2-3.5-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 8.8 7L6.5 6l-2 3.5L6.6 11a7 7 0 0 0 0 2L4.5 14.5l2 3.5 2.3-1a8 8 0 0 0 1.6 1l.3 2.6h4L15 18a8 8 0 0 0 1.5-1l2.4 1 2-3.5-2-1.5a7 7 0 0 0 .1-1Z" />
+          </svg>
+        </button>
+      </footer>
+    </aside>
+
+    <header class="topbar material" id="topbar">
+      <div class="crumbs">
+        <span id="pathRoot">design</span>
+        <span class="sep">/</span>
+        <strong id="pathLeaf">app chrome study</strong>
+        <span class="surface-pill" id="surfacePill">HTML artifact</span>
+      </div>
+      <div class="top-actions">
+        <button class="focus-button" id="focusButton" type="button"
+          title="Hide Wuhu chrome (F)">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+          </svg>
+          <span>Focus</span>
+        </button>
+        <button class="icon-button" aria-label="Share" title="Share">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 15V4M8 8l4-4 4 4M5 13v7h14v-7" />
+          </svg>
+        </button>
+        <button class="icon-button" aria-label="More" title="More">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+            <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="thread">
+      <section class="thread-sheet material" aria-label="Session thread">
+        <div class="thread-head">
+          <span>Wuhu redesign · with 3 agents</span>
+          <span class="spacer"></span>
+          <span>2 recent</span>
+        </div>
+        <div class="msg">
+          <span class="msg-avatar">A1</span>
+          <div class="msg-body">
+          <strong>Chrome direction</strong>
+          Study is live. Translucency stays at the edges — the artifact scrolls beneath the bar and composer, so the material reads as depth instead of decoration.
+        </div>
+        </div>
+        <div class="msg you">
+          <span class="msg-avatar">AM</span>
+          <div class="msg-body">
+          <strong>Alex Morgan</strong>
+          Good. Keep content surfaces opaque; blur only where layers actually meet.
+        </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="composer-zone">
+      <div class="composer material">
+        <button class="session-chip" id="threadToggle" type="button"
+          title="Show thread">
+          <span class="dot"></span>
+          <span class="row-label">Wuhu redesign</span>
+          <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 14 6-6 6 6" />
+          </svg>
+        </button>
+        <input aria-label="Message this session"
+          placeholder="Ask Wuhu about this artifact…">
+        <button class="send-button" aria-label="Send">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m5 12 14-7-5 14-2.5-5.5zM11.5 13.5 19 5" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <button class="focus-return material" id="focusReturn" type="button">
+      <span class="brand-mark">w</span>
+      <span>Show Wuhu</span>
+      <span class="kbd">esc</span>
+    </button>
+
+    <aside class="study" id="study" aria-label="Study controls">
+      <div class="study-title">Study controls</div>
+      <div class="study-row">
+        <span class="study-label">Surface</span>
+        <div class="seg" data-group="view">
+          <button class="active" data-view="custom"
+            type="button">Custom</button>
+          <button data-view="markdown" type="button">Markdown</button>
+        </div>
+      </div>
+      <div class="study-row">
+        <span class="study-label">Chrome</span>
+        <div class="seg" data-group="mode">
+          <button class="active" data-mode="full" type="button">Full</button>
+          <button data-mode="rail" type="button">Rail</button>
+          <button data-mode="focus" type="button">Focus</button>
+        </div>
+      </div>
+    </aside>
+
+    <script>
+    const body = document.body
+    const canvas = document.getElementById('canvas')
+    const topbar = document.getElementById('topbar')
+    const modeButtons = [...document.querySelectorAll('[data-mode]')]
+    const viewButtons = [...document.querySelectorAll('[data-view]')]
+    const collapseButton = document.getElementById('collapseButton')
+    const focusButton = document.getElementById('focusButton')
+    const focusReturn = document.getElementById('focusReturn')
+    const threadToggle = document.getElementById('threadToggle')
+    const pathRoot = document.getElementById('pathRoot')
+    const pathLeaf = document.getElementById('pathLeaf')
+    const surfacePill = document.getElementById('surfacePill')
+    const study = document.getElementById('study')
+
+    function setMode(mode) {
+      body.classList.toggle('rail', mode === 'rail')
+      body.classList.toggle('focus', mode === 'focus')
+      if (mode === 'focus') body.classList.remove('thread-open')
+      modeButtons.forEach((b) =>
+        b.classList.toggle('active', b.dataset.mode === mode)
+      )
+    }
+
+    function setView(view) {
+      const markdown = view === 'markdown'
+      body.classList.toggle('view-markdown', markdown)
+      viewButtons.forEach((b) =>
+        b.classList.toggle('active', b.dataset.view === view)
+      )
+      pathRoot.textContent = markdown ? 'ops' : 'design'
+      pathLeaf.textContent = markdown ? 'backups.md' : 'app chrome study'
+      surfacePill.textContent = markdown ? 'Markdown' : 'HTML artifact'
+      canvas.scrollTo({ top: 0 })
+    }
+
+    modeButtons.forEach((b) =>
+      b.addEventListener('click', () => setMode(b.dataset.mode))
+    )
+    viewButtons.forEach((b) =>
+      b.addEventListener('click', () => setView(b.dataset.view))
+    )
+    collapseButton.addEventListener(
+      'click',
+      () => setMode(body.classList.contains('rail') ? 'full' : 'rail'),
+    )
+    focusButton.addEventListener('click', () => setMode('focus'))
+    focusReturn.addEventListener('click', () => setMode('full'))
+    threadToggle.addEventListener(
+      'click',
+      () => body.classList.toggle('thread-open'),
+    )
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (body.classList.contains('focus')) setMode('full')
+        else body.classList.remove('thread-open')
+      }
+      if (
+        event.key === 'f' && !event.metaKey && !event.ctrlKey &&
+        event.target.tagName !== 'INPUT'
+      ) {
+        setMode(body.classList.contains('focus') ? 'full' : 'focus')
+      }
+    })
+
+    let tuckTimer
+    canvas.addEventListener('scroll', () => {
+      topbar.style.boxShadow = canvas.scrollTop > 8
+        ? 'var(--material-shadow), inset 0 1px 0 rgba(255,255,255,0.5), 0 1px 0 rgba(16,21,28,0.04)'
+        : ''
+      study.classList.add('tucked')
+      clearTimeout(tuckTimer)
+      tuckTimer = setTimeout(() => study.classList.remove('tucked'), 600)
+    }, { passive: true })
+    </script>
+  </body>
+</html>

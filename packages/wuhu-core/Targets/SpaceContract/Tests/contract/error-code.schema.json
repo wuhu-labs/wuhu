@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ErrorCode","type":"string","enum":["notFound","conflict","invalidPath","invalidArgument","unauthorized","unsupported","unavailable","internal"]}

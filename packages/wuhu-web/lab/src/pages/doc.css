@@ -1,0 +1,132 @@
+.lab-doc {
+  max-width: 46rem;
+  margin: 0 auto;
+  font-family: "Helvetica Neue", Helvetica, -apple-system, sans-serif;
+  font-size: 1.03rem;
+  line-height: 1.72;
+}
+
+.lab-doc h1 {
+  margin: 0;
+  max-width: 18ch;
+  font-size: clamp(2.1rem, 1.5rem + 2.4vw, 3rem);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+}
+
+.lab-doc-dateline {
+  margin: 1rem 0 0;
+  color: var(--color-grey-faint);
+  font-size: 0.92rem;
+  font-style: italic;
+}
+
+.lab-doc h2 {
+  margin: clamp(3.2rem, 7vw, 4.6rem) 0 0;
+  font-size: 1.55rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.lab-doc h3 {
+  margin: 2.4rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+}
+
+.lab-doc h2 + p,
+.lab-doc h3 + p,
+.lab-doc h2 + .lab-doc-figure,
+.lab-doc h3 + .lab-doc-figure,
+.lab-doc h2 + .lab-doc-table-wrap,
+.lab-doc h3 + .lab-doc-table-wrap {
+  margin-top: 1.05rem;
+}
+
+.lab-doc p {
+  margin: 1.3rem 0 0;
+  color: #14171d;
+}
+
+.lab-doc code {
+  padding: 0.1em 0.36em;
+  border-radius: 5px;
+  background: rgba(16, 19, 24, 0.055);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.lab-doc-figure {
+  margin: 1.55rem 0 0;
+  padding: 1.05rem 1.25rem;
+  overflow-x: auto;
+  border-radius: 12px;
+  background: rgba(16, 19, 24, 0.04);
+}
+
+.lab-doc-figure pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.83rem;
+  line-height: 1.6;
+}
+
+.lab-doc-figure code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.lab-doc-table-wrap {
+  margin: 1.55rem 0 0;
+  overflow-x: auto;
+}
+
+.lab-doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93rem;
+}
+
+.lab-doc-table th {
+  padding: 0 1.4rem 0.65rem 0;
+  border-bottom: 1px solid rgba(16, 19, 24, 0.09);
+  color: #4b5261;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lab-doc-table td {
+  padding: 0.68rem 1.4rem 0.68rem 0;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.lab-doc-callout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 13px;
+  margin-top: 1.55rem;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(38, 178, 137, 0.09);
+  color: #3d4d47;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.lab-doc-callout::before {
+  content: "✓";
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: white;
+  background: var(--color-green-confirm);
+  font-size: 11px;
+  font-weight: 700;
+}

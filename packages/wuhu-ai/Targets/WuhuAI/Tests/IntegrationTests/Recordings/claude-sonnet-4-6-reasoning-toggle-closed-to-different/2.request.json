@@ -1,0 +1,51 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "Explain quantum computing in one paragraph.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Quantum computing is a type of computation that harnesses the principles of quantum mechanics to process information in fundamentally different ways than classical computers. While classical computers use bits that exist as either 0 or 1, quantum computers use **quantum bits (qubits)**, which can exist in a state of **superposition** — effectively being 0 and 1 simultaneously — allowing them to explore many possible solutions at once. Qubits can also be **entangled**, meaning the state of one qubit is instantly correlated with another regardless of distance, enabling powerful coordinated computations. Through a third principle called **interference**, quantum algorithms amplify correct answers and cancel out wrong ones. Together, these properties allow quantum computers to solve certain complex problems — such as cryptography, drug discovery, optimization, and simulating molecular structures — exponentially faster than the most powerful classical computers, though the technology is still maturing and currently limited by challenges like qubit instability and error rates.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Now explain it to a five-year-old.",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-sonnet-4-6",
+    "output_config" : {
+      "effort" : "low"
+    },
+    "stream" : true,
+    "thinking" : {
+      "display" : "summarized",
+      "type" : "adaptive"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

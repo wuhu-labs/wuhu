@@ -1,0 +1,11 @@
+.DS_Store
+.env
+/node_modules/
+
+# React Router
+/.react-router/
+/build/
+
+# Generated contract types (deno task gen-contract; in-graph via //tools/contract-ts)
+/app/lib/contract.gen.ts
+/app/lib/space-url.vectors.json

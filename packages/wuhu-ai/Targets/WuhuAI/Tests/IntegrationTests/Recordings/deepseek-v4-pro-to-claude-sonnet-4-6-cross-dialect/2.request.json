@@ -1,0 +1,53 @@
+{
+  "body" : {
+    "max_tokens" : 16384,
+    "messages" : [
+      {
+        "content" : [
+          {
+            "text" : "What is the capital of France?",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "content" : [
+          {
+            "text" : "We are asked: \"What is the capital of France?\" This is a straightforward factual question. The capital of France is Paris. No need for additional explanation. Just answer concisely.",
+            "type" : "text"
+          },
+          {
+            "text" : "The capital of France is Paris.",
+            "type" : "text"
+          }
+        ],
+        "role" : "assistant"
+      },
+      {
+        "content" : [
+          {
+            "text" : "What about Germany?",
+            "type" : "text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "claude-sonnet-4-6",
+    "stream" : true,
+    "system" : "You are a helpful assistant. Answer concisely.",
+    "thinking" : {
+      "display" : "summarized",
+      "type" : "adaptive"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "anthropic-version" : "2023-06-01",
+    "content-type" : "application\/json",
+    "x-api-key" : "HMAC:SHA256:9d858f006c6d9492db8402ad9e0bb0fd2d4e53fd9095681aca144b232ed636d9"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.anthropic.com\/v1\/messages"
+}

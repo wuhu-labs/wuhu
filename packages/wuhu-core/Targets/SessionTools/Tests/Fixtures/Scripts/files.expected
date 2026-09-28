@@ -1,0 +1,21 @@
+=== run_script
+onto an existing file: conflict: already exists: /_/sessions/<self>/avatar.png
+replacing it: {"rev":6,"dangling":[]}
+replacing a folder: conflict: already exists: /folder
+to a free path: {"rev":7,"dangling":[]}
+into another home: unauthorized: /_/sessions/other/b.md is in the home of session other; only other itself and humans write there (propose the change to other by message instead)
+out of another home: unauthorized: /_/sessions/other/note.md is in the home of session other; only other itself and humans write there (propose the change to other by message instead)
+remove: {"rev":8}
+remove again: notFound: not found: /notes/b.md
+remove in another home: unauthorized: /_/sessions/other/note.md is in the home of session other; only other itself and humans write there (propose the change to other by message instead)
+remove a machine path: invalidPath: wuhu:space takes a path in this group or wuhu://<group>.localspace/<path>: machines://box/tmp/x
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+avatar: new
+=== probe
+candidate: gone
+=== probe
+other note: theirs
+=== probe
+avatar revisions: 1, 6

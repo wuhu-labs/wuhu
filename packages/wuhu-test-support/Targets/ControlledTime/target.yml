@@ -1,0 +1,6 @@
+name: ControlledTime
+kind: library
+sources: Sources
+dependencies:
+  - Clocks
+  - Dependencies

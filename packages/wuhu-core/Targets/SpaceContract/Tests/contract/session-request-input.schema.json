@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionRequestInput","type":"object","properties":{"message":{"type":"string"},"deadlineSeconds":{"type":["number","null"]}},"required":["message"],"additionalProperties":false}

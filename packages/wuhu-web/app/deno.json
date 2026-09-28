@@ -1,0 +1,33 @@
+{
+  "owner": "wuhu",
+  "exclude": [
+    "app/lib/contract.gen.ts",
+    "app/lib/space-url.vectors.json",
+    ".react-router",
+    "build"
+  ],
+  "generated": {
+    "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
+    "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json"
+  },
+  "exportedDirs": {
+    "shell-sdk": "app/lib/shell-sdk"
+  },
+  "imports": {
+    "~/": "./app/"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.window", "DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "tasks": {
+    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json)",
+    "dev": "deno task gen-contract && deno run -A npm:@react-router/dev dev",
+    "build": "deno run -A npm:@react-router/dev build",
+    "typecheck": "deno task gen-contract && deno run -A npm:@react-router/dev typegen && deno run -A npm:typescript/tsc -p tsconfig.check.json",
+    "fmt": "deno fmt --check .",
+    "lint": "deno lint app",
+    "test": "deno task gen-contract && deno test --sloppy-imports --allow-read --allow-env=NODE_ENV --quiet app/lib app/sdk"
+  }
+}

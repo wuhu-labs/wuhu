@@ -1,0 +1,12 @@
+--- a/Sources/Dependencies/DependencyValues/UUID.swift
++++ b/Sources/Dependencies/DependencyValues/UUID.swift
+@@ -133,7 +133,8 @@
+     public init(_ intValue: Int) {
+       let isNegative = intValue < 0
+       let intValue = isNegative ? -intValue : intValue
+-      var hexString = String(format: "%016llx", intValue)
++      let hexDigits = String(intValue, radix: 16)
++      var hexString = String(repeating: "0", count: 16 - hexDigits.count) + hexDigits
+       hexString.insert("-", at: hexString.index(hexString.startIndex, offsetBy: 4))
+       self.init(uuidString: "00000000-0000-000\(isNegative ? "1" : "0")-\(hexString)")!
+     }

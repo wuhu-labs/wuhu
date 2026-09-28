@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"OutputChunk","type":"object","properties":{"id":{"type":"string","pattern":"^ex_[a-z0-9]{8}$"},"stream":{"type":"string","enum":["stdout","stderr"]},"cursor":{"type":"integer"},"data":{"type":"string","contentEncoding":"base64"}},"required":["id","stream","cursor","data"],"additionalProperties":false}

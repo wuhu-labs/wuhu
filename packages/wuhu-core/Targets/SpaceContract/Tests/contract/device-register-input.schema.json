@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"DeviceRegisterInput","type":"object","properties":{"installation":{"type":"string"},"kind":{"type":"string"},"name":{"type":"string"}},"required":["installation","kind","name"],"additionalProperties":false}

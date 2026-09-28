@@ -1,0 +1,10 @@
+# Off-Darwin locking without full Foundation, for the Linux static binary
+# (swiftpkg_swift_clocks).
+swift_deps.configure_package(
+    name = "swiftpkg_swift_concurrency_extras",
+    patch_args = ["-p1"],
+    patches = [
+        "//bazel/patches:concurrency-extras-linux-locking.patch",
+        "//bazel/patches:concurrency-extras-linux-lockisolated.patch",
+    ],
+)

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ShareLoginInput","type":"object","properties":{"pubkey":{"type":"string"},"challenge":{"type":"string"},"signature":{"type":"string"},"ttlSeconds":{"type":["integer","null"]}},"required":["pubkey","challenge","signature"],"additionalProperties":false}

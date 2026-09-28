@@ -1,0 +1,24 @@
+{
+  "name": "@wuhu/ui",
+  "version": "0.0.1",
+  "owner": "wuhu",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./content.css": "./src/content.css"
+  },
+  "compilerOptions": {
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "tasks": {
+    "fmt": "deno fmt --check .",
+    "typecheck": "deno check src",
+    "lint": "deno lint src"
+  }
+}

@@ -1,0 +1,79 @@
+--- a/apple/internal/partials/app_intents_metadata_bundle.bzl	2026-08-13 20:37:51.730553222 +0800
++++ b/apple/internal/partials/app_intents_metadata_bundle.bzl	2026-08-13 20:38:14.795560405 +0800
+@@ -69,37 +69,45 @@
+                 ),
+             )
+ 
+-        # Merge multiple intent metadatas into a single.
+-        dummy_source_file = intermediates.file(
+-            actions = actions,
+-            target_name = label.name,
+-            output_discriminator = None,
+-            file_name = "{}_app_intents_dummy_source.swift".format(label.name),
+-        )
+-        dummy_constvalues_file = intermediates.file(
+-            actions = actions,
+-            target_name = label.name,
+-            output_discriminator = None,
+-            file_name = "{}_app_intents_dummy_constvalues.swiftconstvalues".format(label.name),
+-        )
+-        actions.write(output = dummy_source_file, content = "")
+-        actions.write(output = dummy_constvalues_file, content = "[]")
+-        metadata_bundle = generate_app_intents_metadata_bundle(
+-            actions = actions,
+-            apple_fragment = platform_prerequisites.apple_fragment,
+-            constvalues_files = [dummy_constvalues_file],
+-            intents_module_names = ["{}AppIntents".format(label.name)],
+-            label = label,
+-            dependency_metadata_bundles = per_dep_metadata_bundles,
+-            platform_prerequisites = platform_prerequisites,
+-            source_files = [dummy_source_file],
+-            target_triples = [
+-                cc_toolchain[cc_common.CcToolchainInfo].target_gnu_system_name
+-                for cc_toolchain in cc_toolchains.values()
+-            ],
+-            xcode_version_config = platform_prerequisites.xcode_version_config,
+-            json_tool = json_tool,
+-        )
++        if len(per_dep_metadata_bundles) == 1:
++            # The merge below re-runs the processor over an empty dummy
++            # module, and it carries only actions, entities and queries
++            # across: an AppShortcutsProvider's shortcuts are read from the
++            # primary module and are lost. With one module there is nothing
++            # to merge.
++            metadata_bundle = per_dep_metadata_bundles[0]
++        else:
++            # Merge multiple intent metadatas into a single.
++            dummy_source_file = intermediates.file(
++                actions = actions,
++                target_name = label.name,
++                output_discriminator = None,
++                file_name = "{}_app_intents_dummy_source.swift".format(label.name),
++            )
++            dummy_constvalues_file = intermediates.file(
++                actions = actions,
++                target_name = label.name,
++                output_discriminator = None,
++                file_name = "{}_app_intents_dummy_constvalues.swiftconstvalues".format(label.name),
++            )
++            actions.write(output = dummy_source_file, content = "")
++            actions.write(output = dummy_constvalues_file, content = "[]")
++            metadata_bundle = generate_app_intents_metadata_bundle(
++                actions = actions,
++                apple_fragment = platform_prerequisites.apple_fragment,
++                constvalues_files = [dummy_constvalues_file],
++                intents_module_names = ["{}AppIntents".format(label.name)],
++                label = label,
++                dependency_metadata_bundles = per_dep_metadata_bundles,
++                platform_prerequisites = platform_prerequisites,
++                source_files = [dummy_source_file],
++                target_triples = [
++                    cc_toolchain[cc_common.CcToolchainInfo].target_gnu_system_name
++                    for cc_toolchain in cc_toolchains.values()
++                ],
++                xcode_version_config = platform_prerequisites.xcode_version_config,
++                json_tool = json_tool,
++            )
+     else:
+         metadata_bundle = generate_app_intents_metadata_bundle(
+             actions = actions,

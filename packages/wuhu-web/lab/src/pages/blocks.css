@@ -1,0 +1,124 @@
+.lab-blocks {
+  max-width: 52rem;
+  margin: 0 auto;
+}
+
+.lab-blocks-title {
+  margin: 0;
+  font-size: clamp(1.9rem, 1.3rem + 2vw, 2.6rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.lab-blocks-lede {
+  max-width: 40rem;
+  margin: 0.9rem 0 0;
+  color: var(--color-grey-lede);
+  font-size: 1.02rem;
+  line-height: 1.55;
+}
+
+.lab-blocks-lede code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+.lab-block {
+  margin-top: 3.4rem;
+  scroll-margin-top: 5rem;
+}
+
+.lab-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--wui-hairline);
+}
+
+.lab-block-label {
+  color: var(--color-mint-deep);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.lab-block-source {
+  overflow: hidden;
+  color: var(--color-grey-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-block-body {
+  margin-top: 1.4rem;
+}
+
+.lab-block .wuhu-code-copy {
+  opacity: 1;
+}
+
+/* Target for the bundled kanban provider (wuhu-core ViewProviders/kanban.html),
+   written on wuhu-ui tokens here and on theme v1 tokens there. */
+.wuhu-kanban .kanban-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.wuhu-kanban .kanban-lane {
+  display: flex;
+  flex: 0 0 16rem;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border-radius: 14px;
+  background: rgba(var(--wui-border-ink), 0.05);
+}
+
+.wuhu-kanban .kanban-lane-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0.1rem 0.3rem 0.25rem;
+  color: var(--color-ink);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wuhu-kanban .kanban-lane-count {
+  color: var(--color-grey-faint);
+  font-family: var(--font-mono);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.wuhu-kanban .kanban-card {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(var(--wui-border-ink), 0.08);
+  border-radius: 10px;
+  background: var(--color-paper);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.wuhu-kanban .kanban-empty {
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px dashed rgba(var(--wui-border-ink), 0.16);
+  border-radius: 10px;
+  color: var(--color-grey-faint);
+  font-size: 0.78rem;
+  text-align: center;
+}

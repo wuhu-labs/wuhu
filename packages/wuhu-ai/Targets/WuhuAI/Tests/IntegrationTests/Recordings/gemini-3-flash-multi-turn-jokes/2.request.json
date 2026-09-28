@@ -1,0 +1,50 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Tell me a short joke."
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "**Considering Joke Ideas**\n\nI'm currently evaluating three joke ideas. The first, a familiar atom-related gag, seems a bit overused. I'm also pondering a visual, parallel lines joke, and a joke involving fake noodles. I'm aiming for brevity, as per the initial constraint.\n\n\n",
+            "thought" : true
+          },
+          {
+            "text" : "Why don't scientists trust atoms?\n\nBecause they make up everything!"
+          },
+          {
+            "text" : "",
+            "thoughtSignature" : "EtsGCtgGAQw51sfS9hsJVH4ys06XdNeBTnHQHHQK5q5VBLe+7sJ5O8jdYdck6X8AHgV1oZrISyAWTm9n1VxvOb6AAoMHiuovBOZ\/0swWcrqCf0hXwpMZbW3cEgP231\/Ok8RHgsQeC4jRbwGcgNcsxHBLqZ0WGd\/rC3YFzNOPBw96QDIh73BDCXcU2xruFu9s7DVNlmzJdxRIOtNAjMBQ7u+wLtXBbzLdBQvKOStrYn70kbd8rY218aYk+1u5PZr\/xSHK4Mmps5heg7fut5C5+F0ZlXbTi8spVMGJAQ\/wvCy94FXsXGKB2PEm38m4yLvmGQaneKZ0FSeZa57KQNK1R6JAfYmf8MUI4IXA1rDeK3w0fthpvhrvAayMqsosM0OREe870CHTRfYFyIUXhBf6Io0LdCsPz6jpBuhYm3vNY\/RQI2K2AGHpzhpBUs\/n42l0FHNjQdoeWGrUVWXaIYNELGfEenDRtuRdbMp8EamLwwzaLq3D9FZVlCR+17pkpjr0Lt+67KbYMxHNz5pofOolzbxkUGUA2ChbV33HYj\/JspAiBVbI1yOI8o4YG\/pwbsz14Yz3A21DjiNFrmUc38NaR45E0Ii4X7cgvzy1UT7sZ49PiFhyBUe4xsCTV2vEqiYTw3\/p\/uX2rvh6sj9YS9\/VC4YWqxy4Ipc\/VmjpG3XaL5XpOe2I0h9g40LPDWT+lPtpxPOGvbRypjbhacQkyOT0D5rfpFWYitid1gkIFgLqgegMp1GvuzaeXM89hKBJAFDinW8g\/Ifkbd1E9\/s9GuPS+CIzXXQsRSed7Cz6hYOHrNrD\/9T0Y5iwXQHUcitshZM2QbiSTCoJ7tE9nuWBROZneo2YH7y2K0YGSFfWsHqUtR6sQ9JyYLUNROrznuu04Iz8G2qb\/H6nqXLI0WvLkMoVSE9axS7PyniW+WUyYZN72y9PxOUqtu+K25lb9sr0FtChpOufZLbtOzv51NICrSYmc3rpQWvAV4YJeNZre3SU4uV49qn51anMYH7nBRDpmXciRR1rZ9hom6sZ7WK1ZQhbNYYjy4nUDrncQy7sd4fB4nQBQ9nTeqRGYxIZeOKSZ8LvtwHH40sOT\/Cr+7QqVROxWQc97UUH83qDjkHSwo\/OeFDBYJs2F+5h2wUtRlH2ig=="
+          }
+        ],
+        "role" : "model"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Tell me a better joke."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true,
+        "thinkingBudget" : 2048
+      }
+    }
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-3-flash-preview:streamGenerateContent?alt=sse"
+}

@@ -1,0 +1,13 @@
+name: MachineChannel
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]
+dependencies:
+  - MachineContract
+  - JSONValue
+tests:
+  dependencies:
+    - MachineContract
+    - JSONValue

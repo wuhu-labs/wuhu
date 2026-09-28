@@ -1,0 +1,4 @@
+=== run_script
+["Error: session <me> is archived and may no longer act on sessions","Error: session <me> is archived and may no longer act on sessions"]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

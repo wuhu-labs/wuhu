@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AccountCreateInput","type":"object","properties":{"name":{"type":["string","null"]},"admin":{"type":["boolean","null"]}},"required":[],"additionalProperties":false}

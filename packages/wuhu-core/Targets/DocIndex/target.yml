@@ -1,0 +1,15 @@
+name: DocIndex
+kind: library
+sources: Sources
+dependencies:
+  - SpaceFS
+  - JSONValue
+  - OrderedCollections
+  - Markdown
+  - SwiftSoup
+  - Yams
+tests:
+  dependencies:
+    - SpaceFS
+    - JSONValue
+    - OrderedCollections

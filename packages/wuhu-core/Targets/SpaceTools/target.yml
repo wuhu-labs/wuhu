@@ -1,0 +1,27 @@
+name: SpaceTools
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - DocIndex
+  - MachineContract
+  - SpaceContract
+  - SpaceCore
+  - SpaceFS
+  - SystemFiles
+  - JSONValue
+  - OrderedCollections
+tests:
+  dependencies:
+    - OrderedCollections
+    - MachineContract
+    - SpaceContract
+    - SpaceCore
+    - SpaceFS
+    - SystemFiles
+    - JSONValue
+    - Dependencies
+    - DependenciesTestSupport
+    - SpaceToolReference

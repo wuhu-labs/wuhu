@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ExecMintInput","type":"object","properties":{"machine":{"type":"string","pattern":"^mc_[a-z0-9]{8}$"}},"required":["machine"],"additionalProperties":false}

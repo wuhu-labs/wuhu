@@ -1,0 +1,31 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Explain quantum computing in one paragraph.",
+        "role" : "user"
+      },
+      {
+        "content" : "Quantum computing harnesses quantum mechanics to process information fundamentally differently than classical machines: instead of bits that are either 0 or 1, it uses quantum bits (qubits) that can exist in superposition—representing both states simultaneously until measured. By exploiting entanglement, which links qubits so that the state of one instantly correlates with another, quantum computers can explore vast numbers of possibilities in parallel. This enables them to solve specific, highly complex problems—such as factoring large numbers, simulating molecular systems, or optimizing massive datasets—exponentially faster than traditional supercomputers, though the technology remains delicate and requires extreme isolation from environmental noise.",
+        "reasoning_content" : "The user wants an explanation of quantum computing in one paragraph. I need to make it concise but accurate, covering the key concepts: qubits, superposition, entanglement, and why it matters (exponential scaling, specific problems it can solve). I should avoid jargon where possible but include the essential terms. Structure: start with the contrast to classical computing, explain qubits\/superposition, mention entanglement, then the practical implication. Keep it to one paragraph (no line breaks), clear and flowing. Let's draft:\n\n\"Quantum computing harnesses the principles of quantum mechanics to process information in ways fundamentally different from classical computers. While classical computers use bits that exist as either 0 or 1, quantum computers use quantum bits, or qubits, which can exist in a state of superposition—representing both 0 and 1 simultaneously until measured. By exploiting another quantum phenomenon called entanglement, where qubits become correlated so that the state of one instantly influences another, quantum computers can evaluate vast numbers of possibilities at once. This allows them to solve certain complex problems—such as factoring large numbers, simulating molecular interactions, or optimizing large systems—exponentially faster than even the most powerful supercomputers, though they remain delicate machines requiring extreme isolation from environmental interference.\"\n\nCheck: one paragraph? Yes. Accurate? Yes. Covers qubits, superposition, entanglement, and application. Length is good. I'll go with that.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Now explain it to a five-year-old.",
+        "role" : "user"
+      }
+    ],
+    "model" : "kimi-k2.6",
+    "reasoning" : {
+      "enabled" : true
+    },
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:36e52862b4d30ffd9b9e051c9d67ae99bb803572494a300e8d06bdad2789653d",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.moonshot.cn\/v1\/chat\/completions"
+}

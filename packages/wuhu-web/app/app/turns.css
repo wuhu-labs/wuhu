@@ -1,0 +1,469 @@
+/* The turn view: a task's page and an agent's transcript. */
+.wuhu-turns {
+  --turn-rule: rgba(var(--wui-border-ink), 0.1);
+  --turn-rail: rgba(var(--wui-border-ink), 0.14);
+  display: flex;
+  flex-direction: column;
+  margin-top: 0.5rem;
+  color: var(--color-ink);
+}
+
+:where(.wuhu-turns, .wuhu-inspector-history) button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wuhu-turns .wui-icon {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+.wuhu-turns .wuhu-markdown {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.wuhu-turns .wuhu-markdown > :first-child {
+  margin-top: 0;
+}
+
+.wuhu-turn-status {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--color-grey-muted);
+  font-size: 13px;
+}
+
+.wuhu-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 0;
+}
+
+.wuhu-turn[data-separated] {
+  border-top: 1px solid var(--turn-rule);
+}
+
+.wuhu-turn-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  color: var(--color-grey-muted);
+  font-size: 11px;
+}
+
+.wuhu-turn-divider::before,
+.wuhu-turn-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--turn-rule);
+  content: '';
+}
+
+.wuhu-turn-divider > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: pre;
+}
+
+.wuhu-turn-divider strong {
+  color: var(--color-grey-strong);
+  font-weight: 600;
+}
+
+.wuhu-turn-divider .wui-icon {
+  width: 8px;
+  height: 8px;
+}
+
+.wuhu-turn-wake {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wuhu-turn-wake-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  white-space: nowrap;
+}
+
+.wuhu-turn-wake-head strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.wuhu-turn-wake-head time {
+  color: var(--color-grey-faint);
+  font-size: 11px;
+}
+
+.wuhu-turn-tag {
+  --tone: var(--color-violet);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  color: var(--tone);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.wuhu-turn-tag[data-tone='report'] {
+  --tone: var(--color-amber-deep);
+}
+
+.wuhu-turn-tag[data-tone='request'] {
+  --tone: var(--color-blue);
+}
+
+.wuhu-turn-clamped,
+.wuhu-turn-fallback {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  font-size: 15px;
+  line-height: 1.4;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.wuhu-turn-fallback {
+  padding-left: 64px;
+  color: var(--color-grey-muted);
+  font-size: 14px;
+  font-style: italic;
+  text-align: right;
+}
+
+.wuhu-turn-summary {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  min-height: 26px;
+  color: var(--color-grey-muted);
+  font-size: 11px;
+}
+
+.wuhu-turn-rail .wuhu-turn-summary {
+  font-size: 12px;
+}
+
+.wuhu-turn-summary .wui-icon:last-child {
+  width: 8px;
+  height: 8px;
+}
+
+.wuhu-turn-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin: 0;
+  color: var(--color-grey-muted);
+  font-size: 12px;
+}
+
+.wuhu-turn-bubble {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-end;
+  gap: 3px;
+  max-width: calc(100% - 64px);
+  padding: 9px 14px 10px;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--sent-bubble);
+}
+
+.wuhu-turn-bubble-target {
+  color: var(--color-grey-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.wuhu-turn-failed {
+  margin-left: 4px;
+  color: var(--color-alert-deep);
+}
+
+.wuhu-turn-rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wuhu-turn-rail[data-line]::before {
+  position: absolute;
+  top: 12px;
+  bottom: 6px;
+  left: 5px;
+  width: 1px;
+  background: var(--turn-rail);
+  content: '';
+}
+
+.wuhu-turn-rail > li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 28px;
+  padding-left: 24px;
+}
+
+.wuhu-turn-rail > li::before {
+  position: absolute;
+  top: calc(var(--dot) - 3px);
+  left: 2.5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-grey-idle);
+  content: '';
+}
+
+.wuhu-turn-rail > li[data-dot='send']::before {
+  background: var(--color-blue);
+}
+
+.wuhu-turn-rail > li[data-dot='text']::before {
+  background: var(--color-ink);
+}
+
+.wuhu-turn-text {
+  position: relative;
+  padding: 4px 0;
+}
+
+.wuhu-turn-text[data-streaming] .wuhu-markdown {
+  color: var(--color-grey-muted);
+  font-size: 14px;
+}
+
+.wuhu-turn-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.wuhu-turn-text:hover .wuhu-turn-actions,
+.wuhu-turn-actions:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wuhu-turn-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-top: 4px;
+    opacity: 1;
+  }
+}
+
+.wuhu-turn-actions button {
+  padding: 0.15rem 0.45rem;
+  background: var(--wui-selected);
+  font-size: 11px;
+}
+
+.wuhu-turn-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.wuhu-turn-tool-name {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wuhu-turn-tool-subject {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-grey-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.wuhu-turn-tool-state {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--color-grey-faint);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.wuhu-turn-tool-state[data-state='running'] {
+  color: var(--color-mint-deep);
+}
+
+.wuhu-turn-tool-state[data-state='failed'] {
+  color: var(--color-alert-deep);
+}
+
+.wuhu-turn-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  margin: 0;
+  color: var(--color-grey-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wuhu-turn-chip[data-boxed] {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgba(var(--wui-border-ink), 0.06);
+}
+
+.wuhu-turn-chip-title {
+  color: var(--color-grey-strong);
+}
+
+.wuhu-turn-chip-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wuhu-turn-working {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin: 0;
+  color: var(--color-mint-deep);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wuhu-turn-working > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-mint-deep);
+}
+
+.wuhu-inspector .wuhu-composer-dialog-body {
+  max-height: 85dvh;
+  overflow-y: auto;
+}
+
+.wuhu-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.wuhu-inspector-head .wuhu-dialog-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wuhu-inspector-facts {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  color: var(--color-grey-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.wuhu-inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wuhu-inspector-section .wuhu-eyebrow {
+  margin: 0;
+}
+
+.wuhu-inspector-payload {
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(var(--wui-border-ink), 0.05);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.wuhu-inspector-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--color-grey-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.wuhu-inspector-grid dt {
+  color: var(--color-grey-faint);
+}
+
+.wuhu-inspector-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.wuhu-inspector-text {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.wuhu-inspector-history {
+  display: flex;
+  flex-direction: column;
+}
+
+.wuhu-inspector-history .wuhu-turn-tool {
+  min-height: 40px;
+  border-top: 1px solid rgba(var(--wui-border-ink), 0.1);
+}

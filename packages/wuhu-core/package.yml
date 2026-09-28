@@ -1,0 +1,125 @@
+name: wuhu-core
+owner: wuhu
+swiftToolsVersion: "6.3"
+packageName: WuhuCoreKit
+products:
+  - ClaudeStream
+  - LoopCore
+  - SpaceFS
+  - DocIndex
+  - SpaceClient
+  - SpaceContract
+  - Assertion
+  - CLIKit
+  - wuhu
+platforms:
+  macOS: "26.0"
+  iOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+externalPackages:
+  wuhu-ai:
+    path: ../wuhu-ai
+    products: [WuhuAI]
+  wuhu-fetch:
+    path: ../wuhu-fetch
+    products: [Fetch, FetchSSE, FetchAsyncHTTPClient, FetchWebSocket, FetchURLSession, PinnedTLS]
+  keel:
+    path: ../keel
+    products: [KeelObjectStore]
+  wuhu-serve:
+    path: ../wuhu-serve
+    products: [Serve, ServeSSE, ServeRouting, ServeNIO, ServeTLS, ServeTesting]
+  swift-http-types:
+    url: https://github.com/apple/swift-http-types.git
+    from: "1.5.1"
+    products: [HTTPTypes]
+  swift-collections:
+    url: https://github.com/apple/swift-collections
+    from: "1.1.0"
+    products: [OrderedCollections]
+  wuhu-test-support:
+    path: ../wuhu-test-support
+    products: [ControlledTime, WuhuRecordReplay]
+  wuhu-json:
+    path: ../wuhu-json
+    products: [JSONValue]
+  quickjs-kit:
+    path: ../quickjs-kit
+    products: [QuickJSKit]
+  qr-code:
+    path: ../qr-code
+    products: [QRCode]
+  wuhu-vfs:
+    path: ../wuhu-vfs
+    products: [WuhuVFS]
+  swift-service-context:
+    url: https://github.com/apple/swift-service-context.git
+    exact: "1.3.0"
+    products: [ServiceContextModule]
+  swift-syntax:
+    url: https://github.com/swiftlang/swift-syntax
+    exact: "602.0.0"
+    products: [SwiftSyntax, SwiftSyntaxMacros, SwiftSyntaxBuilder, SwiftCompilerPlugin, SwiftSyntaxMacrosTestSupport]
+  swift-markdown:
+    url: https://github.com/swiftlang/swift-markdown.git
+    from: "0.7.3"
+    products: [Markdown]
+  yams:
+    url: https://github.com/jpsim/Yams.git
+    from: "5.0.0"
+    products: [Yams]
+  swiftsoup:
+    url: https://github.com/scinfu/SwiftSoup.git
+    from: "2.9.6"
+    products: [SwiftSoup]
+  swift-nio:
+    url: https://github.com/apple/swift-nio.git
+    exact: "2.101.3"
+    products: [NIOCore, NIOPosix]
+  swift-nio-ssl:
+    url: https://github.com/apple/swift-nio-ssl.git
+    from: "2.29.0"
+    products: [NIOSSL]
+  swift-crypto:
+    url: https://github.com/apple/swift-crypto.git
+    exact: "4.3.1"
+    products: [Crypto]
+  async-http-client:
+    url: https://github.com/swift-server/async-http-client.git
+    from: "1.35.0"
+    products: [AsyncHTTPClient]
+  swift-webpush:
+    url: https://github.com/mochidev/swift-webpush.git
+    exact: "0.4.2"
+    products: [WebPush]
+  grdb.swift:
+    url: https://github.com/groue/GRDB.swift.git
+    exact: "7.10.0"
+    products: [GRDB, GRDBSQLite]
+  swift-structured-queries:
+    url: https://github.com/wuhu-labs/swift-structured-queries
+    revision: 190fdfe482ecf70987d3d897f3eb93d5f83127d8
+    products: [StructuredQueries, StructuredQueriesCore, StructuredQueriesSQLite]
+  swift-clocks:
+    url: https://github.com/pointfreeco/swift-clocks
+    branch: clocks-2
+    products: [Clocks]
+  swift-dependencies:
+    url: https://github.com/pointfreeco/swift-dependencies.git
+    from: "1.14.1"
+    products: [Dependencies, DependenciesMacros, DependenciesTestSupport]
+  swift-log:
+    url: https://github.com/apple/swift-log.git
+    from: "1.10.0"
+    products: [Logging]
+  swift-subprocess:
+    url: https://github.com/swiftlang/swift-subprocess.git
+    exact: "1.0.0-beta.1"
+    products: [Subprocess]
+  swift-system:
+    url: https://github.com/apple/swift-system
+    from: "1.5.0"
+    products: [SystemPackage]

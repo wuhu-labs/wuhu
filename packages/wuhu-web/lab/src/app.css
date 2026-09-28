@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+@import '@wuhu/ui/tokens.css';
+@import '@wuhu/ui/content.css';
+
+@source '../../ui/src';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}

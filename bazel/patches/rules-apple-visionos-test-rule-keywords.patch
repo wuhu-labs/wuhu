@@ -1,0 +1,26 @@
+--- a/apple/internal/testing/visionos_rules.bzl	2026-08-20 21:15:21.896389813 +0800
++++ b/apple/internal/testing/visionos_rules.bzl	2026-08-20 21:27:00.826794205 +0800
+@@ -93,13 +93,21 @@
+ 
+ def _visionos_ui_test_impl(ctx):
+     """Implementation of visionos_ui_test."""
+-    return apple_test_rule_support.apple_test_rule_impl(ctx, "xcuitest") + [
++    return apple_test_rule_support.apple_test_rule_impl(
++        ctx = ctx,
++        requires_dossiers = False,
++        test_type = "xcuitest",
++    ) + [
+         new_visionosxctestbundleinfo(),
+     ]
+ 
+ def _visionos_unit_test_impl(ctx):
+     """Implementation of visionos_unit_test."""
+-    return apple_test_rule_support.apple_test_rule_impl(ctx, "xctest") + [
++    return apple_test_rule_support.apple_test_rule_impl(
++        ctx = ctx,
++        requires_dossiers = False,
++        test_type = "xctest",
++    ) + [
+         new_visionosxctestbundleinfo(),
+     ]
+ 

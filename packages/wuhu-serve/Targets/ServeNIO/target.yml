@@ -1,0 +1,28 @@
+name: ServeNIO
+kind: library
+sources: Sources
+dependencies:
+  - Serve
+  - ServeTLS
+  - NIOCore
+  - NIOHTTP1
+  - NIOHTTP2
+  - NIOPosix
+  - NIOSSL
+  - NIOWebSocket
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Fetch
+    - FetchAsyncHTTPClient
+    - FetchWebSocket
+    - PinnedTLS
+    - ServeTLS
+    - AsyncHTTPClient
+    - NIOCore
+    - NIOHTTP1
+    - NIOPosix
+    - NIOSSL
+    - NIOWebSocket

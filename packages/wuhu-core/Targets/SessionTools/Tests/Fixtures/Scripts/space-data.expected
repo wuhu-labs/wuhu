@@ -1,0 +1,27 @@
+=== run_script
+query resolves to an array: true
+rows: [{"title":"first","meta":{"k":1},"done":true,"data":{"0":1,"1":7}}]
+bytes: true 1,7
+first snapshot: [{"title":"first"}]
+inserted ids: [2]
+next snapshot: [{"title":"new"}]
+attributes: {"status":"open","draft":true}
+patch: "string"
+patch with the stale token: SpaceError conflict: version mismatch: /notes/plan.md (carries the current token)
+watched: write /notes/plan.md
+a row in another home: SpaceError unauthorized: /_/sessions/other/t.table is in the home of session other; only other itself and humans write there
+an unknown column: SpaceError invalidArgument: /tasks.table has no column nope
+a missing table: SpaceError notFound: no such table: /missing.table
+a non-Markdown file: SpaceError invalidArgument: attributes live in a Markdown file's frontmatter: /tasks.table is not a .md file
+a row by the qualified path: "renamed"
+delete: []
+titles: first
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+---
+# kept
+status: done
+---
+body
+

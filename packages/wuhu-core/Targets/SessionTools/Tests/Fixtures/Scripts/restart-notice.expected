@@ -1,0 +1,6 @@
+=== message
+script 0badf00d was killed by a server restart; the machine processes it left running (ex_p04syhuz) get killed about a minute after the restart, or when their machine reconnects if it is away then
+=== message
+script cafe0000 was killed by a server restart; the machine processes it left running (ex_suepc9bp) get killed about a minute after the restart, or when their machine reconnects if it is away then
+=== probe
+owner rows left: 0

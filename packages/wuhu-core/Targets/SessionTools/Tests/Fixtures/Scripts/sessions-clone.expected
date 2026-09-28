@@ -1,0 +1,22 @@
+=== run_script
+{"made":false,"id":"string","message":"createSession: session <coder> was created, but internal: the disk is full"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== run_script
+{"made":false,"id":"string","message":"createSession: session <coder> was created, but internal: the disk is full"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+owed: true, home: false
+=== run_script
+{"made":true,"requestId":"string"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+owed: false, home: write code
+=== run_script
+{"made":true,"requestId":"string"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+home: my own notes, briefs: 1

@@ -1,0 +1,6 @@
+name: FetchSSE
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+tests: false

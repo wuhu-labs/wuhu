@@ -1,0 +1,244 @@
+import Dependencies
+import Fetch
+import Foundation
+import Logging
+import SessionDomain
+import WuhuAI
+
+public enum InferenceMode: Hashable, Sendable {
+  case normal
+  case forcedCompact
+}
+
+public struct CompletedInference: Sendable {
+  public var message: AssistantMessage
+  public var metadata: AssistantMessageMetadata
+
+  public init(message: AssistantMessage, metadata: AssistantMessageMetadata) {
+    self.message = message
+    self.metadata = metadata
+  }
+}
+
+public struct InferenceCancelled: Error, Equatable, Sendable {}
+
+public struct InferenceExecutor: Sendable {
+  public var session: SessionID
+  public var model: ResolvedModel
+  public var systemPrompt: String
+  public var tools: [Tool]
+  public var thresholds: CompactionThresholds
+  public var compactToolName: String
+  public var hub: AttemptHub?
+  public var log: AttemptLogConfig?
+  public var metrics: InferenceMetricsSink
+  public var mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)?
+
+  public init(
+    session: SessionID,
+    model: ResolvedModel,
+    systemPrompt: String,
+    tools: [Tool],
+    thresholds: CompactionThresholds = .init(),
+    compactToolName: String = "compact",
+    hub: AttemptHub? = nil,
+    log: AttemptLogConfig? = nil,
+    metrics: InferenceMetricsSink = .noop,
+    mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)? = nil,
+  ) {
+    self.session = session
+    self.model = model
+    self.systemPrompt = systemPrompt
+    self.tools = tools
+    self.thresholds = thresholds
+    self.compactToolName = compactToolName
+    self.hub = hub
+    self.log = log
+    self.metrics = metrics
+    self.mediaResolver = mediaResolver
+  }
+
+  public func run(
+    attemptID: UUID,
+    transcript: Transcript,
+    mode: InferenceMode,
+    idleTimeout: Duration? = nil,
+    handles: [String: String] = [:],
+    devices: [String: String] = [:],
+  ) async throws -> CompletedInference {
+    let context = await transcript.renderRequest(
+      session: session,
+      systemPrompt: systemPrompt,
+      tools: tools,
+      budget: model.budget,
+      thresholds: thresholds,
+      handles: handles,
+      devices: devices,
+    )
+    var options = RequestOptions(
+      maxTokens: model.budget.maxOutput,
+      reasoning: .effort(model.specifier.effort),
+      idleTimeout: idleTimeout,
+    )
+    if mode == .forcedCompact {
+      // Cache discipline: the tool list stays byte-identical on a forced turn;
+      // only tool_choice (and, per dialect, thinking) vary.
+      options.toolChoice = .tool(name: compactToolName)
+    }
+
+    let sizes = TrafficSizes()
+    var endpoint: any ModelEndpoint = model.endpoint
+    if let log {
+      @Dependency(\.fetch) var fetch
+      endpoint = endpoint.withFetch(attemptLoggingFetch(
+        base: fetch,
+        file: log.fileURL(attemptID: attemptID),
+        sizes: sizes,
+      ))
+    }
+    if let mediaResolver {
+      endpoint = endpoint.withMediaResolver(mediaResolver(model.budget.images.forRequest(imageCount: context.imageCount)))
+    }
+
+    @Dependency(\.continuousClock) var clock
+    @Dependency(\.date) var dateGen
+
+    hub?.publish(session: session, .started(attemptID: attemptID))
+    let timestamp = dateGen.now
+    var completed: CompletedInference?
+    var failure: InferenceError?
+    var firstEventSeen = false
+
+    func handle(_ result: Result<InferenceEvent, InferenceError>) {
+      switch result {
+      case let .success(event):
+        hub?.publish(session: session, .delta(attemptID: attemptID, event: event))
+        if case let .done(message, metadata) = event {
+          completed = CompletedInference(message: message, metadata: metadata)
+        }
+      case let .failure(error):
+        failure = error
+      }
+    }
+
+    var iterator = endpoint.runInference(context: context, options: options, mediaResolver: nil).makeAsyncIterator()
+    var firstResult: Result<InferenceEvent, InferenceError>?
+    let ttftDuration = await clock.measure {
+      firstResult = await iterator.next()
+    }
+    if let firstResult {
+      if case .success = firstResult { firstEventSeen = true }
+      handle(firstResult)
+    }
+    let restDuration = await clock.measure {
+      while failure == nil, let result = await iterator.next() {
+        handle(result)
+      }
+    }
+    let elapsed = ttftDuration + restDuration
+    let ttft = firstEventSeen ? ttftDuration : nil
+
+    if let failure {
+      hub?.publish(session: session, .finished(
+        attemptID: attemptID,
+        outcome: .failed(reason: String(describing: failure)),
+      ))
+      logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
+      await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: nil, ttft: ttft, elapsed: elapsed))
+      throw failure
+    }
+    guard let completed else {
+      hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
+      logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
+      await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: nil, ttft: ttft, elapsed: elapsed))
+      throw InferenceCancelled()
+    }
+    hub?.publish(session: session, .finished(
+      attemptID: attemptID,
+      outcome: .done(completed.message, completed.metadata),
+    ))
+    logAttempt(
+      attemptID: attemptID,
+      mode: mode,
+      sizes: sizes,
+      status: "done(\(completed.metadata.stopReason.rawValue))",
+      usage: completed.metadata.usage,
+      elapsed: elapsed,
+    )
+    await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, ttft: ttft, elapsed: elapsed))
+    return completed
+  }
+
+  private func metric(
+    timestamp: Date,
+    error: InferenceError?,
+    cancelled: Bool,
+    usage: Usage?,
+    ttft: Duration?,
+    elapsed: Duration,
+  ) -> InferenceMetric {
+    let derived = cancelled ? (outcome: InferenceMetric.Outcome.cancelled, kind: String?.none, status: Int?.none) : InferenceMetric.classify(error)
+    return InferenceMetric(
+      timestamp: timestamp,
+      session: session,
+      provider: model.specifier.provider,
+      model: model.specifier.model,
+      effort: model.specifier.effort,
+      outcome: derived.outcome,
+      errorKind: derived.kind,
+      status: derived.status,
+      ttftMs: ttft?.milliseconds,
+      durationMs: elapsed.milliseconds,
+      usage: usage,
+    )
+  }
+
+  private func logAttempt(
+    attemptID: UUID,
+    mode: InferenceMode,
+    sizes: TrafficSizes,
+    status: String,
+    usage: Usage?,
+    elapsed: Duration,
+  ) {
+    guard log != nil else { return }
+    let logger = Logger(label: "wuhu.inference")
+    logger.info("inference attempt", metadata: [
+      "attempt": "\(attemptID.uuidString.lowercased())",
+      "session": "\(session.rawValue)",
+      "provider": "\(model.specifier.provider)",
+      "model": "\(model.specifier.model)",
+      "effort": "\(model.specifier.effort)",
+      "mode": "\(mode)",
+      "status": "\(status)",
+      "request_bytes": "\(sizes.request)",
+      "response_bytes": "\(sizes.response)",
+      "usage": "\(usage.map(describe) ?? "none")",
+      "latency_ms": "\(elapsed.milliseconds)",
+    ])
+  }
+}
+
+private func describe(_ usage: Usage) -> String {
+  "in=\(usage.inputTokens) out=\(usage.outputTokens) cacheRead=\(usage.cacheReadTokens) "
+    + "cacheWrite=\(usage.cacheWriteTokens) reasoning=\(usage.reasoningTokens) total=\(usage.totalTokens)"
+}
+
+extension Duration {
+  fileprivate var milliseconds: Int64 {
+    components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000
+  }
+}
+
+extension Context {
+  fileprivate var imageCount: Int {
+    messages.reduce(0) { count, message in
+      let blocks = switch message {
+      case let .user(user): user.content
+      case let .assistant(assistant): assistant.content
+      case let .toolResult(result): result.content
+      }
+      return count + blocks.count { if case .media = $0 { true } else { false } }
+    }
+  }
+}

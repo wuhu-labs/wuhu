@@ -1,0 +1,31 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Explain quantum computing in one paragraph.",
+        "role" : "user"
+      },
+      {
+        "content" : "Quantum computing harnesses the principles of quantum mechanics—specifically superposition, entanglement, and interference—to process information in ways that classical computers cannot. While classical bits exist as either 0 or 1, quantum bits (qubits) can exist in a superposition of both states simultaneously, allowing a quantum computer to explore a vast number of possibilities at once. When qubits become entangled, the state of one instantaneously influences the others, enabling massively parallel correlations. By carefully manipulating these qubits to amplify correct answers and cancel out wrong ones through interference, quantum computers can solve certain complex problems—such as factoring large numbers, simulating molecular interactions, or optimizing intricate systems—exponentially faster than traditional machines, though they remain delicate, error-prone, and require extreme conditions like near-absolute-zero temperatures to operate.",
+        "reasoning_content" : "The user wants a one-paragraph explanation of quantum computing. I need to make it concise but accurate, covering key concepts like qubits, superposition, entanglement, and interference, while explaining why it's different from classical computing and what it might be used for. I'll aim for a single cohesive paragraph without line breaks.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Now explain it to a five-year-old.",
+        "role" : "user"
+      }
+    ],
+    "model" : "kimi-k2.6",
+    "reasoning" : {
+      "enabled" : false
+    },
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:36e52862b4d30ffd9b9e051c9d67ae99bb803572494a300e8d06bdad2789653d",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.moonshot.cn\/v1\/chat\/completions"
+}

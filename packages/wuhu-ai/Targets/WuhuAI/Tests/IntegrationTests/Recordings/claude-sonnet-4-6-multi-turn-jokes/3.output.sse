@@ -1,0 +1,36 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01SXRLc7Hi9NYM5wGfnsg5wj","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":129,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}          }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants an even better joke. Let me think of a really good one."} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EoMCClsIDRgCKkC1Wwxz+D/WuSWwRquZIjcinBlh7+5p2zplyPSyDxfYnnNPEK7u5YLFac3kazsliRUYPw4CWX7vxwjwlY9gba6DMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgwCweGAb5Jah0+DiDMaDP3aBY84m7xnCSQpSiIw21HYgHJlbmCY1+h/tmAkgyGgsaIsar7LEj5l/de7dIWqN2jLmaAAc8D3fGv3T2fRKlbUKj2XDnl/+JWB+u1MdZ+l42TDnRiJ7Z7EaxcE4mTAnqDyn7Ah/14QAo3DNihLbzfjpR0NWS1Vvc0ZCWiI/rPoq7qT5Bh5biYQeIRuvqv/fXZjatR+oxgB"}        }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0        }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I told my wife she should embrace"}   }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" her mistakes.\n\nShe gave me a hug. 😄"}       }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1         }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":129,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":56}  }
+
+event: message_stop
+data: {"type":"message_stop"           }
+

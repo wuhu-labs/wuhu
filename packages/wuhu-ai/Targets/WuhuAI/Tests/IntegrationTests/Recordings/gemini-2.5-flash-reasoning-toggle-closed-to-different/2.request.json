@@ -1,0 +1,45 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Explain quantum computing in one paragraph."
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Quantum computing harnesses the principles of quantum mechanics—superposition and entanglement—to process information in fundamentally new ways compared to classical computers. Instead of bits representing 0 or 1, quantum computers use \"qubits\" that can be both 0 and 1 simultaneously (superposition) and become interconnected (entanglement), allowing them to explore"
+          },
+          {
+            "text" : " and process a vast number of possibilities at once. This enables them to solve certain complex computational problems intractable for even the most powerful supercomputers, with potential applications in fields like drug discovery, materials science, cryptography, and artificial intelligence."
+          }
+        ],
+        "role" : "model"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Now explain it to a five-year-old."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true,
+        "thinkingBudget" : 512
+      }
+    }
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-2.5-flash:streamGenerateContent?alt=sse"
+}

@@ -1,0 +1,4 @@
+=== run_script
+{"area":"9 m²","cyclic":"function","sameMeta":true,"dynamic":"import() is not supported; import 'wuhu:/skills/geometry/area.js' statically"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

@@ -1,0 +1,4 @@
+data: {"candidates": [{"content": {"parts": [{"text": "The result of doubling"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 165,"candidatesTokenCount": 4,"totalTokenCount": 169,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 165}],"serviceTier": "standard"},"modelVersion": "gemini-2.5-flash","responseId": "MWMBasWUJ43m_uMPhoO56QY"}
+
+data: {"candidates": [{"content": {"parts": [{"text": " 21 is 42."}],"role": "model"},"finishReason": "STOP","index": 0}],"usageMetadata": {"promptTokenCount": 165,"candidatesTokenCount": 11,"totalTokenCount": 176,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 165}],"serviceTier": "standard"},"modelVersion": "gemini-2.5-flash","responseId": "MWMBasWUJ43m_uMPhoO56QY"}
+

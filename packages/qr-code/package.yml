@@ -1,0 +1,13 @@
+name: qr-code
+owner: shared
+swiftToolsVersion: "6.2"
+packageName: QRCodeKit
+products:
+  - QRCode
+platforms:
+  iOS: "26.0"
+  macOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]

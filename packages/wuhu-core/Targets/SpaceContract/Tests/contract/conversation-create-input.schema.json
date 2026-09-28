@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ConversationCreateInput","type":"object","properties":{"members":{"type":"array","items":{"type":"string"}},"identity":{"type":["string","null"]}},"required":["members"],"additionalProperties":false}

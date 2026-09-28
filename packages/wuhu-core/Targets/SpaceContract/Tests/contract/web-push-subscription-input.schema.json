@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"WebPushSubscriptionInput","type":"object","properties":{"endpoint":{"type":"string"},"p256dh":{"type":"string"},"auth":{"type":"string"},"applicationServerKey":{"type":"string"},"expirationTime":{"type":["number","null"]}},"required":["endpoint","p256dh","auth","applicationServerKey"],"additionalProperties":false}

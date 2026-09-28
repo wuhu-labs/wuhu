@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"StdinChunk","type":"object","properties":{"id":{"type":"string","pattern":"^ex_[a-z0-9]{8}$"},"cursor":{"type":"integer"},"data":{"type":"string","contentEncoding":"base64"}},"required":["id","cursor","data"],"additionalProperties":false}

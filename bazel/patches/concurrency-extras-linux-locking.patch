@@ -1,0 +1,61 @@
+--- a/Sources/ConcurrencyExtras/Internal/Locking.swift
++++ b/Sources/ConcurrencyExtras/Internal/Locking.swift
+@@ -1,11 +1,55 @@
+-import Foundation
++#if canImport(Darwin)
++  import Foundation
++
++  #if !(os(iOS) || os(macOS) || os(tvOS) || os(watchOS))
++    extension NSLock {
++      func withLock<R>(_ body: () throws -> R) rethrows -> R {
++        self.lock()
++        defer { self.unlock() }
++        return try body()
++      }
++    }
++  #endif
++#else
++  import Glibc
++
++  final class NSRecursiveLock: @unchecked Sendable {
++    private let mutex = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
++
++    init() {
++      var attr = pthread_mutexattr_t()
++      pthread_mutexattr_init(&attr)
++      pthread_mutexattr_settype(&attr, Int32(PTHREAD_MUTEX_RECURSIVE))
++      pthread_mutex_init(self.mutex, &attr)
++      pthread_mutexattr_destroy(&attr)
++    }
++
++    deinit {
++      pthread_mutex_destroy(self.mutex)
++      self.mutex.deallocate()
++    }
++
++    func lock() {
++      pthread_mutex_lock(self.mutex)
++    }
++
++    func unlock() {
++      pthread_mutex_unlock(self.mutex)
++    }
+ 
+-#if !(os(iOS) || os(macOS) || os(tvOS) || os(watchOS))
+-  extension NSLock {
+     func withLock<R>(_ body: () throws -> R) rethrows -> R {
+       self.lock()
+       defer { self.unlock() }
+       return try body()
+     }
++
++    @discardableResult
++    func sync<R>(work: () throws -> R) rethrows -> R {
++      self.lock()
++      defer { self.unlock() }
++      return try work()
++    }
+   }
++
++  typealias NSLock = NSRecursiveLock
+ #endif

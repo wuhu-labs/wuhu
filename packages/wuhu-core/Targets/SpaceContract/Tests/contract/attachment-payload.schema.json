@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"AttachmentPayload","type":"object","properties":{"kind":{"type":"string","enum":["image","file"]},"path":{"type":"string"},"mimeType":{"type":"string"},"size":{"type":["integer","null"]}},"required":["kind","path","mimeType"],"additionalProperties":false}

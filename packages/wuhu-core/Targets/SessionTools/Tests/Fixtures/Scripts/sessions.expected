@@ -1,0 +1,8 @@
+=== run_script
+{"helper":{"kind":"agent","parent":"me","createdBy":"me","title":"helper","tags":["a"],"requestId":"string"},"sameKey":true,"unkeyedTwins":true,"infra":{"kind":"agent","parent":null,"createdBy":"me","title":"Wuhu Infra","tags":[],"requestId":null},"archiveInfra":"done","retagInfra":"Error: <me> may not change session <infra>: only the session itself, its ancestors and humans may","requestInfra":"Error: only the parent of session <infra> may open a request on it","topLevelReply":"Error: createSession: a top-level session has no parent to report to; expects_reply is refused","badTitle":"Error: createSession: a title is one non-empty line of at most 200 characters","noTitle":"Error: createSession needs title","noOptions":"TypeError: createSession needs { title, kind, topLevel, group, provider, model, effort, template, tags, message, expectsReply, key }","retagged":["wuhu:13","gate"],"request":"string","verbs":["done","done","done","done","done"],"stranger":["done","Error: <me> may not change session <stranger>: only the session itself, its ancestors and humans may"],"unknown":"Error: unknown session: no-such-session"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+verbs: ["archive Wuhu Infra", "interrupt twin", "resume twin", "archive twin", "unarchive twin", "archive stranger"]
+=== probe
+tags: ["self"]

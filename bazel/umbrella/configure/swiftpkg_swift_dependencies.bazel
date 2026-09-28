@@ -1,0 +1,21 @@
+# swift-dependencies 1.14 gates CombineSchedulers and Linux URLSession
+# (FoundationNetworking) behind default-enabled traits. SwiftPM trait
+# unification cannot turn them off: any dependent that takes
+# swift-dependencies without a selection re-includes the defaults in the
+# union. The `traits` override is the fork's escape hatch for exactly this
+# deliberate deviation: CombineSchedulers drags OpenCombine
+# (+OpenCombineFoundation) into the Linux static binary (~1.5 MB), and nothing
+# first-party consumes the scheduler or URLSession dependency values.
+swift_deps.configure_package(
+    name = "swiftpkg_swift_dependencies",
+    patch_args = ["-p1"],
+    traits = [
+        "Clocks",
+        "Foundation",
+    ],
+    patches = [
+        "//bazel/patches:swift-dependencies-linux-lock.patch",
+        "//bazel/patches:swift-dependencies-linux-typename.patch",
+        "//bazel/patches:swift-dependencies-linux-uuid-hex.patch",
+    ],
+)

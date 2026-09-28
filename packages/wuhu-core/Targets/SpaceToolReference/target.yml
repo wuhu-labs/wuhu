@@ -1,0 +1,23 @@
+name: SpaceToolReference
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Contract
+  - JSONValue
+  - SpaceContract
+  - SpaceTools
+tests:
+  exclude:
+    - reference/**
+  resources:
+    - path: reference
+      mode: copy
+  data:
+    - Targets/SpaceContract/Tests/contract
+  dependencies:
+    - Contract
+    - SpaceContract
+    - SpaceTools

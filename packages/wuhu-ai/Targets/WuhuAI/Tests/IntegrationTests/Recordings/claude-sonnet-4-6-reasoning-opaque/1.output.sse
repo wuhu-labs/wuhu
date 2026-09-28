@@ -1,0 +1,57 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01PpNPWKedMLsbDa2oj35cXN","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global"}}  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"If a shirt costs $25 after a 20% discount, I need to find the original price.\n\nA 20% discount means the customer pays 80% of the original price.\n\nSo:"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Original Price × 0.80 = $25\n\nOriginal Price = $25 / 0.80 = $31.25"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpYDClsIDRgCKkAwQPRp9/cTPKpZAMMaWMACSDRm8ZsD4uu0G/3vYrVeaadXHTcgZuvoAUIJW5UofD7KpvzHE5Fnrib7PTvX6KF7MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgyYcB6dlgIe7Pt+y7IaDIGd4gP6RkX7Ul/qliIwqutvet54jILtT9OG5vQ1pywIvBDm6HFR1QnfqErkDOyAnfaVKD1EmzhTifMBtc2TKugBZAxP5wQlTXtifotcOHFRUhG4CLbCZCwWkybsZlyJn8hKh+vkIx3Vw2th5Tz7lmqT0eqnhXHIpoj60St014+hhfAjx2Y5l0aT23AaFSjqm+SSVyHscF7duokANTizf5LWD8QbVnwcuSoNqybfWVhn+bE+Qa32JS42TDPQthuyoOTH2QJsjnnEtl1hfTu0EaOwbbVe2Vd2oQbEw+TYBSNVl6UAWa44p9fsxpUa4gd2lTB6LD3uZHtjPjxK23sIFpj0e7MFWLrYSOuGgQHEmftN9oFQnE66p+dUrP5XByvg/iGZAiGWbHa8zRgB"}           }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0  }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"## Finding the Original Price\n\n### Setting Up the Problem\nA 20% discount means you **pay 80%"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** of the original price.\n\n$$\\text{Original Price} \\times 0.80 = \\$25$$\n\n### Solving for the Original Price\n\n$$\\text{Original Price}"} }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = \\frac{\\$25}{0.80}$$\n\n$$\\text{Original Price} = \\$31.25$$\n\n### Verification ✓\n-"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Original price: **$31.25**\n- 20% discount: $31.25 × 0.20 = $6.25\n- Final"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" price: $31.25 − $6.25 = **$25.00** ✓\n\nThe original price was **$31.25**.\n\n---\n**"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Common mistake to avoid:** Don't add 20% back to $25 ($"}              }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"25 × 1.20 = $30). That would give the wrong answer because the 20% should"}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" be calculated on the *original* price, not the discounted price."}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1     }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":322}   }
+
+event: message_stop
+data: {"type":"message_stop"           }
+

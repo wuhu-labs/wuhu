@@ -1,0 +1,57 @@
+name: SessionTools
+kind: library
+sources: Sources
+embeddedResources:
+  - name: SpaceCoreScript
+    target: //packages/wuhu-web/app:shell-sdk
+    typeName: EmbeddedShellScripts
+    symbolName: shellscripts
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Credentials
+  - InferenceKit
+  - Fetch
+  - SessionDomain
+  - SpaceContract
+  - SpaceCore
+  - SpaceTools
+  - SpaceFS
+  - SystemFiles
+  - MachineContract
+  - MachineChannel
+  - WuhuAI
+  - JSONValue
+  - OrderedCollections
+  - QuickJSKit
+  - HTTPTypes
+  - Crypto
+  - Dependencies
+  - Logging
+tests:
+  exclude:
+    - Fixtures/**
+  resources:
+    - path: Fixtures
+      mode: copy
+  dependencies:
+    - Credentials
+    - Fetch
+    - SessionDomain
+    - SpaceContract
+    - SpaceCore
+    - SpaceTools
+    - SpaceFS
+    - SystemFiles
+    - MachineContract
+    - MachineChannel
+    - WuhuAI
+    - JSONValue
+    - OrderedCollections
+    - GRDB
+    - Dependencies
+    - DependenciesTestSupport
+    - Clocks
+    - ControlledTime
+    - Scratch

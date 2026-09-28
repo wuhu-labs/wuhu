@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"UserProfileInput","type":"object","properties":{"handle":{"type":"string"},"displayName":{"type":["string","null"]}},"required":["handle"],"additionalProperties":false}

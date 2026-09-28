@@ -1,0 +1,46 @@
+{
+  "body" : {
+    "contents" : [
+      {
+        "parts" : [
+          {
+            "text" : "Explain quantum computing in one paragraph."
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Quantum computing is a revolutionary paradigm of calculation that leverages the principles of quantum mechanics, such as superposition and entanglement, to process information in ways classical computers cannot. While traditional computers use bits representing either a 0 or a 1, quantum computers use qubits, which can exist in multiple states simultaneously, allowing them to explore vast numbers of potential solutions at once. When qubits are \"entangled,\" the state of one can instantaneously influence another, enabling complex coordination that exponentially increases processing power for specific tasks. This allows quantum computers to solve highly complex problems—such as simulating molecular structures for drug discovery or breaking advanced encryption—that would take conventional supercomputers thousands of years to complete."
+          },
+          {
+            "text" : "",
+            "thoughtSignature" : "EjQKMgEMOdbHMSBMzQQusZYG1HeWHrHSSXxvCCko\/ypjPsPM9nhJYjAWDkSFnlvv0uNP\/pZN"
+          }
+        ],
+        "role" : "model"
+      },
+      {
+        "parts" : [
+          {
+            "text" : "Now explain it to a five-year-old."
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "generationConfig" : {
+      "thinkingConfig" : {
+        "includeThoughts" : true,
+        "thinkingBudget" : 512
+      }
+    }
+  },
+  "headers" : {
+    "content-type" : "application\/json",
+    "x-goog-api-key" : "AIzaSyBElujk0RHl82RzEbqzFY2Gsn3K4ny9dug"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/generativelanguage.googleapis.com\/v1beta\/models\/gemini-3-flash-preview:streamGenerateContent?alt=sse"
+}

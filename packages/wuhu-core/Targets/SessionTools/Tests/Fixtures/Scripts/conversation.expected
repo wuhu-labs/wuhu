@@ -1,0 +1,62 @@
+=== run_script
+[
+  {
+    "id": "m1",
+    "sender": {
+      "id": "u_morgan",
+      "handle": "morgan",
+      "group": "shared"
+    },
+    "kind": "message",
+    "text": "look",
+    "attachments": [
+      "/_/conversations/swift-gate-swamp/attachments/a.png",
+      "/_/conversations/swift-gate-swamp/attachments/b.pdf"
+    ],
+    "replyTarget": null,
+    "requestId": null,
+    "createdAt": "2001-01-01T08:00:00.000+08:00"
+  },
+  {
+    "id": "m2",
+    "sender": {
+      "id": "couch-timber-yellow",
+      "session": "couch-timber-yellow",
+      "group": "shared",
+      "title": "Helper"
+    },
+    "kind": "message",
+    "text": "seen",
+    "attachments": [],
+    "replyTarget": "m1",
+    "requestId": null,
+    "createdAt": "2001-01-01T00:00:00.000Z"
+  }
+]
+m5 createdAt: 2001-01-01T00:01:00.500Z
+latest 2: m4 m5 next=m4
+before m4: m2 m3 next=m2
+before m2: m1 next=null
+after m1: m2 m3 m4 next=m4
+after m3: m4 m5 next=null
+after 08:00+08:00: m4 m5 next=null
+after 07:59:59.999+08:00: m1 m2 m3 m4 m5 next=null
+before 00:01Z: m1 m2 m3 next=null
+after a Date: m4 m5 next=null
+after its own createdAt:  next=null
+one at a time: m1 m2 m3 m4 m5
+dm: true d1 next=null
+no dm: null null
+a group I am in:  next=null
+a group I am not in: unknown conversation: 00000000-0000-0000-0000-000000000000
+unknown message: unknown message in conversation swift-gate-swamp: m-missing
+message elsewhere: unknown message in conversation swift-gate-swamp: d1
+both cursors: pass after or before, not both
+limit 0: limit is a whole number from 1 to 500
+limit 501: limit is a whole number from 1 to 500
+no zone: '2026-09-26T11:00' is not a time; write YYYY-MM-DDTHH:MM[:SS[.fff]] and a zone, like 2026-09-26T11:00+08:00
+unknown conversation: unknown conversation: no-such-box
+a box in an unread group: unknown conversation: bike-noodle-sunset
+no id: conversation(id) wants a conversation id: a box is its agent's session id, a DM comes from dm(a, b)
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

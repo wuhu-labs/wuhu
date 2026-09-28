@@ -1,0 +1,17 @@
+name: ClaudeStream
+kind: library
+sources: Sources
+dependencies:
+  - JSONValue
+  - OrderedCollections
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+tests:
+  exclude:
+    - Fixtures/**
+  resources:
+    - path: Fixtures
+      mode: copy
+  dependencies:
+    - Scratch

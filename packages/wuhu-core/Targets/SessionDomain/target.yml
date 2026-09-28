@@ -1,0 +1,17 @@
+name: SessionDomain
+kind: library
+sources: Sources
+dependencies:
+  - WuhuAI
+  - Dependencies
+  - JSONValue
+  - OrderedCollections
+  - SpaceContract
+swiftSettings:
+  - enableExperimentalFeature: NonisolatedNonsendingByDefault
+tests:
+  dependencies:
+    - WuhuAI
+    - SpaceContract
+    - Dependencies
+    - JSONValue

@@ -1,0 +1,24 @@
+name: InferenceKit
+kind: library
+sources: Sources
+dependencies:
+  - Credentials
+  - SessionDomain
+  - WuhuAI
+  - JSONValue
+  - Dependencies
+  - Fetch
+  - Logging
+swiftSettings:
+  - enableExperimentalFeature: NonisolatedNonsendingByDefault
+tests:
+  dependencies:
+    - Credentials
+    - SessionDomain
+    - WuhuAI
+    - JSONValue
+    - Dependencies
+    - Fetch
+    - FetchURLSession
+    - Clocks
+    - Scratch

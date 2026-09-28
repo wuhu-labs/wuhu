@@ -1,0 +1,5 @@
+=== run_script
+failed: script 00000000 was killed: it did not call result() within 30 s
+
+console:
+thinking

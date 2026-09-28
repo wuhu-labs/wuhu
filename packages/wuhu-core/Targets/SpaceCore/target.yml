@@ -1,0 +1,57 @@
+name: SpaceCore
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Assertion
+  - SpaceFS
+  - DocIndex
+  - MachineContract
+  - SessionDomain
+  - SpaceContract
+  - SpaceSQL
+  - ClaudeStream
+  - WuhuAI
+  - JSONValue
+  - OrderedCollections
+  - Crypto
+  - GRDB
+  - GRDBSQLite
+  - KeelObjectStore
+  - StructuredQueries
+  - StructuredQueriesCore
+  - StructuredQueriesSQLite
+  - Dependencies
+  - Logging
+  - Scratch
+tests:
+  exclude:
+    - Fixtures/**
+  # The storage lint reads the sources back by path.
+  data:
+    - Targets/SpaceCore/Sources
+  resources:
+    - path: Fixtures
+      mode: copy
+  dependencies:
+    - ClaudeStream
+    - OrderedCollections
+    - SpaceFS
+    - KeelObjectStore
+    - DocIndex
+    - MachineContract
+    - SessionDomain
+    - SpaceContract
+    - SpaceSQL
+    - WuhuAI
+    - JSONValue
+    - GRDB
+    - StructuredQueries
+    - Dependencies
+    - DependenciesTestSupport
+    - Clocks
+    - ControlledTime
+    - Logging
+    - Scratch

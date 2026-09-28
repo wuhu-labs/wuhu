@@ -1,0 +1,42 @@
+--- a/Sources/Dependencies/Internal/TypeName.swift
++++ b/Sources/Dependencies/Internal/TypeName.swift
+@@ -6,12 +6,31 @@
+   if let index = name.firstIndex(of: ".") {
+     name.removeSubrange(...index)
+   }
+-  let sanitizedName =
+-    name
+-    .replacingOccurrences(
+-      of: #"\(unknown context at \$[[:xdigit:]]+\)\."#,
+-      with: "",
+-      options: .regularExpression
+-    )
+-  return sanitizedName
++  #if canImport(Darwin)
++    let sanitizedName =
++      name
++      .replacingOccurrences(
++        of: #"\(unknown context at \$[[:xdigit:]]+\)\."#,
++        with: "",
++        options: .regularExpression
++      )
++    return sanitizedName
++  #else
++    let marker = "(unknown context at $"
++    var sanitizedName = ""
++    var rest = Substring(name)
++    while let markerRange = rest.firstRange(of: marker) {
++      let hex = rest[markerRange.upperBound...].prefix(while: \.isHexDigit)
++      let tail = rest[markerRange.upperBound...].dropFirst(hex.count)
++      if !hex.isEmpty, tail.hasPrefix(").") {
++        sanitizedName += rest[..<markerRange.lowerBound]
++        rest = tail.dropFirst(2)
++      } else {
++        sanitizedName += rest[..<markerRange.upperBound]
++        rest = rest[markerRange.upperBound...]
++      }
++    }
++    sanitizedName += rest
++    return sanitizedName
++  #endif
+ }

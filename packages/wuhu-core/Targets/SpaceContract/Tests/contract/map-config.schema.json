@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MapConfig","type":"object","properties":{"nodeID":{"type":"string"},"nodeTitle":{"type":"string"},"parentID":{"type":"string"},"root":{"type":["string","null"]}},"required":["nodeID","nodeTitle","parentID"],"additionalProperties":false}

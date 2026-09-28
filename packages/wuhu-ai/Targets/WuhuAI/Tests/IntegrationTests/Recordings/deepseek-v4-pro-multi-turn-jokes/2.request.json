@@ -1,0 +1,32 @@
+{
+  "body" : {
+    "messages" : [
+      {
+        "content" : "Tell me a short joke.",
+        "role" : "user"
+      },
+      {
+        "content" : "Why don’t scientists trust atoms?\n\nBecause they make up everything.",
+        "reasoning_content" : "We need to come up with a short joke. The user asked \"Tell me a short joke.\" The assistant should output a short joke. The response should be just the joke, maybe a one-liner. I'll craft a simple, clean joke. No need for explanation. I'll keep it appropriate and concise.",
+        "role" : "assistant"
+      },
+      {
+        "content" : "Tell me a better joke.",
+        "role" : "user"
+      }
+    ],
+    "model" : "deepseek-v4-pro",
+    "reasoning_effort" : "high",
+    "stream" : true,
+    "thinking" : {
+      "type" : "enabled"
+    }
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:c6e0fc3c33e78b29b6c2ee67f3a0ed5cd5a0d2f0a0762d1acdbb61babf446b0e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.deepseek.com\/v1\/chat\/completions"
+}

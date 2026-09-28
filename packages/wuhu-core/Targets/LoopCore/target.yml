@@ -1,0 +1,33 @@
+name: LoopCore
+kind: library
+sources: Sources
+dependencies:
+  - ClaudeStream
+  - SessionDomain
+  - SpaceCore
+  - WuhuAI
+  - Fetch
+  - JSONValue
+  - OrderedCollections
+  - Dependencies
+  - Logging
+swiftSettings:
+  - enableExperimentalFeature: NonisolatedNonsendingByDefault
+tests:
+  exclude:
+    - Fixtures/**
+  resources:
+    - path: Fixtures
+      mode: copy
+  dependencies:
+    - ClaudeStream
+    - OrderedCollections
+    - SessionDomain
+    - SpaceCore
+    - WuhuAI
+    - Fetch
+    - JSONValue
+    - Dependencies
+    - Clocks
+    - ControlledTime
+    - GRDB

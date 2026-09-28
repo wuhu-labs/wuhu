@@ -1,0 +1,9 @@
+=== run_script
+first: ready
+lines: machine <machine> was lost while process <id> ran; it gets killed if the machine comes back
+wait: machine <machine> was lost while process <id> ran; it gets killed if the machine comes back
+running after the loss: 8
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+killed when the script ended: 9 of 9

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SyncInput","type":"object","properties":{"path":{"type":"string"},"baseToken":{"type":"string"},"content":{"type":"string"}},"required":["path","baseToken","content"],"additionalProperties":false}

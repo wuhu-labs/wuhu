@@ -1,0 +1,12 @@
+=== run_script
+1000 rows: ok
+a 20 MB body after them: ok
+another 20 MB body: ok
+1000 rows beside both: query result does not fit in the 64 MB this script may buffer (unread response bodies and machine process output together); narrow the query (fewer columns, a filter, a LIMIT), or read earlier response bodies first
+500 rows beside both: ok
+a third 20 MB body: ok
+a fourth 20 MB body: fetch failed: response body does not fit in the 64 MB this script may buffer (unread response bodies and machine process output together); read earlier response bodies first
+reading every body: ok
+1000 rows once they are read: ok
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

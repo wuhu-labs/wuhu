@@ -1,0 +1,6 @@
+=== run_script
+["done",["TOKEN"],[],"removing vault entry TOKEN can't be undone and needs a human admin of group shared","machine away is not attached","no machine named nowhere","name a group or a machine, not both","secret() names a group's secrets; a machine vault's values never leave the machine, so pass the entry to exec as { secrets: { ENV: 'name' } }"]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+=== probe
+box vault: ["TOKEN=v1"]

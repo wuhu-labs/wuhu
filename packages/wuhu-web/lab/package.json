@@ -1,0 +1,19 @@
+{
+  "name": "wuhu-web-lab",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "@wuhu/ui": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.0",
+    "tailwindcss": "4.3.2",
+    "typescript": "^5.9.3",
+    "vite": "8.1.3"
+  }
+}

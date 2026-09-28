@@ -1,0 +1,116 @@
+{
+  "body" : {
+    "include" : [
+      "reasoning.encrypted_content"
+    ],
+    "input" : [
+      {
+        "content" : "You are a helpful assistant.",
+        "role" : "system"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Fetch the weather for BOTH Paris and Tokyo. Call get_weather twice, in parallel, in this single turn — one call per city.",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      },
+      {
+        "encrypted_content" : "gAAAAABqSqc_L4c-XAdoBpFgK6kL09XpkqkaCox38eZt5POAA3LPt4GdkOORSgBtLtoU3ngNKJ5WNRo5v5l-Vl-mW5oSO0ziH0IXNPukvOW9zIYTSCpoNmE3XtdApuqcW6LizS4zaePoEHlmGBZ0VI91NyitVBj8x6WOXfa0VxUhIzilRNNafBeOMReiQsYyQyqZoQeSRByiFy8Qx_OnuFpcyNtCPWyJloe3T2D2RyKpqRTIizVupPqAbC2iUZUdVrp_qrGYEM_tBlsub0FyKMeXaMI84LyPWqQLqUUc1rgSuEVyH0RMBsjmFUpeEdTDLSkSfUE1WjnqHx1Y1XtJnmd2gv3MLfAjwP-fqyhTfs7cAc_ALJRzkiJhZ8qnvl1YMj_FpztBIFGc9fYP3V-RiwAko6oOcXedi3KeDws6aN5ARcvOnyLTznm2w0wCCgRraVrnvxl1ouk5OxW-IW3YbnDLW687az6nU2GcAP355WE-V1jP_i-HJZmdaq-DUOqDduCZ7rZF5diBuBW1_-y3rSoj3oFFFFBc8Bgu-K0uVFBjOz_LbZVHLTAdGH3M4DFS_8BSB2Ig7kTdL1R5VMj7QLd6KoapQ48GuGe9cyAruXButjjYJATiygIj6xexC2LeHBZ9KU47AygN4P5lr2zs_ERdnPF-ejLpqt7yNwF0YdK_V1ruF9819S1AP2NeTwUh4N-Myzbnv5hZ-SRFWI4VowEuwqnW0iLNwljcmRo7LLG-T11-hj9GcHofGruUFc836oRPXlWtnd1F9HxhPDa8t8gVXAmwFXkmfvRAeLJLAt0Pj55VGECAWCxZD0_XVwBCqViWI8O2_2wUM13gpi4X8P_UKbkz9xObML6Y5WZKF7km2oNeWgrdUQYRhQu4HhaDcD0x8yCiaqi3W57FvzpiiKm9k6-ZTlemv5qJay-UlcKfrziojmJYVnEwaLvQbA86KUpLUnErc6p-NELUp95xwj3qQHRN9gVhFewJFCexynyXgbjoYEkLXZPtbSjX1dnOzgvf96bOmQhqihqqQAXL3RD2lMVeeDZlPvUzGx3t-KJNBOob5TM0cvVfQiLedx5cxdoU3GTcjVQomSCzK9AEV4yGTGiaZsxe6MwP3WK4YfAWlQ1BQgg3eGQHevgnGa67fjqflWA8RL1ZkKVLv7MPFldegmgNz22ogMLMJxmAEybASCgJWfRQ_Yo9XHJEdDkqHr42F3OrAxAHkxHmam4bA_wIM0b-MakI8BTyQV3eXLb5o93KPUuIk05hWcpFDlrTfkOGB5JleqOREDhiHm4U-MDlddACB9h_gA8dyPiREZr935gsY27fP1ayoZOmwx2mHtkt0eDEEpc8VXBevYGH0SxFdoaGsN734AnQ1UasTBQX5qq1jS4ATD-dieDh3FsLQdx-jClGREcZ-Q6zXth5O-b2ozPYUrddfb09FFue59TYbnVPyzZ4arm8d7uGSofAQ8gy8FYXWaom",
+        "id" : "rs_09bded74a956f018016a4aa73d0448819889501a2f90fd9dbd",
+        "summary" : [
+          {
+            "text" : "**Planning tool calls**\n\nI need to comply with the guidelines for using tool calls. It seems I should use the commentary tool and call a parallel wrapper since the developer suggests single-turn parallel usage. I might need to use `multi_tool_use.parallel` for two weather calls. I’m checking if I need to format with `recipient_name` through `functions.get_weather`. The developer's guidance indicates that only tools specified in messages are allowed, which is good to keep in mind.",
+            "type" : "summary_text"
+          }
+        ],
+        "type" : "reasoning"
+      },
+      {
+        "arguments" : "{\"city\":\"Paris\"}",
+        "call_id" : "call_ySLsCEKRusjKBC9cRP3NbWOT",
+        "name" : "get_weather",
+        "type" : "function_call"
+      },
+      {
+        "arguments" : "{\"city\":\"Tokyo\"}",
+        "call_id" : "call_jgutm4Gws4V2dwB0k1LZQvIH",
+        "name" : "get_weather",
+        "type" : "function_call"
+      },
+      {
+        "call_id" : "call_ySLsCEKRusjKBC9cRP3NbWOT",
+        "output" : "Paris: sunny, 24C",
+        "type" : "function_call_output"
+      },
+      {
+        "call_id" : "call_jgutm4Gws4V2dwB0k1LZQvIH",
+        "output" : "Tokyo: rain, 19C",
+        "type" : "function_call_output"
+      },
+      {
+        "content" : [
+          {
+            "text" : "Which of the two is warmer?",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "gpt-5.4",
+    "reasoning" : {
+      "effort" : "high",
+      "summary" : "auto"
+    },
+    "store" : false,
+    "stream" : true,
+    "tools" : [
+      {
+        "description" : "Returns the current weather for a city.",
+        "name" : "get_weather",
+        "parameters" : {
+          "properties" : {
+            "city" : {
+              "description" : "City name",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "city"
+          ],
+          "type" : "object"
+        },
+        "strict" : false,
+        "type" : "function"
+      },
+      {
+        "description" : "Folds the conversation so far into a durable summary. Call with a summary of everything above.",
+        "name" : "compact",
+        "parameters" : {
+          "properties" : {
+            "summary" : {
+              "description" : "Summary of the conversation so far",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "summary"
+          ],
+          "type" : "object"
+        },
+        "strict" : false,
+        "type" : "function"
+      }
+    ]
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:6f329108d16c6fb7cabe0189b18335e170449ce04c2b8663b8fde66dc8c9235e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.openai.com\/v1\/responses"
+}

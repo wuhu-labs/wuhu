@@ -1,0 +1,25 @@
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -6776,7 +6776,8 @@
+         }
+         break;
+     case JS_TAG_MODULE:
+-        abort(); /* never freed here */
++        /* only reached once js_free_module_def has let go of the module */
++        js_free_rt(rt, JS_VALUE_GET_PTR(v));
+         break;
+     case JS_TAG_BIG_INT:
+         {
+@@ -29721,7 +29722,11 @@
+     JS_FreeValue(ctx, m->resolving_funcs[1]);
+     JS_FreeValue(ctx, m->private_value);
+     list_del(&m->link);
+-    js_free(ctx, m);
++    /* A top-level await still pending when the context is freed leaves the
++       module referenced from its resolving functions, which the runtime's
++       final GC frees later; the last reference frees the module. */
++    if (--m->header.ref_count == 0)
++        js_free(ctx, m);
+ }
+ 
+ #ifndef QJS_DISABLE_PARSER

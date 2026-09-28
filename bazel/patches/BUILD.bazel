@@ -1,0 +1,14 @@
+exports_files([
+    "concurrency-extras-linux-locking.patch",
+    "concurrency-extras-linux-lockisolated.patch",
+    "issue-reporting-linux-app-host.patch",
+    "issue-reporting-linux-lock.patch",
+    "perception-bindable-obsoleted-extensions.patch",
+    "quickjs-pending-module-free.patch",
+    "rules-apple-visionos-dynamic-framework-constraints.patch",
+    "snapshot-testing-visionos-image.patch",
+    "swift-clocks-linux-lock.patch",
+    "swift-dependencies-linux-lock.patch",
+    "swift-dependencies-linux-typename.patch",
+    "swift-dependencies-linux-uuid-hex.patch",
+])

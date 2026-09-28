@@ -1,0 +1,25 @@
+{
+  "body" : {
+    "input" : [
+      {
+        "content" : [
+          {
+            "text" : "Think step by step: if a shirt costs $25 after a 20% discount, what was the original price?",
+            "type" : "input_text"
+          }
+        ],
+        "role" : "user"
+      }
+    ],
+    "model" : "gpt-4.1-mini",
+    "store" : false,
+    "stream" : true
+  },
+  "headers" : {
+    "accept" : "text\/event-stream",
+    "authorization" : "HMAC:SHA256:6f329108d16c6fb7cabe0189b18335e170449ce04c2b8663b8fde66dc8c9235e",
+    "content-type" : "application\/json"
+  },
+  "method" : "POST",
+  "url" : "https:\/\/api.openai.com\/v1\/responses"
+}
