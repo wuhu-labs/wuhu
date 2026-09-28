@@ -1,4 +1,5 @@
 import enum ClaudeStream.ClaudeCodeBlock
+import Clocks
 import struct Credentials.CredentialResolver
 import Dependencies
 import Fetch
@@ -10,9 +11,11 @@ import Scratch
 import Serve
 import ServeTesting
 import SessionDomain
+import class SessionTools.Scripts
 import enum SpaceContract.ImageMedia
 import SpaceCore
 @testable import SpaceServer
+import Synchronization
 import Testing
 
 @Suite struct ClaudeCodeExecutorTests {
@@ -106,7 +109,7 @@ import Testing
     #expect(throws: ClaudeCodeLaunchError.self) { try window(1_000_001) }
   }
 
-  @Test func aTokenIsOpaqueAndLivesExactlyAsLongAsItsActivation() {
+  @Test func aTokenIsOpaqueAndLivesExactlyAsLongAsItsActivation() async {
     let tokens = ClaudeCodeTokens()
     let one = ClaudeCodeTokens.Holder(session: SessionID("a"), activation: UUID())
     let two = ClaudeCodeTokens.Holder(session: SessionID("b"), activation: UUID())
@@ -119,14 +122,95 @@ import Testing
     let forged = String(first.dropLast()) + (first.hasSuffix("0") ? "1" : "0")
     #expect(tokens.holder(ofBearer: forged) == nil)
     #expect(tokens.holder(ofBearer: "") == nil)
-    tokens.revoke(one.activation)
+    await tokens.end(one.activation)
     #expect(tokens.holder(ofBearer: first) == nil)
     #expect(tokens.holder(ofBearer: second) == two)
   }
 
+  @Test func anActivationsEndCutsOffTheCallsItLetIn() async throws {
+    try await withSessionDeps {
+      let tokens = ClaudeCodeTokens()
+      let holder = ClaudeCodeTokens.Holder(session: SessionID("a"), activation: UUID())
+      _ = tokens.mint(holder)
+      let answered = try await tokens.run(holder.activation, { 7 }) { Issue.record("an answered call is not cut off") }
+      #expect(answered == 7)
+
+      let (started, start) = AsyncStream<Void>.makeStream()
+      let cutOff = Mutex(false)
+      async let parked: Void = tokens.run(holder.activation, {
+        start.yield()
+        try await ContinuousClock().sleep(for: .seconds(3600))
+      }) { cutOff.withLock { $0 = true } }
+      for await _ in started { break }
+      await tokens.end(holder.activation)
+      #expect(cutOff.withLock { $0 }, "the end returns once the cut-off has run")
+      do {
+        try await parked
+        Issue.record("a cut-off call is cancelled")
+      } catch {
+        #expect(error is CancellationError)
+      }
+      await #expect(throws: CancellationError.self, "a call after the end is refused") {
+        try await tokens.run(holder.activation, { 1 }) {}
+      }
+    }
+  }
+
+  @Test func aCallThatFinishesDespiteTheCutKeepsItsResult() async throws {
+    try await withSessionDeps {
+      let tokens = ClaudeCodeTokens()
+      let holder = ClaudeCodeTokens.Holder(session: SessionID("a"), activation: UUID())
+      _ = tokens.mint(holder)
+      let (started, start) = AsyncStream<Void>.makeStream()
+      let cutOff = Mutex(false)
+      async let finished = tokens.run(holder.activation, {
+        start.yield()
+        try? await ContinuousClock().sleep(for: .seconds(3600))
+        return 8
+      }) { cutOff.withLock { $0 = true } }
+      for await _ in started { break }
+      await tokens.end(holder.activation)
+      let value = try await finished
+      #expect(value == 8)
+      #expect(!cutOff.withLock { $0 }, "a call that answered has nothing left to stop")
+    }
+  }
+
+  @Test func anEndGivesUpOnACallThatTakesNoCancellation() async throws {
+    let clock = TestClock()
+    try await withDependencies {
+      $0.continuousClock = clock
+    } operation: {
+      let tokens = ClaudeCodeTokens()
+      let holder = ClaudeCodeTokens.Holder(session: SessionID("a"), activation: UUID())
+      _ = tokens.mint(holder)
+      let (started, start) = AsyncStream<Void>.makeStream()
+      let stuck = Mutex<CheckedContinuation<Void, Never>?>(nil)
+      async let call: Void = tokens.run(holder.activation, {
+        await withCheckedContinuation { waiter in
+          stuck.withLock { $0 = waiter }
+          start.yield()
+        }
+      }) {}
+      for await _ in started { break }
+      let ended = Mutex(false)
+      async let ending: Void = {
+        await tokens.end(holder.activation)
+        ended.withLock { $0 = true }
+      }()
+      #expect(try await realPollUntil {
+        await clock.advance(by: .seconds(10))
+        return ended.withLock { $0 }
+      }, "the end returns after its wind-down")
+      await ending
+      stuck.withLock { $0 }?.resume()
+      try await call
+    }
+  }
+
   @Test func theLoopbackListenerTakesOnlyARunningActivationsTokenForItsOwnSession() async throws {
     try await withSessionDeps {
-      let loopback = try await Loopback()
+      let loopback = try await ClaudeCodeLoopback()
       defer { loopback.config.remove() }
       let mine = try await loopback.claudeSession()
       let theirs = try await loopback.claudeSession()
@@ -149,7 +233,7 @@ import Testing
 
   @Test func aToolCallClaudeCodeRepeatsIsAnsweredFromItsReceipt() async throws {
     try await withSessionDeps {
-      let loopback = try await Loopback()
+      let loopback = try await ClaudeCodeLoopback()
       defer { loopback.config.remove() }
       let session = try await loopback.claudeSession()
       let token = loopback.host.tokens.mint(.init(session: session, activation: UUID()))
@@ -182,7 +266,7 @@ import Testing
 
   @Test func anImageOverWhatTheModelTakesReachesStandardInputAsItsLineAlone() async throws {
     try await withSessionDeps {
-      let loopback = try await Loopback()
+      let loopback = try await ClaudeCodeLoopback()
       defer { loopback.config.remove() }
       let session = try await loopback.claudeSession()
       let small: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
@@ -207,21 +291,24 @@ import Testing
   }
 }
 
-private struct Loopback {
+struct ClaudeCodeLoopback {
   let space: Space
   let host: ClaudeCodeHost
   let api: FetchClient
   let config: ScratchFolder
 
-  init() async throws {
-    space = try Space.inMemory()
+  init(
+    space: Space? = nil, hub: MachineHub? = nil, scripts: Scripts? = nil, credentials: CredentialResolver = .unavailable,
+  ) async throws {
+    let space = try space ?? Space.inMemory()
+    self.space = space
     config = try ScratchFolder("claude-config")
     _ = try await space.fs(.shared).write("/models.json", Data("""
     {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
       "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000, "efforts": ["high"], "defaultEffort": "high"}}}}
     """.utf8), ifMatch: nil)
     host = ClaudeCodeHost(
-      space: space, credentials: .unavailable, usage: UsageBoard(),
+      space: space, credentials: credentials, usage: UsageBoard(),
       configDirectory: config.url,
       origin: "https://space", spaceID: "spc_test",
     )
@@ -233,8 +320,8 @@ private struct Loopback {
       claudeCode: host.seam,
     ))
     api = ServeTesting.client(claudeCodeLoopbackHandler(
-      space: space, hub: MachineHub(space: space), credentials: .unavailable, version: "test",
-      host: host, service: service, scripts: nil,
+      space: space, hub: hub ?? MachineHub(space: space), credentials: .unavailable, version: "test",
+      host: host, service: service, scripts: scripts,
     ))
   }
 

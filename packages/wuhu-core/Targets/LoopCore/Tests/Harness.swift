@@ -87,7 +87,13 @@ func runService(
   _ config: LoopConfig,
   body: (SessionService) async throws -> Void,
 ) async throws {
-  let service = await SessionService(sessions: sessions, loopConfig: config)
+  try await runService(await SessionService(sessions: sessions, loopConfig: config), body: body)
+}
+
+func runService(
+  _ service: SessionService,
+  body: (SessionService) async throws -> Void,
+) async throws {
   try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { try await service.start() }
     var bodyError: (any Error)?

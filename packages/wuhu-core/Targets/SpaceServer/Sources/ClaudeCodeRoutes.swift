@@ -29,6 +29,14 @@ func claudeCodeLoopbackHandler(
   addMcpRoutes(
     &router, space: space, hub: hub, credentials: credentials, version: version, recordsReceipts: true, scripts: scripts,
     control: sessionControl { service },
+    runCall: { request, session, call, run in
+      guard case let .success(holder) = await host.holder(of: request, acting: session) else {
+        throw CancellationError()
+      }
+      return try await host.tokens.run(holder.activation, run) {
+        await killAbandonedExec(space: space, hub: hub, session: session, call: call.name, id: ToolCallID(call.id))
+      }
+    },
   ) { request, session in
     switch await host.holder(of: request, acting: session) {
     case .success: nil

@@ -31,7 +31,8 @@ import Testing
       let created = try await store.promptRevision(id)
       #expect(created != nil, "creation stores the revision")
       let frozen = try await prompt(space, id)
-      #expect(!frozen.contains("one"), "the edits came after creation")
+      // The full markers: a bare "one" matches a handle like guitar-honey-snow.
+      #expect(!["root one", "home one", "the one skill"].contains { frozen.contains($0) }, "the edits came after creation")
 
       try await edit(space, id, "two")
       #expect(try await prompt(space, id) == frozen)

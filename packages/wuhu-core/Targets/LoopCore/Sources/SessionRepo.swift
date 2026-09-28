@@ -10,6 +10,7 @@ import struct WuhuAI.AssistantMessageMetadata
 struct SessionRepo: Sendable {
   var sessions: SessionStore
   var id: SessionID
+  var archiveWrite: @Sendable (SessionStore, SessionID, Duration) async throws -> Date = { try await $0.archive($1, grace: $2) }
 
   func hydrate() async throws -> SessionHydration {
     try await sessions.hydrate(id)
@@ -64,7 +65,7 @@ struct SessionRepo: Sendable {
   }
 
   func archive(grace: Duration) async throws -> Date {
-    try await sessions.archive(id, grace: grace)
+    try await archiveWrite(sessions, id, grace)
   }
 
   func unarchive() async throws {

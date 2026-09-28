@@ -65,6 +65,9 @@ struct ClaudeCodeLive {
   // The running turn's standard-input handover time: receipts recorded since
   // belong to it even before its entries are stored.
   var turnStartedAt: Date?
+  // A turn claimed past the archive check and not yet running: its spawn and
+  // store write are still to come, so archive must wait for it.
+  var starting = false
   // Set when a turn ends, at load and when a park wake fires: the next idle
   // pass reads the session environment for a nag or a wake.
   var evaluate = true
@@ -75,14 +78,14 @@ struct ClaudeCodeLive {
   // fails without saying why.
   var apiError: String?
 
-  var isQuiet: Bool { !turnRunning && !compacting && handover == nil && continuation == nil && !evaluate }
+  var isQuiet: Bool { !turnRunning && !starting && !compacting && handover == nil && continuation == nil }
 
   init(hydration: SessionHydration) {
     switch hydration.record.work {
     case .errored:
       continuation = .errored(hydration.record.errorMessage ?? "unknown error")
     case .hasWork where hydration.undrained.isEmpty:
-      continuation = .restarted
+      continuation = hydration.record.hold == .interrupted ? .interrupted : .restarted
     case .hasWork, .noWork:
       continuation = nil
     }
@@ -114,7 +117,7 @@ extension SessionActor {
         break
       }
       // A running turn is driven by its frames; the turn's end nudges.
-      if live.claude.turnRunning || live.claude.stopping || live.claude.handover != nil || live.claude.compacting { return }
+      if live.claude.turnRunning || live.claude.stopping || live.claude.handover != nil || live.claude.compacting || live.archiving { return }
       guard live.queueHead > live.queueTail || live.claude.continuation != nil else {
         if try await compactOnRequest() { return }
         guard live.claude.evaluate else { return }
@@ -210,6 +213,13 @@ extension SessionActor {
       content.append(.text(systemNotice(SessionPrompt.continuation(reason: continuation.reason), source: "session.continuation")))
     }
     content += try await loopConfig.claudeCode.render(id, entries.map(\.input), .standardInput)
+    try Task.checkCancellation()
+    guard !live.archiving else {
+      if reminders { live.claude.evaluate = true }
+      return
+    }
+    live.claude.starting = true
+    defer { if !Task.isCancelled { live.claude.starting = false } }
     let activation = try await ensureClaudeCodeActivation()
     let uuid = uuid().uuidString.lowercased()
     try await repo.beginClaudeCodeTurn()

@@ -38,6 +38,7 @@ actor SessionActor {
     var lastUpdatedByLoopAt: Date?
     let isTask: Bool
     var parkWake: (at: Date, task: Task<Void, Never>)?
+    var archiving = false
 
     var hasSettled: Bool {
       if sessionStatus.stopped {
@@ -48,6 +49,12 @@ actor SessionActor {
       case let .kernel(transcript): !transcript.hasWork
       case let .claudeCode(claude): claude.isQuiet
       }
+    }
+
+    // Retirement would drop what the next idle pass owes: a nag or a park wake.
+    var owesIdleCheck: Bool {
+      guard !sessionStatus.stopped, case let .claudeCode(claude) = engine else { return false }
+      return claude.evaluate
     }
 
     // In-place: the enum lets go of its copy first, so appending to a large
@@ -139,7 +146,8 @@ actor SessionActor {
     guard let liveState else { return lastCommandProcessedAt }
     guard let lhs = lastCommandProcessedAt,
           let rhs = liveState.lastUpdatedByLoopAt,
-          liveState.hasSettled
+          liveState.hasSettled,
+          !liveState.owesIdleCheck
     else { return nil }
     return max(lhs, rhs)
   }
@@ -305,9 +313,22 @@ actor SessionActor {
     guard live.hasSettled else {
       throw SessionError.busyForArchive
     }
-    await stopClaudeCodeActivation(continuing: nil)
-    let deadline = try await repo.archive(grace: loopConfig.archiveGrace)
-    try Task.checkCancellation()
+    // An owed idle check is no work, but no pass may start a turn while the
+    // archive is written: the turn would land in the archived session. A
+    // failed write hands the check back to the loop.
+    live.archiving = true
+    let deadline: Date
+    do {
+      await stopClaudeCodeActivation(continuing: nil)
+      deadline = try await repo.archive(grace: loopConfig.archiveGrace)
+      try Task.checkCancellation()
+    } catch {
+      if liveState != nil {
+        live.archiving = false
+        nudge()
+      }
+      throw error
+    }
     lifecycle = .archived(graceExpiry: deadline)
     dismountLive()
   }

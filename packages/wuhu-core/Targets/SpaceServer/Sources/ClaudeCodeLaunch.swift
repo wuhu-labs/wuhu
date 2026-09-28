@@ -3,8 +3,10 @@
 #else
   import Foundation
 #endif
+import Dependencies
 import struct InferenceKit.ModelsDocument
 import JSONValue
+import Logging
 import SessionDomain
 import Synchronization
 
@@ -12,24 +14,115 @@ import Synchronization
 // and in that activation's own settings and MCP config files, revoked when
 // its process ends. The server both mints and checks it, so a lookup is all
 // the proof there is; nothing about it is ever stored.
+//
+// A tool call lives no longer than the process that made it: the server never
+// learns that a killed Claude Code stopped waiting for the answer, so `end`
+// cuts off every call still running.
 final class ClaudeCodeTokens: Sendable {
   struct Holder: Hashable, Sendable {
     var session: SessionID
     var activation: UUID
   }
 
-  private let held = Mutex<[UUID: (token: [UInt8], holder: Holder)]>([:])
+  private struct Call {
+    var cut: AsyncStream<Void>.Continuation
+    var done: AsyncStream<Void>
+  }
+
+  private struct Held {
+    var token: [UInt8]
+    var holder: Holder
+    var calls: [Int: Call] = [:]
+    var nextCall = 0
+  }
+
+  private let held = Mutex<[UUID: Held]>([:])
 
   func mint(_ holder: Holder) -> String {
     var generator = SystemRandomNumberGenerator()
     let bytes = (0 ..< 32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
     let token = "cct_" + bytes.map { String($0, radix: 16).leftPadded(to: 2) }.joined()
-    held.withLock { $0[holder.activation] = (Array(token.utf8), holder) }
+    held.withLock { $0[holder.activation] = Held(token: Array(token.utf8), holder: holder) }
     return token
   }
 
-  func revoke(_ activation: UUID) {
-    _ = held.withLock { $0.removeValue(forKey: activation) }
+  // Revokes the token, then cuts off the calls it let in and waits until each
+  // has wound down, or `windDown` has passed: some calls (report, request, a
+  // session-to-session message) wait out a peer's queue and take no
+  // cancellation, and two sessions interrupted together can each be waiting
+  // on the other.
+  func end(_ activation: UUID, windDown: Duration = .seconds(10)) async {
+    @Dependency(\.continuousClock) var clock
+    let calls = held.withLock { $0.removeValue(forKey: activation).map { Array($0.calls.values) } ?? [] }
+    for call in calls {
+      call.cut.finish()
+    }
+    let wound = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+      group.addTask {
+        for call in calls {
+          for await _ in call.done {}
+        }
+        return true
+      }
+      group.addTask { [clock] in
+        _ = try? await clock.sleep(for: windDown)
+        return false
+      }
+      let first = await group.next() ?? false
+      group.cancelAll()
+      return first
+    }
+    if !wound {
+      Logger(label: "wuhu.claude-code").error(
+        "tool calls outlived their Claude Code process",
+        metadata: ["activation": "\(activation)", "after": "\(windDown)"],
+      )
+    }
+  }
+
+  // Runs one tool call of `activation` while it lasts. A call its end cuts off
+  // is cancelled, and `cutOff` then stops what outlives the cancellation.
+  func run<T: Sendable>(
+    _ activation: UUID,
+    _ call: @escaping @Sendable () async throws -> T,
+    cutOff: () async -> Void,
+  ) async throws -> T {
+    let (cut, cutSink) = AsyncStream<Void>.makeStream()
+    let (done, doneSink) = AsyncStream<Void>.makeStream()
+    defer { doneSink.finish() }
+    let key = held.withLock { held -> Int? in
+      guard var entry = held[activation] else { return nil }
+      let key = entry.nextCall
+      entry.nextCall += 1
+      entry.calls[key] = Call(cut: cutSink, done: done)
+      held[activation] = entry
+      return key
+    }
+    guard let key else { throw CancellationError() }
+    defer { _ = held.withLock { $0[activation]?.calls.removeValue(forKey: key) } }
+    let outcome = await withTaskGroup(of: Result<T, any Error>?.self, returning: Result<T, any Error>?.self) { group in
+      group.addTask {
+        do { return .success(try await call()) } catch { return .failure(error) }
+      }
+      group.addTask {
+        for await _ in cut {}
+        return nil
+      }
+      let first = await group.next() ?? nil
+      group.cancelAll()
+      if let first { return first }
+      return await group.next() ?? nil
+    }
+    // A call that finished despite the cut keeps its result.
+    switch outcome {
+    case let .success(value)?:
+      return value
+    case let .failure(error)? where !(error is CancellationError):
+      throw error
+    case .failure?, nil:
+      if held.withLock({ $0[activation] == nil }) { await cutOff() }
+      throw CancellationError()
+    }
   }
 
   // Every held token is compared in full, so the time taken says nothing about
@@ -38,8 +131,8 @@ final class ClaudeCodeTokens: Sendable {
     let presented = Array(bearer.utf8)
     return held.withLock { held in
       var found: Holder?
-      for (token, holder) in held.values where constantTimeEqual(token, presented) {
-        found = holder
+      for entry in held.values where constantTimeEqual(entry.token, presented) {
+        found = entry.holder
       }
       return found
     }

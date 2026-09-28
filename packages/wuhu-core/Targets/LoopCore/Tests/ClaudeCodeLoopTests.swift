@@ -294,6 +294,7 @@ import Testing
         try await until("the turn is running") { parked.value }
         try await service.interrupt(sid)
         #expect(try await sessions.record(sid).hold == .interrupted)
+        #expect(try await sessions.record(sid).work == .hasWork, "the cut turn stays on record")
         try await holds("nothing restarts while interrupted") { fake.launches.value.count == 1 }
         try await service.resume(sid)
         try await until("the continuation is written") { fake.writes.value.count == 2 }
@@ -301,6 +302,109 @@ import Testing
       }
       #expect(fake.writtenTexts[1] == [fake.writtenTexts[1][0]])
       #expect(fake.writtenTexts[1][0].hasSuffix("(it was interrupted). Continue from where you left off."))
+    }
+  }
+
+  @Test func `an interrupted turn outlives its session's retirement, and resume continues it`() async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.claudeCodeSession()
+      let never = Latch()
+      let parked = Box(false)
+      let fake = FakeClaudeCode(turnsPerLaunch: [[0], [1]], cue: { cue in
+        if cue.launch == 0, Self.isHook(cue.line, "Stop") {
+          parked.withLock { $0 = true }
+          await never.wait(unless: cue.killed)
+        }
+        return .proceed
+      })
+      let eviction = EvictionPolicy(idleTTL: .seconds(10), maxIdle: 32, sweepInterval: .seconds(5))
+      try await runService(sessions, makeClaudeCodeConfig(fake, eviction: eviction)) { service in
+        fake.service.withLock { $0 = service }
+        _ = try await service.enqueue(item: Fix.message("go"), to: sid)
+        try await until("the turn is running") { parked.value }
+        try await service.interrupt(sid)
+        try await until("idle") { await service.registry.sessions[sid]?.idleSince != nil }
+        try await until("retired") {
+          guard await service.registry.sessions[sid] != nil else { return true }
+          try await time.wake("the reaper", after: 5)
+          return false
+        }
+        #expect(try await sessions.record(sid).work == .hasWork)
+        try await service.resume(sid)
+        try await until("the continuation is written") { fake.writes.value.count == 2 }
+        try await until("the turn settles") { try await sessions.settledWork(sid) }
+      }
+      let texts = fake.writtenTexts
+      try #require(texts.count == 2)
+      #expect(texts[1].count == 1)
+      #expect(texts[1].first?.hasSuffix("(it was interrupted). Continue from where you left off.") == true)
+    }
+  }
+
+  @Test func `an interrupted turn outlives a server restart, and resume continues it`() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.claudeCodeSession()
+      let never = Latch()
+      let parked = Box(false)
+      let fake = FakeClaudeCode(turnsPerLaunch: [[0], [1]], cue: { cue in
+        if cue.launch == 0, Self.isHook(cue.line, "Stop") {
+          parked.withLock { $0 = true }
+          await never.wait(unless: cue.killed)
+        }
+        return .proceed
+      })
+      try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
+        fake.service.withLock { $0 = service }
+        _ = try await service.enqueue(item: Fix.message("go"), to: sid)
+        try await until("the turn is running") { parked.value }
+        try await service.interrupt(sid)
+      }
+      try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
+        fake.service.withLock { $0 = service }
+        try await holds("nothing starts while interrupted") { fake.launches.value.count == 1 }
+        try await service.resume(sid)
+        try await until("the continuation is written") { fake.writes.value.count == 2 }
+        try await until("the turn settles") { try await sessions.settledWork(sid) }
+      }
+      let texts = fake.writtenTexts
+      try #require(texts.count == 2)
+      #expect(texts[1].count == 1)
+      #expect(texts[1].first?.hasSuffix("(it was interrupted). Continue from where you left off.") == true)
+    }
+  }
+
+  @Test func `a message queued during the cut turn goes in with the continuation on resume`() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.claudeCodeSession()
+      let never = Latch()
+      let parked = Box(false)
+      let fake = FakeClaudeCode(turnsPerLaunch: [[0], [1]], cue: { cue in
+        if cue.launch == 0, Self.isHook(cue.line, "Stop") {
+          parked.withLock { $0 = true }
+          await never.wait(unless: cue.killed)
+        }
+        return .proceed
+      })
+      try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
+        fake.service.withLock { $0 = service }
+        _ = try await service.enqueue(item: Fix.message("go"), to: sid)
+        try await until("the turn is running") { parked.value }
+        _ = try await service.enqueue(item: Fix.message("meanwhile", message: "m2"), to: sid)
+        try await service.interrupt(sid)
+        #expect(try await sessions.record(sid).work == .hasWork, "the queued message is still work")
+        try await holds("it waits for the resume") { fake.writes.value.count == 1 }
+        try await service.resume(sid)
+        try await until("the continuation is written") { fake.writes.value.count == 2 }
+        try await until("the turn settles") { try await sessions.settledWork(sid) }
+        #expect(try await sessions.undrainedInputs(sid).isEmpty)
+      }
+      let texts = fake.writtenTexts
+      try #require(texts.count == 2)
+      #expect(texts[1].first?.hasSuffix("(it was interrupted). Continue from where you left off.") == true)
+      #expect(texts[1].joined().hasSuffix("<message-id>m2</message-id>\n\nmeanwhile"))
     }
   }
 
@@ -389,16 +493,23 @@ import Testing
         fake.service.withLock { $0 = service }
         _ = try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("the turn settles") { try await sessions.settledWork(sid) && fake.writes.value.count == 1 }
-        for _ in 0 ..< 6 {
+        // The idle clock starts only once the loop pass has ended, and the
+        // process ends between sweeps: advancing ahead of either sweeps a
+        // session that does not look idle yet.
+        try await until("idle") { await service.registry.sessions[sid]?.idleSince != nil }
+        try await until("retired") {
+          guard await service.registry.sessions[sid] != nil else { return true }
           try await time.wake("the reaper", after: 5)
+          return false
         }
         _ = try await service.enqueue(item: Fix.message("two", message: "m2"), to: sid)
         try await until("the second delivery is written") { fake.writes.value.count == 2 }
         try await until("the turn settles") { try await sessions.settledWork(sid) }
       }
-      #expect(fake.launches.value.count == 2)
-      #expect(fake.launches.value[0].log.entries.isEmpty)
-      #expect(!fake.launches.value[1].log.entries.isEmpty, "the second process resumes the conversation")
+      let launches = fake.launches.value
+      try #require(launches.count == 2)
+      #expect(launches[0].log.entries.isEmpty)
+      #expect(!launches[1].log.entries.isEmpty, "the second process resumes the conversation")
     }
   }
 }

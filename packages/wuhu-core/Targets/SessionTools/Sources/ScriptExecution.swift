@@ -6,6 +6,8 @@ import SpaceCore
 import Synchronization
 
 let scriptStopGrace: Duration = .seconds(5)
+// How long a cancelled run_script call waits for its script to end.
+let scriptWindDown: Duration = .seconds(10)
 // The longest wait a script can ask for, in seconds: its max lifetime,
 // timeout_seconds, sleep(). Longer than any script runs, and far inside what
 // Duration and a clock's sleep can hold; past those, the server trapped.
@@ -75,6 +77,9 @@ final class ScriptExecution: Sendable {
     var killed: ScriptStop?
     var ending: ScriptEnding?
     var endWaiters: [AsyncStream<ScriptEnding>.Continuation] = []
+    var started = false
+    var killRequested: ScriptStop?
+    var windDowns: [WindDown] = []
     var console = ScriptConsole()
   }
 
@@ -154,7 +159,42 @@ final class ScriptExecution: Sendable {
         kill(.timeout(timeout))
       }
       kill(.cancelled)
+      await windDown()
       throw CancellationError()
+    }
+  }
+
+  // Waits, cancelled or not, until the script has ended and its machine
+  // processes are killed, or `scriptWindDown` has passed: a host call that
+  // takes no cancellation holds the script, and one that waits on this very
+  // call (a script interrupting its own session) would hold it for good. A
+  // script that never started has nothing to wait for.
+  private func windDown() async {
+    @Dependency(\.continuousClock) var continuousClock
+    let clock = continuousClock
+    let timer = Mutex<Task<Void, Never>?>(nil)
+    let ended = await withCheckedContinuation { (waiter: CheckedContinuation<Bool, Never>) in
+      let windDown = WindDown(waiter)
+      let pending = state.withLock { state -> Bool in
+        guard state.started, state.ending == nil else { return false }
+        state.windDowns.append(windDown)
+        return true
+      }
+      guard pending else { return windDown.resume(ended: true) }
+      // Unstructured: the waiting task is cancelled already, and a child of it
+      // would be too.
+      timer.withLock {
+        $0 = Task {
+          guard (try? await clock.sleep(for: scriptWindDown)) != nil else { return }
+          windDown.resume(ended: false)
+        }
+      }
+    }
+    timer.withLock { $0 }?.cancel()
+    if !ended {
+      Logger(label: "wuhu.run-script").error(
+        "script \(id) did not end within \(seconds(scriptWindDown)) s of its call's cancellation; the call returns without it",
+      )
     }
   }
 
@@ -175,13 +215,21 @@ final class ScriptExecution: Sendable {
   }
 
   private func kill(_ stop: ScriptStop) {
-    state.withLock { if $0.stop == nil { $0.stop = stop } }
+    state.withLock {
+      if $0.stop == nil { $0.stop = stop }
+      if $0.killRequested == nil { $0.killRequested = stop }
+    }
     control.yield(.kill(stop))
   }
 
   // MARK: The engine's side
 
   func run(space: Space) async {
+    let killed = state.withLock { state -> ScriptStop? in
+      state.started = true
+      return state.killRequested
+    }
+    if let killed { return finish(.killed(killed)) }
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await self.deliver(to: space) }
       group.addTask { await self.processes.run() }
@@ -322,7 +370,7 @@ final class ScriptExecution: Sendable {
   }
 
   private func finish(_ ending: ScriptEnding) {
-    state.withLock { state in
+    let windDowns = state.withLock { state -> [WindDown] in
       state.ending = ending
       let tail = state.console.rendered
       let stopped = state.stop == .requested
@@ -339,6 +387,12 @@ final class ScriptExecution: Sendable {
         waiter.finish()
       }
       state.endWaiters = []
+      let windDowns = state.windDowns
+      state.windDowns = []
+      return windDowns
+    }
+    for windDown in windDowns {
+      windDown.resume(ended: true)
     }
     post.finish()
   }
@@ -401,5 +455,24 @@ func notify(_ space: Space, _ session: SessionID, script: String, _ text: String
     _ = try await space.sessions.enqueue(session, input: .notification(notification))
   } catch {
     Logger(label: "wuhu.run-script").warning("script \(script) could not reach \(session.rawValue): \(error)")
+  }
+}
+
+// One wait for a script's end, answered by the end or by the time limit,
+// whichever comes first.
+private final class WindDown: Sendable {
+  private let waiter: Mutex<CheckedContinuation<Bool, Never>?>
+
+  init(_ waiter: CheckedContinuation<Bool, Never>) {
+    self.waiter = Mutex(waiter)
+  }
+
+  func resume(ended: Bool) {
+    let taken = waiter.withLock { waiter in
+      let taken = waiter
+      waiter = nil
+      return taken
+    }
+    taken?.resume(returning: ended)
   }
 }

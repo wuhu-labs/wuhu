@@ -13,10 +13,14 @@ public struct SessionService: Sendable {
   let archiveGrace: Duration
 
   public init(sessions: SessionStore, loopConfig: LoopConfig) async {
+    await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(sessions: sessions, id: $0) }
+  }
+
+  init(sessions: SessionStore, loopConfig: LoopConfig, makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
     self.sessions = sessions
     archiveGrace = loopConfig.archiveGrace
     registry = SessionRegistry(
-      makeRepo: { SessionRepo(sessions: sessions, id: $0) },
+      makeRepo: makeRepo,
       loopConfig: loopConfig,
       liveness: livenessTracker,
     )

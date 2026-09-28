@@ -49,6 +49,10 @@ func addMcpRoutes(
   recordsReceipts: Bool = false,
   scripts: Scripts?,
   control: SessionControl?,
+  // Wraps each tools/call: the loopback ties it to the activation making it.
+  runCall: @escaping @Sendable (
+    Request, SessionID, ToolCall, @escaping @Sendable () async throws -> ToolResultPayload,
+  ) async throws -> ToolResultPayload = { _, _, _, call in try await call() },
   refusal: @escaping @Sendable (Request, SessionID) async throws -> Response?,
 ) {
   let executor = sessionToolExecutor(
@@ -139,11 +143,10 @@ func addMcpRoutes(
       } catch {
         return sessionErrorResponse(error)
       }
-      let payload = try await executor.execute(
-        session: session,
-        call: call,
-        state: states.withLock { held(session, generation: generation, in: &$0) },
-      ).clamped()
+      let state = states.withLock { held(session, generation: generation, in: &$0) }
+      let payload = try await runCall(request, session, call) {
+        try await executor.execute(session: session, call: call, state: state)
+      }.clamped()
       // A Claude Code session's environment is folded from these: every
       // effect its tools had, keyed by the tool call id its log names.
       if recordsReceipts, !payload.isToolFailure {

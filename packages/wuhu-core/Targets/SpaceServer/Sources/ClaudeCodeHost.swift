@@ -114,87 +114,90 @@ final class ClaudeCodeHost: Sendable {
         defer { try? FileManager.default.removeItem(atPath: root) }
         let holder = ClaudeCodeTokens.Holder(session: launch.session, activation: launch.activation)
         let token = tokens.mint(holder)
-        defer { tokens.revoke(launch.activation) }
-        let plan = spec(resolvedPath(root), token).plan
-        do {
-          for (path, contents) in plan.files {
-            try Data(contents.utf8).write(to: URL(fileURLWithPath: path))
-          }
-          if !launch.log.entries.isEmpty {
-            try await launch.log.write(configDirectory: plan.configDirectory, workingFolder: plan.workingFolder)
-          }
-        } catch {
-          return "could not write its folder: \(error)"
-        }
-        var options = PlatformOptions()
-        options.processGroupID = 0
-        options.teardownSequence = [.send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
-        do {
-          let result = try await Subprocess.run(
-            .path(FilePath(plan.executable)),
-            arguments: Arguments(plan.arguments),
-            environment: .custom(Dictionary(uniqueKeysWithValues: plan.environment.map {
-              (Environment.Key(stringLiteral: $0.key), $0.value)
-            })),
-            workingDirectory: FilePath(plan.workingFolder),
-            platformOptions: options,
-            input: .inputWriter,
-            output: .sequence,
-            error: .sequence,
-          ) { execution in
-            let kill = { @Sendable in _ = try? execution.send(signal: .kill, toProcessGroup: true) }
-            if killer.withLock({ state in
-              defer { state = .running(kill) }
-              return state.killed
-            }) { kill() }
-            await withTaskGroup(of: Void.self) { group in
-              group.addTask {
-                do {
-                  for await bytes in outbound {
-                    _ = try await execution.standardInputWriter.write(bytes)
-                  }
-                  try await execution.standardInputWriter.finish()
-                } catch {
-                  kill()
-                }
-              }
-              await withTaskGroup(of: Void.self) { pumps in
-                pumps.addTask {
-                  var reader = ClaudeStreamReader()
-                  do {
-                    for try await buffer in execution.standardOutput {
-                      for frame in reader.read(buffer.withUnsafeBytes { Array($0) }) {
-                        if case let .rateLimit(limit) = frame {
-                          usage.record(model.provider, plan: nil, windows: claudeUsage(limit), at: date.now)
-                        }
-                        frameSink.yield(frame)
-                      }
-                    }
-                  } catch {}
-                  if let last = reader.finish() { frameSink.yield(last) }
-                  frameSink.finish()
-                }
-                pumps.addTask {
-                  do {
-                    for try await buffer in execution.standardError {
-                      let text = String(decoding: buffer.withUnsafeBytes { Array($0) }, as: UTF8.self)
-                      log.notice("claude code stderr", metadata: ["session": "\(launch.session.rawValue)", "text": "\(text)"])
-                    }
-                  } catch {}
-                }
-              }
-              group.cancelAll()
+        let ending = await { () async -> String in
+          let plan = spec(resolvedPath(root), token).plan
+          do {
+            for (path, contents) in plan.files {
+              try Data(contents.utf8).write(to: URL(fileURLWithPath: path))
             }
+            if !launch.log.entries.isEmpty {
+              try await launch.log.write(configDirectory: plan.configDirectory, workingFolder: plan.workingFolder)
+            }
+          } catch {
+            return "could not write its folder: \(error)"
           }
-          killer.withLock { $0 = .ended }
-          return switch result.terminationStatus {
-          case let .exited(code): "exit status \(code)"
-          case let .signaled(signal): "signal \(signal)"
+          var options = PlatformOptions()
+          options.processGroupID = 0
+          options.teardownSequence = [.send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
+          do {
+            let result = try await Subprocess.run(
+              .path(FilePath(plan.executable)),
+              arguments: Arguments(plan.arguments),
+              environment: .custom(Dictionary(uniqueKeysWithValues: plan.environment.map {
+                (Environment.Key(stringLiteral: $0.key), $0.value)
+              })),
+              workingDirectory: FilePath(plan.workingFolder),
+              platformOptions: options,
+              input: .inputWriter,
+              output: .sequence,
+              error: .sequence,
+            ) { execution in
+              let kill = { @Sendable in _ = try? execution.send(signal: .kill, toProcessGroup: true) }
+              if killer.withLock({ state in
+                defer { state = .running(kill) }
+                return state.killed
+              }) { kill() }
+              await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                  do {
+                    for await bytes in outbound {
+                      _ = try await execution.standardInputWriter.write(bytes)
+                    }
+                    try await execution.standardInputWriter.finish()
+                  } catch {
+                    kill()
+                  }
+                }
+                await withTaskGroup(of: Void.self) { pumps in
+                  pumps.addTask {
+                    var reader = ClaudeStreamReader()
+                    do {
+                      for try await buffer in execution.standardOutput {
+                        for frame in reader.read(buffer.withUnsafeBytes { Array($0) }) {
+                          if case let .rateLimit(limit) = frame {
+                            usage.record(model.provider, plan: nil, windows: claudeUsage(limit), at: date.now)
+                          }
+                          frameSink.yield(frame)
+                        }
+                      }
+                    } catch {}
+                    if let last = reader.finish() { frameSink.yield(last) }
+                    frameSink.finish()
+                  }
+                  pumps.addTask {
+                    do {
+                      for try await buffer in execution.standardError {
+                        let text = String(decoding: buffer.withUnsafeBytes { Array($0) }, as: UTF8.self)
+                        log.notice("claude code stderr", metadata: ["session": "\(launch.session.rawValue)", "text": "\(text)"])
+                      }
+                    } catch {}
+                  }
+                }
+                group.cancelAll()
+              }
+            }
+            killer.withLock { $0 = .ended }
+            return switch result.terminationStatus {
+            case let .exited(code): "exit status \(code)"
+            case let .signaled(signal): "signal \(signal)"
+            }
+          } catch {
+            killer.withLock { $0 = .ended }
+            return "could not start: \(error)"
           }
-        } catch {
-          killer.withLock { $0 = .ended }
-          return "could not start: \(error)"
-        }
+        }()
+        await tokens.end(launch.activation)
+        return ending
       },
       frames: frames,
       write: { bytes in

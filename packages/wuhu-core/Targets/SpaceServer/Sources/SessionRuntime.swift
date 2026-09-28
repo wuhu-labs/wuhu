@@ -168,12 +168,9 @@ extension SessionRuntime {
       },
       budget: budget,
       killInterruptedTool: { invocation in
-        guard invocation.call.name == "exec" else { return }
-        let caller = invocation.sessionID.rawValue
-        guard let record = try? await space.execRecord(caller: caller, toolCallID: ToolCallID(invocation.call.id)),
-              record.terminal == nil
-        else { return }
-        try? await hub.kill(record.id)
+        await killAbandonedExec(
+          space: space, hub: hub, session: invocation.sessionID, call: invocation.call.name, id: ToolCallID(invocation.call.id),
+        )
       },
       claudeCode: claudeCode,
       thresholds: thresholds,
@@ -192,6 +189,16 @@ extension SessionRuntime {
       scripts: scripts,
     )
   }
+}
+
+// A cancelled exec call leaves its process running on purpose (a crash retry
+// rejoins it); one cut off by an interrupt, or by the end of the Claude Code
+// process that made it, is never retried, so its process is killed.
+func killAbandonedExec(space: Space, hub: MachineHub, session: SessionID, call name: String, id: ToolCallID) async {
+  guard name == "exec" else { return }
+  guard let record = try? await space.execRecord(caller: session.rawValue, toolCallID: id), record.terminal == nil
+  else { return }
+  try? await hub.kill(record.id)
 }
 
 func sessionToolExecutor(
