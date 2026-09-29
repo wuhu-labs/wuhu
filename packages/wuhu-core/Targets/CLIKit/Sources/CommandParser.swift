@@ -271,6 +271,9 @@ extension Command {
       if groupCert != nil, origin == nil {
         throw UsageError(message: "serve: --group-certificate needs --origin, whose host names the group hosts")
       }
+      if groupCert != nil, cert == nil {
+        throw UsageError(message: "serve: --group-certificate needs --cert/--key: invites pin the generated certificate, which must serve every host")
+      }
       let folder = try parser.required("folder", verb: verb)
       try parser.finish(verb: verb)
       return .serve(ServeCommand(
@@ -873,14 +876,16 @@ extension Command {
     usage: wuhu login < invite-link
 
     enrolls this device at the space behind a one-time invite link
-    (https://host:port/_/enroll#token=jt_...&space=spc_...&fp=sha256:...). the
+    (https://host:port/_/enroll#token=jt_...&space=spc_...[&fp=sha256:...]). the
     link is read from stdin (one trailing line ending is stripped), never from
     arguments: its token enrolls whatever key the holder presents, and argv
     leaks via ps. generates the per-space ed25519 device key into
     ~/.wuhu/keys/<space-id>.key when this device has none yet (keys are never
     reused across spaces and never leave this machine), records the delivered
-    certificate fingerprint into the user trust store when present, and
-    presents the public key. the link dies at enrollment; a second use fails.
+    certificate fingerprint into the user trust store when present (a link
+    without one drops this host's pin once the server passes system trust, and
+    enrolls through the pin when it does not), and presents the public key. the link dies at enrollment; a second use
+    fails.
     \(exitCodes)
     """,
     "share-login": """
@@ -1076,10 +1081,14 @@ extension Command {
 
     runs the space server. Always serves TLS: without --cert/--key a
     self-signed certificate is generated into <folder>/tls and reused.
+    Invites, share-login links and machine join tokens carry that
+    generated certificate's fingerprint for clients to pin; with
+    --cert/--key (self-signed or not) they carry none, and clients check
+    the certificate against their system trust store.
     A group is served at <group>.<host> of each origin; with
     --group-certificate/--group-private-key (a *.<host> leaf, needs
-    --origin) both listeners present it to those names by SNI, and the
-    --cert leaf to every other name. serve refuses to start with a group
+    --origin and --cert/--key) both listeners present it to those names by
+    SNI, and the --cert leaf to every other name. serve refuses to start with a group
     pair no handshake can use: a key on no named curve (P-256, P-384,
     P-521; RSA and Ed25519 also work, though macOS's system curl, built
     on LibreSSL, fails an Ed25519 handshake) or one that isn't the leaf's.
@@ -1092,8 +1101,9 @@ extension Command {
     /v1/server discovery; share-login and machine join links
     are minted against it instead of the minting wallet's own address.
     serve uses this value and persists it to the database at boot (NULL when
-    absent), alongside the TLS fingerprint, for offline verbs like
-    wuhu user invite; argv stays authoritative at runtime.
+    absent), alongside the TLS fingerprint and whether it is the generated
+    certificate, for offline verbs like wuhu user invite; argv stays
+    authoritative at runtime.
     --web-origin advertises an explicit https:// web-content origin through
     /v1/server discovery; without it clients derive same host + web port.
     Auth walls are on by default: API calls need an enrolled device and
@@ -1125,8 +1135,8 @@ extension Command {
     usage: wuhu machine add [--name N]
 
     mints a machine in the pinned space and prints its id, one-time join
-    token, and the server certificate fingerprint. the token is shown once
-    and dies at first use.
+    token, and, when the server runs its generated certificate, that
+    certificate's fingerprint. the token is shown once and dies at first use.
     \(exitCodes)
     """,
     "machine join": """
@@ -1138,8 +1148,10 @@ extension Command {
     and persists the key and agent config under ~/.wuhu/machine. the token is
     read from stdin (one trailing line ending is stripped), never from
     arguments: argv leaks via ps. a fingerprint (printed by machine add) is
-    recorded into the user trust store before the first dial; without one the
-    server certificate must pass system trust.
+    recorded into the user trust store before the first dial. without one, a
+    server that passes system trust drops any pin an earlier join recorded for
+    the host; one that does not is reached through that pin, which stays, and
+    with no pin the join fails.
     start the agent with: wuhu machine run
     \(exitCodes)
     """,
@@ -1283,16 +1295,18 @@ extension Command {
 
     mints a one-time device join token for the account directly in
     <folder>/space.sqlite (run with the server stopped) and prints the
-    complete invite link (https://host:port/_/enroll#token=...&space=...&fp=...)
+    complete invite link (https://host:port/_/enroll#token=...&space=...[&fp=...])
     for wuhu login or the browser. this is the device-zero bootstrap: it
     needs no enrolled device and no --dev window.
 
-    the server address and certificate fingerprint come from the deployment
-    record the server persists at boot; --server overrides the recorded
-    address, but the recorded fingerprint stays attached — the override
-    must reach the same TLS leaf. without either, the verb fails: pass
-    --server, or boot the server once with --origin. the token expires
-    after --ttl seconds (default 3600).
+    the server address comes from the deployment record the server persists
+    at boot, and so does the fp: present only when that boot ran the
+    generated certificate, absent under --cert/--key or when the record
+    predates this distinction (boot the server once to fix that).
+    --server overrides the recorded address, but a recorded fp stays
+    attached — the override must reach the same TLS leaf. without either
+    address, the verb fails: pass --server, or boot the server once with
+    --origin. the token expires after --ttl seconds (default 3600).
     \(exitCodes)
     """,
     "key": """

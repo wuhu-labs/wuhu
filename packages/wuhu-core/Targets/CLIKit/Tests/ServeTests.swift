@@ -75,6 +75,10 @@ struct ServeParsingTests {
     ["serve", "--origin", "https://api.wuhu.example", "--group-certificate", "/tls/groups.pem", "store"],
     ["serve", "--origin", "https://api.wuhu.example", "--group-private-key", "/tls/groups.key", "store"],
     ["serve", "--group-certificate", "/tls/groups.pem", "--group-private-key", "/tls/groups.key", "store"],
+    [
+      "serve", "--origin", "https://api.wuhu.example",
+      "--group-certificate", "/tls/groups.pem", "--group-private-key", "/tls/groups.key", "store",
+    ],
   ])
   func usageErrors(_ arguments: [String]) {
     #expect(throws: UsageError.self) {

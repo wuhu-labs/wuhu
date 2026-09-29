@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS "space_deployment" (
   "origin" TEXT,
   "tls_fingerprint" TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS "space_deployment_certificate" (
+  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
+  "tls_fingerprint" TEXT NOT NULL,
+  "generated" INTEGER NOT NULL
+);
 """
 
 public struct SpaceIdentity: Hashable, Sendable {
@@ -71,12 +76,28 @@ enum SpaceMeta {
 }
 
 public struct DeploymentRecord: Hashable, Sendable {
+  public enum Certificate: Hashable, Sendable {
+    /// The one serve generated into `<folder>/tls`.
+    case generated
+    /// `--cert`/`--key`, self-signed or not.
+    case provided
+  }
+
   public let origin: String?
   public let tlsFingerprint: String
+  /// nil on a record written by a server that did not tell the two apart.
+  public let certificate: Certificate?
 
-  public init(origin: String?, tlsFingerprint: String) {
+  public init(origin: String?, tlsFingerprint: String, certificate: Certificate?) {
     self.origin = origin
     self.tlsFingerprint = tlsFingerprint
+    self.certificate = certificate
+  }
+
+  /// The fingerprint an invite hands out for clients to pin. Only the generated certificate is pinned; any other,
+  /// and one this record cannot prove was generated, is left to the client's system trust.
+  public var pin: String? {
+    certificate == .generated ? tlsFingerprint : nil
   }
 }
 
@@ -85,21 +106,42 @@ extension Space {
   // --origin, NULL when absent — the record never lies); offline verbs read
   // it; live clients read GET /v1/server; nobody else writes. argv stays
   // authoritative at runtime.
+  //
+  // The certificate kind lives in its own row, keyed by the fingerprint it
+  // describes: a server that predates it rewrites space_deployment alone, and
+  // the stale row then no longer matches, so the record reads as unknown.
   public func recordDeployment(_ record: DeploymentRecord) async throws {
     try await writer.write { db in
       try db.execute(
         sql: "INSERT OR REPLACE INTO space_deployment (id, origin, tls_fingerprint) VALUES (1, ?, ?)",
         arguments: [record.origin, record.tlsFingerprint],
       )
+      if let certificate = record.certificate {
+        try db.execute(
+          sql: "INSERT OR REPLACE INTO space_deployment_certificate (id, tls_fingerprint, generated) VALUES (1, ?, ?)",
+          arguments: [record.tlsFingerprint, certificate == .generated],
+        )
+      } else {
+        try db.execute(sql: "DELETE FROM space_deployment_certificate")
+      }
     }
   }
 
   public func deployment() async throws -> DeploymentRecord? {
     try await writer.read { db in
-      guard let row = try Row.fetchOne(db, sql: "SELECT origin, tls_fingerprint FROM space_deployment WHERE id = 1") else {
+      guard let row = try Row.fetchOne(db, sql: """
+      SELECT d.origin, d.tls_fingerprint, c.generated FROM space_deployment d
+      LEFT JOIN space_deployment_certificate c ON c.tls_fingerprint = d.tls_fingerprint
+      WHERE d.id = 1
+      """) else {
         return nil
       }
-      return DeploymentRecord(origin: row["origin"], tlsFingerprint: row["tls_fingerprint"])
+      let generated: Bool? = row["generated"]
+      return DeploymentRecord(
+        origin: row["origin"],
+        tlsFingerprint: row["tls_fingerprint"],
+        certificate: generated.map { $0 ? .generated : .provided },
+      )
     }
   }
 

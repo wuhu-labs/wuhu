@@ -59,13 +59,20 @@ public enum UserRecovery {
       origin: server,
       token: minted.token.rawValue,
       space: identity.rawValue,
-      fingerprint: deployment?.tlsFingerprint,
+      fingerprint: deployment?.pin,
     )
+    let unproven = deployment.map { $0.certificate == nil } ?? false
     return (
       "\(link)\n",
-      "one-time link; it dies at first use or in \(Int(lifetime)) seconds\n",
+      (unproven ? unprovenCertificateNote : "") + "one-time link; it dies at first use or in \(Int(lifetime)) seconds\n",
     )
   }
+
+  static let unprovenCertificateNote = """
+  the deployment record predates certificate tracking, so this link carries no certificate fingerprint; \
+  boot the server once to record it
+
+  """
 
   private static func open(folder: URL) throws -> Space {
     var isDirectory: ObjCBool = false

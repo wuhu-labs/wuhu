@@ -251,11 +251,12 @@ private func routedWebResponse(
   guard (try? SpacePath(validating: path)) != nil else { return plainStatus(.notFound) }
   let trailingSlash = rawPath.count > 1 && rawPath.hasSuffix("/")
   let attachment = attachmentConversation(path) != nil
+  let download = queryValues(of: request.url)["download"] == "1"
   var response = await contentResponse(
     space: space,
     group: caller.group,
     files: try await attachmentHome(path, host: caller.group, viewer: viewer, space: space),
-    shell: attachment ? nil : shell,
+    shell: attachment || download ? nil : shell,
     path: path,
     trailingSlash: trailingSlash,
     headOnly: headOnly,
@@ -264,8 +265,28 @@ private func routedWebResponse(
     ifRange: request.headers[.ifRange],
   ).viewed(by: viewer)
   if attachment { response.headers[contentSecurityPolicy] = attachmentSandbox }
+  if download, let name = segments.last {
+    response.headers[contentDisposition] = "attachment; filename*=UTF-8''" + extValue(name)
+  }
   return response
 }
+
+private let contentDisposition = HTTPField.Name("Content-Disposition")!
+
+/// RFC 8187 `ext-value` bytes: attr-char stays, every other UTF-8 byte is `%XX`.
+private func extValue(_ name: String) -> String {
+  var encoded = ""
+  for byte in name.utf8 {
+    if attrChars.contains(byte) {
+      encoded.unicodeScalars.append(Unicode.Scalar(byte))
+    } else {
+      encoded += (byte < 0x10 ? "%0" : "%") + String(byte, radix: 16, uppercase: true)
+    }
+  }
+  return encoded
+}
+
+private let attrChars = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&+-.^_`|~".utf8)
 
 private let systemFolders: Set<String> = ["sessions", "machines", "conversations"]
 private let pageWriteRoutes: Set<String> = ["/_/space/rows", "/_/space/attributes"]

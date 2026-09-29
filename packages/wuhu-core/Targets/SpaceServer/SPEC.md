@@ -65,6 +65,10 @@ attachments live in its group and a member reads them from any group.
     `wuhu://<group>.localspace` a reader outside the conversation's group is
     handed, so every member opens what was posted without a cookie for the
     conversation's group host.
+  - `?download=1` on a file answers its raw bytes (no import map or shell
+    injection) with `Content-Disposition: attachment; filename*=UTF-8''<name>`,
+    the file name percent-encoded per RFC 8187: the SPA's file card links
+    there, since a cross-origin `download` attribute is ignored.
   - Every file under `/_/conversations/<id>/attachments/`, whichever group
     homes it and whoever posted it, is message content, never a page of the
     host: it is served with `Content-Security-Policy: sandbox allow-scripts`
@@ -99,12 +103,14 @@ attachments live in its group and a member reads them from any group.
   - HTML on a group host carries `<meta name="wuhu-group" content="<group>">`
     ahead of the shell script.
   - TLS: `--group-certificate`/`--group-private-key` (a `*.<host>` leaf, needs
-    `--origin`; checked at boot, and a pair no handshake can use — a key off
+    `--origin` and `--cert`/`--key`, else `GroupTLSError.noOrigin` /
+    `.noCertificate`: the generated certificate is pinned, so it serves every
+    host; checked at boot, and a pair no handshake can use — a key off
     the named curves, e.g. EC with explicit curve parameters, or a key that
     isn't the leaf's — stops the start with `GroupTLSError.unusable`, naming
     the file and why) is served by SNI to names exactly one label under each
     listener's host. Every other name, and a handshake without SNI, gets the
-    `--cert` leaf, whose fingerprint is the one recorded and pinned. A
+    `--cert` leaf. A
     listener answers 421 to its sibling listener's host and group hosts, never
     its own; the sibling's host is 421 even when it is one label under this
     listener's host (`--origin https://api.example --web-origin
@@ -258,6 +264,10 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   `links` stays same-group only (source and destination both in the acting
   group, as before groups); naming the group (`"wuhu://<g>.localspace/links"`)
   also shows that group's links into other groups, with their `dst_grp`.
+
+## Certificate pinning
+
+What the server hands out for a client to enroll with — `EnrollMintOutput`, `ShareLoginOutput`, `MachineAddOutput` and `MachineRotateOutput` — carries a `fingerprint` only when `serve` runs the certificate it generated into `<folder>/tls`. With `--cert`/`--key`, self-signed or not, it is absent everywhere and clients check the certificate against their system trust store. `serve` records the certificate's fingerprint and which kind it is in the deployment record, so the offline `wuhu user invite` follows the same rule; a record written by a server from before the kind was recorded reads as unknown and yields no `fp` until the next boot rewrites it. Re-enrolling replaces a client's pin: a CLI `login` or `machine join` with an `fp` records it over the old one, and one without drops the host's pin once the server passes system trust, which is how a client pinned under the old rule moves to system trust. When system trust rejects the server, an existing pin carries the enrollment and stays.
 
 ## Endpoints
 

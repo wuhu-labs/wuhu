@@ -306,6 +306,20 @@ import Testing
     #expect(reserved.status == .notFound)
   }
 
+  @Test func aDownloadQueryAnswersTheRawBytesAsAnAttachment() async throws {
+    let harness = try Harness()
+    _ = try await harness.direct("write", .object(["path": "/out/café build.html", "content": "<main>x</main>"]))
+
+    let download = try await harness.get(harness.web, "/out/café build.html", query: ["download": "1"])
+    #expect(download.status == .ok)
+    #expect(download.headers[HTTPField.Name("Content-Disposition")!] == "attachment; filename*=UTF-8''caf%C3%A9%20build.html")
+    #expect(try await download.text() == "<main>x</main>")
+
+    let page = try await harness.get(harness.web, "/out/café build.html")
+    #expect(page.headers[HTTPField.Name("Content-Disposition")!] == nil)
+    #expect(try await page.text() == importMap + "<main>x</main>" + injection)
+  }
+
   @Test func machineNotesServeUnderTheNameAndTheId() async throws {
     let harness = try Harness()
     let id = try await harness.space.addMachine(name: "studio").id.rawValue

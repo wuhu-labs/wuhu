@@ -275,27 +275,30 @@ public enum SpaceServer {
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    let identity = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
     // Group hosts `<g>.<host>` get the group identity (a `*.<host>` leaf); the
-    // bare host and every other name keep `identity`, so existing pins hold.
+    // bare host and every other name keep `identity`.
     let groupIdentity: TLSIdentity?
     switch (groupCertificate, groupPrivateKey) {
     case (nil, nil):
       groupIdentity = nil
-    case let (certificate?, privateKey?):
+    case let (groupPEM?, groupKey?):
       guard origin != nil else { throw GroupTLSError.noOrigin }
-      let loaded = try pemIdentity(certificate: certificate, privateKey: privateKey)
+      // Invites pin the generated certificate, so it must be the one every
+      // host serves.
+      guard certificate != nil, privateKey != nil else { throw GroupTLSError.noCertificate }
+      let loaded = try pemIdentity(certificate: groupPEM, privateKey: groupKey)
       // The TLS stack takes some identities it can't handshake with, and every
       // group host would then fail with alert 80: refuse to start instead.
       do {
         try loaded.validate()
       } catch {
-        throw GroupTLSError.unusable(certificate: certificate.path, reason: "\(error)")
+        throw GroupTLSError.unusable(certificate: groupPEM.path, reason: "\(error)")
       }
       groupIdentity = loaded
     default:
       throw GroupTLSError.unpaired
     }
+    let (identity, certificateKind) = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
     func groupHosts(_ origin: String?) -> [String: TLSIdentity] {
       guard let groupIdentity, let host = spaceHost(of: origin) else { return [:] }
       return [host: groupIdentity]
@@ -325,7 +328,8 @@ public enum SpaceServer {
     }
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
     try await space.reindexLinks()
-    try await space.recordDeployment(DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint))
+    let deployment = DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint, certificate: certificateKind)
+    try await space.recordDeployment(deployment)
     if let devImport {
       try await space.importFolder(devImport)
     }
@@ -381,7 +385,7 @@ public enum SpaceServer {
         origin: advertisedOrigin,
         webPort: webPort,
         webOrigin: webOrigin?.absoluteString,
-        fingerprint: fingerprint,
+        fingerprint: deployment.pin,
         dev: dev,
         version: version,
         webApp: webApp,
@@ -516,14 +520,17 @@ private func normalizedOrigin(_ origin: URL) -> String {
   return raw.hasSuffix("/") ? String(raw.dropLast()) : raw
 }
 
-private func tlsIdentity(folder: URL, certificate: URL?, privateKey: URL?) async throws -> TLSIdentity {
+private func tlsIdentity(
+  folder: URL, certificate: URL?, privateKey: URL?,
+) async throws -> (TLSIdentity, DeploymentRecord.Certificate) {
   if let certificate, let privateKey {
-    return try pemIdentity(certificate: certificate, privateKey: privateKey)
+    return (try pemIdentity(certificate: certificate, privateKey: privateKey), .provided)
   }
-  return try await TLSIdentity.loadOrCreate(
+  let generated = try await TLSIdentity.loadOrCreate(
     directory: folder.appendingPathComponent("tls"),
     hosts: ["localhost", "127.0.0.1", "::1"],
   )
+  return (generated, .generated)
 }
 
 private func pemIdentity(certificate: URL, privateKey: URL) throws -> TLSIdentity {
@@ -536,12 +543,15 @@ private func pemIdentity(certificate: URL, privateKey: URL) throws -> TLSIdentit
 public enum GroupTLSError: Error, Equatable, CustomStringConvertible {
   case unpaired
   case noOrigin
+  case noCertificate
   case unusable(certificate: String, reason: String)
 
   public var description: String {
     switch self {
     case .unpaired: "a group certificate and its private key go together"
     case .noOrigin: "a group certificate needs --origin: group hosts are named under its host"
+    case .noCertificate:
+      "a group certificate needs --cert/--key: invites pin the generated certificate, which must serve every host"
     case let .unusable(certificate, reason): "the group certificate \(certificate) can't serve TLS: \(reason)"
     }
   }

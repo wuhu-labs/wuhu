@@ -38,11 +38,11 @@ session*.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v1/machine` | Add: optional name → id + one-time join token (shown once; the box consumes it at `POST /v1/enroll/consume`). A person's machine joins their personal group, created on first need; the `--dev` seat's joins `shared`. The name is lowercased and must match `[a-z0-9][a-z0-9.-]{0,62}` (`400 invalidMachineName`); it is unique per space, compared case-insensitively (`409 machineNameTaken`). |
+| `POST /v1/machine` | Add: optional name → id + one-time join token + `fingerprint?` (see [Enrollment](#enrollment)) (token shown once; the box consumes it at `POST /v1/enroll/consume`). A person's machine joins their personal group, created on first need; the `--dev` seat's joins `shared`. The name is lowercased and must match `[a-z0-9][a-z0-9.-]{0,62}` (`400 invalidMachineName`); it is unique per space, compared case-insensitively (`409 machineNameTaken`). |
 | `GET /v1/machine` | List with attachment state; `name` is `null` on an unnamed machine. Only machines in a group the acting group reads. |
 | `PUT /v1/machine/:id/name` | Rename: `{name}` → `MachineStatus`. Same grammar and uniqueness rules as add. |
 | `PUT /v1/machine/:id/group` | Move the machine to another group: `{group}` (`MachineMoveInput`) → `MachineStatus`. Needs an admin of both groups (`403 adminRequired`); an unknown target is `404 unknownGroup`. Its notes under `/_/machines/<name>/` move into the new group's tree in the same revision; a note already at the same path there gives way to the moved one. |
-| `POST /v1/machine/:id/rotate` | Kick the machine's enrolled key (dropping any live connection) and mint a fresh join token. Needs a human admin of the machine's group. |
+| `POST /v1/machine/:id/rotate` | Kick the machine's enrolled key (dropping any live connection) and mint a fresh join token, with `fingerprint?` as for add. Needs a human admin of the machine's group. |
 | `POST /v1/machine/:id/revoke` | Kick the key and drop any live connection; rotate re-enables. Needs a human admin of the machine's group. |
 | `GET /v1/machine/challenge` | Mint a one-shot connect challenge: burned at first take, short-lived. Open in non-dev mode. |
 | `GET /v1/machine/connect` (WS) | The machine agent's dial-in; pubkey + challenge + signature headers, verified against the live key row before upgrade. Open in non-dev mode. |
@@ -84,13 +84,15 @@ Handles are display only. They never authenticate anything, never appear in an a
 
 ## Enrollment
 
+`fingerprint` in the mint, share-login, machine add and machine rotate responses is the `sha256:<hex>` of the server's certificate for clients to pin, present only when the server runs the certificate it generated into `<folder>/tls`. Under `--cert`/`--key`, self-signed or not, it is absent and clients use their system trust store.
+
 | Route | Purpose |
 | --- | --- |
 | `POST /v1/enroll` | Mint a join token: `{account, capabilities, ttlSeconds?}` (default 3600) → `{token, expiresAt, space, fingerprint?}` (token shown once, stored only as a verifier). Capabilities: `device`, `seat`, `exec-machine`, `space`. Self-or-admin: any account mints for itself; minting for another account needs an admin bearer (the `--dev` seat acts as admin). |
 | `POST /v1/enroll/revoke` | Kill an unconsumed join token: `{token}` → `{}`; `404 notFound` when no live invite carries that token. Self-or-admin on the token's account, gated inside the claiming transaction so a refused revoke leaves the invite alive. |
 | `POST /v1/enroll/consume` | Enroll a key: `{token, pubkey, name?}` → `{account, capabilities, machine?, machineName?}` (the machine fields name the machine when the token's account is one). A joining box passes its hostname as `name`; the server claims it for an **unnamed** machine only, suffixing `-2`, `-3`, … until free, and reports the result in `machineName`. A machine that already carries a name keeps it and `machineName` reports the kept one — a join never renames, that is `PUT /v1/machine/:id/name` alone. The pubkey must be a parseable key label (`ed25519:<base64 raw key>` or `p256:<base64 x963 key>`); a malformed one is a 400 and leaves the token alive. One transaction claims the token and inserts the key, so a token consumes exactly once and dies at enrollment. Open in non-dev mode. |
 | `GET /v1/enroll/share-login/challenge` | Mint a one-shot share-login challenge: burned at first take, short-lived. Open in non-dev mode. |
-| `POST /v1/enroll/share-login` | Any enrolled key mints a one-time device link for its own account: `{pubkey, challenge, signature, ttlSeconds?}` → `{token, expiresAt, space, fingerprint}` (`device` capability). `ttlSeconds` runs 1…259200 (three days) and defaults to 600; outside that it is `400`. A bad handshake is `401 keyInvalid`. The signature — a raw signature over `wuhu-share-login:<challenge>` by the named key, under the algorithm its label tags (`ed25519:` or `p256:`), verified against the live key row — authenticates the minter; the pubkey is only an index. Open in non-dev mode. |
+| `POST /v1/enroll/share-login` | Any enrolled key mints a one-time device link for its own account: `{pubkey, challenge, signature, ttlSeconds?}` → `{token, expiresAt, space, fingerprint?}` (`device` capability). `ttlSeconds` runs 1…259200 (three days) and defaults to 600; outside that it is `400`. A bad handshake is `401 keyInvalid`. The signature — a raw signature over `wuhu-share-login:<challenge>` by the named key, under the algorithm its label tags (`ed25519:` or `p256:`), verified against the live key row — authenticates the minter; the pubkey is only an index. Open in non-dev mode. |
 | `POST /v1/persona` | Draw a messaging persona (allocator word-name) recorded against the verified bearer's key and account: no body → `{persona}`. Requires a verified assertion even in `--dev`; each call draws afresh (one per wallet × space is the CLI's caching policy, not the server's). |
 
 ## Accounts and keys

@@ -84,7 +84,10 @@ the OS trust store by default; for a self-signed server, `wuhu use <host:port>
 --pin` records the fingerprint explicitly into the user-level
 `~/.wuhu/trust.json`, and `machine join` pre-records the fingerprint printed
 by `machine add` (see [wuhu-cli.md](wuhu-cli.md)); browsers get a one-time
-interstitial.
+interstitial. Invites, share-login links and machine join tokens carry the
+fingerprint only for this generated certificate: with `--cert`/`--key`
+(self-signed or not) they carry none, and every client must trust the
+certificate through its system trust store.
 
 The server keeps one VAPID private key at `<space>/web-push/vapid.json`
 (directory mode `0700`, file mode `0600`). Keep that server-owned secret with
@@ -98,7 +101,8 @@ a specific interface address).
 The serious install shape is port 443 with **two hostnames** — one for the
 API/SPA origin and one for the web-content origin — and a real certificate
 via `--cert <pem> --key <pem>` covering both, bound with `--host 0.0.0.0` (or
-the interface that faces your clients). Advertise the API/SPA
+the interface that faces your clients). Such a server hands out no
+fingerprint, so a certificate renewal never locks devices out. Advertise the API/SPA
 hostname with `--origin https://space.example.com` so share-login and
 invite links carry the public name instead of whatever address the
 minting wallet happens to use, and the web-content
@@ -132,14 +136,15 @@ The first device of a space is enrolled offline, from the space folder itself
 
 ```bash
 wuhu serve ~/my-space --host 0.0.0.0 --origin https://space.example.com:5540
-# ctrl-c once it is up: the first boot records the origin and TLS fingerprint
+# ctrl-c once it is up: the first boot records the origin and TLS certificate
 wuhu user add --space ~/my-space --name me          # prints the account id; the first account is admin
 wuhu user invite --space ~/my-space <account-id> > invite.txt
 wuhu serve ~/my-space --host 0.0.0.0 --origin https://space.example.com:5540
 ```
 
 The invite link (`https://<origin>/_/enroll#token=jt_…&space=spc_…&fp=sha256:…`)
-carries the certificate fingerprint recorded at boot and expires after an hour
+carries the fingerprint of the generated certificate recorded at boot (none
+under `--cert`/`--key`) and expires after an hour
 (`--ttl <seconds>`). Without `--origin`, pass `--server https://<host>:<port>` to
 `user invite`. On the device, enroll and pin:
 
@@ -148,7 +153,8 @@ wuhu login < invite.txt
 wuhu use space.example.com:5540
 ```
 
-`wuhu login` records the fingerprint as a pin, generates this device's key for
+`wuhu login` records a delivered fingerprint as a pin (a link without one
+drops a pin left by an earlier enrollment once the server passes system trust), generates this device's key for
 the space and enrolls it; the link dies at first use. The browser takes the
 same link. From an enrolled device, `wuhu share-login` mints a one-time link
 (and a terminal QR code) for another device of your account. `user add` and

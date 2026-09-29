@@ -135,15 +135,26 @@ extension Executor {
   func establishDeliveredTrust(server: String, fingerprint: String?, verb: String, refingerprintHint: String) async throws {
     let endpoint = try self.endpoint(space: server)
     guard let fingerprint else {
-      guard endpoint.secure, try self.trust.pin(forHost: endpoint.key) == nil else { return }
+      guard endpoint.secure else { return }
+      // A server on --cert/--key hands out no fingerprint, so once system trust
+      // accepts it, a pin from an earlier enrollment is stale. Links without
+      // one also come from a server on its generated certificate (web
+      // share-login, an old deployment record); system trust rejects that
+      // one, and an existing pin then carries the enrollment as it did before.
+      let pinned = try self.trust.pin(forHost: endpoint.key)
       @Dependency(ServerTrustProbe.self) var probe
       do {
         try await probe.validateSystem(endpoint.host, endpoint.port)
       } catch {
+        guard pinned == nil else { return }
         throw CLIError(message: """
         \(endpoint.key) presented a certificate this system does not trust: \(error)
         \(refingerprintHint)
         """)
+      }
+      if pinned != nil {
+        try self.trust.removePin(forHost: endpoint.key)
+        await self.runner.stderr("forgot the certificate pin for \(endpoint.key); system trust applies\n")
       }
       return
     }

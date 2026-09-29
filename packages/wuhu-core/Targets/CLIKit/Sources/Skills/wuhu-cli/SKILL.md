@@ -204,7 +204,10 @@ wuhu serve <folder> [--host <address>] [--port N] [--web-port N] [--origin <url>
 Both listeners bind `--host` (default `127.0.0.1`, loopback only); pass
 `--host 0.0.0.0` to expose the server on the LAN.
 API origin on `:N` (default 5540), raw space content on `:N+1` — both always
-TLS (self-signed into `<folder>/tls` unless `--cert`/`--key`); `--origin`
+TLS (self-signed into `<folder>/tls` unless `--cert`/`--key`; only that
+generated certificate's fingerprint rides invites, share-login links and
+machine join tokens, and a `--cert` server, self-signed or not, must pass
+its clients' system trust); `--origin`
 advertises the server's canonical API origin through `GET /v1/server`, so
 share-login and machine join links carry it instead of the
 minting wallet's own address; `--web-origin` advertises an explicit
@@ -252,9 +255,11 @@ wuhu share-login         # mint a one-time login link for your account, shown as
 ```
 
 `wuhu login` reads an invite link
-(`https://host:port/_/enroll#token=jt_...&space=spc_...&fp=sha256:...`) from
+(`https://host:port/_/enroll#token=jt_...&space=spc_...[&fp=sha256:...]`) from
 stdin — never from arguments, since argv leaks via ps — records the delivered
-certificate fingerprint into user-level trust, lazily generates this device's
+certificate fingerprint, if any, into user-level trust (a link without one
+drops the host's pin once the server passes system trust, and enrolls through
+the pin when it does not), lazily generates this device's
 per-space ed25519 key into `~/.wuhu/keys/<space-id>.key` (the `spc_...` space
 identity from the link; 0600; never reused
 across spaces, never synced), and presents the public key. The link dies at

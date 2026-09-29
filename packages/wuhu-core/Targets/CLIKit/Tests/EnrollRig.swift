@@ -138,8 +138,11 @@ struct EnrollRig {
     root.appendingPathComponent("work/.wuhu", isDirectory: true)
   }
 
-  func run(_ arguments: [String], io: CLIIO = CLIIO(), log: RequestLog? = nil) async -> Int32 {
-    let plain = FetchClient { request in
+  // `plain` stands in for system trust; by default nothing may reach it.
+  func run(
+    _ arguments: [String], io: CLIIO = CLIIO(), log: RequestLog? = nil, plain: FetchClient? = nil,
+  ) async -> Int32 {
+    let plain = plain ?? FetchClient { request in
       Issue.record("enrollment traffic must not reach the plain client: \(request.url)")
       throw FetchError.unimplemented
     }

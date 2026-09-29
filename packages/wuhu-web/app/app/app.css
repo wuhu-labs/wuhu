@@ -882,6 +882,21 @@ summary,
   font-size: 0.72rem;
 }
 
+.wuhu-file-card {
+  max-width: 28rem;
+}
+
+.wuhu-file-card > a {
+  margin-left: auto;
+  text-decoration: none;
+}
+
+.wuhu-file-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 .wuhu-pending {
   display: flex;
   flex-wrap: wrap;

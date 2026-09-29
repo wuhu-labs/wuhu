@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useOutletContext } from 'react-router'
 import { ContentFrame } from '~/components/content-frame'
 import { DocMeta } from '~/components/doc-meta'
+import { FileCard, FileImage } from '~/components/file-view'
 import { MarkdownDocument } from '~/components/markdown-document'
 import { TableView } from '~/components/table-view'
 import type { EntryKind, QueryOutput, ReadOutput } from '~/lib/contract.gen'
 import { cachedThenLive } from '~/lib/cached-then-live'
+import { type OpenedFile, openFile } from '~/lib/file-opening'
 import { useSpaceFeeds } from '~/lib/space-feeds'
 import type { PathMap } from '~/lib/tree'
 import { errorMessage } from '~/sdk/errors'
@@ -17,12 +19,10 @@ import { viewOpening } from '~/lib/view-opening'
 import type { SpaceContext } from './space'
 
 type View =
-  | { state: 'loading' }
+  | Exclude<OpenedFile, { state: 'text' }>
   | { state: 'error'; message: string }
-  | { state: 'markdown'; content: string; path: string; token: string }
   | { state: 'text'; content: string; notice?: string }
   | { state: 'html'; origin: string; src: string }
-  | { state: 'binary' }
   | { state: 'table'; path: string }
 
 export default function Node() {
@@ -74,16 +74,16 @@ function NodePage({ path }: { path: string }) {
       if (!cancelled) setView(next)
     }
     const kept: Source = {
-      kind: (at) => {
+      stat: (at) => {
         const kind = at === '/' ? 'directory' : paths.current.get(at)
         return kind === undefined
           ? Promise.reject(new Error(`${at} is not in the kept tree`))
-          : Promise.resolve(kind)
+          : Promise.resolve({ kind })
       },
       read: (at) => client.keptRead(at),
     }
     const live: Source = {
-      kind: (at) => client.stat(at).then((entry) => entry.kind),
+      stat: (at) => client.stat(at),
       read: (at) => client.read(at),
     }
     cachedThenLive(
@@ -150,12 +150,18 @@ function NodeBody({
           remint={client.remintContentSession}
         />
       )
-    case 'binary':
+    case 'image':
       return (
-        <p className='wuhu-muted'>
-          Binary content — no viewer for this file yet.
-        </p>
+        <FileImage
+          group={group}
+          path={view.path}
+          size={view.size}
+          src={view.src}
+          remint={client.remintContentSession}
+        />
       )
+    case 'file':
+      return <FileCard path={view.path} size={view.size} src={view.src} />
     case 'table':
       return <LiveTable path={view.path} group={group} />
   }
@@ -173,7 +179,7 @@ function LiveTable({ path, group }: { path: string; group: string }) {
 }
 
 interface Source {
-  kind(path: string): Promise<EntryKind>
+  stat(path: string): Promise<{ kind: EntryKind; size?: number }>
   read(path: string): Promise<ReadOutput>
 }
 
@@ -184,7 +190,7 @@ async function load(
   suffix: string,
   viewRev: number,
 ): Promise<View> {
-  const kind = await source.kind(path)
+  const { kind, size } = await source.stat(path)
   if (kind === 'table') return { state: 'table', path }
   if (kind === 'directory') {
     const origin = resolvedContentOrigin(contentOrigin)
@@ -237,12 +243,12 @@ async function load(
       src: `${origin}/_/views/${encodeURIComponent(doc.view)}?${params}`,
     }
   }
-  const { content, token } = await source.read(path)
-  if (content.includes('\u0000')) return { state: 'binary' }
-  if (path.endsWith('.md') || path.endsWith('.markdown')) {
-    return { state: 'markdown', content, path, token }
-  }
-  return { state: 'text', content }
+  return openFile(
+    path,
+    size,
+    () => resolvedContentOrigin(contentOrigin),
+    source.read,
+  )
 }
 
 function resolvedContentOrigin(

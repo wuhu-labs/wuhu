@@ -89,7 +89,7 @@ struct UserVerbTests {
     let seeded = try harness.openSpace()
     let account = try await seeded.addAccount(kind: .human, name: "alice")
     let fp = "sha256:" + String(repeating: "ab", count: 32)
-    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp))
+    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp, certificate: .generated))
 
     let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
     #expect(code == 0)
@@ -115,7 +115,7 @@ struct UserVerbTests {
     let seeded = try harness.openSpace()
     let account = try await seeded.addAccount(kind: .human, name: nil)
     let fp = "sha256:" + String(repeating: "cd", count: 32)
-    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp))
+    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example:5540", tlsFingerprint: fp, certificate: .generated))
 
     let code = await harness.run([
       "user", "invite", "--space", harness.folder.path, "--server", "https://lan.example:9443/", "--ttl", "60",
@@ -127,6 +127,44 @@ struct UserVerbTests {
     #expect(envelope.server == "https://lan.example:9443")
     #expect(envelope.fingerprint == fp)
     #expect(await harness.stderr.text == "one-time link; it dies at first use or in 60 seconds\n")
+  }
+
+  @Test func inviteFromAProvidedCertificateServerCarriesNoFingerprint() async throws {
+    let harness = try RecoveryHarness()
+    let seeded = try harness.openSpace()
+    let account = try await seeded.addAccount(kind: .human, name: nil)
+    let fp = "sha256:" + String(repeating: "ef", count: 32)
+    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: .provided))
+
+    let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
+    #expect(code == 0)
+    let lines = await harness.stdout.text.split(separator: "\n").map(String.init)
+    #expect(!lines[0].contains("fp="))
+    let envelope = try #require(EnrollmentEnvelope.parse(lines[0]))
+    #expect(envelope.server == "https://wuhu.example")
+    #expect(envelope.fingerprint == nil)
+    #expect(await harness.stderr.text == "one-time link; it dies at first use or in 3600 seconds\n")
+  }
+
+  @Test func inviteFromARecordThatPredatesTheCertificateKindCarriesNoFingerprintAndSaysSo() async throws {
+    let harness = try RecoveryHarness()
+    let seeded = try harness.openSpace()
+    let account = try await seeded.addAccount(kind: .human, name: nil)
+    let fp = "sha256:" + String(repeating: "ef", count: 32)
+    try await seeded.recordDeployment(DeploymentRecord(origin: "https://wuhu.example", tlsFingerprint: fp, certificate: nil))
+
+    let code = await harness.run(["user", "invite", "--space", harness.folder.path, account.id.rawValue])
+    #expect(code == 0)
+    let lines = await harness.stdout.text.split(separator: "\n").map(String.init)
+    #expect(lines.count == 1)
+    let envelope = try #require(EnrollmentEnvelope.parse(lines[0]))
+    #expect(envelope.fingerprint == nil)
+    #expect(await harness.stderr.text == """
+    the deployment record predates certificate tracking, so this link carries no certificate fingerprint; \
+    boot the server once to record it
+    one-time link; it dies at first use or in 3600 seconds
+
+    """)
   }
 
   @Test func inviteWithServerButNoDeploymentRecordOmitsTheFingerprint() async throws {

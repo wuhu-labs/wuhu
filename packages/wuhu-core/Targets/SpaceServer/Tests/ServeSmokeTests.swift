@@ -124,10 +124,16 @@ import Testing
     let privateKey = base.appendingPathComponent("group.key")
     try explicitCurveGroupCertificatePEM.write(to: certificate, atomically: true, encoding: .utf8)
     try explicitCurveGroupKeyPEM.write(to: privateKey, atomically: true, encoding: .utf8)
+    let own = try TLSIdentity.selfSigned(hosts: ["space.test"])
+    let ownCertificate = base.appendingPathComponent("own.pem")
+    let ownPrivateKey = base.appendingPathComponent("own.key")
+    try own.certificatePEM.write(to: ownCertificate, atomically: true, encoding: .utf8)
+    try own.privateKeyPEM.write(to: ownPrivateKey, atomically: true, encoding: .utf8)
     let refusal = await #expect(throws: GroupTLSError.self) {
       try await SpaceServer.serve(
         folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"), webPort: 0,
-        dev: true, groupCertificate: certificate, groupPrivateKey: privateKey,
+        dev: true, certificate: ownCertificate, privateKey: ownPrivateKey,
+        groupCertificate: certificate, groupPrivateKey: privateKey,
       )
     }
     let text = refusal.map { "\($0)" } ?? ""
