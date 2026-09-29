@@ -4,6 +4,8 @@
   import Foundation
 #endif
 
+import struct ClaudeInstall.ClaudeInstallEnvironment
+import struct ClaudeInstall.ClaudeInstaller
 import enum Credentials.ChatGPTAuth
 import struct Credentials.ChatGPTTokens
 import struct Credentials.CredentialsStore
@@ -87,7 +89,7 @@ extension Executor {
     switch definition.dialect {
     case .claude:
       @Dependency(ClaudeInstallEnvironment.self) var environment
-      let installer = try ClaudeInstaller(
+      let installer = ClaudeInstaller(
         configDirectory: try ServerTrust.userConfigDirectory(environment: runner.environment),
         environment: environment,
       )

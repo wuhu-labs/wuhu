@@ -1,0 +1,20 @@
+name: ClaudeInstall
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - ClaudeStream
+  - Crypto
+  - Dependencies
+  - Fetch
+  - WuhuVFS
+tests:
+  dependencies:
+    - ClaudeStream
+    - Clocks
+    - Crypto
+    - Dependencies
+    - Fetch
+    - WuhuVFS

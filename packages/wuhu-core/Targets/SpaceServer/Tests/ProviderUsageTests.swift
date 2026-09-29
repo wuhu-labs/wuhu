@@ -175,9 +175,9 @@ private let codexAndClaudeModels = """
         credentials: CredentialResolver { $0 == "chatgpt" ? .chatGPT(accessToken: "jwt", accountID: "acct-42") : nil },
         probeClaude: { provider in
           probed.withValue { $0.append(provider) }
-          return try? rateLimit("""
+          return .probed(try? rateLimit("""
           {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1790184600}}}}
-          """)
+          """))
         },
       )
       await withDependencies {
@@ -206,6 +206,39 @@ private let codexAndClaudeModels = """
       #expect(board.usage("chatgpt")?.plan == "pro")
       #expect(board.usage("claude")?.windows == [UsageWindow(name: "five_hour", usedPercent: 50, resetsAt: 1_790_184_600)])
       #expect(board.usage("testing") == nil, "the anthropic dialect reports no plan usage")
+    }
+  }
+
+  @Test func aClaudeProbeWithoutTheBinaryLeavesTheRefreshUnclaimed() async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      _ = try await space.fs(.shared).write("/models.json", Data(codexAndClaudeModels.utf8), ifMatch: nil)
+      let board = UsageBoard()
+      let installed = LockIsolated(false)
+      let probes = LockIsolated(0)
+      let refresher = UsageRefresher(
+        board: board,
+        space: space,
+        credentials: CredentialResolver { _ in nil },
+        probeClaude: { _ in
+          guard installed.value else { return .notInstalled }
+          probes.withValue { $0 += 1 }
+          return .probed(try? rateLimit("""
+          {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1790184600}}}}
+          """))
+        },
+      )
+      await withDependencies {
+        $0.fetch = FetchClient { _ in Response(status: .unauthorized, body: .string("")) }
+      } operation: {
+        await refresher.refreshStale()
+        #expect(board.usage("claude") == nil)
+        installed.setValue(true)
+        await refresher.refreshStale()
+        await refresher.refreshStale()
+      }
+      #expect(probes.value == 1, "the probe runs once the binary is there, then waits out the interval")
+      #expect(board.usage("claude")?.windows == [UsageWindow(name: "five_hour", usedPercent: 50, resetsAt: 1_790_184_600)])
     }
   }
 }

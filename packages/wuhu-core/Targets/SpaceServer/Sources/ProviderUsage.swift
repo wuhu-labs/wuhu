@@ -67,6 +67,20 @@ final class UsageBoard: Sendable {
       return true
     }
   }
+
+  // Gives back a claim whose refresh could not run, so the next tick tries again.
+  func releaseClaim(_ provider: String, claimedAt: Date) {
+    entries.withLock { entries in
+      guard entries[provider]?.attemptedAt == claimedAt else { return }
+      entries[provider]?.attemptedAt = nil
+    }
+  }
+}
+
+// A probe needs the installed binary; until it is there, nothing was tried.
+enum ClaudeUsageProbe: Sendable {
+  case notInstalled
+  case probed(ClaudeStreamFrame.RateLimit?)
 }
 
 // The cheapest model Claude Code accepts; a probe turn is one word long.
@@ -126,7 +140,7 @@ struct UsageRefresher: Sendable {
   let board: UsageBoard
   let space: Space
   let credentials: CredentialResolver
-  let probeClaude: @Sendable (String) async -> ClaudeStreamFrame.RateLimit?
+  let probeClaude: @Sendable (String) async -> ClaudeUsageProbe
 
   func run() async {
     @Dependency(\.continuousClock) var clock
@@ -145,9 +159,15 @@ struct UsageRefresher: Sendable {
         guard board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
         await refreshCodex(id, provider: provider)
       case .claude:
-        guard board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
-        if let rateLimit = await probeClaude(id) {
+        let claimedAt = date.now
+        guard board.claimRefresh(id, now: claimedAt, interval: Self.interval) else { continue }
+        switch await probeClaude(id) {
+        case .notInstalled:
+          board.releaseClaim(id, claimedAt: claimedAt)
+        case let .probed(rateLimit?):
           board.record(id, plan: nil, windows: claudeUsage(rateLimit), at: date.now)
+        case .probed(nil):
+          break
         }
       case .anthropic, .responses:
         continue

@@ -343,6 +343,7 @@ public enum SpaceServer {
       origin: advertisedOrigin ?? "https://\(host):\(port)",
       spaceID: try await space.identity().rawValue,
     )
+    claudeCode.installInBackground()
     let sessions = await SessionRuntime.assemble(
       space: space,
       hub: hub,

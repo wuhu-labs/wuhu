@@ -98,7 +98,7 @@ extension SessionRuntime {
     secrets: SpaceSecretStores?,
     claudeCode: ClaudeCodeSeam,
     usage: UsageBoard,
-    probeClaude: (@Sendable (String) async -> ClaudeStreamFrame.RateLimit?)?,
+    probeClaude: (@Sendable (String) async -> ClaudeUsageProbe)?,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let store = space.sessions

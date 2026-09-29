@@ -10,6 +10,9 @@
 #elseif canImport(Musl)
   import Musl
 #endif
+import class ClaudeInstall.ClaudeCodeInstallation
+import struct ClaudeInstall.ClaudeInstallEnvironment
+import struct ClaudeInstall.ClaudeInstaller
 import ClaudeStream
 import struct Credentials.CredentialResolver
 import Dependencies
@@ -37,7 +40,7 @@ final class ClaudeCodeHost: Sendable {
   private let space: Space
   private let credentials: CredentialResolver
   private let usage: UsageBoard
-  private let binary: String?
+  private let installation: ClaudeCodeInstallation?
   private let origin: String
   private let run: Result<ClaudeCodeRun, ClaudeCodeRunError>
 
@@ -54,7 +57,8 @@ final class ClaudeCodeHost: Sendable {
     self.space = space
     self.credentials = credentials
     self.usage = usage
-    binary = configDirectory?.appendingPathComponent("vendors/claude/\(ClaudeCode.version)/claude").path
+    @Dependency(ClaudeInstallEnvironment.self) var environment
+    installation = configDirectory.map { ClaudeCodeInstallation(ClaudeInstaller(configDirectory: $0, environment: environment)) }
     self.origin = origin
     run = Result {
       guard let configDirectory else { throw ClaudeCodeRunError("this server has no configured directory") }
@@ -69,6 +73,17 @@ final class ClaudeCodeHost: Sendable {
     switch run {
     case let .success(run): run.activations
     case let .failure(error): throw ClaudeCodeLaunchError("Claude Code has no run folder: \(error)")
+    }
+  }
+
+  func installInBackground() {
+    guard let installation else { return }
+    Task {
+      do {
+        _ = try await installation.ready()
+      } catch {
+        Logger(label: "wuhu.claude-code").warning("Claude Code \(ClaudeCode.version) could not be installed", metadata: ["error": "\(error)"])
+      }
     }
   }
 
@@ -235,8 +250,12 @@ final class ClaudeCodeHost: Sendable {
     guard case let .claudeCodeOAuth(oauth)? = try await credentials.resolve(model.provider) else {
       throw ClaudeCodeLaunchError("provider \(model.provider) has no Claude Code setup token; store one with: wuhu auth login \(model.provider)")
     }
-    guard let binary, FileManager.default.isExecutableFile(atPath: binary) else {
-      throw ClaudeCodeLaunchError("Claude Code \(ClaudeCode.version) is not installed at \(binary ?? "~/.wuhu/vendors"); install it with: wuhu auth login \(model.provider)")
+    guard let installation else { throw ClaudeCodeLaunchError("Claude Code has no config directory to be installed in") }
+    let binary: String
+    do {
+      binary = try await installation.ready().path
+    } catch {
+      throw ClaudeCodeLaunchError("Claude Code \(ClaudeCode.version) could not be installed at \(installation.installer.binaryPath.path): \(error)")
     }
     guard let loopback = loopback.withLock({ $0 }) else {
       throw ClaudeCodeLaunchError("the Claude Code loopback listener is not bound yet")
@@ -267,12 +286,17 @@ final class ClaudeCodeHost: Sendable {
   // A setup token carries no profile scope, so Claude Code's own usage read
   // answers nothing; the plan's windows ride only on inference responses. One
   // cheap turn on a fresh process, no tools and no settings, reads them.
-  func probeUsage(provider: String) async -> ClaudeStreamFrame.RateLimit? {
+  func probeUsage(provider: String) async -> ClaudeUsageProbe {
+    guard let binary = installation?.installer.binaryPath.path, FileManager.default.isExecutableFile(atPath: binary) else {
+      return .notInstalled
+    }
+    return await .probed(probeUsage(provider: provider, binary: binary))
+  }
+
+  private func probeUsage(provider: String, binary: String) async -> ClaudeStreamFrame.RateLimit? {
     @Dependency(\.continuousClock) var dependencyClock
     let clock = dependencyClock
-    guard case let .claudeCodeOAuth(oauth)? = try? await credentials.resolve(provider),
-          let binary, FileManager.default.isExecutableFile(atPath: binary)
-    else { return nil }
+    guard case let .claudeCodeOAuth(oauth)? = try? await credentials.resolve(provider) else { return nil }
     guard let activations = try? activations() else { return nil }
     let root = activations + "/usage-" + UUID().uuidString.lowercased()
     do {

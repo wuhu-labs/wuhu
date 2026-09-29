@@ -16,9 +16,10 @@ import Dependencies
 import WuhuVFS
 
 extension ClaudeInstallEnvironment: DependencyKey {
-  static var liveValue: ClaudeInstallEnvironment {
+  public static var liveValue: ClaudeInstallEnvironment {
     @Dependency(\.fetch) var fetch
     return ClaudeInstallEnvironment(
+      platform: hostPlatform,
       fetch: fetch,
       extract: { archive, member in
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wuhu-claude-\(UUID().uuidString)", isDirectory: true)
@@ -53,6 +54,16 @@ extension ClaudeInstallEnvironment: DependencyKey {
       },
     )
   }
+}
+
+private var hostPlatform: String? {
+  #if os(macOS) && arch(arm64)
+    "darwin-arm64"
+  #elseif os(Linux) && arch(x86_64)
+    "linux-x64"
+  #else
+    nil
+  #endif
 }
 
 private struct ClaudeExtractionError: Error, CustomStringConvertible {

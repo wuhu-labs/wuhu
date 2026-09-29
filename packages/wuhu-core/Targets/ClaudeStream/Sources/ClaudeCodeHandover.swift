@@ -2,7 +2,7 @@ import JSONValue
 import OrderedCollections
 
 public enum ClaudeCode {
-  public static let version: String = "2.1.280"
+  public static let version: String = "2.1.284"
 }
 
 public enum ClaudeCodeBlock: Hashable, Sendable {

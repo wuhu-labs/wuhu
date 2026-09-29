@@ -11,14 +11,13 @@ checks:
   test: [linux, mac]
 dependencies:
   - Assertion
-  - ClaudeStream
+  - ClaudeInstall
   - Credentials
   - InferenceKit
   - SpaceClient
   - PinnedTLS
   - QRCode
   - Crypto
-  - WuhuVFS
   - FetchWebSocket
   - NIOCore
   - SpaceContract
@@ -60,6 +59,5 @@ tests:
     - Clocks
     - QRCode
     - Crypto
-    - WuhuVFS
     - Scratch
     - ScratchTesting

@@ -19,6 +19,7 @@ checks:
   test: [linux, mac]
 dependencies:
   - Assertion
+  - ClaudeInstall
   - ClaudeStream
   - Credentials
   - MachineContract
@@ -53,6 +54,7 @@ tests:
   size: large
   dependencies:
     - Assertion
+    - ClaudeInstall
     - ClaudeStream
     - Credentials
     - Crypto
@@ -89,6 +91,7 @@ tests:
     - GRDB
     - Scratch
     - ScratchTesting
+    - WuhuVFS
   resources:
     - path: Recordings
       mode: copy
