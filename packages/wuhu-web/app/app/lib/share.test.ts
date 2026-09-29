@@ -37,17 +37,32 @@ Deno.test('a file page keeps its query and fragment', () => {
   )
 })
 
-Deno.test('a place in another group shares its group host', () => {
+Deno.test('a place in another group shares the SPA URL and a group-host wuhu link', () => {
   assertEquals(
     shareLinks(
       'https://space.example:5530',
       '/notes/plan.md',
       '?group=sail-clock-pepper&q=1',
+      '#top',
+    ),
+    {
+      https:
+        'https://space.example:5530/notes/plan.md?q=1&group=sail-clock-pepper#top',
+      wuhu: 'wuhu://sail-clock-pepper.space.example:5530/notes/plan.md?q=1#top',
+    },
+  )
+  assertEquals(
+    shareLinks(
+      'https://space.example:5530',
+      '/_/sessions/zebra-forest-bike',
+      '?group=sail-clock-pepper',
       '',
     ),
     {
-      https: 'https://sail-clock-pepper.space.example:5530/notes/plan.md?q=1',
-      wuhu: 'wuhu://sail-clock-pepper.space.example:5530/notes/plan.md?q=1',
+      https:
+        'https://space.example:5530/_/sessions/zebra-forest-bike?group=sail-clock-pepper',
+      wuhu:
+        'wuhu://sail-clock-pepper.space.example:5530/_/sessions/zebra-forest-bike',
     },
   )
 })

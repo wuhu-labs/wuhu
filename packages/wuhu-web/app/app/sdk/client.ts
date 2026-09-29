@@ -15,7 +15,6 @@ import { sharedGroup } from '~/lib/shell-sdk/open-cache.js'
 // What every group of one space shares: discovery, and one client per group.
 export class SpaceServer {
   private infoPromise: Promise<ServerInfo> | undefined
-  private webOriginPromise: Promise<string | null> | undefined
   private readonly clients = new Map<string, SpaceClient>()
 
   constructor(private readonly caches: ViewerCaches | null = null) {}
@@ -67,35 +66,34 @@ export class SpaceServer {
       return kept
     }
   }
-
-  webOrigin(): Promise<string | null> {
-    this.webOriginPromise ??= this.resolveWebOrigin().catch(
-      (failure: unknown) => {
-        this.webOriginPromise = undefined
-        throw failure
-      },
-    )
-    return this.webOriginPromise
-  }
-
-  // Only a 2xx resolution is memoizable: api() throws on non-OK (401
-  // pre-login, 5xx, transient) so webOrigin() resets its promise and retries
-  // — otherwise discovery caches a null and content never loads after login.
-  private async resolveWebOrigin(): Promise<string | null> {
-    const info = await this.info()
-    if (info.webOrigin != null) return new URL(info.webOrigin).origin
-    if (info.webPort == null) return null
-    const url = new URL(globalThis.location.origin)
-    url.port = String(info.webPort)
-    return url.origin
-  }
 }
 
-// A group's pages are served on `<group>.<web host>`; shared's on the bare one.
-export function groupOrigin(origin: string, group: string): string {
-  if (group === sharedGroup) return origin
-  const url = new URL(origin)
-  url.hostname = `${group}.${url.hostname}`
+// Every group's pages, shared's included, live on
+// `https://<group>.<contentBase>`; null for a serve with no content plane.
+function contentOriginOf(
+  info: ServerInfo,
+  group: string,
+): string | null {
+  if (info.contentBase != null) {
+    return new URL(`https://${group}.${info.contentBase}`).origin
+  }
+  return legacyContentOrigin(info, group)
+}
+
+// Transitional, for a server that predates contentBase: pages on webOrigin,
+// else on the API host at webPort, and a group other than shared on
+// `<group>.<that host>`.
+function legacyContentOrigin(info: ServerInfo, group: string): string | null {
+  let url: URL
+  if (info.webOrigin != null) {
+    url = new URL(info.webOrigin)
+  } else if (info.webPort != null) {
+    url = new URL(globalThis.location.origin)
+    url.port = String(info.webPort)
+  } else {
+    return null
+  }
+  if (group !== sharedGroup) url.hostname = `${group}.${url.hostname}`
   return url.origin
 }
 
@@ -111,9 +109,8 @@ export class SpaceClient {
     private readonly cache: ViewerCache | null,
   ) {}
 
-  async webOrigin(): Promise<string | null> {
-    const origin = await this.server.webOrigin()
-    return origin == null ? null : groupOrigin(origin, this.group)
+  private async origin(): Promise<string | null> {
+    return contentOriginOf(await this.server.info(), this.group)
   }
 
   // Only a minted read cookie is remembered. Offline, or with the space out
@@ -122,7 +119,7 @@ export class SpaceClient {
   // refused content read mints again. Only an HTTP refusal throws; fetch
   // cannot tell CORS or TLS failures from unreachable, and painting wins.
   async contentOrigin(): Promise<string | null> {
-    const origin = await this.webOrigin()
+    const origin = await this.origin()
     if (origin == null) return null
     if (globalThis.navigator?.onLine === false) return origin
     if (this.contentSession === undefined) {

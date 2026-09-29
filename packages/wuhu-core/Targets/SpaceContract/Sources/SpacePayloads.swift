@@ -124,6 +124,8 @@ public struct ServerInfo: Codable, Equatable, Sendable {
   public let origin: String?
   public let webPort: Int?
   public let webOrigin: String?
+  /// A group's content origin is `https://<group>.<contentBase>`, `shared` included.
+  public let contentBase: String?
   public let features: [String]?
   /// The group the caller acts in: its `Wuhu-Group` header, else the server's default for it.
   public let group: String?

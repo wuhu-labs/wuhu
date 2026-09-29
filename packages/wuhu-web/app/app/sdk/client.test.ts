@@ -1,3 +1,4 @@
+import type { ServerInfo } from '~/lib/contract.gen'
 import { SpaceServer } from './client.ts'
 
 function equal(actual: unknown, expected: unknown) {
@@ -9,14 +10,11 @@ function equal(actual: unknown, expected: unknown) {
 // The API origin answers; the content origin is reachable or not.
 let reachable = true
 let mintStatus = 204
+let serverInfo: ServerInfo = { webOrigin: 'https://space.test:5791' }
 const mints: string[] = []
 globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input)
-  if (url === '/v1/server') {
-    return Promise.resolve(
-      Response.json({ webOrigin: 'https://space.test:5791' }),
-    )
-  }
+  if (url === '/v1/server') return Promise.resolve(Response.json(serverInfo))
   mints.push(`${init?.method} ${url}`)
   if (!reachable) return Promise.reject(new TypeError('Failed to fetch'))
   return Promise.resolve(new Response(null, { status: mintStatus }))
@@ -39,6 +37,71 @@ globalThis.indexedDB = {
 } as unknown as IDBFactory
 
 const origin = 'https://space.test:5791'
+
+// Shared's and alice's content origins against a server answering `info`.
+async function originsOf(info: ServerInfo): Promise<(string | null)[]> {
+  serverInfo = info
+  reachable = true
+  mintStatus = 204
+  try {
+    const server = new SpaceServer()
+    return [
+      await server.client('shared').contentOrigin(),
+      await server.client('alice').contentOrigin(),
+    ]
+  } finally {
+    serverInfo = { webOrigin: origin }
+  }
+}
+
+Deno.test('a content base names every group, shared included', async () => {
+  equal(await originsOf({ contentBase: 'example.wuhu:5530' }), [
+    'https://shared.example.wuhu:5530',
+    'https://alice.example.wuhu:5530',
+  ])
+  equal(await originsOf({ contentBase: 'example.wuhu' }), [
+    'https://shared.example.wuhu',
+    'https://alice.example.wuhu',
+  ])
+  equal(
+    await originsOf({
+      contentBase: 'example.wuhu:5530',
+      webOrigin: 'https://web.example.wuhu',
+      webPort: 5531,
+    }),
+    ['https://shared.example.wuhu:5530', 'https://alice.example.wuhu:5530'],
+  )
+})
+
+Deno.test('without a content base, pages stay on webOrigin or webPort', async () => {
+  equal(
+    await originsOf({ webOrigin: 'https://web.example.wuhu:4101/ignored' }),
+    ['https://web.example.wuhu:4101', 'https://alice.web.example.wuhu:4101'],
+  )
+  const location = Object.getOwnPropertyDescriptor(globalThis, 'location')!
+  Object.defineProperty(globalThis, 'location', {
+    value: new URL('https://space.test:5790/'),
+    configurable: true,
+  })
+  try {
+    equal(await originsOf({ webPort: 5791 }), [
+      'https://space.test:5791',
+      'https://alice.space.test:5791',
+    ])
+  } finally {
+    Object.defineProperty(globalThis, 'location', location)
+  }
+  equal(await originsOf({}), [null, null])
+})
+
+Deno.test('a group mints its read cookie on its content base host', async () => {
+  mints.length = 0
+  await originsOf({ contentBase: 'example.wuhu:5530', webPort: 5791 })
+  equal(mints, [
+    'POST https://shared.example.wuhu:5530/_/session',
+    'POST https://alice.example.wuhu:5530/_/session',
+  ])
+})
 
 Deno.test('online but out of reach, the content origin still paints and mints again later', async () => {
   const client = new SpaceServer().client('shared')

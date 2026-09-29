@@ -1,5 +1,11 @@
 import { sharedGroup } from './groups.ts'
-import { placeGroup, screens, systemAddress, withoutGroup } from './links.ts'
+import {
+  placeGroup,
+  screens,
+  systemAddress,
+  withGroup,
+  withoutGroup,
+} from './links.ts'
 import { formatSpaceURL, spaceDestination, spaceHost } from './space-url.ts'
 
 export interface ShareLinks {
@@ -17,18 +23,22 @@ export function shareLinks(
   const host = spaceHost(origin)
   const destination = spaceDestination(pathname)
   if (host == null || destination == null) return null
-  // Outside the SPA a group is its host, never the query.
+  // The https link is the SPA's own URL, its group in the query; the app's
+  // wuhu link names the group as a host label.
   const group = placeGroup(search)
   const query = withoutGroup(search)
-  const url = {
-    host: group === sharedGroup ? host : `${group}.${host}`,
+  const place = (host: string, query: string) => ({
+    host,
     destination,
     ...(query.length > 1 ? { query: query.slice(1) } : {}),
     ...(hash.length > 1 ? { fragment: hash.slice(1) } : {}),
-  }
+  })
   return {
-    https: formatSpaceURL(url, 'https'),
-    wuhu: formatSpaceURL(url, 'wuhu'),
+    https: formatSpaceURL(place(host, withGroup(query, group)), 'https'),
+    wuhu: formatSpaceURL(
+      place(group === sharedGroup ? host : `${group}.${host}`, query),
+      'wuhu',
+    ),
   }
 }
 

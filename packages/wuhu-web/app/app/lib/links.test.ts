@@ -148,7 +148,28 @@ Deno.test('a place in another group carries it in the query', () => {
   assertEquals(withoutGroup('?group=sail-clock-pepper'), '')
 })
 
-Deno.test('a group-host link opens that group in the SPA', () => {
+Deno.test('a share link with ?group= opens that group in the SPA', () => {
+  assertEquals(
+    spaceLink(
+      'https://space.example:5530/notes/a.md?q=1&group=sail-clock-pepper#top',
+      'shared',
+      undefined,
+      origin,
+    ),
+    '/notes/a.md?q=1&group=sail-clock-pepper#top',
+  )
+  assertEquals(
+    spaceLink(
+      'https://space.example:5530/_/sessions/s1?group=sail-clock-pepper',
+      'design',
+      undefined,
+      origin,
+    ),
+    '/_/sessions/s1?group=sail-clock-pepper',
+  )
+})
+
+Deno.test('an old group-host link opens that group in the SPA', () => {
   assertEquals(
     spaceLink(
       'https://sail-clock-pepper.space.example:5530/notes/a.md',

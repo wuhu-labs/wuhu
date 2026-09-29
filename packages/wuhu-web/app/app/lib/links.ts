@@ -120,8 +120,9 @@ export function sessionView(search: string): SessionView | null {
 
 const externalHref = /^([a-z][a-z0-9+.-]*:|\/\/)/i
 
-// The group a link's host names: an https link's own host is shared and one
-// label under it that label's group; a wuhu link names `<g>.localspace`.
+// The group a link's host names: an https link's own host is shared, its
+// `?group=` then naming any other, and one label under it, the form older
+// share links take, that label's group; a wuhu link names `<g>.localspace`.
 function hostGroup(
   linkHost: string,
   host: string,
