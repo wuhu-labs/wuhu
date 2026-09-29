@@ -137,22 +137,23 @@ filesystem access:
 - Use: `wuhu exec --cwd machines://<name-or-id>/<path> -- <command...>` (byte-exact
   duplex pipe, no shell, no PTY), `wuhu ps`, `wuhu kill <exec-id>`. Fs verbs
   accept `machines://<id>/<path>` too — raw fs, no revisions there.
-- Secrets: `wuhu vault set <machine> NAME` (value from stdin) stores a
-  write-only secret on the machine; inject with `wuhu exec --secret ENV=NAME`.
-  No surface ever returns a value.
-- Group secrets, for scripts: `wuhu secret set NAME` (value from stdin) stores a
-  secret of the acting group on the server, outside the space's files and
-  history. A `run_script` module reaches it through `wuhu:secret`:
+- Secrets: `wuhu secret set NAME` (value from stdin) stores a secret of the
+  acting group on the server, outside the space's files and history. No
+  surface ever returns a value.
+- An exec uses one by name: `wuhu exec --secret ENV=NAME`, the exec tool's
+  `secrets`, `wuhu:machine`'s `secrets`. NAME resolves in the group of the
+  machine the exec runs on (not the caller's), the value rides the exec start,
+  and the machine masks it as `***`. A name that group lacks fails before
+  anything runs. Machines keep no secrets of their own.
+- A `run_script` module reaches a secret through `wuhu:secret`:
   `secret("NAME")` is a placeholder that becomes the value only inside the
   request `fetch` sends, and any value sent is masked as `***` in what comes
   back. A session uses its own group's secrets, and another group's it reads
   only by name (`secret("NAME", { group: "shared" })`). Setting one needs an
   admin of the group: a person through the CLI, a top-level agent through
   `run_script`'s `set` (sessions can't use the CLI). Removing one needs a
-  human admin. `set(name, value, { machine })` and `list({ machine })` do the
-  same for a machine's vault, gated on an admin of the machine's group; a
-  vault's values never leave the machine, so `secret(name, { machine })`
-  throws and `exec`'s `secrets` is how they are used.
+  human admin. A placeholder is refused in an exec's command, env or stdin:
+  name the secret in the exec's `secrets` instead.
 
 ## Devices
 

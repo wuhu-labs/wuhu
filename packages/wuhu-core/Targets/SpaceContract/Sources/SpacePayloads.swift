@@ -122,8 +122,6 @@ public struct NewOutput: Codable, Equatable, Sendable {
 public struct ServerInfo: Codable, Equatable, Sendable {
   public let space: String?
   public let origin: String?
-  public let webPort: Int?
-  public let webOrigin: String?
   /// A group's content origin is `https://<group>.<contentBase>`, `shared` included.
   public let contentBase: String?
   public let features: [String]?

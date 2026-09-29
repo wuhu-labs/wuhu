@@ -24,8 +24,8 @@ WebSocket transport is a later milestone.
 An endpoint outlives its transports. The owner drives each connection with
 `run(transport)`, which returns when the transport dies; re-binding is just
 calling `run` again with a fresh transport. All per-exec state (replay buffers,
-cursors, delivery watermarks) survives across bindings. In-flight VFS / search /
-vault round trips do not: they are scoped to the *pair* of bindings that carried
+cursors, delivery watermarks) survives across bindings. In-flight VFS / search
+round trips do not: they are scoped to the *pair* of bindings that carried
 them, failing with `ChannelError.severed` on the requester's own unbind and on
 the responder's rebind (its `hello` — the response may have died with the old
 binding, and responses are never replayed). Retry policy belongs to the caller.

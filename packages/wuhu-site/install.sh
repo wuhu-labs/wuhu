@@ -18,8 +18,9 @@ case "$os/$arch" in
   *) fail "no build for $os/$arch (have: macOS arm64, Linux x86_64)" ;;
 esac
 
+bin="$HOME/.wuhu/bin"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp" "$bin/.wuhu-$$" "$bin/.wuhu-current-$$"' EXIT
 
 # The lane pointer is JSON the release pipeline writes; none of its values hold
 # whitespace, so with whitespace stripped sed can pick fields out of it.
@@ -60,7 +61,7 @@ case "$sha256" in
 esac
 [ "${#sha256}" -eq 64 ] || fail "no sha256 for $artifact"
 
-dest="$HOME/.wuhu/bin/$VERSION"
+dest="$bin/$VERSION"
 
 echo "wuhu $VERSION ($os/$arch)"
 echo "  fetch   $url"
@@ -80,10 +81,16 @@ case "$artifact" in
   *.tar.gz) tar -xzf "$tmp/$artifact" -C "$dest" ;;
 esac
 chmod +x "$dest/wuhu"
-ln -sfn "$VERSION/wuhu" "$HOME/.wuhu/bin/wuhu"
+# A real file at a fixed path, since macOS keys privacy grants by it; replaced by
+# rename, never written into, since the kernel caches a signature per inode.
+cp "$dest/wuhu" "$bin/.wuhu-$$"
+chmod 755 "$bin/.wuhu-$$"
+mv -f "$bin/.wuhu-$$" "$bin/wuhu"
+echo "$VERSION" > "$bin/.wuhu-current-$$"
+mv -f "$bin/.wuhu-current-$$" "$bin/.current"
 
-echo "  install $HOME/.wuhu/bin/wuhu -> $VERSION/wuhu"
-"$HOME/.wuhu/bin/wuhu" --version
+echo "  install $bin/wuhu from $VERSION/wuhu"
+"$bin/wuhu" --version
 
 case ":$PATH:" in
   *":$HOME/.wuhu/bin:"*) ;;

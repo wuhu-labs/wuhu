@@ -145,7 +145,7 @@ The session verbs are in [wuhu-cli.md](wuhu-cli.md#sessions-and-messaging).
 
 A space can adopt remote boxes for command execution and raw filesystem
 access; see the machine verbs in
-[wuhu-cli.md](wuhu-cli.md#machines-exec-vault).
+[wuhu-cli.md](wuhu-cli.md#machines-exec-secrets).
 
 ## Where to go next
 

@@ -52,10 +52,5 @@ public enum MachineContractSchemas {
     ("SearchRequest", SearchRequest.jsonSchema),
     ("SearchResult", SearchResult.jsonSchema),
     ("SearchResponse", SearchResponse.jsonSchema),
-
-    ("VaultSet", VaultSet.jsonSchema),
-    ("VaultRemove", VaultRemove.jsonSchema),
-    ("VaultList", VaultList.jsonSchema),
-    ("VaultOutcome", VaultOutcome.jsonSchema),
   ]
 }

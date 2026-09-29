@@ -18,13 +18,22 @@ struct UpgradeLayout {
     return UpgradeLayout(root: config.appendingPathComponent("bin", isDirectory: true))
   }
 
-  var currentLink: URL { self.root.appendingPathComponent("wuhu") }
+  var currentBinary: URL { self.root.appendingPathComponent("wuhu") }
+  private var currentFile: URL { self.root.appendingPathComponent(".current") }
   private var previousFile: URL { self.root.appendingPathComponent(".previous") }
 
+  // A symlink wins over `.current`: a release from before the fixed path (reached by a rollback) writes
+  // one and leaves `.current` stale.
   func currentVersion() -> String? {
-    guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: self.currentLink.path) else {
-      return nil
+    if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: self.currentBinary.path) {
+      return Self.version(linkTarget: target)
     }
+    guard let text = try? String(contentsOf: self.currentFile, encoding: .utf8) else { return nil }
+    let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? nil : name
+  }
+
+  private static func version(linkTarget target: String) -> String? {
     let parts = target.split(separator: "/")
     guard !target.hasPrefix("/"), parts.count == 2, parts[1] == "wuhu" else { return nil }
     return String(parts[0])
@@ -35,6 +44,21 @@ struct UpgradeLayout {
     let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, self.versionDirectoryExists(name) else { return nil }
     return name
+  }
+
+  private func binary(of version: String) -> URL {
+    self.root.appendingPathComponent(version, isDirectory: true).appendingPathComponent("wuhu")
+  }
+
+  // `.current` goes stale when someone replaces the binary by hand (`install <old> ~/.wuhu/bin/wuhu`),
+  // so claiming a version is installed takes a byte comparison.
+  func holds(_ version: String) -> Bool {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: self.currentBinary.path),
+          attributes[.type] as? FileAttributeType == .typeRegular,
+          let installed = try? Data(contentsOf: self.currentBinary),
+          let source = try? Data(contentsOf: self.binary(of: version))
+    else { return false }
+    return installed == source
   }
 
   func versionDirectoryExists(_ name: String) -> Bool {
@@ -79,16 +103,31 @@ struct UpgradeLayout {
     try FileManager.default.moveItem(at: payload, to: destination)
   }
 
+  // A real file at a fixed path, since macOS keys privacy grants by it; replaced by rename, never written
+  // into, since the kernel caches a signature per inode. The caller holds the lock, so flip may sweep the
+  // copies an interrupted flip left behind.
   @discardableResult
   func flip(to version: String) throws -> String? {
-    let temp = self.root.appendingPathComponent(".link-\(UUID().uuidString)")
-    try FileManager.default.createSymbolicLink(atPath: temp.path, withDestinationPath: "\(version)/wuhu")
-    let displaced = self.currentVersion()
-    guard rename(temp.path, self.currentLink.path) == 0 else {
-      let reason = String(cString: strerror(errno))
-      try? FileManager.default.removeItem(at: temp)
-      throw CLIError(message: "could not flip \(self.currentLink.path): \(reason)")
+    let manager = FileManager.default
+    for name in (try? manager.contentsOfDirectory(atPath: self.root.path)) ?? [] where name.hasPrefix(".wuhu-") {
+      try? manager.removeItem(at: self.root.appendingPathComponent(name))
     }
+    let source = self.binary(of: version)
+    let temp = self.root.appendingPathComponent(".wuhu-\(UUID().uuidString)")
+    do {
+      try manager.copyItem(at: source, to: temp)
+      try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temp.path)
+    } catch {
+      try? manager.removeItem(at: temp)
+      throw CLIError(message: "could not copy \(source.path): \(error)")
+    }
+    let displaced = self.currentVersion()
+    guard rename(temp.path, self.currentBinary.path) == 0 else {
+      let reason = String(cString: strerror(errno))
+      try? manager.removeItem(at: temp)
+      throw CLIError(message: "could not replace \(self.currentBinary.path): \(reason)")
+    }
+    try Data((version + "\n").utf8).write(to: self.currentFile, options: .atomic)
     if let displaced, displaced != version {
       try Data((displaced + "\n").utf8).write(to: self.previousFile, options: .atomic)
     }
@@ -97,7 +136,7 @@ struct UpgradeLayout {
 
   func rollback() throws -> (from: String, to: String) {
     guard let current = self.currentVersion() else {
-      throw CLIError(message: "nothing installed at \(self.currentLink.path); run wuhu upgrade first")
+      throw CLIError(message: "nothing installed at \(self.currentBinary.path); run wuhu upgrade first")
     }
     guard let previous = self.previousVersion() else {
       throw CLIError(message: "no previous version recorded under \(self.root.path); nothing to roll back to")

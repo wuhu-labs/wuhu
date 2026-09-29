@@ -66,7 +66,7 @@ private func mcpToolNames(_ harness: SessionHarness, session: String) async thro
     }
   }
 
-  @Test func theExecSchemaOffersEnvAndVaultSecrets() async throws {
+  @Test func theExecSchemaOffersEnvAndGroupSecrets() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let roster = try #require(try await sessionToolRosters(harness, executor: .claudeCode).rosters.first)

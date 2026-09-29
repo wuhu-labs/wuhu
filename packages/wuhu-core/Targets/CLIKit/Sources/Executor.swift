@@ -61,12 +61,6 @@ struct Executor {
       try await self.deviceList()
     case let .deviceSet(id, name, machine):
       try await self.deviceSet(id: id, name: name, machine: machine)
-    case let .vaultSet(machine, name):
-      try await self.vaultSet(machine: machine, name: name)
-    case let .vaultList(machine):
-      try await self.vaultList(machine: machine)
-    case let .vaultRemove(machine, name):
-      try await self.vaultRemove(machine: machine, name: name)
     case let .secretSet(name):
       try await self.secretSet(name: name)
     case .secretList:

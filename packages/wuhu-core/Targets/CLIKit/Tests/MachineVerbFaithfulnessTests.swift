@@ -117,11 +117,9 @@ import Testing
         group.addTask { _ = await h.run(["machine", "run"]) }
         try await h.waitAttached(machine.id)
 
-        let setIO = CLIIO(stdin: "hunter2\n")
-        #expect(await h.run(["vault", "set", "studio", "API_KEY"], io: setIO) == 0)
-        let listIO = CLIIO()
-        #expect(await h.run(["vault", "list", "STUDIO"], io: listIO) == 0)
-        #expect(await listIO.stdoutText() == "API_KEY\n")
+        let execIO = CLIIO()
+        #expect(await h.run(["exec", "--cwd", "machines://STUDIO/", "--", "sh", "-c", "echo hi"], io: execIO) == 0)
+        #expect(await execIO.stdoutText() == "hi\n")
 
         group.cancelAll()
       }
@@ -151,47 +149,6 @@ import Testing
       #expect(await missing.stderrText().contains("machine move: --group <group> is required"))
       let unknown = CLIIO()
       #expect(await h.run(["machine", "move", "box", "--group", "nowhere"], io: unknown) == 1)
-    }
-  }
-
-  @Test func vaultSetListRemoveReachTheRealAgentVault() async throws {
-    let harness = try MachineCLIHarness()
-    try await harness.runScenario { h in
-      let machine = try await h.addAndJoin()
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { _ = await h.run(["machine", "run"]) }
-        try await h.waitAttached(machine.id)
-
-        let setIO = CLIIO(stdin: "hunter2-secret-value\n")
-        #expect(await h.run(["vault", "set", machine.id, "API_KEY"], io: setIO) == 0)
-        #expect(await setIO.stdoutText() == "set API_KEY\n")
-
-        let vaultFile = h.home.appendingPathComponent(".wuhu/machine/state/vault.json")
-        let stored = try String(contentsOf: vaultFile, encoding: .utf8)
-        #expect(stored.contains("API_KEY"))
-        #expect(stored.contains("hunter2-secret-value"))
-
-        let promptIO = CLIIO(stdin: "second-value\r\n", terminal: true)
-        #expect(await h.run(["vault", "set", machine.id, "OTHER"], io: promptIO) == 0)
-        #expect(await promptIO.stderrText().contains("value for OTHER"))
-        let withOther = try String(contentsOf: vaultFile, encoding: .utf8)
-        #expect(withOther.contains("second-value"))
-        #expect(!withOther.contains(#"\r"#))
-
-        let listIO = CLIIO()
-        #expect(await h.run(["vault", "list", machine.id], io: listIO) == 0)
-        #expect(await listIO.stdoutText() == "API_KEY\nOTHER\n")
-
-        let removeIO = CLIIO()
-        #expect(await h.run(["vault", "remove", machine.id, "OTHER"], io: removeIO) == 0)
-        #expect(await removeIO.stdoutText() == "removed OTHER\n")
-
-        let after = CLIIO()
-        #expect(await h.run(["vault", "list", machine.id], io: after) == 0)
-        #expect(await after.stdoutText() == "API_KEY\n")
-
-        group.cancelAll()
-      }
     }
   }
 

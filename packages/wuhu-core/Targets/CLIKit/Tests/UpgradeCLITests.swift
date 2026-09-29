@@ -124,9 +124,11 @@ struct UpgradeCLITests {
 
     let layout = harness.layout
     #expect(layout.currentVersion() == "0.1.0-dev.2")
-    let installed = try String(contentsOf: layout.currentLink.resolvingSymlinksInPath(), encoding: .utf8)
+    let attributes = try FileManager.default.attributesOfItem(atPath: layout.currentBinary.path)
+    #expect(attributes[.type] as? FileAttributeType == .typeRegular)
+    let installed = try String(contentsOf: layout.currentBinary, encoding: .utf8)
     #expect(installed == "installed:\(archiveChecksum)")
-    #expect(await harness.stdout.text == "installed 0.1.0-dev.2 -> \(layout.currentLink.path)\n")
+    #expect(await harness.stdout.text == "installed 0.1.0-dev.2 -> \(layout.currentBinary.path)\n")
     #expect(stderr.contains("downloading \(devAsset)\n"))
     #expect(stderr.contains("verified sha256:\(archiveChecksum)\n"))
 
@@ -276,7 +278,8 @@ struct UpgradeCLITests {
 
     #expect(await harness.run(["upgrade", "--rollback"], environment: environment) == 0)
     #expect(layout.currentVersion() == "0.1.0-dev.1")
-    #expect(await harness.stdout.text.contains("rolled back \(layout.currentLink.path): 0.1.0-dev.2 -> 0.1.0-dev.1"))
+    #expect(try String(contentsOf: layout.currentBinary, encoding: .utf8) == "old")
+    #expect(await harness.stdout.text.contains("rolled back \(layout.currentBinary.path): 0.1.0-dev.2 -> 0.1.0-dev.1"))
   }
 
   @Test func alreadyFlippedLayoutSuggestsFreshShell() async throws {
@@ -284,7 +287,30 @@ struct UpgradeCLITests {
     let environment = harness.feed()
     #expect(await harness.run(["upgrade"], environment: environment) == 0)
     #expect(await harness.run(["upgrade"], environment: environment) == 0)
-    #expect(await harness.stdout.text.contains("already points at 0.1.0-dev.2"))
+    #expect(await harness.stdout.text.contains("is already 0.1.0-dev.2"))
+  }
+
+  @Test func aHandDowngradeUpgradesAgainWithoutDownloading() async throws {
+    let harness = try UpgradeHarness()
+    let environment = harness.feed()
+    let layout = harness.layout
+    try FileManager.default.createDirectory(at: layout.root, withIntermediateDirectories: true)
+    let payload = try layout.stagingDirectory()
+    try Data("old".utf8).write(to: payload.appendingPathComponent("wuhu"))
+    try layout.install(payload: payload, version: "0.1.0-dev.1")
+    try layout.flip(to: "0.1.0-dev.1")
+    #expect(await harness.run(["upgrade"], environment: environment) == 0)
+
+    try FileManager.default.removeItem(at: layout.currentBinary)
+    try FileManager.default.copyItem(at: layout.root.appendingPathComponent("0.1.0-dev.1/wuhu"), to: layout.currentBinary)
+    #expect(layout.currentVersion() == "0.1.0-dev.2", "a hand downgrade leaves .current behind")
+    harness.requests.withLock { $0.removeAll() }
+
+    #expect(await harness.run(["upgrade"], environment: environment) == 0)
+    #expect(try String(contentsOf: layout.currentBinary, encoding: .utf8) == "installed:\(archiveChecksum)")
+    #expect(await harness.stdout.text.hasSuffix("installed 0.1.0-dev.2 -> \(layout.currentBinary.path)\n"))
+    let fetched = harness.requests.withLock { $0.map(\.url.absoluteString) }
+    #expect(fetched == ["https://wuhu.ai/releases/dev/latest.json"])
   }
 
   @Test func decoyOnPathTriggersShadowWarning() async throws {
@@ -301,6 +327,6 @@ struct UpgradeCLITests {
       extraEnvironment: ["PATH": "\(decoyDirectory.path):\(harness.layout.root.path)"],
     )
     #expect(code == 0)
-    #expect(await harness.stderr.text.contains("warning: \(decoy.path) shadows \(harness.layout.currentLink.path) on PATH"))
+    #expect(await harness.stderr.text.contains("warning: \(decoy.path) shadows \(harness.layout.currentBinary.path) on PATH"))
   }
 }

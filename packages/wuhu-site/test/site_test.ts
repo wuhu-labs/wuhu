@@ -120,13 +120,26 @@ function serve(
   return { base, close: () => server.shutdown() }
 }
 
-async function install(base: string, env: Record<string, string> = {}) {
-  const home = await Deno.makeTempDir()
+// `current` is the version installed at ~/.wuhu/bin/wuhu, checked to be a
+// regular file holding that version's bytes, or null when nothing is there.
+async function install(
+  base: string,
+  env: Record<string, string> = {},
+  home?: string,
+) {
+  home ??= await Deno.makeTempDir()
+  const bin = `${home}/.wuhu/bin`
   const result = await sh(['sh', `${siteDir}/install.sh`], {
     env: { HOME: home, WUHU_BASE_URL: base, NO_PROXY: '*', ...env },
   })
-  const link = await Deno.readLink(`${home}/.wuhu/bin/wuhu`).catch(() => null)
-  return { ...result, link }
+  const info = await Deno.lstat(`${bin}/wuhu`).catch(() => null)
+  if (info === null) return { ...result, current: null }
+  assertEquals(info.isFile, true, 'bin/wuhu is a regular file')
+  const current = (await Deno.readTextFile(`${bin}/.current`)).trim()
+  const installed = await Deno.readTextFile(`${bin}/wuhu`)
+  const source = await Deno.readTextFile(`${bin}/${current}/wuhu`)
+  assertEquals(installed, source, 'bin/wuhu holds the .current bytes')
+  return { ...result, current }
 }
 
 Deno.test({
@@ -147,18 +160,40 @@ Deno.test({
     try {
       const byDefault = await install(site.base)
       assertEquals(byDefault.code, 0, byDefault.stderr)
-      assertEquals(byDefault.link, '0.1.0-beta.7/wuhu')
+      assertEquals(byDefault.current, '0.1.0-beta.7')
       assertEquals(byDefault.stdout.includes('wuhu 0.1.0-beta.7 (fake)'), true)
 
       const byLane = await install(site.base, { WUHU_LANE: 'dev' })
       assertEquals(byLane.code, 0, byLane.stderr)
-      assertEquals(byLane.link, '0.1.0-dev.30/wuhu')
+      assertEquals(byLane.current, '0.1.0-dev.30')
 
       const byVersion = await install(site.base, {
         WUHU_VERSION: '0.1.0-dev.12',
       })
       assertEquals(byVersion.code, 0, byVersion.stderr)
-      assertEquals(byVersion.link, '0.1.0-dev.12/wuhu')
+      assertEquals(byVersion.current, '0.1.0-dev.12')
+
+      const home = await Deno.makeTempDir()
+      await Deno.mkdir(`${home}/.wuhu/bin/0.1.0-beta.6`, { recursive: true })
+      await Deno.writeTextFile(`${home}/.wuhu/bin/0.1.0-beta.6/wuhu`, 'old')
+      await Deno.symlink('0.1.0-beta.6/wuhu', `${home}/.wuhu/bin/wuhu`)
+      const overSymlink = await install(site.base, {}, home)
+      assertEquals(overSymlink.code, 0, overSymlink.stderr)
+      assertEquals(overSymlink.current, '0.1.0-beta.7')
+      assertEquals(
+        await Deno.readTextFile(`${home}/.wuhu/bin/0.1.0-beta.6/wuhu`),
+        'old',
+      )
+
+      const before = (await Deno.lstat(`${home}/.wuhu/bin/wuhu`)).ino
+      const next = await install(site.base, { WUHU_LANE: 'dev' }, home)
+      assertEquals(next.current, '0.1.0-dev.30')
+      const after = (await Deno.lstat(`${home}/.wuhu/bin/wuhu`)).ino
+      assertEquals(after !== before, true, 'a new inode, never written into')
+      const leftovers = [...Deno.readDirSync(`${home}/.wuhu/bin`)]
+        .map((entry) => entry.name)
+        .filter((name) => /^\.wuhu-/.test(name))
+      assertEquals(leftovers.length, 0, 'no temp files left behind')
 
       const badVersion = await install(site.base, { WUHU_VERSION: '../x' })
       assertEquals(badVersion.code, 1)
@@ -166,7 +201,7 @@ Deno.test({
 
       const noLane = await install(site.base, { WUHU_LANE: 'nightly' })
       assertEquals(noLane.code, 1)
-      assertEquals(noLane.link, null)
+      assertEquals(noLane.current, null)
     } finally {
       await site.close()
     }
@@ -193,7 +228,7 @@ Deno.test({
         const result = await install(site.base, env)
         assertEquals(result.code, 1)
         assertEquals(result.stderr.includes('checksum mismatch'), true)
-        assertEquals(result.link, null)
+        assertEquals(result.current, null)
       }
     } finally {
       await site.close()

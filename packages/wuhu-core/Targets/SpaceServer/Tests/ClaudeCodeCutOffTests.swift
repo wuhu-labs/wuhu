@@ -157,7 +157,7 @@ private func withCutOffScenario(
     let scripts = Scripts(
       space: space,
       machines: ScriptMachineAccess(
-        files: machineSeam(hub: server.hub), exec: execBackend(space: space, hub: server.hub), vault: vaultSeam(hub: server.hub),
+        files: machineSeam(hub: server.hub), exec: execBackend(space: space, hub: server.hub),
       ),
     )
     let loopback = try await ClaudeCodeLoopback(

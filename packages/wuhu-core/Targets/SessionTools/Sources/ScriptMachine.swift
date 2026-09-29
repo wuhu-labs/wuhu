@@ -12,7 +12,6 @@ import struct MachineContract.ExecStart
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineError
 import struct MachineContract.MachineID
-import enum MachineContract.VaultOutcome
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
 import QuickJSKit
@@ -20,31 +19,14 @@ import SpaceCore
 import SpaceTools
 
 // What wuhu:machine reaches: the machines' files, and execs minted for the
-// script that runs them. wuhu:secret reaches a machine's vault through it too.
+// script that runs them.
 public struct ScriptMachineAccess: Sendable {
   let files: MachineSeam
   let exec: ExecBackend
-  let vault: MachineVaultSeam
 
-  public init(files: MachineSeam, exec: ExecBackend, vault: MachineVaultSeam) {
+  public init(files: MachineSeam, exec: ExecBackend) {
     self.files = files
     self.exec = exec
-    self.vault = vault
-  }
-}
-
-/// A machine's vault as a script reaches it: setting an entry and listing the
-/// names. Removal can't be undone, so it is a person's and has no seam.
-public struct MachineVaultSeam: Sendable {
-  let set: @Sendable (MachineID, String, String) async throws -> VaultOutcome
-  let list: @Sendable (MachineID) async throws -> VaultOutcome
-
-  public init(
-    set: @escaping @Sendable (MachineID, String, String) async throws -> VaultOutcome,
-    list: @escaping @Sendable (MachineID) async throws -> VaultOutcome,
-  ) {
-    self.set = set
-    self.list = list
   }
 }
 
@@ -91,58 +73,6 @@ final class ScriptMachineBindings: Sendable {
       try await execution.processes.process(string(arguments, 0)).discard()
       return .null
     })
-    engine.define("__wuhu_vault_set", promising: { [self] in try await vaultSet($0) })
-    engine.define("__wuhu_vault_list", promising: { [self] in try await vaultList($0) })
-    engine.define("__wuhu_vault_remove", promising: { [self] in try await vaultRemove($0) })
-  }
-
-  // MARK: A machine's vault
-
-  // Setting an entry takes an admin of the machine's group, as `wuhu machine
-  // vault set` does; listing takes any session that can use the machine.
-  private func vaultSet(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let access = try available()
-    let reference = string(arguments, 0)
-    let record = try await usableMachine(reference)
-    guard try await space.isAdmin(.session(execution.session), of: record.group) else {
-      throw ScriptError(
-        "setting a vault entry on \(reference) needs an admin of group \(record.group.rawValue)"
-          + (await notAdmin(execution.session, of: record.group, space: space)),
-      )
-    }
-    let id = try await attached(record, reference, access)
-    _ = try await vault(reference) { try await access.vault.set(id, string(arguments, 1), string(arguments, 2)) }
-    return .null
-  }
-
-  private func vaultList(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let access = try available()
-    let reference = string(arguments, 0)
-    let id = try await attached(usableMachine(reference), reference, access)
-    return .array(try await vault(reference) { try await access.vault.list(id) }.map(JSONValue.string))
-  }
-
-  private func vaultRemove(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let record = try await usableMachine(string(arguments, 0))
-    throw ScriptError(
-      "removing vault entry \(string(arguments, 1)) can't be undone and needs a human admin of group \(record.group.rawValue)",
-    )
-  }
-
-  private func vault(_ reference: String, _ operation: () async throws -> VaultOutcome) async throws -> [String] {
-    let outcome: VaultOutcome
-    do {
-      outcome = try await operation()
-    } catch let error as ScriptError {
-      throw error
-    } catch {
-      throw ScriptError(renderedFailure(Wire.failure(error)))
-    }
-    switch outcome {
-    case .ok: return []
-    case let .names(_, names): return names
-    case let .error(_, error): throw failure(error)
-    }
   }
 
   // MARK: Machines and files
@@ -452,8 +382,8 @@ final class ScriptMachineBindings: Sendable {
   private func refusePlaceholders(_ bytes: [UInt8], in place: String) throws {
     guard execution.secrets.carriesPlaceholder(bytes) else { return }
     throw ScriptError("""
-    \(place) holds a wuhu:secret placeholder, and space secrets never reach a machine; \
-    put the value in the machine's vault and pass it by name in `secrets`
+    \(place) holds a wuhu:secret placeholder, which only fetch fills in; \
+    pass a secret of the machine's group by name in `secrets` instead
     """)
   }
 

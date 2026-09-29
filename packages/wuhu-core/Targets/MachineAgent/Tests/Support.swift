@@ -1,5 +1,6 @@
 import Dependencies
 import Foundation
+import Logging
 @testable import MachineAgent
 import MachineChannel
 import MachineContract
@@ -24,6 +25,7 @@ func makeStart(
   cwd: String = "/",
   env: [String: String]? = nil,
   secrets: [String: String]? = nil,
+  secretValues: [String: String]? = nil,
   window: Int? = nil,
   maxOutput: Int? = nil,
   timeout: Double? = nil,
@@ -35,6 +37,7 @@ func makeStart(
     command: command,
     env: env.map(StringMap.init),
     secrets: secrets.map(StringMap.init),
+    secretValues: secretValues.map(StringMap.init),
     window: window,
     maxOutput: maxOutput,
     timeout: timeout,
@@ -143,9 +146,12 @@ final class Harness: Sendable {
   private let callerTransports: AsyncStream<InMemoryTransport>
   private let callerContinuation: AsyncStream<InMemoryTransport>.Continuation
 
-  init(killGrace: Duration = .milliseconds(300), disconnectGrace: Duration = .seconds(300)) throws {
+  init(
+    killGrace: Duration = .milliseconds(300), disconnectGrace: Duration = .seconds(300),
+    logger: Logger = Logger(label: "MachineAgent"),
+  ) throws {
     state = try ScratchFolder("machine-agent-tests")
-    agent = MachineAgent(stateDirectory: state.path, killGrace: killGrace, disconnectGrace: disconnectGrace)
+    agent = MachineAgent(stateDirectory: state.path, killGrace: killGrace, disconnectGrace: disconnectGrace, logger: logger)
     (agentTransports, agentContinuation) = AsyncStream.makeStream()
     (callerTransports, callerContinuation) = AsyncStream.makeStream()
   }
@@ -190,6 +196,29 @@ func retryingUntilBound<Result>(_ operation: @Sendable () async throws -> Result
       return try await operation()
     } catch ChannelError.severed {
       await Task.yield()
+    }
+  }
+}
+
+final class RecordedLogs: Sendable {
+  private let entries = Mutex<[String]>([])
+
+  var messages: [String] { entries.withLock { $0 } }
+
+  var logger: Logger { Logger(label: "MachineAgent") { _ in Handler(sink: self) } }
+
+  private struct Handler: LogHandler {
+    let sink: RecordedLogs
+    var logLevel: Logger.Level = .trace
+    var metadata: Logger.Metadata = [:]
+
+    subscript(metadataKey key: String) -> Logger.Metadata.Value? {
+      get { metadata[key] }
+      set { metadata[key] = newValue }
+    }
+
+    func log(event: LogEvent) {
+      sink.entries.withLock { $0.append(event.message.description) }
     }
   }
 }

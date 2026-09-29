@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { SpaceClient } from '~/sdk/client'
 
-// Undefined until the read cookie is minted, null for a serve with no
-// content origin, an Error when the origin refused to mint one.
+// Undefined until the read cookie is minted, null when the client has no
+// content origin (see SpaceClient.contentOrigin), an Error when the origin
+// refused to mint one.
 export type ContentOrigin = string | null | Error | undefined
 
 export function contentOriginString(origin: ContentOrigin): string | null {

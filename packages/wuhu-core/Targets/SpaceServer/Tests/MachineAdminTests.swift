@@ -353,9 +353,7 @@ import Testing
     #expect(renamed.status == .ok)
     #expect(try await renamed.json(MachineStatus.self) == MachineStatus(id: added.id, name: "studio", attached: false))
 
-    let vault = try await server.http(.get, "/v1/machine/studio/vault")
-    #expect(vault.status != .notFound)
-    #expect(try await server.http(.get, "/v1/machine/mini/vault").status == .notFound)
+    #expect(try await server.http(.post, "/v1/machine/mini/rotate").status == .notFound)
     #expect(try await server.http(.post, "/v1/machine/studio/rotate").status == .ok)
 
     let junk = try await server.http(.put, "/v1/machine/studio/name", json: .object(["name": .string("my box")]))

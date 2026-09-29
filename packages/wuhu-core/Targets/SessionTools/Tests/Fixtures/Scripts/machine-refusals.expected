@@ -3,10 +3,10 @@ unknown machine: no machine named nowhere
 detached machine: machine away is not attached
 relative path: readText takes an absolute path on the machine
 relative cwd: cwd must be an absolute path on the machine
-placeholder in the command: the command holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
-placeholder in env: env AUTH holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
+placeholder in the command: the command holds a wuhu:secret placeholder, which only fetch fills in; pass a secret of the machine's group by name in `secrets` instead
+placeholder in env: env AUTH holds a wuhu:secret placeholder, which only fetch fills in; pass a secret of the machine's group by name in `secrets` instead
 bad env name: exec: 'A-B' is not a usable environment variable name
-placeholder on stdin: stdin holds a wuhu:secret placeholder, and space secrets never reach a machine; put the value in the machine's vault and pass it by name in `secrets`
+placeholder on stdin: stdin holds a wuhu:secret placeholder, which only fetch fills in; pass a secret of the machine's group by name in `secrets` instead
 stdin not asked for: process ex_acg7ja0l was spawned without { stdin: true }
 a ninth process: a script runs at most 8 machine processes at once; wait for one to exit or kill it first
 once one exits: ok

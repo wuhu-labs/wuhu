@@ -248,12 +248,6 @@ public actor ChannelEndpoint {
       exec.killsContinuation.finish()
     case .vfsResponse, .searchResponse:
       routeResponse(frame)
-    case .vaultSet, .vaultRemove, .vaultList:
-      if let id = frame.requestID, pendingRequests[id] != nil {
-        routeResponse(frame)
-      } else {
-        routeRequest(frame)
-      }
     case .vfsRequest, .searchRequest:
       routeRequest(frame)
     }
@@ -323,9 +317,6 @@ public actor ChannelEndpoint {
     let request: InboundRequest? = switch frame.opcode {
     case .vfsRequest: (try? frame.payload(VFSRequest.self)).map(InboundRequest.vfs)
     case .searchRequest: (try? frame.payload(SearchRequest.self)).map(InboundRequest.search)
-    case .vaultSet: (try? frame.payload(VaultSet.self)).map(InboundRequest.vaultSet)
-    case .vaultRemove: (try? frame.payload(VaultRemove.self)).map(InboundRequest.vaultRemove)
-    case .vaultList: (try? frame.payload(VaultList.self)).map(InboundRequest.vaultList)
     default: nil
     }
     guard let request else {

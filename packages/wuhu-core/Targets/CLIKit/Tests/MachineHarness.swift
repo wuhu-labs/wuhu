@@ -63,7 +63,7 @@ final class MachineCLIHarness: Sendable {
     let hub = withDependencies {
       $0.continuousClock = clock
     } operation: {
-      MachineHub(space: space)
+      MachineHub(space: space, tokens: nil, secrets: stores)
     }
     self.clock = clock
     self.space = space
@@ -166,6 +166,7 @@ final class MachineCLIHarness: Sendable {
         (MachineConnect.pubkeyHeader, "ed25519:" + key.publicKey.rawRepresentation.base64EncodedString()),
         (MachineConnect.challengeHeader, challenge),
         (MachineConnect.signatureHeader, signature.base64EncodedString()),
+        (MachineConnect.capabilitiesHeader, MachineConnect.groupSecrets),
       ],
     )
   }

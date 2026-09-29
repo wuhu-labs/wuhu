@@ -164,20 +164,16 @@ import Testing
         try await awaitAttached(server, machine)
         try await withThrowingTaskGroup(of: Void.self) { round in
           round.addTask {
-            let outcome = try await server.hub.vaultList(machine: machine)
-            guard case let .names(_, names) = outcome else {
-              Issue.record("expected names, got \(outcome)")
-              return
-            }
-            #expect(names == ["ok"])
+            let result = try await server.hub.vfs(machine: machine, op: .mkdir(path: "/tmp/racing"))
+            #expect(result == .ok)
           }
           round.addTask {
             var requestID: Int?
             for await message in socket.inbound {
               guard case let .binary(bytes) = message,
                     let frame = try? FrameCodec.decode(bytes),
-                    frame.opcode == .vaultList,
-                    let request = try? frame.payload(VaultList.self)
+                    frame.opcode == .vfsRequest,
+                    let request = try? frame.payload(VFSRequest.self)
               else { continue }
               requestID = request.id
               break
@@ -187,7 +183,7 @@ import Testing
               Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
             )))
             try await socket.send(.binary(FrameCodec.encode(
-              Frame(streamID: 0, opcode: .vaultList, payload: VaultOutcome.names(id: id, names: ["ok"])),
+              Frame(streamID: 0, opcode: .vfsResponse, payload: VFSResponse(id: id, result: .ok)),
             )))
           }
           try await round.waitForAll()
@@ -305,7 +301,7 @@ private struct Page: Equatable {
   let cursor: String?
 }
 
-private func awaitAttached(_ server: TestServer, _ machine: MachineID) async throws {
+func awaitAttached(_ server: TestServer, _ machine: MachineID) async throws {
   let attached = try await realPollUntil { await server.hub.attachedMachines().contains(machine) }
   #expect(attached)
 }

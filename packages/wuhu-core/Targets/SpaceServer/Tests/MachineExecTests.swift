@@ -434,38 +434,6 @@ import Testing
       #expect(try await server.http(.post, "/v1/exec/ex_zzzzzzzz/kill").status == .notFound)
     }
   }
-
-  @Test func vaultOpsRoundTripAndValueNeverPersistsServerSide() async throws {
-    let scratch = try ScratchFolder("m4-vault")
-    defer { scratch.remove() }
-    let file = scratch.url.appendingPathComponent("space.sqlite")
-    let space = try makeMachineSpace(file: file)
-    let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
-    let secret = "hunter2-super-secret-value"
-
-    try await runScenario(server: server) { dialer, _ in
-      let base = "/v1/machine/\(machine.rawValue)/vault"
-      let unattached = try await server.http(.post, base, json: .object(["name": .string("API_KEY"), "value": .string(secret)]))
-      #expect(unattached.status == .serviceUnavailable)
-
-      dialer.offer(try await connectMachine(server, key: key))
-      let set = try await realPollUntil {
-        try await server.http(.post, base, json: .object(["name": .string("API_KEY"), "value": .string(secret)])).status == .ok
-      }
-      #expect(set)
-
-      let names = try await json(try await server.http(.get, base))
-      #expect(names == .object(["names": .array([.string("API_KEY")])]))
-
-      #expect(try await server.http(.delete, "\(base)/API_KEY").status == .ok)
-      let empty = try await json(try await server.http(.get, base))
-      #expect(empty == .object(["names": .array([])]))
-
-      let bytes = try Data(contentsOf: file)
-      #expect(bytes.range(of: Data(secret.utf8)) == nil)
-    }
-  }
 }
 
 func makeExecStart(_ id: ExecID, command: [String], window: Int? = nil) -> ExecStart {

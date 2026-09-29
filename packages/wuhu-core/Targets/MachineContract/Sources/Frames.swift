@@ -15,9 +15,6 @@ public enum Opcode: String, Codable, Equatable, Sendable {
   case vfsResponse = "vfs-response"
   case searchRequest = "search-request"
   case searchResponse = "search-response"
-  case vaultSet = "vault-set"
-  case vaultRemove = "vault-remove"
-  case vaultList = "vault-list"
 }
 
 @Contract

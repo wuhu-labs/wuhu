@@ -1,1 +1,0 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"VaultSet","type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"},"value":{"type":"string"}},"required":["id","name","value"],"additionalProperties":false}

@@ -9,7 +9,7 @@ process <id> already has a reader
 out: 255,0,65
 err: 10
 upper: HELLO WORLD
-exec: {"code":3,"signal":null,"stdout":"cwd /work; env [\"CI=1\"]; vault [\"TOKEN<-GITHUB_TOKEN\"]\n","stderr":"timeout 1.5\n","truncated":false}
+exec: {"code":3,"signal":null,"stdout":"cwd /work; env [\"CI=1\"]; secrets [\"TOKEN<-GITHUB_TOKEN\"]\n","stderr":"timeout 1.5\n","truncated":false}
 flood: 1048576, 1048576, 1048576, 0, 3
 killed: {"code":null,"signal":15}
 process <id> was spawned without { stdin: true }

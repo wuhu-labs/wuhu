@@ -2,7 +2,7 @@
 
 The daemon side of the machine domain: one `MachineAgent` owns one
 `ChannelEndpoint`, dials the server forever, runs execs as real subprocesses,
-serves VFS/search/vault requests, and enforces the output policy machine-side.
+serves VFS/search requests, and enforces the output policy machine-side.
 MachineContract pins the wire vocabulary; MachineChannel pins channel behavior;
 this file pins the agent semantics on top.
 
@@ -11,8 +11,10 @@ this file pins the agent semantics on top.
 `MachineAgent(stateDirectory:killGrace:disconnectGrace:)` plus
 `run(dial:)` — that is the whole public surface. `dial` returns a fresh
 `FrameTransport` per (re)connection; production hands in the WebSocket dialer
-(a later milestone), tests hand in in-memory pairs. `run` returns only on task
-cancellation. The clock is `@Dependency(\.continuousClock)`, captured at init.
+(a later milestone), tests hand in in-memory pairs. The production dialer
+announces `group-secrets` in MachineContract's capabilities header on every
+dial: this agent takes secret values from the exec start and resolves no name
+itself. `run` returns only on task cancellation. The clock is `@Dependency(\.continuousClock)`, captured at init.
 
 ## Connection lifecycle
 
@@ -30,13 +32,13 @@ cancellation. The clock is `@Dependency(\.continuousClock)`, captured at init.
 - Spawned via swift-subprocess in its **own process group**
   (`processGroupID = 0`), never a PTY, pipes only. `command` is argv
   (`command[0]` resolved via PATH when it contains no `/`, else as a path); no
-  shell. Environment = agent environment ∪ `env` ∪ resolved secrets ∪ the
+  shell. Environment = agent environment ∪ `env` ∪ `secretValues` ∪ the
   session names, rightmost wins. The session names are the server's:
   with `session` present, `WUHU_EXEC=1`, `WUHU_TOKEN` = its token and
   `WUHU_SPACE_URL` = its `spaceURL`; without it, all three are **unset**, so
   an agent that itself runs inside a session's exec never passes its own on.
   `WUHU_IDENTITY` and `WUHU_GROUP` are **unset** unless the exec start itself
-  sets them (in `env` or as a secret name): ones inherited from the agent's
+  sets them (in `env` or `secretValues`): ones inherited from the agent's
   own environment never reach an exec, so an agent started in wallet mode or
   in a group does not put its execs there.
 - **Kill escalation** (kill frame, timeout expiry, maxOutput exceeded,
@@ -48,7 +50,7 @@ cancellation. The clock is `@Dependency(\.continuousClock)`, captured at init.
   wall clock.
 - **Exit status** is faithful: `exited(code)` or `signaled(signal)`; every
   escalated kill surfaces as `signaled`.
-- **Failure shape**: unknown secret name, empty command, and spawn failure
+- **Failure shape**: a secret handed over by name, empty command, and spawn failure
   (missing executable, bad cwd) surface as one `wuhu: …` line on stderr
   followed by `exited(code: 127)` — the wire has no separate failure op; the
   caller-facing `ExecEvent.failed` is composed by the caller leg.
@@ -76,14 +78,19 @@ semantics, no loss, no unbounded memory.
 
 ## Secrets
 
-- Vault file: `<stateDirectory>/vault.json`, a flat JSON string map, written
-  0600 (directory 0700). Write-only wire surface: set/remove/list, list
-  returns names only, no op returns a value, values are never logged or
-  interpolated into errors.
-- `exec-start.secrets` (`ENV_NAME → SECRET_NAME`) resolves at spawn and
-  injects as environment only. Unknown name fails the exec (see failure
-  shape) — nothing is spawned.
-- **Masking** covers the **injected** secrets' values and the session token
+- The agent keeps no secrets. `exec-start.secretValues` (`ENV_NAME → value`,
+  resolved by the server in the machine's group) injects as environment only,
+  at spawn; no value is written to disk, logged, or interpolated into an
+  error.
+- `exec-start.secrets` present and non-empty means a server from before
+  group secrets, which expects the agent to resolve names itself. The agent
+  spawns nothing and fails the exec (see failure shape) with `wuhu: secret
+  NAME came as a name, not a value; this machine's server predates group
+  secrets`, naming the lexically first secret.
+- A `<stateDirectory>/vault.json` left by an agent from before group secrets
+  is never read, changed or removed; `run` logs one notice line that it is no
+  longer used.
+- **Masking** covers the `secretValues` values and the session token
   (that is what this exec can leak), independently per output stream, replacement `***`. The streaming
   masker holds back exactly the bytes that are a proper prefix of some secret
   (at most `maxSecretLen − 1`), so chunked output is byte-identical to

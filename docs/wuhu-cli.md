@@ -76,7 +76,7 @@ different spaces do not share cursors. `--from` applies only to `--glob`.
 | Verb | Purpose |
 | --- | --- |
 | `wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--web-app <dir>]` | Run the space server. |
-| `wuhu upgrade [--check] [--lane dev\|beta\|release]` / `--rollback` | Update the installed `wuhu` from `https://wuhu.ai` into `~/.wuhu/bin/<version>/wuhu`, with `~/.wuhu/bin/wuhu` a symlink flipped atomically to the current version; every download is checked against the lane pointer's sha256, and the last 3 versions are kept. `--check` prints the newest release in the lane without installing, `--lane` crosses to another lane, `--rollback` flips back to the previous version. It never touches `PATH`, shells or dotfiles. |
+| `wuhu upgrade [--check] [--lane dev\|beta\|release]` / `--rollback` | Update the installed `wuhu` from `https://wuhu.ai` into `~/.wuhu/bin/<version>/wuhu`, with `~/.wuhu/bin/wuhu` a real file: a copy of the current version renamed into place, so its path (and the macOS privacy grants tied to it) never changes, and `~/.wuhu/bin/.current` naming the version; every download is checked against the lane pointer's sha256, and the last 3 versions are kept. `--check` prints the newest release in the lane without installing, `--lane` crosses to another lane, `--rollback` puts the previous version back the same way; by hand, `install ~/.wuhu/bin/<version>/wuhu ~/.wuhu/bin/wuhu`. It never touches `PATH`, shells or dotfiles. |
 
 The server binds one TLS port, `--port` (default 5530), on `--host`, which defaults to `127.0.0.1` (loopback only); `--host 0.0.0.0` exposes it. `--origin` is the canonical `https://` origin, named by a host rather than an IP address (use an sslip.io name such as `https://192-168-1-5.sslip.io:5530` for a bare address): its host serves the API and the web app, `/v1/server` advertises it, share-login and invite links are minted against it, and serve records it with the TLS fingerprint and whether that is the generated certificate in the space database at boot for the offline `wuhu user invite`. Each group's content is served at `<group>.<host>` on the same port (`shared.<host>` for `shared`); without `--origin` the host is `localhost`, so the group hosts are `<group>.localhost:<port>`, reachable from this machine only. The server always serves TLS: `--cert`/`--key` (given together) name a certificate that must cover `<host>` and `*.<host>`, else a self-signed one (`localhost`, `*.localhost`) is generated into `<folder>/tls` and reused. Only that generated certificate's fingerprint rides invites, share-login links and machine join tokens; under `--cert`/`--key`, self-signed or not, they carry none and clients rely on their system trust store. `--group-certificate`/`--group-private-key` (a `*.<host>` leaf, together, needing `--origin` and `--cert`/`--key`) is presented to the group hosts by SNI instead. `--web-port` and `--web-origin` are deprecated: serve accepts and ignores them, printing a warning for each. `--web-app <dir>` serves the SPA from a folder (loaded once at boot; `index.html` required) instead of the embedded build.
 
@@ -111,7 +111,7 @@ Device keys are per (device × space), keyed by the space identity (`spc_` plus 
 
 A handle is display only: it never logs in, never appears in auth, and the persona name stays the principal that rows store. Handles are lowercased, unique per space, renameable by claiming another, and match `[a-z0-9][a-z0-9-]{1,31}`. Claiming a handle rewrites how history renders — nothing is copied onto a message — so a rename re-attributes every message the principal ever sent.
 
-## Machines, exec, vault
+## Machines, exec, secrets
 
 | Verb | Purpose |
 | --- | --- |
@@ -123,10 +123,7 @@ A handle is display only: it never logs in, never appears in auth, and the perso
 | `wuhu machine rotate <machine>` | Kick the machine's enrolled key (dropping any live connection) and mint a fresh join token; rejoin the box with it. |
 | `wuhu machine revoke <machine>` | Kick the key and drop any live connection; rotate re-enables the machine. |
 | `wuhu machine move <machine> --group <group>` | Move a machine to another group, so the sessions of the groups that read that group may exec on it. Needs an admin of both groups. Its notes under `/_/machines/<name>/` move into the new group's tree in the same revision. |
-| `wuhu vault set <machine> <NAME>` | Store a secret on the machine. Value from stdin, never argv (argv leaks via `ps`). |
-| `wuhu vault list <machine>` | List secret names. No surface ever returns a value. |
-| `wuhu vault remove <machine> <NAME>` | Delete a secret. |
-| `wuhu secret set <NAME>` | Create or replace a space secret for `run_script` (`wuhu:secret`). Value from stdin, never argv. |
+| `wuhu secret set <NAME>` | Create or replace a secret of the group you act in, for `run_script` (`wuhu:secret`) and for execs on that group's machines (`--secret`). Value from stdin, never argv (argv leaks via `ps`). |
 | `wuhu secret list` | List space secret names. No surface ever returns a value. |
 | `wuhu secret remove <NAME>` | Delete a space secret. |
 | `wuhu exec --cwd machines://<machine>/<path> [flags] -- <command...>` | Run a command on a machine, duplex and pipe-clean. |
@@ -142,8 +139,11 @@ stdout/stderr byte-exactly with zero decoration, all CLI diagnostics go to
 stderr, and local stdin streams to the command's stdin (immediate half-close
 when local stdin is a terminal — no PTY, ever). Policy knobs live here, not in
 the protocol: `--window` defaults to 4 MiB, `--max-output` and `--timeout`
-default to off. `--secret ENV=NAME` injects a vault secret as an environment
-variable; the machine masks its value in the output stream.
+default to off. `--secret ENV=NAME` injects secret NAME of the machine's group
+(not the group you act in) as an environment variable; the server sends the
+value with the exec start, the machine masks it in the output stream and
+writes it nowhere. A name the machine's group lacks fails before anything
+runs, `wuhu: no secret NAME in group GROUP` and exit 127.
 
 The CLI auto-reconnects across network blips with the same exec id and resumes
 byte-exactly (first redial is immediate, then doubling backoff from 200 ms
@@ -213,7 +213,8 @@ The box side (`wuhu machine join` / `wuhu machine run`) persists its state
 under `~/.wuhu/machine`: `agent.json` (server URL, machine id — file mode
 0600), `machine.key` (the box's ed25519 machine credential, 0600 in the 0700
 directory, distinct from any device key under `~/.wuhu/keys/`) and `state/`
-(the agent's vault and working state). Server trust
+(the agent's working state; a `vault.json` there from an agent before group
+secrets is no longer read). Server trust
 is not part of this state; it lives in the user-level `~/.wuhu/trust.json`
 shared with every other client on the box. This is the one
 deliberate exception to the wallet rule below: agent identity is per box, not
@@ -303,7 +304,7 @@ folder under the temp directory keyed by the token. The server applies the
 session's own rules (home rule, ancestry, child-only create, own
 execs only). The home rule covers every verb that writes: the file verbs,
 `checkout`, `table create|alter|mutate` and `new`, which checks its `in`
-folder, else its template's, where the instance lands. Verbs a session lacks — `user list|handle|profile|remove`, `key`, `vault`, `auth`,
+folder, else its template's, where the instance lands. Verbs a session lacks — `user list|handle|profile|remove`, `key`, `auth`,
 `machine add|join|run|rotate|revoke`, `models update`, `use`, `trust`,
 `untrust`, `login`, `share-login`, `group use`, `upgrade` (all but
 `--check`, since on a server's host it swaps the binary the server runs), and

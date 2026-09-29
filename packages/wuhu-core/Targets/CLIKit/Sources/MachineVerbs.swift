@@ -165,31 +165,9 @@ extension Executor {
         (MachineConnect.pubkeyHeader, key.pubkeyLabel),
         (MachineConnect.challengeHeader, output.challenge),
         (MachineConnect.signatureHeader, signature.base64EncodedString()),
+        (MachineConnect.capabilitiesHeader, MachineConnect.groupSecrets),
       ])
     })
-  }
-
-  mutating func vaultSet(machine: String, name: String) async throws {
-    let space = try self.wallet.pinnedSpace()
-    if self.runner.stdinIsTerminal {
-      await self.runner.stderr("value for \(name) (stdin, end with ctrl-d): ")
-    }
-    let value = try await self.runner.stdin().strippingOneTrailingLineEnding()
-    let body: JSONValue = .object(["name": .string(name), "value": .string(value)])
-    let _: EmptyOutput = try await self.api(.post, "/v1/machine/\(machine)/vault", space: space, body: body)
-    await self.runner.stdout("set \(name)\n")
-  }
-
-  mutating func vaultList(machine: String) async throws {
-    let space = try self.wallet.pinnedSpace()
-    let output: VaultNamesOutput = try await self.api(.get, "/v1/machine/\(machine)/vault", space: space)
-    await self.runner.stdout(output.names.map { $0 + "\n" }.joined())
-  }
-
-  mutating func vaultRemove(machine: String, name: String) async throws {
-    let space = try self.wallet.pinnedSpace()
-    let _: EmptyOutput = try await self.api(.delete, "/v1/machine/\(machine)/vault/\(name)", space: space)
-    await self.runner.stdout("removed \(name)\n")
   }
 
   mutating func ps() async throws {
@@ -255,10 +233,6 @@ private func boxHostname() -> String? {
 }
 
 struct EmptyOutput: Decodable {}
-
-struct VaultNamesOutput: Decodable {
-  let names: [String]
-}
 
 struct MachineAgentConfig: Codable, Equatable {
   var server: String

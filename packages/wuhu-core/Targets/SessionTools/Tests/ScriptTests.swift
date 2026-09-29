@@ -313,32 +313,12 @@ import struct WuhuAI.ToolCall
     }
   }
 
-  @Test func aTopLevelAgentSetsAndListsAMachineVaultButRemovesNothing() async throws {
-    let world = MachineWorld()
-    try await withRig(world: world) { rig in
-      try await world.attach("box", in: rig.space)
-      _ = try await rig.space.addMachine(name: "away")
-      try await rig.run("machine-vault")
+  @Test func aMachineOptionOnWuhuSecretThrowsAndTouchesNoGroup() async throws {
+    try await withRig { rig in
+      try await rig.run("secret-machine-option")
       try await rig.released()
-      rig.probe("box vault: \(world.vault.withLock { $0.values.flatMap { $0.map { "\($0.key)=\($0.value)" } } })")
-      try rig.expect("machine-vault")
-    }
-  }
-
-  // The refusal names why this caller is no admin: a task, or a top-level
-  // agent of another group.
-  @Test(arguments: [
-    (GroupID.shared, true, "machine-vault-refused"),
-    (GroupID(rawValue: "alice"), false, "machine-vault-refused-outsider"),
-  ])
-  func onlyAnAdminOfTheMachinesGroupSetsItsVault(group: GroupID, task: Bool, expected: String) async throws {
-    let world = MachineWorld()
-    try await withRig(world: world, group: group, task: task) { rig in
-      try await world.attach("box", in: rig.space)
-      try await rig.run("machine-vault-refused")
-      try await rig.released()
-      rig.probe("box vault: \(world.vault.withLock { $0.values.flatMap(\.keys) })")
-      try rig.expect(expected)
+      rig.probe("shared: \(try await rig.secrets.names())")
+      try rig.expect("secret-machine-option")
     }
   }
 
@@ -705,21 +685,10 @@ final class ScriptRig: Sendable {
 final class MachineWorld: Sendable {
   let files = FakeMachineFS()
   let execs = ScriptedExecMachine()
-  let vault = Box<[MachineID: [String: String]]>([:])
-
-  var vaultSeam: MachineVaultSeam {
-    MachineVaultSeam(
-      set: { [vault] machine, name, value in
-        vault.withLock { $0[machine, default: [:]][name] = value }
-        return .ok(id: 0)
-      },
-      list: { [vault] machine in .names(id: 0, names: vault.withLock { ($0[machine] ?? [:]).keys.sorted() }) },
-    )
-  }
 
   func attach(_ name: String, in space: Space) async throws {
     let id = try await space.addMachine(name: name).id
-    files.attached.withLock { $0.insert(id) }
+    _ = files.attached.withLock { $0.insert(id) }
   }
 }
 
@@ -746,7 +715,7 @@ private let playbook: @Sendable (IncomingExec, ScriptedExecMachine) async -> Voi
   case "env":
     let env = (exec.start.env?.entries ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
     let secrets = (exec.start.secrets?.entries ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)<-\($0.value)" }
-    try? await exec.send(.stdout, Array("cwd \(exec.start.cwd); env \(env); vault \(secrets)\n".utf8))
+    try? await exec.send(.stdout, Array("cwd \(exec.start.cwd); env \(env); secrets \(secrets)\n".utf8))
     try? await exec.send(.stderr, Array("timeout \(exec.start.timeout.map { "\($0)" } ?? "none")\n".utf8))
     await exec.exit(.exited(code: 3))
   case "flood":
@@ -814,7 +783,7 @@ func withRig(
       defer { try? FileManager.default.removeItem(at: folder) }
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
-      let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space), vault: $0.vaultSeam) }
+      let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
       let scripts = Scripts(space: space, secrets: stores, machines: access)
       let executor = ToolExecutor(
         space: space, machines: machines, resolveModelExecutor: resolveModelExecutor,

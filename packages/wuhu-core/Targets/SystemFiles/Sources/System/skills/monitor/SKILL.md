@@ -85,7 +85,7 @@ update(
 );
 ```
 
-`wait()` resolves with `{ code, signal }`: `code` is the exit status, or `null` when a signal ended the process. A command that cannot start at all (bad `cwd`, missing vault secret) exits 127 with a `wuhu:` line on stderr.
+`wait()` resolves with `{ code, signal }`: `code` is the exit status, or `null` when a signal ended the process. A command that cannot start at all (bad `cwd`, a secret the machine's group lacks) exits 127 with a `wuhu:` line on stderr.
 
 ## Stopping
 
@@ -97,4 +97,4 @@ update(
 
 - At most 8 spawned processes per script at once.
 - Output is flow-controlled, never dropped: each process has a 1 MiB window, and a script that reads slowly stalls its process rather than losing lines. Leaving a `for await` loop early (`break`, `return`, a throw) is the one exception: the rest of that process's output is dropped unread, since a process has only one reader.
-- `secrets: { VAR: "vault-name" }` passes a machine vault secret as an environment variable. `wuhu:secret` placeholders are refused in commands, `env` and stdin: space secrets never reach a machine.
+- `secrets: { VAR: "SECRET_NAME" }` passes a secret of the machine's group (not yours) as an environment variable, masked as `***` in the output. `wuhu:secret` placeholders are refused in commands, `env` and stdin: only `fetch` fills one in.

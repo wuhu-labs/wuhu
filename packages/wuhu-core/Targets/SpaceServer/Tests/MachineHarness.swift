@@ -1,4 +1,5 @@
 import Clocks
+import struct Credentials.SpaceSecretStores
 import Crypto
 import Dependencies
 import Fetch
@@ -53,15 +54,18 @@ final class TestServer: Sendable {
   private let sessions: AsyncStream<@Sendable () async -> Void>
   private let sessionsContinuation: AsyncStream<@Sendable () async -> Void>.Continuation
 
-  init(space: Space, clock: any Clock<Duration>, grace: Duration = .seconds(60), dev: Bool = true, tokens: ExecTokens? = nil) {
+  init(
+    space: Space, clock: any Clock<Duration>, grace: Duration = .seconds(60), dev: Bool = true, tokens: ExecTokens? = nil,
+    secrets: SpaceSecretStores? = nil,
+  ) {
     self.space = space
     hub = withDependencies {
       $0.continuousClock = clock
       $0.date = DateGenerator { Date() }
     } operation: {
-      MachineHub(space: space, callerGrace: grace, machineGrace: grace, tokens: tokens)
+      MachineHub(space: space, callerGrace: grace, machineGrace: grace, tokens: tokens, secrets: secrets)
     }
-    handler = SpaceServer.handler(space: space, hub: hub, dev: dev)
+    handler = SpaceServer.handler(space: space, hub: hub, dev: dev, secrets: secrets)
     api = ServeTesting.client(upgrading: handler)
     (sessions, sessionsContinuation) = AsyncStream.makeStream()
   }
@@ -292,20 +296,26 @@ func enrollMachineKey(_ server: TestServer, token: String) async throws -> Curve
   return key
 }
 
-func connectHeaders(_ server: TestServer, key: Curve25519.Signing.PrivateKey) async throws -> [(String, String)] {
+// `groupSecrets: false` dials as an agent from before the capabilities header.
+func connectHeaders(
+  _ server: TestServer, key: Curve25519.Signing.PrivateKey, groupSecrets: Bool = true,
+) async throws -> [(String, String)] {
   let response = try await server.http(.get, "/v1/machine/challenge")
   #expect(response.status == .ok)
   let challenge = try await response.json(MachineChallengeOutput.self).challenge
   let signature = try key.signature(for: MachineConnect.signingPayload(challenge: challenge))
-  return [
+  let headers = [
     (MachineConnect.pubkeyHeader, key.pubkeyLabel),
     (MachineConnect.challengeHeader, challenge),
     (MachineConnect.signatureHeader, signature.base64EncodedString()),
   ]
+  return groupSecrets ? headers + [(MachineConnect.capabilitiesHeader, MachineConnect.groupSecrets)] : headers
 }
 
-func connectMachine(_ server: TestServer, key: Curve25519.Signing.PrivateKey) async throws -> WebSocket {
-  try await server.requireSocket("/v1/machine/connect", headers: try await connectHeaders(server, key: key))
+func connectMachine(
+  _ server: TestServer, key: Curve25519.Signing.PrivateKey, groupSecrets: Bool = true,
+) async throws -> WebSocket {
+  try await server.requireSocket("/v1/machine/connect", headers: try await connectHeaders(server, key: key, groupSecrets: groupSecrets))
 }
 
 func mintExec(_ server: TestServer, machine: MachineID) async throws -> ExecID {

@@ -14,10 +14,10 @@ import ServeRouting
 import struct SpaceContract.GroupID
 import SpaceCore
 
-// A machine belongs to one group; a principal uses it (lists, execs, reads
-// its vault's names) when its group reads that group, and any other machine
-// answers as unknown. Changing its name, its keys, its vault or its group
-// takes an admin of the machine's group, and a removal a human one.
+// A machine belongs to one group; a principal uses it (lists, execs) when its
+// group reads that group, and any other machine answers as unknown. Changing
+// its name or its group takes an admin of the machine's group, and its keys a
+// human one.
 func addMachineRoutes(
   _ router: inout Router,
   space: Space,
@@ -219,8 +219,9 @@ func addMachineRoutes(
     else {
       return .response(errorResponse(.unauthorized, code: "keyInvalid", message: "machine key handshake rejected"))
     }
+    let capabilities = Set((request.headers[MachineConnect.capabilitiesHeader] ?? "").split(separator: ",").map(String.init))
     return .webSocket { socket in
-      await hub.runMachineSession(machine, pubkey: pubkey, socket: socket)
+      await hub.runMachineSession(machine, pubkey: pubkey, capabilities: capabilities, socket: socket)
     }
   }
 
@@ -303,53 +304,6 @@ func addMachineRoutes(
       await hub.runCallerSession(record, socket: socket)
     }
   }
-
-  router.post("/v1/machine/:id/vault") { request, parameters in
-    let id: MachineID
-    switch try await usable(request, parameters) {
-    case let .success((principal, record)):
-      guard try await admits(principal, of: record.group, space: space) else {
-        return errorResponse(
-          .forbidden, code: "adminRequired",
-          message: "setting a vault entry on \(record.name ?? record.id.rawValue) needs an admin of group \(record.group.rawValue)",
-        )
-      }
-      id = record.id
-    case let .failure(response): return response
-    }
-    let body = try await request.body?.text() ?? ""
-    guard case let .object(fields)? = JSONValue.parse(body),
-          case let .string(name)? = fields["name"],
-          case let .string(value)? = fields["value"]
-    else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "expected {name, value}")
-    }
-    return await vaultResponse { try await hub.vaultSet(machine: id, name: name, value: value) }
-  }
-
-  router.delete("/v1/machine/:id/vault/:name") { request, parameters in
-    try request.requireNoBody()
-    let id: MachineID
-    switch try await usable(request, parameters) {
-    case let .success((principal, record)):
-      guard try await humanAdmits(principal, of: record.group, space: space) else {
-        return humanAdminRequired("removing a vault entry from \(record.name ?? record.id.rawValue)", group: record.group)
-      }
-      id = record.id
-    case let .failure(response): return response
-    }
-    guard let name = parameters["name"] else { return unknownMachine(parameters) }
-    return await vaultResponse { try await hub.vaultRemove(machine: id, name: name) }
-  }
-
-  router.get("/v1/machine/:id/vault") { request, parameters in
-    let id: MachineID
-    switch try await usable(request, parameters) {
-    case let .success((_, record)): id = record.id
-    case let .failure(response): return response
-    }
-    return await vaultResponse { try await hub.vaultList(machine: id) }
-  }
 }
 
 func execStatus(of record: ExecRecord) -> ExecStatus {
@@ -413,21 +367,4 @@ private func unknownMachine(_ parameters: RouteParameters) -> Response {
 
 func unknownExec(_ parameters: RouteParameters) -> Response {
   errorResponse(.notFound, code: "notFound", message: "unknown exec: \(parameters["id"] ?? "")")
-}
-
-private func vaultResponse(_ operation: () async throws -> VaultOutcome) async -> Response {
-  do {
-    switch try await operation() {
-    case .ok:
-      return jsonResponse(.object([:]))
-    case let .names(_, names):
-      return jsonResponse(.object(["names": .array(names.map(JSONValue.string))]))
-    case let .error(_, error):
-      return errorResponse(.unprocessableContent, code: error.code.rawValue, message: error.message)
-    }
-  } catch is MachineHubError {
-    return errorResponse(.serviceUnavailable, code: "machineLost", message: "machine is not attached")
-  } catch {
-    return errorResponse(.internalServerError, code: "io", message: "vault operation failed")
-  }
 }

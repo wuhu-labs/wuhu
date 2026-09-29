@@ -69,24 +69,29 @@ struct ExecTests {
     }
   }
 
-  @Test func secretsInjectAsEnvAndOutputIsMasked() async throws {
+  @Test func secretValuesInjectAsEnvAndOutputIsMasked() async throws {
     try await Harness().run { h in
       h.connect()
-      let outcome = try await retryingUntilBound { try await h.caller.vaultSet(name: "GH_TOKEN", value: "hunter2-value") }
-      guard case .ok = outcome else {
-        Issue.record("expected ok, got \(outcome)")
-        return
-      }
       let exec = await h.caller.startExec(makeStart(
         execID(1),
-        command: ["sh", "-c", "printf 'token=%s;' \"$TOKEN\"; printf 'again %s' \"$TOKEN\" 1>&2"],
-        secrets: ["TOKEN": "GH_TOKEN"],
+        command: ["sh", "-c", "printf 'token=%s;' \"$TOKEN\"; printf 'again %s|%s|' \"$TOKEN\" \"$ALIAS\" 1>&2; printf '[%s]' \"$EMPTY\""],
+        secretValues: ["TOKEN": "hunter2-value", "ALIAS": "hunter2-value", "EMPTY": ""],
       ))
       let collected = try await collect(exec)
-      #expect(collected.stdoutText == "token=***;")
-      #expect(collected.stderrText == "again ***")
+      #expect(collected.stdoutText == "token=***;[]")
+      #expect(collected.stderrText == "again ***|***|")
       #expect(collected.exit == .exited(code: 0))
     }
+  }
+
+  @Test func maskingCoversSecretValuesAndTheTokenButNeverAnEmptyValue() {
+    let start = makeStart(
+      execID(1),
+      command: ["true"],
+      secretValues: ["A": "hunter2", "B": "hunter2", "E": ""],
+      session: ExecSessionCredential(token: "wst_t", spaceURL: "https://space.test"),
+    )
+    #expect(ExecEngine.maskedValues(start) == ["hunter2", "wst_t"])
   }
 
   @Test func sessionCredentialSetsTheServerNamesLastAndMasksTheToken() async throws {
@@ -120,11 +125,11 @@ struct ExecTests {
   }
 
   @Test func anInheritedIdentityOrGroupIsDroppedUnlessTheStartSetsIt() async throws {
-    let bare = ExecEngine.environmentOverlay(makeStart(execID(1), command: ["true"]), secrets: [:])
+    let bare = ExecEngine.environmentOverlay(makeStart(execID(1), command: ["true"]))
     #expect(bare.keys.contains("WUHU_IDENTITY"))
     #expect(bare["WUHU_IDENTITY"] == .some(String?.none))
     #expect(bare["WUHU_GROUP"] == .some(String?.none))
-    let own = ExecEngine.environmentOverlay(makeStart(execID(1), command: ["true"], env: ["WUHU_IDENTITY": "wallet"]), secrets: [:])
+    let own = ExecEngine.environmentOverlay(makeStart(execID(1), command: ["true"], env: ["WUHU_IDENTITY": "wallet"]))
     #expect(own["WUHU_IDENTITY"] == .some("wallet"))
     try await Harness().run { h in
       h.connect()
@@ -135,15 +140,21 @@ struct ExecTests {
     }
   }
 
-  @Test func unknownSecretFailsLoudlyWithoutSpawning() async throws {
+  // Names come only from a server that predates group secrets; this agent has
+  // nothing to resolve them from, so nothing spawns.
+  @Test func secretNamesFailLoudlyWithoutSpawning() async throws {
+    let scratch = try ScratchFolder("machine-agent-tests")
+    defer { scratch.remove() }
+    let marker = scratch.path + "/spawned"
     try await Harness().run { h in
       h.connect()
-      let exec = await h.caller.startExec(makeStart(execID(1), command: ["echo", "never"], secrets: ["X": "MISSING"]))
+      let exec = await h.caller.startExec(makeStart(execID(1), command: ["touch", marker], secrets: ["X": "GH_TOKEN"]))
       let collected = try await collect(exec)
       #expect(collected.stdout.isEmpty)
-      #expect(collected.stderrText == "wuhu: unknown secret name 'MISSING'\n")
+      #expect(collected.stderrText == "wuhu: secret GH_TOKEN came as a name, not a value; this machine's server predates group secrets\n")
       #expect(collected.exit == .exited(code: 127))
     }
+    #expect(!FileManager.default.fileExists(atPath: marker))
   }
 
   @Test func spawnFailureFailsLoudly() async throws {
@@ -156,25 +167,37 @@ struct ExecTests {
     }
   }
 
-  @Test func vaultOpsServeOverTheWire() async throws {
-    try await Harness().run { h in
-      h.connect()
-      _ = try await retryingUntilBound { try await h.caller.vaultSet(name: "B_TOKEN", value: "b") }
-      _ = try await h.caller.vaultSet(name: "A_TOKEN", value: "a")
-      guard case let .names(_, names) = try await h.caller.vaultList() else {
-        Issue.record("expected names")
-        return
+  // Across reconnects the agent says once that the file is unused, and never
+  // reads, changes or removes it.
+  @Test func aLegacyVaultFileIsLeftAloneAndNamedInOneLogLine() async throws {
+    let logs = RecordedLogs()
+    let harness = try Harness(logger: logs.logger)
+    let vault = harness.stateDirectory + "/vault.json"
+    let contents = Data(#"{"GH_TOKEN":"hunter2"}"#.utf8)
+    #expect(FileManager.default.createFile(atPath: vault, contents: contents, attributes: [.posixPermissions: 0o600]))
+    try await harness.run { h in
+      for round in 1 ... 2 {
+        let (_, sever) = h.connect()
+        let exec = await h.caller.startExec(makeStart(execID(round), command: ["printf", "%s", "ran"]))
+        let collected = try await collect(exec)
+        #expect(collected.stdoutText == "ran")
+        sever.close()
       }
-      #expect(names == ["A_TOKEN", "B_TOKEN"])
-      _ = try await h.caller.vaultRemove(name: "B_TOKEN")
-      guard case let .names(_, remaining) = try await h.caller.vaultList() else {
-        Issue.record("expected names")
-        return
-      }
-      #expect(remaining == ["A_TOKEN"])
-      let attributes = try FileManager.default.attributesOfItem(atPath: h.stateDirectory + "/vault.json")
-      #expect((attributes[.posixPermissions] as? Int) == 0o600)
     }
+    #expect(FileManager.default.contents(atPath: vault) == contents)
+    let lines = logs.messages.filter { $0.contains("vault.json") }
+    #expect(lines == ["\(vault) is no longer used: an exec's secrets are its machine's group secrets (wuhu secret set)"])
+  }
+
+  @Test func withoutAVaultFileNothingIsLogged() async throws {
+    let logs = RecordedLogs()
+    let harness = try Harness(logger: logs.logger)
+    try await harness.run { h in
+      h.connect()
+      let exec = await h.caller.startExec(makeStart(execID(1), command: ["true"]))
+      _ = try await collect(exec)
+    }
+    #expect(!logs.messages.contains { $0.contains("vault.json") })
   }
 
   @Test func vfsAndSearchServeOverTheWire() async throws {

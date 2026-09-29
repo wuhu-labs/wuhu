@@ -172,8 +172,6 @@ extension Command {
       return try parseMachine(&parser)
     case "device":
       return try parseDevice(&parser)
-    case "vault":
-      return try parseVault(&parser)
     case "secret":
       return try parseSecret(&parser)
     case "group":
@@ -301,7 +299,7 @@ extension Command {
   }
 
   private static func help(for verb: String, parser: ArgumentCursor) -> String {
-    if ["table", "machine", "device", "vault", "secret", "group", "user", "key", "skill", "models", "session", "auth"].contains(verb),
+    if ["table", "machine", "device", "secret", "group", "user", "key", "skill", "models", "session", "auth"].contains(verb),
        let subcommand = parser.remaining.first(where: { $0 != "--help" && $0 != "-h" })
     {
       return Self.verbHelp["\(verb) \(subcommand)"] ?? Self.verbHelp[verb]!
@@ -657,28 +655,6 @@ extension Command {
     }
   }
 
-  private static func parseVault(_ parser: inout ArgumentCursor) throws -> Self {
-    guard let subcommand = parser.pop() else {
-      throw UsageError(message: "vault: missing <set|list|remove>")
-    }
-    let machine = try parser.required("machine", verb: "vault \(subcommand)")
-    switch subcommand {
-    case "set":
-      let name = try parser.required("name", verb: "vault set")
-      try parser.finish(verb: "vault set")
-      return .vaultSet(machine: machine, name: name)
-    case "list":
-      try parser.finish(verb: "vault list")
-      return .vaultList(machine: machine)
-    case "remove":
-      let name = try parser.required("name", verb: "vault remove")
-      try parser.finish(verb: "vault remove")
-      return .vaultRemove(machine: machine, name: name)
-    default:
-      throw UsageError(message: "vault: unknown subcommand \(subcommand)")
-    }
-  }
-
   private static func parseExec(_ arguments: [String]) throws -> Self {
     var flags = arguments
     var command: [String] = []
@@ -814,8 +790,7 @@ extension Command {
     device    list the phones, pads, macs and vision devices signed into this space, or annotate one
     user      accounts: offline recovery (add/reset/invite), live list/remove, and your own handle/profile
     key       list or revoke enrolled device keys in the pinned space
-    vault     manage a machine's secret vault (write-only)
-    secret    manage the space's secrets for run_script (write-only)
+    secret    manage your group's secrets for run_script and execs (write-only)
     group     list the space's groups, or choose the one this wallet acts in
     exec      run a command on a machine (duplex, pipe-clean)
     ps        list live execs
@@ -906,14 +881,15 @@ extension Command {
     updates the installed wuhu under ~/.wuhu/bin from https://wuhu.ai, which
     serves the lane pointer and the artifacts it names; no token, no account.
     every download is verified against the sha256 in that pointer.
-    layout: ~/.wuhu/bin/<version>/wuhu, with ~/.wuhu/bin/wuhu a symlink to the
-    current version, flipped atomically; the last 3 versions are kept.
+    layout: ~/.wuhu/bin/<version>/wuhu, with ~/.wuhu/bin/wuhu a copy of the
+    current version's binary, renamed into place so its path never changes
+    (macOS privacy grants follow it); the last 3 versions are kept.
     the binary follows its own release lane; ordering is (train semver, lane
     counter) within a lane only. never touches PATH, shells, or dotfiles.
     flags:
       --check     print the newest release in the lane without installing
       --lane L    cross to another lane's latest release
-      --rollback  flip the symlink back to the previously current version
+      --rollback  put the previously current version back at ~/.wuhu/bin/wuhu
     \(exitCodes)
     """,
     "read": """
@@ -1165,7 +1141,7 @@ extension Command {
     usage: wuhu machine run
 
     runs the machine agent in the foreground: dials the joined server forever,
-    serves exec/fs/search/vault, and logs to stderr. stop with ctrl-c.
+    serves exec/fs/search, and logs to stderr. stop with ctrl-c.
     \(exitCodes)
     """,
     "device": """
@@ -1200,7 +1176,7 @@ extension Command {
     renames a machine; needs an admin of the machine's group, as a move
     does. names are lowercased, unique per space, and match
     [a-z0-9][a-z0-9.-]{0,62}; the mc_ id never changes and both address the
-    box in machines:// paths, exec, vault, rotate, and revoke.
+    box in machines:// paths, exec, rotate, and revoke.
     \(exitCodes)
     """,
     "machine rotate": """
@@ -1342,42 +1318,6 @@ extension Command {
     out until re-enrolled (wuhu login < invite-link).
     \(exitCodes)
     """,
-    "vault": """
-    usage: wuhu vault <set|list|remove> <machine> ...
-
-    subcommands:
-      set <machine> <NAME>        store a secret on the machine (value read from stdin)
-      list <machine>              list secret names (values are never readable)
-      remove <machine> <NAME>     delete a secret
-
-    the value is read from stdin, never from arguments: argv leaks via ps.
-    the vault is write-only; no surface returns a value. setting a secret takes
-    a person who is an admin of the machine's group, removing one a human admin
-    of it. the CLI is a person's; a top-level agent sets and lists vault
-    secrets through run_script (wuhu:secret with { machine }).
-    \(exitCodes)
-    """,
-    "vault set": """
-    usage: wuhu vault set <machine> <NAME> < value
-
-    stores a secret in the machine's local vault; needs an admin of the
-    machine's group. the value is read from stdin (one trailing newline is
-    stripped), never from arguments: argv leaks via ps.
-    \(exitCodes)
-    """,
-    "vault list": """
-    usage: wuhu vault list <machine>
-
-    prints secret names, one per line. values are never readable.
-    \(exitCodes)
-    """,
-    "vault remove": """
-    usage: wuhu vault remove <machine> <NAME>
-
-    deletes a secret from the machine's local vault; needs a human admin of
-    the machine's group.
-    \(exitCodes)
-    """,
     "secret": """
     usage: wuhu secret <set|list|remove> ...
 
@@ -1388,9 +1328,10 @@ extension Command {
 
     space secrets live on the server, outside the space's files and history,
     one store per group: every subcommand acts on the acting group's store.
-    scripts (run_script) use them through wuhu:secret. here, setting a secret
-    takes a person who is an admin of the group, and removing one a human
-    admin. the CLI is a person's: a top-level agent sets its group's secrets
+    scripts (run_script) use them through wuhu:secret, and an exec's
+    --secret ENV=NAME takes NAME from the store of the machine's group. here,
+    setting a secret takes a person who is an admin of the group, and
+    removing one a human admin. the CLI is a person's: a top-level agent sets its group's secrets
     through run_script (wuhu:secret set) instead. no surface returns a value.
     \(exitCodes)
     """,
@@ -1469,7 +1410,7 @@ extension Command {
     stderr only. reconnects automatically across network blips.
 
     flags:
-      --secret ENV=NAME  inject vault secret NAME as $ENV (repeatable); output is masked
+      --secret ENV=NAME  inject secret NAME of the machine's group as $ENV (repeatable); output is masked
       --window N         flow-control window in bytes (default 4 MiB)
       --max-output N     kill the command once total output reaches N bytes (default unlimited)
       --timeout SECS     kill the command after SECS wall-clock seconds (default none)

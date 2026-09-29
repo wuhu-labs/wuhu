@@ -4,30 +4,16 @@ import Testing
 
 @Suite(.timeLimit(.minutes(2)))
 struct RequestTests {
-  @Test func vfsSearchAndVaultRoundTrip() async throws {
+  @Test func vfsAndSearchRoundTrip() async throws {
     let caller = ChannelEndpoint()
     let machine = ChannelEndpoint()
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await drive(caller, machine) }
       group.addTask { await serveRequestsOK(machine) }
-      #expect(try await vfsRetryingUntilBound(caller, .stat(path: "/")) == .ok)
-      #expect(try await caller.search(.find(glob: "*", path: nil, matchLimit: nil, entryLimit: nil, step: nil)) == .paths(paths: [], cursor: nil))
-      guard case .ok = try await caller.vaultSet(name: "A", value: "secret") else {
-        Issue.record("vault set did not succeed")
-        group.cancelAll()
-        return
-      }
-      guard case let .names(_, names) = try await caller.vaultList() else {
-        Issue.record("vault list did not return names")
-        group.cancelAll()
-        return
-      }
-      #expect(names == ["A"])
-      guard case .ok = try await caller.vaultRemove(name: "A") else {
-        Issue.record("vault remove did not succeed")
-        group.cancelAll()
-        return
-      }
+      let stat = try await vfsRetryingUntilBound(caller, .stat(path: "/"))
+      #expect(stat == .ok)
+      let found = try await caller.search(.find(glob: "*", path: nil, matchLimit: nil, entryLimit: nil, step: nil))
+      #expect(found == .paths(paths: [], cursor: nil))
       group.cancelAll()
     }
   }

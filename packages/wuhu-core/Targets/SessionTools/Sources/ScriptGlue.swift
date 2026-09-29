@@ -80,45 +80,32 @@ const use = __wuhu_secret
 const put = __wuhu_secret_set
 const names = __wuhu_secret_list
 const drop = __wuhu_secret_remove
-const vaultPut = __wuhu_vault_set
-const vaultNames = __wuhu_vault_list
-const vaultDrop = __wuhu_vault_remove
-
-// `{ machine }` names a machine's vault instead of the group's secrets.
-const machineOf = (options) => {
-  const machine = options?.machine
-  if (machine === undefined || machine === null) return null
-  if (options.group !== undefined && options.group !== null) throw new TypeError("name a group or a machine, not both")
-  return String(machine)
+const noMachine = (options) => {
+  if (options?.machine !== undefined && options?.machine !== null) {
+    throw new TypeError("machines keep no secrets of their own: an exec's { secrets: { ENV: 'NAME' } } names a secret of the machine's group, set and listed here as that group's")
+  }
 }
 
 export const secret = (name, options) => {
-  // A vault's values never leave its machine, so no placeholder can stand for
-  // one: exec's secrets argument is the way to use them.
-  if (options?.machine !== undefined && options?.machine !== null) {
-    throw new TypeError("secret() names a group's secrets; a machine vault's values never leave the machine, so pass the entry to exec as { secrets: { ENV: 'name' } }")
-  }
+  noMachine(options)
   const group = options?.group
   return group === undefined || group === null ? use(String(name)) : use(String(name), String(group))
 }
 
 export async function set(name, value, options) {
-  const machine = machineOf(options)
-  if (machine === null) await put(String(name), String(value))
-  else await vaultPut(machine, String(name), String(value))
+  noMachine(options)
+  await put(String(name), String(value))
 }
 
 export const list = (options) => {
-  const machine = machineOf(options)
-  if (machine !== null) return vaultNames(machine)
+  noMachine(options)
   const group = options?.group
   return group === undefined || group === null ? names() : names(String(group))
 }
 
 export async function remove(name, options) {
-  const machine = machineOf(options)
-  if (machine === null) await drop(String(name))
-  else await vaultDrop(machine, String(name))
+  noMachine(options)
+  await drop(String(name))
 }
 """#
 

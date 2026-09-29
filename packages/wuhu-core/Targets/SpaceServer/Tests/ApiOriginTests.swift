@@ -120,7 +120,7 @@ import Testing
     #expect(rows.rows == [[.object(["k": .integer(1)]), .bool(true), .string("x")]])
   }
 
-  // Clients build `<group>.<contentBase>`; no second port is advertised.
+  // Clients build `<group>.<contentBase>`.
   @Test func serverInfoReportsTheContentBase() async throws {
     for (origin, base) in [
       ("https://wuhu.example:5530", "wuhu.example:5530"), ("https://Wuhu.Example", "wuhu.example"),
@@ -131,8 +131,6 @@ import Testing
       #expect(response.status == .ok)
       let info = try await json(response).object
       #expect(info?["contentBase"] == .string(base))
-      #expect(info?["webPort"] == nil)
-      #expect(info?["webOrigin"] == nil)
     }
   }
 

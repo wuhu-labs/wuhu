@@ -121,7 +121,7 @@ extension SessionRuntime {
       space: space,
       secrets: secrets,
       machines: ScriptMachineAccess(
-        files: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub), vault: vaultSeam(hub: hub),
+        files: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
       ),
     )
     let budget = budgetResolver(space: space)
@@ -341,19 +341,6 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
     },
     attached: { await hub.attachedMachines() },
-  )
-}
-
-func vaultSeam(hub: MachineHub) -> MachineVaultSeam {
-  MachineVaultSeam(
-    set: { machine, name, value in
-      do { return try await hub.vaultSet(machine: machine, name: name, value: value) }
-      catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
-    },
-    list: { machine in
-      do { return try await hub.vaultList(machine: machine) }
-      catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
-    },
   )
 }
 

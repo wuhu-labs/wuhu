@@ -33,6 +33,9 @@ public struct ExecStart: Codable, Equatable, Sendable {
   public let command: [String]
   public let env: StringMap?
   public let secrets: StringMap?
+  /// `ENV_NAME → value`, the server's resolution of `secrets` in the machine's
+  /// group; sent only to an agent that announced `MachineConnect.groupSecrets`.
+  public let secretValues: StringMap?
   public let window: Int?
   public let maxOutput: Int?
   public let timeout: Double?

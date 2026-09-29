@@ -1,3 +1,5 @@
+import enum Credentials.SecretError
+import struct Credentials.SpaceSecretStores
 import Dependencies
 import JSONValue
 import Logging
@@ -18,6 +20,7 @@ public actor MachineHub {
   private struct Leg {
     let send: @Sendable ([UInt8]) async throws -> Void
     let close: @Sendable () -> Void
+    var groupSecrets: Bool = false
   }
 
   private enum TimerKind {
@@ -32,6 +35,7 @@ public actor MachineHub {
   private let machineGrace: Duration
   private let keyRecheck: Duration
   private let tokens: ExecTokens?
+  private let secrets: SpaceSecretStores?
   private let date: DateGenerator
   private let logger: Logger = Logger(label: "wuhu.machine-hub")
 
@@ -44,6 +48,13 @@ public actor MachineHub {
   private var exitDelivered: Set<ExecID> = []
   private var execsByStream: [MachineID: [Int: ExecID]] = [:]
   private var machineStreamIDs: [ExecID: Int] = [:]
+  // Execs the hub failed before spawning, with the stderr line their caller
+  // gets again should it replay the start.
+  private var refusals: [ExecID: [UInt8]] = [:]
+  // The secret values each exec's first relayed start carried, for the
+  // exec's lifetime: a replay reuses them, so a running exec never changes
+  // group and is never refused late.
+  private var relayedSecrets: [ExecID: StringMap?] = [:]
 
   private var nextRequestID: Int = 1
   private var pendingRequests: [Int: AsyncThrowingStream<Frame, any Error>.Continuation] = [:]
@@ -61,19 +72,22 @@ public actor MachineHub {
     self.init(space: space, callerGrace: callerGrace, machineGrace: machineGrace, keyRecheck: keyRecheck, tokens: nil)
   }
 
-  // With tokens, a session's exec start carries its credential; only
-  // `serve()` and the package's tests pass them.
+  // With tokens, a session's exec start carries its credential; with secrets,
+  // an exec's `secrets` resolve in its machine's group. Only `serve()` and the
+  // package's tests pass them.
   package init(
     space: Space,
     callerGrace: Duration = .seconds(60),
     machineGrace: Duration = .seconds(60),
     keyRecheck: Duration = .seconds(30),
     tokens: ExecTokens?,
+    secrets: SpaceSecretStores? = nil,
   ) {
     @Dependency(\.continuousClock) var clock
     @Dependency(\.date) var date
     self.space = space
     self.tokens = tokens
+    self.secrets = secrets
     self.date = date
     self.clock = clock
     self.callerGrace = callerGrace
@@ -103,8 +117,10 @@ public actor MachineHub {
 
   // MARK: - Sessions
 
-  public func runMachineSession(_ machine: MachineID, pubkey: String, socket: WebSocket) async {
-    let generation = bindMachine(machine, socket: socket)
+  /// `capabilities` are what the agent announced when it dialed
+  /// (`MachineConnect.capabilitiesHeader`).
+  public func runMachineSession(_ machine: MachineID, pubkey: String, capabilities: Set<String>, socket: WebSocket) async {
+    let generation = bindMachine(machine, socket: socket, groupSecrets: capabilities.contains(MachineConnect.groupSecrets))
     await deliverPendingKills(machine)
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await self.enforceLiveKey(machine, pubkey: pubkey, socket: socket) }
@@ -191,18 +207,6 @@ public actor MachineHub {
     return response.result
   }
 
-  public func vaultSet(machine: MachineID, name: String, value: String) async throws -> VaultOutcome {
-    try await roundTrip(machine, .vaultSet) { VaultSet(id: $0, name: name, value: value) }
-  }
-
-  public func vaultRemove(machine: MachineID, name: String) async throws -> VaultOutcome {
-    try await roundTrip(machine, .vaultRemove) { VaultRemove(id: $0, name: name) }
-  }
-
-  public func vaultList(machine: MachineID) async throws -> VaultOutcome {
-    try await roundTrip(machine, .vaultList) { VaultList(id: $0) }
-  }
-
   private func roundTrip<Response: Decodable>(
     _ machine: MachineID,
     _ opcode: Opcode,
@@ -235,11 +239,11 @@ public actor MachineHub {
   // answered; they fail here, at rebind, not on the machine's hello — a round
   // trip issued on the new binding races the in-flight hello frame and must
   // survive it.
-  private func bindMachine(_ machine: MachineID, socket: WebSocket) -> Int {
+  private func bindMachine(_ machine: MachineID, socket: WebSocket, groupSecrets: Bool) -> Int {
     machineLegs[machine]?.close()
     failPendingRequests(for: machine, with: MachineHubError.severed)
     machineGenerations[machine, default: 0] += 1
-    machineLegs[machine] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() })
+    machineLegs[machine] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() }, groupSecrets: groupSecrets)
     return machineGenerations[machine, default: 0]
   }
 
@@ -295,6 +299,8 @@ public actor MachineHub {
     // it: it gets the kill, now or on the machine's next connect.
     case let .callerGone(id, generation):
       guard callerGenerations[id, default: 0] == generation, callerLegs[id] == nil else { return }
+      refusals[id] = nil
+      relayedSecrets[id] = nil
       guard let record = try? await space.execRecord(id) else { return }
       switch record.terminal {
       case nil:
@@ -355,13 +361,29 @@ public actor MachineHub {
       // the replay is dropped and the exec ack-starves (caller-first double
       // sever).
       callerStreamIDs[record.id] = frame.streamID
+      if refusals[record.id] != nil {
+        await deliverRefusal(record.id)
+        return
+      }
       // Registry re-check before relaying: a start replayed for a finished
       // exec would respawn the command on an agent that restarted and lost
       // its per-id dedup state.
       guard let current = try? await space.execRecord(record.id), current.terminal == nil else { return }
       try? await space.recordExecCommand(record.id, command: start.command.joined(separator: " "))
       guard let leg = machineLegs[record.machine] else { return }
-      let relayed = sessionStart(start, caller: record.caller)
+      let values: StringMap?
+      if let first = relayedSecrets[record.id] {
+        values = first
+      } else {
+        switch await secretValues(start, machine: record.machine, groupSecrets: leg.groupSecrets) {
+        case let .success(resolved): values = resolved
+        case let .failure(refusal):
+          await refuse(record.id, refusal.message)
+          return
+        }
+        relayedSecrets[record.id] = .some(values)
+      }
+      let relayed = machineStart(start, record: record, groupSecrets: leg.groupSecrets, values: values)
       try? await leg.send(FrameCodec.encode(Frame(streamID: record.streamID, opcode: frame.opcode, payload: relayed)))
       // A kill that landed while this start was in flight reached the machine
       // first, where an unknown stream drops it; repeat it behind the start.
@@ -376,13 +398,19 @@ public actor MachineHub {
     }
   }
 
-  // The server owns the session names in every start it relays: whatever the
-  // caller put under them goes, and a session's exec gets its credential.
-  private func sessionStart(_ start: ExecStart, caller: String?) -> ExecStart {
-    func stripped(_ map: StringMap?) -> StringMap? {
-      map.map { StringMap($0.entries.filter { !SessionExecEnvironment.reserved.contains($0.key) }) }
-    }
-    let session: ExecSessionCredential? = if let caller, let tokens {
+  private struct ExecRefusal: Error {
+    let message: String
+  }
+
+  // The start the machine gets. The server owns the session names in every
+  // start it relays: whatever the caller put under them goes, and a session's
+  // exec gets its credential. An agent that announced group secrets gets the
+  // values resolved for the exec's first relay; an older one gets the names
+  // and resolves them from its own vault.
+  private func machineStart(_ start: ExecStart, record: ExecRecord, groupSecrets: Bool, values: StringMap?) -> ExecStart {
+    let names = Self.secretNames(start)
+    let unresolved = values == nil && !(names?.entries.isEmpty ?? true)
+    let session: ExecSessionCredential? = if let caller = record.caller, let tokens {
       tokens.credential(session: SessionID(rawValue: caller), exec: start.id, timeout: start.timeout, now: date.now)
     } else {
       nil
@@ -391,13 +419,67 @@ public actor MachineHub {
       id: start.id,
       cwd: start.cwd,
       command: start.command,
-      env: stripped(start.env),
-      secrets: stripped(start.secrets),
+      env: Self.withoutReserved(start.env),
+      secrets: groupSecrets && !unresolved ? nil : names,
+      secretValues: groupSecrets ? values : nil,
       window: start.window,
       maxOutput: start.maxOutput,
       timeout: start.timeout,
       session: session,
     )
+  }
+
+  private static func withoutReserved(_ map: StringMap?) -> StringMap? {
+    map.map { StringMap($0.entries.filter { !SessionExecEnvironment.reserved.contains($0.key) }) }
+  }
+
+  private static func secretNames(_ start: ExecStart) -> StringMap? {
+    withoutReserved(start.secrets)
+  }
+
+  // The values of the machine's group as it stands now, for an agent that
+  // announced group secrets; nil when there is nothing to resolve.
+  private func secretValues(_ start: ExecStart, machine: MachineID, groupSecrets: Bool) async -> Result<StringMap?, ExecRefusal> {
+    guard groupSecrets, let names = Self.secretNames(start), !names.entries.isEmpty else { return .success(nil) }
+    return await secretValues(names.entries, machine: machine).map { StringMap($0) }
+  }
+
+  // Names resolve in alphabetical order, so the one a refusal names is stable.
+  private func secretValues(_ names: [String: String], machine: MachineID) async -> Result<[String: String], ExecRefusal> {
+    guard let group = try? await space.machine(machine)?.group else {
+      return .failure(ExecRefusal(message: "machine \(machine.rawValue) is no longer enrolled"))
+    }
+    guard let secrets, let store = try? secrets.group(group.rawValue) else {
+      return .failure(ExecRefusal(message: "this server keeps no group secrets, so none reach machine \(machine.rawValue)"))
+    }
+    var values: [String: String] = [:]
+    for (variable, name) in names.sorted(by: { ($0.value, $0.key) < ($1.value, $1.key) }) {
+      do {
+        values[variable] = try await store.value(of: name)
+      } catch SecretError.unknown {
+        return .failure(ExecRefusal(message: "no secret \(name) in group \(group.rawValue)"))
+      } catch {
+        return .failure(ExecRefusal(message: "the secrets of group \(group.rawValue) are unreadable"))
+      }
+    }
+    return .success(values)
+  }
+
+  // A refused exec fails the way one the machine cannot spawn does: one
+  // `wuhu:` line on stderr, then exit 127. Nothing reaches the machine.
+  private func refuse(_ id: ExecID, _ message: String) async {
+    refusals[id] = Array("wuhu: \(message)\n".utf8)
+    try? await space.finishExec(id, .exited(code: 127))
+    await deliverRefusal(id)
+  }
+
+  private func deliverRefusal(_ id: ExecID) async {
+    guard let line = refusals[id], let leg = callerLegs[id], let streamID = callerStreamIDs[id] else { return }
+    let output = OutputChunk(id: id, stream: .stderr, cursor: 0, data: Base64Data(line))
+    let exit = ExecExit(id: id, cursor: line.count, status: .exited(code: 127))
+    try? await leg.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .output, payload: output)))
+    try? await leg.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .execExit, payload: exit)))
+    exitDelivered.insert(id)
   }
 
   private func routeFromMachine(_ machine: MachineID, _ bytes: [UInt8]) async {
@@ -409,6 +491,7 @@ public actor MachineHub {
     guard let id = await execID(machine: machine, streamID: frame.streamID) else { return }
     if frame.opcode == .execExit, let exit = try? frame.payload(ExecExit.self) {
       tokens?.revoke(id)
+      relayedSecrets[id] = nil
       switch exit.status {
       case let .exited(code): try? await space.finishExec(id, .exited(code: code))
       case let .signaled(signal): try? await space.finishExec(id, .signaled(signal: signal))
@@ -438,7 +521,7 @@ public actor MachineHub {
       case let .error(error):
         logger.warning("machine control error", metadata: ["machine": .string(machine.rawValue), "code": .string(error.code.rawValue)])
       }
-    case .vfsResponse, .searchResponse, .vaultSet, .vaultRemove, .vaultList:
+    case .vfsResponse, .searchResponse:
       guard let id = requestID(of: frame), let continuation = pendingRequests.removeValue(forKey: id) else { return }
       pendingMachines[id] = nil
       continuation.yield(frame)

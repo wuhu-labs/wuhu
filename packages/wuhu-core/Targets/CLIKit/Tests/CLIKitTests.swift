@@ -198,17 +198,16 @@ struct RequestMappingTests {
     #expect(await harness.stderr.text == "")
   }
 
-  // The secret and vault routes refuse every session, so their help names the
-  // person as the CLI's admin and run_script as the agent's way in.
-  @Test func secretAndVaultHelpSayTheCLIIsAPersonsAndAgentsUseRunScript() async throws {
+  // The secret routes refuse every session, so their help names the person as
+  // the CLI's admin and run_script as the agent's way in.
+  @Test func secretHelpSaysTheCLIIsAPersonsAndAgentsUseRunScript() async throws {
     let temp = try TemporaryDirectory()
     let harness = try Harness(temp: temp, response: .object([:]))
     #expect(await harness.runner.run(arguments: ["secret", "--help"]) == 0)
-    #expect(await harness.runner.run(arguments: ["vault", "--help"]) == 0)
     let output = await harness.stdout.text
     #expect(!output.contains("a live top-level agent"))
     #expect(output.contains("through run_script (wuhu:secret set)"))
-    #expect(output.contains("run_script (wuhu:secret with { machine })"))
+    #expect(output.contains("--secret ENV=NAME takes NAME from the store of the machine's group"))
   }
 }
 

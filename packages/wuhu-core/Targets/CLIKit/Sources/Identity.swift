@@ -71,7 +71,7 @@ extension Command {
       !upgrade.check
     case .use, .trust, .untrust, .userList, .userHandle, .userProfile, .userRemove,
          .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineJoin, .machineRun, .machineRotate,
-         .machineRevoke, .machineMove, .vaultSet, .vaultList, .vaultRemove, .authSet, .authList, .authRemove, .authLogin,
+         .machineRevoke, .machineMove, .authSet, .authList, .authRemove, .authLogin,
          .authLogout, .modelsUpdate, .groupUse:
       true
     default:

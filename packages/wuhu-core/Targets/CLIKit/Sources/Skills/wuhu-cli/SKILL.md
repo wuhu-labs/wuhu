@@ -187,13 +187,7 @@ wuhu upgrade [--check] [--lane dev|beta|release]
 wuhu upgrade --rollback
 ```
 
-Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane
-pointer, then the artifact it names, checked against its sha256. Installs into `~/.wuhu/bin/<version>/wuhu` and atomically
-flips the `~/.wuhu/bin/wuhu` symlink; the last 3 versions are kept and
-`--rollback` flips back one. The binary follows its own release lane
-(`-dev.N` / `-beta.N` / stable) — crossing lanes takes an explicit `--lane`.
-`--check` only prints. Never touches PATH, shells, or dotfiles; if another
-`wuhu` shadows the installed one on PATH it warns and leaves it alone.
+Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane pointer, then the artifact it names, checked against its sha256. Installs into `~/.wuhu/bin/<version>/wuhu`, then copies that binary to a temp file and renames it over `~/.wuhu/bin/wuhu`, a real file whose path never changes, so macOS privacy grants survive upgrades; `~/.wuhu/bin/.current` names the version. The last 3 versions are kept and `--rollback` puts the previous one back the same way. The binary follows its own release lane (`-dev.N` / `-beta.N` / stable) — crossing lanes takes an explicit `--lane`. `--check` only prints. Never touches PATH, shells, or dotfiles; if another `wuhu` shadows the installed one on PATH it warns and leaves it alone.
 
 ## Server
 
@@ -250,7 +244,7 @@ enrollment; a second use fails. `wuhu share-login [--ttl <seconds>]` requires
 an enrolled device and a pinned space; its link dies at first use or after
 `--ttl` seconds (default 600, at most 259200).
 
-## Machines, exec, vault
+## Machines, exec, secrets
 
 ```bash
 wuhu machine add [--name N]         # prints id + join token (shown ONCE)
@@ -263,13 +257,11 @@ wuhu machine move <machine> --group <group>   # needs an admin of both groups
 wuhu exec --cwd machines://<machine>/tmp [--secret ENV=NAME] [--timeout S] [--max-output N] -- ls -la
 wuhu ps
 wuhu kill <exec-id>
-wuhu vault set <machine> NAME < value    # value from stdin, never argv
-wuhu vault list|remove <machine> [NAME]
-wuhu secret set NAME < value             # the acting group's secret for run_script (wuhu:secret); value from stdin
+wuhu secret set NAME < value             # the acting group's secret, for run_script (wuhu:secret) and --secret; value from stdin, never argv
 wuhu secret list|remove [NAME]
 ```
 
-A machine belongs to one group: `machine add` puts it in your personal group, and only sessions and people acting in a group that reads it see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin.
+A machine belongs to one group: `machine add` puts it in your personal group, and only sessions and people acting in a group that reads it see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
 
 `<machine>` is the machine's name or its `mc_` id — every machine verb and route takes either, `exec --cwd` included. `machine join` claims `--name` (default: the box's hostname, suffixed until free — `mini`, `mini-2`, …) only when the machine is still unnamed; a named machine keeps its name, so renaming is `machine name` alone.
 

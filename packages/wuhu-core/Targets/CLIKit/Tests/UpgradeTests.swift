@@ -89,6 +89,48 @@ struct UpgradeLayoutTests {
     try layout.install(payload: payload, version: version)
   }
 
+  private func expectInstalled(_ layout: UpgradeLayout, _ version: String, sourceLocation: SourceLocation = #_sourceLocation) throws {
+    let info = try self.fileStatus(layout.currentBinary)
+    #expect(info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), sourceLocation: sourceLocation)
+    #expect(info.st_mode & 0o777 == 0o755, sourceLocation: sourceLocation)
+    let source = layout.root.appendingPathComponent(version).appendingPathComponent("wuhu")
+    #expect(try Data(contentsOf: layout.currentBinary) == Data(contentsOf: source), sourceLocation: sourceLocation)
+    #expect(try self.inode(layout.currentBinary) != self.inode(source), sourceLocation: sourceLocation)
+    let recorded = try String(contentsOf: layout.root.appendingPathComponent(".current"), encoding: .utf8)
+    #expect(recorded == version + "\n", sourceLocation: sourceLocation)
+    #expect(layout.currentVersion() == version, sourceLocation: sourceLocation)
+  }
+
+  private struct Snapshot: Equatable {
+    var inode: UInt64
+    var binary: Data
+    var current: String
+    var previous: String
+  }
+
+  private func snapshot(_ layout: UpgradeLayout) throws -> Snapshot {
+    try Snapshot(
+      inode: self.inode(layout.currentBinary),
+      binary: Data(contentsOf: layout.currentBinary),
+      current: String(contentsOf: layout.root.appendingPathComponent(".current"), encoding: .utf8),
+      previous: String(contentsOf: layout.root.appendingPathComponent(".previous"), encoding: .utf8),
+    )
+  }
+
+  private func temporaries(_ layout: UpgradeLayout) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: layout.root.path).filter { $0.hasPrefix(".wuhu-") }
+  }
+
+  private func fileStatus(_ url: URL) throws -> stat {
+    var info = stat()
+    try #require(lstat(url.path, &info) == 0)
+    return info
+  }
+
+  private func inode(_ url: URL) throws -> UInt64 {
+    try UInt64(self.fileStatus(url).st_ino)
+  }
+
   @Test func locateUsesWuhuConfigDirectory() throws {
     let layout = try UpgradeLayout.locate(environment: ["HOME": "/Users/someone"])
     #expect(layout.root.path == "/Users/someone/.wuhu/bin")
@@ -101,7 +143,7 @@ struct UpgradeLayoutTests {
     let scratch = try ScratchFolder("upgrade")
     defer { scratch.remove() }
     let layout = try self.layout(in: scratch)
-    try FileManager.default.createSymbolicLink(atPath: layout.currentLink.path, withDestinationPath: "/opt/wuhu/wuhu")
+    try FileManager.default.createSymbolicLink(atPath: layout.currentBinary.path, withDestinationPath: "/opt/wuhu/wuhu")
     #expect(layout.currentVersion() == nil)
   }
 
@@ -115,7 +157,7 @@ struct UpgradeLayoutTests {
     _ = try layout.acquireLock()
   }
 
-  @Test func flipPointsCurrentAndRecordsPrevious() throws {
+  @Test func flipRenamesAFreshCopyOverTheFixedPath() throws {
     let scratch = try ScratchFolder("upgrade")
     defer { scratch.remove() }
     let layout = try self.layout(in: scratch)
@@ -124,32 +166,119 @@ struct UpgradeLayoutTests {
     #expect(layout.currentVersion() == nil)
 
     try layout.flip(to: "0.1.0-dev.1")
-    #expect(layout.currentVersion() == "0.1.0-dev.1")
+    try self.expectInstalled(layout, "0.1.0-dev.1")
     #expect(layout.previousVersion() == nil)
 
+    let displaced = try self.inode(layout.currentBinary)
+    let heldOpen = scratch.url.appendingPathComponent("held-open")
+    try FileManager.default.linkItem(at: layout.currentBinary, to: heldOpen)
     try layout.flip(to: "0.1.0-dev.2")
-    #expect(layout.currentVersion() == "0.1.0-dev.2")
+    try self.expectInstalled(layout, "0.1.0-dev.2")
     #expect(layout.previousVersion() == "0.1.0-dev.1")
-    let resolved = try String(contentsOf: layout.currentLink.resolvingSymlinksInPath(), encoding: .utf8)
-    #expect(resolved == "two")
+    #expect(try self.inode(layout.currentBinary) != displaced)
+    #expect(try String(contentsOf: heldOpen, encoding: .utf8) == "one", "the displaced inode is never written into")
+
+    #expect(try self.temporaries(layout).isEmpty)
   }
+
+  @Test func aSymlinkWinsOverAStaleCurrent() throws {
+    let scratch = try ScratchFolder("upgrade")
+    defer { scratch.remove() }
+    let layout = try self.layout(in: scratch)
+    try self.plantVersion(layout, "0.1.0-dev.1", content: "one")
+    try self.plantVersion(layout, "0.1.0-dev.2", content: "two")
+    try layout.flip(to: "0.1.0-dev.1")
+    let link = layout.root.appendingPathComponent("link")
+    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "0.1.0-dev.2/wuhu")
+    #expect(rename(link.path, layout.currentBinary.path) == 0)
+    try Data("0.1.0-dev.1\n".utf8).write(to: layout.root.appendingPathComponent(".previous"))
+    #expect(layout.currentVersion() == "0.1.0-dev.2", "a pre-fixed-path release flipped the symlink and left .current")
+
+    #expect(try layout.rollback() == (from: "0.1.0-dev.2", to: "0.1.0-dev.1"))
+    try self.expectInstalled(layout, "0.1.0-dev.1")
+    #expect(layout.previousVersion() == "0.1.0-dev.2")
+  }
+
+  @Test func flipSweepsCopiesAnInterruptedFlipLeft() throws {
+    let scratch = try ScratchFolder("upgrade")
+    defer { scratch.remove() }
+    let layout = try self.layout(in: scratch)
+    try self.plantVersion(layout, "0.1.0-dev.1")
+    try Data("abandoned".utf8).write(to: layout.root.appendingPathComponent(".wuhu-abandoned"))
+    try layout.flip(to: "0.1.0-dev.1")
+    #expect(try self.temporaries(layout).isEmpty)
+  }
+
+  @Test(arguments: ["0.1.0-dev.8", "0.1.0-dev.9"])
+  func aFailedFlipLeavesTheInstallAlone(_ target: String) throws {
+    let scratch = try ScratchFolder("upgrade")
+    defer { scratch.remove() }
+    let layout = try self.layout(in: scratch)
+    try self.plantVersion(layout, "0.1.0-dev.1", content: "one")
+    try self.plantVersion(layout, "0.1.0-dev.2", content: "two")
+    try layout.flip(to: "0.1.0-dev.1")
+    try layout.flip(to: "0.1.0-dev.2")
+    try FileManager.default.createDirectory(at: layout.root.appendingPathComponent("0.1.0-dev.8"), withIntermediateDirectories: false)
+    let before = try self.snapshot(layout)
+
+    #expect(throws: CLIError.self) { try layout.flip(to: target) }
+    #expect(try self.snapshot(layout) == before)
+    #expect(try self.temporaries(layout).isEmpty)
+  }
+
+  #if canImport(Darwin)
+    @Test func aFailedRenameLeavesTheInstallAlone() throws {
+      let scratch = try ScratchFolder("upgrade")
+      defer { scratch.remove() }
+      let layout = try self.layout(in: scratch)
+      try self.plantVersion(layout, "0.1.0-dev.1", content: "one")
+      try self.plantVersion(layout, "0.1.0-dev.2", content: "two")
+      try layout.flip(to: "0.1.0-dev.1")
+      try layout.flip(to: "0.1.0-dev.2")
+      try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: layout.currentBinary.path)
+      defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: layout.currentBinary.path) }
+      let before = try self.snapshot(layout)
+
+      #expect(throws: CLIError.self) { try layout.flip(to: "0.1.0-dev.1") }
+      #expect(try self.snapshot(layout) == before)
+      #expect(try self.temporaries(layout).isEmpty)
+    }
+  #endif
 
   @Test func rollbackTogglesBetweenLastTwoVersions() throws {
     let scratch = try ScratchFolder("upgrade")
     defer { scratch.remove() }
     let layout = try self.layout(in: scratch)
-    try self.plantVersion(layout, "0.1.0-dev.1")
-    try self.plantVersion(layout, "0.1.0-dev.2")
+    try self.plantVersion(layout, "0.1.0-dev.1", content: "one")
+    try self.plantVersion(layout, "0.1.0-dev.2", content: "two")
     try layout.flip(to: "0.1.0-dev.1")
     try layout.flip(to: "0.1.0-dev.2")
 
     let back = try layout.rollback()
     #expect(back == (from: "0.1.0-dev.2", to: "0.1.0-dev.1"))
-    #expect(layout.currentVersion() == "0.1.0-dev.1")
+    try self.expectInstalled(layout, "0.1.0-dev.1")
 
     let forward = try layout.rollback()
     #expect(forward == (from: "0.1.0-dev.1", to: "0.1.0-dev.2"))
-    #expect(layout.currentVersion() == "0.1.0-dev.2")
+    try self.expectInstalled(layout, "0.1.0-dev.2")
+  }
+
+  @Test func aSymlinkInstallUpgradesToARealFile() throws {
+    let scratch = try ScratchFolder("upgrade")
+    defer { scratch.remove() }
+    let layout = try self.layout(in: scratch)
+    try self.plantVersion(layout, "0.1.0-dev.1", content: "one")
+    try self.plantVersion(layout, "0.1.0-dev.2", content: "two")
+    try FileManager.default.createSymbolicLink(atPath: layout.currentBinary.path, withDestinationPath: "0.1.0-dev.1/wuhu")
+    #expect(layout.currentVersion() == "0.1.0-dev.1")
+
+    #expect(try layout.flip(to: "0.1.0-dev.2") == "0.1.0-dev.1")
+    try self.expectInstalled(layout, "0.1.0-dev.2")
+    #expect(layout.previousVersion() == "0.1.0-dev.1")
+    #expect(try String(contentsOf: layout.root.appendingPathComponent("0.1.0-dev.1/wuhu"), encoding: .utf8) == "one")
+
+    #expect(try layout.rollback() == (from: "0.1.0-dev.2", to: "0.1.0-dev.1"))
+    try self.expectInstalled(layout, "0.1.0-dev.1")
   }
 
   @Test func rollbackWithoutHistoryFails() throws {

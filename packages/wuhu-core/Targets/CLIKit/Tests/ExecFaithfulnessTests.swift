@@ -64,10 +64,10 @@ import Testing
     }
   }
 
-  @Test func execInjectsAndMasksVaultSecrets() async throws {
+  @Test func execInjectsAndMasksASecretOfTheMachinesGroup() async throws {
     try await execScenario { h, m in
       let setIO = CLIIO(stdin: "hunter2-secret-value\n")
-      #expect(await h.run(["vault", "set", m.id, "API_KEY"], io: setIO) == 0)
+      #expect(await h.run(["secret", "set", "API_KEY"], io: setIO) == 0)
 
       let io = CLIIO()
       let code = await h.run(
@@ -83,7 +83,7 @@ import Testing
         io: unknown,
       )
       #expect(failed == 127)
-      #expect(await unknown.stderrText().contains("wuhu:"))
+      #expect(await unknown.stderrText() == "wuhu: no secret NO_SUCH_SECRET in group shared\n")
     }
   }
 

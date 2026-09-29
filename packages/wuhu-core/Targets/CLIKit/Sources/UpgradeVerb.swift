@@ -107,7 +107,7 @@ struct UpgradeVerb {
       let lock = try layout.acquireLock()
       defer { try? FileManager.default.removeItem(at: lock) }
       let flip = try layout.rollback()
-      await self.runner.stdout("rolled back \(layout.currentLink.path): \(flip.from) -> \(flip.to)\n")
+      await self.runner.stdout("rolled back \(layout.currentBinary.path): \(flip.from) -> \(flip.to)\n")
       await self.warnAboutShadowing(layout)
       return
     }
@@ -145,11 +145,18 @@ struct UpgradeVerb {
       await self.runner.stdout("up to date: \(latest) is the latest \(lane.rawValue) release\n")
       return
     }
-    if layout.currentVersion() == latest.description {
-      await self.runner.stdout("""
-      \(layout.currentLink.path) already points at \(latest); this process runs \(self.runner.version)
-      start a fresh shell (or rehash) to pick it up
-      """ + "\n")
+    if layout.currentVersion() == latest.description, layout.versionDirectoryExists(latest.description) {
+      if layout.holds(latest.description) {
+        await self.runner.stdout("""
+        \(layout.currentBinary.path) is already \(latest); this process runs \(self.runner.version)
+        start a fresh shell (or rehash) to pick it up
+        """ + "\n")
+      } else {
+        let lock = try layout.acquireLock()
+        defer { try? FileManager.default.removeItem(at: lock) }
+        try layout.flip(to: latest.description)
+        await self.runner.stdout("installed \(latest) -> \(layout.currentBinary.path)\n")
+      }
       await self.warnAboutShadowing(layout)
       return
     }
@@ -193,7 +200,7 @@ struct UpgradeVerb {
       try? FileManager.default.removeItem(at: staging)
       throw error
     }
-    await self.runner.stdout("installed \(latest) -> \(layout.currentLink.path)\n")
+    await self.runner.stdout("installed \(latest) -> \(layout.currentBinary.path)\n")
     do {
       for version in try layout.prune(keep: 3) {
         await self.runner.stderr("pruned \(version)\n")
@@ -223,16 +230,16 @@ func shadowWarning(
 ) -> String? {
   let binDirectory = layout.root.standardizedFileURL.path
   guard let path else {
-    return "warning: PATH is not set; \(layout.currentLink.path) will not be found\n"
+    return "warning: PATH is not set; \(layout.currentBinary.path) will not be found\n"
   }
   for entry in path.split(separator: ":") where !entry.isEmpty {
     let candidate = URL(fileURLWithPath: String(entry), isDirectory: true)
       .appendingPathComponent("wuhu").standardizedFileURL.path
     guard isExecutable(candidate) else { continue }
-    if candidate == layout.currentLink.standardizedFileURL.path { return nil }
+    if candidate == layout.currentBinary.standardizedFileURL.path { return nil }
     let resolved = resolve(candidate)
     if resolved.hasPrefix(resolve(binDirectory) + "/") { return nil }
-    return "warning: \(candidate) shadows \(layout.currentLink.path) on PATH; remove it or reorder PATH\n"
+    return "warning: \(candidate) shadows \(layout.currentBinary.path) on PATH; remove it or reorder PATH\n"
   }
   return "warning: \(binDirectory) is not on PATH; the installed wuhu will not be found\n"
 }

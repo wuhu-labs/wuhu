@@ -13,7 +13,6 @@ import Synchronization
 private typealias ChildProcess = Execution<CustomWriteInput, SequenceOutput, SequenceOutput>
 
 struct ExecEngine: Sendable {
-  let vault: SecretVault
   let registry: ExecRegistry
   let clock: any Clock<Duration>
   let killGrace: Duration
@@ -38,27 +37,31 @@ struct ExecEngine: Sendable {
   /// dropped unless the start itself sets it, so an agent launched in wallet
   /// mode or in a group never puts its execs there; then `env`, the resolved
   /// secrets and the session names, rightmost wins.
-  static func environmentOverlay(_ start: ExecStart, secrets: [String: String]) -> [String: String?] {
+  static func environmentOverlay(_ start: ExecStart) -> [String: String?] {
     var overlay: [String: String?] = [
       SessionExecEnvironment.identity: String?.none,
       SessionExecEnvironment.group: String?.none,
     ]
     for (name, value) in start.env?.entries ?? [:] { overlay[name] = .some(value) }
-    for (name, value) in secrets { overlay[name] = .some(value) }
+    for (name, value) in start.secretValues?.entries ?? [:] { overlay[name] = .some(value) }
     for (name, value) in sessionEnvironment(start.session) { overlay[name] = .some(value) }
     return overlay
   }
 
+  /// What the exec can leak, masked in its output: the injected secret values
+  /// and the session token. An empty value would mask every position, so it
+  /// is injected but not masked.
+  static func maskedValues(_ start: ExecStart) -> [String] {
+    let values = (start.secretValues.map { Array($0.entries.values) } ?? []) + [start.session?.token].compactMap(\.self)
+    return Set(values).filter { !$0.isEmpty }.sorted()
+  }
+
   func run(_ exec: IncomingExec) async {
     let start = exec.start
-    let resolved: SecretVault.Resolved
-    do {
-      resolved = try await vault.resolve(start.secrets?.entries ?? [:])
-    } catch let unknown as SecretVault.UnknownSecret {
-      await fail(exec, "unknown secret name '\(unknown.name)'")
-      return
-    } catch {
-      await fail(exec, "vault unavailable")
+    // Only a server from before group secrets sends names: this agent keeps
+    // no values to resolve them from.
+    if let name = start.secrets?.entries.values.min() {
+      await fail(exec, "secret \(name) came as a name, not a value; this machine's server predates group secrets")
       return
     }
     guard let executable = start.command.first, !executable.isEmpty else {
@@ -67,10 +70,10 @@ struct ExecEngine: Sendable {
     }
 
     var overlay: [Environment.Key: String?] = [:]
-    for (name, value) in Self.environmentOverlay(start, secrets: resolved.env) {
+    for (name, value) in Self.environmentOverlay(start) {
       overlay[Environment.Key(stringLiteral: name)] = value
     }
-    let masked = resolved.maskedValues + [start.session?.token].compactMap(\.self)
+    let masked = Self.maskedValues(start)
 
     var options = PlatformOptions()
     options.processGroupID = 0

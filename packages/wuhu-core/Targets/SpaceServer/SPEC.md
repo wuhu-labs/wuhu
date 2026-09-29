@@ -210,7 +210,7 @@ What the server hands out for a client to enroll with — `EnrollMintOutput`, `S
 
 ## Endpoints
 
-- `GET /v1/server` — discovery for API clients: `ServerInfo` with `origin` (`--origin`, absent without it) and `contentBase`, the `host[:port]` a client writes after `<group>.` for a group's content origin (`https://<group>.<contentBase>`): the `--origin` authority, else `localhost:<port>`. `webPort` and `webOrigin` are never sent; they stay in the contract, optional, for older clients. Public, outside the API wall. `features` lists `groups` (the server takes the `wuhu-group` header), and `group` is the group the request names, unchecked: an exec token's session group, else the header, else `shared`. It carries no list of groups; that is `GET /v1/groups`.
+- `GET /v1/server` — discovery for API clients: `ServerInfo` with `origin` (`--origin`, absent without it) and `contentBase`, the `host[:port]` a client writes after `<group>.` for a group's content origin (`https://<group>.<contentBase>`): the `--origin` authority, else `localhost:<port>`. Public, outside the API wall. `features` lists `groups` (the server takes the `wuhu-group` header), and `group` is the group the request names, unchecked: an exec token's session group, else the header, else `shared`. It carries no list of groups; that is `GET /v1/groups`.
 - `GET /v1/groups` — `[GroupSummary]`, every group not removed, with where the caller stands: `member` (it acts and creates there: a person's `group_members` rows, a session's own group only) and `readable` (the union of what its member groups read, so every member group is readable). The caller is the request's credential alone; for a person the group the request names by `wuhu-group` header changes nothing, and it need not be a member of it. A session's exec token naming a group other than its own is still 403 `groupMismatch` at the session gate, as on every route. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`): naming it by `wuhu-group`, or minting `/_/session` on its content host, is 403 `groupForbidden`. Public discovery outside the API wall, like `/v1/server`: anonymous is both `false` everywhere, the --dev seat both `true` (it acts in every group), a bearer that fails verification 401. Both flags are optional in the contract so a newer client reads an older server.
 - `PUT /v1/groups/:id` — `GroupUpdateInput` → `GroupSettings`. Behind the API
   wall. `spaceLayer` turns the space-wide layer (see *Sessions in groups*) on
@@ -295,14 +295,6 @@ What the server hands out for a client to enroll with — `EnrollMintOutput`, `S
   any connected caller leg is closed — no exit event will ever come, the
   registry carries the outcome — and the kill is delivered on the machine's
   next connect).
-- Vault: `POST /v1/machine/:id/vault` `{name, value}` ·
-  `DELETE /v1/machine/:id/vault/:name` · `GET /v1/machine/:id/vault`
-  (names only). Delegated over the machine channel as wire ops; the value
-  transits this process transiently and is never persisted or logged
-  server-side. 503 when the machine is not attached. Setting needs an admin
-  of the machine's group, removing a human admin of it (403 `adminRequired`).
-  A session reaches a vault through `run_script`'s `wuhu:secret` with
-  `{ machine }` (below), under the same gates.
 - Group secrets: `PUT /v1/secret/:name` `{value}` (create or replace) ·
   `DELETE /v1/secret/:name` · `GET /v1/secret` → `{names}`, all on the acting
   group's store. Stored in `$WUHU_CONFIG_DIR/secrets/<space-id>/<group>.json`
@@ -313,7 +305,9 @@ What the server hands out for a client to enroll with — `EnrollMintOutput`, `S
   needs an admin of the group; a removal can't be undone and needs a human
   admin (403 `adminRequired`). The server refuses to start while the
   pre-groups flat file `secrets/<space-id>.json` exists (`needsSecretsMove`,
-  with the `mkdir … && mv … <space-id>/shared.json` that fixes it).
+  with the `mkdir … && mv … <space-id>/shared.json` that fixes it). The same
+  stores feed exec `secrets` (*Exec secrets come from the machine's group*,
+  below); a machine keeps no secrets of its own.
   `run_script` reaches the store through `wuhu:secret`: `secret(name)` is a
   secret of the session's own group, never another's by fallback, and
   `secret(name, { group: "shared" })` one of a group the session's group
@@ -322,14 +316,9 @@ What the server hands out for a client to enroll with — `EnrollMintOutput`, `S
   characters URL and form encoding leave alone. `set(name, value)` needs an
   admin of the session's group, so only a top-level agent sets one;
   `remove(name)` is always refused, since a removal needs a human admin.
-  `{ machine: "<name-or-id>" }` names a machine's vault instead, one the
-  session's group can use and that is attached: `set(name, value, { machine })`
-  needs an admin of the machine's group (again only a top-level agent of that
-  group), `list({ machine })` returns its names, and `remove(name, { machine })`
-  is always refused; naming both a group and a machine is a TypeError.
-  `secret(name, { machine })` is a TypeError too, never a fallback to the
-  group's secret: a vault's values never leave the machine, so no placeholder
-  stands for one, and `exec`'s `secrets` is how a script uses them. `fetch`
+  Any of the four given a `{ machine }` option throws a TypeError and touches
+  no store: machines keep no secrets, and a script's exec names secrets of the
+  machine's group in `wuhu:machine`'s `secrets`. `fetch`
   replaces a placeholder with the value in the
   URL, header values and body it sends, and every value sent is masked as
   `***` in response bodies, headers and statusText, console, `result()`,
@@ -433,11 +422,12 @@ p.write(data); p.end(); p.kill(); await p.wait() // { code, signal }
   `null` for a missing path; other failures throw `code: message`.
 - `exec` and `spawn` both run `sh -c cmd` as an exec minted in the registry
   (`machine_execs` plus its `script_execs` owner row), so `wuhu ps` lists it
-  under its `ex_` id. `secrets` names entries of the machine's vault
-  (`{ VAR: "vault-name" }`); the agent injects and masks them. `env` names and
-  the env/secrets overlap are checked as for the exec tool. A space-secret
-  placeholder from `wuhu:secret` in the command, an env value or stdin is
-  refused: space secrets never reach a machine. `timeout` is milliseconds
+  under its `ex_` id. `secrets` names secrets of the machine's group
+  (`{ VAR: "SECRET_NAME" }`, *Exec secrets come from the machine's group*);
+  the agent injects and masks them. `env` names and the env/secrets overlap
+  are checked as for the exec tool. A `wuhu:secret` placeholder in the
+  command, an env value or stdin is refused: only `fetch` fills one in, and
+  `secrets` is how a group secret reaches a machine. `timeout` is milliseconds
   (exec only). A command the box cannot spawn ends with exit 127 and a
   `wuhu:` line on stderr.
 - `exec` collects the whole output: `maxOutput` defaults to 1 MiB and is
@@ -490,17 +480,60 @@ p.write(data); p.end(); p.kill(); await p.wait() // { code, signal }
 3. The hub relays frames between the caller leg and the machine leg by
    rewriting the envelope's stream id (caller-chosen ↔ registry-allocated) and
    never touching bodies — except `exec-start`, which it re-encodes with the
-   session names owned (see *Session execs act as their session*). Acks are end-to-end; the server holds **no durable
+   session names owned (see *Session execs act as their session*) and its
+   `secrets` resolved (see *Exec secrets come from the machine's group*). Acks are end-to-end; the server holds **no durable
    stream state** — replay buffers live at the two endpoints.
 4. Stream-0 routing is asymmetric: a caller `hello` is forwarded to the
    machine (triggering its un-acked replay), a machine `hello` is broadcast to
-   that machine's caller legs (triggering theirs); vault/VFS/search responses
+   that machine's caller legs (triggering theirs); VFS/search responses
    resolve server round trips by request id and are never relayed to callers.
-   The server's own in-flight vault/VFS round trips fail (`severed`) when the
+   The server's own in-flight VFS/search round trips fail (`severed`) when the
    machine leg unbinds or rebinds — at bind, not on `hello`, so a round trip
    issued on the new binding that races the in-flight hello frame survives it.
 5. `exec-exit` passing through marks the registry row terminal (a real exit
    also settles a row previously `cancelled` or `machine-lost`).
+
+## Exec secrets come from the machine's group
+
+Every exec surface — the exec tool, `run_script`'s `m.exec`/`m.spawn`,
+`POST /v1/exec` with its WS caller leg, `wuhu exec --secret` — carries
+`secrets` as `ENV_NAME → SECRET_NAME`, and the hub resolves it when it relays
+the `exec-start`, so all of them behave alike.
+
+- **Whose store.** NAME is looked up in the group store of the group the
+  machine belongs to (`machines.grp`) when the start is first relayed. The
+  calling session's or person's group plays no part, and a machine moved to
+  another group uses that group's store from its next start on. The values come from
+  the same `$WUHU_CONFIG_DIR/secrets/<space-id>/<group>.json` stores that
+  `wuhu secret` and `wuhu:secret` manage.
+- **Capability.** The machine connect upgrade carries
+  `x-wuhu-machine-capabilities` (MachineContract). A machine leg bound with
+  `group-secrets` in it gets the start re-encoded with `secrets` removed and
+  `secretValues` (`ENV_NAME → value`) added; the agent injects and masks them
+  and writes nothing to disk. The values live only in that frame and in the
+  hub's memory for the exec's lifetime; they are never logged, stored in the
+  registry, or put in an error.
+- **Resolved once.** Only the first relay of an exec id resolves. A caller
+  replaying the start after a blip gets it relayed with the values of that
+  first relay and is never refused, even when the machine has since moved or
+  the secret is gone: a running exec keeps its environment. The values are
+  dropped at the exec's exit or when its caller grace runs out; a server
+  restart forgets them, so a start replayed across one resolves afresh.
+- **Refusal before spawn.** A name the machine's group lacks, a store that
+  cannot be read, a server started without a config directory (no stores at
+  all), or a machine no longer enrolled refuses the exec: the start never
+  reaches the agent, the registry row turns `exited:127`, and the caller leg
+  gets what a failed spawn gives — one stderr chunk `wuhu: no secret NAME in
+  group GROUP\n` (or the matching reason) at cursor 0 and `exec-exit` with
+  `exited(code: 127)`. A caller replaying that start after a blip gets the
+  same refusal again. Several unknown names report the lexically first.
+- **Old agents.** A machine leg bound without `group-secrets` (an agent from
+  before the header) gets the start with `secrets` names as they came and no
+  `secretValues`, and resolves them in its own `vault.json` as it always did;
+  the server sends such an agent no value. It stays that way until the agent
+  is upgraded and reconnects.
+- A `wuhu:secret` placeholder is never a secret name: `run_script` refuses one
+  in an exec's command, env or stdin before minting.
 
 ## Session execs act as their session
 
@@ -551,7 +584,7 @@ An exec whose registry row has a `caller` session — the exec tool's claim, a
     token) on a machine its group reads (404 otherwise); `GET /v1/exec` lists its own live execs; `GET /v1/exec/:id`,
     `POST /v1/exec/:id/kill` and the WS caller leg answer only for its own
     execs (404 otherwise).
-  - Everything else — users, accounts, keys, vault, secrets, providers and
+  - Everything else — users, accounts, keys, secrets, providers and
     auth, machine add/rotate/revoke/name, devices, notifications, usage,
     transcripts and logs, `sync` — is 403 with
     exactly `not available to a session`.
@@ -607,8 +640,7 @@ but time is lost.
 
 `handler()` wires the tool context with a machine seam: `hub.vfs(machine:op:)`
 and `hub.search(machine:query:)` are round trips over the machine leg, the
-same pending-request plumbing (and severed-on-rebind semantics) as the vault
-ops.
+same pending-request plumbing (and severed-on-rebind semantics).
 Fs tools called with a `machines://<id>/<path>` address route through
 FSResolver to the machine backend; space addresses are untouched. Ruling 2
 scope holds — machine fs is raw:

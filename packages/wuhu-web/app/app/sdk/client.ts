@@ -69,32 +69,13 @@ export class SpaceServer {
 }
 
 // Every group's pages, shared's included, live on
-// `https://<group>.<contentBase>`; null for a serve with no content plane.
+// `https://<group>.<contentBase>`; null from a server that predates contentBase.
 function contentOriginOf(
   info: ServerInfo,
   group: string,
 ): string | null {
-  if (info.contentBase != null) {
-    return new URL(`https://${group}.${info.contentBase}`).origin
-  }
-  return legacyContentOrigin(info, group)
-}
-
-// Transitional, for a server that predates contentBase: pages on webOrigin,
-// else on the API host at webPort, and a group other than shared on
-// `<group>.<that host>`.
-function legacyContentOrigin(info: ServerInfo, group: string): string | null {
-  let url: URL
-  if (info.webOrigin != null) {
-    url = new URL(info.webOrigin)
-  } else if (info.webPort != null) {
-    url = new URL(globalThis.location.origin)
-    url.port = String(info.webPort)
-  } else {
-    return null
-  }
-  if (group !== sharedGroup) url.hostname = `${group}.${url.hostname}`
-  return url.origin
+  if (info.contentBase == null) return null
+  return new URL(`https://${group}.${info.contentBase}`).origin
 }
 
 // One group of a space: its tools act in that group, and its pages live on

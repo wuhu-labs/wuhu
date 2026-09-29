@@ -268,9 +268,6 @@ enum Command: Equatable {
   case machineMove(machine: String, group: String)
   case deviceList
   case deviceSet(id: String, name: String?, machine: String?)
-  case vaultSet(machine: String, name: String)
-  case vaultList(machine: String)
-  case vaultRemove(machine: String, name: String)
   case secretSet(name: String)
   case secretList
   case secretRemove(name: String)

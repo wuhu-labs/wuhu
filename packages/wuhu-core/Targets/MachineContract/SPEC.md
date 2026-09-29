@@ -14,7 +14,7 @@ contract: changes here are contract changes.
 ## Encoding conventions
 
 - **Discriminated unions** (`ControlMessage`, `ExitStatus`, `ExecEvent`,
-  `VFSOp`, `VFSResult`, `SearchQuery`, `SearchResult`, `VaultOutcome`) are
+  `VFSOp`, `VFSResult`, `SearchQuery`, `SearchResult`) are
   **internally tagged**: `{"kind": "<case>", …flattened labeled values}`,
   never externally tagged, never a `_0` key.
 - **Optional fields** are omitted when absent (never explicit `null`) and are
@@ -27,9 +27,8 @@ contract: changes here are contract changes.
 
 A connection carries `Frame` values: `{streamID, opcode, body}` where `body`
 is the opcode's payload type. Stream 0 is control (`ControlMessage`); each
-exec gets a fresh nonzero `streamID` assigned by the initiating side; VFS,
-search, and vault traffic demux by their payload's request `id`, not by
-stream.
+exec gets a fresh nonzero `streamID` assigned by the initiating side; VFS
+and search traffic demux by their payload's request `id`, not by stream.
 
 Opcode → payload: `control`→`ControlMessage`, `exec-start`→`ExecStart`,
 `stdin`→`StdinChunk`, `stdin-eof`→`StdinEOF`, `output`→`OutputChunk`,
@@ -37,11 +36,8 @@ Opcode → payload: `control`→`ControlMessage`, `exec-start`→`ExecStart`,
 `vfs-request`→`VFSRequest`, `vfs-response`→`VFSResponse`,
 `search-request`→`SearchRequest`, `search-response`→`SearchResponse`.
 
-The three vault opcodes are **direction-typed**: toward the machine the body
-is the request (`VaultSet`/`VaultRemove`/`VaultList`); the machine replies on
-the same opcode with a `VaultOutcome` carrying the request's `id`. `vault-set`
-carries the secret value inbound only; `vault-list` returns names only; no
-vault op ever returns a value.
+There are no secret opcodes: a machine keeps no secrets of its own, and a
+secret's value reaches it only inside the `ExecStart` that needs it.
 
 ## Ids, tokens, and the connect handshake
 
@@ -63,6 +59,13 @@ vault op ever returns a value.
   connect upgrade. The server burns the challenge at first take and verifies
   against the live key row, so a captured handshake cannot replay and a
   revoked key cannot dial.
+- The same upgrade carries `MachineConnect.capabilitiesHeader`
+  (`x-wuhu-machine-capabilities`), a comma-separated list of what the dialing
+  agent speaks. Today's one capability is `MachineConnect.groupSecrets`
+  (`group-secrets`): the agent takes `ExecStart.secretValues` and resolves no
+  secret name itself. A header that is absent, or lacks a capability, means
+  an agent from before it; the server treats that connection as such for its
+  whole life.
 - `ExecID` is server-minted before `exec-start` and the frame carries it, so a
   retried start after a blip is idempotent — the machine spawns at most one
   process per exec id.
@@ -74,8 +77,22 @@ vault op ever returns a value.
   the machine; only the machine-local path crosses this wire.
 - `command` is argv: `command[0]` is the executable; no shell interpretation.
 - `env` and `secrets` absent mean empty. `secrets` maps `ENV_NAME` →
-  `SECRET_NAME` — names only; the machine resolves values from its local
-  vault at spawn.
+  `SECRET_NAME`, names of secrets in the group of the machine the exec runs
+  on — the machine's group at the moment the start is relayed, never the
+  caller's. A caller sends names only. The server resolves them and relays,
+  to an agent that announced `group-secrets`, the start with `secrets` absent
+  and `secretValues` (`ENV_NAME` → value) in its place; the agent injects
+  those as env at spawn, masks every non-empty value in the output, and never
+  writes one to disk. A name the machine's group lacks spawns nothing: the
+  server answers the caller as a failed spawn does — one stderr line
+  `wuhu: no secret NAME in group GROUP\n` and `exited(code: 127)` — and the
+  agent never sees the start. An agent that announced `group-secrets` but is
+  handed names in `secrets` (a server from before this field) spawns nothing
+  either and fails the same way, naming the first secret.
+- An agent that did not announce `group-secrets` (one from before it) is
+  relayed the start as it always was: `secrets` names, no `secretValues`,
+  which it resolves in its own local vault. The server never sends such an
+  agent a value.
 - `session` (`ExecSessionCredential {token, spaceURL}`) is set by the server,
   never by a caller, on an exec run for a session. The agent sets
   the `SessionExecEnvironment` names from it — `WUHU_EXEC=1`, `WUHU_TOKEN`,

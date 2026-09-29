@@ -15,7 +15,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-// Group isolation over HTTP: secrets, machines, the vault, archive and the MCP
+// Group isolation over HTTP: secrets, machines, archive and the MCP
 // seat live in groups. Alice and Bob are people with personal groups; Admin is
 // a human admin of shared; P is a top-level agent in alice, S one in shared.
 @Suite struct GroupIsolationRouteTests {
@@ -351,30 +351,6 @@ import Testing
         let own = try await send(w, .put, "/v1/machine/\(hers.id.rawValue)/name", .object(["name": "her-box"]), bearer: w.alice, group: w.aliceGroup)
         #expect(own.status == .ok)
         #expect(try await w.harness.space.machine(hers.id)?.name == "her-box")
-      }
-    }
-  }
-
-  @Test func theVaultSetsForAdminsAndRemovesForHumanAdmins() async throws {
-    try await withSessionDeps {
-      try await world { w in
-        let common = try await w.harness.space.addMachine(name: "common")
-        let path = "/v1/machine/\(common.id.rawValue)/vault"
-        let entry: JSONValue = .object(["name": "K", "value": "v"])
-
-        let set = try await send(w, .post, path, entry, bearer: w.alice)
-        #expect(set.status == .forbidden)
-        #expect(try await code(set) == "adminRequired")
-        let removal = try await send(w, .delete, path + "/K", bearer: w.alice)
-        #expect(removal.status == .forbidden)
-        #expect(try await code(removal) == "adminRequired")
-        // Past the gates, the machine isn't attached.
-        #expect(try await send(w, .get, path, bearer: w.alice).status == .serviceUnavailable)
-        #expect(try await send(w, .post, path, entry, bearer: w.admin).status == .serviceUnavailable)
-        #expect(try await send(w, .delete, path + "/K", bearer: w.admin).status == .serviceUnavailable)
-        let hers = try await w.harness.space.addMachine(name: "hers", group: w.aliceGroup)
-        #expect(try await send(w, .get, "/v1/machine/\(hers.id.rawValue)/vault", bearer: w.bob, group: w.bobGroup).status == .notFound)
-        #expect(try await send(w, .get, "/v1/machine/\(hers.id.rawValue)/vault", bearer: w.bob).status == .notFound)
       }
     }
   }

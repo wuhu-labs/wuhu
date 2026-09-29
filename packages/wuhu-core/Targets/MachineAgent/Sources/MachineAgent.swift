@@ -6,33 +6,44 @@ import MachineContract
 
 public final class MachineAgent: Sendable {
   private let endpoint: ChannelEndpoint = ChannelEndpoint()
-  private let vault: SecretVault
+  private let stateDirectory: URL
   private let registry: ExecRegistry = ExecRegistry()
   private let engine: ExecEngine
   private let clock: any Clock<Duration>
   private let disconnectGrace: Duration
   private let logger: Logger
 
-  public init(
+  public convenience init(
     stateDirectory: String,
     killGrace: Duration = .seconds(5),
     disconnectGrace: Duration = .seconds(300),
   ) {
+    self.init(stateDirectory: stateDirectory, killGrace: killGrace, disconnectGrace: disconnectGrace, logger: Logger(label: "MachineAgent"))
+  }
+
+  init(stateDirectory: String, killGrace: Duration, disconnectGrace: Duration, logger: Logger) {
     @Dependency(\.continuousClock) var clock
     self.clock = clock
     self.disconnectGrace = disconnectGrace
-    logger = Logger(label: "MachineAgent")
-    let vault = SecretVault(stateDirectory: URL(fileURLWithPath: stateDirectory, isDirectory: true))
-    self.vault = vault
-    engine = ExecEngine(vault: vault, registry: registry, clock: clock, killGrace: killGrace, logger: logger)
+    self.logger = logger
+    self.stateDirectory = URL(fileURLWithPath: stateDirectory, isDirectory: true)
+    engine = ExecEngine(registry: registry, clock: clock, killGrace: killGrace, logger: logger)
   }
 
   public func run(dial: @escaping @Sendable () async throws -> any FrameTransport) async {
+    if FileManager.default.fileExists(atPath: legacyVault.path) {
+      logger.notice("\(legacyVault.path) is no longer used: an exec's secrets are its machine's group secrets (wuhu secret set)")
+    }
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await self.serveExecs() }
       group.addTask { await self.serveRequests() }
       group.addTask { await self.maintainConnection(dial: dial) }
     }
+  }
+
+  // Left in place: its values are the owner's to move with `wuhu secret set`.
+  var legacyVault: URL {
+    stateDirectory.appendingPathComponent("vault.json")
   }
 
   private func serveExecs() async {
@@ -57,33 +68,6 @@ public final class MachineAgent: Sendable {
       await endpoint.respond(.vfs(VFSResponse(id: request.id, result: MachineVFS.execute(request.op))))
     case let .search(request):
       await endpoint.respond(.search(SearchResponse(id: request.id, result: MachineSearch.execute(request.query))))
-    case let .vaultSet(request):
-      let outcome: VaultOutcome
-      do {
-        try await vault.set(name: request.name, value: request.value)
-        outcome = .ok(id: request.id)
-      } catch {
-        // Never interpolate the value; the name alone is safe to surface.
-        outcome = .error(id: request.id, error: MachineError(code: .io, message: "vault write failed for '\(request.name)'"))
-      }
-      await endpoint.respond(.vaultSet(outcome))
-    case let .vaultRemove(request):
-      let outcome: VaultOutcome
-      do {
-        try await vault.remove(name: request.name)
-        outcome = .ok(id: request.id)
-      } catch {
-        outcome = .error(id: request.id, error: MachineError(code: .io, message: "vault write failed for '\(request.name)'"))
-      }
-      await endpoint.respond(.vaultRemove(outcome))
-    case let .vaultList(request):
-      let outcome: VaultOutcome
-      do {
-        outcome = try await .names(id: request.id, names: vault.names())
-      } catch {
-        outcome = .error(id: request.id, error: MachineError(code: .io, message: "vault read failed"))
-      }
-      await endpoint.respond(.vaultList(outcome))
     }
   }
 

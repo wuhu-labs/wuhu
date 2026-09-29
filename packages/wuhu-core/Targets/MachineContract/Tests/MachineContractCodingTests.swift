@@ -91,13 +91,6 @@ struct MachineContractCodingTests {
     ]))
   }
 
-  @Test func vaultOutcomeEncodesInternallyTagged() throws {
-    #expect(try encoder.encode(VaultOutcome.ok(id: 4)) == .object(["kind": "ok", "id": 4]))
-    #expect(try encoder.encode(VaultOutcome.names(id: 5, names: ["GH_TOKEN"])) == .object([
-      "kind": "names", "id": 5, "names": .array(["GH_TOKEN"]),
-    ]))
-  }
-
   @Test func absentOptionalDecodesNilAndReEncodesAbsent() throws {
     let json: JSONValue = .object([
       "id": "ex_a1b2c3d4", "cwd": "/work", "command": .array(["make", "test"]),

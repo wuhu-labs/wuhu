@@ -331,10 +331,10 @@ public enum SpaceServer {
       try await space.importFolder(devImport)
     }
     let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? "https://\(host):\(port)")
-    let hub = MachineHub(space: space, tokens: execTokens)
+    let secrets = try await secretStore(space: space, logger: logger)
+    let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
     let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
     let credentials = try await credentialResolver(space: space, logger: logger)
-    let secrets = try await secretStore(space: space, logger: logger)
     let usage = UsageBoard()
     let claudeCode = ClaudeCodeHost(
       space: space,
@@ -514,7 +514,7 @@ private func secretStore(space: Space, logger: Logger) async throws -> SpaceSecr
   do {
     directory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment)
   } catch {
-    logger.warning("secret store unavailable (\(error)); scripts and wuhu secret refuse secrets")
+    logger.warning("secret store unavailable (\(error)); scripts, execs and wuhu secret refuse secrets")
     return nil
   }
   return try secretStores(configDirectory: directory, spaceID: try await space.identity().rawValue)
