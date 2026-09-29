@@ -19,19 +19,18 @@ func testPubkey(_ seed: String) -> String {
 }
 
 struct Harness {
-  static let apiPort = 4100
-
   let space: Space
   let context: SpaceToolContext
+  /// The one listener: every host, as the request names it.
   let api: FetchClient
+  /// The same listener, with a request to any name off the content host
+  /// sent to `shared.<host>`: the content of the shared group.
   let web: FetchClient
 
   init(
     dev: Bool = true,
     publicRead: Bool = false,
     origin: String? = nil,
-    webPort: Int? = nil,
-    webOrigin: String? = nil,
     fingerprint: String? = nil,
     webApp: WebApp? = nil,
     views: ViewProviders? = nil,
@@ -39,7 +38,8 @@ struct Harness {
     credentials: CredentialResolver = .unavailable,
     opening: () throws -> Space = { try Space.inMemory() },
   ) throws {
-    let (space, handler, webHandler) = try withDependencies {
+    let contentHost = ContentHost(origin: origin ?? "https://localhost")!
+    let (space, handler) = try withDependencies {
       $0.date = .constant(fixedDate)
       $0.continuousClock = ContinuousClock()
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 11))
@@ -47,26 +47,25 @@ struct Harness {
       let space = try opening()
       let hub = MachineHub(space: space)
       let handler = SpaceServer.configuredHandler(
-        space: space, hub: hub, origin: origin, webPort: webPort, webOrigin: webOrigin,
-        fingerprint: fingerprint, dev: dev, webApp: webApp,
+        space: space, hub: hub, origin: origin,
+        fingerprint: fingerprint, dev: dev, publicRead: publicRead, webApp: webApp, views: views,
         webPushApplicationServerKey: webPushApplicationServerKey,
         credentials: credentials,
       )
-      let webHandler = SpaceServer.webHandler(
-        space: space,
-        apiPort: Self.apiPort,
-        advertisedOrigin: origin,
-        webOrigin: webOrigin,
-        dev: dev,
-        publicRead: publicRead,
-        views: views,
-      )
-      return (space, handler, webHandler)
+      return (space, handler)
     }
     self.space = space
     self.context = SpaceToolContext(space: space, principal: .shared(.anonymous))
     self.api = ServeTesting.client(upgrading: handler)
-    self.web = ServeTesting.client(webHandler)
+    self.web = ServeTesting.client(upgrading: { request in
+      guard contentHost.plane(of: request.url.host) == .api,
+            var components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+      else { return try await handler(request) }
+      components.host = "shared." + contentHost.host
+      var shared = request
+      shared.url = components.url!
+      return try await handler(shared)
+    })
   }
 
   func post(_ tool: String, _ input: JSONValue) async throws -> Response {

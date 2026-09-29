@@ -18,10 +18,9 @@ import SpaceTools
 
 func webResponse(
   space: Space,
-  apiPort: Int,
+  group: GroupID,
+  contentHost: ContentHost,
   advertisedOrigin: String?,
-  webOrigin: String? = nil,
-  webHost: String?,
   now: Date,
   dev: Bool,
   publicRead: Bool,
@@ -29,10 +28,8 @@ func webResponse(
   shell: ShellSDK?,
   request: Request,
 ) async throws -> Response {
-  let label = hostGroup(request.url.host, spaceHost: webHost)
-  let pairs = pairedOrigins(request: request, apiPort: apiPort, advertisedOrigin: advertisedOrigin, hostLabel: label)
+  let pairs = pairedOrigins(request: request, contentHost: contentHost, advertisedOrigin: advertisedOrigin)
   let paired = allowedOrigin(request: request, pairs: pairs)
-  let group = label.map(GroupID.init(rawValue:)) ?? .shared
   var response: Response
   if group != .shared, try await !space.groupExists(group) {
     response = errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(group.rawValue)")
@@ -41,7 +38,7 @@ func webResponse(
       space: space,
       caller: WebCaller(
         group: group, crossOrigin: crossOrigin(request, paired: paired != nil),
-        contentOrigins: contentOrigins(request: request, webOrigin: webOrigin, hostLabel: label),
+        contentOrigins: contentOrigins(request: request), webApp: contentHost.origin,
       ),
       now: now,
       dev: dev,
@@ -77,17 +74,14 @@ private let contentSecurityPolicy = HTTPField.Name("Content-Security-Policy")!
 
 // Browsers require CORS for cross-origin font fetches and the credentialed
 // /_/session bootstrap, so this reflection carries Allow-Credentials: true.
-// The paired SPA origin is either the advertised canonical API origin
-// (--origin, the browser origin behind a TLS-terminating proxy) or, on a direct
-// LAN serve with no --origin, the same scheme and host at the raw API port.
-// Reflecting only that pairing keeps space content unreadable to arbitrary
-// websites. Match is exact on scheme+host+effective port — never widen to *, a
-// suffix/prefix match, or the --web-origin (not a valid requester), or any
-// website could read space content with the visitor's read-session cookie.
-// A group host `<g>.<web host>` pairs with `<g>.<API host>` and with the bare
-// API origin, where the SPA of every group a person reads runs; a sibling
-// group's `<h>.<API host>` is no requester. The bare web host pairs with the
-// bare API origin only.
+// A group host `<g>.<host>` pairs with the bare host, where the SPA of every
+// group a person reads runs: the advertised --origin (the browser origin
+// behind a TLS-terminating proxy) and the bare host at this request's own
+// scheme and port. Reflecting only that pairing keeps space content
+// unreadable to arbitrary websites. Match is exact on scheme+host+effective
+// port — never widen to *, a suffix/prefix match, or a sibling group host,
+// or any website could read space content with the visitor's read-session
+// cookie.
 private func allowedOrigin(request: Request, pairs: [OriginEndpoint]) -> String? {
   guard let origin = request.headers[.origin],
         let requester = URL(string: origin).flatMap(originEndpoint),
@@ -96,20 +90,18 @@ private func allowedOrigin(request: Request, pairs: [OriginEndpoint]) -> String?
   return origin
 }
 
-private func pairedOrigins(request: Request, apiPort: Int, advertisedOrigin: String?, hostLabel: String?) -> [OriginEndpoint] {
+private func pairedOrigins(request: Request, contentHost: ContentHost, advertisedOrigin: String?) -> [OriginEndpoint] {
   var pairs: [OriginEndpoint] = []
-  if let advertisedOrigin, let advertised = URL(string: advertisedOrigin).flatMap(originEndpoint) {
-    if let hostLabel {
-      pairs.append(OriginEndpoint(scheme: advertised.scheme, host: hostLabel + "." + advertised.host, port: advertised.port))
+  if let advertised = advertisedOrigin.flatMap(URL.init(string:)).flatMap(originEndpoint) { pairs.append(advertised) }
+  if let own = originEndpoint(request.url) {
+    // Without --origin the web app is also opened by loopback address.
+    let hosts = [contentHost.host] + (advertisedOrigin == nil ? ["127.0.0.1", "::1"] : [])
+    for host in hosts {
+      let bare = OriginEndpoint(scheme: own.scheme, host: host, port: own.port)
+      if !pairs.contains(bare) { pairs.append(bare) }
     }
-    pairs.append(advertised)
   }
-  if let host = request.url.host, let scheme = request.url.scheme {
-    pairs.append(OriginEndpoint(scheme: scheme, host: host, port: apiPort))
-    // hostGroup took the label off this very host, so it is `<label>.<bare host>`.
-    if let hostLabel { pairs.append(OriginEndpoint(scheme: scheme, host: String(host.dropFirst(hostLabel.count + 1)), port: apiPort)) }
-  }
-  return pairs.reduce(into: []) { unique, endpoint in if !unique.contains(endpoint) { unique.append(endpoint) } }
+  return pairs
 }
 
 private struct OriginEndpoint: Equatable {
@@ -119,28 +111,20 @@ private struct OriginEndpoint: Equatable {
 
   var serialized: String {
     let defaultPort = scheme == "https" ? 443 : 80
-    return port == defaultPort ? "\(scheme)://\(host)" : "\(scheme)://\(host):\(port)"
+    let name = host.contains(":") ? "[\(host)]" : host
+    return port == defaultPort ? "\(scheme)://\(name)" : "\(scheme)://\(name):\(port)"
   }
 }
 
 private func originEndpoint(_ url: URL) -> OriginEndpoint? {
   guard let scheme = url.scheme, let host = url.host else { return nil }
-  return OriginEndpoint(scheme: scheme, host: host, port: url.port ?? (scheme == "https" ? 443 : 80))
+  let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+  return OriginEndpoint(scheme: scheme, host: bare.lowercased(), port: url.port ?? (scheme == "https" ? 443 : 80))
 }
 
-/// The content origin a page on this host has, in its serialized form: the
-/// request's own scheme and Host, and behind a proxy the --web-origin (with
-/// this host's group label).
-private func contentOrigins(request: Request, webOrigin: String?, hostLabel: String?) -> [String] {
-  var origins: [String] = []
-  if let host = request.url.host, let scheme = request.url.scheme {
-    origins.append(OriginEndpoint(scheme: scheme, host: host, port: request.url.port ?? (scheme == "https" ? 443 : 80)).serialized)
-  }
-  if let webOrigin, let configured = URL(string: webOrigin).flatMap(originEndpoint) {
-    let host = hostLabel.map { $0 + "." + configured.host } ?? configured.host
-    origins.append(OriginEndpoint(scheme: configured.scheme, host: host, port: configured.port).serialized)
-  }
-  return origins
+/// The content origin a page on this host has, in its serialized form.
+private func contentOrigins(request: Request) -> [String] {
+  originEndpoint(request.url).map { [$0.serialized] } ?? []
 }
 
 /// The group a web request reads, from its Host, whether its caller is a
@@ -150,6 +134,8 @@ struct WebCaller {
   let group: GroupID
   let crossOrigin: Bool
   let contentOrigins: [String]
+  /// The bare host's origin, where the web app runs.
+  var webApp: String? = nil
 }
 
 // Sibling group hosts are same-site, so SameSite=Lax still attaches a host's
@@ -243,6 +229,7 @@ private func routedWebResponse(
   let admitted = try await admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, request: request)
   switch guarded(admitted, caller: caller, script: false) {
   case let .refused(wall):
+    if let opened = openedInWebApp(request, caller: caller) { return opened }
     return headOnly ? Response(status: wall.status, headers: wall.headers) : wall
   case let .admitted(account):
     viewer = account
@@ -269,6 +256,27 @@ private func routedWebResponse(
     response.headers[contentDisposition] = "attachment; filename*=UTF-8''" + extValue(name)
   }
   return response
+}
+
+// A share link is `https://<host>/<path>?group=<g>`, the web app's own URL;
+// a link written before that named `https://<g>.<host>/<path>`. Opened in a
+// tab with no read session, the group host sends it to the web app, which
+// signs in and shows the document; a frame, a fetch, or a navigation the
+// cookie admits gets the content.
+private let secFetchDest = HTTPField.Name("Sec-Fetch-Dest")!
+
+private func openedInWebApp(_ request: Request, caller: WebCaller) -> Response? {
+  guard request.method == .get, request.headers[secFetchDest] == "document", request.headers[secFetchMode] == "navigate",
+        let webApp = caller.webApp,
+        let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
+  else { return nil }
+  var items = components.percentEncodedQuery.map { $0.split(separator: "&").map(String.init) } ?? []
+  items.removeAll { $0.hasPrefix("group=") }
+  if caller.group != .shared { items.append("group=" + caller.group.rawValue) }
+  var headers = Headers()
+  headers[.location] = webApp + components.percentEncodedPath + (items.isEmpty ? "" : "?" + items.joined(separator: "&"))
+  headers[.cacheControl] = "no-store"
+  return Response(status: .seeOther, headers: headers)
 }
 
 private let contentDisposition = HTTPField.Name("Content-Disposition")!
@@ -327,8 +335,8 @@ private let attachmentSandbox = "sandbox allow-scripts"
 // admitted by a live read-session cookie minted on this host, for a member of
 // the host's group; product chrome (shell.js, bundled views, the /_/session
 // minter itself) stays open so a browser can reach the point of
-// authenticating. --public-read opens `shared` reads on purpose; it never opens
-// a group host or the API origin. An admitted cookie names its account in
+// authenticating. --public-read opens `shared.<host>` reads on purpose; it never
+// opens another group host or the API. An admitted cookie names its account in
 // Wuhu-Viewer, which the page service worker files what it keeps under.
 enum ContentAdmission {
   case admitted(AccountID?)
@@ -642,8 +650,8 @@ private func matches(_ ifNoneMatch: String, _ tag: String) -> Bool {
 
 private let shellInjection = Data(#"<script type="module" src="/_/shell.js"></script>"#.utf8)
 
-/// A group host tells shell.js its group in a meta ahead of the script; the
-/// bare host's bytes are unchanged.
+/// A group host tells shell.js its group in a meta ahead of the script;
+/// `shared.`'s bytes are unchanged.
 private func groupShellInjection(_ group: GroupID) -> Data {
   guard group != .shared else { return shellInjection }
   return Data(#"<meta name="wuhu-group" content="\#(group.rawValue)">"#.utf8) + shellInjection

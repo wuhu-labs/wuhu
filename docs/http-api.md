@@ -1,10 +1,10 @@
 # HTTP API map: the `/v1` surface
 
-The API origin's route inventory — a map, not a schema. The API is pre-1.0 and may change with any release.
+The route inventory of the space's host — a map, not a schema. The API is pre-1.0 and may change with any release.
 
 Wire types are Swift contract types in `SpaceContract`: their generated JSON Schemas are the shapes ([wire schemas](wire-schemas.md)), and [SpaceContract/SPEC.md](../packages/wuhu-core/Targets/SpaceContract/SPEC.md) carries the semantics a schema cannot. The machine routes are pinned in [SpaceServer/SPEC.md](../packages/wuhu-core/Targets/SpaceServer/SPEC.md).
 
-Auth: without `--dev` the API origin admits a request only with a verified bearer assertion from an enrolled key (`Authorization: Bearer …`) or a session's exec token; anything else is `401 unauthorized`, "this space admits enrolled devices only". The routes that carry their own credential or are discovery are open: `GET /v1/machine/connect` and `GET /v1/machine/challenge`, `POST /v1/enroll/consume`, `POST /v1/enroll/share-login` and `GET /v1/enroll/share-login/challenge`, `GET /v1/server` and `GET /v1/groups`. Static SPA GETs (non-`/v1`) also pass. How a device gets its key is in [getting-started.md](getting-started.md#authentication).
+Auth: without `--dev` the space's host admits a request only with a verified bearer assertion from an enrolled key (`Authorization: Bearer …`) or a session's exec token; anything else is `401 unauthorized`, "this space admits enrolled devices only". The routes that carry their own credential or are discovery are open: `GET /v1/machine/connect` and `GET /v1/machine/challenge`, `POST /v1/enroll/consume`, `POST /v1/enroll/share-login` and `GET /v1/enroll/share-login/challenge`, `GET /v1/server` and `GET /v1/groups`. Static SPA GETs (non-`/v1`) also pass. How a device gets its key is in [getting-started.md](getting-started.md#authentication).
 
 A session's exec token (`Authorization: Bearer wst_…`, handed to a
 session's exec as `WUHU_TOKEN`) is its own principal, dev or not: it acts as
@@ -27,7 +27,7 @@ session*.
 | `POST /v1/tools/:name` | The tool surface — read, write, edit, sync, remove, move, list, stat, grep, find, history, checkout, query, table verbs, new, attributes.read, attributes.patch. `sync` three-way merges a full-text editor draft from its read token. `ls` at `/` omits `/_` (the system folder, which holds the session homes) and `/users` unless `hidden: true`. One route, dispatched over the toolbox; the tool schema is the API: see the [space tool pages](../packages/wuhu-core/Targets/SpaceToolReference/Tests/reference/README.md). |
 | `GET /v1/observe?glob=…&from=…` / `?sql=…&throttleMs=…` | SSE observation: glob mutation events (rev-cursored replay then live) or SQL snapshots. In `sql`, `viewer()` is the caller's identity (the one `POST /v1/watermark` advances), so a sidebar can observe its own unread state; a caller without an identity gets the watermark route's refusal for a statement that calls it. Every SSE response opens with a `:` comment preamble and carries comment heartbeats (15s; 1s on conversation streams) — clients should treat prolonged byte silence as a dead connection. |
 | `GET /v1/f/<space path>` / `PUT /v1/f/<space path>` | The byte lane: raw file bodies in and out, no JSON envelope. `GET` answers the bytes with a `Content-Type` derived from the path extension and the version token as `ETag`; `PUT` takes an arbitrary binary body (`If-Match` for optimistic concurrency) and answers `{rev, token}`. Bodies over 64 MiB are refused with `413`. |
-| `GET /v1/server` | Discovery, open without a credential: `space` (the space identity, `spc_…`), `origin` (the `--origin` it was started with), `webPort` and `webOrigin` (the web-content origin, when bound), `features` (`["groups"]`), and `group` (the group the request names by `wuhu-group` header or Host, unchecked). Absent fields are omitted. |
+| `GET /v1/server` | Discovery, open without a credential: `space` (the space identity, `spc_…`), `origin` (the `--origin` it was started with), `contentBase` (the `host[:port]` a group's content is served under, `https://<group>.<contentBase>`: the `--origin` authority, else `localhost:<port>`), `features` (`["groups"]`), and `group` (the group the request names by `wuhu-group` header, unchecked). `webPort` and `webOrigin` are never sent. Absent fields are omitted. |
 | `GET /v1/groups` | The space's live groups, `[{id, member, readable}]` (`GroupSummary`), as the caller stands to each. For a person the group the request names by header or Host changes nothing; a session's exec token naming a group other than its own is `403 groupMismatch`, as on every route. `member`: the caller acts and creates there (a person's memberships; a session's own group only). `readable`: a group the caller is a member of reads it, so every member group is readable. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`); naming it by `wuhu-group` or Host, or minting `/_/session` on its content host, is `403 groupForbidden`. Open without a credential, like `/v1/server`: an anonymous caller gets both `false` everywhere, the `--dev` seat both `true`; a bearer that fails verification is `401`. A client of an older server finds both absent. |
 | `PUT /v1/groups/:id` | Change a group's settings: `{spaceLayer?}` (`GroupUpdateInput`) → `{id, spaceLayer}` (`GroupSettings`). `spaceLayer` says whether the space-wide layer (`shared`'s `/AGENTS.md` and skills) reaches the group's sessions. Needs an admin of that group (`403 forbidden`); `404 unknownGroup`, `400 invalidArgument`. |
 | `POST /v1/transcribe` | Speech to text. Raw audio body with an audio `Content-Type` (wav, mpeg, mp4, m4a, webm), optional `?language=`; answers `TranscriptionOutput`. Provider order: a stored ChatGPT login (`codex`) first, then an `openai` api key; neither → `503 noTranscriber`. Over 25 MiB → `413 invalidArgument`; wrong content type → `415 unsupported`; upstream refusal → `502 unavailable` (`429` when rate-limited). |
@@ -61,7 +61,7 @@ Every `/v1/machine/:id/*` route resolves `:id` as either the `mc_…` id or the 
 
 ## Secrets
 
-Secrets for `run_script`, one store per group: every route reads and writes the acting group's (`wuhu-group` header or Host; a person naming none acts in `shared`), never another's by fallback. Values live in the server's config directory at `secrets/<space-id>/<group>.json`, outside `space.sqlite`, so they never enter the revision journal, history or backups. No route returns a value. A server that finds the pre-groups flat file `secrets/<space-id>.json` refuses to start with `needsSecretsMove`, naming the `mkdir` and `mv` that put it at `secrets/<space-id>/shared.json`.
+Secrets for `run_script`, one store per group: every route reads and writes the acting group's (`wuhu-group` header; a person naming none acts in `shared`), never another's by fallback. Values live in the server's config directory at `secrets/<space-id>/<group>.json`, outside `space.sqlite`, so they never enter the revision journal, history or backups. No route returns a value. A server that finds the pre-groups flat file `secrets/<space-id>.json` refuses to start with `needsSecretsMove`, naming the `mkdir` and `mv` that put it at `secrets/<space-id>/shared.json`.
 
 | Route | Purpose |
 | --- | --- |
@@ -184,59 +184,9 @@ gets a `reset` followed by the full current generation). Observing a cold
 session never materializes it. The full event vocabulary is in
 [SpaceContract/SPEC.md](../packages/wuhu-core/Targets/SpaceContract/SPEC.md) under "Session observation streams".
 
-## The web-content origin
+## Group hosts
 
-The second port (API port + 1) is not `/v1`: it serves space files raw at `/`
-and exposes the page data API `wuhu:space` (`GET /_/space.js` over the
-`/_/space/*` routes, below), the deprecated `GET /_/query?sql=` and
-`GET /_/observe?sql=|glob=`, the injected `GET /_/shell.js` embed SDK, the
-page service worker `GET /_/worker.js` (with `Service-Worker-Allowed: /`) and
-the modules it imports, credentialed `GET /_/session` read-cookie bootstrap,
-and bundled view providers under `/_/views/`. Shell/content communication is cross-origin `postMessage`
-over one contract, `wuhu:ready` / `wuhu:context` / `wuhu:navigate`, and the SDK
-is one file. Space content is never served from the API origin. `POST /_/session` mints a
-read-only login cookie (`wuhu_read`) from a bearer assertion, and the auth wall
-is live: content reads, `/_/query` and `/_/observe` all answer `401
-unauthorized` without a live read session, unless the server runs `--dev`, or
-`--public-read` and the request is for the `shared` group (the bare host);
-`--public-read` never opens a group host. Product chrome — `/_/shell.js`, bundled view providers, the
-minter itself — stays open so a browser can reach the point of authenticating.
-The cookie is a content-origin credential only: the API origin never accepts
-it, and the one mutation it admits is a page's own JSON write to
-`POST /_/space/rows` or `POST /_/space/attributes` from the page's own origin. Every admitted content response, `/_/query` and
-`/_/observe` included, names the cookie's account in `Wuhu-Viewer`.
-A mint also sets `wuhu_viewer=<account>`, a script-readable cookie that tells
-the page worker whose cache to read; `DELETE /_/session` clears both cookies.
-Nothing the origin stores is ever wiped with `Clear-Site-Data`.
-A Host `<group>.<host>` serves that group: its files, `/_/query` and
-`/_/observe`, with a cookie minted on that host (host-only, no `Domain`) by a
-member of the group. The bare host is `shared`. A cross-origin browser
-request (`Sec-Fetch-Site` other than `same-origin` or `none`, not a
-navigation, and not from a paired SPA: `<group>.<API host>` or the bare API origin) is refused
-when the cookie admits it to `/_/query` or `/_/observe`, or to anything on a
-group host; `DELETE /_/session` refuses it always. Group-host responses carry
-`Content-Security-Policy: frame-ancestors 'self' <paired SPAs>`; see
-[SpaceServer/SPEC.md](../packages/wuhu-core/Targets/SpaceServer/SPEC.md) "The acting group".
-Every served file carries its revision as a quoted `ETag` and
-`Cache-Control: no-cache`, so a client revalidates each use
-and a matching `If-None-Match` answers `304` with no body. HTML with the shell
-script injected gets its own tag. A directory listing carries no tag.
-`/_/query` tags its result with a digest of the result, is
-`Cache-Control: private, no-cache`, and answers a matching
-`If-None-Match` with `304` the same way. A
-`Range` with an `If-Range` other than the current tag gets the whole body.
-The page worker, registered by `shell.js`, answers page navigations and
-`/_/query` stale-while-revalidate from its IndexedDB cache, and opens
-`/_/observe?sql=` with the kept snapshot as the first event before the live
-stream, keeping each snapshot it relays. `/_/space/query` and
-`/_/space/observe` are kept the same way, keyed by statement and `params`. Entries are written under the
-response's `Wuhu-Viewer` account and read under the `wuhu_viewer` cookie's, so
-another account never reads them; when the cookie names someone else, or no
-one, the previous viewer's entries are purged. A refused live answer reaches
-the page as it would without the worker. When a kept page revalidates to a new
-tag the worker posts `wuhu:fresh` and `shell.js` reloads the frame; a `401`
-posts `wuhu:unauthorized`, which `shell.js` forwards to the shell so it mints a
-new cookie. Product chrome (`shell.js`, view providers) is never stored.
+A request for `<group>.<host>`, on the same port, is not `/v1`: it serves that group's files raw at `/` and exposes the page data API `wuhu:space` (`GET /_/space.js` over the `/_/space/*` routes, below), the deprecated `GET /_/query?sql=` and `GET /_/observe?sql=|glob=`, the injected `GET /_/shell.js` embed SDK, the page service worker `GET /_/worker.js` (with `Service-Worker-Allowed: /`) and the modules it imports, credentialed `GET /_/session` read-cookie bootstrap, and bundled view providers under `/_/views/`. Shell/content communication is cross-origin `postMessage` over one contract, `wuhu:ready` / `wuhu:context` / `wuhu:navigate`, and the SDK is one file. Space content is never served from the space's host itself, and a name nested deeper (`a.b.<host>`) or with an empty label is `421`. `POST /_/session` mints a read-only login cookie (`wuhu_read`) from a bearer assertion, and the auth wall is live: content reads, `/_/query` and `/_/observe` all answer `401 unauthorized` without a live read session, unless the server runs `--dev`, or `--public-read` and the request is for `shared.<host>`; `--public-read` never opens another group host. Product chrome — `/_/shell.js`, bundled view providers, the minter itself — stays open so a browser can reach the point of authenticating. The cookie is a group-host credential only: the space's host never accepts it, and the one mutation it admits is a page's own JSON write to `POST /_/space/rows` or `POST /_/space/attributes` from the page's own origin. Every admitted content response, `/_/query` and `/_/observe` included, names the cookie's account in `Wuhu-Viewer`. A mint also sets `wuhu_viewer=<account>`, a script-readable cookie that tells the page worker whose cache to read; `DELETE /_/session` clears both cookies. Nothing a group host stores is ever wiped with `Clear-Site-Data`. Each group host serves only that group: its files, `/_/query` and `/_/observe`, with a cookie minted on that host (host-only, no `Domain`) by a member of the group. A cross-origin browser request (`Sec-Fetch-Site` other than `same-origin` or `none`, not a navigation, and not from the paired SPA: the `--origin`, or the space's host at the request's own scheme and port) is refused when the cookie admits it to `/_/query` or `/_/observe`, or to anything on a group host other than `shared.`; `DELETE /_/session` refuses it always. Group-host responses other than `shared.`'s carry `Content-Security-Policy: frame-ancestors 'self' <paired SPA>`. A top-level `GET` navigation (`Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`) that no live cookie admits answers `303` to the share link `https://<host>/<path>?group=<group>` (no `group` for `shared`), `Cache-Control: no-store`, so the web app opens it; see [SpaceServer/SPEC.md](../packages/wuhu-core/Targets/SpaceServer/SPEC.md) "The acting group". Every served file carries its revision as a quoted `ETag` and `Cache-Control: no-cache`, so a client revalidates each use and a matching `If-None-Match` answers `304` with no body. HTML with the shell script injected gets its own tag. A directory listing carries no tag. `/_/query` tags its result with a digest of the result, is `Cache-Control: private, no-cache`, and answers a matching `If-None-Match` with `304` the same way. A `Range` with an `If-Range` other than the current tag gets the whole body. The page worker, registered by `shell.js`, answers page navigations and `/_/query` stale-while-revalidate from its IndexedDB cache, and opens `/_/observe?sql=` with the kept snapshot as the first event before the live stream, keeping each snapshot it relays. `/_/space/query` and `/_/space/observe` are kept the same way, keyed by statement and `params`. Entries are written under the response's `Wuhu-Viewer` account and read under the `wuhu_viewer` cookie's, so another account never reads them; when the cookie names someone else, or no one, the previous viewer's entries are purged. A refused live answer reaches the page as it would without the worker. When a kept page revalidates to a new tag the worker posts `wuhu:fresh` and `shell.js` reloads the frame; a `401` posts `wuhu:unauthorized`, which `shell.js` forwards to the shell so it mints a new cookie. Product chrome (`shell.js`, view providers) is never stored.
 
 ### Page data: `wuhu:space`
 

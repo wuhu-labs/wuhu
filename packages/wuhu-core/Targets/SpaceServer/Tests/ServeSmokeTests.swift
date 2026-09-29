@@ -33,11 +33,10 @@ import Testing
     )
     let server = Task {
       try await SpaceServer.serve(
-        folder: store, port: 0, webPort: 0, dev: true, devImport: importDir, devExport: exportDir, hooks: hooks,
+        folder: store, port: 0, dev: true, devImport: importDir, devExport: exportDir, hooks: hooks,
       )
     }
     var iterator = binds.makeAsyncIterator()
-    _ = await iterator.next()
     _ = await iterator.next()
     server.cancel()
     try await server.value
@@ -46,33 +45,37 @@ import Testing
     #expect(try String(contentsOf: exported, encoding: .utf8) == "hello")
   }
 
-  @Test func webPortBindFailureTearsDownTheApiListener() async throws {
+  // The API, the web app and every group's content share one listener: a
+  // serve binds one port and shuts down one.
+  @Test func serveBindsOnePort() async throws {
     let base = try scratch()
     defer { try? FileManager.default.removeItem(at: base) }
-
-    let squatter = try await ServeNIOServer.bind(port: 0) { _ in Response(status: .ok) }
-    let busyPort = try #require(squatter.localAddress?.port)
-
     let bound = Mutex<[Int?]>([])
     let torndown = Mutex<[Int?]>([])
+    let (binds, bindsContinuation) = AsyncStream<Void>.makeStream()
     let hooks = ServeNIOHooks(
-      onDidBind: { address in bound.withLock { $0.append(address.port) } },
+      onDidBind: { address in
+        bound.withLock { $0.append(address.port) }
+        bindsContinuation.yield()
+      },
+      onStartupFailure: { _ in bindsContinuation.finish() },
       onDidShutdown: { address in torndown.withLock { $0.append(address.port) } },
     )
-    await #expect(throws: (any Error).self) {
-      try await SpaceServer.serve(
-        folder: base.appendingPathComponent("store"), port: 0, webPort: busyPort, dev: true, hooks: hooks,
-      )
+    let server = Task {
+      try await SpaceServer.serve(folder: base.appendingPathComponent("store"), port: 0, dev: true, hooks: hooks)
     }
+    var iterator = binds.makeAsyncIterator()
+    _ = await iterator.next()
+    server.cancel()
+    try await server.value
 
-    let apiPort = try #require(bound.withLock { $0 }.first ?? nil)
-    #expect(bound.withLock { $0 } == [apiPort])
-    #expect(torndown.withLock { $0 } == [apiPort])
-    await squatter.shutdown()
+    let port = try #require(bound.withLock { $0 }.first ?? nil)
+    #expect(bound.withLock { $0 } == [port])
+    #expect(torndown.withLock { $0 } == [port])
   }
 
   // The bare host keeps the exact leaf clients pinned; only `<g>.<host>`
-  // names get the group leaf, on both listeners.
+  // names get the group leaf.
   @Test func groupHostsGetTheGroupLeafAndEveryOtherNameTheServersOwn() async throws {
     let base = try scratch()
     defer { try? FileManager.default.removeItem(at: base) }
@@ -95,24 +98,22 @@ import Testing
     let groupPrivateKey = try pem("group.key", group.privateKeyPEM)
     let server = Task {
       try await SpaceServer.serve(
-        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"), webPort: 0,
+        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"),
         dev: true, certificate: certificate, privateKey: privateKey,
         groupCertificate: groupCertificate, groupPrivateKey: groupPrivateKey, hooks: hooks,
       )
     }
     var iterator = binds.makeAsyncIterator()
-    let ports = [try #require(await iterator.next() ?? nil), try #require(await iterator.next() ?? nil)]
+    let port = try #require(await iterator.next() ?? nil)
     func leaf(_ port: Int, _ serverName: String?) async throws -> String {
       try PinnedTLS.fingerprint(certificateDERBase64: try await PinnedTLS.probeCertificate(
         host: "127.0.0.1", port: port, serverName: serverName,
       ))
     }
-    for port in ports {
-      #expect(try await leaf(port, nil) == (try own.fingerprint()))
-      #expect(try await leaf(port, "space.test") == (try own.fingerprint()))
-      #expect(try await leaf(port, "alice.space.test") == (try group.fingerprint()))
-      #expect(try await leaf(port, "a.b.space.test") == (try own.fingerprint()))
-    }
+    #expect(try await leaf(port, nil) == (try own.fingerprint()))
+    #expect(try await leaf(port, "space.test") == (try own.fingerprint()))
+    #expect(try await leaf(port, "alice.space.test") == (try group.fingerprint()))
+    #expect(try await leaf(port, "a.b.space.test") == (try own.fingerprint()))
     server.cancel()
     try await server.value
   }
@@ -131,7 +132,7 @@ import Testing
     try own.privateKeyPEM.write(to: ownPrivateKey, atomically: true, encoding: .utf8)
     let refusal = await #expect(throws: GroupTLSError.self) {
       try await SpaceServer.serve(
-        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"), webPort: 0,
+        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"),
         dev: true, certificate: ownCertificate, privateKey: ownPrivateKey,
         groupCertificate: certificate, groupPrivateKey: privateKey,
       )
@@ -152,7 +153,7 @@ import Testing
     try group.privateKeyPEM.write(to: privateKey, atomically: true, encoding: .utf8)
     await #expect(throws: GroupTLSError.noOrigin) {
       try await SpaceServer.serve(
-        folder: base.appendingPathComponent("store"), port: 0, webPort: 0, dev: true,
+        folder: base.appendingPathComponent("store"), port: 0, dev: true,
         groupCertificate: certificate, groupPrivateKey: privateKey,
       )
     }

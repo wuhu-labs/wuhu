@@ -5,7 +5,7 @@ description: Author live HTML pages served from space files — read and write s
 
 # Live HTML pages in a Wuhu space
 
-Any HTML file in the space is a real page on the web-content origin (discovered via `GET /v1/server`; default API port + 1, https). Write `/dash.html`, open it, done — no build step, native ESM only, and everything the page fetches must be same-origin.
+Any HTML file in the space is a real page on its group's host, `https://<group>.<contentBase>` (`contentBase` from `GET /v1/server`). Write `/dash.html`, open it, done — no build step, native ESM only, and everything the page fetches must be same-origin.
 
 ## Data: `wuhu:space`
 

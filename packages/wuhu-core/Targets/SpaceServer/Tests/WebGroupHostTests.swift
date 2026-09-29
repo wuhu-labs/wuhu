@@ -12,11 +12,11 @@ import SpaceServer
 import SpaceTools
 import Testing
 
-// `<group>.<host>` on the web origin serves that group, to its members, with a
-// cookie minted on that host; the bare host stays `shared`.
+// `<group>.<host>` serves that group's content, to its members, with a
+// cookie minted on that host; `shared.<host>` serves `shared`.
 @Suite struct WebGroupHostTests {
   static let origin = "https://space.test:5530"
-  static let bare = "space.test:5531"
+  static let sharedHost = "shared.space.test:5530"
 
   struct Rig {
     let harness: Harness
@@ -25,8 +25,8 @@ import Testing
     let aliceGroup: GroupID
     let bobGroup: GroupID
 
-    var aliceHost: String { "\(aliceGroup.rawValue).space.test:5531" }
-    var bobHost: String { "\(bobGroup.rawValue).space.test:5531" }
+    var aliceHost: String { "\(aliceGroup.rawValue).space.test:5530" }
+    var bobHost: String { "\(bobGroup.rawValue).space.test:5530" }
   }
 
   func rig(publicRead: Bool = false) async throws -> Rig {
@@ -81,12 +81,12 @@ import Testing
     #expect(try await page.text() == "alice plan")
     #expect(page.headers[HTTPField.Name("Wuhu-Viewer")!] == r.alice.rawValue)
 
-    let shared = try await get(r, Self.bare, "/plan.md", cookie: try await cookie(r, r.alice, .shared))
+    let shared = try await get(r, Self.sharedHost, "/plan.md", cookie: try await cookie(r, r.alice, .shared))
     #expect(try await shared.text() == "shared plan")
-    #expect(try await get(r, Self.bare, "/alice-only.md", cookie: try await cookie(r, r.alice, .shared)).status == .notFound)
+    #expect(try await get(r, Self.sharedHost, "/alice-only.md", cookie: try await cookie(r, r.alice, .shared)).status == .notFound)
 
     // A cookie is good on the host it was minted on only.
-    #expect(try await get(r, Self.bare, "/plan.md", cookie: alices).status == .unauthorized)
+    #expect(try await get(r, Self.sharedHost, "/plan.md", cookie: alices).status == .unauthorized)
     #expect(try await get(r, r.bobHost, "/plan.md", cookie: alices).status == .unauthorized)
     let bobsShared = try await cookie(r, r.bob, .shared)
     #expect(try await get(r, r.aliceHost, "/plan.md", cookie: bobsShared).status == .unauthorized)
@@ -121,7 +121,7 @@ import Testing
 
     let carol = try await space.addAccount(kind: .human, name: "carol").id
     let carolGroup = try await space.ensurePersonalGroup(account: carol)
-    let carolHost = "\(carolGroup.rawValue).space.test:5531"
+    let carolHost = "\(carolGroup.rawValue).space.test:5530"
     #expect(try await get(r, carolHost, path, cookie: try await cookie(r, carol, carolGroup)).status == .notFound)
   }
 
@@ -141,14 +141,14 @@ import Testing
       break
     }
 
-    let bareRows = try await get(r, Self.bare, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared)).text()
+    let bareRows = try await get(r, Self.sharedHost, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared)).text()
     #expect(!bareRows.contains("/alice-only.md"))
   }
 
   @Test func aSharedPageCannotReachAGroupByAddress() async throws {
     let r = try await rig()
     let sql = "SELECT%20*%20FROM%20%22wuhu://\(r.aliceGroup.rawValue).localspace/docs%22"
-    let response = try await get(r, Self.bare, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared))
+    let response = try await get(r, Self.sharedHost, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared))
     #expect(response.status == .unprocessableContent)
     #expect(try await response.text().contains("no such table: wuhu://\(r.aliceGroup.rawValue).localspace/docs"))
   }
@@ -157,10 +157,7 @@ import Testing
     let r = try await rig()
     let alices = try await cookie(r, r.alice, r.aliceGroup)
     for path in ["/_/query?sql=SELECT%201", "/_/observe?sql=SELECT%201"] {
-      for requester in [
-        "https://\(r.bobHost)", "https://\(r.bobGroup.rawValue).space.test:5530",
-        "https://\(r.bobGroup.rawValue).space.test:\(Harness.apiPort)", "https://space.test:5531",
-      ] {
+      for requester in ["https://\(r.bobHost)", "https://\(Self.sharedHost)", "https://space.test:5531"] {
         let refused = try await get(r, r.aliceHost, path, cookie: alices, site: "same-site", origin: requester)
         #expect(refused.status == .forbidden, "\(path) from \(requester)")
         #expect(try await code(refused) == "crossOrigin")
@@ -177,7 +174,7 @@ import Testing
     // Sec-Fetch-Site (the native app) still read.
     let own = try await get(r, r.aliceHost, "/_/query?sql=SELECT%201", cookie: alices, site: "same-origin")
     #expect(own.status == .ok)
-    let spa = "https://\(r.aliceGroup.rawValue).space.test:5530"
+    let spa = Self.origin
     let paired = try await get(r, r.aliceHost, "/_/query?sql=SELECT%201", cookie: alices, site: "same-site", origin: spa)
     #expect(paired.status == .ok)
     #expect(paired.headers[.accessControlAllowOrigin] == spa)
@@ -209,7 +206,7 @@ import Testing
     }
     let own = try await get(r, r.aliceHost, "/x.js", cookie: alices, site: "same-origin", mode: "no-cors")
     #expect(own.status == .ok)
-    let spa = "https://\(r.aliceGroup.rawValue).space.test:5530"
+    let spa = Self.origin
     #expect(try await get(r, r.aliceHost, "/x.js", cookie: alices, site: "same-site", mode: "cors", origin: spa).status == .ok)
   }
 
@@ -217,70 +214,64 @@ import Testing
     let r = try await rig(publicRead: true)
     let csp = HTTPField.Name("Content-Security-Policy")!
     let alices = try await cookie(r, r.alice, r.aliceGroup)
-    // The pairs CORS reflects: the --origin ones, then the raw API port's;
-    // each the group's, then the bare one.
-    let expected = "frame-ancestors 'self' https://\(r.aliceGroup.rawValue).space.test:5530 https://space.test:5530"
-      + " https://\(r.aliceGroup.rawValue).space.test:\(Harness.apiPort) https://space.test:\(Harness.apiPort)"
+    // The pair CORS reflects: the bare host, where the SPA runs.
+    let expected = "frame-ancestors 'self' https://space.test:5530"
     for path in ["/plan.md", "/_/shell.js", "/nothing-here"] {
       let framed = try await get(r, r.aliceHost, path, cookie: alices, site: "same-site", mode: "navigate")
       #expect(framed.headers[csp] == expected, "\(path)")
     }
     #expect(try await get(r, r.aliceHost, "/plan.md").headers[csp] == expected)
-    #expect(try await get(r, "nowhere.space.test:5531", "/plan.md").headers[csp] != nil)
+    #expect(try await get(r, "nowhere.space.test:5530", "/plan.md").headers[csp] != nil)
     for path in ["/plan.md", "/_/shell.js", "/_/query?sql=SELECT%201"] {
-      #expect(try await get(r, Self.bare, path).headers[csp] == nil, "\(path)")
+      #expect(try await get(r, Self.sharedHost, path).headers[csp] == nil, "\(path)")
     }
   }
 
-  // The bare host keeps what it served before groups: the old SPA's
-  // cross-port calls and navigations to /_/query with the cookie.
-  @Test func theBareHostsCrossPortFlowsStillPass() async throws {
+  // `shared.<host>` keeps what the shared content origin served: the SPA's
+  // cross-origin calls and navigations to /_/query with the cookie.
+  @Test func theSharedHostsCrossOriginFlowsStillPass() async throws {
     let r = try await rig()
     let shared = try await cookie(r, r.alice, .shared)
     for path in ["/_/query?sql=SELECT%201", "/_/observe?sql=SELECT%201"] {
-      let paired = try await get(r, Self.bare, path, cookie: shared, site: "same-site", mode: "cors", origin: Self.origin)
+      let paired = try await get(r, Self.sharedHost, path, cookie: shared, site: "same-site", mode: "cors", origin: Self.origin)
       #expect(paired.status == .ok, "\(path)")
       #expect(paired.headers[.accessControlAllowOrigin] == Self.origin)
     }
     let logout = try await get(
-      r, Self.bare, "/_/session", cookie: shared, site: "same-site", mode: "cors", origin: Self.origin, method: .delete,
+      r, Self.sharedHost, "/_/session", cookie: shared, site: "same-site", mode: "cors", origin: Self.origin, method: .delete,
     )
     #expect(logout.status == .noContent)
     #expect(logout.headers[.setCookie] != nil)
 
     let other = try await cookie(r, r.alice, .shared)
     for site in ["same-site", "cross-site"] {
-      let navigated = try await get(r, Self.bare, "/_/query?sql=SELECT%201", cookie: other, site: site, mode: "navigate")
+      let navigated = try await get(r, Self.sharedHost, "/_/query?sql=SELECT%201", cookie: other, site: site, mode: "navigate")
       #expect(navigated.status == .ok, "\(site)")
     }
     // A shared file is still a subresource anyone signed in may embed.
-    #expect(try await get(r, Self.bare, "/plan.md", cookie: other, site: "same-site", mode: "no-cors").status == .ok)
+    #expect(try await get(r, Self.sharedHost, "/plan.md", cookie: other, site: "same-site", mode: "no-cors").status == .ok)
     // A script from elsewhere still gets no cookie-backed query.
-    let scripted = try await get(r, Self.bare, "/_/query?sql=SELECT%201", cookie: other, site: "cross-site", mode: "cors", origin: "https://evil.example")
+    let scripted = try await get(r, Self.sharedHost, "/_/query?sql=SELECT%201", cookie: other, site: "cross-site", mode: "cors", origin: "https://evil.example")
     #expect(scripted.status == .forbidden)
   }
 
-  @Test func corsOnAGroupHostPairsThatGroupsSPAAndTheBareOne() async throws {
+  @Test func corsOnAGroupHostPairsTheBareHostOnly() async throws {
     let r = try await rig(publicRead: true)
     let alices = try await cookie(r, r.alice, r.aliceGroup)
-    let groupSPA = "https://\(r.aliceGroup.rawValue).space.test:5530"
-    let directBare = "https://space.test:\(Harness.apiPort)"
-    for spa in [groupSPA, Self.origin, directBare] {
-      #expect(try await get(r, r.aliceHost, "/plan.md", cookie: alices, origin: spa).headers[.accessControlAllowOrigin] == spa)
-    }
+    #expect(try await get(r, r.aliceHost, "/plan.md", cookie: alices, origin: Self.origin).headers[.accessControlAllowOrigin] == Self.origin)
     for requester in [
-      "https://\(r.bobGroup.rawValue).space.test:5530", "https://\(r.bobGroup.rawValue).space.test:\(Harness.apiPort)",
-      "https://space.test:5531", "https://space.test", "https://evil.example", "https://evil.space.test:5530",
+      "https://\(r.bobHost)", "https://\(Self.sharedHost)", "https://space.test:5531", "https://space.test",
+      "http://space.test:5530", "https://evil.example", "https://evil.space.test:5530",
     ] {
       #expect(try await get(r, r.aliceHost, "/plan.md", cookie: alices, origin: requester).headers[.accessControlAllowOrigin] == nil, "\(requester)")
     }
-    #expect(try await get(r, Self.bare, "/plan.md", origin: groupSPA).headers[.accessControlAllowOrigin] == nil)
-    #expect(try await get(r, Self.bare, "/plan.md", origin: Self.origin).headers[.accessControlAllowOrigin] == Self.origin)
+    #expect(try await get(r, Self.sharedHost, "/plan.md", origin: "https://\(r.aliceHost)").headers[.accessControlAllowOrigin] == nil)
+    #expect(try await get(r, Self.sharedHost, "/plan.md", origin: Self.origin).headers[.accessControlAllowOrigin] == Self.origin)
   }
 
   @Test func mintingOnAGroupHostNeedsMembershipAndBindsTheHost() async throws {
     let r = try await rig()
-    let spa = "https://\(r.aliceGroup.rawValue).space.test:5530"
+    let spa = Self.origin
     let minted = try await mint(r, r.alice, host: r.aliceHost, origin: spa)
     #expect(minted.status == .noContent)
     #expect(minted.headers[.accessControlAllowOrigin] == spa)
@@ -299,7 +290,7 @@ import Testing
     #expect(foreign.headers[.setCookie] == nil)
   }
 
-  // The SPA on the bare API origin reaches every group a person reads: it
+  // The SPA on the bare host reaches every group a person reads: it
   // mints that host's cookie, frames its pages and loads its images, and the
   // pairing admits nobody the membership check would not.
   @Test func theBareSPAReachesAGroupHostItsPersonIsAMemberOf() async throws {
@@ -318,8 +309,8 @@ import Testing
     #expect(image.status == .ok)
     #expect(image.headers[.accessControlAllowOrigin] == Self.origin)
     let csp = HTTPField.Name("Content-Security-Policy")!
-    #expect(image.headers[csp]?.contains(" \(Self.origin) ") == true)
-    for requester in ["https://\(r.bobGroup.rawValue).space.test:5530", "https://evil.example"] {
+    #expect(image.headers[csp] == "frame-ancestors 'self' \(Self.origin)")
+    for requester in ["https://\(r.bobHost)", "https://evil.example"] {
       let refused = try await get(r, r.aliceHost, "/avatar.png", cookie: alices, site: "cross-site", mode: "cors", origin: requester)
       #expect(refused.status == .forbidden, "\(requester)")
       #expect(try await code(refused) == "crossOrigin")
@@ -340,7 +331,7 @@ import Testing
     try await put(r, .shared, "/page.html", "<body>hi</body>")
     try await put(r, r.aliceGroup, "/page.html", "<body>hi</body>")
     let script = #"<script type="module" src="/_/shell.js"></script>"#
-    let bare = try await get(r, Self.bare, "/page.html")
+    let bare = try await get(r, Self.sharedHost, "/page.html")
     let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
     #expect(try await bare.text() == "\(importMap)<body>hi\(script)</body>")
     let grouped = try await get(r, r.aliceHost, "/page.html", cookie: try await cookie(r, r.alice, r.aliceGroup))
@@ -350,15 +341,15 @@ import Testing
   @Test func anUnknownGroupHostIsNotFoundEverywhere() async throws {
     let r = try await rig(publicRead: true)
     for path in ["/plan.md", "/_/shell.js", "/_/query?sql=SELECT%201"] {
-      let response = try await get(r, "nowhere.space.test:5531", path)
+      let response = try await get(r, "nowhere.space.test:5530", path)
       #expect(response.status == .notFound, "\(path)")
       #expect(try await code(response) == "unknownGroup")
     }
   }
 
-  @Test func publicReadOpensTheBareHostOnly() async throws {
+  @Test func publicReadOpensTheSharedHostOnly() async throws {
     let r = try await rig(publicRead: true)
-    #expect(try await get(r, Self.bare, "/plan.md").status == .ok)
+    #expect(try await get(r, Self.sharedHost, "/plan.md").status == .ok)
     #expect(try await get(r, r.aliceHost, "/plan.md").status == .unauthorized)
     #expect(try await get(r, r.aliceHost, "/_/query?sql=SELECT%201").status == .unauthorized)
   }

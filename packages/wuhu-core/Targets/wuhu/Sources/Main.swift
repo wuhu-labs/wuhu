@@ -86,8 +86,6 @@ enum Main {
             host: config.host,
             port: config.port,
             origin: config.origin.flatMap(URL.init(string:)),
-            webPort: config.webPort,
-            webOrigin: config.webOrigin.flatMap(URL.init(string:)),
             dev: config.dev,
             version: BuildStamp.version,
             publicRead: config.publicRead,

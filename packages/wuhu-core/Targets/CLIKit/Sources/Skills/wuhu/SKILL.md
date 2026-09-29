@@ -168,24 +168,14 @@ verbatim; today it is `{"sidebar": "/.sidebars/<name>.json"}` or
 seconds. `wuhu device list` / `wuhu device set` are the CLI side (see the
 `wuhu-cli` skill).
 
-## The two web faces
+## The two web planes
 
-`wuhu serve <folder> --port N` opens two origins (both TLS-always;
-self-signed by default):
+`wuhu serve <folder> --port N` binds one TLS port (default 5530; self-signed by default) and answers by host name:
 
-- **API origin** (`:N`) — `POST /v1/tools/<name>`, `GET /v1/observe`, and (in
-  binaries with the embedded SPA) the Wuhu web app on every non-`/v1` path.
-- **Web-content origin** (default `:N+1`, same host; advertised via
-  `GET /v1/server`) — the space's files served raw at `/`
-  (`index.html` / `index.md` resolution, MIME by extension). This is the
-  origin space HTML/JS runs on; `/_/` is reserved for page-embedded
-  query/observe (`/_/query`, `/_/observe`) and bundled view providers.
+- **The space's host** (the `--origin` host, else `localhost`) — `POST /v1/tools/<name>`, `GET /v1/observe`, and (in binaries with the embedded SPA) the Wuhu web app on every non-`/v1` path. No space content.
+- **A group's host**, `<group>.<host>` on the same port (`shared.<host>` for `shared`; the base is `contentBase` in `GET /v1/server`) — that group's files served raw at `/` (`index.html` / `index.md` resolution, MIME by extension). This is the origin space HTML/JS runs on; `/_/` is reserved for page-embedded query/observe (`/_/query`, `/_/observe`) and bundled view providers. No `/v1`.
 
-Both origins sit behind the auth wall by default: API calls need an enrolled
-device and web-content reads a live browser read session. Serving with
-`--public-read` opens content reads of the `shared` group to anyone (group
-hosts still need a read session, writes stay walled); `--dev`
-drops both walls for local iteration.
+Both sit behind the auth wall by default: API calls need an enrolled device and group-host reads a live browser read session. Serving with `--public-read` opens content reads of `shared.<host>` to anyone (other group hosts still need a read session, writes stay walled); `--dev` drops both walls for local iteration. A link to a group's page is `https://<host>/<path>?group=<group>` (no `group` for `shared`), which the web app opens.
 
 Two document conventions the web app understands:
 

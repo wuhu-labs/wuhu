@@ -8,7 +8,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-// The group a request acts in: a person names it by header or Host and needs
+// The group a request acts in: a person names it by header and needs
 // membership; a session acts in its own group only.
 @Suite struct ActingGroupTests {
   struct People {
@@ -42,16 +42,18 @@ import Testing
     try await json(response).object?["code"]?.stringValue
   }
 
-  @Test func aPersonActsInTheGroupItNamesByHeaderOrHost() async throws {
+  @Test func aPersonActsInTheGroupItNamesByHeader() async throws {
     try await withSessionDeps {
       let p = try await people()
       #expect(try await write(p, "/by-header.md", group: p.alice.rawValue).status == .ok)
-      #expect(try await write(p, "/by-host.md", host: "\(p.alice.rawValue).space.test").status == .ok)
       #expect(try await write(p, "/plain.md").status == .ok)
       let alice = await p.harness.space.fs(p.alice)
       #expect(try await alice.stat("/by-header.md").size == 1)
-      #expect(try await alice.stat("/by-host.md").size == 1)
       #expect(try await p.harness.space.fs(.shared).stat("/plain.md").size == 1)
+      // A group host serves content, not the API.
+      let byHost = try await write(p, "/by-host.md", host: "\(p.alice.rawValue).space.test")
+      #expect(byHost.status == .methodNotAllowed)
+      await #expect(throws: (any Error).self) { try await alice.stat("/by-host.md") }
       await #expect(throws: (any Error).self) { try await p.harness.space.fs(.shared).stat("/by-header.md") }
     }
   }
@@ -65,9 +67,6 @@ import Testing
       let unknown = try await write(p, "/x.md", group: "nowhere")
       #expect(unknown.status == .notFound)
       #expect(try await code(unknown) == "unknownGroup")
-      let conflict = try await write(p, "/x.md", host: "\(p.bob.rawValue).space.test", group: p.alice.rawValue)
-      #expect(conflict.status == .badRequest)
-      #expect(try await code(conflict) == "groupConflict")
     }
   }
 
@@ -88,11 +87,6 @@ import Testing
       let alice = await p.harness.space.fs(p.alice)
       #expect(try await alice.stat("/own.md").size == 1)
       #expect(try await alice.stat("/unnamed.md").size == 1)
-
-      let foreignHost = try await write(p, "/x.md", host: "\(p.bob.rawValue).space.test", bearer: token)
-      #expect(foreignHost.status == .forbidden)
-      #expect(try await code(foreignHost) == "groupMismatch")
-      #expect(try await write(p, "/by-own-host.md", host: "\(p.alice.rawValue).space.test", bearer: token).status == .ok)
 
       let home = "/_/sessions/\(session.rawValue)/notes.md"
       #expect(try await write(p, home, bearer: token).status == .ok)
@@ -143,7 +137,7 @@ import Testing
     }
   }
 
-  @Test func theWebOriginStreamsOnlySharedWhilePersonalGroupsWrite() async throws {
+  @Test func theSharedHostStreamsOnlySharedWhilePersonalGroupsWrite() async throws {
     let harness = try Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let alice = try await harness.space.ensurePersonalGroup(account: account.id)
@@ -259,10 +253,11 @@ import Testing
     try await withSessionDeps {
       let p = try await people()
       func observe(_ glob: String) async throws -> Response {
-        var components = URLComponents(string: "https://\(p.alice.rawValue).space.test/v1/observe")!
+        var components = URLComponents(string: "https://space.test/v1/observe")!
         components.queryItems = [URLQueryItem(name: "glob", value: glob)]
         var request = Request(url: components.url!)
         request.headers[.authorization] = "Bearer " + p.bearer
+        request.headers[GroupHeader.name] = p.alice.rawValue
         return try await p.harness.api(request)
       }
       #expect(try await observe("wuhu://\(p.bob.rawValue).localspace/**").status == .notFound)

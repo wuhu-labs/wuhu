@@ -20,6 +20,7 @@ import ServeNIO
 import ServeRouting
 import ServeTLS
 import enum SpaceContract.GroupHeader
+import struct SpaceContract.GroupID
 import SpaceCore
 import SpaceTools
 import WebPush
@@ -32,8 +33,6 @@ public enum SpaceServer {
     hub: MachineHub,
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
-    webPort: Int? = nil,
-    webOrigin: String? = nil,
     fingerprint: String? = nil,
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
@@ -46,8 +45,6 @@ public enum SpaceServer {
       hub: hub,
       sessions: sessions,
       origin: origin,
-      webPort: webPort,
-      webOrigin: webOrigin,
       fingerprint: fingerprint,
       dev: dev,
       version: version,
@@ -65,22 +62,25 @@ public enum SpaceServer {
     hub: MachineHub,
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
-    webPort: Int? = nil,
-    webOrigin: String? = nil,
+    port: Int? = nil,
     fingerprint: String? = nil,
     dev: Bool,
+    publicRead: Bool = false,
     version: String = SpaceServer.unstampedVersion,
     webApp: WebApp? = .embedded,
+    views: ViewProviders? = .embedded,
     webPushApplicationServerKey: String? = nil,
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
     execTokens: ExecTokens? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
-    let host = spaceHost(of: origin)
+    // Without --origin, content lives under localhost at the listener's port.
+    let localhost = "https://localhost" + (port.map { ":\($0)" } ?? "")
+    let contentHost = ContentHost(origin: origin ?? localhost) ?? ContentHost(origin: localhost)!
     @Dependency(\.date) var clock
     let contextOf: @Sendable (Request) async throws -> ToolContextVerdict = { request in
-      switch try await requestPrincipal(request, space: space, spaceHost: host, date: clock) {
+      switch try await requestPrincipal(request, space: space, date: clock) {
       case let .principal(principal): .context(SpaceToolContext(space: space, machines: machines, principal: principal))
       case let .refused(response): .refused(response)
       }
@@ -115,7 +115,7 @@ public enum SpaceServer {
     addToolRosterRoutes(&router)
     router.get("/v1/observe") { request, _ in
       let principal: Principal
-      switch try await requestPrincipal(request, space: space, spaceHost: host, date: clock) {
+      switch try await requestPrincipal(request, space: space, date: clock) {
       case let .principal(resolved): principal = resolved
       case let .refused(response): return response
       }
@@ -130,19 +130,18 @@ public enum SpaceServer {
       var info: OrderedDictionary<String, JSONValue> = [:]
       info["space"] = .string(try await space.identity().rawValue)
       info["origin"] = origin.map(JSONValue.string)
-      info["webPort"] = webPort.map(JSONValue.integer)
-      info["webOrigin"] = webOrigin.map(JSONValue.string)
+      info["contentBase"] = .string(contentHost.base)
       info["features"] = .array([.string(GroupHeader.feature)])
       // Public discovery names the group asked for and checks nothing; the
       // routes that act in it do.
-      info["group"] = .string(namedGroup(request, spaceHost: host).rawValue)
+      info["group"] = .string(namedGroup(request).rawValue)
       return jsonResponse(.object(info))
     }
-    addGroupRoutes(&router, space: space, spaceHost: host, dev: dev)
+    addGroupRoutes(&router, space: space, dev: dev)
     addMachineRoutes(
       &router, space: space, hub: hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
     ) { request in
-      try await requestPrincipal(request, space: space, spaceHost: host, date: clock)
+      try await requestPrincipal(request, space: space, date: clock)
     }
     addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev)
     addAccountRoutes(&router, space: space, dev: dev)
@@ -151,7 +150,7 @@ public enum SpaceServer {
     addProviderRoutes(&router, space: space, usage: sessions?.usage)
     addTranscribeRoutes(&router, space: space, credentials: credentials)
     addSecretRoutes(&router, space: space, secrets: secrets) { request in
-      try await requestPrincipal(request, space: space, spaceHost: host, date: clock)
+      try await requestPrincipal(request, space: space, date: clock)
     }
     if let webPushApplicationServerKey {
       addWebPushRoutes(&router, space: space, applicationServerKey: webPushApplicationServerKey)
@@ -159,10 +158,10 @@ public enum SpaceServer {
     addPushRelayRoutes(&router, space: space, allowedHosts: pushRelayHosts(ProcessInfo.processInfo.environment))
     if let sessions {
       addSessionRoutes(&router, space: space, runtime: sessions, dev: dev) { request in
-        try await requestPrincipal(request, space: space, spaceHost: host, date: clock)
+        try await requestPrincipal(request, space: space, date: clock)
       }
       addSessionLogRoutes(&router, space: space, runtime: sessions) { request in
-        try await requestPrincipal(request, space: space, spaceHost: host, date: clock)
+        try await requestPrincipal(request, space: space, date: clock)
       }
       addMcpRoutes(
         &router, space: space, hub: hub, credentials: credentials, version: version, dev: dev, scripts: sessions.scripts,
@@ -180,11 +179,14 @@ public enum SpaceServer {
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
       guard let execTokens, let sessions else { return walled }
       return sessionGate(
-        space: space, hub: hub, runtime: sessions, tokens: execTokens, credentials: credentials, spaceHost: host,
+        space: space, hub: hub, runtime: sessions, tokens: execTokens, credentials: credentials,
         routed: routed, otherwise: walled,
       )
     }
-    if dev { return misdirecting(own: origin, other: webOrigin, gated(routed)) }
+    let content = contentHandler(
+      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, views: views,
+    )
+    if dev { return hostRouted(contentHost, api: gated(routed), content: content) }
     @Dependency(\.date) var dateGen
     // The wall. Exceptions carry their own credential and so must precede it:
     // machine connect and enroll share-login (each with the challenge mint
@@ -202,7 +204,7 @@ public enum SpaceServer {
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
       "/v1/server", "/v1/groups",
     ]
-    return misdirecting(own: origin, other: webOrigin, gated { request in
+    return hostRouted(contentHost, api: gated { request in
       if selfAuthenticating.contains(request.url.path) {
         return try await routed(request)
       }
@@ -222,29 +224,26 @@ public enum SpaceServer {
           hint: "enroll this device (wuhu login < invite-link), or run the server with --dev",
         ))
       }
-    })
+    }, content: content)
   }
 
-  public static func webHandler(
+  static func contentHandler(
     space: Space,
-    apiPort: Int,
-    advertisedOrigin: String? = nil,
-    webOrigin: String? = nil,
+    contentHost: ContentHost,
+    advertisedOrigin: String?,
     dev: Bool,
-    publicRead: Bool = false,
-    views: ViewProviders? = .embedded,
-  ) -> Handler {
+    publicRead: Bool,
+    views: ViewProviders?,
+  ) -> @Sendable (GroupID, Request) async throws -> Response {
     @Dependency(\.date) var dateGen
     // Forcing the embed here fails at bind time, not on the first request.
     let shell = ShellSDK.embedded
-    let webHost = spaceHost(of: webOrigin ?? advertisedOrigin)
-    return { request in
+    return { group, request in
       try await webResponse(
         space: space,
-        apiPort: apiPort,
+        group: group,
+        contentHost: contentHost,
         advertisedOrigin: advertisedOrigin,
-        webOrigin: webOrigin,
-        webHost: webHost,
         now: dateGen.now,
         dev: dev,
         publicRead: publicRead,
@@ -260,8 +259,6 @@ public enum SpaceServer {
     host: String = "127.0.0.1",
     port: Int,
     origin: URL? = nil,
-    webPort: Int?,
-    webOrigin: URL? = nil,
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
     publicRead: Bool = false,
@@ -300,7 +297,7 @@ public enum SpaceServer {
     }
     let (identity, certificateKind) = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
     func groupHosts(_ origin: String?) -> [String: TLSIdentity] {
-      guard let groupIdentity, let host = spaceHost(of: origin) else { return [:] }
+      guard let groupIdentity, let host = origin.flatMap(ContentHost.init(origin:))?.host else { return [:] }
       return [host: groupIdentity]
     }
     let fingerprint = try identity.fingerprint()
@@ -383,10 +380,10 @@ public enum SpaceServer {
         hub: hub,
         sessions: sessions,
         origin: advertisedOrigin,
-        webPort: webPort,
-        webOrigin: webOrigin?.absoluteString,
+        port: port,
         fingerprint: deployment.pin,
         dev: dev,
+        publicRead: publicRead,
         version: version,
         webApp: webApp,
         webPushApplicationServerKey: webPushManager.nextVAPIDKeyID.description,
@@ -412,31 +409,6 @@ public enum SpaceServer {
     }
     guard let loopbackPort = loopback.boundAddress.port else { preconditionFailure("a TCP listener has a port") }
     claudeCode.serveLoopback(on: "http://127.0.0.1:\(loopbackPort)")
-    let web: ServeNIOServer?
-    if let webPort {
-      do {
-        web = try await ServeNIOServer.bind(
-          host: host,
-          port: webPort,
-          tls: identity,
-          subdomains: groupHosts(webOrigin?.absoluteString ?? advertisedOrigin),
-          hooks: hooks,
-          handler: misdirecting(
-            webHandler(
-              space: space, apiPort: port, advertisedOrigin: advertisedOrigin, webOrigin: webOrigin?.absoluteString,
-              dev: dev, publicRead: publicRead,
-            ),
-            own: webOrigin?.absoluteString,
-            other: advertisedOrigin,
-          ),
-        )
-      } catch {
-        await api.shutdown()
-        throw error
-      }
-    } else {
-      web = nil
-    }
     @Dependency(\.continuousClock) var clock
     @Dependency(\.date) var dateGen
     await withTaskGroup(of: Void.self) { group in
@@ -454,9 +426,6 @@ public enum SpaceServer {
       }
       group.addTask { await api.runUntilCancelled() }
       group.addTask { await loopback.runUntilCancelled() }
-      if let web {
-        group.addTask { await web.runUntilCancelled() }
-      }
       await group.waitForAll()
     }
     await metricsWriter.close()
@@ -469,49 +438,19 @@ public enum SpaceServer {
   }
 }
 
-// A browser holding an HTTP/2 connection to one of the two origins reuses it
-// for the other whenever both names resolve to the same address and the
-// certificate covers both (RFC 9113 §9.1.1 coalescing), so the request lands
-// on the wrong listener carrying the other origin's authority. 421 is the
-// protocol's answer and browsers retry on a fresh connection to the right
-// name; any other reply leaks this listener's response — and, lacking the
-// other listener's CORS reflection, breaks the SPA's content bootstrap. Only
-// two distinct hostnames can coalesce: a proxy topology that reaches both
-// listeners through one name, or a serve without --web-origin, is left alone.
-// A group host `<g>.<host>` belongs to the listener of its host, and the
-// wildcard certificate lets it coalesce the same way.
-func misdirecting(own: String?, other: String?, _ handler: @escaping UpgradingHandler) -> UpgradingHandler {
-  guard let stray = misdirectedHosts(own: own, other: other) else { return handler }
-  return { request in
-    if stray(request.url.host) {
-      return .response(plainStatus(.misdirectedRequest))
+/// One listener, two planes: the bare host is the API and the web app,
+/// `<group>.<host>` that group's content.
+func hostRouted(
+  _ contentHost: ContentHost,
+  api: @escaping UpgradingHandler,
+  content: @escaping @Sendable (GroupID, Request) async throws -> Response,
+) -> UpgradingHandler {
+  { request in
+    switch contentHost.plane(of: request.url.host) {
+    case .api: try await api(request)
+    case let .content(group): .response(try await content(group, request))
+    case .misdirected: .response(plainStatus(.misdirectedRequest))
     }
-    return try await handler(request)
-  }
-}
-
-func misdirecting(_ handler: @escaping Handler, own: String?, other: String?) -> Handler {
-  guard let stray = misdirectedHosts(own: own, other: other) else { return handler }
-  return { request in
-    if stray(request.url.host) {
-      return plainStatus(.misdirectedRequest)
-    }
-    return try await handler(request)
-  }
-}
-
-private func misdirectedHosts(own: String?, other: String?) -> (@Sendable (String?) -> Bool)? {
-  guard let ownHost = spaceHost(of: own), let otherHost = spaceHost(of: other), ownHost != otherHost else { return nil }
-  @Sendable func under(_ host: String, _ base: String) -> Bool {
-    host == base || hostGroup(host, spaceHost: base) != nil
-  }
-  // The sibling's own host is stray before any group-host reading, so a
-  // nested pair (api.example, web.api.example) never reads one listener's
-  // host as a group of the other.
-  return { host in
-    guard let host = host?.lowercased() else { return false }
-    if host == otherHost { return true }
-    return under(host, otherHost) && !under(host, ownHost)
   }
 }
 
@@ -528,7 +467,7 @@ private func tlsIdentity(
   }
   let generated = try await TLSIdentity.loadOrCreate(
     directory: folder.appendingPathComponent("tls"),
-    hosts: ["localhost", "127.0.0.1", "::1"],
+    hosts: ["localhost", "*.localhost", "127.0.0.1", "::1"],
   )
   return (generated, .generated)
 }

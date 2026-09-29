@@ -7,6 +7,7 @@
 import Fetch
 import HTTPTypes
 import Serve
+import struct SpaceContract.GroupID
 import struct SpaceContract.SpaceURL
 
 public struct WebApp: Sendable {
@@ -93,9 +94,18 @@ private func shellResponse(_ webApp: WebApp, components: URLComponents) -> Respo
   return Response(status: .ok, headers: headers, body: .bytes(data, contentType: mimeType(for: "index.html")))
 }
 
+// The SPA names a group by `?group=`; the app's link names it by host label,
+// `wuhu://<group>.<host>/<path>`.
 private func smartBanner(_ components: URLComponents) -> String {
-  let authority = (components.percentEncodedHost ?? "") + (components.port.map { ":\($0)" } ?? "")
-  let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+  var authority = (components.percentEncodedHost ?? "") + (components.port.map { ":\($0)" } ?? "")
+  var items = components.percentEncodedQuery.map { $0.split(separator: "&", omittingEmptySubsequences: false) } ?? []
+  if let index = items.firstIndex(where: { $0.hasPrefix("group=") }) {
+    let group = items[index].dropFirst("group=".count)
+    guard GroupID.isValid(group) else { return "app-id=\(appStoreID)" }
+    if group != GroupID.shared.rawValue { authority = "\(group).\(authority)" }
+    items.remove(at: index)
+  }
+  let query = items.isEmpty ? "" : "?" + items.joined(separator: "&")
   guard let host = SpaceURL.host(origin: "https://\(authority)"),
         let url = SpaceURL("https://\(host)\(components.percentEncodedPath)\(query)")
   else { return "app-id=\(appStoreID)" }

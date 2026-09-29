@@ -176,7 +176,7 @@ public actor MachineHub {
 
   // MARK: - Machine round trips
 
-  // The API listener enforces this WebSocket frame ceiling; an outbound frame
+  // The listener enforces this WebSocket frame ceiling; an outbound frame
   // that exceeds it would sever the machine leg on a real socket, so the hub
   // refuses to send it and the caller fails loudly instead.
   public static let maximumFrameBytes: Int = 16 << 20

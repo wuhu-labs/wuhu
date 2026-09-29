@@ -6,37 +6,36 @@ import Testing
 struct ServeParsingTests {
   @Test func defaultsPortsAndFlags() throws {
     #expect(try Command.parse(["serve", "/tmp/store"]) == .serve(ServeCommand(
-      folder: "/tmp/store", host: "127.0.0.1", port: 5540, webPort: 5541, webOrigin: nil, dev: false, devImport: nil, devExport: nil,
+      folder: "/tmp/store", host: "127.0.0.1", port: 5530, dev: false, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )))
   }
 
-  @Test func webPortDefaultFollowsPort() throws {
+  @Test func parsesThePort() throws {
     #expect(try Command.parse(["serve", "store", "--port", "7000"]) == .serve(ServeCommand(
-      folder: "store", host: "127.0.0.1", port: 7000, webPort: 7001, webOrigin: nil, dev: false, devImport: nil, devExport: nil,
+      folder: "store", host: "127.0.0.1", port: 7000, dev: false, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )))
   }
 
   @Test func parsesHostOptionForLANOptIn() throws {
     #expect(try Command.parse(["serve", "store", "--host", "0.0.0.0"]) == .serve(ServeCommand(
-      folder: "store", host: "0.0.0.0", port: 5540, webPort: 5541, webOrigin: nil, dev: false, devImport: nil, devExport: nil,
+      folder: "store", host: "0.0.0.0", port: 5530, dev: false, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )))
   }
 
   @Test func parsesEveryOption() throws {
     let arguments = [
-      "serve", "--port", "7000", "--web-port", "7100", "--dev", "--public-read",
+      "serve", "--port", "7000", "--dev", "--public-read",
       "--dev-import", "/in", "--dev-export", "/out",
       "--origin", "https://api.wuhu.example:7443",
-      "--web-origin", "https://web.wuhu.example",
       "--cert", "/tls/cert.pem", "--key", "/tls/key.pem",
       "--group-certificate", "/tls/groups.pem", "--group-private-key", "/tls/groups.key",
       "--web-app", "/spa/dist", "store",
     ]
     #expect(try Command.parse(arguments) == .serve(ServeCommand(
-      folder: "store", host: "127.0.0.1", port: 7000, origin: "https://api.wuhu.example:7443", webPort: 7100, webOrigin: "https://web.wuhu.example", dev: true, publicRead: true, devImport: "/in", devExport: "/out",
+      folder: "store", host: "127.0.0.1", port: 7000, origin: "https://api.wuhu.example:7443", dev: true, publicRead: true, devImport: "/in", devExport: "/out",
       certificate: "/tls/cert.pem", privateKey: "/tls/key.pem",
       groupCertificate: "/tls/groups.pem", groupPrivateKey: "/tls/groups.key", webApp: "/spa/dist",
     )))
@@ -52,22 +51,38 @@ struct ServeParsingTests {
 
   @Test func publicReadParsesWithoutDev() throws {
     #expect(try Command.parse(["serve", "--public-read", "store"]) == .serve(ServeCommand(
-      folder: "store", host: "127.0.0.1", port: 5540, webPort: 5541, webOrigin: nil, dev: false, publicRead: true, devImport: nil, devExport: nil,
+      folder: "store", host: "127.0.0.1", port: 5530, dev: false, publicRead: true, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )))
+  }
+
+  @Test func deprecatedWebOptionsParseAndAreIgnored() throws {
+    let arguments = ["serve", "--web-port", "5531", "--web-origin", "https://web.wuhu.example", "store"]
+    #expect(try Command.parse(arguments) == .serve(ServeCommand(
+      folder: "store", host: "127.0.0.1", port: 5530, dev: false, devImport: nil, devExport: nil,
+      certificate: nil, privateKey: nil, ignoredOptions: ["--web-port", "--web-origin"],
+    )))
+  }
+
+  @Test func anIPLiteralOriginPointsToAnSslipName() {
+    #expect {
+      try Command.parse(["serve", "--origin", "https://192.168.1.5:5530", "store"])
+    } throws: { error in
+      (error as? UsageError)?.message.contains("sslip.io") == true
+    }
   }
 
   @Test(arguments: [
     ["serve"],
     ["serve", "store", "extra"],
     ["serve", "--port", "nope", "store"],
-    ["serve", "--web-port", "nope", "store"],
+    ["serve", "--web-port", "store"],
     ["serve", "--dev-import", "store"],
     ["serve", "--web-app", "store"],
     ["serve", "--cert", "/tls/cert.pem", "store"],
     ["serve", "--key", "/tls/key.pem", "store"],
-    ["serve", "--web-origin", "http://plain.example", "store"],
-    ["serve", "--web-origin", "not a url", "store"],
+    ["serve", "--origin", "https://192.168.1.5:5530", "store"],
+    ["serve", "--origin", "https://[::1]:5530", "store"],
     ["serve", "--origin", "http://plain.example", "store"],
     ["serve", "--origin", "not a url", "store"],
     ["serve", "--origin", "https://api.wuhu.example/deep/path", "store"],
@@ -114,10 +129,24 @@ struct ServeRoutingTests {
     let runner = self.runner(received) { config in await received.record(config) }
     #expect(await runner.run(arguments: ["serve", "/tmp/store", "--dev"]) == 0)
     #expect(await received.configs == [ServeCommand(
-      folder: "/tmp/store", host: "127.0.0.1", port: 5540, webPort: 5541, webOrigin: nil, dev: true, devImport: nil, devExport: nil,
+      folder: "/tmp/store", host: "127.0.0.1", port: 5530, dev: true, devImport: nil, devExport: nil,
       certificate: nil, privateKey: nil,
     )])
-    #expect(await received.stderr == "serving /tmp/store on 127.0.0.1:5540 (api) and 127.0.0.1:5541 (web)\n")
+    #expect(await received.stderr == "serving /tmp/store on 127.0.0.1:5530 at https://localhost:5530\n")
+  }
+
+  @Test func eachDeprecatedWebOptionWarnsOnceAndServes() async throws {
+    let received = Received()
+    let runner = self.runner(received) { config in await received.record(config) }
+    let arguments = ["serve", "/tmp/store", "--web-port", "5531", "--web-origin", "https://web.example", "--origin", "https://space.example"]
+    #expect(await runner.run(arguments: arguments) == 0)
+    #expect(await received.configs.count == 1)
+    #expect(await received.stderr == """
+    --web-port is ignored: content is served on <group>.<host> on the one port; remove it
+    --web-origin is ignored: content is served on <group>.<host> on the one port; remove it
+    serving /tmp/store on 127.0.0.1:5530 at https://space.example
+
+    """)
   }
 
   @Test func usageErrorExitsSixtyFourWithoutReachingHandler() async throws {

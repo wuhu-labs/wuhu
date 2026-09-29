@@ -17,8 +17,6 @@ public struct ServeCommand: Equatable, Sendable {
   public var host: String
   public var port: Int
   public var origin: String? = nil
-  public var webPort: Int
-  public var webOrigin: String?
   public var dev: Bool
   public var publicRead: Bool = false
   public var devImport: String?
@@ -28,6 +26,8 @@ public struct ServeCommand: Equatable, Sendable {
   public var groupCertificate: String? = nil
   public var groupPrivateKey: String? = nil
   public var webApp: String? = nil
+  /// Deprecated options serve accepts and ignores, with a warning.
+  public var ignoredOptions: [String] = []
 }
 
 public enum UserCommand: Equatable, Sendable {
@@ -108,7 +108,12 @@ public struct CommandRunner: Sendable {
         guard let serve = self.serve else {
           throw CLIError(message: "serve is not available in this client")
         }
-        await self.stderr("serving \(config.folder) on \(config.host):\(config.port) (api) and \(config.host):\(config.webPort) (web)\n")
+        for option in config.ignoredOptions {
+          await self.stderr("\(option) is ignored: content is served on <group>.<host> on the one port; remove it\n")
+        }
+        await self.stderr(
+          "serving \(config.folder) on \(config.host):\(config.port) at \(config.origin ?? "https://localhost:\(config.port)")\n",
+        )
         try await serve(config)
         return 0
       }

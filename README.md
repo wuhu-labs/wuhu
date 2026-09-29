@@ -24,10 +24,10 @@ The build compiles the web app and embeds it in the binary; that step fetches it
 wuhu serve ~/my-space --dev
 ```
 
-Open `https://localhost:5540/` for the web app, or pin the space from any folder and use the CLI:
+Open `https://localhost:5530/` for the web app, or pin the space from any folder and use the CLI:
 
 ```bash
-wuhu use localhost:5540 --pin
+wuhu use localhost:5530 --pin
 wuhu write /notes/plan.md --body "# Plan"
 wuhu ls /
 ```

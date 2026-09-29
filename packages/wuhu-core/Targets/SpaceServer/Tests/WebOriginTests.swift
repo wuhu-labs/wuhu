@@ -565,11 +565,11 @@ import Testing
     #expect(response.headers[.contentType] == "application/json")
   }
 
-  @Test func corsReflectsOnlyThePairedAPIOrigin() async throws {
+  @Test func corsReflectsOnlyTheBareHost() async throws {
     let harness = try Harness()
     _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
     let url = URL(string: "http://space/font.woff2")!
-    let paired = "http://space:\(Harness.apiPort)"
+    let paired = "http://localhost"
 
     var headers = RequestHeaders()
     headers[.origin] = paired
@@ -579,16 +579,16 @@ import Testing
     #expect(allowed.headers[.accessControlAllowCredentials] == "true")
     #expect(allowed.headers[.vary] == "Origin")
 
-    headers[.origin] = "http://space:\(Harness.apiPort + 1)"
+    headers[.origin] = "http://localhost:4101"
     let wrongPort = try await harness.web(Request(url: url, headers: headers))
     #expect(wrongPort.headers[.accessControlAllowOrigin] == nil)
     #expect(wrongPort.headers[.vary] == "Origin")
 
-    headers[.origin] = "http://evil.example:\(Harness.apiPort)"
+    headers[.origin] = "http://evil.example"
     let foreignHost = try await harness.web(Request(url: url, headers: headers))
     #expect(foreignHost.headers[.accessControlAllowOrigin] == nil)
 
-    headers[.origin] = "https://space:\(Harness.apiPort)"
+    headers[.origin] = "https://space"
     let wrongScheme = try await harness.web(Request(url: url, headers: headers))
     #expect(wrongScheme.headers[.accessControlAllowOrigin] == nil)
 
@@ -600,7 +600,7 @@ import Testing
   @Test func corsReflectsTheAdvertisedOriginBehindAProxy() async throws {
     let harness = try Harness(origin: "https://example.test")
     _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
-    // The proxy terminates TLS on 443 and forwards to the backend web listener;
+    // The proxy terminates TLS on 443 and forwards to the backend listener;
     // the browser origin is the advertised canonical origin, not the raw port.
     let url = URL(string: "https://example.test/font.woff2")!
 
@@ -616,10 +616,9 @@ import Testing
     #expect(foreign.headers[.accessControlAllowOrigin] == nil)
     #expect(foreign.headers[.accessControlAllowCredentials] == nil)
 
-    // A --origin serve still admits the same-host raw-API-port fallback.
-    headers[.origin] = "https://example.test:\(Harness.apiPort)"
-    let fallback = try await harness.web(Request(url: url, headers: headers))
-    #expect(fallback.headers[.accessControlAllowOrigin] == "https://example.test:\(Harness.apiPort)")
+    headers[.origin] = "https://example.test:5531"
+    let otherPort = try await harness.web(Request(url: url, headers: headers))
+    #expect(otherPort.headers[.accessControlAllowOrigin] == nil)
   }
 
   @Test func advertisedOriginWithExplicitPortMatchesOnlyThatPort() async throws {
@@ -657,22 +656,10 @@ import Testing
     #expect(response.headers[.accessControlAllowHeaders] == "Authorization")
   }
 
-  @Test func advertisedWebOriginIsNeverAValidRequester() async throws {
-    let harness = try Harness(origin: "https://example.test", webOrigin: "https://web.example.test")
-    _ = try await harness.direct("write", .object(["path": "/font.woff2", "content": "f"]))
-    let url = URL(string: "https://example.test/font.woff2")!
-
-    var headers = RequestHeaders()
-    headers[.origin] = "https://web.example.test"
-    let webOriginRequester = try await harness.web(Request(url: url, headers: headers))
-    #expect(webOriginRequester.headers[.accessControlAllowOrigin] == nil)
-    #expect(webOriginRequester.headers[.accessControlAllowCredentials] == nil)
-  }
-
   @Test func sessionPreflightAllowsOnlyThePairedOriginAndBearerHeader() async throws {
     let harness = try Harness()
     let url = URL(string: "http://space/_/session")!
-    let paired = "http://space:\(Harness.apiPort)"
+    let paired = "http://localhost"
     var headers = RequestHeaders()
     headers[.origin] = paired
     headers[.accessControlRequestMethod] = "POST"
@@ -686,7 +673,7 @@ import Testing
     #expect(response.headers[.accessControlAllowHeaders] == "Authorization")
     #expect(response.headers[.vary] == "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 
-    headers[.origin] = "http://elsewhere:\(Harness.apiPort)"
+    headers[.origin] = "http://elsewhere"
     let rejected = try await harness.web(Request(url: url, method: .options, headers: headers))
     #expect(rejected.status == .noContent)
     #expect(rejected.headers[.accessControlAllowOrigin] == nil)
@@ -717,7 +704,7 @@ import Testing
     ).signed(by: key)
     var headers = RequestHeaders()
     headers[.authorization] = "Bearer " + assertion.rawValue
-    headers[.origin] = "http://space:\(Harness.apiPort)"
+    headers[.origin] = "http://localhost"
 
     let response = try await harness.web(Request(
       url: URL(string: "http://space/_/session")!,

@@ -58,7 +58,7 @@ import Testing
     try group.privateKeyPEM.write(to: privateKey, atomically: true, encoding: .utf8)
     await #expect(throws: GroupTLSError.noCertificate) {
       try await SpaceServer.serve(
-        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"), webPort: nil,
+        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"),
         dev: true, groupCertificate: certificate, groupPrivateKey: privateKey,
       )
     }
@@ -81,7 +81,7 @@ private func serveAndCollect(folder: URL, certificate: URL? = nil, privateKey: U
   )
   let server = Task {
     try await SpaceServer.serve(
-      folder: folder, port: 0, origin: URL(string: "https://space.test:5530"), webPort: nil, dev: true,
+      folder: folder, port: 0, origin: URL(string: "https://space.test:5530"), dev: true,
       certificate: certificate, privateKey: privateKey, hooks: hooks,
     )
   }

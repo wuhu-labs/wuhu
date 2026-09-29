@@ -45,7 +45,6 @@ func sessionGate(
   runtime: SessionRuntime,
   tokens: ExecTokens,
   credentials: CredentialResolver,
-  spaceHost: String?,
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
@@ -61,7 +60,7 @@ func sessionGate(
     case let .session(holder):
       // An exec token acts in its session's group; naming another is refused
       // here, whatever the route.
-      if let refused = groupMismatch(request, spaceHost: spaceHost, session: holder.session, group: holder.group) {
+      if let refused = groupMismatch(request, session: holder.session, group: holder.group) {
         return .response(refused)
       }
       return try await SessionPrincipal.$current.withValue(holder) {

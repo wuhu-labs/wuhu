@@ -2,7 +2,7 @@ import Fetch
 import Foundation
 import JSONValue
 import SpaceContract
-import SpaceServer
+@testable import SpaceServer
 import Testing
 
 @Suite struct ApiOriginTests {
@@ -120,28 +120,28 @@ import Testing
     #expect(rows.rows == [[.object(["k": .integer(1)]), .bool(true), .string("x")]])
   }
 
-  @Test func serverInfoReportsWebPortOrNothing() async throws {
-    let bound = try Harness(webPort: 5541)
-    let response = try await bound.get(bound.api, "/v1/server")
-    #expect(response.status == .ok)
-    let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
-    #expect(info.webPort == 5541)
-    #expect(info.webOrigin == nil)
-
-    let unbound = try Harness()
-    let bare = try await unbound.get(unbound.api, "/v1/server")
-    #expect(bare.status == .ok)
-    let none = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(bare))
-    #expect(none.webPort == nil)
+  // Clients build `<group>.<contentBase>`; no second port is advertised.
+  @Test func serverInfoReportsTheContentBase() async throws {
+    for (origin, base) in [
+      ("https://wuhu.example:5530", "wuhu.example:5530"), ("https://Wuhu.Example", "wuhu.example"),
+      ("https://localhost:5530", "localhost:5530"),
+    ] {
+      let harness = try Harness(origin: origin)
+      let response = try await harness.get(harness.api, "/v1/server")
+      #expect(response.status == .ok)
+      let info = try await json(response).object
+      #expect(info?["contentBase"] == .string(base))
+      #expect(info?["webPort"] == nil)
+      #expect(info?["webOrigin"] == nil)
+    }
   }
 
-  @Test func serverInfoAdvertisesTheConfiguredWebOrigin() async throws {
-    let harness = try Harness(webPort: 5541, webOrigin: "https://web.wuhu.example")
-    let response = try await harness.get(harness.api, "/v1/server")
-    #expect(response.status == .ok)
-    let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
-    #expect(info.webPort == 5541)
-    #expect(info.webOrigin == "https://web.wuhu.example")
+  @Test func theDefaultContentHostIsLocalhost() throws {
+    let host = try #require(ContentHost(origin: "https://localhost:5530"))
+    #expect(host.base == "localhost:5530")
+    #expect(host.plane(of: "shared.localhost") == .content(.shared))
+    #expect(host.plane(of: "localhost") == .api)
+    #expect(host.plane(of: "127.0.0.1") == .api)
   }
 
   @Test func serverInfoAdvertisesTheSpaceIdentityAndOrigin() async throws {

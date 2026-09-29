@@ -26,36 +26,24 @@ semantics layered over MachineContract/MachineChannel.
   and is deleted when the script ends, so a row still present at boot names a
   script the restart killed (see *Scripts on machines*).
 
+## One listener, two planes
+
+`serve` binds one TLS listener (`--port`, default 5530). The Host of each request picks the plane, compared lowercased and without one trailing dot, as is the `--origin` host:
+
+- The bare host (the `--origin` host; without `--origin`, `localhost`) serves the API (`/v1/*`) and the web app. It serves no space content.
+- `<group>.<host>`, exactly one label under it, serves that group's content: pages, files, `/_/session`, `/_/query`, `/_/observe`, `/_/space/*`, the shell and view providers. `shared.<host>` is `shared`. A content host answers no API route: `/v1/...` there is a content path.
+- A name two or more labels under the host (`a.b.<host>`) is 421: the certificate may cover it, so a browser can reuse a connection for it, and 421 makes it retry on a fresh one to the right name.
+- Every other name (an IP address, another LAN name a machine or CLI dials) reaches the API plane.
+
+Without `--origin` the content host is `localhost`, so a browser on the serving machine reaches `<group>.localhost:<port>`; the self-signed certificate a fresh serve generates covers `*.localhost`. Serving group content to other devices needs `--origin`, which must name a host: an IP literal has no subdomains, so `serve` refuses one and points to an sslip.io name. `--web-port` and `--web-origin` still parse, for old launch configurations; each is ignored with one warning on stderr.
+
 ## The acting group
 
-Every request on the API origin acts in one group. Hostless paths, `/v1/f/*`,
-tool calls and observe globs are that group's; `wuhu://<group>.localspace/<path>`
-names another group's, and a group the acting group does not read answers as
-a missing path. There is no fallback from a hostless path to another group.
-The space paths a conversation post attaches are hostless, read in the acting
-group, or `wuhu://<group>.localspace/<path>` in a group the acting group reads;
-an unread group is 404 `notFound`, any other form 400. A conversation's
-attachments live in its group and a member reads them from any group.
+Every request on the API plane acts in one group. Hostless paths, `/v1/f/*`, tool calls and observe globs are that group's; `wuhu://<group>.localspace/<path>` names another group's, and a group the acting group does not read answers as a missing path. There is no fallback from a hostless path to another group. The space paths a conversation post attaches are hostless, read in the acting group, or `wuhu://<group>.localspace/<path>` in a group the acting group reads; an unread group is 404 `notFound`, any other form 400. A conversation's attachments live in its group and a member reads them from any group.
 
-- A person (an assertion, or anonymous in dev) acts in the group the
-  `wuhu-group` header names, else the Host `<group>.<space host>` (one label
-  before the `--origin` host), else `shared`. `shared` needs no check. A group
-  that does not exist or was removed is 404 `unknownGroup`; a group the
-  person's account is not a member of is 403 `groupForbidden` (anonymous in
-  dev skips membership); a header and a Host naming different groups are 400
-  `groupConflict`. The person speaks as the persona the identity routes give
-  them: the one `?identity=` names, else the account's first. A persona of
-  another account is 403 `identityNotYours`, a claim from a key that is not
-  a device or seat key 403 `personaRequiresDevice`. That persona is the
-  member for watermarks, DMs and notifications.
+- A person (an assertion, or anonymous in dev) acts in the group the `wuhu-group` header names, else `shared`. The Host never names it. `shared` needs no check. A group that does not exist or was removed is 404 `unknownGroup`; a group the person's account is not a member of is 403 `groupForbidden` (anonymous in dev skips membership). The person speaks as the persona the identity routes give them: the one `?identity=` names, else the account's first. A persona of another account is 403 `identityNotYours`, a claim from a key that is not a device or seat key 403 `personaRequiresDevice`. That persona is the member for watermarks, DMs and notifications.
 - An exec token acts in its session's group (see *The gate*).
-- The web origin serves the group its Host names: `<group>.<host>` (one label
-  before the `--web-origin` host, else the `--origin` host) is that group, and
-  the bare host, or a serve without an origin, is `shared`, byte-identical to
-  a serve without groups. A group that does not exist or was removed is 404
-  `unknownGroup` on every path. Pages, `/_/query` and `/_/observe` read that
-  group with the cookie's viewer as the actor; the `wuhu-group` header is never
-  read there, so a page cannot pivot into its viewer's other groups.
+- A content host serves the group its Host names: `<group>.<host>` is that group, `shared.<host>` is `shared`. A group that does not exist or was removed is 404 `unknownGroup` on every path. Pages, `/_/query` and `/_/observe` read that group with the cookie's viewer as the actor; the `wuhu-group` header is never read there, so a page cannot pivot into its viewer's other groups.
   - The one exception is a conversation's attachment folder:
     `/_/conversations/<id>/attachments/…` on any host is read in the group
     that homes conversation `<id>` when the host's group reads that group or
@@ -77,44 +65,13 @@ attachments live in its group and a member reads them from any group.
     scripts run in an opaque origin, so its fetches carry no cookie and its
     writes send `Origin: null`, which page-write admission refuses as
     `crossOrigin` whatever `page` they claim.
-  - A read session is minted on one host with no `Domain`, binds that host's
-    group (`read_sessions.grp`, NULL for `shared`), and admits on that host
-    only. Every `wuhu_read` cookie sent is tried, so one a sibling host tosses
-    at the parent domain cannot shadow the host's own. On a group host,
-    minting and reading need membership (403 `groupForbidden`); `--public-read`
-    opens the bare host only.
-  - Sibling group hosts are same-site, so `SameSite=Lax` still sends a host's
-    cookie with its neighbour's subresource and script requests. A request is
-    cross-origin when its `Sec-Fetch-Site` is present and neither
-    `same-origin` nor `none`, its `Sec-Fetch-Mode` is not `navigate`, and its
-    `Origin` is not one of the host's paired SPA origins. It gets 403 `crossOrigin`
-    when a cookie admits it to `/_/query` or `/_/observe` on any host, or to
-    anything a group host serves; `DELETE /_/session` refuses it with or
-    without a cookie. The pairing, and CORS, is exact: `<group>.<API host>`
-    and the bare API origin (where the SPA runs for every group a person
-    reads) for a group host, the bare API origin alone for the bare host; a
-    sibling's `<other>.<API host>` never pairs. On a direct LAN serve each is
-    the same scheme and host at the API port. Pairing grants no read: minting
-    on a group host still needs membership.
-  - Every group-host response carries `Content-Security-Policy:
-    frame-ancestors 'self' <paired SPA origins>` (the origins CORS pairs), so
-    a navigation the cookie serves cannot land in a sibling's frame. The bare
-    host sends none.
+  - A read session is minted on one host with no `Domain`, binds that host's group (`read_sessions.grp`, NULL for `shared`), and admits on that host only. Every `wuhu_read` cookie sent is tried, so one a sibling host tosses at the parent domain cannot shadow the host's own. On a group host, minting and reading need membership (403 `groupForbidden`); `--public-read` opens `shared.<host>` only.
+  - Sibling group hosts are same-site, so `SameSite=Lax` still sends a host's cookie with its neighbour's subresource and script requests. A request is cross-origin when its `Sec-Fetch-Site` is present and neither `same-origin` nor `none`, its `Sec-Fetch-Mode` is not `navigate`, and its `Origin` is not one of the host's paired SPA origins. It gets 403 `crossOrigin` when a cookie admits it to `/_/query` or `/_/observe` on any host, or to anything a group host other than `shared.` serves; `DELETE /_/session` refuses it with or without a cookie. The pairing, and CORS, is exact: a content host pairs with the bare host, where the SPA runs for every group a person reads, as `--origin` spells it and as the bare host at the request's own scheme and port; without `--origin`, also as `127.0.0.1` and `[::1]` at that scheme and port, so the web app opened by loopback address frames and fetches its content. A sibling content host, `shared.` included, never pairs. Pairing grants no read: minting on a group host still needs membership.
+  - Every group-host response carries `Content-Security-Policy: frame-ancestors 'self' <paired SPA origins>` (the origins CORS pairs), so a navigation the cookie serves cannot land in a sibling's frame. `shared.<host>` sends none.
   - HTML on a group host carries `<meta name="wuhu-group" content="<group>">`
     ahead of the shell script.
-  - TLS: `--group-certificate`/`--group-private-key` (a `*.<host>` leaf, needs
-    `--origin` and `--cert`/`--key`, else `GroupTLSError.noOrigin` /
-    `.noCertificate`: the generated certificate is pinned, so it serves every
-    host; checked at boot, and a pair no handshake can use — a key off
-    the named curves, e.g. EC with explicit curve parameters, or a key that
-    isn't the leaf's — stops the start with `GroupTLSError.unusable`, naming
-    the file and why) is served by SNI to names exactly one label under each
-    listener's host. Every other name, and a handshake without SNI, gets the
-    `--cert` leaf. A
-    listener answers 421 to its sibling listener's host and group hosts, never
-    its own; the sibling's host is 421 even when it is one label under this
-    listener's host (`--origin https://api.example --web-origin
-    https://web.api.example`), so it never reads as a group.
+  - Share links. A place in a group is shared as the web app's own URL, `https://<host>/<path>?group=<group>`; `shared`'s has no `group`. A link written as `https://<group>.<host>/<path>` names the content. A top-level navigation there (`GET`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`) that the file wall refuses is 303 to `<bare origin>/<path>?<query>` with every `group` query item dropped and `group=<group>` appended; on `shared.` none is appended (`Cache-Control: no-store`), so an old link opens the document in the web app, which signs in. A frame, a fetch, a navigation a cookie admits, and `shared.` under `--public-read` get the content. The web app's shell carries a smart app banner whose `app-argument` folds `?group=<g>` into the host, `wuhu://<g>.<host>/<path>`.
+  - TLS: `--group-certificate`/`--group-private-key` (a `*.<host>` leaf, needs `--origin` and `--cert`/`--key`, else `GroupTLSError.noOrigin` / `.noCertificate`: the generated certificate is pinned, so it serves every host; checked at boot, and a pair no handshake can use — a key off the named curves, e.g. EC with explicit curve parameters, or a key that isn't the leaf's — stops the start with `GroupTLSError.unusable`, naming the file and why) is served by SNI to names exactly one label under the host. Every other name, and a handshake without SNI, gets the `--cert` leaf.
 
 ## Page data: `/_/space/*`
 
@@ -125,8 +82,7 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
 `run_script` embeds the same core over host calls. The legacy `/_/query` and
 `/_/observe` are unchanged.
 
-- Reads pass the wall `/_/query` passes (a read session, `--dev` or
-  `--public-read`, and the cross-origin refusal):
+- Reads pass the wall `/_/query` passes (a read session, `--dev` or `--public-read`, and the cross-origin refusal):
   - `GET /_/space/query?sql=&params=` answers a typed snapshot
     `{columns, rows}`: a cell is a JSON scalar, `{"blob": base64}` or
     `{"json": value}`; a BOOLEAN column is `true`/`false`, a JSON column is
@@ -147,24 +103,7 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
     event's rev>` and loses nothing. File events keep the default `message`
     type; the legacy `/_/observe?glob=` sends no head frame.
   - `GET /_/space/attributes?path=` runs `attributes.read`.
-- Writes are `POST /_/space/rows` `{path, ops, page}` → `{rev, ids}` and
-  `POST /_/space/attributes` `{path, set?, remove?, ifMatch, page}` →
-  `{token}`. `ops` are `{insert: {col: cell}}`, `{update: id, set: {col:
-  cell}}` or `{delete: id}`, applied in one revision; `ids` are the inserted
-  rows' ids in order. A call touching one row id twice is refused as
-  `invalidArgument` (an update's untouched fields come from the row before
-  the call, so two ops on one row cannot fold). The patch is `attributes.patch`'s. Admission, in order:
-  a `Content-Type` other than `application/json` is 415; an `Origin` that is
-  not this host's own content origin (the request's scheme and host, or the
-  `--web-origin` with the Host's group label), or a `Sec-Fetch-Site` other
-  than `same-origin`, is 403 `crossOrigin`; no live read session for the
-  host's group is 401 (`--public-read` admits no visitor to write; `--dev`
-  writes as its seat, with no actor); a body past 4 MiB is 413, one that is
-  not a JSON object 400; `page` must be the writing page's
-  `location.pathname` — absolute and hostless, percent-decoded, a trailing
-  slash dropped — else 400. `page` is the page's own claim; what keeps
-  message content from writing is the attachment sandbox above, not `page`.
-  Other methods on these routes are 405.
+- Writes are `POST /_/space/rows` `{path, ops, page}` → `{rev, ids}` and `POST /_/space/attributes` `{path, set?, remove?, ifMatch, page}` → `{token}`. `ops` are `{insert: {col: cell}}`, `{update: id, set: {col: cell}}` or `{delete: id}`, applied in one revision; `ids` are the inserted rows' ids in order. A call touching one row id twice is refused as `invalidArgument` (an update's untouched fields come from the row before the call, so two ops on one row cannot fold). The patch is `attributes.patch`'s. Admission, in order: a `Content-Type` other than `application/json` is 415; an `Origin` that is not this host's own content origin (the request's scheme and host), or a `Sec-Fetch-Site` other than `same-origin`, is 403 `crossOrigin`; no live read session for the host's group is 401 (`--public-read` admits no visitor to write; `--dev` writes as its seat, with no actor); a body past 4 MiB is 413, one that is not a JSON object 400; `page` must be the writing page's `location.pathname` — absolute and hostless, percent-decoded, a trailing slash dropped — else 400. `page` is the page's own claim; what keeps message content from writing is the attachment sandbox above, not `page`. Other methods on these routes are 405.
 - A page acts as its host's group minus admin, whoever views it: an
   admin-only target (the group's instruction layer, e.g. shared's
   `AGENTS.md`) is refused as `unauthorized` even for an admin viewer, and so
@@ -271,15 +210,8 @@ What the server hands out for a client to enroll with — `EnrollMintOutput`, `S
 
 ## Endpoints
 
-- `GET /v1/server` — discovery for API clients: `ServerInfo` with `webPort`
-  when a web-content origin is bound, `{}` otherwise. The server reports the
-  port, not an origin — only the client knows which host it reached, so the
-  web origin is the API origin's host with this port. Public, outside the API
-  wall. `features` lists `groups` (the server takes the `wuhu-group` header),
-  and `group` is the group the request names, unchecked: an exec token's
-  session group, else the header, else the Host, else `shared`. It carries no
-  list of groups; that is `GET /v1/groups`.
-- `GET /v1/groups` — `[GroupSummary]`, every group not removed, with where the caller stands: `member` (it acts and creates there: a person's `group_members` rows, a session's own group only) and `readable` (the union of what its member groups read, so every member group is readable). The caller is the request's credential alone; for a person the group the request names by `wuhu-group` header or Host changes nothing, and it need not be a member of it. A session's exec token naming a group other than its own is still 403 `groupMismatch` at the session gate, as on every route. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`): naming it by `wuhu-group` or Host, or minting `/_/session` on its content host, is 403 `groupForbidden`. Public discovery outside the API wall, like `/v1/server`: anonymous is both `false` everywhere, the --dev seat both `true` (it acts in every group), a bearer that fails verification 401. Both flags are optional in the contract so a newer client reads an older server.
+- `GET /v1/server` — discovery for API clients: `ServerInfo` with `origin` (`--origin`, absent without it) and `contentBase`, the `host[:port]` a client writes after `<group>.` for a group's content origin (`https://<group>.<contentBase>`): the `--origin` authority, else `localhost:<port>`. `webPort` and `webOrigin` are never sent; they stay in the contract, optional, for older clients. Public, outside the API wall. `features` lists `groups` (the server takes the `wuhu-group` header), and `group` is the group the request names, unchecked: an exec token's session group, else the header, else `shared`. It carries no list of groups; that is `GET /v1/groups`.
+- `GET /v1/groups` — `[GroupSummary]`, every group not removed, with where the caller stands: `member` (it acts and creates there: a person's `group_members` rows, a session's own group only) and `readable` (the union of what its member groups read, so every member group is readable). The caller is the request's credential alone; for a person the group the request names by `wuhu-group` header changes nothing, and it need not be a member of it. A session's exec token naming a group other than its own is still 403 `groupMismatch` at the session gate, as on every route. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`): naming it by `wuhu-group`, or minting `/_/session` on its content host, is 403 `groupForbidden`. Public discovery outside the API wall, like `/v1/server`: anonymous is both `false` everywhere, the --dev seat both `true` (it acts in every group), a bearer that fails verification 401. Both flags are optional in the contract so a newer client reads an older server.
 - `PUT /v1/groups/:id` — `GroupUpdateInput` → `GroupSettings`. Behind the API
   wall. `spaceLayer` turns the space-wide layer (see *Sessions in groups*) on
   or off for the group's sessions. Only an admin of that group may, else 403
@@ -595,9 +527,7 @@ An exec whose registry row has a `caller` session — the exec tool's claim, a
   one whose exec has ended, is 401 with the reason; an archived session is
   403. A valid token runs the request as the session under the rules its own
   tools keep:
-  - group: the session's own. A `wuhu-group` header or a Host
-    `<group>.<space host>` naming another group is 403 `groupMismatch`, before
-    any route.
+  - group: the session's own. A `wuhu-group` header naming another group is 403 `groupMismatch`, before any route.
   - files: `GET /v1/f/*`, `PUT /v1/f/*`, and `POST /v1/tools/{read, ls, stat,
     grep, find, history, query, write, edit, rm, mv, checkout, table.create,
     table.alter, table.mutate, new}`. Writes keep the session home rule
@@ -712,19 +642,11 @@ scope holds — machine fs is raw:
   that is not attached (or a round trip severed mid-flight) fails
   `unavailable`; an id failing the `mc_` shape fails `invalidPath`.
 
-The web origin's tool context has no machine seam: machines:// addresses fail
-`unavailable` there.
+The content plane's tool context has no machine seam: machines:// addresses fail `unavailable` there.
 
 ## Frame size bound
 
-`serve()` binds the API listener with a 16 MiB WebSocket frame ceiling
-(`ServeOptions.maximumWebSocketFrameBytes` = `MachineHub.maximumFrameBytes`;
-wuhu-serve's default is 1 MiB). Two machine-wire payloads travel as single
-frames that exceed the default on real sockets: an exec output chunk can be as
-large as the flow-control window (4 MiB default → ~5.6 MiB as base64 JSON),
-and a VFS `read` returns the whole file in one response frame. The ceiling is
-a memory guard against a hostile or buggy peer, not a tunable to chase file
-sizes.
+`serve()` binds its listener with a 16 MiB WebSocket frame ceiling (`ServeOptions.maximumWebSocketFrameBytes` = `MachineHub.maximumFrameBytes`; wuhu-serve's default is 1 MiB). Two machine-wire payloads travel as single frames that exceed the default on real sockets: an exec output chunk can be as large as the flow-control window (4 MiB default → ~5.6 MiB as base64 JSON), and a VFS `read` returns the whole file in one response frame. The ceiling is a memory guard against a hostile or buggy peer, not a tunable to chase file sizes.
 
 M5 resolved the open question **document-and-defer**: VFS reads are not paged
 at the wire level. The space design defers streaming reads too, and wire

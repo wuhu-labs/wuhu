@@ -198,27 +198,10 @@ flips the `~/.wuhu/bin/wuhu` symlink; the last 3 versions are kept and
 ## Server
 
 ```bash
-wuhu serve <folder> [--host <address>] [--port N] [--web-port N] [--origin <url>] [--web-origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>]
+wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>]
 ```
 
-Both listeners bind `--host` (default `127.0.0.1`, loopback only); pass
-`--host 0.0.0.0` to expose the server on the LAN.
-API origin on `:N` (default 5540), raw space content on `:N+1` — both always
-TLS (self-signed into `<folder>/tls` unless `--cert`/`--key`; only that
-generated certificate's fingerprint rides invites, share-login links and
-machine join tokens, and a `--cert` server, self-signed or not, must pass
-its clients' system trust); `--origin`
-advertises the server's canonical API origin through `GET /v1/server`, so
-share-login and machine join links carry it instead of the
-minting wallet's own address; `--web-origin` advertises an explicit
-web-content URL the same way. Auth walls are on by default and usable
-as-is: API calls authenticate with an enrolled device (`wuhu login`) and
-web-content reads with a live browser read session. `--public-read` opens
-content reads of the `shared` group (the bare host) to anyone, a public
-board; group hosts still need a read session, and writes stay walled. `--dev` drops
-both walls, for local iteration only. `--dev-import <folder>` imports a
-plain folder into the space on boot; `--dev-export <folder>` dumps it back
-on graceful shutdown. `--dev` alone neither imports nor exports.
+One TLS port, `--port` (default 5530), bound on `--host` (default `127.0.0.1`, loopback only); pass `--host 0.0.0.0` to expose the server on the LAN. The `--origin` host serves the API and the web app; each group's raw content is served at `<group>.<host>` on the same port (`shared.<host>` for `shared`). `--origin` is advertised through `GET /v1/server` (with `contentBase`, the `host[:port]` under the group hosts), so share-login and machine join links carry it instead of the minting wallet's own address; without it the host is `localhost` and the group hosts are `<group>.localhost:<port>`, this machine only. TLS always: self-signed (`localhost`, `*.localhost`) into `<folder>/tls` unless `--cert`/`--key`, which must cover `<host>` and `*.<host>`; only that generated certificate's fingerprint rides invites, share-login links and machine join tokens, and a `--cert` server, self-signed or not, must pass its clients' system trust. Auth walls are on by default and usable as-is: API calls authenticate with an enrolled device (`wuhu login`) and group-host reads with a live browser read session. `--public-read` opens content reads of `shared.<host>` to anyone, a public board; other group hosts still need a read session, and writes stay walled. `--dev` drops both walls, for local iteration only. `--dev-import <folder>` imports a plain folder into the space on boot; `--dev-export <folder>` dumps it back on graceful shutdown. `--dev` alone neither imports nor exports.
 
 ## Accounts and keys
 

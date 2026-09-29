@@ -14,7 +14,7 @@ import Testing
 // minus admin, admitted only from its own origin with a live read session.
 @Suite struct SpaceDataRouteTests {
   static let origin = "https://space.test:5530"
-  static let bare = "space.test:5531"
+  static let sharedHost = "shared.space.test:5530"
 
   struct Rig {
     let harness: Harness
@@ -23,8 +23,8 @@ import Testing
     let bob: AccountID
     let bobGroup: GroupID
 
-    var aliceHost: String { "\(aliceGroup.rawValue).space.test:5531" }
-    var bobHost: String { "\(bobGroup.rawValue).space.test:5531" }
+    var aliceHost: String { "\(aliceGroup.rawValue).space.test:5530" }
+    var bobHost: String { "\(bobGroup.rawValue).space.test:5530" }
   }
 
   func rig(dev: Bool = false, publicRead: Bool = false) async throws -> Rig {
@@ -106,14 +106,14 @@ import Testing
     let written = try await run(r, .shared, "write", ["path": "/AGENTS.md", "content": "---\nk: 1\n---\nrules\n"])
     let token = try #require(written.object?["token"])
     let alices = try await cookie(r, r.alice, .shared)
-    let refused = try await post(r, Self.bare, "/_/space/attributes", [
+    let refused = try await post(r, Self.sharedHost, "/_/space/attributes", [
       "path": "/AGENTS.md", "set": ["k": 2], "ifMatch": token, "page": "/p.html",
     ], cookie: alices)
     #expect(refused.status == .forbidden)
     #expect(try await code(refused) == "unauthorized")
 
     let plan = try await run(r, .shared, "write", ["path": "/plan.md", "content": "---\nk: 1\n---\n"])
-    let patched = try await post(r, Self.bare, "/_/space/attributes", [
+    let patched = try await post(r, Self.sharedHost, "/_/space/attributes", [
       "path": "/plan.md", "set": ["k": 2], "ifMatch": try #require(plan.object?["token"]), "page": "/p.html",
     ], cookie: alices)
     #expect(patched.status == .ok)
@@ -186,11 +186,11 @@ import Testing
   @Test func twoOpsOnOneRowAreRefusedWithNothingWritten() async throws {
     let r = try await rig()
     let alices = try await cookie(r, r.alice, .shared)
-    let seeded = try await post(r, Self.bare, "/_/space/rows", [
+    let seeded = try await post(r, Self.sharedHost, "/_/space/rows", [
       "path": "/tasks.table", "ops": [["insert": ["title": "a"]]], "page": "/p.html",
     ], cookie: alices)
     #expect(seeded.status == .ok)
-    let refused = try await post(r, Self.bare, "/_/space/rows", [
+    let refused = try await post(r, Self.sharedHost, "/_/space/rows", [
       "path": "/tasks.table", "ops": [["update": 1, "set": ["title": "b"]], ["update": 1, "set": ["meta": ["json": 1]]]],
       "page": "/p.html",
     ], cookie: alices)
@@ -233,9 +233,9 @@ import Testing
 
   @Test func aPublicReadVisitorReadsButNeverWrites() async throws {
     let r = try await rig(publicRead: true)
-    let query = try await get(r, Self.bare, "/_/space/query", ["sql": "SELECT title FROM \"/tasks.table\""])
+    let query = try await get(r, Self.sharedHost, "/_/space/query", ["sql": "SELECT title FROM \"/tasks.table\""])
     #expect(query.status == .ok)
-    let write = try await post(r, Self.bare, "/_/space/rows", [
+    let write = try await post(r, Self.sharedHost, "/_/space/rows", [
       "path": "/tasks.table", "ops": [["insert": ["title": "x"]]], "page": "/p.html",
     ], cookie: nil)
     #expect(write.status == .unauthorized)
@@ -245,7 +245,7 @@ import Testing
 
   @Test func aDevSeatPageWritesWithNoActor() async throws {
     let r = try await rig(dev: true)
-    let response = try await post(r, Self.bare, "/_/space/rows", [
+    let response = try await post(r, Self.sharedHost, "/_/space/rows", [
       "path": "/tasks.table", "ops": [["insert": ["title": "x"]]], "page": "/p.html",
     ], cookie: nil)
     #expect(response.status == .ok)
@@ -262,16 +262,16 @@ import Testing
     ])
     let alices = try await cookie(r, r.alice, .shared)
     let sql = "SELECT title, meta FROM \"/tasks.table\" WHERE title = ?"
-    let typed = try await get(r, Self.bare, "/_/space/query", ["sql": sql, "params": "[\"a\"]"], cookie: alices)
+    let typed = try await get(r, Self.sharedHost, "/_/space/query", ["sql": sql, "params": "[\"a\"]"], cookie: alices)
     #expect(typed.status == .ok)
     #expect(try await json(typed) == ["columns": ["title", "meta"], "rows": [["a", ["json": ["k": 1]]]]])
 
     let legacySQL = "SELECT title, meta FROM \"/tasks.table\" WHERE title = 'a'"
-    let legacy = try await get(r, Self.bare, "/_/query", ["sql": legacySQL], cookie: alices)
+    let legacy = try await get(r, Self.sharedHost, "/_/query", ["sql": legacySQL], cookie: alices)
     #expect(try await json(legacy) == ["columns": ["title", "meta"], "rows": [["a", ["k": 1]]]])
 
     for params in ["{}", "1", "[", "[{\"x\":1}]"] {
-      let bad = try await get(r, Self.bare, "/_/space/query", ["sql": sql, "params": params], cookie: alices)
+      let bad = try await get(r, Self.sharedHost, "/_/space/query", ["sql": sql, "params": params], cookie: alices)
       #expect(bad.status == .badRequest, "params \(params)")
     }
   }
@@ -279,7 +279,7 @@ import Testing
   @Test func observeDeliversANewTypedSnapshotAfterAPageWrite() async throws {
     let r = try await rig()
     let alices = try await cookie(r, r.alice, .shared)
-    let observe = try await get(r, Self.bare, "/_/space/observe", [
+    let observe = try await get(r, Self.sharedHost, "/_/space/observe", [
       "sql": "SELECT title, meta FROM \"/tasks.table\" WHERE title <> ? ORDER BY id", "params": "[\"skip\"]",
     ], cookie: alices)
     #expect(observe.status == .ok)
@@ -287,7 +287,7 @@ import Testing
     for try await frame in observe.sse() {
       snapshots.append(try #require(JSONValue.parse(frame.data)))
       if snapshots.count == 1 {
-        let write = try await post(r, Self.bare, "/_/space/rows", [
+        let write = try await post(r, Self.sharedHost, "/_/space/rows", [
           "path": "/tasks.table", "ops": [["insert": ["title": "skip"]], ["insert": ["title": "new", "meta": ["json": [1]]]]],
           "page": "/p.html",
         ], cookie: alices)
@@ -329,14 +329,14 @@ import Testing
     let written = try await run(r, .shared, "write", ["path": "/notes/a.md", "content": "---\nk: 1\n---\n"])
     let head = try #require(written.object?["rev"]?.intValue)
     let alices = try await cookie(r, r.alice, .shared)
-    let watch = try await get(r, Self.bare, "/_/space/watch", ["glob": "/notes/**"], cookie: alices)
+    let watch = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": "/notes/**"], cookie: alices)
     #expect(watch.status == .ok)
     var frames = watch.sse().makeAsyncIterator()
     let opening = try #require(try await frames.next())
     #expect(opening.event == "head")
     #expect(JSONValue.parse(opening.data) == ["rev": .integer(head)])
 
-    let patch = try await post(r, Self.bare, "/_/space/attributes", [
+    let patch = try await post(r, Self.sharedHost, "/_/space/attributes", [
       "path": "/notes/a.md", "set": ["k": 2], "ifMatch": try #require(written.object?["token"]), "page": "/p.html",
     ], cookie: alices)
     #expect(patch.status == .ok)
@@ -350,7 +350,7 @@ import Testing
     #expect(path == "/notes/a.md")
     #expect(rev > head)
     #expect(entry == .file)
-    let attributes = try await get(r, Self.bare, "/_/space/attributes", ["path": "/notes/a.md"], cookie: alices)
+    let attributes = try await get(r, Self.sharedHost, "/_/space/attributes", ["path": "/notes/a.md"], cookie: alices)
     #expect(try await json(attributes).object?["attributes"] == ["k": 2])
 
     // With `from` the replay comes first, and legacy /_/observe never sends a head frame.
@@ -362,7 +362,7 @@ import Testing
       if query["from"] == nil {
         try await run(r, .shared, "write", ["path": "/notes/b.md", "content": "b"])
       }
-      let response = try await get(r, Self.bare, path, query, cookie: alices)
+      let response = try await get(r, Self.sharedHost, path, query, cookie: alices)
       if query["from"] == nil {
         try await run(r, .shared, "write", ["path": "/notes/c.md", "content": "c"])
       }
@@ -380,16 +380,16 @@ import Testing
     ])
     try await run(r, .shared, "write", ["path": "/bare.html", "content": "<!DOCTYPE html>\n<p>no head</p>"])
     let map = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
-    let page = try await get(r, Self.bare, "/page.html")
+    let page = try await get(r, Self.sharedHost, "/page.html")
     let text = try await page.text()
     #expect(text.hasPrefix("<!doctype html><html><HEAD lang=en>" + map + "<title>t</title>"))
     #expect(text.hasSuffix(#"<script type="module" src="/_/shell.js"></script></body></html>"#))
     let tag = try #require(page.headers[.eTag])
     #expect(tag.range(of: #"^"[^"]+-shell-[0-9a-f]{12}"$"#, options: .regularExpression) != nil)
 
-    #expect(try await get(r, Self.bare, "/bare.html").text().hasPrefix("<!DOCTYPE html>" + map + "\n<p>no head</p>"))
+    #expect(try await get(r, Self.sharedHost, "/bare.html").text().hasPrefix("<!DOCTYPE html>" + map + "\n<p>no head</p>"))
 
-    let core = try await get(r, Self.bare, "/_/space-core.js")
+    let core = try await get(r, Self.sharedHost, "/_/space-core.js")
     #expect(core.status == .ok)
     #expect(core.headers[.cacheControl] == "no-cache")
     #expect(try await core.text().contains("export function createSpace"))

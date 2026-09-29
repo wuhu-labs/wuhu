@@ -128,12 +128,9 @@ import Testing
       #expect(named.status == .forbidden)
       #expect(try await json(named).object?["code"]?.stringValue == "groupForbidden")
 
-      let web = ServeTesting.client(SpaceServer.webHandler(
-        space: s.harness.space, apiPort: 5530, advertisedOrigin: "https://space.test:5530", dev: false,
-      ))
-      var mint = Request(url: URL(string: "https://library.space.test:5531/_/session")!, method: .post)
+      var mint = Request(url: URL(string: "https://library.space.test:5530/_/session")!, method: .post)
       mint.headers[.authorization] = "Bearer " + s.bearer
-      let minted = try await web(mint)
+      let minted = try await s.harness.api(mint)
       #expect(minted.status == .forbidden)
       #expect(try await json(minted).object?["code"]?.stringValue == "groupForbidden")
       #expect(minted.headers[.setCookie] == nil)
@@ -157,13 +154,10 @@ import Testing
     try await withSessionDeps {
       let s = try await space()
       let bare = try await standing(s, bearer: s.bearer)
-      #expect(try await standing(s, host: "team.space.test", bearer: s.bearer) == bare)
-      #expect(try await standing(s, host: "\(s.bob.rawValue).space.test", bearer: s.bearer) == bare)
       #expect(try await standing(s, group: s.bob, bearer: s.bearer) == bare)
-      #expect(try await standing(s, host: "team.space.test", group: s.alice, bearer: s.bearer) == bare)
-      #expect(try await standing(s, host: "library.space.test", bearer: nil) == standing(s, bearer: nil))
+      #expect(try await standing(s, group: s.alice, bearer: s.bearer) == bare)
       let token = try await sessionToken(s, in: s.alice)
-      #expect(try await standing(s, host: "\(s.alice.rawValue).space.test", bearer: token) == standing(s, bearer: token))
+      #expect(try await standing(s, group: s.alice, bearer: token) == standing(s, bearer: token))
     }
   }
 }

@@ -8,7 +8,7 @@ import struct SpaceContract.GroupSummary
 import struct SpaceContract.GroupUpdateInput
 import SpaceCore
 
-func addGroupRoutes(_ router: inout Router, space: Space, spaceHost: String?, dev: Bool) {
+func addGroupRoutes(_ router: inout Router, space: Space, dev: Bool) {
   @Dependency(\.date) var clock
 
   // Public discovery: an anonymous caller gets the ids alone, a credential
@@ -24,7 +24,7 @@ func addGroupRoutes(_ router: inout Router, space: Space, spaceHost: String?, de
 
   router.put("/v1/groups/:id") { request, parameters in
     let principal: Principal
-    switch try await requestPrincipal(request, space: space, spaceHost: spaceHost, date: clock) {
+    switch try await requestPrincipal(request, space: space, date: clock) {
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }

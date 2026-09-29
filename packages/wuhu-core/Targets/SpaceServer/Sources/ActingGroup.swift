@@ -26,35 +26,28 @@ enum PrincipalVerdict: Sendable {
 }
 
 /// A session acts in its own group only. A person names one with the
-/// `wuhu-group` header or the Host `<group>.<space host>`, else acts in
-/// `shared`; any other group needs membership.
-func principal(for request: Request, credential: RequestCredential, space: Space, spaceHost: String?) async throws -> PrincipalVerdict {
+/// `wuhu-group` header, else acts in `shared`; any other group needs
+/// membership.
+func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
   if case let .session(session, group) = credential {
-    if let refused = groupMismatch(request, spaceHost: spaceHost, session: session, group: group) { return .refused(refused) }
+    if let refused = groupMismatch(request, session: session, group: group) { return .refused(refused) }
     return .principal(Principal(actor: .session(session), group: group))
-  }
-  let hosted = hostGroup(request.url.host, spaceHost: spaceHost)
-  if let named, let hosted, named != hosted {
-    return .refused(errorResponse(
-      .badRequest, code: "groupConflict",
-      message: "the \(GroupHeader.name) header names group \(named) but the host names group \(hosted)",
-    ))
   }
   let actor: Actor
   switch try await speaker(of: credential, speaking: queryValues(of: request.url)["identity"], in: space) {
   case let .actor(resolved): actor = resolved
   case let .refused(response): return .refused(response)
   }
-  guard let chosen = named ?? hosted, chosen != GroupID.shared.rawValue else {
+  guard let named, named != GroupID.shared.rawValue else {
     return .principal(.shared(actor))
   }
-  let group = GroupID(rawValue: chosen)
+  let group = GroupID(rawValue: named)
   guard try await space.groupExists(group) else {
-    return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(chosen)"))
+    return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)"))
   }
   if case let .person(_, account) = actor, try await !space.isMember(account, of: group) {
-    return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(chosen)"))
+    return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(named)"))
   }
   return .principal(Principal(actor: actor, group: group))
 }
@@ -77,40 +70,27 @@ func requestCredential(_ request: Request, space: Space, date: DateGenerator) as
 
 /// The principal of a request on the API origin: its credential, acting in
 /// the group the request names.
-func requestPrincipal(_ request: Request, space: Space, spaceHost: String?, date: DateGenerator) async throws -> PrincipalVerdict {
+func requestPrincipal(_ request: Request, space: Space, date: DateGenerator) async throws -> PrincipalVerdict {
   switch try await requestCredential(request, space: space, date: date) {
-  case let .credential(credential): try await principal(for: request, credential: credential, space: space, spaceHost: spaceHost)
+  case let .credential(credential): try await principal(for: request, credential: credential, space: space)
   case let .refused(response): .refused(response)
   }
 }
 
 /// The group a request names, unchecked: the gated session's, else the
-/// header's, else the Host's, else `shared`.
-func namedGroup(_ request: Request, spaceHost: String?) -> GroupID {
+/// header's, else `shared`.
+func namedGroup(_ request: Request) -> GroupID {
   if let gated = SessionPrincipal.current { return gated.group }
-  let named = request.headers[GroupHeader.name] ?? hostGroup(request.url.host, spaceHost: spaceHost)
-  return named.map(GroupID.init(rawValue:)) ?? .shared
+  return request.headers[GroupHeader.name].map(GroupID.init(rawValue:)) ?? .shared
 }
 
-/// A session naming another group than its own, by header or Host.
-func groupMismatch(_ request: Request, spaceHost: String?, session: SessionID, group: GroupID) -> Response? {
-  let names = [request.headers[GroupHeader.name], hostGroup(request.url.host, spaceHost: spaceHost)]
-  guard let named = names.compactMap(\.self).first(where: { $0 != group.rawValue }) else { return nil }
+/// A session naming another group than its own.
+func groupMismatch(_ request: Request, session: SessionID, group: GroupID) -> Response? {
+  guard let named = request.headers[GroupHeader.name], named != group.rawValue else { return nil }
   return errorResponse(
     .forbidden, code: "groupMismatch",
     message: "session \(session.rawValue) acts in its own group \(group.rawValue) only, not \(named)",
   )
-}
-
-func spaceHost(of origin: String?) -> String? {
-  origin.flatMap(URL.init(string:))?.host?.lowercased()
-}
-
-/// The one label a Host carries before the space host, if any.
-func hostGroup(_ host: String?, spaceHost: String?) -> String? {
-  guard let host = host?.lowercased(), let spaceHost, host.hasSuffix("." + spaceHost) else { return nil }
-  let label = host.dropLast(spaceHost.count + 1)
-  return label.contains(".") ? nil : String(label)
 }
 
 /// A person speaks as the persona its request names with `?identity=` when

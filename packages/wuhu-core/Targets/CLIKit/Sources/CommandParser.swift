@@ -236,8 +236,7 @@ extension Command {
       return .kill(id: id)
     case "serve":
       let host = try parser.option("--host", verb: verb) ?? "127.0.0.1"
-      let port = try parser.intOption("--port", verb: verb) ?? 5540
-      let webPort = try parser.intOption("--web-port", verb: verb) ?? port + 1
+      let port = try parser.intOption("--port", verb: verb) ?? 5530
       let dev = parser.flag("--dev")
       let publicRead = parser.flag("--public-read")
       let devImport = try parser.option("--dev-import", verb: verb)
@@ -245,6 +244,10 @@ extension Command {
       let cert = try parser.option("--cert", verb: verb)
       let key = try parser.option("--key", verb: verb)
       let webApp = try parser.option("--web-app", verb: verb)
+      var ignored: [String] = []
+      for name in ["--web-port", "--web-origin"] {
+        if try parser.option(name, verb: verb) != nil { ignored.append(name) }
+      }
       if (cert == nil) != (key == nil) {
         throw UsageError(message: "serve requires --cert and --key together")
       }
@@ -253,18 +256,18 @@ extension Command {
       if (groupCert == nil) != (groupKey == nil) {
         throw UsageError(message: "serve requires --group-certificate and --group-private-key together")
       }
-      let webOrigin = try parser.option("--web-origin", verb: verb)
-      if let webOrigin {
-        guard let url = URL(string: webOrigin), url.scheme == "https", url.host != nil else {
-          throw UsageError(message: "serve: --web-origin must be an absolute https:// URL")
-        }
-      }
       var origin = try parser.option("--origin", verb: verb)
       if let raw = origin {
         guard let url = URL(string: raw), url.scheme == "https", url.host != nil,
               url.path.isEmpty || url.path == "/", url.query == nil, url.fragment == nil
         else {
           throw UsageError(message: "serve: --origin must be an https:// origin (scheme + host [+ port], no path)")
+        }
+        if let host = url.host, isIPLiteral(host) {
+          throw UsageError(message: """
+          serve: --origin must be a name, not an IP address: group content is served on <group>.<host>. \
+          Use an sslip.io name for the address, such as https://192-168-1-5.sslip.io:5530
+          """)
         }
         origin = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
       }
@@ -281,8 +284,6 @@ extension Command {
         host: host,
         port: port,
         origin: origin,
-        webPort: webPort,
-        webOrigin: webOrigin,
         dev: dev,
         publicRead: publicRead,
         devImport: devImport,
@@ -292,6 +293,7 @@ extension Command {
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
         webApp: webApp,
+        ignoredOptions: ignored,
       ))
     default:
       throw UsageError(message: Self.usage)
@@ -1077,41 +1079,45 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--web-port N] [--origin <url>] [--web-origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--web-app <dir>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--web-app <dir>]
 
-    runs the space server. Always serves TLS: without --cert/--key a
-    self-signed certificate is generated into <folder>/tls and reused.
-    Invites, share-login links and machine join tokens carry that
-    generated certificate's fingerprint for clients to pin; with
+    runs the space server on one TLS port (--port, default 5530). Without
+    --cert/--key a self-signed certificate is generated into <folder>/tls
+    and reused. Invites, share-login links and machine join tokens carry
+    that generated certificate's fingerprint for clients to pin; with
     --cert/--key (self-signed or not) they carry none, and clients check
-    the certificate against their system trust store.
-    A group is served at <group>.<host> of each origin; with
-    --group-certificate/--group-private-key (a *.<host> leaf, needs
-    --origin and --cert/--key) both listeners present it to those names by
-    SNI, and the --cert leaf to every other name. serve refuses to start with a group
-    pair no handshake can use: a key on no named curve (P-256, P-384,
+    the certificate against their system trust store. The origin's host
+    serves the API and the web app; each group's content (pages, files,
+    page APIs) is served at <group>.<host>, the shared group at
+    shared.<host>, so the certificate must cover both <host> and *.<host>.
+    With --group-certificate/--group-private-key (a *.<host> leaf, needs
+    --origin and --cert/--key) the listener presents it to the group
+    hosts by SNI, and the --cert leaf to every other name. serve refuses
+    to start with a group pair no handshake can use: a key on no named curve (P-256, P-384,
     P-521; RSA and Ed25519 also work, though macOS's system curl, built
     on LibreSSL, fails an Ed25519 handshake) or one that isn't the leaf's.
     --web-app serves the SPA from <dir> (loaded once at boot; index.html
     required) instead of the embedded build; the override is logged at boot.
-    --host sets the bind address for both the api and web listeners; it
-    defaults to 127.0.0.1 (loopback only). Pass --host 0.0.0.0 to expose
-    the server on the LAN.
-    --origin advertises the server's canonical https:// API origin through
+    --host sets the bind address; it defaults to 127.0.0.1 (loopback
+    only). Pass --host 0.0.0.0 to expose the server on the LAN.
+    --origin advertises the server's canonical https:// origin through
     /v1/server discovery; share-login and machine join links
-    are minted against it instead of the minting wallet's own address.
+    are minted against it instead of the minting wallet's own address,
+    and its host is the one group hosts are named under. Without it the
+    group hosts are <group>.localhost:<port>, which only a browser on this
+    machine reaches: serving group content to other devices needs --origin.
     serve uses this value and persists it to the database at boot (NULL when
     absent), alongside the TLS fingerprint and whether it is the generated
     certificate, for offline verbs like wuhu user invite; argv stays
     authoritative at runtime.
-    --web-origin advertises an explicit https:// web-content origin through
-    /v1/server discovery; without it clients derive same host + web port.
     Auth walls are on by default: API calls need an enrolled device and
     web-content reads need a live browser read session. --public-read
-    opens content reads of the shared group (the bare host) to anyone, a
+    opens content reads of the shared group (shared.<host>) to anyone, a
     public board; group hosts still need a read session, and writes stay
     walled.
     --dev drops both walls for local iteration.
+    --web-port and --web-origin are deprecated and ignored: serve prints a
+    warning for each; remove them.
     \(exitCodes)
     """,
     "machine": """
@@ -1810,4 +1816,11 @@ struct ArgumentCursor {
     let end = self.arguments.firstIndex(of: "--") ?? self.arguments.endIndex
     return self.arguments[..<end].firstIndex(of: name)
   }
+}
+
+/// An IPv4 or IPv6 literal, which has no subdomains to name group hosts.
+private func isIPLiteral(_ host: String) -> Bool {
+  if host.contains(":") { return true }
+  let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+  return parts.count == 4 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
 }
