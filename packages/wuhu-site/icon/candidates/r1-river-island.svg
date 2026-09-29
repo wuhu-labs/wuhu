@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <mask id="isl1">
+    <rect width="100" height="100" fill="#fff"/>
+    <path d="M57.5 19 C 61.5 27 61.5 39 57.5 47 C 53.5 39 53.5 27 57.5 19 Z"
+          transform="rotate(-8 57.5 33)" fill="#000"/>
+  </mask>
+  <g mask="url(#isl1)">
+    <path d="M17 84 C 32 72 45 67 52 57 C 58 48 56 40 58 31 C 60 22 61 17 60 10"
+          stroke="#10c99a" stroke-width="15" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

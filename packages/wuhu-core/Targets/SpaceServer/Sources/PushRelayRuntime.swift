@@ -93,15 +93,19 @@ func render(_ delivery: PushRelayDelivery, space: Space) async throws -> PushRel
     data["sender"] = sender.id
     data["senderKind"] = sender.kind.rawValue
   }
+  // One key per notification: iOS replaces a banner that shares a collapse id,
+  // so only a retry of this same notification may replace it. Stacking by
+  // conversation is the thread id's job.
+  let key = "\(delivery.grant):\(notification.n)"
   return PushRelayMessage(
     endpoint: delivery.endpoint,
     token: delivery.token,
-    idempotencyKey: "\(delivery.grant):\(notification.n)",
+    idempotencyKey: key,
     title: content.title,
     subtitle: content.subtitle,
     body: content.body,
     threadID: notification.source,
-    collapseKey: notification.source,
+    collapseKey: key,
     badge: delivery.unreadConversations,
     data: data.compactMapValues { $0 },
   )

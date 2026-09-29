@@ -1,0 +1,14 @@
+{
+  "owner": "wuhu",
+  "lock": false,
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true,
+    "include": ["test"]
+  },
+  "tasks": {
+    "fmt": "deno fmt --check",
+    "lint": "deno lint test",
+    "test": "deno test --allow-read --allow-write --allow-net=127.0.0.1 --allow-run --allow-env test"
+  }
+}

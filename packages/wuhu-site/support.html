@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Wuhu</title>
+<meta name="description" content="Help with the Wuhu app and your connection to a space.">
+<link rel="canonical" href="https://wuhu.ai/support">
+<style>
+:root { --ink:#0b0d12; --ink-2:#4b5261; --paper:#f7f7f4; --card:#fff; --line:rgba(11,13,18,.08); --mint:#10c99a; --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; background:var(--paper); color:var(--ink); line-height:1.7; -webkit-font-smoothing:antialiased; }
+body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:-1; background:radial-gradient(ellipse at 95% 0,rgba(165,243,221,.32),transparent 45%),radial-gradient(ellipse at 0 65%,rgba(216,210,255,.25),transparent 45%); }
+.shell { max-width:1060px; margin:auto; padding:0 24px; }
+nav { display:flex; align-items:center; flex-wrap:wrap; gap:18px; padding:22px 0; }
+.mark { color:var(--ink); font-size:22px; font-weight:700; letter-spacing:-.02em; text-decoration:none; }
+nav .spacer { flex:1; }
+nav a:not(.mark) { font-size:14px; color:var(--ink-2); }
+a { color:inherit; text-underline-offset:3px; overflow-wrap:anywhere; }
+a:hover { color:#08795e; }
+a:focus-visible { outline:2px solid #08795e; outline-offset:5px; border-radius:2px; }
+header { padding:64px 0 32px; }
+.kicker { font:600 12px/1.4 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:#08795e; margin-bottom:20px; }
+h1 { font-size:clamp(38px,6vw,64px); line-height:1.06; letter-spacing:-.035em; }
+.lede { margin-top:22px; color:var(--ink-2); font-size:19px; max-width:58ch; }
+.updated { margin-top:20px; color:var(--ink-2); font:12px/1.7 var(--mono); }
+article { max-width:800px; padding:36px 40px 42px; border:1px solid var(--line); border-radius:20px; background:var(--card); }
+section + section { margin-top:30px; }
+h2 { font-size:23px; line-height:1.3; letter-spacing:-.025em; margin-bottom:12px; }
+p + p, ul + p { margin-top:14px; }
+p, li { color:var(--ink-2); }
+strong { color:var(--ink); }
+ul, ol { padding-left:23px; margin-top:12px; }
+li + li { margin-top:10px; }
+code { font-family:var(--mono); font-size:.9em; overflow-wrap:anywhere; }
+footer { margin-top:72px; padding:30px 0 42px; border-top:1px solid var(--line); display:flex; flex-wrap:wrap; justify-content:space-between; gap:18px; color:var(--ink-2); font-size:13px; }
+.footer-links { display:flex; flex-wrap:wrap; gap:20px; }
+@media(max-width:600px) { .shell { padding:0 18px; } nav { gap:14px; } header { padding-top:38px; } article { padding:26px 22px; } }
+</style>
+</head>
+<body>
+<div class="shell">
+<nav aria-label="Main"><a class="mark" href="/">wuhu</a><span class="spacer"></span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a></nav>
+<main>
+<header><div class="kicker">your space, your choices</div><h1>Support</h1><p class="lede">Help with the Wuhu app and your connection to a space.</p><p class="updated">Effective September 20, 2026</p></header>
+<article><section><h2>Contact us</h2><p>For app support, feedback, or a privacy request, email <strong><a href="mailto:lms@xnzg.tech">lms@xnzg.tech</a></strong>. Wuhu is developed by Hangzhou Hu Di Shen Shan Technology Co., Ltd..</p><p>For a bug report, include the app version, device and operating system, what you expected, and steps to reproduce the problem. A screenshot can help if you remove private content. Never send private signing keys, model-provider credentials, or an unused invitation link.</p></section>
+<section><h2>Join a space</h2><p>Wuhu connects to a space hosted by you or your team. Ask the space owner or an authorized member for a fresh invitation link. In the app’s login screen, paste the link, continue, and confirm enrollment of your device. Invitations are one-time credentials; each new device needs its own fresh link.</p><p>If an invitation has already been used or enrollment fails, ask for a new link and check that you can reach the space’s address. An invitation may require the operator’s network or VPN. Downloading the app does not create a hosted space.</p></section>
+<section><h2>Space, agent, or connection problems</h2><p>Contact the space operator for server availability, membership, permissions, backups, or AI-provider configuration. A model that cannot respond may need credentials or capacity on that server. The app developer cannot access or repair an independently hosted space without its operator’s participation.</p><p>If notifications are missing, check the app’s notification permission in system settings and reopen the app while connected to the network. Notifications depend on the space, our relay, and Apple’s push service; delivery is best effort.</p></section>
+<section><h2>Privacy and deletion</h2><p>For data held by us, send a request to <a href="mailto:lms@xnzg.tech">lms@xnzg.tech</a>. For documents, conversations, account data, or history on an independently hosted space, contact that space’s operator. Removing the app or logging out does not delete server data.</p><p>Read the <a href="/privacy">Privacy Policy</a> for data flows and retention, and the <a href="/terms">Terms of Use</a> for service terms.</p></section></article>
+</main>
+<footer><div>© 2026 Hangzhou Hu Di Shen Shan Technology Co., Ltd.</div><div class="footer-links"><a href="/">Home</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a></div></footer>
+</div>
+</body>
+</html>

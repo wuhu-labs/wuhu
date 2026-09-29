@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wuhu icon — contact sheet</title>
+<style>
+  :root { --ink:#0b0d12; --paper:#f7f7f4; --mint:#10c99a; --brightmint:#58f0c8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 "Helvetica Neue",Helvetica,Arial,sans-serif; color:var(--ink); background:var(--paper); -webkit-font-smoothing:antialiased; }
+  header { padding:48px 40px 8px; }
+  h1 { margin:0; font-size:26px; letter-spacing:-0.02em; font-weight:700; }
+  .sub { color:#6b7280; margin-top:6px; max-width:64ch; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.12em; color:#9aa1ab; font-weight:700; margin:44px 40px 0; }
+  section { padding:16px 40px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:26px; align-items:flex-end; }
+  .cell { text-align:center; }
+  .cell .cap { font-size:11px; color:#9aa1ab; margin-top:8px; letter-spacing:0.02em; }
+  .swatch { border-radius:22.37%; overflow:hidden; display:inline-block; vertical-align:bottom; }
+  .onink { background:var(--ink); }
+  .onpaper { background:var(--paper); box-shadow:inset 0 0 0 1px rgba(0,0,0,.08); }
+  img { display:block; }
+  .ladder { display:flex; gap:22px; align-items:flex-end; }
+  .plate { display:flex; border-radius:16px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.14); width:max-content; }
+  .plate > div { padding:30px 38px; display:flex; gap:30px; align-items:center; }
+  footer { padding:40px; color:#9aa1ab; font-size:12px; }
+  .dark { background:var(--ink); margin-top:20px; }
+  .dark h2 { color:#6b7280; }
+  .dark .sub { color:#6b7280; }
+</style>
+</head>
+<body>
+<header>
+  <h1>wuhu — the bend of the river</h1>
+  <p class="sub">The mark abstracts the Yangtze (长江) as it passes Wuhu: a broad mouth entering from the
+  southwest, the elbow at the city, the run north — carrying the long mid-channel island as a
+  leaf-shaped void inside the ribbon. One filled ribbon, variable width (broadest at the SW mouth),
+  the island cut with an even-odd hole. Mint on ink.</p>
+</header>
+
+<h2>Final — app tile · size ladder</h2>
+<section>
+  <div class="row">
+    <div class="cell"><span class="swatch"><img src="icon-tile.svg" width="240" height="240"></span><div class="cap">icon-tile.svg</div></div>
+    <div class="cell"><div class="ladder">
+      <span class="swatch"><img src="icon-tile.svg" width="128" height="128"></span>
+      <span class="swatch"><img src="icon-tile.svg" width="64" height="64"></span>
+      <span class="swatch"><img src="icon-tile.svg" width="32" height="32"></span>
+      <span class="swatch"><img src="icon-tile.svg" width="16" height="16"></span>
+    </div><div class="cap">128 · 64 · 32 · 16</div></div>
+  </div>
+</section>
+
+<h2>Final — bare mark · both polarities + monochrome</h2>
+<section>
+  <div class="plate">
+    <div class="onpaper"><img src="icon-mark.svg" width="128" height="128"></div>
+    <div class="onink"><img src="icon-mark.svg" width="128" height="128"></div>
+  </div>
+  <p class="sub" style="margin-top:14px">The island is true transparency (even-odd hole, no mask), so it
+  reads on any background and in pure monochrome — swap the single fill color.</p>
+</section>
+
+<h2>Final — favicon · void exaggerated for tiny sizes</h2>
+<section>
+  <div class="row">
+    <span class="swatch"><img src="favicon.svg" width="128" height="128"></span>
+    <span class="swatch"><img src="favicon.svg" width="64" height="64"></span>
+    <span class="swatch"><img src="favicon.svg" width="32" height="32"></span>
+    <span class="swatch"><img src="favicon.svg" width="16" height="16"></span>
+  </div>
+  <p class="sub" style="margin-top:14px">16 · 32 · 64 · 128. Wider void and thinner banks so the split
+  survives as a lens at 32 and a notch at 16.</p>
+</section>
+
+<h2>Variant — city dot (Wuhu on the east bank)</h2>
+<section>
+  <div class="plate">
+    <div class="onink"><img src="icon-mark-citydot.svg" width="150" height="150"></div>
+    <div class="onpaper"><img src="icon-mark-citydot.svg" width="150" height="150"></div>
+  </div>
+  <p class="sub" style="margin-top:14px">A mint dot in the negative space just east of the inner elbow —
+  the city sitting in the crook of the bend, not on the ribbon. Separate variant; the plain mark stays
+  primary.</p>
+</section>
+
+<div class="dark">
+<h2>Round 3 — ribbon rebuild (16/32/64 strip on ink)</h2>
+<section>
+  <div class="row">
+    <div class="cell"><span class="swatch onink"><img src="candidates/v3-ribbon.svg" width="120" height="120"></span><div class="cap">v3 · first filled ribbon</div></div>
+    <div class="cell"><span class="swatch onink"><img src="candidates/v4-ribbon.svg" width="120" height="120"></span><div class="cap">v4 · balanced banks, soft mouth</div></div>
+    <div class="cell"><span class="swatch onink"><img src="candidates/v5-ribbon.svg" width="120" height="120"></span><div class="cap">v5 · final geometry</div></div>
+    <div class="cell"><div class="ladder">
+      <span class="swatch onink"><img src="candidates/v5-ribbon.svg" width="64" height="64"></span>
+      <span class="swatch onink"><img src="candidates/v5-ribbon.svg" width="32" height="32"></span>
+      <span class="swatch onink"><img src="candidates/v5-ribbon.svg" width="16" height="16"></span>
+    </div><div class="cap">v5 · 64 · 32 · 16</div></div>
+  </div>
+  <p class="sub" style="margin-top:16px">Switched from a constant-width stroke to a hand-authored filled
+  ribbon: only this lets the channel widen around the island (healthy banks + a large void), taper to a
+  broad SW mouth, and hold one continuous smooth inner edge through the elbow.</p>
+</section>
+
+<h2>Earlier rounds (rejected)</h2>
+<section>
+  <div class="row">
+    <div class="cell"><span class="swatch onink"><img src="candidates/a-single-stroke.svg" width="96" height="96"></span><div class="cap">A · fork</div></div>
+    <div class="cell"><span class="swatch onink"><img src="candidates/b-island-threads.svg" width="96" height="96"></span><div class="cap">B · lumpy split</div></div>
+    <div class="cell"><span class="swatch onink"><img src="candidates/c-ribbon-cut.svg" width="96" height="96"></span><div class="cap">C · notched elbow</div></div>
+    <div class="cell"><span class="swatch onink"><img src="candidates/r2-river-city.svg" width="96" height="96"></span><div class="cap">R2 · tripod returns</div></div>
+  </div>
+  <p class="sub" style="margin-top:16px">The tributary-as-third-leg read as a fork (人 / 又); the stroked
+  void nearly vanished small and thinned the banks. Round 3 fixed both.</p>
+</section>
+</div>
+
+<footer>
+  Palette: ink #0b0d12 · paper #f7f7f4 · mint #10c99a · bright mint #58f0c8. &nbsp; Hand-authored SVG,
+  rendered via rsvg-convert.
+</footer>
+</body>
+</html>

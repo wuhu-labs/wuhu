@@ -239,7 +239,11 @@ server-local.
   that identity above its watermark; other kinds (errors, deadlines) never make
   it unread. A push carries `badge`: the number of unarchived agent boxes
   unread for the recipient when the push is sent. Direct and group
-  conversations do not count toward it yet.
+  conversations do not count toward it yet. Each APNs relay push stands on
+  its own: its `collapse_key` is `<grant>:<n>`, the same as its
+  `idempotency_key`, so only a retried send of that notification replaces it,
+  and its `thread_id` is the notification's source (the conversation, or the
+  session), so a device stacks one conversation's pushes in one group.
 - **Notifications** (`GET /v1/notifications?identity=&after=`): append-only
   rows above the cursor; `payload` is the kind-specific JSON object. A person
   has one inbox across all their groups with one read position: the route

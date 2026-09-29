@@ -135,6 +135,45 @@ import Testing
     #expect(surviving.map(\.grant) == ["g1_live"])
   }
 
+  @Test func eachNotificationCollapsesAloneButOneConversationSharesAThread() async throws {
+    let attempts = MessageCollector()
+    let (space, owner) = try await relaySpace(grants: ["g1_live"])
+    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
+    guard case let .text(helperID)? = helperRow.first?.first else { Issue.record("no helper"); return }
+    let client = PushRelayClient { message in
+      await attempts.append(message)
+      if await attempts.values.count == 1 {
+        throw PushRelayTransportError(status: 503, retryAfter: "30", underlying: "busy")
+      }
+    }
+
+    for at in [fixedDate, fixedDate.addingTimeInterval(30)] {
+      try await withDependencies {
+        $0.date = .constant(at)
+      } operation: {
+        if at == fixedDate {
+          _ = try await space.sessions.post(
+            .box(owner), messageID: MessageID("second"),
+            sender: Sender(id: helperID, timeZone: TimeZone(identifier: "UTC")!),
+            senderSession: SessionID(helperID), content: .init(text: "second"),
+          )
+        }
+        try await PushRelayRuntime(space: space, logger: Logger(label: "push-relay-test"), client: client).drain()
+      }
+    }
+
+    let sent = await attempts.values
+    try #require(sent.count == 3)
+    let (failed, retried, second) = (sent[0], sent[1], sent[2])
+    #expect(retried.collapseKey == failed.collapseKey)
+    #expect(retried.collapseKey == "g1_live:\(retried.data["n"]!)")
+    #expect(second.collapseKey == "g1_live:\(second.data["n"]!)")
+    #expect(second.collapseKey != retried.collapseKey)
+    #expect(second.data["conversation"] == retried.data["conversation"])
+    #expect(second.threadID == retried.threadID)
+    #expect(second.threadID == second.data["conversation"])
+  }
+
   @Test func transientFailureDefersTheSameNotification() async throws {
     let (space, _) = try await relaySpace(grants: ["g1_retry"])
     try await withDependencies {

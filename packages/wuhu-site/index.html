@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wuhu — one space for you and your agents</title>
+<meta name="description" content="Wuhu is an agent-native workspace: versioned files, live tables, model sessions, and attached machines behind one tiny server. One binary. TLS by default.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d12'/%3E%3Cpath d='M12 24c4 0 4 8 8 8s4-16 8-16 4 24 8 24 4-16 8-16 4 8 8 8' fill='none' stroke='%2358f0c8' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #0b0d12;
+    --ink-2: #4b5261;
+    --ink-3: #8a91a0;
+    --paper: #f7f7f4;
+    --card: #ffffff;
+    --line: rgba(11,13,18,.08);
+    --mint: #10c99a;
+    --mint-bright: #58f0c8;
+    --coral: #ff6b57;
+    --violet: #7b6cff;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --ease: cubic-bezier(.22,.9,.28,1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+
+  /* drifting orbs */
+  .orbs { position: fixed; inset: 0; z-index: 0; pointer-events: none; filter: blur(70px); opacity: .5; }
+  .orb { position: absolute; border-radius: 50%; }
+  .orb.a { width: 46vw; height: 46vw; background: radial-gradient(circle, #a5f3dd, transparent 65%); top: -14vw; right: -10vw; animation: drift-a 26s var(--ease) infinite alternate; }
+  .orb.b { width: 34vw; height: 34vw; background: radial-gradient(circle, #d8d2ff, transparent 65%); top: 30vh; left: -14vw; animation: drift-b 32s var(--ease) infinite alternate; }
+  .orb.c { width: 26vw; height: 26vw; background: radial-gradient(circle, #ffd9d2, transparent 65%); bottom: -10vw; right: 16vw; animation: drift-c 38s var(--ease) infinite alternate; }
+  @keyframes drift-a { to { transform: translate(-9vw, 11vh) scale(1.12); } }
+  @keyframes drift-b { to { transform: translate(7vw, -9vh) scale(.94); } }
+  @keyframes drift-c { to { transform: translate(-5vw, -7vh) scale(1.18); } }
+
+  .shell { position: relative; z-index: 1; max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  /* nav */
+  nav {
+    display: flex; align-items: center; gap: 14px;
+    padding: 22px 0;
+  }
+  .mark { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--ink); }
+  .mark b { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  .pill {
+    font: 500 11.5px/1 var(--mono);
+    color: var(--ink-2);
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 5px 9px; border-radius: 999px;
+  }
+  nav .spacer { flex: 1; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-weight: 600; font-size: 14.5px;
+    padding: 10px 18px; border-radius: 10px;
+    transition: transform .18s var(--ease), box-shadow .18s var(--ease), background .18s;
+  }
+  .btn.solid { background: var(--ink); color: #fff; box-shadow: 0 10px 26px -14px rgba(11,13,18,.55); }
+  .btn.solid:hover { transform: translateY(-1.5px); box-shadow: 0 16px 32px -14px rgba(11,13,18,.6); }
+  .btn.ghost { color: var(--ink-2); }
+  .btn.ghost:hover { color: var(--ink); }
+
+  /* hero */
+  header { padding: 72px 0 40px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--mint); margin-bottom: 22px;
+  }
+  .kicker::before { content: ""; width: 22px; height: 2px; background: var(--mint); border-radius: 2px; }
+  h1 {
+    font-size: clamp(44px, 7.4vw, 84px);
+    line-height: .98; letter-spacing: -.035em; font-weight: 700;
+    max-width: 15ch;
+  }
+  h1 .wave {
+    background: linear-gradient(92deg, var(--mint) 0%, var(--violet) 55%, var(--coral) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: hue 7s linear infinite;
+  }
+  @keyframes hue { 0% { background-position: 0% 0; } 100% { background-position: 220% 0; } }
+  .lede {
+    margin: 26px 0 34px; font-size: clamp(17px, 2vw, 20px);
+    color: var(--ink-2); max-width: 56ch; font-weight: 400;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+
+  /* copyable command */
+  .cmd {
+    display: inline-flex; align-items: center; gap: 12px;
+    font: 500 13.5px/1 var(--mono);
+    background: var(--ink); color: #dfe4ee;
+    border-radius: 12px; padding: 13px 15px 13px 17px;
+    cursor: pointer; border: 0;
+    box-shadow: 0 14px 30px -16px rgba(11,13,18,.55);
+    transition: transform .18s var(--ease);
+  }
+  .cmd:hover { transform: translateY(-1.5px); }
+  .cmd .p { color: var(--mint-bright); }
+  .cmd .copy-hint { font-size: 11px; color: #7b8394; border: 1px solid rgba(255,255,255,.16); padding: 4px 7px; border-radius: 6px; }
+  .cmd.copied .copy-hint { color: var(--mint-bright); border-color: var(--mint); }
+
+  /* terminal */
+  .term {
+    margin: 58px 0 0; border-radius: 16px; overflow: hidden;
+    background: #0d1017; color: #d7dce6;
+    box-shadow: 0 30px 70px -30px rgba(11,13,18,.45);
+    border: 1px solid rgba(255,255,255,.06);
+  }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; background: rgba(255,255,255,.04); }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #2a2f3a; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .term-title { margin-left: 8px; font: 500 12px/1 var(--mono); color: #6b7280; }
+  .term-body { padding: 22px 24px 26px; font: 400 13.5px/1.9 var(--mono); min-height: 216px; white-space: pre-wrap; }
+  .term-body .p { color: var(--mint-bright); }
+  .term-body .out { color: #8b93a5; }
+  .caret { display: inline-block; width: 8px; height: 15px; background: var(--mint-bright); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* sections */
+  section { padding: 84px 0 0; }
+  h2 { font-size: clamp(28px, 3.6vw, 40px); letter-spacing: -.03em; font-weight: 700; }
+  .sub { color: var(--ink-2); margin-top: 10px; max-width: 60ch; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 38px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; padding: 24px 22px;
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease);
+  }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 22px 44px -26px rgba(11,13,18,.3); }
+  .card .ico {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+    margin-bottom: 16px; font-size: 17px;
+    background: linear-gradient(135deg, rgba(16,201,154,.14), rgba(123,108,255,.14));
+  }
+  .card h3 { font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 7px; }
+  .card p { font-size: 14px; color: var(--ink-2); }
+  .card code { font: 500 12px var(--mono); color: var(--mint); background: rgba(16,201,154,.08); padding: 1.5px 5px; border-radius: 5px; }
+
+  /* install */
+  #install .panel {
+    margin-top: 38px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 20px; padding: 34px;
+  }
+  .install-cmd {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    background: var(--ink); color: #dfe4ee; border-radius: 13px;
+    padding: 17px 19px; font: 500 clamp(12px, 1.7vw, 15px)/1.4 var(--mono);
+    cursor: pointer; border: 0; width: 100%; text-align: left;
+    transition: transform .18s var(--ease);
+  }
+  .install-cmd:hover { transform: translateY(-1.5px); }
+  .dl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+  @media (max-width: 640px) { .dl-row { grid-template-columns: 1fr; } }
+  .dl {
+    display: flex; align-items: center; gap: 15px; text-decoration: none;
+    border: 1px solid var(--line); border-radius: 14px; padding: 17px 19px;
+    color: var(--ink); background: var(--paper);
+    transition: transform .2s var(--ease), border-color .2s;
+  }
+  .dl:hover { transform: translateY(-2px); border-color: rgba(16,201,154,.5); }
+  .dl .os { font-size: 22px; }
+  .dl b { display: block; font-size: 14.5px; }
+  .dl span { font-size: 12.5px; color: var(--ink-3); font-family: var(--mono); }
+  .dl > span:last-child { min-width: 0; }
+  .dl .sha { display: block; margin-top: 5px; font-size: 10.5px; line-height: 1.45; word-break: break-all; }
+  .dl .sha[hidden] { display: none; }
+  .fine { margin-top: 18px; font-size: 13px; color: var(--ink-3); }
+  .fine code { font: 500 12px var(--mono); background: rgba(11,13,18,.05); padding: 2px 6px; border-radius: 5px; }
+
+  footer {
+    margin-top: 96px; padding: 34px 0 46px;
+    border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between;
+    color: var(--ink-3); font-size: 13.5px;
+  }
+
+  /* reveal on scroll */
+  .rv { opacity: 0; transform: translateY(22px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+  .rv.in { opacity: 1; transform: none; }
+  .rv.d1 { transition-delay: .08s; } .rv.d2 { transition-delay: .16s; } .rv.d3 { transition-delay: .24s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb, .caret, h1 .wave { animation: none !important; }
+    .rv { opacity: 1; transform: none; transition: none; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="orbs" aria-hidden="true"><i class="orb a"></i><i class="orb b"></i><i class="orb c"></i></div>
+
+<div class="shell">
+
+  <nav>
+    <a class="mark" href="/"><b>wuhu</b><span class="pill" id="ver" hidden></span></a>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="#what">What it is</a>
+    <a class="btn solid" href="#install">Install</a>
+  </nav>
+
+  <header>
+    <div class="kicker rv">agent-native workspace</div>
+    <h1 class="rv d1">One space for you<br>and <span class="wave">your agents.</span></h1>
+    <p class="lede rv d2">
+      Wuhu puts <b>versioned files</b>, <b>live tables</b>, <b>model sessions</b>, and
+      <b>attached machines</b> behind one tiny server. Query it, observe it, hand it to your
+      fleet. <b>One binary.</b> TLS by default.
+    </p>
+    <div class="cta-row rv d3">
+      <button class="cmd" data-copy="curl -fsSL https://wuhu.ai/install.sh | sh">
+        <span><span class="p">$</span> curl -fsSL https://wuhu.ai/install.sh | sh</span>
+        <span class="copy-hint">copy</span>
+      </button>
+      <a class="btn ghost" href="#install">or download ↓</a>
+    </div>
+
+    <div class="term rv d3" aria-hidden="true">
+      <div class="term-bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="term-title">wuhu — fish</span></div>
+      <div class="term-body" id="term"></div>
+    </div>
+  </header>
+
+  <section id="what">
+    <h2 class="rv">A space is a database you can live in.</h2>
+    <p class="sub rv d1">Files and tables share one journal. Every write is a revision, every query is live, and every
+    agent — human or model — works the same surface through the CLI, the web board, or the API.</p>
+
+    <div class="grid">
+      <div class="card rv"><div class="ico">🗄️</div><h3>Space as database</h3><p>Documents and tables in one journaled store. <code>read</code>, <code>write</code>, <code>history</code>, <code>checkout</code> — nothing is ever lost.</p></div>
+      <div class="card rv d1"><div class="ico">📡</div><h3>Query &amp; observe</h3><p>SQL over your whole space, and observation streams that push every change — <code>observe --sql</code> turns queries into dashboards.</p></div>
+      <div class="card rv d2"><div class="ico">💬</div><h3>Model sessions</h3><p>Durable sessions with Anthropic, OpenAI, and DeepSeek models. Channels, threads, an inbox — conversations that outlive your terminal.</p></div>
+      <div class="card rv"><div class="ico">🖥️</div><h3>Machines</h3><p>Attach any box to the space. Run commands with <code>exec</code>, keep secrets in write-only vaults, reach files with <code>machines://</code>.</p></div>
+      <div class="card rv d1"><div class="ico">🤖</div><h3>Contractors</h3><p>Enroll agent executors that dial in and answer sessions — your coding agents become residents of the space.</p></div>
+      <div class="card rv d2"><div class="ico">🔒</div><h3>Walled by default</h3><p>Always TLS. Device keys, one-time invite links, admin accounts. <code>--dev</code> exists; production never needs it.</p></div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2 class="rv">Install</h2>
+    <p class="sub rv d1">macOS (Apple silicon, signed &amp; notarized) and Linux (x86-64). The script verifies checksums and installs to <code style="font-family:var(--mono);font-size:13px">~/.wuhu/bin</code>.</p>
+
+    <div class="panel rv d2">
+      <button class="install-cmd" data-copy="curl -fsSL https://wuhu.ai/install.sh | sh">
+        <span><span style="color:var(--mint-bright)">$</span> curl -fsSL https://wuhu.ai/install.sh | sh</span>
+        <span class="copy-hint" style="font-size:11px;color:#7b8394;border:1px solid rgba(255,255,255,.16);padding:4px 8px;border-radius:6px;">copy</span>
+      </button>
+
+      <div class="dl-row">
+        <a class="dl" id="dl-mac" href="/install.sh">
+          <span class="os"></span>
+          <span><b>macOS · Apple silicon</b><span id="dl-mac-name">install.sh</span><span class="sha" id="dl-mac-sha" hidden></span></span>
+        </a>
+        <a class="dl" id="dl-linux" href="/install.sh">
+          <span class="os">🐧</span>
+          <span><b>Linux · x86-64</b><span id="dl-linux-name">install.sh</span><span class="sha" id="dl-linux-sha" hidden></span></span>
+        </a>
+      </div>
+
+      <p class="fine">
+        Manual install: unpack, <code>chmod +x wuhu</code>, put it on your <code>PATH</code>.
+        Then point it at a space: <code>wuhu use host:port</code> — and later just <code>wuhu upgrade</code>.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div>© 2026 wuhu</div>
+    <div>built by one person and a fleet of agents</div>
+    <div style="display:flex;flex-wrap:wrap;gap:20px"><a href="/privacy" style="color:inherit">Privacy</a><a href="/terms" style="color:inherit">Terms</a><a href="/support" style="color:inherit">Support</a></div>
+  </footer>
+
+</div>
+
+<script>
+  // reveal on scroll
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }), { threshold: .12 });
+  document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+  // copy buttons
+  document.querySelectorAll('[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(btn.dataset.copy); } catch {}
+      const hint = btn.querySelector('.copy-hint');
+      btn.classList.add('copied');
+      if (hint) { const t = hint.textContent; hint.textContent = 'copied!'; setTimeout(() => { hint.textContent = t; btn.classList.remove('copied'); }, 1400); }
+    });
+  });
+
+  // terminal typing loop
+  const script = [
+    { cmd: 'curl -fsSL https://wuhu.ai/install.sh | sh', out: () => `wuhu${release ? ` ${release.version}` : ''} (macOS/arm64)\nwuhu! next: wuhu use <your-space-host:port>` },
+    { cmd: 'wuhu use space.yourteam.dev:5530', out: 'pinned space.yourteam.dev:5530 — system trust OK' },
+    { cmd: 'echo "ship the demo" | wuhu write /todos/today.md', out: 'rev 41 token 41' },
+    { cmd: 'wuhu query \'SELECT title, status FROM "/tasks.table"\'', out: 'title\tstatus\nShip the demo\tdoing' },
+    { cmd: 'wuhu send radar-grass-shrimp "summarize today" --wait', out: 'Done: demo shipped, notes in /todos/today.md ✓' },
+  ];
+  const term = document.getElementById('term');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const outOf = step => typeof step.out === 'function' ? step.out() : step.out;
+  const renderStatic = () => {
+    term.innerHTML = script.map(s => `<span class="p">$</span> ${esc(s.cmd)}\n<span class="out">${esc(outOf(s))}</span>`).join('\n');
+  };
+  async function typeLoop() {
+    if (reduced) return renderStatic();
+    while (true) {
+      term.innerHTML = '';
+      for (const step of script) {
+        const line = document.createElement('div');
+        line.innerHTML = '<span class="p">$</span> ';
+        const span = document.createElement('span');
+        line.appendChild(span);
+        const caret = document.createElement('i'); caret.className = 'caret';
+        line.appendChild(caret);
+        term.appendChild(line);
+        for (const ch of step.cmd) { span.textContent += ch; await wait(18 + Math.random() * 42); }
+        await wait(340); caret.remove();
+        const out = document.createElement('div'); out.className = 'out'; out.textContent = outOf(step);
+        term.appendChild(out);
+        await wait(820);
+      }
+      await wait(4200);
+    }
+  }
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+  // Until the beta pointer answers with a well-formed release, the page shows
+  // no version: the pill stays hidden and both downloads fall back to install.sh.
+  let release = null;
+  const artifactOf = (pointer, platform) => {
+    const a = pointer && pointer.artifacts && pointer.artifacts[platform];
+    return a && /^[0-9a-f]{64}$/.test(a.sha256) ? a : null;
+  };
+  async function loadRelease() {
+    const response = await fetch('/releases/beta/latest.json', { cache: 'no-cache' });
+    if (!response.ok) return;
+    const pointer = await response.json();
+    const mac = artifactOf(pointer, 'macos-arm64');
+    const linux = artifactOf(pointer, 'linux-amd64');
+    if (typeof pointer.version !== 'string' || !mac || !linux) return;
+    release = { version: pointer.version, mac, linux };
+    const pill = document.getElementById('ver');
+    const prerelease = /-(.+)$/.exec(release.version);
+    pill.textContent = prerelease ? prerelease[1] : `v${release.version}`;
+    pill.hidden = false;
+    for (const [id, artifact] of [['dl-mac', mac], ['dl-linux', linux]]) {
+      document.getElementById(id).href = artifact.url;
+      document.getElementById(`${id}-name`).textContent = artifact.name;
+      const sha = document.getElementById(`${id}-sha`);
+      sha.textContent = `sha256 ${artifact.sha256}`;
+      sha.hidden = false;
+    }
+    if (reduced) renderStatic();
+  }
+  loadRelease().catch(() => {});
+  typeLoop();
+</script>
+</body>
+</html>

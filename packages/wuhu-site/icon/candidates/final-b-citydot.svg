@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <mask id="m2">
+    <rect width="100" height="100" fill="#fff"/>
+    <path d="M61 19 C 65.5 28 65.5 40 61 49 C 56.5 40 56.5 28 61 19 Z"
+          transform="rotate(-8 61 34)" fill="#000"/>
+  </mask>
+  <g mask="url(#m2)">
+    <path d="M22 82 C 37 71 50 66 57 56 C 63 47 61 39 63 30 C 65 22 66 18 65 13"
+          stroke="#10c99a" stroke-width="15" stroke-linecap="round" fill="none"/>
+  </g>
+  <circle cx="42" cy="64" r="4" fill="#58f0c8"/>
+</svg>
