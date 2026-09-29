@@ -21,7 +21,7 @@ enum WellKnownModels {
   {
     "anthropic": {
       "dialect": "anthropic",
-      "baseURL": "https://api.anthropic.com/v1",
+      "baseURL": "https://api.anthropic.com",
       "models": {
         "claude-sonnet-5": {
           "maxInput": 200000,

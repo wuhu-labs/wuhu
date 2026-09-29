@@ -152,7 +152,7 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
 
   public init(
     model: String,
-    baseURL: URL = URL(string: "https://api.anthropic.com/v1")!,
+    baseURL: URL = URL(string: "https://api.anthropic.com")!,
     apiKey: String,
     promptCache: AnthropicPromptCache = .disabled,
   ) {
@@ -527,7 +527,7 @@ public struct MiniMaxEndpoint: AnthropicMessagesEndpoint {
 
   public init(
     model: String,
-    baseURL: URL = URL(string: "https://api.minimaxi.com/anthropic/v1")!,
+    baseURL: URL = URL(string: "https://api.minimaxi.com/anthropic")!,
     apiKey: String,
   ) {
     self.model = model

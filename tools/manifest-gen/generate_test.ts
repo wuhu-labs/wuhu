@@ -37,6 +37,7 @@ import {
   validateAppIntents,
   validateAppRelease,
   validateTargetInfo,
+  validateTargetLinkedFrameworks,
   validateTargetRelease,
   viewPilotProducts,
 } from './generate.ts'
@@ -1886,6 +1887,37 @@ Deno.test('systemLibrary kind emits a .systemLibrary and a wuhu_system_library',
   assertIncludes(bazel, `module_map = "Targets/CSQLite/module.modulemap"`)
   assertIncludes(bazel, `linkopts = [\n        "-lsqlite3",\n    ]`)
   assertIncludes(bazel, `deps = [\n        ":CSQLite",`)
+})
+
+Deno.test('a library links its declared SDK frameworks in both graphs', async () => {
+  const target: TargetManifest = {
+    ...minimalTarget('Player', 'library'),
+    linkedFrameworks: ['AVKit'],
+  }
+  const swift = generatePackageSwift(
+    { ...basePkg, products: ['Player'] },
+    '.',
+    [target],
+  )
+  assertIncludes(
+    swift,
+    `linkerSettings: [\n        .linkedFramework("AVKit")\n      ]`,
+  )
+  const bazel = await generateBuildBazel({ ...basePkg, products: ['Player'] }, [
+    target,
+  ])
+  assertIncludes(
+    bazel,
+    `linkopts = [\n        "-framework",\n        "AVKit",\n    ],`,
+  )
+  assertThrows(
+    () =>
+      validateTargetLinkedFrameworks({
+        ...minimalTarget('Tool', 'executable'),
+        linkedFrameworks: ['AVKit'],
+      }),
+    'is kind executable, not library',
+  )
 })
 
 Deno.test('objcLibrary kind emits an always-linked Objective-C target', async () => {

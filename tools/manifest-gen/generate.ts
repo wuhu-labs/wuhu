@@ -235,6 +235,9 @@ export interface TargetManifest {
   // `link` directive covers Darwin autolink).
   apt?: string[]
   link?: string[]
+  // library only: SDK frameworks the binary must load even when no symbol in
+  // it references them, e.g. the superclass of an overlay's subclass.
+  linkedFrameworks?: string[]
   stamp?: boolean
   // An executable's embedded Info.plist (macOS only); the version keys are
   // stamped, so it requires `stamp: true`.
@@ -389,6 +392,14 @@ export function validateTargetRelease(target: TargetManifest): void {
       `${target.name} release.teamID must be 10 characters of A-Z0-9, got ${
         JSON.stringify(release.teamID)
       }`,
+    )
+  }
+}
+
+export function validateTargetLinkedFrameworks(target: TargetManifest): void {
+  if (target.linkedFrameworks && target.kind !== 'library') {
+    throw new Error(
+      `${target.name} declares linkedFrameworks: but is kind ${target.kind}, not library`,
     )
   }
 }
@@ -833,6 +844,7 @@ async function discoverTargets(root: string): Promise<TargetManifest[]> {
     const resolved = { ...target, manifestDir: dirname(manifestPath) }
     validateTargetRelease(resolved)
     validateTargetInfo(resolved)
+    validateTargetLinkedFrameworks(resolved)
     targets.push(resolved)
   }
 
@@ -1386,7 +1398,27 @@ function swiftTargetDecl(
     targetRelativePath(packageDir, target, target.sources)
   }"${embeddedExcludes}${swiftResources(target.resources)}${
     swiftSettingsExpr(target.swiftSettings)
-  }\n    )`
+  }${linkedFrameworksExpr(target.linkedFrameworks)}\n    )`
+}
+
+function linkedFrameworksExpr(frameworks: string[] | undefined): string {
+  if (!frameworks?.length) return ''
+  return `,\n      linkerSettings: [\n        ${
+    frameworks.map((framework) => `.linkedFramework("${framework}")`).join(
+      ',\n        ',
+    )
+  }\n      ]`
+}
+
+function linkedFrameworksLinkoptsAttr(
+  frameworks: string[] | undefined,
+): string {
+  if (!frameworks?.length) return ''
+  return `    linkopts = ${
+    quotedStarlarkList(
+      frameworks.flatMap((framework) => ['-framework', framework]),
+    )
+  },\n`
 }
 
 function systemLibraryDecl(packageDir: string, target: TargetManifest): string {
@@ -2046,7 +2078,9 @@ export async function generateBuildBazel(
             target.embeddedResources?.length
               ? [...(target.swiftSettings ?? []), { define: 'WUHU_EMBEDDED' }]
               : target.swiftSettings,
-          )}    deps = ${starlarkList(deps)},
+          )}${
+          linkedFrameworksLinkoptsAttr(target.linkedFrameworks)
+        }    deps = ${starlarkList(deps)},
 ${pluginsAttr}    package_name = "${pkg.packageName}",
 ${
           platformsAttr(

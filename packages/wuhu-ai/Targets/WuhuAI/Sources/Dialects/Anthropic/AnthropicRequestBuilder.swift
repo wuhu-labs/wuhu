@@ -4,6 +4,13 @@ import OrderedCollections
 
 // MARK: - Anthropic Request Builder
 
+/// The base URL is the vendor's published one, as with Anthropic's SDKs (`https://api.anthropic.com`, `https://api.deepseek.com/anthropic`); a base that already ends in `/v1` is taken as the versioned root.
+func anthropicMessagesURL(baseURL: URL) -> URL {
+  baseURL.path.split(separator: "/").last == "v1"
+    ? baseURL.appendingPathComponent("messages")
+    : baseURL.appendingPathComponent("v1/messages")
+}
+
 /// Build an Anthropic Messages API request body from domain types.
 ///
 /// Wire format: Anthropic Messages API, SSE content-block streaming.
@@ -15,7 +22,7 @@ func buildAnthropicRequest(
   acceptsUnsignedThinking: Bool = true,
   mediaResolver: (any MediaResolver)? = nil,
 ) async throws -> (url: URL, headers: [String: String], body: OrderedDictionary<String, JSONValue>) {
-  let url = baseURL.appendingPathComponent("messages")
+  let url = anthropicMessagesURL(baseURL: baseURL)
 
   let headers: [String: String] = [
     "content-type": "application/json",

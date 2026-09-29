@@ -92,7 +92,9 @@ Created inert (`wuhu session create --provider P --model M [--effort E]
 <title>`); it starts working when something is posted to it. The
 `(provider, model, effort)` spec is validated against `/models.json` — a plain space file keyed
 by provider (`dialect`, `baseURL`, per-model `maxInput`/`maxOutput`/
-`efforts`/`defaultEffort`/optional `headroomOverride`). `wuhu models update`
+`efforts`/`defaultEffort`/optional `headroomOverride`). An `anthropic`-dialect
+`baseURL` is the vendor's published one (`https://api.deepseek.com/anthropic`);
+the server appends `/v1/messages`, or just `/messages` to a base ending in `/v1`. `wuhu models update`
 seeds/merges it additively (your edits win); API keys come from the server's
 environment (`ANTHROPIC_API_KEY` pattern), never the space. Usable context =
 maxInput − (headroomOverride ?? maxOutput); the session self-compacts past

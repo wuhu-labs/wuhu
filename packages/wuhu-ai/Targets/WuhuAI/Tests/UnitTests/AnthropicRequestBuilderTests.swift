@@ -7,6 +7,21 @@ import Testing
 // MARK: - Anthropic Encoding Tests
 
 @Suite struct AnthropicRequestBuilderTests {
+  @Test(arguments: [
+    ("https://api.anthropic.com", "https://api.anthropic.com/v1/messages"),
+    ("https://api.anthropic.com/", "https://api.anthropic.com/v1/messages"),
+    ("https://api.anthropic.com/v1", "https://api.anthropic.com/v1/messages"),
+    ("https://api.anthropic.com/v1/", "https://api.anthropic.com/v1/messages"),
+    ("https://api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic/v1/messages"),
+    ("https://api.xiaomimimo.com/anthropic", "https://api.xiaomimimo.com/anthropic/v1/messages"),
+    ("https://api.xiaomimimo.com/anthropic/", "https://api.xiaomimimo.com/anthropic/v1/messages"),
+    ("https://api.xiaomimimo.com/anthropic/v1", "https://api.xiaomimimo.com/anthropic/v1/messages"),
+    ("http://localhost:8080/proxy/v1v", "http://localhost:8080/proxy/v1v/v1/messages"),
+  ])
+  func messagesURLFollowsTheSDKConvention(baseURL: String, expected: String) {
+    #expect(anthropicMessagesURL(baseURL: URL(string: baseURL)!).absoluteString == expected)
+  }
+
   @Test func buildsBasicAnthropicRequest() async throws {
     let context = Context(
       systemPrompt: "You are helpful.",
@@ -17,7 +32,7 @@ import Testing
 
     let (url, headers, body) = try await buildAnthropicRequest(
       model: "claude-sonnet-4-6",
-      baseURL: URL(string: "https://api.anthropic.com/v1")!,
+      baseURL: URL(string: "https://api.anthropic.com")!,
       context: context,
       options: RequestOptions(),
     )

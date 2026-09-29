@@ -48,3 +48,8 @@ Stream merge policy:
 
 - A `MediaResolver` may answer `.text` for media it cannot deliver in a form the request takes. Every dialect sends those words as a text part where the media would have gone, so the model knows something was there.
 - Responses sends every `input_image` with `detail: "original"`, so the model sees the image at the size it was sent. `"auto"` lets older models shrink it to a preset. Fitting an image to a model's limits is the caller's job, done before resolving.
+
+## Anthropic Messages URL
+
+- An Anthropic-dialect endpoint's `baseURL` is the one the vendor publishes for Anthropic's SDKs, and requests go to `<baseURL>/v1/messages`: `https://api.anthropic.com`, `https://api.deepseek.com/anthropic`, `https://api.xiaomimimo.com/anthropic`.
+- A `baseURL` whose path already ends in `/v1`, with or without a trailing slash, posts to `<baseURL>/messages`, so `https://api.anthropic.com/v1` and `…/anthropic/v1` keep working.
