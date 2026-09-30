@@ -17,9 +17,9 @@ public struct SessionControl: Sendable {
     case unarchive
   }
 
-  public var perform: @Sendable (Verb, SessionID) async throws -> Void
+  public var perform: @Sendable (Verb, SessionID, Bool) async throws -> Void
 
-  public init(perform: @escaping @Sendable (Verb, SessionID) async throws -> Void) {
+  public init(perform: @escaping @Sendable (Verb, SessionID, Bool) async throws -> Void) {
     self.perform = perform
   }
 }
@@ -27,7 +27,6 @@ public struct SessionControl: Sendable {
 // A verb the session loop refused, with the reason a caller can read.
 public struct SessionControlRefusal: Error {
   public enum Reason: Sendable {
-    // Archive found the session mid-turn.
     case busy
     case other
   }
@@ -239,7 +238,7 @@ extension ToolExecutor {
     }
   }
 
-  func control(_ verb: SessionControl.Verb, _ caller: SessionID, of target: SessionID) async throws {
+  func control(_ verb: SessionControl.Verb, _ caller: SessionID, of target: SessionID, force: Bool = false) async throws {
     guard let control else {
       throw ToolProblem("\(verb.rawValue) is not available on this server")
     }
@@ -249,15 +248,14 @@ extension ToolExecutor {
     case .interrupt, .resume:
       try await refuseUnlessInCharge(caller, of: target)
     }
+    if verb == .archive, force, caller == target {
+      throw ToolProblem("session \(target.rawValue) can't force-archive itself; its parent, an ancestor or a human archives it")
+    }
     do {
-      try await control.perform(verb, target)
+      try await control.perform(verb, target, force)
     } catch let refusal as SessionControlRefusal {
-      // A session's own call runs inside its own turn, so the turn can't
-      // settle while archive waits for it.
       if refusal.reason == .busy, verb == .archive, caller == target {
-        throw ToolProblem(
-          "session \(target.rawValue) can't archive itself mid-turn: this call is part of its own turn, which keeps it busy; its parent, an ancestor or a human archives it",
-        )
+        throw ToolProblem("session \(target.rawValue) can't archive itself mid-turn: this call is part of its own turn, which keeps it busy; its parent, an ancestor or a human archives it; \(refusal.message)")
       }
       throw ToolProblem(refusal.message)
     } catch let error as SessionStoreError {

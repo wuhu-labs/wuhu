@@ -5,6 +5,8 @@ import {
   ComposerZone,
   SendButton,
 } from '@wuhu/ui'
+import { senderName } from '~/lib/directory'
+import { useDirectory, useSessionTitles } from '~/lib/use-directory'
 import { QuoteStrip } from '~/components/message-row'
 import { PendingFiles } from '~/components/pending-files'
 import { admitFiles } from '~/lib/attachments'
@@ -34,6 +36,8 @@ export function ShellComposer({
   dictate: boolean
   onSend: (draft: Draft) => Promise<unknown>
 }) {
+  const directory = useDirectory()
+  const sessions = useSessionTitles()
   const draft = useDraft(drafts, draftKey)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -112,7 +116,7 @@ export function ShellComposer({
       error={error}
       above={draft.reply && (
         <QuoteStrip
-          sender={draft.reply.sender}
+          sender={senderName(directory, draft.reply, sessions)}
           text={draft.reply.text}
           onClear={() =>
             drafts.update(draftKey, (held) => ({ ...held, reply: null }))}

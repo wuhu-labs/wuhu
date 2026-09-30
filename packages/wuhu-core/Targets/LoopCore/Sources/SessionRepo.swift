@@ -10,6 +10,8 @@ import struct WuhuAI.AssistantMessageMetadata
 struct SessionRepo: Sendable {
   var sessions: SessionStore
   var id: SessionID
+  var queueHeadRead: @Sendable (SessionStore, SessionID) async throws -> Int = { try await $0.queueHead($1) }
+  var pendingCommandRead: @Sendable (SessionStore, SessionID) async throws -> SessionCommand? = { try await $0.pendingCommand($1) }
   var archiveWrite: @Sendable (SessionStore, SessionID, Duration) async throws -> Date = { try await $0.archive($1, grace: $2) }
 
   func hydrate() async throws -> SessionHydration {
@@ -33,11 +35,11 @@ struct SessionRepo: Sendable {
   }
 
   func queueHead() async throws -> Int {
-    try await sessions.queueHead(id)
+    try await queueHeadRead(sessions, id)
   }
 
   func pendingCommand() async throws -> SessionCommand? {
-    try await sessions.pendingCommand(id)
+    try await pendingCommandRead(sessions, id)
   }
 
   func takeCommand() async throws -> SessionCommand? {

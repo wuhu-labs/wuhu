@@ -39,7 +39,7 @@ import Testing
     #expect(plan.executable == "/home/dev/.wuhu/vendors/claude/2.1.280/claude")
     #expect(plan.arguments == [
       "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-      "--session-mirror", "--include-hook-events",
+      "--session-mirror", "--include-hook-events", "--include-partial-messages",
       "--model", "claude-sonnet-5", "--effort", "high",
       "--tools", "Read,Write,Edit,WebSearch", "--permission-mode", "dontAsk",
       "--setting-sources", "", "--settings", "/tmp/a/settings.json",

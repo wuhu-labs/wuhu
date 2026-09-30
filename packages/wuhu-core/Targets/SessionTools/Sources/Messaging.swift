@@ -230,6 +230,8 @@ extension ToolExecutor {
       ToolProblem("session \(key) is archived and no longer accepts messages")
     case let .busyForRestart(key):
       ToolProblem("session \(key) has unfinished work or an open run and cannot start over")
+    case let .parentUnavailableForCreation(key):
+      ToolProblem("session \(key) is being archived or is archived; it cannot create children")
     case let .restartOfArchivedSession(key):
       ToolProblem("session \(key) is archived and cannot start over")
     case .unusableTitle:

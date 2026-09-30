@@ -229,7 +229,7 @@ public struct SubscriptionFiring: Sendable {
       case .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
            .selfDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .noParent, .notTheParent,
            .requestAlreadyOpen, .unknownRequest,
-           .busyForRestart, .restartOfArchivedSession, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
+           .busyForRestart, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
         break
       }
     } catch {}

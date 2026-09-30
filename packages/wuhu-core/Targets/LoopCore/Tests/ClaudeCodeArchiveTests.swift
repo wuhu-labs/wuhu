@@ -124,7 +124,7 @@ import Testing
       try await until("the reminder goes in") { fake.writes.value.count == 1 }
       write.gate.release()
       let result = await archive.result
-      #expect(throws: SessionError.busyForArchive) { try result.get() }
+      #expect(throws: SubtreeArchiveBusy.self) { try result.get() }
       let record = try await sessions.record(sid)
       #expect(record.lifecycle == .live)
       await service.registry.stop()
@@ -143,9 +143,9 @@ import Testing
       })
       try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
         fake.service.withLock { $0 = service }
-        await #expect(throws: SessionError.busyForArchive) { try await service.archive(sid) }
+        await #expect(throws: SubtreeArchiveBusy.self) { try await service.archive(sid) }
         try await until("the turn is running") { fake.writes.value.count == 1 }
-        await #expect(throws: SessionError.busyForArchive) { try await service.archive(sid) }
+        await #expect(throws: SubtreeArchiveBusy.self) { try await service.archive(sid) }
         gate.release()
         try await until("the settled session archives") { (try? await service.archive(sid)) != nil }
       }

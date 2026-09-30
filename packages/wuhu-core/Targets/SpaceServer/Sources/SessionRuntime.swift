@@ -234,7 +234,7 @@ final class SessionServiceSlot: Sendable {
 }
 
 func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> SessionControl {
-  SessionControl { verb, id in
+  SessionControl { verb, id, force in
     guard let service = service() else {
       throw SessionControlRefusal("the session loops are not running yet")
     }
@@ -242,14 +242,15 @@ func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> Ses
       switch verb {
       case .interrupt: try await service.interrupt(id)
       case .resume: try await service.resume(id)
-      case .archive: try await service.archive(id)
+      case .archive: try await service.archive(id, force: force)
       case .unarchive: try await service.unarchive(id)
       }
-    } catch SessionError.busyForArchive {
-      throw SessionControlRefusal(
-        "session \(id.rawValue) has unfinished work; interrupt it or let it settle before archiving",
-        reason: .busy,
-      )
+    } catch let busy as SubtreeArchiveBusy {
+      throw SessionControlRefusal(busy.message, reason: busy.sessions.contains { $0.id == id } ? .busy : .other)
+    } catch SessionError.archiveInProgress {
+      throw SessionControlRefusal("session \(id.rawValue) is being archived; retry after the archive finishes")
+    } catch SessionError.archiveReservationLost {
+      throw SessionControlRefusal("session \(id.rawValue) changed during archive; archive stopped, retry it")
     } catch SessionError.archiveGraceExpired {
       throw SessionControlRefusal("session \(id.rawValue) is archived and its grace has expired")
     }

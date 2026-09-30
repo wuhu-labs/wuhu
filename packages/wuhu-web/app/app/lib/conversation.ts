@@ -5,14 +5,21 @@ export type MessageMap = ReadonlyMap<string, ConversationMessagePayload>
 export interface ReplyDraft {
   messageId: string
   sender: string
+  senderKind?: string | null
+  senderHandle?: string | null
   text: string
 }
 
 export function replyDraft(
   message: ConversationMessagePayload,
-  sender: string,
 ): ReplyDraft {
-  return { messageId: message.messageId, sender, text: message.text }
+  return {
+    messageId: message.messageId,
+    sender: message.sender,
+    senderKind: message.senderKind,
+    senderHandle: message.senderHandle,
+    text: message.text,
+  }
 }
 
 export type Quote =

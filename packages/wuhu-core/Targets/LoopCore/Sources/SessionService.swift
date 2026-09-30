@@ -11,6 +11,7 @@ public struct SessionService: Sendable {
   let registry: SessionRegistry
   let sessions: SessionStore
   let archiveGrace: Duration
+  private let archives = ArchiveCoordinator()
 
   public init(sessions: SessionStore, loopConfig: LoopConfig) async {
     await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(sessions: sessions, id: $0) }
@@ -87,6 +88,7 @@ public struct SessionService: Sendable {
   }
 
   public func wake(_ sessionID: SessionID) async throws {
+    guard !sessions.isReservedForArchive(sessionID) else { return }
     guard try await contractorRecord(sessionID) == nil else { return }
     try await retryingEviction {
       try await withCallback(of: Void.self) {
@@ -96,6 +98,9 @@ public struct SessionService: Sendable {
   }
 
   public func enqueue(item: QueueInput, to sessionID: SessionID) async throws -> Int {
+    if sessions.isReservedForArchive(sessionID) {
+      return try await sessions.enqueue(sessionID, input: item)
+    }
     if try await contractorRecord(sessionID) != nil {
       return try await sessions.enqueue(sessionID, input: item)
     }
@@ -107,6 +112,7 @@ public struct SessionService: Sendable {
   }
 
   public func interrupt(_ sessionID: SessionID) async throws {
+    guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await contractorRecord(sessionID) != nil {
       try await sessions.markInterrupted(sessionID)
       return
@@ -119,6 +125,7 @@ public struct SessionService: Sendable {
   }
 
   public func resume(_ sessionID: SessionID) async throws {
+    guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await contractorRecord(sessionID) != nil {
       try await sessions.markResumed(sessionID)
       return
@@ -130,17 +137,68 @@ public struct SessionService: Sendable {
     }
   }
 
-  public func archive(_ sessionID: SessionID) async throws {
-    if let record = try await contractorRecord(sessionID) {
-      if case .live = record.lifecycle {
-        _ = try await sessions.archive(sessionID, grace: archiveGrace)
+  public func archive(_ sessionID: SessionID, force: Bool = false) async throws {
+    try await archives.run { try await archiveSubtree(sessionID, force: force) }
+  }
+
+  private func archiveSubtree(_ sessionID: SessionID, force: Bool) async throws {
+    var subtree = try await sessions.archiveSubtree(sessionID)
+    let reservation = UUID()
+    var prepared: [SessionID] = []
+    var busy: [ArchiveBusySession] = []
+    do {
+      var checked: Set<SessionID> = []
+      while true {
+        for record in subtree where !checked.contains(record.id) {
+          var settled = try await prepareArchive(record.id, reservation: reservation)
+          if !settled, force {
+            try await interrupt(record.id)
+            settled = try await prepareArchive(record.id, reservation: reservation)
+          }
+          checked.insert(record.id)
+          if settled {
+            prepared.append(record.id)
+            try await sessions.reserveForArchive(record.id, token: reservation)
+          } else {
+            busy.append(ArchiveBusySession(id: record.id, title: record.title))
+          }
+        }
+        subtree = try await sessions.archiveSubtree(sessionID)
+        if subtree.allSatisfy({ checked.contains($0.id) }) { break }
       }
-      return
+      guard busy.isEmpty else { throw SubtreeArchiveBusy(sessions: busy) }
+      if force {
+        for record in subtree { try await sessions.closeRequestsForArchive(record.id) }
+      }
+      for member in subtree {
+        let record = try await sessions.record(member.id)
+        if case .contractor = record.executor {
+          if case .live = record.lifecycle { _ = try await sessions.archive(record.id, grace: archiveGrace) }
+        } else {
+          try await retryingEviction {
+            try await withCallback(of: Void.self) { send(action: .archive(reservation, $0), to: record.id) }
+          }
+        }
+      }
+    } catch {
+      await releaseArchive(prepared, reservation: reservation)
+      throw error
     }
-    try await retryingEviction {
-      try await withCallback(of: Void.self) {
-        send(action: .archive($0), to: sessionID)
-      }
+    await releaseArchive(prepared, reservation: reservation)
+  }
+
+  private func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
+    if try await contractorRecord(id) != nil { return true }
+    return try await retryingEviction {
+      try await withCallback(of: Bool.self) { send(action: .prepareArchive(reservation, $0), to: id) }
+    }
+  }
+
+  private func releaseArchive(_ ids: [SessionID], reservation: UUID) async {
+    for id in ids {
+      sessions.releaseArchiveReservation(id, token: reservation)
+      guard (try? await contractorRecord(id)) == nil else { continue }
+      _ = try? await withCallback(of: Void.self) { send(action: .releaseArchive(reservation, $0), to: id) }
     }
   }
 
@@ -149,6 +207,7 @@ public struct SessionService: Sendable {
     executor: SessionExecutor?,
     note: String?,
   ) async throws -> SessionRestart {
+    guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await contractorRecord(sessionID) != nil {
       return try await sessions.restart(sessionID, executor: executor, note: note)
     }
@@ -172,6 +231,7 @@ public struct SessionService: Sendable {
   }
 
   public func unarchive(_ sessionID: SessionID) async throws {
+    guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await contractorRecord(sessionID) != nil {
       try await sessions.unarchive(sessionID)
       return
@@ -233,5 +293,27 @@ final class LivenessTracker: Sendable {
         cont.resume()
       }
     }
+  }
+}
+
+private actor ArchiveCoordinator {
+  private var active = false
+  private var waiting: [Callback<Void>] = []
+
+  func run(_ operation: @Sendable () async throws -> Void) async throws {
+    if active {
+      try await withCallback(of: Void.self) { waiting.append($0) }
+    } else {
+      active = true
+    }
+    defer {
+      if waiting.isEmpty {
+        active = false
+      } else {
+        waiting.removeFirst().resume(returning: ())
+      }
+    }
+    try Task.checkCancellation()
+    try await operation()
   }
 }

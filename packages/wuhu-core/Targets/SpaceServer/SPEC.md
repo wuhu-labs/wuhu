@@ -356,27 +356,11 @@ await createSession({ title, kind, topLevel, provider, model, effort, template,
                       tags, message, expectsReply, key }) // { id, requestId? }
 await request(id, message, { deadlineSeconds })           // { requestId }
 await setTags(id, tags)                                   // replaces the list
-await archive(id); await unarchive(id); await interrupt(id); await resume(id)
+await archive(id, { force: true }); await unarchive(id); await interrupt(id); await resume(id)
 ```
 
-- Every call is checked when it runs, against the script's session as it
-  stands then: an archived session is refused ("session X is archived and
-  may no longer act on sessions"). `setTags`, `interrupt` and `resume` are
-  allowed on the session itself and its descendants only; a root agent
-  created with `topLevel` is not its creator's descendant. `archive` and
-  `unarchive` also admit the session's creator and, from a top-level agent,
-  any session of its own group (the rule: "only the session itself, its
-  creator and admins of its group may"). `archive` of the
-  script's own session from inside its turn is refused: the call is part of
-  that turn, so the session can't settle ("can't archive itself mid-turn
-  … its parent, an ancestor or a human archives it"). A detached script that
-  outlives the turn can archive it once it has settled.
-- `createSession` follows `create_session`: the kind is the explicit one,
-  else the template's, else `agent` with `topLevel`, else `task`; the tree is
-  capped at 16 levels; `topLevel` is for agents only, makes an agent, refuses
-  `expectsReply`, and delivers `message` as a DM from the creator. Without
-  `expectsReply`, `message` is a DM to a child too. Errors reuse the tool's
-  wording with a `createSession:` prefix.
+- Every call is checked when it runs, against the script's session as it stands then: an archived session is refused ("session X is archived and may no longer act on sessions"). `setTags`, `interrupt` and `resume` are allowed on the session itself and its descendants only; a root agent created with `topLevel` is not its creator's descendant. `archive` and `unarchive` also admit the session's creator and, from a top-level agent, any session of its own group (the rule: "only the session itself, its creator and admins of its group may"). Force self-archive is always refused ("can't force-archive itself; its parent, an ancestor or a human archives it"). Non-force archive of the script's own session is refused mid-turn: the call is part of that turn, so the session cannot settle ("can't archive itself mid-turn … its parent, an ancestor or a human archives it"). A detached script that outlives the turn can archive it once it has settled. The same subtree busy check and leaf-first archive apply.
+- `createSession` follows `create_session`: the kind is the explicit one, else the template's, else `agent` with `topLevel`, else `task`; the tree is capped at 16 levels; `topLevel` is for agents only, makes an agent, refuses `expectsReply`, and delivers `message` as a DM from the creator. Without `expectsReply`, `message` is a DM to a child too. Creating a child below a parent reserved for archive or already archived is refused, including from a detached script. Errors reuse the tool's wording with a `createSession:` prefix.
 - `key` makes a create idempotent per calling session: it is stored as the
   receipt of tool call `script-key:<key>`, so a script that runs again (after
   a restart, a retry) gets the first session back, its `requestId` included.
@@ -699,4 +683,10 @@ gates are what make the failure mode reachable and tested.
 
 The kernel metrics sink writes every `InferenceMetric` to `inferences` alongside the existing `logs/inference.jsonl` line. Uncached input subtracts cache reads and writes from WuhuAI's total input; billed output includes reasoning. Missing usage and unreported reasoning remain null. Compaction uses the same sink.
 
-Claude Code assistant frames are collected by `message.id`. A different assistant id or a user/tool-result frame completes the pending call and its row is written before the boundary frame is forwarded; result and process EOF drain the last call. Completed calls therefore survive a server stop mid-turn. Each id yields one row using the last frame's usage and served model before its completion boundary, and the configured provider/model/effort. `at` is the first assistant frame's timestamp: Claude Code does not expose API call start on this path. Duration, time to first token and reasoning remain null; assistant calls have outcome `ok`. The turn result is only a flush boundary, not the source of per-call usage. Calls that never reach the stream (including Claude Code's own auto-compaction) are not counted. Rows are not backfilled.
+Claude Code launches with `--include-partial-messages`. Its `stream_event` message lifecycle supplies final per-call usage: `message_start` identifies the call, cumulative `message_delta` usage replaces supplied input/cache/output fields, and `message_stop` completes it. Assistant frames supply the first timestamp and last served model, but their provisional usage cannot overwrite final delta values. One row per message id is persisted at message stop, before forwarding subsequent frames; if assistant metadata arrives after message stop, its arrival completes the row. Completed calls therefore survive a server stop mid-turn. Partial-message envelopes add one frame per streamed content chunk as well as lifecycle events; the host consumes them for accounting and does not forward them to the session loop or transcript/UI path. Transcript mirrors and hook handling are unchanged. `at` is the first assistant frame's timestamp, or the first stream frame's host-recorded arrival time if no assistant arrives: Claude Code does not expose API call start on this path. Duration, time to first token and reasoning remain null; completed calls have outcome `ok`. Turn-result usage is never per-call usage. Result or EOF drains unfinished calls with outcome `cancelled`, preserving reported input/cache counts and output from the last delta; without an output delta, output is null rather than the provisional count. Stopped calls without assistant metadata are emitted on drain as `ok`, with a null served model and the first-arrival timestamp. Unreported token fields remain null. Calls that never reach the stream (including Claude Code's own auto-compaction) are not counted. Rows are not backfilled.
+
+## Subtree archive
+
+`POST /v1/session/:id/archive` accepts no body or `{ "force": false }`; `{ "force": true }` forces the operation. A malformed body returns `invalidArgument`. A busy non-force archive returns HTTP 409 `conflict` with a `busy: id (title), ...` list. The CLI accepts `session archive <id> [--force]`; code mode accepts `archive(id, { force: true })`. The app's unchanged empty-body call is non-force.
+
+Archiving a session takes its entire parent-chain subtree, leaves first and root last. A separately created top-level agent has no parent and is not included. Only the root's archive rights are checked. Without force, every session is checked for the existing unfinished-work condition (retired contractors are never busy, even with queued input); refusal archives nothing and names every busy session by id and title. With force, busy sessions are interrupted before any archive write, and every open request in the subtree, including an undrained request, is closed with a final-kind message saying the session was archived before reporting. Its requester receives that message even outside the subtree. Unarchive remains single-session, subject to the archive grace window.

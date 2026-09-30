@@ -234,7 +234,7 @@ struct ClaudeCodeLaunchSpec {
       executable: binary,
       arguments: [
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-        "--session-mirror", "--include-hook-events",
+        "--session-mirror", "--include-hook-events", "--include-partial-messages",
         "--model", model, "--effort", effort,
       ] + (autocompact.map { ["--autocompact", String($0)] } ?? []) + [
         "--tools", Self.tools.joined(separator: ","), "--permission-mode", "dontAsk",

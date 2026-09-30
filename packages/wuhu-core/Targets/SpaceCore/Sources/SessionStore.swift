@@ -81,6 +81,7 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case archiveGraceExpired(String)
   case busyForRestart(String)
   case restartOfArchivedSession(String)
+  case parentUnavailableForCreation(String)
   case unknownMessage(String)
   case unknownConversation(String)
   case replyTargetInAnotherConversation(String)
@@ -109,12 +110,13 @@ public struct SessionStore: Sendable {
   let dateGen: DateGenerator
   let broadcast: FSBroadcast
   let signals: WorkSignals
+  let archiveReservations: ArchiveReservations
   let rng: WithRandomNumberGenerator
 }
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, rng: rng)
+    SessionStore(writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, archiveReservations: archiveReservations, rng: rng)
   }
 }
 

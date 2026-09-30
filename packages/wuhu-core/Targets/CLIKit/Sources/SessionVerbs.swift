@@ -200,11 +200,14 @@ extension Executor {
     await self.runner.stdout("requested \(output.requestId) in \(output.conversationId)\n")
   }
 
-  mutating func sessionAction(_ verb: SessionActionVerb, id: String) async throws {
+  mutating func sessionAction(_ verb: SessionActionVerb, id: String, force: Bool) async throws {
     let session = try sessionKey(id)
     let space = try self.wallet.pinnedSpace()
     struct Empty: Decodable {}
-    let _: Empty = try await self.authenticated(space).api(.post, "/v1/session/\(session)/\(verb.rawValue)")
+    let _: Empty = try await self.authenticated(space).api(
+      .post, "/v1/session/\(session)/\(verb.rawValue)",
+      body: verb == .archive ? .object(["force": .bool(force)]) : nil,
+    )
   }
 
   mutating func sessionRename(id: String, title: String) async throws {

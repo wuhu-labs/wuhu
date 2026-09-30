@@ -27,6 +27,7 @@ extension SessionActor {
     while true {
       try Task.checkCancellation()
 
+      guard !live.archiving else { return }
       switch live.sessionStatus {
       case .interrupted, .errored:
         return
@@ -46,13 +47,16 @@ extension SessionActor {
       }
       let fullness = await live.transcript.contextFullness(budget: loopConfig.budget(id))
       try Task.checkCancellation()
+      guard !live.archiving else { return }
       if fullness >= loopConfig.thresholds.hard {
         try await runInference(mode: .forcedCompact)
       } else if live.queueHead > live.queueTail {
         try await drainQueue()
       } else {
+        guard !live.archiving else { return }
         let forced = try await takeCompactRequest()
         try Task.checkCancellation()
+        guard !live.archiving else { return }
         if forced {
           try await runInference(mode: .forcedCompact)
         } else if live.transcript.hasWork {
@@ -70,7 +74,12 @@ extension SessionActor {
   // Code's `/compact` command: instructions land as one system
   // notification, and the turn that follows is tool-choice-pinned to compact.
   func takeCompactRequest() async throws -> Bool {
+    guard !live.archiving else { return false }
     guard try await repo.pendingCommand() != nil else { return false }
+    try Task.checkCancellation()
+    guard !live.archiving else { return false }
+    live.claimingCompactRequest = true
+    defer { liveState?.claimingCompactRequest = false }
     guard case let .compact(instructions)? = try await repo.takeCommand() else { return false }
     guard let instructions, !instructions.isEmpty else { return true }
     let notification = SystemNotification(

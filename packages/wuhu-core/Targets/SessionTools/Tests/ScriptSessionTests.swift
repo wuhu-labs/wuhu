@@ -8,7 +8,7 @@ struct ScriptSessionTests {
   @Test func scriptsCreateSessionsAndActOnlyOnTheirOwnTree() async throws {
     let space = try Space.inMemory()
     let verbs = Box<[String]>([])
-    let control = SessionControl { verb, id in
+    let control = SessionControl { verb, id, _ in
       let title = try await space.sessions.record(id).title
       verbs.withLock { $0.append("\(verb.rawValue) \(title)") }
     }
@@ -34,7 +34,7 @@ struct ScriptSessionTests {
       resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
       },
-      control: SessionControl { _, _ in },
+      control: SessionControl { _, _, _ in },
       prepare: { space, session in _ = try await space.sessions.archive(session, grace: .seconds(3600)) },
     ) { rig in
       try await rig.run("sessions-archived")

@@ -446,9 +446,10 @@ extension Command {
       try parser.finish(verb: "session compact")
       return .sessionCompact(id: id, instructions: instructions)
     case "interrupt", "resume", "archive", "unarchive":
+      let force = subcommand == "archive" && parser.flag("--force")
       let id = try parser.required("session-id", verb: "session \(subcommand)")
       try parser.finish(verb: "session \(subcommand)")
-      return .sessionAction(SessionActionVerb(rawValue: subcommand)!, id: id)
+      return .sessionAction(SessionActionVerb(rawValue: subcommand)!, id: id, force: force)
     case "log":
       let direct = parser.flag("--direct")
       let verbose = parser.flag("-v")
@@ -1554,7 +1555,10 @@ extension Command {
       compact <session-id> [--instructions ...]
                                ask a session to fold its context at its next
                                quiet point; works on every executor
-      archive <session-id>     archive a settled session (grace applies)
+      archive <session-id> [--force]
+                               archive its subtree; force interrupts busy
+                               sessions and closes all open requests in
+                               the subtree
       unarchive <session-id>   restore within the grace window
       log [--direct|-v|-vv] [--limit N] [--before REF] <session-id>  read the session log
       entry <session-id> <ref> fetch one log item in full

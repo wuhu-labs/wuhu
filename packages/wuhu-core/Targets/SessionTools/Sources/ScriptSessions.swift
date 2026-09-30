@@ -115,7 +115,13 @@ struct ScriptSessions {
         else {
           throw ToolProblem("\(verbName(arguments[safe: 0])) wants a session id")
         }
-        try await tools.control(verb, session, of: SessionID(target))
+        let force: Bool
+        switch arguments[safe: 2] {
+        case .bool(let value)?: force = value
+        case nil: force = false
+        default: throw ToolProblem("archive: force must be a boolean")
+        }
+        try await tools.control(verb, session, of: SessionID(target), force: force)
         return .null
       }
     })
@@ -182,8 +188,8 @@ export async function setTags(id, tags) {
   await retag(String(id), tags)
 }
 
-export async function archive(id) {
-  await act("archive", String(id))
+export async function archive(id, { force = false } = {}) {
+  await act("archive", String(id), force)
 }
 
 export async function unarchive(id) {

@@ -287,7 +287,7 @@ enum Command: Equatable {
   case inbox
   case sessionCreate(SessionCreateCommand)
   case sessionRequest(id: String, message: String, deadline: Double?)
-  case sessionAction(SessionActionVerb, id: String)
+  case sessionAction(SessionActionVerb, id: String, force: Bool = false)
   case sessionCompact(id: String, instructions: String?)
   case sessionRename(id: String, title: String)
   case sessionTags(id: String, tags: [String])

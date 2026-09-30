@@ -9,6 +9,134 @@ import Testing
 // route's executor, the SessionService behind sessionControl, and the
 // session loops themselves. Nothing here fakes SessionControl.
 @Suite struct SessionControlE2ETests {
+  @Test func scriptsRefuseForceSelfArchiveAndRejectNonBooleanForce() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let caller = try await harness.createSession(title: "caller")
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await harness.runtime.run() }
+        defer { group.cancelAll() }
+        let output = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
+          "source": .string("import { archive } from \"wuhu:session\"; result(await archive(\"\(caller.rawValue)\", { force: true }).then(() => \"unexpected success\", e => e.message))"),
+        ]))
+        #expect(resultText(output)?.contains("can't force-archive itself") == true)
+        #expect(try await harness.store.record(caller).lifecycle == .live)
+        let malformed = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
+          "source": .string("import { archive } from \"wuhu:session\"; result(await archive(\"\(caller.rawValue)\", { force: \"yes\" }).catch(e => e.message))"),
+        ]))
+        #expect(resultText(malformed)?.contains("force must be a boolean") == true)
+        #expect(try await harness.store.record(caller).lifecycle == .live)
+      }
+    }
+  }
+
+  @Test func settledDetachedScriptCanArchiveItsOwnSubtreeWithoutForce() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let root = try await harness.createSession(title: "waiting")
+      let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
+      let child = try await harness.store.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: model)
+      let leaf = try await harness.store.createSession(group: .shared, title: "leaf", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
+      let independent = try await harness.store.createSession(group: .shared, title: "independent", kind: .agent, createdBy: root.rawValue, executor: model)
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await harness.runtime.run() }
+        defer { group.cancelAll() }
+        let output = try await callResult(harness, root.rawValue, tool: "run_script", .object([
+          "source": .string("""
+          import { archive } from "wuhu:session"
+          import { observe } from "wuhu:space"
+          result("detached")
+          for await (const rows of observe`SELECT title FROM sessions WHERE id = '\(root.rawValue)'`) {
+            if (rows[0].title === "settled") break
+          }
+          await archive("\(root.rawValue)")
+          """),
+        ]))
+        #expect(resultText(output)?.contains("detached") == true)
+        #expect(try await harness.store.record(root).work == .noWork)
+        #expect(try await harness.store.record(root).lifecycle == .live)
+        _ = try await harness.store.setTitle(root, to: "settled")
+        try await until("detached script archives its own subtree") {
+          try await harness.store.record(root).lifecycle != .live
+        }
+        for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle != .live) }
+        #expect(try await harness.store.record(independent).lifecycle == .live)
+      }
+    }
+  }
+
+  @Test func httpArchiveDefaultsToFalseAndRejectsMalformedForce() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness(inference: { _, _ in
+        try await ContinuousClock().sleep(for: .seconds(3600))
+        return reply("done")
+      })
+      let root = try await harness.createSession(title: "root")
+      let child = try await harness.store.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+      _ = try await harness.store.openRequest(on: child, from: root, messageID: .init("http-request"), text: "queued", deadline: nil)
+      for body in [JSONValue.null, .object([:]), .object(["force": .bool(false)])] {
+        let response = try await harness.post("/v1/session/\(root.rawValue)/archive", body)
+        #expect(response.status == .conflict)
+        #expect(try await response.text().contains("\(child.rawValue) (child)"))
+        #expect(try await harness.store.record(root).lifecycle == .live)
+        #expect(try await harness.store.record(child).lifecycle == .live)
+      }
+      #expect(try await harness.post("/v1/session/\(root.rawValue)/archive", .object(["force": .string("true")])).status == .badRequest)
+      #expect(try await harness.post("/v1/session/\(root.rawValue)/archive", .object(["force": .bool(true)])).status == .ok)
+      #expect(try await harness.store.record(root).lifecycle != .live)
+      #expect(try await harness.store.record(child).lifecycle != .live)
+    }
+  }
+
+  @Test func scriptForceArchivesAThreeLevelTreeAndClosesTheOutsideRequest() async throws {
+    try await withSessionDeps {
+      let entered = Gate()
+      let release = Gate()
+      let harness = try await SessionHarness(inference: { _, _ in
+        entered.open()
+        await release.wait()
+        try Task.checkCancellation()
+        return reply("done")
+      })
+      let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
+      let caller = try await harness.createSession(title: "owner")
+      let root = try await harness.store.createSession(group: .shared, title: "coder", kind: .task, parent: caller, createdBy: caller.rawValue, executor: model)
+      let child = try await harness.store.createSession(group: .shared, title: "proxy", kind: .task, parent: root, createdBy: root.rawValue, executor: model)
+      let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
+      let topLevel = try await harness.store.createSession(group: .shared, title: "independent", kind: .agent, createdBy: child.rawValue, executor: model)
+      try await harness.store.markInterrupted(root)
+      let delivery = try await harness.store.openRequest(on: root, from: caller, messageID: .init("script-request"), text: "work", deadline: nil)
+      func script(_ options: String) async throws -> String {
+        let result = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
+          "source": .string("import { archive } from \"wuhu:session\"; result(await archive(\"\(root.rawValue)\"\(options)).then(() => \"done\", e => e.message))"),
+        ]))
+        return resultText(result) ?? ""
+      }
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await harness.runtime.run() }
+        defer { group.cancelAll(); release.open() }
+        try await harness.deliver("start", to: leaf)
+        await entered.wait()
+        let refused = try await script("")
+        #expect(refused.contains("\(leaf.rawValue) (signup)"))
+        for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle == .live) }
+        #expect(try await script(", { force: true }").contains("done"))
+        for id in [root, child, leaf] {
+          guard case .archived = try await harness.store.record(id).lifecycle else {
+            Issue.record("\(id) remained live")
+            continue
+          }
+        }
+        #expect(try await harness.store.record(topLevel).lifecycle == .live)
+        #expect(try await harness.store.record(caller).lifecycle == .live)
+        let messages = try await harness.store.messages(conversation: delivery.message.conversation)
+        let final = try #require(messages.first { $0.kind == .final })
+        #expect(final.requestID == .init("script-request"))
+        #expect(final.content.text.contains("archived before reporting"))
+      }
+    }
+  }
+
   @Test func anAncestorArchivesAndInterruptsItsDescendantsAndOthersAreRefused() async throws {
     try await withSessionDeps {
       let entered = Gate()

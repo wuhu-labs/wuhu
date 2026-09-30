@@ -131,10 +131,28 @@ func addSessionRoutes(
     }
   }
 
+  router.post("/v1/session/:id/archive") { request, parameters in
+    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
+    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
+    let input: SessionArchiveInput
+    if request.body == nil {
+      input = SessionArchiveInput(force: nil)
+    } else {
+      do { input = try await request.json(SessionArchiveInput.self) }
+      catch { return errorResponse(.badRequest, code: "invalidArgument", message: "invalid archive body") }
+    }
+    do {
+      if case let .principal(principal) = try await principalOf(request) {
+        try await store.refuseArchiving(id, by: principal.actor)
+      }
+      try await service.archive(id, force: input.force ?? false)
+      return jsonResponse(.object([:]))
+    } catch { return sessionErrorResponse(error) }
+  }
+
   for (verb, action) in [
     ("interrupt", SessionService.interrupt),
     ("resume", SessionService.resume),
-    ("archive", SessionService.archive),
     ("unarchive", SessionService.unarchive),
   ] {
     router.post("/v1/session/:id/\(verb)") { request, parameters in
@@ -142,7 +160,7 @@ func addSessionRoutes(
       guard let id = sessionID(parameters) else { return unknownSession(parameters) }
       if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
       do {
-        if verb == "archive" || verb == "unarchive", case let .principal(principal) = try await principalOf(request) {
+        if verb == "unarchive", case let .principal(principal) = try await principalOf(request) {
           try await store.refuseArchiving(id, by: principal.actor)
         }
         try await action(service)(id)
@@ -631,6 +649,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
         code: "conflict",
         message: "session \(key) has unfinished work or an open run; interrupt it or let it settle before starting over",
       )
+    case let .parentUnavailableForCreation(key):
+      return errorResponse(.conflict, code: "conflict", message: "session \(key) is being archived or is archived; it cannot create children")
     case let .restartOfArchivedSession(key):
       return errorResponse(.conflict, code: "conflict", message: "session \(key) is archived; unarchive it before starting over")
     case let .unknownConversation(id):
@@ -681,8 +701,12 @@ func sessionErrorResponse(_ error: any Error) -> Response {
         hint: String(title.prefix(80)),
       )
     }
-  case SessionError.busyForArchive:
-    return errorResponse(.conflict, code: "conflict", message: "session has unfinished work; interrupt it or let it settle before archiving")
+  case let busy as SubtreeArchiveBusy:
+    return errorResponse(.conflict, code: "conflict", message: busy.message)
+  case SessionError.archiveInProgress:
+    return errorResponse(.conflict, code: "conflict", message: "session is being archived; retry after the archive finishes")
+  case SessionError.archiveReservationLost:
+    return errorResponse(.conflict, code: "conflict", message: "session changed during archive; archive stopped, retry it")
   case SessionError.archiveGraceExpired:
     return errorResponse(.conflict, code: "archiveGraceExpired", message: "the archive grace has expired")
   case let error as CatalogError:

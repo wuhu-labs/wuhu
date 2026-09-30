@@ -14,7 +14,8 @@ export type Directory = ReadonlyMap<string, DirectoryEntry>
 export const emptyDirectory: Directory = new Map()
 
 function present(value: string | null | undefined): string | undefined {
-  return value == null || value === '' ? undefined : value
+  const trimmed = value?.trim()
+  return trimmed == null || trimmed === '' ? undefined : trimmed
 }
 
 export function directoryOf(users: readonly DirectoryUser[]): Directory {
@@ -22,7 +23,6 @@ export function directoryOf(users: readonly DirectoryUser[]): Directory {
   for (const user of users) {
     const handle = present(user.handle)
     const displayName = present(user.displayName)
-    if (handle == null && displayName == null) continue
     entries.set(user.id, {
       ...(handle == null ? {} : { handle }),
       ...(displayName == null ? {} : { displayName }),
@@ -49,8 +49,16 @@ export function displayFor(
   directory: Directory,
   principal: string,
   handle?: string | null,
+  sessions: SessionTitles = noSessionTitles,
+  kind?: string | null,
 ): string {
-  const found = present(handle) ?? handleFor(directory, principal)
+  if (senderIsSession(sessions, { sender: principal, senderKind: kind })) {
+    return sessionName(sessions, principal)
+  }
+  const entry = directory.get(principal)
+  const name = entry?.displayName
+  if (name != null) return name
+  const found = entry == null ? present(handle) : entry.handle
   return found == null ? principal : `@${found}`
 }
 
@@ -109,10 +117,13 @@ export function senderName(
   },
   sessions: SessionTitles = noSessionTitles,
 ): string {
-  if (senderIsSession(sessions, message)) {
-    return sessionName(sessions, message.sender)
-  }
-  return displayFor(directory, message.sender, message.senderHandle)
+  return displayFor(
+    directory,
+    message.sender,
+    message.senderHandle,
+    sessions,
+    message.senderKind,
+  )
 }
 
 export function principalName(
@@ -120,16 +131,40 @@ export function principalName(
   sessions: SessionTitles,
   principal: string,
 ): string {
-  return isSession(sessions, principal)
-    ? sessionName(sessions, principal)
-    : displayFor(directory, principal)
+  return displayFor(directory, principal, undefined, sessions)
 }
 
 export function memberName(
   directory: Directory,
-  member: { member: string; memberHandle?: string | null },
+  member: { member: string; memberHandle?: string | null; kind?: string },
+  sessions: SessionTitles = noSessionTitles,
 ): string {
-  return displayFor(directory, member.member, member.memberHandle)
+  return displayFor(
+    directory,
+    member.member,
+    member.memberHandle,
+    sessions,
+    member.kind,
+  )
+}
+
+export function memberHandle(
+  directory: Directory,
+  member: { member: string; memberHandle?: string | null; kind?: string },
+  sessions: SessionTitles,
+): string | undefined {
+  if (
+    senderIsSession(sessions, {
+      sender: member.member,
+      senderKind: member.kind,
+    })
+  ) {
+    return undefined
+  }
+  const entry = directory.get(member.member)
+  if (entry?.displayName == null || entry.handle == null) return undefined
+  const handle = `@${entry.handle}`
+  return handle === entry.displayName ? undefined : handle
 }
 
 export function initialsFrom(source: string): string {

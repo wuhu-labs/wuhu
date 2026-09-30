@@ -8,6 +8,26 @@ import SpaceCore
 import Testing
 
 @Suite struct ClaudeCodeLoopTests {
+  @Test func `partial stream events do not enter the transcript or interrupt delivery`() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.claudeCodeSession()
+      let fake = FakeClaudeCode(rewrite: { _, line in
+        let partial = #"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial must not enter transcript"}},"parent_tool_use_id":null}"#
+        return partial + "\n" + line
+      })
+      try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
+        fake.service.withLock { $0 = service }
+        _ = try await service.enqueue(item: Fix.message("hello", conversation: sid.rawValue, owesReply: false), to: sid)
+        try await until("the turn settles with extra partial frames") { try await sessions.settledWork(sid) && fake.writes.value.count == 1 }
+        let log = try await sessions.claudeCodeLog(sid)
+        #expect(!log.entries.isEmpty)
+        #expect(!log.entries.contains { $0["type"] == "stream_event" })
+        #expect(!log.entries.contains { JSONValue.object($0).jsonString().contains("partial must not enter transcript") })
+      }
+    }
+  }
+
   private static func isMirror(_ line: String) -> Bool { line.contains(#""type":"transcript_mirror""#) }
   private static func isHook(_ line: String, _ event: String) -> Bool {
     line.contains(#""subtype":"hook_started""#) && line.contains(#""hook_event":"\#(event)""#)

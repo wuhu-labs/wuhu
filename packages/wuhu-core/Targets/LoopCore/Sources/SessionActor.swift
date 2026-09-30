@@ -39,12 +39,13 @@ actor SessionActor {
     let isTask: Bool
     var parkWake: (at: Date, task: Task<Void, Never>)?
     var archiving = false
+    var claimingCompactRequest = false
 
     var hasSettled: Bool {
       if sessionStatus.stopped {
         return true
       }
-      guard queueHead == queueTail else { return false }
+      guard !claimingCompactRequest, queueHead == queueTail else { return false }
       return switch engine {
       case let .kernel(transcript): !transcript.hasWork
       case let .claudeCode(claude): claude.isQuiet
@@ -84,7 +85,9 @@ actor SessionActor {
   enum ExternalAction {
     case wake(Callback<Void>)
     case enqueue(QueueInput, Callback<Int>)
-    case archive(Callback<Void>)
+    case prepareArchive(UUID, Callback<Bool>)
+    case releaseArchive(UUID, Callback<Void>)
+    case archive(UUID, Callback<Void>)
     case unarchive(Callback<Void>)
     case interrupt(Callback<Void>)
     case resume(Callback<Void>)
@@ -106,6 +109,7 @@ actor SessionActor {
   private var looperTask: Task<Void, Never>?
   var longRunningTask: Task<Void, Never>?
   private var retired = false
+  private var archiveReservation: UUID?
 
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
@@ -143,6 +147,7 @@ actor SessionActor {
   }
 
   var idleSince: Date? {
+    guard archiveReservation == nil else { return nil }
     guard let liveState else { return lastCommandProcessedAt }
     guard let lhs = lastCommandProcessedAt,
           let rhs = liveState.lastUpdatedByLoopAt,
@@ -201,6 +206,20 @@ actor SessionActor {
   }
 
   private func handle(action: ExternalAction) async {
+    if archiveReservation != nil {
+      switch action {
+      case .wake, .enqueue, .archive, .releaseArchive: break
+      case .prepareArchive(_, let callback):
+        callback.resume(throwing: SessionError.archiveInProgress)
+        return
+      case .unarchive(let callback), .interrupt(let callback), .resume(let callback):
+        callback.resume(throwing: SessionError.archiveInProgress)
+        return
+      case .restart(_, _, let callback):
+        callback.resume(throwing: SessionError.archiveInProgress)
+        return
+      }
+    }
     switch action {
     case .wake(let callback):
       await callback.run {
@@ -211,8 +230,34 @@ actor SessionActor {
       await callback.run {
         try await handleEnqueue(item)
       }
-    case .archive(let callback):
+    case .prepareArchive(let reservation, let callback):
       await callback.run {
+        guard try await ensureLifecycle() == .live else {
+          archiveReservation = reservation
+          return true
+        }
+        let head = try await repo.queueHead()
+        try modify { $0.queueHead = max($0.queueHead, head) }
+        guard live.hasSettled else { return false }
+        live.archiving = true
+        archiveReservation = reservation
+        return true
+      }
+    case .releaseArchive(let reservation, let callback):
+      await callback.run {
+        guard archiveReservation == reservation else { return }
+        archiveReservation = nil
+        if liveState != nil {
+          defer {
+            liveState?.archiving = false
+            nudge()
+          }
+          try await handleWake()
+        }
+      }
+    case .archive(let reservation, let callback):
+      await callback.run {
+        guard archiveReservation == reservation else { throw SessionError.archiveReservationLost }
         try await handleArchive()
       }
     case .unarchive(let callback):
@@ -310,25 +355,12 @@ actor SessionActor {
   private func handleArchive() async throws {
     guard try await ensureLifecycle() == .live else { return }
 
-    guard live.hasSettled else {
-      throw SessionError.busyForArchive
-    }
     // An owed idle check is no work, but no pass may start a turn while the
-    // archive is written: the turn would land in the archived session. A
-    // failed write hands the check back to the loop.
+    // archive is written: the turn would land in the archived session.
     live.archiving = true
-    let deadline: Date
-    do {
-      await stopClaudeCodeActivation(continuing: nil)
-      deadline = try await repo.archive(grace: loopConfig.archiveGrace)
-      try Task.checkCancellation()
-    } catch {
-      if liveState != nil {
-        live.archiving = false
-        nudge()
-      }
-      throw error
-    }
+    await stopClaudeCodeActivation(continuing: nil)
+    let deadline = try await repo.archive(grace: loopConfig.archiveGrace)
+    try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
     dismountLive()
   }

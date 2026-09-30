@@ -179,7 +179,8 @@ final class ClaudeCodeHost: Sendable {
                     var reader = ClaudeStreamReader()
                     var calls = ClaudeInferenceCalls()
                     func consume(_ frame: ClaudeStreamFrame) async {
-                      await recordClaudeInferences(calls.record(frame), space: space, session: launch.session, model: model, logger: log)
+                      await recordClaudeInferences(calls.record(frame, at: date.now.ISO8601Format(.init(includingFractionalSeconds: true))), space: space, session: launch.session, model: model, logger: log)
+                      if case let .other(value) = frame, value.object?["type"]?.stringValue == "stream_event" { return }
                       if case let .rateLimit(limit) = frame {
                         usage.record(model.provider, plan: nil, windows: claudeUsage(limit), at: date.now)
                       }

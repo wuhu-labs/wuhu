@@ -1,0 +1,7 @@
+# SessionTools
+
+## Script archive
+
+`archive(id, { force: false })` in `wuhu:session` defaults to non-force. Its control bridge forwards the force flag to the runtime after checking the caller's rights on the root. `force` must be a boolean. A busy refusal rejects with the full id/title list. A descendant-only busy refusal does not claim that the caller itself is mid-turn. Force self-archive is always refused, including from a detached script. Non-force self-archive is refused mid-turn because the call keeps the session busy. A detached script that outlives the turn can archive it once it has settled; this archives its whole subtree, subject to the same non-force busy check.
+
+Archiving a session takes its entire parent-chain subtree, leaves first and root last. A separately created top-level agent has no parent and is not included. Only the root's archive rights are checked. Without force, every session is checked for the existing unfinished-work condition (retired contractors are never busy, even with queued input); refusal archives nothing and names every busy session by id and title. With force, busy sessions are interrupted before any archive write, and every open request in the subtree, including an undrained request, is closed with a final-kind message saying the session was archived before reporting. Its requester receives that message even outside the subtree. Unarchive remains single-session, subject to the archive grace window.

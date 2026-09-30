@@ -25,13 +25,13 @@ import Testing
     bytes.split(separator: UInt8(ascii: "\n"))
   }
 
-  @Test(arguments: ["hook", "manual-compact", "auto-compact"], [1, 23, 65536])
+  @Test(arguments: ["hook", "manual-compact", "auto-compact", "partial-usage"], [1, 23, 65536])
   func everyCapturedLineIsOneFrameAndMirrorEntriesAreTheLogBytes(_ name: String, _ chunkSize: Int) throws {
     let bytes = try fixture(name)
     let frames = replay(bytes, chunkSize: chunkSize)
     let lines = lines(bytes)
     #expect(frames.count == lines.count)
-    #expect(frames.contains { if case .initialization = $0 { true } else { false } })
+    if name != "partial-usage" { #expect(frames.contains { if case .initialization = $0 { true } else { false } }) }
     for (frame, line) in zip(frames, lines) {
       switch frame {
       case let .transcriptMirror(entries):

@@ -298,7 +298,8 @@ wuhu session entry <session-id> <ref>
 wuhu session list
 wuhu session rename <session-id> "New title"
 wuhu session tags <session-id> [tag]...   # replace the whole tag list; none clears it
-wuhu session interrupt|resume|archive|unarchive <session-id>
+wuhu session interrupt|resume|unarchive <session-id>
+wuhu session archive <session-id> [--force]
 wuhu inbox
 ```
 
@@ -351,8 +352,7 @@ wuhu inbox
 - `session list` is sugar over
   `wuhu query 'SELECT id, title, hold, work, lifecycle, last_activity_at FROM sessions ...'` —
   query or `observe --sql` the `sessions` table directly for dashboards.
-- `archive` refuses a session with unfinished work (interrupt it or let it
-  settle); `unarchive` works only inside the ~24 h grace window.
+- `archive` takes the entire descendant subtree, leaves first and root last. Without `--force`, it checks every node and refuses without archiving anything if one is busy, listing every busy id and title. `--force` first interrupts busy nodes, then archives them all and closes open requests with a final-kind “archived before reporting” message to each requester. Separately created top-level agents stay live. `unarchive` restores only one session and works only inside the ~24 h grace window.
 - `inbox` prints notifications above this wallet's cursor, then advances the
   cursor — a second call prints nothing until something new arrives. One
   inbox and one cursor span all your groups, so switching `--group` replays

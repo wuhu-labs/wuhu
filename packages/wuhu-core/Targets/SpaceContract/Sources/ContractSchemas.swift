@@ -114,6 +114,7 @@ public enum ContractSchemas {
     ("SessionContextSource", SessionContextSource.jsonSchema),
     ("SessionContext", SessionContext.jsonSchema),
     ("SessionContextOutput", SessionContextOutput.jsonSchema),
+    ("SessionArchiveInput", SessionArchiveInput.jsonSchema),
     ("SessionCompactInput", SessionCompactInput.jsonSchema),
     ("SessionTitleInput", SessionTitleInput.jsonSchema),
     ("SessionTagsInput", SessionTagsInput.jsonSchema),

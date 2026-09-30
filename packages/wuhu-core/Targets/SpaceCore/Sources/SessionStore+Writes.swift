@@ -65,7 +65,10 @@ extension SessionStore {
         return result.sessionID
       }
       if let parent {
-        _ = try Sessions.record(parent.rawValue, in: db)
+        let parentRecord = try Sessions.record(parent.rawValue, in: db)
+        guard parentRecord.lifecycle == .live, !self.archiveReservations.contains(parent) else {
+          throw SessionStoreError.parentUnavailableForCreation(parent.rawValue)
+        }
         guard try Sessions.ancestors(parent.rawValue, in: db).count + 2 <= Self.depthLimit else {
           throw SessionStoreError.tooDeep(parent.rawValue)
         }

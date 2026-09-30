@@ -122,6 +122,11 @@ public struct SessionContextOutput: Codable, Equatable, Sendable {
 }
 
 @Contract
+public struct SessionArchiveInput: Codable, Equatable, Sendable {
+  public let force: Bool?
+}
+
+@Contract
 public struct SessionCompactInput: Codable, Equatable, Sendable {
   public let instructions: String?
 }

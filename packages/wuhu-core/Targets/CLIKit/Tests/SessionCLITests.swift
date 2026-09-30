@@ -389,6 +389,45 @@ private func until(
     }
   }
 
+  @Test func archiveCLIRefusesABusyThreeLevelTreeAndForceClosesItsRequest() async throws {
+    try await withSessionDeps {
+      let busyID = Mutex<SessionID?>(nil)
+      let entered = Mutex(false)
+      let harness = try await SessionCLIHarness { request in
+        if busyID.withLock({ $0 }) == request.sessionID {
+          entered.withLock { $0 = true }
+          try await ContinuousClock().sleep(for: .seconds(3600))
+        }
+        return reply([.text(.init(text: "ok"))])
+      }
+      let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
+      let requester = try await harness.store.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      let root = try await harness.store.createSession(group: .shared, title: "coder", kind: .task, parent: requester, createdBy: requester.rawValue, executor: model)
+      let child = try await harness.store.createSession(group: .shared, title: "proxy", kind: .task, parent: root, createdBy: root.rawValue, executor: model)
+      let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)
+      busyID.withLock { $0 = leaf }
+      try await harness.store.markInterrupted(root)
+      let delivery = try await harness.store.openRequest(on: root, from: requester, messageID: .init("cli-request"), text: "work", deadline: nil)
+      _ = try await harness.store.openRequest(on: leaf, from: child, messageID: .init("cli-leaf-request"), text: "start", deadline: nil)
+      try await until("signup running") { entered.withLock { $0 } }
+      #expect(await harness.run(["session", "archive", root.rawValue]) == 1)
+      #expect(await harness.stderr.text.contains("\(leaf.rawValue) (signup)"))
+      for id in [root, child, leaf] { #expect(try await harness.store.record(id).lifecycle == .live) }
+      #expect(await harness.run(["session", "archive", root.rawValue, "--force"]) == 0)
+      for id in [root, child, leaf] {
+        guard case .archived = try await harness.store.record(id).lifecycle else {
+          Issue.record("\(id) remained live")
+          continue
+        }
+      }
+      let messages = try await harness.store.messages(conversation: delivery.message.conversation)
+      let final = try #require(messages.first { $0.kind == .final })
+      #expect(final.requestID == .init("cli-request"))
+      #expect(final.content.text.contains("archived before reporting"))
+      #expect(try await harness.store.record(requester).lifecycle == .live)
+    }
+  }
+
   @Test func sessionVerbsAndListRunAgainstTheRealServer() async throws {
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "ok"))]) }
@@ -561,6 +600,9 @@ private func until(
     #expect(throws: (any Error).self) {
       try Command.parse(["session", "create", "--executor", "kernel", "title"])
     }
+    #expect(try Command.parse(["session", "archive", "abc", "--force"]) == .sessionAction(.archive, id: "abc", force: true))
+    #expect(try Command.parse(["session", "archive", "abc"]) == .sessionAction(.archive, id: "abc"))
+    #expect(throws: (any Error).self) { try Command.parse(["session", "unarchive", "abc", "--force"]) }
     #expect(try Command.parse(["session", "interrupt", "abc"]) == .sessionAction(.interrupt, id: "abc"))
     #expect(try Command.parse(["session", "compact", "abc"]) == .sessionCompact(id: "abc", instructions: nil))
     #expect(

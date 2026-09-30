@@ -9,6 +9,20 @@ import Testing
 // materializes it, every verb acts on the store, and a restart onto a model
 // is the way back.
 @Suite struct RetiredContractorTests {
+  @Test func undrainedContractorInputDoesNotRequireForceToArchive() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.createSession(group: .shared, title: "retired", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      _ = try await sessions.enqueue(sid, input: Fix.message("queued"))
+      try await runService(sessions, makeConfig()) { service in
+        try await service.archive(sid)
+        #expect(try await sessions.record(sid).lifecycle != .live)
+        #expect(try await sessions.record(sid).hold == .normal)
+        #expect(try await sessions.hydrate(sid).queueTail == 0)
+      }
+    }
+  }
+
   @Test func bootAndWakeNeverMaterializeALeftoverContractorSession() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()

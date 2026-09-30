@@ -1,5 +1,5 @@
 import type { GroupSummary } from './contract.gen.ts'
-import { type Directory, displayNameFor } from './directory.ts'
+import { type Directory, displayFor } from './directory.ts'
 import { sharedGroup } from './shell-sdk/open-cache.js'
 
 export { sharedGroup }
@@ -23,9 +23,7 @@ export function memberOr(
 
 // A personal group's id is its person's.
 export function groupLabel(group: string, directory: Directory): string {
-  return group === sharedGroup
-    ? 'Shared'
-    : displayNameFor(directory, group) ?? group
+  return group === sharedGroup ? 'Shared' : displayFor(directory, group)
 }
 
 // A sender from outside the conversation's group carries that group's label.

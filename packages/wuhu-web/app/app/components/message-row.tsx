@@ -110,7 +110,7 @@ export function MessageRow({
             <button
               type='button'
               className='wuhu-quiet-button'
-              onClick={() => onReply(replyDraft(message, sender))}
+              onClick={() => onReply(replyDraft(message))}
             >
               Reply
             </button>

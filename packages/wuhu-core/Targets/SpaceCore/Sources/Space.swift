@@ -14,6 +14,7 @@ public actor Space {
   let blobs: BlobStore
   let broadcast: FSBroadcast
   let workSignals = WorkSignals()
+  let archiveReservations = ArchiveReservations()
   let dateGen: DateGenerator
   let clock: any Clock<Duration>
   let rng: WithRandomNumberGenerator

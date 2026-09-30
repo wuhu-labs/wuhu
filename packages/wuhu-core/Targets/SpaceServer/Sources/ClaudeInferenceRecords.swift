@@ -1,4 +1,4 @@
-import enum ClaudeStream.ClaudeStreamFrame
+import struct ClaudeStream.ClaudeInferenceCalls
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +11,7 @@ import struct SpaceCore.InferenceRecord
 import class SpaceCore.Space
 
 func recordClaudeInferences(
-  _ calls: [ClaudeStreamFrame.Assistant], space: Space, session: SessionID, model: ModelSpecifier, logger: Logger,
+  _ calls: [ClaudeInferenceCalls.Call], space: Space, session: SessionID, model: ModelSpecifier, logger: Logger,
 ) async {
   for call in calls {
     do {
@@ -21,7 +21,7 @@ func recordClaudeInferences(
         provider: model.provider, model: model.model, servedModel: call.model, effort: model.effort,
         input: call.usage.inputTokens, cacheRead: call.usage.cacheReadInputTokens,
         cacheWrite: call.usage.cacheCreationInputTokens, output: call.usage.outputTokens,
-        outcome: "ok",
+        outcome: call.outcome.rawValue,
       ))
     } catch {
       logger.error("Claude inference database write failed", metadata: ["session": "\(session.rawValue)", "error": "\(error)"])

@@ -164,11 +164,11 @@ import struct WuhuAI.ToolArguments
     }
   }
 
-  @Test func archiveIsForTheSessionItsCreatorAndAdminsOfItsGroup() async throws {
+  @Test func archiveIsForTheSessionItsCreatorAndAdminsButForceCannotArchiveSelf() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
       let performed = Box<[SessionID]>([])
-      let executor = ToolExecutor(space: rig.space, control: SessionControl { _, id in performed.withLock { $0.append(id) } })
+      let executor = ToolExecutor(space: rig.space, control: SessionControl { _, id, _ in performed.withLock { $0.append(id) } })
       let st = try await task(rig, of: rig.s, in: .shared)
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)
@@ -182,8 +182,15 @@ import struct WuhuAI.ToolArguments
           #expect(problem.message == "\(caller.rawValue) may not archive or unarchive session \(target.rawValue): only the session itself, its creator and admins of its group may")
         }
       }
+      do {
+        try await executor.control(.archive, st, of: st, force: true)
+        Issue.record("script force-archived itself")
+      } catch let problem as ToolProblem {
+        #expect(problem.message.contains("can't force-archive itself"))
+      }
       try await executor.control(.archive, st, of: st)
-      #expect(performed.value == [theirs, st])
+      try await executor.control(.unarchive, st, of: st)
+      #expect(performed.value == [theirs, st, st])
     }
   }
 }

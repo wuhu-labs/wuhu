@@ -370,7 +370,10 @@ import Testing
 
         let persona = try #require(try await w.harness.space.persona(account: w.aliceAccount)).name
         let hers = try await w.harness.store.createSession(group: .shared, title: "hers", kind: .agent, createdBy: persona, executor: Self.model)
+        let descendant = try await w.harness.store.createSession(group: .shared, title: "someone else's child", kind: .task, parent: hers, createdBy: w.s.rawValue, executor: Self.model)
+        #expect(try await send(w, .post, "/v1/session/\(descendant.rawValue)/archive", .object(["force": .bool(true)]), bearer: w.alice).status == .forbidden)
         #expect(try await send(w, .post, "/v1/session/\(hers.rawValue)/archive", bearer: w.alice).status == .ok)
+        #expect(try await w.harness.store.record(descendant).lifecycle != .live)
         #expect(try await send(w, .post, "/v1/session/\(w.s.rawValue)/archive", bearer: w.admin).status == .ok)
       }
     }

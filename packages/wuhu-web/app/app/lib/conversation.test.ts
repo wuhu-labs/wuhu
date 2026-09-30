@@ -1,3 +1,4 @@
+import { directoryOf, senderName } from './directory.ts'
 import {
   foldMessage,
   type MessageMap,
@@ -89,10 +90,23 @@ Deno.test('a quote excerpt collapses whitespace and clips to one line', () => {
   assertEquals(quoteExcerpt('abc', 3), 'abc')
 })
 
-Deno.test('a reply draft carries only what the composer strip renders', () => {
+Deno.test('a reply draft keeps the sender id and kind for presentation-time resolution', () => {
   assertEquals(
-    replyDraft(message(9, 'a', { sender: 'owner', text: 'hi' }), '@owner'),
-    { messageId: 'a', sender: '@owner', text: 'hi' },
+    replyDraft(
+      message(9, 'a', {
+        sender: 'owner',
+        senderKind: 'user',
+        senderHandle: 'old',
+        text: 'hi',
+      }),
+    ),
+    {
+      messageId: 'a',
+      sender: 'owner',
+      senderKind: 'user',
+      senderHandle: 'old',
+      text: 'hi',
+    },
   )
 })
 
@@ -102,4 +116,31 @@ Deno.test('the reader decides sides once resolved, and owns nothing without a pr
   assertEquals([none('morgan'), none('spoon')], [false, false])
   const known = ownerOf('morgan')!
   assertEquals([known('morgan'), known('spoon')], [true, false])
+})
+
+Deno.test('a pending reply resolves against the current directory without changing its sender id', () => {
+  const draft = replyDraft(
+    message(9, 'a', {
+      sender: 'person',
+      senderKind: 'user',
+      senderHandle: 'old',
+      text: 'hi',
+    }),
+  )
+  assertEquals(draft.sender, 'person')
+  assertEquals(
+    senderName(directoryOf([{ id: 'person', handle: 'vivian' }]), draft),
+    '@vivian',
+  )
+  assertEquals(
+    senderName(
+      directoryOf([{
+        id: 'person',
+        handle: 'vivian',
+        displayName: 'Vivian Cao',
+      }]),
+      draft,
+    ),
+    'Vivian Cao',
+  )
 })
