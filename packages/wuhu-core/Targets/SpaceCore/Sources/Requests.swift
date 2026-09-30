@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -84,21 +88,32 @@ extension SessionStore {
   ) async throws {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
-      try Notifications.append(
-        recipient: Notifications.ownerRecipient,
-        source: parent.rawValue,
-        group: try Sessions.group(of: parent.rawValue, in: db),
-        kind: .requestDeadline,
-        payload: try Sessions.encode(Notifications.RequestDeadlinePayload(
-          sessionID: task.rawValue,
-          parent: parent.rawValue,
-          requestID: request.rawValue,
-          deadlineAt: deadline.timeIntervalSince1970,
-        )),
-        now: now,
-        in: db,
-      )
+      try recordRequestDeadline(parent: parent, task: task, request: request, deadline: deadline, now: now, in: db)
     }
+  }
+
+  func recordRequestDeadline(
+    parent: SessionID,
+    task: SessionID,
+    request: RequestID,
+    deadline: Date,
+    now: String,
+    in db: Database,
+  ) throws {
+    try Notifications.append(
+      recipient: Notifications.ownerRecipient,
+      source: parent.rawValue,
+      group: try Sessions.group(of: parent.rawValue, in: db),
+      kind: .requestDeadline,
+      payload: try Sessions.encode(Notifications.RequestDeadlinePayload(
+        sessionID: task.rawValue,
+        parent: parent.rawValue,
+        requestID: request.rawValue,
+        deadlineAt: deadline.timeIntervalSince1970,
+      )),
+      now: now,
+      in: db,
+    )
   }
 
   // An errored or killed child with an open request tells its parent so;

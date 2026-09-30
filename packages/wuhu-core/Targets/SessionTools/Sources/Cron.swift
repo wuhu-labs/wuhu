@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 // Five-field cron (minute hour day-of-month month day-of-week), UTC.
 // Supports *, */n, a-b, a-b/n, and comma lists; day-of-month and day-of-week
@@ -60,43 +64,65 @@ struct CronSchedule: Hashable, Sendable {
   }
 
   func next(after date: Date) -> Date? {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "UTC")!
-    let remainder = date.timeIntervalSince1970.truncatingRemainder(dividingBy: 60)
-    var candidate = date.addingTimeInterval(60 - remainder)
-    // Bounded by construction: any satisfiable schedule fires within 4 years
-    // (leap-day worst case); day-level skips keep the walk cheap.
-    let limit = candidate.addingTimeInterval(4 * 366 * 24 * 3600)
+    var candidate = Int((date.timeIntervalSince1970 / 60).rounded(.down)) + 1
+    let limit = candidate + 4 * 366 * 24 * 60
     while candidate < limit {
-      let parts = calendar.dateComponents([.minute, .hour, .day, .month, .weekday], from: candidate)
-      guard months.contains(parts.month!) else {
-        candidate = nextDay(after: candidate, calendar: calendar)
+      let dayID = floorDivide(candidate, by: 1440)
+      let minuteOfDay = candidate - dayID * 1440
+      let (month, day) = monthAndDay(dayID)
+      let weekday = dayID + 4 - floorDivide(dayID + 4, by: 7) * 7
+      guard months.contains(month) else {
+        candidate = (dayID + 1) * 1440
         continue
       }
       let dayMatches = switch (dayRestricted, weekdayRestricted) {
-      case (true, true): days.contains(parts.day!) || weekdays.contains(parts.weekday! - 1)
-      case (true, false): days.contains(parts.day!)
-      case (false, true): weekdays.contains(parts.weekday! - 1)
+      case (true, true): days.contains(day) || weekdays.contains(weekday)
+      case (true, false): days.contains(day)
+      case (false, true): weekdays.contains(weekday)
       case (false, false): true
       }
       guard dayMatches else {
-        candidate = nextDay(after: candidate, calendar: calendar)
+        candidate = (dayID + 1) * 1440
         continue
       }
-      guard hours.contains(parts.hour!) else {
-        candidate = candidate.addingTimeInterval(TimeInterval((60 - parts.minute!) * 60))
+      let minute = minuteOfDay % 60
+      guard hours.contains(minuteOfDay / 60) else {
+        candidate += 60 - minute
         continue
       }
-      guard minutes.contains(parts.minute!) else {
-        candidate = candidate.addingTimeInterval(60)
+      guard minutes.contains(minute) else {
+        candidate += 1
         continue
       }
-      return candidate
+      return Date(timeIntervalSince1970: Double(candidate * 60))
     }
     return nil
   }
+}
 
-  private func nextDay(after date: Date, calendar: Calendar) -> Date {
-    calendar.startOfDay(for: date).addingTimeInterval(24 * 3600)
+private func floorDivide(_ value: Int, by divisor: Int) -> Int {
+  let quotient = value / divisor
+  return value % divisor < 0 ? quotient - 1 : quotient
+}
+
+private func monthAndDay(_ dayID: Int) -> (month: Int, day: Int) {
+  // 2000-01-01 is Unix day 10957; Gregorian leap years repeat every 146097 days.
+  let daysSince2000 = dayID - 10957
+  let era = floorDivide(daysSince2000, by: 146_097)
+  var year = 2000 + era * 400
+  var dayOfYear = daysSince2000 - era * 146_097
+  func leap(_ year: Int) -> Bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
   }
+  while dayOfYear >= (leap(year) ? 366 : 365) {
+    dayOfYear -= leap(year) ? 366 : 365
+    year += 1
+  }
+  let lengths = [31, leap(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  var month = 0
+  while dayOfYear >= lengths[month] {
+    dayOfYear -= lengths[month]
+    month += 1
+  }
+  return (month + 1, dayOfYear + 1)
 }

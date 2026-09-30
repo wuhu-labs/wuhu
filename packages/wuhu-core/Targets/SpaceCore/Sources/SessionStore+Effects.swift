@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -161,21 +165,28 @@ extension SessionStore {
   }
 
   @_spi(SessionObservation)
+  public func subscriptionRegistrations() async throws -> [(subscription: ArmedSubscription, callbackID: UUID?)] {
+    try await writer.read { db in try subscriptionRegistrations(in: db) }
+  }
+
+  @_spi(SessionObservation)
   public func observeArmedSubscriptions()
     -> some AsyncSequence<[(subscription: ArmedSubscription, callbackID: UUID?)], any Error> & Sendable
   {
     ValueObservation
-      .tracking { db in
-        try Row.fetchAll(
-          db,
-          sql: "SELECT * FROM session_subscriptions ORDER BY session_id, subscription_id",
-        ).map { row in
-          let subscription = try armedSubscription(row)
-          guard case .observe = subscription.slot.kind else { return (subscription, nil) }
-          return (subscription, observationToken(subscription))
-        }
-      }
+      .tracking { db in try subscriptionRegistrations(in: db) }
       .values(in: writer, bufferingPolicy: .bufferingNewest(1))
+  }
+
+  private func subscriptionRegistrations(in db: Database) throws -> [(subscription: ArmedSubscription, callbackID: UUID?)] {
+    try Row.fetchAll(
+      db,
+      sql: "SELECT * FROM session_subscriptions ORDER BY session_id, subscription_id",
+    ).map { row in
+      let subscription = try armedSubscription(row)
+      guard case .observe = subscription.slot.kind else { return (subscription, nil) }
+      return (subscription, observationToken(subscription))
+    }
   }
 
   public func armedSubscriptions(_ id: SessionID) async throws -> [ArmedSubscription] {
@@ -216,6 +227,16 @@ extension SessionStore {
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
     let row = try await writer.write { db in
+      if case let .reschedule(next) = advance {
+        guard let row = try Row.fetchOne(
+          db,
+          sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
+          arguments: [key, subscriptionID.rawValue],
+        ) else { throw StaleSubscriptionCallback() }
+        let due = try armedSubscription(row).nextFireAt
+        guard let due, SQLiteDateFormat.string(from: next) > SQLiteDateFormat.string(from: due)
+        else { throw NonAdvancingSubscription(due: due, next: next) }
+      }
       var delivered = notification
       var advancedObservation: SubscriptionSlot?
       if notification.kind == .spaceObservation {
@@ -248,6 +269,21 @@ extension SessionStore {
       }
 
       let enqueued = try Sessions.enqueue(key, input: .notification(delivered), nowDate: nowDate, in: db)
+      if notification.kind == .requestDeadline {
+        guard let row = try Row.fetchOne(
+          db,
+          sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
+          arguments: [key, subscriptionID.rawValue],
+        ) else { throw StaleSubscriptionCallback() }
+        let current = try armedSubscription(row)
+        guard case let .requestDeadline(request, task) = current.slot.kind,
+              request == notification.requestID, let deadline = current.nextFireAt,
+              advance == .retire
+        else { throw StaleSubscriptionCallback() }
+        try recordRequestDeadline(
+          parent: id, task: task, request: request, deadline: deadline, now: now, in: db,
+        )
+      }
       switch advance {
       case .retire:
         try db.execute(
@@ -281,6 +317,14 @@ extension SessionStore {
 }
 
 private struct StaleSubscriptionCallback: Error {}
+@_spi(SessionObservation)
+public struct NonAdvancingSubscription: Error, CustomStringConvertible {
+  public let description: String
+
+  init(due: Date?, next: Date) {
+    description = "reschedule did not advance stored due time \(due.map(SQLiteDateFormat.string(from:)) ?? "nil"): next \(SQLiteDateFormat.string(from: next))"
+  }
+}
 
 // An arming's incarnation is the whole callback identity: a cancel, a re-arm or
 // a restart mints a new one, so every callback still holding the old one is by

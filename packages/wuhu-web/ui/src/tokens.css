@@ -1085,6 +1085,14 @@
     width: min(720px, 100%);
   }
 
+  .wui-composer-stack > * {
+    pointer-events: auto;
+  }
+
+  .wui-mode-focus .wui-composer-stack > * {
+    pointer-events: none;
+  }
+
   .wui-composer {
     display: flex;
     flex-direction: column;
@@ -1093,7 +1101,6 @@
     min-height: 56px;
     padding: 7px 7px 7px 8px;
     border-radius: 18px;
-    pointer-events: auto;
     transition: box-shadow 150ms ease;
   }
 
@@ -1431,6 +1438,10 @@
     .wui-root.wui-mode-focus .wui-composer-zone {
       opacity: 1;
       transform: none;
+    }
+
+    .wui-root.wui-mode-focus .wui-composer-stack > * {
+      pointer-events: auto;
     }
 
     .wui-root.wui-mode-focus .wui-thread {

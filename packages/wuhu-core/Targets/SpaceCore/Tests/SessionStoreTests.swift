@@ -3,7 +3,7 @@ import Foundation
 import GRDB
 import JSONValue
 import SessionDomain
-@testable import SpaceCore
+@_spi(SessionObservation) @testable import SpaceCore
 import Testing
 import WuhuAI
 
@@ -409,6 +409,28 @@ struct SessionStoreTests {
           receipt: (session: sid, callID: callID),
         )
       }
+    }
+  }
+
+  @Test func reschedulingMustAdvanceThePersistedDueTimeBeforeEnqueuing() async throws {
+    try await withSessionDeps {
+      let space = try makeSpace()
+      let store = space.sessions
+      let session = try await store.createSession(group: .shared, title: "timer", kind: .agent, createdBy: "morgan", model: .test)
+      let due = fixedDate
+      let slot = SubscriptionSlot(id: .init("timer.advance"), kind: .timer(.cron("* * * * *"), message: "tick"))
+      try await store.armSubscription(session, slot: slot, nextFireAt: due)
+      let notification = SystemNotification(id: UUID(), timestamp: due, kind: .timer, subscriptionID: slot.id, content: .init(text: "tick"))
+      for next in [due.addingTimeInterval(-60), due, due.addingTimeInterval(0.0001)] {
+        await #expect(throws: NonAdvancingSubscription.self) {
+          try await store.fireSubscription(session, subscriptionID: slot.id, notification: notification, advance: .reschedule(next))
+        }
+        #expect(try await store.hydrate(session).undrained.isEmpty)
+        #expect(try await store.armedSubscriptions(session).first?.nextFireAt == due)
+      }
+      try await store.fireSubscription(session, subscriptionID: slot.id, notification: notification, advance: .reschedule(due.addingTimeInterval(60)))
+      #expect(try await store.hydrate(session).undrained.count == 1)
+      #expect(try await store.armedSubscriptions(session).first?.nextFireAt == due.addingTimeInterval(60))
     }
   }
 
