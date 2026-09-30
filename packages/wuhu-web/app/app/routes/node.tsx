@@ -5,25 +5,16 @@ import { DocMeta } from '~/components/doc-meta'
 import { FileCard, FileImage } from '~/components/file-view'
 import { MarkdownDocument } from '~/components/markdown-document'
 import { TableView } from '~/components/table-view'
-import type { EntryKind, QueryOutput, ReadOutput } from '~/lib/contract.gen'
+import type { QueryOutput } from '~/lib/contract.gen'
 import { cachedThenLive } from '~/lib/cached-then-live'
-import { type OpenedFile, openFile } from '~/lib/file-opening'
-import { useSpaceFeeds } from '~/lib/space-feeds'
-import type { PathMap } from '~/lib/tree'
-import { errorMessage } from '~/sdk/errors'
+import { loadNode, type NodeSource, type NodeView } from '~/lib/node-view'
+import { type GroupFeed, useSpaceFeeds } from '~/lib/space-feeds'
+import { ApiError, errorMessage } from '~/sdk/errors'
 import { tableSubscription } from '~/sdk/subscriptions'
 import { spaceDestination } from '~/lib/space-url'
 import { withoutGroup } from '~/lib/links'
 import { useObserve } from '~/lib/use-observe'
-import { viewOpening } from '~/lib/view-opening'
 import type { SpaceContext } from './space'
-
-type View =
-  | Exclude<OpenedFile, { state: 'text' }>
-  | { state: 'error'; message: string }
-  | { state: 'text'; content: string; notice?: string }
-  | { state: 'html'; origin: string; src: string }
-  | { state: 'table'; path: string }
 
 export default function Node() {
   const location = useLocation()
@@ -45,11 +36,11 @@ function NodePage({ path }: { path: string }) {
   const location = useLocation()
   const suffix = withoutGroup(location.search) + location.hash
   const viewRev = viewRevs[path] ?? 0
-  const [view, setView] = useState<View>({ state: 'loading' })
+  const [view, setView] = useState<NodeView>({ state: 'loading' })
   // The tree names a path's kind without a round trip; reading it through a
   // ref keeps every space mutation from reloading the page.
-  const paths = useRef<PathMap>(new Map())
-  paths.current = useSpaceFeeds().feed(group).files.paths
+  const feed = useRef<GroupFeed | null>(null)
+  feed.current = useSpaceFeeds().feed(group)
   const [active, setActive] = useState({
     client,
     contentOrigin,
@@ -70,25 +61,33 @@ function NodePage({ path }: { path: string }) {
 
   useEffect(() => {
     let cancelled = false
-    const apply = (next: View) => {
+    const apply = (next: NodeView) => {
       if (!cancelled) setView(next)
     }
-    const kept: Source = {
+    const kept: NodeSource = {
       stat: (at) => {
-        const kind = at === '/' ? 'directory' : paths.current.get(at)
+        if (!feed.current?.loaded) {
+          return Promise.reject(new Error('The kept tree is not loaded.'))
+        }
+        const kind = at === '/' ? 'directory' : feed.current.files.paths.get(at)
         return kind === undefined
-          ? Promise.reject(new Error(`${at} is not in the kept tree`))
+          ? Promise.reject(
+            new ApiError(404, {
+              code: 'notFound',
+              message: `${at} is not in the kept tree`,
+            }),
+          )
           : Promise.resolve({ kind })
       },
       read: (at) => client.keptRead(at),
     }
-    const live: Source = {
+    const live: NodeSource = {
       stat: (at) => client.stat(at),
       read: (at) => client.read(at),
     }
     cachedThenLive(
-      () => load(kept, contentOrigin, path, suffix, viewRev),
-      () => load(live, contentOrigin, path, suffix, viewRev),
+      () => loadNode(kept, contentOrigin, path, suffix, viewRev),
+      () => loadNode(live, contentOrigin, path, suffix, viewRev),
       apply,
       (failure) => apply({ state: 'error', message: errorMessage(failure) }),
     )
@@ -116,7 +115,7 @@ function NodeBody({
 }: {
   group: string
   client: SpaceContext['client']
-  view: View
+  view: NodeView
 }) {
   switch (view.state) {
     case 'loading':
@@ -176,84 +175,4 @@ function LiveTable({ path, group }: { path: string; group: string }) {
     noRows,
   ).data
   return <TableView output={output} />
-}
-
-interface Source {
-  stat(path: string): Promise<{ kind: EntryKind; size?: number }>
-  read(path: string): Promise<ReadOutput>
-}
-
-async function load(
-  source: Source,
-  contentOrigin: SpaceContext['contentOrigin'],
-  path: string,
-  suffix: string,
-  viewRev: number,
-): Promise<View> {
-  const { kind, size } = await source.stat(path)
-  if (kind === 'table') return { state: 'table', path }
-  if (kind === 'directory') {
-    const origin = resolvedContentOrigin(contentOrigin)
-    if (origin === undefined) return { state: 'loading' }
-    if (origin != null) {
-      const directory = path === '/' ? path : `${path}/`
-      return {
-        state: 'html',
-        origin,
-        src: origin + encodeURI(directory) + suffix,
-      }
-    }
-    return { state: 'error', message: 'Server reports no web origin.' }
-  }
-  if (path.endsWith('.html') || path.endsWith('.htm')) {
-    const origin = resolvedContentOrigin(contentOrigin)
-    if (origin === undefined) return { state: 'loading' }
-    if (origin) {
-      return {
-        state: 'html',
-        origin,
-        src: origin + encodeURI(path) + suffix,
-      }
-    }
-    const { content } = await source.read(path)
-    return {
-      state: 'text',
-      content,
-      notice: 'Server reports no web origin — showing raw HTML.',
-    }
-  }
-  if (path.endsWith('.view')) {
-    const { content } = await source.read(path)
-    const opening = viewOpening(content)
-    if (opening.state === 'text') return opening
-    const doc = opening.doc
-    const origin = resolvedContentOrigin(contentOrigin)
-    if (origin === undefined) return { state: 'loading' }
-    if (!origin) {
-      return {
-        state: 'text',
-        content,
-        notice: 'Server reports no web origin — showing the raw view doc.',
-      }
-    }
-    const params = new URLSearchParams({ path, rev: String(viewRev) })
-    return {
-      state: 'html',
-      origin,
-      src: `${origin}/_/views/${encodeURIComponent(doc.view)}?${params}`,
-    }
-  }
-  return openFile(
-    path,
-    size,
-    () => resolvedContentOrigin(contentOrigin),
-    source.read,
-  )
-}
-
-function resolvedContentOrigin(
-  contentOrigin: SpaceContext['contentOrigin'],
-): string | null | undefined {
-  if (contentOrigin instanceof Error) throw contentOrigin
-  return contentOrigin
 }

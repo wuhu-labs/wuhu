@@ -31,6 +31,7 @@ import {
   contentOriginString,
 } from '~/lib/use-content-origin'
 import { spaceDestination } from '~/lib/space-url'
+import { homepages } from '~/lib/node-view'
 import { ShareActions } from '~/components/share-actions'
 import { SessionActions } from '~/components/session-actions'
 import { AISharingDialog } from '~/components/ai-sharing-dialog'
@@ -156,6 +157,9 @@ function SpaceBody(
     ? [sharedGroup]
     : memberGroups(feeds.groups)
   const activePath = nodePathOf(location.pathname)
+  const shownPath = activePath === '/'
+    ? homepages.find((page) => paths.has(page)) ?? activePath
+    : activePath
 
   const go = useCallback((to: string) => {
     void navigate(to)
@@ -236,7 +240,7 @@ function SpaceBody(
     <>
       <AppShell
         style={shellStyle}
-        canvas={activePath?.endsWith('.md') ? 'quiet' : 'atmospheric'}
+        canvas={shownPath?.endsWith('.md') ? 'quiet' : 'atmospheric'}
         sidebar={
           <SpaceSidebar
             account={{
