@@ -358,7 +358,7 @@ extension SessionActor {
       case .compactBoundary:
         // Known again at the next result.
         live.claude.contextTokens = nil
-      case .initialization, .rateLimit, .other:
+      case .initialization, .assistant, .rateLimit, .other:
         break
       }
     } catch is CancellationError {

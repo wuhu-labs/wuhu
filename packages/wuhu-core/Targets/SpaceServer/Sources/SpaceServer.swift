@@ -349,7 +349,7 @@ public enum SpaceServer {
       space: space,
       hub: hub,
       attemptLog: attemptLogConfig(),
-      metrics: inferenceMetricsSink(writer: metricsWriter, logger: logger),
+      metrics: inferenceMetricsSink(space: space, writer: metricsWriter, logger: logger),
       credentials: credentials,
       secrets: secrets,
       claudeCode: claudeCode.seam,

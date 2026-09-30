@@ -14,14 +14,27 @@ func parseAnthropicStream(
     let task = Task {
       var content: [ContentBlock] = []
       let phase: AssistantMessagePhase? = nil
+      var servedModel: String?
       var stopReason: StopReason = .stop
-      var inputTokens = 0
+      var uncachedInputTokens = 0
+      var usage: Usage?
       var outputTokens = 0
       var cacheReadTokens = 0
       var cacheWriteTokens = 0
 
       func partial() -> AssistantMessage {
         AssistantMessage(content: content, phase: phase)
+      }
+
+      func reportUsage() {
+        let totalInput = uncachedInputTokens + cacheReadTokens + cacheWriteTokens
+        let current = Usage(
+          inputTokens: totalInput, outputTokens: outputTokens,
+          cacheReadTokens: cacheReadTokens, cacheWriteTokens: cacheWriteTokens,
+          totalTokens: totalInput + outputTokens,
+        )
+        usage = current
+        continuation.yield(.usage(current, servedModel: servedModel, partial: partial()))
       }
 
       continuation.yield(.start(partial()))
@@ -40,14 +53,14 @@ func parseAnthropicStream(
 
           switch event {
           case "message_start":
+            servedModel = dict["message"]?.object?["model"]?.stringValue
             if let msg = dict["message"]?.object,
                let usage = msg["usage"]?.object
             {
               cacheWriteTokens = usage["cache_creation_input_tokens"]?.intValue ?? 0
               cacheReadTokens = usage["cache_read_input_tokens"]?.intValue ?? 0
-              inputTokens = (usage["input_tokens"]?.intValue ?? 0)
-                + cacheWriteTokens
-                + cacheReadTokens
+              uncachedInputTokens = usage["input_tokens"]?.intValue ?? 0
+              reportUsage()
             }
 
           case "content_block_start":
@@ -256,8 +269,9 @@ func parseAnthropicStream(
                 cacheReadTokens = read
               }
               if let input = usage["input_tokens"]?.intValue {
-                inputTokens = input + cacheWriteTokens + cacheReadTokens
+                uncachedInputTokens = input
               }
+              reportUsage()
             }
 
           case "message_stop":
@@ -297,20 +311,7 @@ func parseAnthropicStream(
           stopReason = .stop
         }
 
-        let usage: Usage? = if inputTokens > 0 || outputTokens > 0 {
-          Usage(
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
-            cacheReadTokens: cacheReadTokens,
-            cacheWriteTokens: cacheWriteTokens,
-            reasoningTokens: 0,
-            totalTokens: inputTokens + outputTokens,
-          )
-        } else {
-          nil
-        }
-
-        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage)))
+        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage, servedModel: servedModel)))
         continuation.finish()
       } catch {
         continuation.finish(throwing: error)

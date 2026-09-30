@@ -18,6 +18,7 @@ func parseGeminiStream(
       var content: [ContentBlock] = []
       let phase: AssistantMessagePhase? = nil
       var stopReason: StopReason = .stop
+      var servedModel: String?
       var usage: Usage?
 
       func partial() -> AssistantMessage {
@@ -36,8 +37,11 @@ func parseGeminiStream(
           guard let dicts = parseGeminiResponse(sseEvent.data) else { continue }
 
           for dict in dicts {
+            if let reported = dict["modelVersion"]?.stringValue { servedModel = reported }
             if let usageMetadata = dict["usageMetadata"]?.object {
-              usage = parseGeminiUsage(from: usageMetadata)
+              let current = parseGeminiUsage(from: usageMetadata)
+              usage = current
+              continuation.yield(.usage(current, servedModel: servedModel, partial: partial()))
             }
 
             guard let candidates = dict["candidates"]?.array?.compactMap(\.object),
@@ -227,7 +231,7 @@ func parseGeminiStream(
           ))
         }
 
-        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage)))
+        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage, servedModel: servedModel)))
         continuation.finish()
       } catch {
         continuation.finish(throwing: error)
@@ -258,13 +262,13 @@ private func parseGeminiResponse(_ text: String) -> [OrderedDictionary<String, J
 private func parseGeminiUsage(from dict: OrderedDictionary<String, JSONValue>) -> Usage {
   let input = dict["promptTokenCount"]?.intValue ?? 0
   let outputTokens = dict["candidatesTokenCount"]?.intValue ?? 0
-  let total = dict["totalTokenCount"]?.intValue ?? (input + outputTokens)
-  let reasoning = dict["thoughtsTokenCount"]?.intValue ?? 0
+  let reasoning = dict["thoughtsTokenCount"]?.intValue
+  let total = dict["totalTokenCount"]?.intValue ?? (input + outputTokens + (reasoning ?? 0))
   let cached = dict["cachedContentTokenCount"]?.intValue ?? 0
 
   return Usage(
     inputTokens: input,
-    outputTokens: outputTokens,
+    outputTokens: outputTokens + (reasoning ?? 0),
     cacheReadTokens: cached,
     cacheWriteTokens: 0,
     reasoningTokens: reasoning,

@@ -111,6 +111,7 @@ final class ClaudeCodeHost: Sendable {
     let killer = Mutex(Killer.notStarted)
     let log = Logger(label: "wuhu.claude-code")
     let usage = usage
+    let space = space
     @Dependency(\.date) var dependencyDate
     let date = dependencyDate
     return ClaudeCodeProcess(
@@ -176,17 +177,23 @@ final class ClaudeCodeHost: Sendable {
                 await withTaskGroup(of: Void.self) { pumps in
                   pumps.addTask {
                     var reader = ClaudeStreamReader()
+                    var calls = ClaudeInferenceCalls()
+                    func consume(_ frame: ClaudeStreamFrame) async {
+                      await recordClaudeInferences(calls.record(frame), space: space, session: launch.session, model: model, logger: log)
+                      if case let .rateLimit(limit) = frame {
+                        usage.record(model.provider, plan: nil, windows: claudeUsage(limit), at: date.now)
+                      }
+                      frameSink.yield(frame)
+                    }
                     do {
                       for try await buffer in execution.standardOutput {
                         for frame in reader.read(buffer.withUnsafeBytes { Array($0) }) {
-                          if case let .rateLimit(limit) = frame {
-                            usage.record(model.provider, plan: nil, windows: claudeUsage(limit), at: date.now)
-                          }
-                          frameSink.yield(frame)
+                          await consume(frame)
                         }
                       }
                     } catch {}
-                    if let last = reader.finish() { frameSink.yield(last) }
+                    if let last = reader.finish() { await consume(last) }
+                    await recordClaudeInferences(calls.drain(), space: space, session: launch.session, model: model, logger: log)
                     frameSink.finish()
                   }
                   pumps.addTask {
@@ -340,7 +347,7 @@ final class ClaudeCodeHost: Sendable {
                 for frame in reader.read(buffer.withUnsafeBytes { Array($0) }) {
                   switch frame {
                   case let .rateLimit(limit): return limit
-                  case .result: return nil
+                  case .assistant, .result: return nil
                   default: continue
                   }
                 }

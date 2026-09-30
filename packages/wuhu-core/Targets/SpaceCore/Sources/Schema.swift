@@ -7,7 +7,7 @@ let spaceSchemaSQL = [
   sessionScopeContextSchemaSQL, conversationSchemaSQL, notificationSchemaSQL,
   allocationSchemaSQL, authSchemaSQL, groupSchemaSQL, deviceSchemaSQL, enrollmentSchemaSQL, personaSchemaSQL,
   claudeCodeSchemaSQL, claudeCodeHandoverSchemaSQL, spaceMetaSchemaSQL, webPushSchemaSQL, pushRelaySchemaSQL,
-  userProfileSchemaSQL, sessionPromptRevisionSchemaSQL,
+  userProfileSchemaSQL, sessionPromptRevisionSchemaSQL, inferenceSchemaSQL,
 ]
 .joined(separator: "\n")
 

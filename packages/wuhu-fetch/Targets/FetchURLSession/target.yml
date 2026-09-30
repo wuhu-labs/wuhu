@@ -2,11 +2,9 @@ name: FetchURLSession
 kind: library
 sources: Sources
 dependencies:
-  - Crypto
   - Fetch
 tests:
   dependencies:
-    - Crypto
     - Fetch
     - FetchSSE
     - FetchTesting

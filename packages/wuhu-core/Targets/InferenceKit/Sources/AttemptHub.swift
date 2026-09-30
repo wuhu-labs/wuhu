@@ -95,6 +95,7 @@ extension InferenceEvent {
          let .toolCallStart(_, partial),
          let .toolCallDelta(_, _, partial),
          let .toolCallEnd(_, _, partial),
+         let .usage(_, _, partial),
          let .done(partial, _):
       partial
     }

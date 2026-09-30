@@ -285,7 +285,7 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     #expect(usage.reasoningTokens == 128)
   }
 
-  @Test func absentUsageDetailsReadZero() async throws {
+  @Test func absentUsageDetailsLeaveReasoningUnknown() async throws {
     let usage = try await parsedUsage([
       "input_tokens": 10,
       "output_tokens": 5,
@@ -293,7 +293,7 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     ])
     #expect(usage.cacheReadTokens == 0)
     #expect(usage.cacheWriteTokens == 0)
-    #expect(usage.reasoningTokens == 0)
+    #expect(usage.reasoningTokens == nil)
   }
 
   @Test func handlesErrorResponse() async throws {

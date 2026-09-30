@@ -120,6 +120,8 @@ The induced `sessions` table (id, title, tags, hold, work, lifecycle,
 executor, executor_config, created_by, timestamps) IS the status surface: `wuhu session list`,
 `query`/`observe --sql` over it, or a `.view` file for a live dashboard.
 
+The induced `inferences` table is per-call usage, with the same group visibility as `sessions`: configured provider/model/effort, API `served_model`, UTC `at`, uncached `input`, `cache_read`, `cache_write`, billed `output` including reasoning, optional `reasoning`, outcome/error and optional timings. Query or observe it, joining `sessions` for tags. Rows survive archive, compaction and Start over; no backfill or prices. Claude Code uses the first assistant frame timestamp and last frame usage per message id, with null reasoning and timings.
+
 ## Machines
 
 A space can adopt remote boxes ("machines") for raw command execution and raw

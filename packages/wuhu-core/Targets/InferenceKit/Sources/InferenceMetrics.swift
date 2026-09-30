@@ -19,6 +19,7 @@ public struct InferenceMetric: Sendable, Equatable {
   public var session: SessionID
   public var provider: String
   public var model: String
+  public var servedModel: String?
   public var effort: String
   public var outcome: Outcome
   public var errorKind: String?
@@ -32,6 +33,7 @@ public struct InferenceMetric: Sendable, Equatable {
     session: SessionID,
     provider: String,
     model: String,
+    servedModel: String? = nil,
     effort: String,
     outcome: Outcome,
     errorKind: String? = nil,
@@ -44,6 +46,7 @@ public struct InferenceMetric: Sendable, Equatable {
     self.session = session
     self.provider = provider
     self.model = model
+    self.servedModel = servedModel
     self.effort = effort
     self.outcome = outcome
     self.errorKind = errorKind
@@ -71,7 +74,7 @@ public struct InferenceMetric: Sendable, Equatable {
         "out": .integer(usage.outputTokens),
         "cache_read": .integer(usage.cacheReadTokens),
         "cache_write": .integer(usage.cacheWriteTokens),
-        "reasoning": .integer(usage.reasoningTokens),
+        "reasoning": .integer(usage.reasoningTokens ?? 0),
         "total": .integer(usage.totalTokens),
       ])
     }

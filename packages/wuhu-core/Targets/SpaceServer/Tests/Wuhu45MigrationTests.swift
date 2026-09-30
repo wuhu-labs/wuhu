@@ -88,7 +88,7 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["revision_actors", "space_deployment_certificate"]
+    let later: Set = ["revision_actors", "space_deployment_certificate", "inferences"]
     #expect(migrated.keys.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
     for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) {
       #expect(migrated[table] == lines, "\(table)")

@@ -294,15 +294,18 @@ public struct AssistantMessage: Hashable, Sendable, Codable {
 public struct AssistantMessageMetadata: Hashable, Sendable, Codable {
   public var stopReason: StopReason
   public var usage: Usage?
+  public var servedModel: String?
 
-  public init(stopReason: StopReason = .stop, usage: Usage? = nil) {
+  public init(stopReason: StopReason = .stop, usage: Usage? = nil, servedModel: String? = nil) {
     self.stopReason = stopReason
     self.usage = usage
+    self.servedModel = servedModel
   }
 
   public enum CodingKeys: String, CodingKey {
     case stopReason = "stop_reason"
     case usage = "usage"
+    case servedModel = "served_model"
   }
 }
 
@@ -344,15 +347,21 @@ public struct Usage: Hashable, Sendable, Codable {
   public var outputTokens: Int
   public var cacheReadTokens: Int
   public var cacheWriteTokens: Int
-  public var reasoningTokens: Int
+  public var reasoningTokens: Int?
   public var totalTokens: Int
+
+  public var uncachedInputTokens: Int {
+    let uncached = inputTokens - cacheReadTokens - cacheWriteTokens
+    precondition(uncached >= 0, "cached input exceeds total input")
+    return uncached
+  }
 
   public init(
     inputTokens: Int,
     outputTokens: Int,
     cacheReadTokens: Int = 0,
     cacheWriteTokens: Int = 0,
-    reasoningTokens: Int = 0,
+    reasoningTokens: Int? = nil,
     totalTokens: Int,
   ) {
     self.inputTokens = inputTokens

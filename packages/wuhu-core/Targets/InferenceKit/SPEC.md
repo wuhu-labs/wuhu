@@ -1,0 +1,3 @@
+# InferenceKit
+
+Each executor attempt, including forced-compaction calls and failed or cancelled attempts, produces one `InferenceMetric`. It carries call start, session, configured provider/model/effort, API-reported served model when available, outcome/error, duration, optional time to first event, and optional usage. The metrics sink is also called on failures. Failed or cancelled attempts retain the last reported partial usage, when present. Usage remains in WuhuAI's total-input form until the server normalizes it for storage. Existing `logs/inference.jsonl` encoding stays unchanged, including zero for unreported reasoning.

@@ -4,10 +4,11 @@ import OrderedCollections
 public enum ClaudeStreamFrame: Sendable, Equatable {
   case initialization(Initialization)
   case transcriptMirror(entries: [OrderedDictionary<String, JSONValue>])
+  case assistant(Assistant)
   case result(TurnResult)
   case compactBoundary(CompactBoundary)
   case rateLimit(RateLimit)
-  // An init, mirror or result frame the loop cannot read: the session cannot
+  // An init, assistant, mirror or result frame the loop cannot read: the session cannot
   // go on without it, so it must never pass as `.other`.
   case malformed(JSONValue)
   case other(JSONValue)
@@ -17,6 +18,13 @@ public enum ClaudeStreamFrame: Sendable, Equatable {
     let sessionID: String
     let version: String
     let model: String
+  }
+
+  public struct Assistant: Sendable, Equatable {
+    public let id: String
+    public let timestamp: String
+    public let model: String
+    public let usage: Usage
   }
 
   public struct TurnResult: Sendable, Equatable {
@@ -37,10 +45,10 @@ public enum ClaudeStreamFrame: Sendable, Equatable {
   }
 
   public struct Usage: Sendable, Equatable {
-    let inputTokens: Int
-    let cacheReadInputTokens: Int
-    let cacheCreationInputTokens: Int
-    let outputTokens: Int
+    public let inputTokens: Int
+    public let cacheReadInputTokens: Int
+    public let cacheCreationInputTokens: Int
+    public let outputTokens: Int
 
     public var contextTokens: Int { inputTokens + cacheReadInputTokens }
   }
@@ -93,6 +101,8 @@ extension ClaudeStreamFrame {
       self = Self.initialization(frame).map(Self.initialization) ?? .malformed(value)
     case ("transcript_mirror", _):
       self = frame["entries"]?.array?.objects.map { .transcriptMirror(entries: $0) } ?? .malformed(value)
+    case ("assistant", _):
+      self = Self.assistant(frame).map(Self.assistant) ?? .malformed(value)
     case ("result", _):
       self = Self.result(frame).map(Self.result) ?? .malformed(value)
     case ("system", "compact_boundary"):
@@ -110,6 +120,16 @@ extension ClaudeStreamFrame {
           let model = frame["model"]?.stringValue
     else { return nil }
     return Initialization(sessionID: sessionID, version: version, model: model)
+  }
+
+  private static func assistant(_ frame: OrderedDictionary<String, JSONValue>) -> Assistant? {
+    guard let message = frame["message"]?.object,
+          let id = message["id"]?.stringValue,
+          let timestamp = frame["timestamp"]?.stringValue,
+          let model = message["model"]?.stringValue,
+          let usage = message["usage"]?.object.flatMap(Usage.init)
+    else { return nil }
+    return Assistant(id: id, timestamp: timestamp, model: model, usage: usage)
   }
 
   private static func result(_ frame: OrderedDictionary<String, JSONValue>) -> TurnResult? {

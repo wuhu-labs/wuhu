@@ -4,22 +4,16 @@ import Foundation
   import FoundationNetworking
 #endif
 
-import Crypto
 import Fetch
 import HTTPTypes
 
 #if canImport(Security)
   import Security
-
-  private func certificateFingerprint(_ certificate: SecCertificate) -> String {
-    let digest = SHA256.hash(data: SecCertificateCopyData(certificate) as Data)
-    return "sha256:" + digest.map { $0 < 16 ? "0" + String($0, radix: 16) : String($0, radix: 16) }.joined()
-  }
 #endif
 
 extension FetchClient {
   public static func urlSession(_ session: URLSession = .shared) -> Self {
-    let transport = URLSessionFetchTransport(configuration: session.configuration, pinnedFingerprint: nil)
+    let transport = URLSessionFetchTransport(configuration: session.configuration, delegate: StreamingURLSessionDelegate())
 
     return Self { request in
       try await transport.fetch(request)
@@ -27,16 +21,16 @@ extension FetchClient {
   }
 
   #if canImport(Security)
-    // A wuhu space server presents a self-signed leaf the system cannot chain,
-    // so the invite-delivered `sha256:<hex>` over the leaf DER IS the trust
-    // decision — system evaluation is bypassed, never merely supplemented.
+    /// A client whose server-trust challenges `serverTrust` decides in place of the system.
+    ///
+    /// It receives the challenged host and the trust the server presented; `true` accepts that trust as is, without system evaluation, and `false` cancels the connection.
     public static func urlSession(
       _ session: URLSession = .shared,
-      pinnedCertificateFingerprint fingerprint: String,
+      serverTrust: @escaping @Sendable (_ host: String, _ trust: SecTrust) -> Bool,
     ) -> Self {
       let transport = URLSessionFetchTransport(
         configuration: session.configuration,
-        pinnedFingerprint: fingerprint,
+        delegate: StreamingURLSessionDelegate(serverTrust: serverTrust),
       )
 
       return Self { request in
@@ -50,8 +44,8 @@ private final class URLSessionFetchTransport: @unchecked Sendable {
   private let delegate: StreamingURLSessionDelegate
   private let session: URLSession
 
-  init(configuration: URLSessionConfiguration, pinnedFingerprint: String?) {
-    self.delegate = StreamingURLSessionDelegate(pinnedFingerprint: pinnedFingerprint)
+  init(configuration: URLSessionConfiguration, delegate: StreamingURLSessionDelegate) {
+    self.delegate = delegate
     self.session = URLSession(
       configuration: configuration,
       delegate: self.delegate,
@@ -174,29 +168,27 @@ private struct TransportBoundSequence<Base: AsyncSequence & Sendable>: AsyncSequ
 private final class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private var tasks: [Int: StreamingTaskState] = [:]
   private let lock = NSLock()
-  private let pinnedFingerprint: String?
-
-  init(pinnedFingerprint: String?) {
-    self.pinnedFingerprint = pinnedFingerprint
-  }
 
   #if canImport(Security)
+    private let serverTrust: (@Sendable (String, SecTrust) -> Bool)?
+
+    init(serverTrust: (@Sendable (String, SecTrust) -> Bool)? = nil) {
+      self.serverTrust = serverTrust
+    }
+
     func urlSession(
       _ session: URLSession,
       didReceive challenge: URLAuthenticationChallenge,
       completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void,
     ) {
-      guard let pinnedFingerprint,
+      guard let serverTrust,
             challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
             let trust = challenge.protectionSpace.serverTrust
       else {
         completionHandler(.performDefaultHandling, nil)
         return
       }
-      guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-            let leaf = chain.first,
-            certificateFingerprint(leaf) == pinnedFingerprint
-      else {
+      guard serverTrust(challenge.protectionSpace.host, trust) else {
         completionHandler(.cancelAuthenticationChallenge, nil)
         return
       }

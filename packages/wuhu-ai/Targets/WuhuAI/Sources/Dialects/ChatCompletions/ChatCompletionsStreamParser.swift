@@ -15,6 +15,7 @@ func parseChatCompletionsStream(
       var content: [ContentBlock] = []
       let phase: AssistantMessagePhase? = nil
       var stopReason: StopReason = .stop
+      var servedModel: String?
       var usage: Usage?
 
       func partial() -> AssistantMessage {
@@ -63,11 +64,14 @@ func parseChatCompletionsStream(
           }
 
           guard let dict = parseChatJSON(sseEvent.data) else { continue }
+          if let reported = dict["model"]?.stringValue { servedModel = reported }
 
           // DashScope delivers usage in a trailing chunk whose choices array
           // is empty, so this must run before the choices guard.
           if let usageDict = dict["usage"]?.object {
-            usage = parseUsage(from: usageDict)
+            let current = parseUsage(from: usageDict)
+            usage = current
+            continuation.yield(.usage(current, servedModel: servedModel, partial: partial()))
           }
 
           guard let choices = dict["choices"]?.array?.compactMap(\.object),
@@ -246,7 +250,7 @@ func parseChatCompletionsStream(
           stopReason = .stop
         }
 
-        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage)))
+        continuation.yield(.done(partial(), AssistantMessageMetadata(stopReason: stopReason, usage: usage, servedModel: servedModel)))
         continuation.finish()
       } catch {
         continuation.finish(throwing: error)
@@ -276,7 +280,6 @@ private func parseUsage(from dict: OrderedDictionary<String, JSONValue>) -> Usag
   let cacheWrite = dict["cache_creation_input_tokens"]?.intValue ?? 0
   let reasoning = dict["reasoning_tokens"]?.intValue
     ?? dict["completion_tokens_details"]?.object?["reasoning_tokens"]?.intValue
-    ?? 0
 
   return Usage(
     inputTokens: input,

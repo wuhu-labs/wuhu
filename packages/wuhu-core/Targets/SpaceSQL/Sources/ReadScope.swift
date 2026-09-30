@@ -43,10 +43,10 @@ public struct ViewCatalog: Sendable {
   static let schemaPlaceholder = "{schema}"
 
   static let inducedTables: Set<String> = [
-    "docs", "links", "doc_custom_attrs", "sessions", "conversations", "conversation_members",
+    "docs", "links", "doc_custom_attrs", "sessions", "inferences", "conversations", "conversation_members",
     "messages", "notifications", "watermarks", "devices", "device_commands",
   ]
-  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "conversations", "notifications"]
+  static let groupedTables: Set<String> = ["docs", "links", "doc_custom_attrs", "sessions", "inferences", "conversations", "notifications"]
   // SQLite reports a table-valued function as a read of a table by its name;
   // these two read nothing but their own arguments.
   static let tableFunctions: Set<String> = ["json_each", "json_tree"]

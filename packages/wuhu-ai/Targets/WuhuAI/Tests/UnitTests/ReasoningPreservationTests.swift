@@ -271,7 +271,7 @@ import Testing
     #expect(events.map(kind) == [
       "start",
       "reasoningStart", "reasoningDelta", "reasoningDelta", "reasoningEnd",
-      "textStart", "textDelta", "textDelta", "textEnd",
+      "textStart", "textDelta", "textDelta", "usage", "textEnd",
       "done",
     ])
 
@@ -349,6 +349,7 @@ import Testing
     case .toolCallDelta: "toolCallDelta"
     case .toolCallEnd: "toolCallEnd"
     case .done: "done"
+    case .usage: "usage"
     }
   }
 }

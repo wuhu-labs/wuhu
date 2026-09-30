@@ -24,6 +24,8 @@ public enum InferenceEvent: Hashable, Sendable {
   case toolCallDelta(contentIndex: Int, delta: String, partial: AssistantMessage)
   case toolCallEnd(contentIndex: Int, toolCall: ToolCall, partial: AssistantMessage)
 
+  case usage(Usage, servedModel: String?, partial: AssistantMessage)
+
   // MARK: Terminal events
 
   /// Success terminal — carries the final message and metadata.

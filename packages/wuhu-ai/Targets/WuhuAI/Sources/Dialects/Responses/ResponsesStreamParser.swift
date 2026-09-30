@@ -15,6 +15,7 @@ func parseResponsesStream(
       var content: [ContentBlock] = []
       var phase: AssistantMessagePhase?
       var stopReason: StopReason = .stop
+      var servedModel: String?
       var usage: Usage?
       var completedStatus: String?
 
@@ -40,6 +41,33 @@ func parseResponsesStream(
         for try await sseEvent in sse {
           guard let dict = parseJSON(sseEvent.data) else { continue }
           guard let type = dict["type"]?.stringValue else { continue }
+
+          if let reported = dict["response"]?.object?["model"]?.stringValue { servedModel = reported }
+
+          if let usageDict = dict["response"]?.object?["usage"]?.object {
+            let input = usageDict["input_tokens"]?.intValue ?? 0
+            let outputTokens = usageDict["output_tokens"]?.intValue ?? 0
+            let total = usageDict["total_tokens"]?.intValue ?? (input + outputTokens)
+            let reasoning = usageDict["output_tokens_details"]?.object?["reasoning_tokens"]?.intValue
+              ?? usageDict["reasoning_tokens"]?.intValue
+            let cacheRead = usageDict["input_tokens_details"]?.object?["cached_tokens"]?.intValue
+              ?? usageDict["cached_input_tokens"]?.intValue
+              ?? 0
+            let cacheWrite = usageDict["input_tokens_details"]?.object?["cache_write_tokens"]?.intValue
+              ?? usageDict["cache_creation_input_tokens"]?.intValue
+              ?? 0
+
+            let current = Usage(
+              inputTokens: input,
+              outputTokens: outputTokens,
+              cacheReadTokens: cacheRead,
+              cacheWriteTokens: cacheWrite,
+              reasoningTokens: reasoning,
+              totalTokens: total,
+            )
+            usage = current
+            continuation.yield(.usage(current, servedModel: servedModel, partial: partial()))
+          }
 
           switch type {
           case "response.output_item.added":
@@ -244,29 +272,6 @@ func parseResponsesStream(
           case "response.completed":
             sawResponseCompleted = true
             if let response = dict["response"]?.object {
-              if let usageDict = response["usage"]?.object {
-                let input = usageDict["input_tokens"]?.intValue ?? 0
-                let outputTokens = usageDict["output_tokens"]?.intValue ?? 0
-                let total = usageDict["total_tokens"]?.intValue ?? (input + outputTokens)
-                let reasoning = usageDict["output_tokens_details"]?.object?["reasoning_tokens"]?.intValue
-                  ?? usageDict["reasoning_tokens"]?.intValue
-                  ?? 0
-                let cacheRead = usageDict["input_tokens_details"]?.object?["cached_tokens"]?.intValue
-                  ?? usageDict["cached_input_tokens"]?.intValue
-                  ?? 0
-                let cacheWrite = usageDict["input_tokens_details"]?.object?["cache_write_tokens"]?.intValue
-                  ?? usageDict["cache_creation_input_tokens"]?.intValue
-                  ?? 0
-
-                usage = Usage(
-                  inputTokens: input,
-                  outputTokens: outputTokens,
-                  cacheReadTokens: cacheRead,
-                  cacheWriteTokens: cacheWrite,
-                  reasoningTokens: reasoning,
-                  totalTokens: total,
-                )
-              }
               completedStatus = response["status"]?.stringValue
 
               // Use incomplete_details.reason for stop reason
@@ -297,7 +302,7 @@ func parseResponsesStream(
           )
         }
 
-        continuation.yield(.done(completedMessage(), AssistantMessageMetadata(stopReason: stopReason, usage: usage)))
+        continuation.yield(.done(completedMessage(), AssistantMessageMetadata(stopReason: stopReason, usage: usage, servedModel: servedModel)))
         continuation.finish()
       } catch {
         continuation.finish(throwing: error)

@@ -12,7 +12,7 @@ import WuhuAI
 
 private let textSSE = """
 event: message_start
-data: {"message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4}}}
+data: {"message":{"model":"claude-served","usage":{"input_tokens":10,"cache_read_input_tokens":4}}}
 
 event: content_block_start
 data: {"content_block":{"type":"text","text":""}}
@@ -288,6 +288,7 @@ private func run(
     #expect(metric.model == "deepseek-v4-pro")
     #expect(metric.effort == "high")
     #expect(metric.usage?.totalTokens == 19)
+    #expect(metric.servedModel == "claude-served")
     let ttft = try #require(metric.ttftMs)
     #expect(ttft <= metric.durationMs)
     #expect(metric.durationMs > 0)
@@ -322,5 +323,37 @@ private func run(
     #expect(metric.outcome == .timeout)
     #expect(metric.errorKind == "readTimeout")
     #expect(metric.ttftMs == nil)
+  }
+
+  @Test func failedCallRetainsReportedPartialUsageAndServedModel() async throws {
+    let box = MetricBox()
+    let executor = try await makeExecutor(metrics: InferenceMetricsSink { box.set($0) })
+    let partial = """
+    event: message_start
+    data: {"message":{"model":"claude-partial","usage":{"input_tokens":10,"cache_read_input_tokens":40,"cache_creation_input_tokens":20}}}
+
+    event: message_delta
+    data: {"usage":{"output_tokens":5}}
+
+    event: error
+    data: {"error":{"type":"overloaded_error","message":"overloaded"}}
+
+    """
+    await #expect(throws: (any Error).self) {
+      try await withDependencies {
+        $0.fetch = stubFetch(sse: partial, into: RequestBox())
+        $0.continuousClock = ImmediateClock()
+      } operation: {
+        try await executor.run(attemptID: UUID(4), transcript: transcript, mode: .forcedCompact)
+      }
+    }
+    let metric = try #require(box.metric)
+    #expect(metric.outcome != .ok)
+    #expect(metric.servedModel == "claude-partial")
+    #expect(metric.usage?.uncachedInputTokens == 10)
+    #expect(metric.usage?.cacheReadTokens == 40)
+    #expect(metric.usage?.cacheWriteTokens == 20)
+    #expect(metric.usage?.outputTokens == 5)
+    #expect(metric.usage?.reasoningTokens == nil)
   }
 }

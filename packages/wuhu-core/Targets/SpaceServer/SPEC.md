@@ -694,3 +694,9 @@ enforced loudly at both ends:
 
 In-process tests never hit the NIO decoder's ceiling — these two explicit
 gates are what make the failure mode reachable and tested.
+
+## Per-call inference accounting
+
+The kernel metrics sink writes every `InferenceMetric` to `inferences` alongside the existing `logs/inference.jsonl` line. Uncached input subtracts cache reads and writes from WuhuAI's total input; billed output includes reasoning. Missing usage and unreported reasoning remain null. Compaction uses the same sink.
+
+Claude Code assistant frames are collected by `message.id`. A different assistant id or a user/tool-result frame completes the pending call and its row is written before the boundary frame is forwarded; result and process EOF drain the last call. Completed calls therefore survive a server stop mid-turn. Each id yields one row using the last frame's usage and served model before its completion boundary, and the configured provider/model/effort. `at` is the first assistant frame's timestamp: Claude Code does not expose API call start on this path. Duration, time to first token and reasoning remain null; assistant calls have outcome `ok`. The turn result is only a flush boundary, not the source of per-call usage. Calls that never reach the stream (including Claude Code's own auto-compaction) are not counted. Rows are not backfilled.

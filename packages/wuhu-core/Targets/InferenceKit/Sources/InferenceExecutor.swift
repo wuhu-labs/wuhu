@@ -107,11 +107,17 @@ public struct InferenceExecutor: Sendable {
     let timestamp = dateGen.now
     var completed: CompletedInference?
     var failure: InferenceError?
+    var reportedUsage: Usage?
+    var servedModel: String?
     var firstEventSeen = false
 
     func handle(_ result: Result<InferenceEvent, InferenceError>) {
       switch result {
       case let .success(event):
+        if case let .usage(usage, reportedModel, _) = event {
+          reportedUsage = usage
+          servedModel = reportedModel
+        }
         hub?.publish(session: session, .delta(attemptID: attemptID, event: event))
         if case let .done(message, metadata) = event {
           completed = CompletedInference(message: message, metadata: metadata)
@@ -144,13 +150,13 @@ public struct InferenceExecutor: Sendable {
         outcome: .failed(reason: String(describing: failure)),
       ))
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
-      await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: nil, ttft: ttft, elapsed: elapsed))
+      await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
       throw failure
     }
     guard let completed else {
       hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
-      await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: nil, ttft: ttft, elapsed: elapsed))
+      await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
       throw InferenceCancelled()
     }
     hub?.publish(session: session, .finished(
@@ -165,7 +171,7 @@ public struct InferenceExecutor: Sendable {
       usage: completed.metadata.usage,
       elapsed: elapsed,
     )
-    await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, ttft: ttft, elapsed: elapsed))
+    await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, servedModel: completed.metadata.servedModel, ttft: ttft, elapsed: elapsed))
     return completed
   }
 
@@ -174,6 +180,7 @@ public struct InferenceExecutor: Sendable {
     error: InferenceError?,
     cancelled: Bool,
     usage: Usage?,
+    servedModel: String? = nil,
     ttft: Duration?,
     elapsed: Duration,
   ) -> InferenceMetric {
@@ -183,6 +190,7 @@ public struct InferenceExecutor: Sendable {
       session: session,
       provider: model.specifier.provider,
       model: model.specifier.model,
+      servedModel: servedModel,
       effort: model.specifier.effort,
       outcome: derived.outcome,
       errorKind: derived.kind,
@@ -221,7 +229,7 @@ public struct InferenceExecutor: Sendable {
 
 private func describe(_ usage: Usage) -> String {
   "in=\(usage.inputTokens) out=\(usage.outputTokens) cacheRead=\(usage.cacheReadTokens) "
-    + "cacheWrite=\(usage.cacheWriteTokens) reasoning=\(usage.reasoningTokens) total=\(usage.totalTokens)"
+    + "cacheWrite=\(usage.cacheWriteTokens) reasoning=\(usage.reasoningTokens ?? 0) total=\(usage.totalTokens)"
 }
 
 extension Duration {
