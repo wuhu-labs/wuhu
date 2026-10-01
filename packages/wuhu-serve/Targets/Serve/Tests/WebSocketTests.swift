@@ -44,6 +44,17 @@ import Testing
     }
   }
 
+  @Test func pairAbortFinishesBothSidesAndFailsSends() async throws {
+    let (a, b) = WebSocket.pair()
+    a.abort()
+    var aInbound = a.inbound.makeAsyncIterator()
+    var bInbound = b.inbound.makeAsyncIterator()
+    #expect(await aInbound.next() == nil)
+    #expect(await bInbound.next() == nil)
+    await #expect(throws: ServeError.webSocketClosed) { try await a.send(.text("late")) }
+    await #expect(throws: ServeError.webSocketClosed) { try await b.send(.text("late")) }
+  }
+
   @Test func recognizesWebSocketUpgradeRequests() throws {
     #expect(Serve.isWebSocketUpgradeRequest(upgradeRequest()))
     #expect(Serve.isWebSocketUpgradeRequest(upgradeRequest(connection: "keep-alive, Upgrade")))

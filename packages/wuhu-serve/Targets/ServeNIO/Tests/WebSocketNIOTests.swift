@@ -11,6 +11,7 @@ import NIOPosix
 import NIOWebSocket
 import Serve
 import ServeNIO
+import Synchronization
 import Testing
 
 @Suite(.serialized)
@@ -73,6 +74,45 @@ struct WebSocketNIOTests {
         break
       }
       #expect(sawClose)
+      try? await client.channel.close()
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1))) func abortReleasesBackpressuredWriteWithoutFlushingCloseFrame() async throws {
+    let (sockets, continuation) = AsyncStream<WebSocket>.makeStream()
+    let sendFinished = Signal()
+    try await withWebSocketServer(session: { socket in
+      continuation.yield(socket)
+      for await _ in socket.inbound {}
+    }) { port in
+      let client = try await connectWebSocket(port: port, path: "/ws")
+      try await client.channel.setOption(ChannelOptions.autoRead, value: false).get()
+      var iterator = sockets.makeAsyncIterator()
+      let socket = try #require(await iterator.next())
+      let message = WebSocketMessage.binary(Array(repeating: 7, count: 32 << 20))
+      await withTaskGroup(of: Bool.self) { group in
+        group.addTask {
+          do {
+            try await socket.send(message)
+            sendFinished.trigger()
+            return false
+          } catch {
+            sendFinished.trigger()
+            return true
+          }
+        }
+        group.addTask {
+          try? await ContinuousClock().sleep(for: .milliseconds(100))
+          #expect(!sendFinished.isTriggered)
+          socket.close()
+          try? await ContinuousClock().sleep(for: .milliseconds(100))
+          #expect(!sendFinished.isTriggered)
+          socket.abort()
+          return true
+        }
+        for await failedOrAborted in group { #expect(failedOrAborted) }
+      }
+      #expect(sendFinished.isTriggered)
       try? await client.channel.close()
     }
   }
@@ -268,6 +308,8 @@ private func rawRoundTrip(port: Int, request: String) async throws -> String {
 }
 
 private final class Signal: Sendable {
+  private let triggered = Mutex(false)
+  var isTriggered: Bool { triggered.withLock { $0 } }
   private let stream: AsyncStream<Void>
   private let continuation: AsyncStream<Void>.Continuation
 
@@ -276,6 +318,7 @@ private final class Signal: Sendable {
   }
 
   func trigger() {
+    triggered.withLock { $0 = true }
     continuation.finish()
   }
 

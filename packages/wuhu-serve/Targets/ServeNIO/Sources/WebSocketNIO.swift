@@ -137,6 +137,7 @@ extension ServeNIOServer {
                 channel.close(promise: nil)
               }
             },
+            abort: { channel.close(promise: nil) },
           )
           return .webSocket(negotiation.takeSession(), socket)
         }

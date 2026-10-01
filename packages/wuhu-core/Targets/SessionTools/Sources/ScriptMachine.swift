@@ -247,7 +247,7 @@ final class ScriptMachineBindings: Sendable {
     await outgoing.closeStdin()
     let outcome = try await withThrowingTaskGroup(of: ExecOutcome?.self, returning: ExecOutcome.self) { group in
       group.addTask {
-        try await holdExecLeg(record.id, endpoint: endpoint, backend: access.exec, abandoningLost: true).map(ExecOutcome.lost)
+        try await holdExecLeg(record.id, endpoint: endpoint, backend: access.exec).map(ExecOutcome.lost)
       }
       group.addTask {
         var output: [ExecOutputStream: [UInt8]] = [:]

@@ -175,7 +175,7 @@ final class ScriptProcess: Sendable {
   func drive() async {
     await withTaskGroup(of: Void.self) { group in
       group.addTask { [self] in
-        guard let reason = try? await holdExecLeg(id, endpoint: endpoint, backend: backend, abandoningLost: true) else {
+        guard let reason = try? await holdExecLeg(id, endpoint: endpoint, backend: backend) else {
           return
         }
         finish(.lost(reason))
@@ -340,7 +340,7 @@ final class ScriptProcess: Sendable {
   }
 
   private func lostError(_ reason: String) -> ScriptError {
-    ScriptError("\(reason) while process \(id.rawValue) ran; it gets killed if the machine comes back")
+    ScriptError("process \(id.rawValue): \(reason); it gets killed if the machine comes back")
   }
 
   // Runs `step` until it yields a value, sleeping on the next change in

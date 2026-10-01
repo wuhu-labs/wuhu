@@ -11,6 +11,7 @@ import SpaceCore
 
 public enum MachineHubError: Error, Equatable, Sendable {
   case machineUnattached(MachineID)
+  case machineLost(MachineID)
   case execNotFound(ExecID)
   case severed
   case frameTooLarge
@@ -20,6 +21,7 @@ public actor MachineHub {
   private struct Leg {
     let send: @Sendable ([UInt8]) async throws -> Void
     let close: @Sendable () -> Void
+    let abort: @Sendable () -> Void
     var groupSecrets: Bool = false
   }
 
@@ -27,6 +29,8 @@ public actor MachineHub {
     case callerGone(ExecID, generation: Int)
     case machineGone(MachineID, generation: Int)
     case drainStalled(ExecID, generation: Int)
+    case machineSilent(MachineID)
+    case probeMachine(MachineID, generation: Int)
   }
 
   private let space: Space
@@ -40,6 +44,9 @@ public actor MachineHub {
   private let logger: Logger = Logger(label: "wuhu.machine-hub")
 
   private var machineLegs: [MachineID: Leg] = [:]
+  private var machineSilence: [MachineID: @Sendable () -> Duration] = [:]
+  private var machineProbes: [MachineID: Int] = [:]
+  private var lastMachineOpcode: [MachineID: Opcode] = [:]
   private var machineGenerations: [MachineID: Int] = [:]
   private var callerLegs: [ExecID: Leg] = [:]
   private var callerGenerations: [ExecID: Int] = [:]
@@ -107,7 +114,8 @@ public actor MachineHub {
     await withDiscardingTaskGroup { group in
       for await timer in timers {
         group.addTask {
-          try? await self.clock.sleep(for: timer.delay)
+          let delay = await self.remainingDelay(timer.delay, for: timer.kind)
+          try? await self.clock.sleep(for: delay)
           guard !Task.isCancelled else { return }
           await self.fire(timer.kind)
         }
@@ -125,7 +133,7 @@ public actor MachineHub {
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await self.enforceLiveKey(machine, pubkey: pubkey, socket: socket) }
       for await message in socket.inbound {
-        await routeFromMachine(machine, frameBytes(message))
+        await routeFromMachine(machine, generation: generation, frameBytes(message))
       }
       group.cancelAll()
     }
@@ -156,6 +164,9 @@ public actor MachineHub {
 
   public func runCallerSession(_ record: ExecRecord, socket: WebSocket) async {
     let generation = bindCaller(record, socket: socket)
+    if record.terminal == nil, let current = try? await space.execRecord(record.id), current.terminal == .machineLost {
+      await failCaller(record.id, machine: record.machine)
+    }
     for await message in socket.inbound {
       await routeFromCaller(record, frameBytes(message))
     }
@@ -243,13 +254,22 @@ public actor MachineHub {
     machineLegs[machine]?.close()
     failPendingRequests(for: machine, with: MachineHubError.severed)
     machineGenerations[machine, default: 0] += 1
-    machineLegs[machine] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() }, groupSecrets: groupSecrets)
+    if machineSilence[machine] == nil {
+      machineSilence[machine] = elapsedSinceNow(clock)
+      timersContinuation.yield((machineGrace, .machineSilent(machine)))
+    }
+    machineProbes[machine] = nil
+    timersContinuation.yield((machineGrace / 3, .probeMachine(machine, generation: machineGenerations[machine, default: 0])))
+    logger.info("machine bound", metadata: machineMetadata(machine))
+    machineLegs[machine] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() }, abort: { socket.abort() }, groupSecrets: groupSecrets)
     return machineGenerations[machine, default: 0]
   }
 
   private func unbindMachine(_ machine: MachineID, generation: Int) {
     guard machineGenerations[machine] == generation else { return }
+    logger.info("machine unbound", metadata: machineMetadata(machine))
     machineLegs[machine] = nil
+    machineProbes[machine] = nil
     failPendingRequests(for: machine, with: MachineHubError.severed)
     timersContinuation.yield((machineGrace, .machineGone(machine, generation: generation)))
   }
@@ -258,7 +278,7 @@ public actor MachineHub {
     remember(record)
     callerLegs[record.id]?.close()
     callerGenerations[record.id, default: 0] += 1
-    callerLegs[record.id] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() })
+    callerLegs[record.id] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() }, abort: { socket.abort() })
     callerMachines[record.id] = record.machine
     exitDelivered.remove(record.id)
     // A caller must never wait in silence: if the machine is not attached now,
@@ -290,6 +310,13 @@ public actor MachineHub {
 
   // MARK: - Grace timers
 
+  private func remainingDelay(_ delay: Duration, for kind: TimerKind) -> Duration {
+    if case let .machineSilent(machine) = kind, let elapsed = machineSilence[machine] {
+      return max(.zero, machineGrace - elapsed())
+    }
+    return delay
+  }
+
   private func fire(_ kind: TimerKind) async {
     switch kind {
     // The rejoin deadline: a caller absent past callerGrace gets its exec
@@ -316,19 +343,93 @@ public actor MachineHub {
       }
     case let .machineGone(machine, generation):
       guard machineGenerations[machine, default: 0] == generation, machineLegs[machine] == nil else { return }
-      let error = MachineError(code: .machineLost, message: "machine \(machine.rawValue) lost")
-      let frame = FrameCodec.encode(Frame(streamID: 0, opcode: .control, payload: ControlMessage.error(error: error)))
-      for (id, leg) in callerLegs where callerMachines[id] == machine {
-        guard let record = try? await space.execRecord(id), record.terminal == nil else { continue }
-        try? await space.finishExec(id, .machineLost)
-        try? await leg.send(frame)
-        leg.close()
+      await failMachineCallers(machine)
+    case let .machineSilent(machine):
+      guard let elapsed = machineSilence[machine] else { return }
+      let silence = elapsed()
+      if silence < machineGrace {
+        timersContinuation.yield((machineGrace - silence, .machineSilent(machine)))
+        return
       }
+      logger.error("machine silence deadline expired; remote process outcomes unknown", metadata: machineMetadata(machine))
+      machineSilence[machine] = nil
+      lastMachineOpcode[machine] = nil
+      machineProbes[machine] = nil
+      let leg = machineLegs.removeValue(forKey: machine)
+      machineGenerations[machine, default: 0] += 1
+      failPendingRequests(for: machine, with: MachineHubError.machineLost(machine))
+      leg?.abort()
+      await failMachineCallers(machine)
+    case let .probeMachine(machine, generation):
+      guard machineGenerations[machine] == generation, let leg = machineLegs[machine] else { return }
+      timersContinuation.yield((machineGrace / 3, .probeMachine(machine, generation: generation)))
+      guard machineProbes[machine] == nil else { return }
+      let id = nextRequestID
+      nextRequestID += 1
+      machineProbes[machine] = id
+      // Installed agents already answer stat; ping has no reply on older agents.
+      let request = VFSRequest(id: id, op: .stat(path: "/"))
+      try? await leg.send(FrameCodec.encode(Frame(streamID: 0, opcode: .vfsRequest, payload: request)))
     case let .drainStalled(id, generation):
       guard callerGenerations[id, default: 0] == generation, let leg = callerLegs[id], !exitDelivered.contains(id) else { return }
       let error = MachineError(code: .execNotFound, message: "exec \(id.rawValue) is finished and its stream is no longer replayable")
       try? await leg.send(FrameCodec.encode(Frame(streamID: 0, opcode: .control, payload: ControlMessage.error(error: error))))
       leg.close()
+    }
+  }
+
+  private func elapsedSinceNow<C: Clock>(_ clock: C) -> @Sendable () -> Duration where C.Duration == Duration {
+    let start = clock.now
+    return { start.duration(to: clock.now) }
+  }
+
+  private func machineMetadata(_ machine: MachineID) -> Logger.Metadata {
+    [
+      "machine": .string(machine.rawValue),
+      "generation": .stringConvertible(machineGenerations[machine, default: 0]),
+      "silence": .stringConvertible(machineSilence[machine]?() ?? .zero),
+      "lastOpcode": .string(lastMachineOpcode[machine].map { String(describing: $0) } ?? "none"),
+      "probeOutstanding": .stringConvertible(machineProbes[machine] != nil),
+      "pendingRequests": .stringConvertible(pendingMachines.values.filter { $0 == machine }.count),
+      "callers": .stringConvertible(callerMachines.filter { $0.value == machine && callerLegs[$0.key] != nil }.count),
+    ]
+  }
+
+  private func failMachineCallers(_ machine: MachineID) async {
+    let ids = callerLegs.keys.filter { callerMachines[$0] == machine }
+    for id in ids {
+      if let record = try? await space.execRecord(id), record.terminal == nil {
+        try? await space.finishExec(id, .machineLost)
+      }
+    }
+    await withTaskGroup(of: Void.self) { group in
+      for id in ids {
+        group.addTask { await self.failCaller(id, machine: machine) }
+      }
+    }
+  }
+
+  private func failCaller(_ id: ExecID, machine: MachineID) async {
+    let terminal = try? await space.execRecord(id)?.terminal
+    guard let leg = callerLegs[id] else { return }
+    let error: MachineError
+    if let terminal, terminal != .machineLost {
+      error = MachineError(code: .execNotFound, message: "exec \(id.rawValue) is finished and its stream is no longer replayable")
+    } else {
+      error = MachineError(code: .machineLost, message: "machine \(machine.rawValue) stopped responding; remote process outcome is unknown")
+    }
+    let frame = FrameCodec.encode(Frame(streamID: 0, opcode: .control, payload: ControlMessage.error(error: error)))
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask { try? await leg.send(frame) }
+      group.addTask {
+        try? await self.clock.sleep(for: .milliseconds(100))
+        guard !Task.isCancelled else { return }
+        leg.abort()
+      }
+      _ = await group.next()
+      leg.abort()
+      callerLegs[id]?.abort()
+      group.cancelAll()
     }
   }
 
@@ -482,8 +583,11 @@ public actor MachineHub {
     exitDelivered.insert(id)
   }
 
-  private func routeFromMachine(_ machine: MachineID, _ bytes: [UInt8]) async {
-    guard let frame = try? FrameCodec.decode(bytes) else { return }
+  private func routeFromMachine(_ machine: MachineID, generation: Int, _ bytes: [UInt8]) async {
+    guard machineGenerations[machine] == generation, machineLegs[machine] != nil,
+          let frame = try? FrameCodec.decode(bytes) else { return }
+    machineSilence[machine] = elapsedSinceNow(clock)
+    lastMachineOpcode[machine] = frame.opcode
     if frame.streamID == 0 {
       await routeMachineControl(machine, frame, bytes: bytes)
       return
@@ -522,7 +626,12 @@ public actor MachineHub {
         logger.warning("machine control error", metadata: ["machine": .string(machine.rawValue), "code": .string(error.code.rawValue)])
       }
     case .vfsResponse, .searchResponse:
-      guard let id = requestID(of: frame), let continuation = pendingRequests.removeValue(forKey: id) else { return }
+      guard let id = requestID(of: frame) else { return }
+      if machineProbes[machine] == id {
+        machineProbes[machine] = nil
+        return
+      }
+      guard pendingMachines[id] == machine, let continuation = pendingRequests.removeValue(forKey: id) else { return }
       pendingMachines[id] = nil
       continuation.yield(frame)
       continuation.finish()

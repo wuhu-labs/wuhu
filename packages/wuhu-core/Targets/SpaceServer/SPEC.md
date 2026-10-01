@@ -599,19 +599,14 @@ but time is lost.
   bound machine leg drops and when a caller binds while the machine is not
   attached — a machine that never dialed in, or one still gone after an
   earlier expiry, fails a fresh caller after one grace instead of silence.
-  The process may still be running on the box. When the machine returns, a
-  `machine-lost` exec is killed unless a caller leg is dialed for it: the
-  exec tool keeps re-dialing, with no deadline, until the machine is back or
-  its call is interrupted, and then resumes, while a script gives up at
-  `machine-lost` (see *Scripts on machines*), so its processes
-  get the kill.
+  The process may still be running on the box. Both exec tools and scripts stop waiting at `machine-lost`; neither treats it as confirmed process exit. When the machine returns, a `machine-lost` exec without a connected caller is killed.
+- **Machine silence 60s**: the logical machine relationship has a monotonic silence deadline, including while its socket appears attached. Only decoded inbound machine frames renew it; server-local caller reconnects and replacement machine sockets do not. An existing `stat("/")` VFS request every 20 seconds supplies liveness evidence from installed agents without changing the wire protocol, and at most one such probe is outstanding per socket. At expiry the hub detaches the machine, fails pending VFS/search calls with exactly `machine <machine> stopped responding`, and fails/closes its exec callers. Exec errors retain the warning that the remote process outcome is unknown. This deadline is independent of each remote process's runtime timeout and leaves byte ACKs and output replay unchanged. Binding, unbinding, and silence expiry are logged with the machine, socket generation, silence duration, last message type, and pending caller/request counts, without command text or secrets. Registry loss is recorded for all affected execs before error sends run concurrently; after a 100 ms best-effort error-send grace, the transport is aborted without flushing a close frame, failing pending writes and ending inbound. A backpressured caller cannot hold up another or keep the send task group waiting for an outbound flush. A caller rebound during loss accounting is failed on its current binding, including one accepted using a stale live registry record. A drain caller whose registry already records a terminal verdict other than `machine-lost` receives `execNotFound` with `exec <id> is finished and its stream is no longer replayable`; silence expiry never replaces its known verdict with an unknown process outcome.
 - **Drain grace**: a caller bound to a terminal exec must receive the replayed
   exit event within one grace; if it does not (the agent restarted, so the
   retained stream is gone), it gets a stream-0 `control` error with code
   `execNotFound` and the leg closes — the outcome stays readable via
   `GET /v1/exec/:id`.
-- Reconnect within a grace simply rebinds: timers are generation-guarded and a
-  stale expiry is a no-op. Nothing hangs forever on any path.
+- Reconnect within a grace rebinds socket-scoped timers; stale socket expiries are no-ops. The logical silence deadline survives socket replacement until actual machine evidence arrives.
 - **Accepted edge — agent restart mid-exec**: `exec-start` is relayed only
   while the registry row is live (a replayed start for a finished exec is
   dropped, so an agent that restarted and lost its per-id dedup state cannot

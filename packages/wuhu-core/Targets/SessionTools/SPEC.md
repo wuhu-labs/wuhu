@@ -17,3 +17,7 @@ The firing registry treats completion as an event and reloads durable registrati
 One-shot timer delays, request deadlines and archive grace remain relative durations and retain fractional-second inputs; they do not compute recurring calendar boundaries.
 
 A request deadline is delivered to the parent queue and the owner notification feed atomically with slot retirement; failure of either delivery retries the still-armed deadline.
+
+## Machine exec liveness
+
+An exec tool or script stops waiting when the server records `machine-lost`, reporting that the remote process outcome is unknown rather than claiming an exit. For other terminal records, one additional caller connection may drain retained output; a second sever without an exit event fails as no longer replayable. Successful server-local connections do not reset that terminal drain budget. Transient reconnects for live execs and the byte-exact replay/retention policy are unchanged.

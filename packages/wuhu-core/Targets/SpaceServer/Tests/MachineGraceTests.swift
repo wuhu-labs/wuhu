@@ -43,7 +43,7 @@ import Testing
 
       callerSocket.close()
       let died = try await realPollUntil { @Sendable in
-        await clock.advance(by: .seconds(61))
+        await clock.advance(by: .seconds(1))
         return !processAlive(pid)
       }
       #expect(died, "caller gone past grace must kill the process group")

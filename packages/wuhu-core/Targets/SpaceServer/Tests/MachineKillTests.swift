@@ -125,7 +125,7 @@ import Testing
 
       secondCaller.close()
       let died = try await realPollUntil { @Sendable in
-        await clock.advance(by: .seconds(61))
+        await clock.advance(by: .seconds(1))
         return !processAlive(pid)
       }
       #expect(died, "once the caller is gone past grace, the kill goes out")

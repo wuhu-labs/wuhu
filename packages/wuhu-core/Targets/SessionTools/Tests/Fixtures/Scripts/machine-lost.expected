@@ -1,7 +1,7 @@
 === run_script
 first: ready
-lines: machine <machine> was lost while process <id> ran; it gets killed if the machine comes back
-wait: machine <machine> was lost while process <id> ran; it gets killed if the machine comes back
+lines: process <id>: machine <machine> stopped responding; remote process outcome is unknown; it gets killed if the machine comes back
+wait: process <id>: machine <machine> stopped responding; remote process outcome is unknown; it gets killed if the machine comes back
 running after the loss: 8
 
 [script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

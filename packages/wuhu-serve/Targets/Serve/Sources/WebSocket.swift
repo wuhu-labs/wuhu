@@ -19,15 +19,18 @@ public struct WebSocket: Sendable {
   public let inbound: AsyncStream<WebSocketMessage>
   private let sink: @Sendable (WebSocketMessage) async throws -> Void
   private let terminator: @Sendable () -> Void
+  private let aborter: @Sendable () -> Void
 
   public init(
     inbound: AsyncStream<WebSocketMessage>,
     send: @escaping @Sendable (WebSocketMessage) async throws -> Void,
     close: @escaping @Sendable () -> Void,
+    abort: @escaping @Sendable () -> Void,
   ) {
     self.inbound = inbound
     sink = send
     terminator = close
+    aborter = abort
   }
 
   public func send(_ message: WebSocketMessage) async throws {
@@ -36,6 +39,10 @@ public struct WebSocket: Sendable {
 
   public func close() {
     terminator()
+  }
+
+  public func abort() {
+    aborter()
   }
 }
 
@@ -59,8 +66,8 @@ extension WebSocket {
       peer.yield(message)
     }
     return (
-      WebSocket(inbound: aInbound, send: { try send(bContinuation, $0) }, close: close),
-      WebSocket(inbound: bInbound, send: { try send(aContinuation, $0) }, close: close),
+      WebSocket(inbound: aInbound, send: { try send(bContinuation, $0) }, close: close, abort: close),
+      WebSocket(inbound: bInbound, send: { try send(aContinuation, $0) }, close: close, abort: close),
     )
   }
 }

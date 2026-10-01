@@ -1,3 +1,5 @@
+import Clocks
+import Dependencies
 import Foundation
 import JSONValue
 import MachineChannel
@@ -11,6 +13,53 @@ import Testing
 import struct WuhuAI.ToolArguments
 
 @Suite(.timeLimit(.minutes(2))) struct ExecToolTests {
+  @Test func terminalCallerReconnectsAreBoundedEvenWhenLocalConnectSucceeds() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      let scripted = ScriptedExecMachine()
+      var backend = scripted.backend(space)
+      let claim = try await backend.claim(machine, session, .init("terminal-drain"))
+      try await space.finishExec(claim.record.id, .exited(code: 0))
+      let connects = Box(0)
+      backend.connect = { _ in
+        connects.withLock { $0 += 1 }
+        let (caller, peer) = InMemoryTransport.pair()
+        peer.sever()
+        return caller
+      }
+      let reason = try await withDependencies {
+        $0.continuousClock = ImmediateClock()
+      } operation: {
+        try await holdExecLeg(claim.record.id, endpoint: ChannelEndpoint(), backend: backend)
+      }
+      #expect(reason?.contains("no longer replayable") == true)
+      #expect(connects.value == 2)
+    }
+  }
+
+  @Test func machineLostStopsAfterFirstSeverWithoutClaimingProcessExit() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      var backend = ScriptedExecMachine().backend(space)
+      let claim = try await backend.claim(machine, session, .init("machine-lost"))
+      try await space.finishExec(claim.record.id, .machineLost)
+      let connects = Box(0)
+      backend.connect = { _ in
+        connects.withLock { $0 += 1 }
+        let (caller, peer) = InMemoryTransport.pair()
+        peer.sever()
+        return caller
+      }
+      let reason = try await holdExecLeg(claim.record.id, endpoint: ChannelEndpoint(), backend: backend)
+      #expect(reason?.contains("remote process outcome is unknown") == true)
+      #expect(connects.value == 1)
+    }
+  }
+
   @Test func execRunsRecordsAReceiptAndAbsorbsTheRetry() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

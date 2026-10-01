@@ -558,6 +558,8 @@ func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
   switch error {
   case .frameTooLarge:
     .failed(code: .invalidArgument, message: "request for machine \(machine.rawValue) exceeds the 16 MiB frame ceiling", hint: nil)
+  case .machineLost:
+    .failed(code: .unavailable, message: "machine \(machine.rawValue) stopped responding", hint: nil)
   case .machineUnattached, .execNotFound, .severed:
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
   }

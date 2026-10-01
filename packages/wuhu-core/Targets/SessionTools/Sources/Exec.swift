@@ -122,7 +122,7 @@ extension ToolExecutor {
       case .cancelled:
         throw ToolProblem("exec \(claim.record.id.rawValue) was cancelled")
       case .machineLost:
-        throw ToolProblem("machine \(machine.rawValue) was lost while the command ran; output is not replayable")
+        throw ToolProblem("machine \(machine.rawValue) stopped responding while the command ran; remote process outcome is unknown")
       case .reaped:
         throw ToolProblem("exec \(claim.record.id.rawValue) was reaped and its buffered output is no longer replayable")
       default:
@@ -177,16 +177,15 @@ extension ToolExecutor {
 }
 
 // Keeps an exec's caller leg dialed, re-dialing with backoff, and returns why it
-// gave up (nil once cancelled). With `abandoningLost`, a machine-lost verdict
-// ends it at once instead of waiting for the machine to come back.
+// gave up (nil once cancelled). A machine-lost verdict never proves process exit.
 func holdExecLeg(
   _ id: ExecID,
   endpoint: ChannelEndpoint,
   backend: ExecBackend,
-  abandoningLost: Bool = false,
 ) async throws -> String? {
   let clock: any Clock<Duration> = Dependency(\.continuousClock).wrappedValue
   var unreachable = 0
+  var terminalSevers = 0
   while !Task.isCancelled {
     do {
       let transport = try await backend.connect(id)
@@ -199,12 +198,15 @@ func holdExecLeg(
     }
     if Task.isCancelled { return nil }
     if let record = try? await backend.status(id), let terminal = record.terminal {
-      if abandoningLost, terminal == .machineLost {
-        return "machine \(record.machine.rawValue) was lost"
+      if terminal == .machineLost {
+        return "machine \(record.machine.rawValue) stopped responding; remote process outcome is unknown"
       }
       // Terminal without a delivered exit: one more round may still
       // drain the buffered tail; a second sever means it cannot.
-      unreachable += 4
+      terminalSevers += 1
+      if terminalSevers >= 2 {
+        return "exec \(id.rawValue) is finished and its stream is no longer replayable"
+      }
     }
     if unreachable >= 8 {
       return "machine connection for exec \(id.rawValue) failed; the run may still be tracked server-side"
