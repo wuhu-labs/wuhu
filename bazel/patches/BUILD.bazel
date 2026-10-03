@@ -7,6 +7,7 @@ exports_files([
     "quickjs-pending-module-free.patch",
     "rules-apple-visionos-dynamic-framework-constraints.patch",
     "snapshot-testing-visionos-image.patch",
+    "snapshot-testing-coreimage-extent.patch",
     "swift-clocks-linux-lock.patch",
     "swift-dependencies-linux-lock.patch",
     "swift-dependencies-linux-typename.patch",

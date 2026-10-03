@@ -167,14 +167,14 @@ struct EnrollmentTests {
     let owner = try await space.addAccount(kind: .human, name: nil)
     let minted = try await space.mintJoinToken(account: owner.id, capabilities: [.device], createdBy: nil, lifetime: 600)
     let secret = minted.token.rawValue
-    let rows = try await space.writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT * FROM join_tokens")
-    }
-    #expect(rows.count == 1)
-    for row in rows {
-      for (column, value) in row {
-        #expect(!"\(value)".contains(secret), "join_tokens.\(column) leaks the token")
-        #expect(!"\(value)".contains(secret.dropFirst(3)), "join_tokens.\(column) leaks the token body")
+    try await space.writer.read { db in
+      let rows = try Row.fetchAll(db, sql: "SELECT * FROM join_tokens")
+      #expect(rows.count == 1)
+      for row in rows {
+        for (column, value) in row {
+          #expect(!"\(value)".contains(secret), "join_tokens.\(column) leaks the token")
+          #expect(!"\(value)".contains(secret.dropFirst(3)), "join_tokens.\(column) leaks the token body")
+        }
       }
     }
     _ = try await space.consumeJoinToken(minted.token, pubkey: testPubkey("pk"))

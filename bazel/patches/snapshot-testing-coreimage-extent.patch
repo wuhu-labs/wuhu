@@ -1,0 +1,17 @@
+diff --git a/Sources/SnapshotTesting/Snapshotting/UIImage.swift b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+--- a/Sources/SnapshotTesting/Snapshotting/UIImage.swift
++++ b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+@@ -397,11 +397,11 @@
+     }
+ 
+     func applyingAreaAverage() -> CIImage {
+-      applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: extent])
++      applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: extent)])
+     }
+ 
+     func applyingAreaMaximum() -> CIImage {
+-      applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: extent])
++      applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: extent)])
+     }
+ 
+     func renderSingleValue(in context: CIContext) -> Float? {

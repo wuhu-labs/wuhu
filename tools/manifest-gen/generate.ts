@@ -83,6 +83,23 @@ export interface ExternalPackage {
   identity?: string
 }
 
+const issueReportingTestSupport: ExternalPackage = {
+  url: 'https://github.com/pointfreeco/xctest-dynamic-overlay',
+  from: '1.0.0',
+  identity: 'xctest-dynamic-overlay',
+  bazelRepo: 'swiftpkg_xctest_dynamic_overlay',
+  products: ['IssueReportingTestSupport'],
+}
+
+function testSupportPackages(
+  pkg: PackageManifest,
+): Record<string, ExternalPackage> {
+  return {
+    'xctest-dynamic-overlay': issueReportingTestSupport,
+    ...pkg.externalPackages,
+  }
+}
+
 interface BinaryTargetLowering {
   url: string
   checksum: string
@@ -1442,6 +1459,7 @@ function swiftTestDecl(
   const config = test.config
   const testDeps = [
     `.byName(name: "${target.name}")`,
+    '.product(name: "IssueReportingTestSupport", package: "xctest-dynamic-overlay")',
     ...(config.dependencies ?? [])
       .map((dep) => swiftDependency(pkg, targetNames, dep)),
   ]
@@ -1574,7 +1592,10 @@ export function generatePackageSwift(
     })
     .join(',\n')
 
-  const dependencies = Object.entries(pkg.externalPackages ?? {})
+  const externals = targets.some((target) => testTargets(target).length > 0)
+    ? testSupportPackages(pkg)
+    : pkg.externalPackages ?? {}
+  const dependencies = Object.entries(externals)
     .map(([_, external]) => {
       return `    .package(${swiftPackageRequirement(external)})`
     })
@@ -2101,7 +2122,11 @@ ${
         config.dependencies,
         true,
       )
-      const testDeps = [`":${target.name}"`, ...testExtraDeps]
+      const testDeps = [
+        `":${target.name}"`,
+        '"@swiftpkg_xctest_dynamic_overlay//:IssueReportingTestSupport"',
+        ...testExtraDeps,
+      ]
       const testPluginsAttr = testPlugins.length
         ? `    plugins = ${starlarkList(testPlugins)},\n`
         : ''
@@ -2653,7 +2678,7 @@ function collectPackageMetadata(
     }
   }
 
-  for (const external of Object.values(pkg.externalPackages ?? {})) {
+  for (const external of Object.values(testSupportPackages(pkg))) {
     if (external.path) continue
     const identity = external.identity
     if (!identity) {

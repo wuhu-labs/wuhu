@@ -1754,6 +1754,41 @@ const applePkg: PackageManifest = {
   checks: { build: ['mac', 'ios', 'tvos', 'visionos'], test: ['mac'] },
 }
 
+Deno.test('every Swift test links IssueReporting support without changing production deps', async () => {
+  const checks = { test: ['linux', 'mac', 'ios', 'tvos', 'visionos'] as const }
+  const target: TargetManifest = {
+    ...minimalTarget('Feature', 'library'),
+    tests: { checks: { test: [...checks.test] } },
+    additionalTestTargets: [{
+      sources: 'ContractTests',
+      checks: { test: [...checks.test] },
+    }],
+  }
+  const build = await generateBuildBazel(applePkg, [target])
+  const support =
+    '"@swiftpkg_xctest_dynamic_overlay//:IssueReportingTestSupport"'
+  assertEquals(build.split(support).length - 1, 8)
+  const production = build.slice(0, build.indexOf('wuhu_swift_test('))
+  assertEquals(production.includes(support), false)
+
+  const swift = generatePackageSwift(applePkg, '.', [target])
+  const product =
+    '.product(name: "IssueReportingTestSupport", package: "xctest-dynamic-overlay")'
+  assertEquals(swift.split(product).length - 1, 2)
+  assertIncludes(
+    swift,
+    '.package(url: "https://github.com/pointfreeco/xctest-dynamic-overlay", from: "1.0.0")',
+  )
+  assertEquals(
+    swift.slice(0, swift.indexOf('.testTarget(')).includes(product),
+    false,
+  )
+  const withoutTests = generatePackageSwift(applePkg, '.', [
+    minimalTarget('Feature', 'library'),
+  ])
+  assertEquals(withoutTests.includes('xctest-dynamic-overlay'), false)
+})
+
 Deno.test('a simulator test lane lowers to its own bundle target beside the swift_test', async () => {
   const build = await generateBuildBazel(applePkg, [
     {

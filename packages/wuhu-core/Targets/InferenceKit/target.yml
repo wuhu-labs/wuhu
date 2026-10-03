@@ -2,6 +2,7 @@ name: InferenceKit
 kind: library
 sources: Sources
 dependencies:
+  - Clocks
   - Credentials
   - SessionDomain
   - WuhuAI

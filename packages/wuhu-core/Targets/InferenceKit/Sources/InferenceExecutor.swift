@@ -1,3 +1,4 @@
+import Clocks
 import Dependencies
 import Fetch
 import Foundation
@@ -100,7 +101,7 @@ public struct InferenceExecutor: Sendable {
       endpoint = endpoint.withMediaResolver(mediaResolver(model.budget.images.forRequest(imageCount: context.imageCount)))
     }
 
-    @Dependency(\.continuousClock) var clock
+    @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.date) var dateGen
 
     hub?.publish(session: session, .started(attemptID: attemptID))
@@ -128,20 +129,18 @@ public struct InferenceExecutor: Sendable {
     }
 
     var iterator = endpoint.runInference(context: context, options: options, mediaResolver: nil).makeAsyncIterator()
-    var firstResult: Result<InferenceEvent, InferenceError>?
-    let ttftDuration = await clock.measure {
-      firstResult = await iterator.next()
-    }
+    let clock = AnyClock(continuousClock)
+    let started = clock.now
+    let firstResult = await iterator.next()
+    let ttftDuration = started.duration(to: clock.now)
     if let firstResult {
       if case .success = firstResult { firstEventSeen = true }
       handle(firstResult)
     }
-    let restDuration = await clock.measure {
-      while failure == nil, let result = await iterator.next() {
-        handle(result)
-      }
+    while failure == nil, let result = await iterator.next() {
+      handle(result)
     }
-    let elapsed = ttftDuration + restDuration
+    let elapsed = started.duration(to: clock.now)
     let ttft = firstEventSeen ? ttftDuration : nil
 
     if let failure {

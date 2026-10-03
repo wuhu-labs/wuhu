@@ -45,6 +45,11 @@ common:sign-store --//bazel/signing:variant=store
 # skew detection only works if every binary carries its true provenance.
 build --workspace_status_command=tools/workspace-status.sh
 
+# Keep the shipped wuhu CLI and execution-platform tools runnable at wuhu-core's
+# macOS floor, not the installed SDK version. check_test.ts guards that contract.
+build --macos_minimum_os=26.0
+build --host_macos_minimum_os=26.0
+
 # Swift-specific
 build --features=swift.use_global_module_cache
 
