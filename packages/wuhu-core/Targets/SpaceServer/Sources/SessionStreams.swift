@@ -34,13 +34,13 @@ func conversationStreamResponse(
   return .sse(events, heartbeat: .seconds(1), clock: clock)
 }
 
-func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: TranscriptCursor?) -> Response {
+func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: TranscriptCursor?, bounded: Bool = false, historyEpoch: String? = nil) -> Response {
   let store = runtime.store
   let hub = runtime.attempts
   let events = AsyncStream<SSEEvent> { continuation in
     let task = Task {
       let tracker = AttemptTracker()
-      await withTaskGroup(of: Void.self) { group in
+      await withTaskGroup(of: Bool.self) { group in
         group.addTask {
           // Subscribe before the in-flight snapshot so no event can fall in
           // between; the tracker dedupes a started seen on both paths.
@@ -76,12 +76,14 @@ func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: T
               }
             }
           }
+          return false
         }
         group.addTask {
           do {
-            for try await page in store.observeTranscript(session, from: cursor) {
+            for try await page in store.observeTranscript(session, from: cursor, bounded: bounded, historyEpoch: historyEpoch) {
               if page.reset {
                 yieldEvent(continuation, .reset(generation: page.generation))
+                if bounded { break }
               }
               for (offset, item) in page.items.enumerated() {
                 if case let .assistant(entry) = item, tracker.claimCommitted(entry.id) {
@@ -98,8 +100,11 @@ func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: T
           // The committed stream is the authority: when it ends, end the
           // response instead of dangling on attempt events alone.
           continuation.finish()
+          return true
         }
-        await group.waitForAll()
+        while let ended = await group.next() {
+          if ended { group.cancelAll(); break }
+        }
       }
       continuation.finish()
     }

@@ -1,3 +1,4 @@
+import struct Credentials.CredentialResolver
 import Fetch
 import Foundation
 import JSONValue
@@ -21,9 +22,9 @@ import Testing
     let token: String
   }
 
-  func tree(dev: Bool = true, timeout: Double? = nil) async throws -> Tree {
+  func tree(dev: Bool = true, timeout: Double? = nil, credentials: CredentialResolver = .unavailable) async throws -> Tree {
     let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let harness = try await SessionHarness(dev: dev, execTokens: tokens)
+    let harness = try await SessionHarness(dev: dev, credentials: credentials, execTokens: tokens)
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let parent = try await harness.store.createSession(group: .shared, title: "orchestrator", kind: .agent, createdBy: "owner", executor: model)
     let child = try await harness.store.createSession(

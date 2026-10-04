@@ -3,6 +3,7 @@ import {
   kindTag,
   type Names,
   sendTarget,
+  summaryText,
   turnStatus,
   wakeLabel,
   wakeTime,
@@ -154,4 +155,11 @@ Deno.test('a box message and a wake-up tag a request or report alike', () => {
   })
   assertEquals(kindTag('final'), { tag: 'Report · final', tone: 'report' })
   assertEquals(kindTag('message'), null)
+})
+
+Deno.test('zero-tool summaries omit counts and keep available duration', () => {
+  assertEquals(summaryText(0, null), '')
+  assertEquals(summaryText(0, 30), '30s')
+  assertEquals(summaryText(1, null), '1 tool')
+  assertEquals(summaryText(2, 30), '2 tools · 30s')
 })

@@ -1,85 +1,229 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Icon } from '@wuhu/ui'
-import { ToolLine } from '~/components/turn-timeline'
+import { CopyButton } from '~/components/copy-button'
 import type { DirectState } from '~/lib/transcript-fold'
 import {
   type Destination,
   type EventDetails,
   eventDetails,
+  historyRow,
   type Inspection,
 } from '~/lib/turn-inspection'
 import { toolStateLabel } from '~/lib/turn-labels'
-import { activity, baseName, toolState, type TurnProjection } from '~/lib/turns'
+import {
+  activity,
+  baseName,
+  rowAtAnchor,
+  toolState,
+  type TurnProjection,
+  type WorkItem,
+} from '~/lib/turns'
+import { eventKey } from '~/lib/work-events'
+import {
+  historyPosition,
+  initialHistoryPosition,
+  restoredHistoryTop,
+} from '~/lib/history-position'
+
+function historyBounds(element: HTMLElement) {
+  return [...element.querySelectorAll<HTMLElement>('[data-event-id]')].map(
+    (row) => {
+      const rect = row.getBoundingClientRect()
+      return { id: row.dataset.eventId!, top: rect.top, bottom: rect.bottom }
+    },
+  )
+}
 
 function payloadText(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
 function Payload({ title, value }: { title: string; value: unknown }) {
+  const text = payloadText(value)
   return (
     <section className='wuhu-inspector-section'>
-      <h3 className='wuhu-eyebrow'>{title}</h3>
-      <pre className='wuhu-inspector-payload'>{payloadText(value)}</pre>
+      <div className='wuhu-inspector-section-head'>
+        <h3 className='wuhu-eyebrow'>{title}</h3>
+        <CopyButton text={text} />
+      </div>
+      <pre className='wuhu-inspector-payload'>{text}</pre>
     </section>
   )
 }
 
-export function TurnInspector({
-  inspection,
-  projection,
-  state,
-  inspect,
-  returnToHistory,
-  close,
-}: {
-  inspection: Inspection
-  projection: TurnProjection
-  state: DirectState
-  inspect: (destination: Destination) => void
-  returnToHistory: () => void
-  close: () => void
-}) {
+export function HistoryItem(
+  { item, open }: { item: WorkItem; open: () => void },
+) {
+  const content = item.content
+  const tool = content.kind === 'tool' || content.kind === 'send'
+    ? content.tool
+    : null
+  const secondary = item.subject ??
+    (item.inference
+      ? `Inference ${item.inference} · block ${
+        item.event.kind === 'kernel' ? item.event.part : 0
+      }`
+      : null)
+  return (
+    <button
+      type='button'
+      className='wuhu-history-row'
+      aria-label={[
+        item.label,
+        item.subject,
+        item.inference
+          ? `Inference ${item.inference}, block ${
+            item.event.kind === 'kernel' ? item.event.part : 0
+          }`
+          : null,
+        tool ? toolStateLabel[toolState(tool)] : null,
+      ].filter(Boolean).join('. ')}
+      data-event-id={item.key}
+      onClick={open}
+    >
+      <Icon
+        name={tool
+          ? 'hammer'
+          : content.kind === 'reasoning'
+          ? 'sparkle'
+          : content.kind === 'notice'
+          ? 'info'
+          : 'reply'}
+      />
+      <strong>{item.label}</strong>
+      {secondary !== null && (
+        <span className='wuhu-history-subject'>{secondary}</span>
+      )}
+      {tool !== null && (
+        <span className='wuhu-turn-tool-state' data-state={toolState(tool)}>
+          {toolStateLabel[toolState(tool)]}
+        </span>
+      )}
+      <Icon name='chevronRight' />
+    </button>
+  )
+}
+
+export function TurnInspector(
+  { inspection, projection, state, inspect, returnToHistory, close }: {
+    inspection: Inspection
+    projection: TurnProjection
+    state: DirectState
+    inspect: (destination: Destination) => void
+    returnToHistory: () => void
+    close: () => void
+  },
+) {
   const inspecting = inspection.destination
   const dialog = useRef<HTMLDialogElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLElement | null>(null)
+  const triggerID = useRef<string | null>(null)
+  const savedHistory = useRef(initialHistoryPosition)
+  const wasHistory = useRef(false)
 
   useEffect(() => {
     const element = dialog.current!
-    if (inspecting !== null && !element.open) element.showModal()
-    if (inspecting === null && element.open) element.close()
-  }, [inspecting])
+    if (inspecting !== null && !element.open) {
+      trigger.current = document.activeElement as HTMLElement
+      triggerID.current =
+        trigger.current.closest<HTMLElement>('[data-history-id]')?.dataset
+          .historyId ?? null
+      savedHistory.current = initialHistoryPosition
+      element.showModal()
+      if (inspecting.kind === 'history') rememberHistory()
+    }
+    if (inspecting === null && element.open) {
+      element.close()
+      if (trigger.current?.isConnected) trigger.current.focus()
+      else if (triggerID.current !== null) {
+        const anchor = rowAtAnchor(projection, triggerID.current)?.key
+        if (anchor) {
+          document.querySelector<HTMLElement>(
+            `[data-history-id="${CSS.escape(anchor)}"] button`,
+          )?.focus()
+        }
+      }
+    }
+  }, [inspecting, projection])
+
+  const rememberHistory = (focus = savedHistory.current.focus) => {
+    const element = scroller.current
+    if (element) {
+      savedHistory.current = historyPosition(
+        element.scrollTop,
+        element.getBoundingClientRect().top,
+        historyBounds(element),
+        focus,
+      )
+    }
+  }
+
+  useLayoutEffect(() => {
+    const history = inspecting?.kind === 'history'
+    const element = scroller.current
+    if (element && history) {
+      if (!dialog.current?.open) savedHistory.current = initialHistoryPosition
+      element.scrollTop = restoredHistoryTop(
+        savedHistory.current,
+        element.scrollTop,
+        element.getBoundingClientRect().top,
+        historyBounds(element),
+      )
+      if (!wasHistory.current && savedHistory.current.focus) {
+        element.querySelector<HTMLElement>(
+          `[data-event-id="${CSS.escape(savedHistory.current.focus)}"]`,
+        )?.focus({ preventScroll: true })
+      }
+      rememberHistory()
+    } else if (element && wasHistory.current) {
+      element.scrollTop = 0
+      dialog.current?.querySelector<HTMLElement>('.wuhu-history-back, h2')
+        ?.focus({ preventScroll: true })
+    }
+    wasHistory.current = history
+  })
 
   const tool = inspecting?.kind === 'tool'
     ? activity(projection, inspecting.callID)
     : null
+  const item = inspecting?.kind === 'tool'
+    ? projection.items.find((item) =>
+      (item.content.kind === 'tool' || item.content.kind === 'send') &&
+      item.content.tool.callID === inspecting.callID
+    )
+    : inspecting?.kind === 'event'
+    ? projection.items.find((item) => item.key === eventKey(inspecting.id))
+    : null
   const details = inspecting?.kind === 'event'
     ? eventDetails(state, inspecting.id)
+    : item
+    ? eventDetails(state, item.event)
     : null
-  const title = inspecting?.kind === 'tool'
-    ? tool === null ? 'Tool' : baseName(tool)
-    : inspecting?.kind === 'history'
-    ? 'Tool history'
-    : details?.title ?? 'Event details'
+  const history = inspecting?.kind === 'history'
+    ? historyRow(projection, inspecting.summary)
+    : null
+  const title = inspecting?.kind === 'history'
+    ? 'Work history'
+    : tool
+    ? baseName(tool)
+    : item?.label ?? details?.title ?? 'Event details'
 
   return (
     <dialog
       ref={dialog}
       className='wuhu-composer-dialog wuhu-inspector'
       aria-label={title}
-      onClose={close}
+      onKeyDownCapture={(event) => event.stopPropagation()}
+      onCancel={(event) => {
+        event.preventDefault()
+        close()
+      }}
     >
       {inspecting !== null && (
-        <div className='wuhu-composer-dialog-body'>
+        <>
           <header className='wuhu-inspector-head'>
-            {inspecting.kind === 'tool' && inspection.history.length > 0 && (
-              <button
-                type='button'
-                className='wuhu-quiet-button'
-                onClick={returnToHistory}
-              >
-                ‹ Tool history
-              </button>
-            )}
-            <h2 className='wuhu-dialog-title'>{title}</h2>
+            <h2 className='wuhu-dialog-title' tabIndex={-1}>{title}</h2>
             <button
               type='button'
               className='wui-icon-button'
@@ -89,52 +233,86 @@ export function TurnInspector({
               <Icon name='xmark' />
             </button>
           </header>
-          {inspecting.kind === 'tool' && (tool === null
-            ? (
-              <p className='wuhu-muted'>
-                This tool is not available in the current generation.
+          <div
+            ref={scroller}
+            className='wuhu-inspector-body'
+            onScroll={() => {
+              if (inspecting.kind === 'history') rememberHistory()
+            }}
+          >
+            {inspecting.kind !== 'history' && inspection.history !== null && (
+              <button
+                type='button'
+                className='wuhu-history-back'
+                onClick={returnToHistory}
+              >
+                <span aria-hidden='true'>‹</span> Back to work history
+              </button>
+            )}
+            {item?.inference && (
+              <p className='wuhu-inspector-facts'>
+                Inference {item.inference} · block{' '}
+                {item.event.kind === 'kernel' ? item.event.part : 0}
               </p>
-            )
-            : (
+            )}
+            {inspecting.kind === 'history' && (
+              <div className='wuhu-inspector-history'>
+                {history?.items.map((item) => (
+                  <HistoryItem
+                    key={item.key}
+                    item={item}
+                    open={() => {
+                      rememberHistory(item.key)
+                      const content = item.content
+                      inspect(
+                        content.kind === 'tool' || content.kind === 'send'
+                          ? { kind: 'tool', callID: content.tool.callID }
+                          : { kind: 'event', id: item.event },
+                      )
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            {tool && (
               <>
                 <p className='wuhu-inspector-facts'>
-                  <span>{tool.callID}</span>
+                  <span>{tool.name} · {tool.callID}</span>
                   <span>{toolStateLabel[toolState(tool)]}</span>
                 </p>
                 <Payload title='Arguments' value={tool.arguments} />
                 {tool.result === null
-                  ? <p className='wuhu-muted'>Waiting for output…</p>
-                  : <Payload title='Output' value={tool.result.output} />}
+                  ? (
+                    <p className='wuhu-muted'>
+                      {toolState(tool) === 'unknown'
+                        ? 'Execution state unknown; no result available.'
+                        : toolState(tool) === 'queued'
+                        ? 'Queued; no result yet.'
+                        : 'Running; waiting for output…'}
+                    </p>
+                  )
+                  : (
+                    <Payload
+                      title={tool.result.failed ? 'Error' : 'Result'}
+                      value={tool.result.output}
+                    />
+                  )}
               </>
-            ))}
-          {inspecting.kind === 'history' && (
-            <div className='wuhu-inspector-history'>
-              {inspecting.calls.map((callID) => {
-                const call = activity(projection, callID)
-                return call === null ? null : (
-                  <ToolLine
-                    key={callID}
-                    tool={call}
-                    open={() => inspect({ kind: 'tool', callID })}
-                  />
-                )
-              })}
-            </div>
-          )}
-          {inspecting.kind === 'event' && (details === null
-            ? (
-              <p className='wuhu-muted'>
-                This event is not available in the current generation.
-              </p>
-            )
-            : <Event details={details} />)}
-        </div>
+            )}
+            {item && item.sources.length > 0 && (
+              <Payload title='Instruction sources' value={item.sources} />
+            )}
+            {inspecting.kind !== 'history' && details && (
+              <Event details={details} tool={tool !== null} />
+            )}
+          </div>
+        </>
       )}
     </dialog>
   )
 }
 
-function Event({ details }: { details: EventDetails }) {
+function Event({ details, tool }: { details: EventDetails; tool: boolean }) {
   return (
     <>
       <dl className='wuhu-inspector-grid'>
@@ -142,13 +320,9 @@ function Event({ details }: { details: EventDetails }) {
           <>
             <dt>Time</dt>
             <dd>
-              {details.timestamp.toLocaleString(undefined, {
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
+              <time dateTime={details.timestamp.toISOString()}>
+                {details.timestamp.toLocaleString()}
+              </time>
             </dd>
           </>
         )}
@@ -159,13 +333,13 @@ function Event({ details }: { details: EventDetails }) {
           </div>
         ))}
       </dl>
-      {details.text !== null && details.text !== '' && (
-        <section className='wuhu-inspector-section'>
-          <h3 className='wuhu-eyebrow'>Text</h3>
-          <p className='wuhu-inspector-text'>{details.text}</p>
-        </section>
+      {details.text !== null && (
+        <Payload
+          title='Text'
+          value={details.text || 'No source body available.'}
+        />
       )}
-      {details.payload !== undefined && (
+      {!tool && details.payload !== undefined && (
         <Payload title='Payload' value={details.payload} />
       )}
     </>

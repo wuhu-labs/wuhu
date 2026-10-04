@@ -110,6 +110,7 @@ extension SessionStore {
           try Sessions.confirmClaudeCodeHandover(key, confirming.handover, entry: confirming.entry, in: db)
         }
       }
+      try Sessions.maintainClaudeHistory(key, generation: generation, in: db)
     }
     return confirming?.entry
   }

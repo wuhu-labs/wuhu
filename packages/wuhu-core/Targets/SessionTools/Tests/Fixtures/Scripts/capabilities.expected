@@ -1,0 +1,4 @@
+=== run_script
+{"sameSearchExport":true,"provider":"brave","title":"Synthetic title","image":"/art/generated.png","edit":"/art/edited.png","transcript":"hello","start":0.1,"speaker":"1"}
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

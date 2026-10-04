@@ -97,8 +97,12 @@ struct Executor {
       let output: WriteOutput = try await self.tool("write", input, space: route.space)
       try self.wallet.record(token: output.token, space: route.space, path: route.path)
       await self.runner.stdout(revPrefix(output.rev) + "token \(output.token)\n")
-    case let .transcribe(file, language):
-      try await self.transcribe(file: file, language: language)
+    case let .transcribe(file, language, provider, model, timestamps, diarize, json):
+      try await self.transcribe(file: file, language: language, provider: provider, model: model, timestamps: timestamps, diarize: diarize, json: json)
+    case let .webSearch(query, provider, count):
+      try await self.webSearch(query: query, provider: provider, count: count)
+    case let .image(prompt, images, destination, provider, model, quality, size):
+      try await self.image(prompt: prompt, images: images, destination: destination, provider: provider, model: model, quality: quality, size: size)
     case .transcriber:
       try await self.transcriber()
     case let .cat(path):
@@ -428,10 +432,10 @@ struct Executor {
     await self.runner.stdout("forgot \(endpoint.key)\n")
   }
 
-  func client(_ space: String, group: String? = nil) -> SpaceClient {
+  func client(_ space: String, group: String? = nil, longRunning: Bool = false) -> SpaceClient {
     SpaceClient(
       space: space,
-      fetch: self.runner.fetch,
+      fetch: longRunning ? self.runner.observeFetch : self.runner.fetch,
       observeFetch: self.runner.observeFetch,
       dial: self.runner.dial,
       group: group,

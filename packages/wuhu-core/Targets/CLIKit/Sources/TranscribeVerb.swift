@@ -5,6 +5,7 @@
 #endif
 
 import enum InferenceKit.TranscriptionLimits
+import JSONValue
 
 let audioContentTypes: [String: String] = [
   "wav": "audio/wav",
@@ -15,7 +16,7 @@ let audioContentTypes: [String: String] = [
 ]
 
 extension Executor {
-  mutating func transcribe(file: String, language: String?) async throws {
+  mutating func transcribe(file: String, language: String?, provider: String?, model: String?, timestamps: String?, diarize: Bool, json: Bool) async throws {
     let space = try self.wallet.pinnedSpace()
     let url = URL(
       fileURLWithPath: file,
@@ -39,9 +40,9 @@ extension Executor {
       a space accepts at most \(TranscriptionLimits.maximumBytes)
       """)
     }
-    let output = try await self.authenticated(space)
-      .transcribe(audio, contentType: contentType, language: language)
-    await self.runner.stdout(output.text + "\n")
+    let output = try await self.authenticated(space, longRunning: true)
+      .transcribe(audio, contentType: contentType, language: language, provider: provider, model: model, timestamps: timestamps, diarize: diarize ? true : nil)
+    await self.runner.stdout((json ? try JSONValueEncoder().encode(output).jsonString() : output.text) + "\n")
   }
 
   mutating func transcriber() async throws {

@@ -8,114 +8,68 @@ import struct Credentials.CredentialResolver
 import Fetch
 import struct InferenceKit.AudioClip
 import enum InferenceKit.AudioMediaType
-import struct InferenceKit.ModelsDocument
-import struct InferenceKit.ProviderCatalog
-import protocol InferenceKit.Transcriber
-import struct InferenceKit.Transcription
-import enum InferenceKit.TranscriptionError
+import struct InferenceKit.CapabilityClient
+import struct InferenceKit.CapabilityError
+import struct InferenceKit.CapabilityOptions
 import enum InferenceKit.TranscriptionLimits
-import Logging
+import JSONValue
 import ServeRouting
 import SpaceContract
 import SpaceCore
 
 func addTranscribeRoutes(_ router: inout Router, space: Space, credentials: CredentialResolver) {
   router.get("/v1/transcribe") { _, _ in
-    let transcriber = await spaceTranscriber(space: space, credentials: credentials)
-    return try Response.json(TranscriberInfo(
-      available: transcriber != nil,
-      provider: transcriber?.providerID,
-      model: transcriber?.model,
-    ))
+    do {
+      let info = try await spaceCapabilities(space: space, credentials: credentials).transcriberInfo()
+      return try Response.json(TranscriberInfo(available: true, provider: info.provider, model: info.model))
+    } catch {
+      return try Response.json(TranscriberInfo(available: false, provider: nil, model: nil))
+    }
   }
 
   router.post("/v1/transcribe") { request, _ in
     guard let header = request.headers[.contentType], let mediaType = AudioMediaType(header: header) else {
-      return errorResponse(
-        .unsupportedMediaType,
-        code: ErrorCode.unsupported.rawValue,
-        message: "transcription needs an audio content type",
-        hint: AudioMediaType.allCases.map(\.rawValue).joined(separator: ", "),
-      )
+      return errorResponse(.unsupportedMediaType, code: "invalid_argument", message: "Transcription needs an audio content type.", hint: AudioMediaType.allCases.map(\.rawValue).joined(separator: ", "))
     }
-    // Resolve before buffering: a space with no provider must refuse the
-    // upload, not pay 25 MiB of memory to discover it cannot serve it.
-    guard let transcriber = await spaceTranscriber(space: space, credentials: credentials) else {
-      return transcribeFailure(.noTranscriber, provider: nil)
-    }
-    let bytes: Data
     do {
-      bytes = try await request.body?.data(upTo: TranscriptionLimits.maximumBytes) ?? Data()
+      let client = try await spaceCapabilities(space: space, credentials: credentials)
+      let query = queryValues(of: request.url)
+      let options = CapabilityOptions(provider: query["provider"], model: query["model"], language: query["language"], timestamps: query["timestamps"].map { $0.split(separator: ",").map(String.init) }, diarize: query["diarize"].map { $0 == "true" })
+      if let value = query["diarize"], !["true", "false"].contains(value) { throw CapabilityError(.invalidArgument, "diarize must be true or false.") }
+      _ = try await client.transcriberInfo(options: options)
+      let bytes = try await request.body?.data(upTo: TranscriptionLimits.maximumBytes) ?? Data()
+      let transcription = try await client.transcribe(AudioClip(bytes: bytes, mediaType: mediaType), options: options)
+      return try Response.json(TranscriptionOutput(
+        text: transcription.text, provider: transcription.provider, model: transcription.model,
+        language: transcription.language, durationSeconds: transcription.durationSeconds,
+        segments: try transcription.segments.map { try $0.map { try JSONValueEncoder().encode($0) } },
+        words: try transcription.words.map { try $0.map { try JSONValueEncoder().encode($0) } },
+        confidence: transcription.confidence, usage: transcription.usage,
+      ))
+    } catch let error as CapabilityError {
+      return capabilityFailure(error)
     } catch FetchError.bodyLimitExceeded {
-      return errorResponse(
-        .contentTooLarge,
-        code: ErrorCode.invalidArgument.rawValue,
-        message: "audio exceeds the \(TranscriptionLimits.maximumBytes)-byte transcription bound",
-      )
+      return errorResponse(.contentTooLarge, code: "invalid_argument", message: "Audio exceeds the 25 MiB transcription bound.")
     } catch {
-      return errorResponse(
-        .badRequest,
-        code: ErrorCode.invalidArgument.rawValue,
-        message: "the audio body could not be read",
-      )
+      return capabilityFailure(.init(.providerUnavailable, "Transcription could not be completed.", hint: "Check the private audio input and selected capability provider."))
     }
-    let transcription: Transcription
-    do {
-      transcription = try await transcriber.transcribe(
-        AudioClip(bytes: bytes, mediaType: mediaType),
-        language: queryValues(of: request.url)["language"],
-      )
-    } catch let error as TranscriptionError {
-      return transcribeFailure(error, provider: transcriber.providerID)
-    }
-    return try Response.json(TranscriptionOutput(
-      text: transcription.text,
-      provider: transcription.provider,
-      model: transcription.model,
-      language: transcription.language,
-      durationSeconds: transcription.durationSeconds,
-    ))
   }
 }
 
-private func spaceTranscriber(space: Space, credentials: CredentialResolver) async -> (any Transcriber)? {
-  let document: ModelsDocument
-  if let (_, data) = try? await space.fs(.shared).read(ModelsDocument.spacePath), let parsed = try? ModelsDocument(json: data) {
-    document = parsed
-  } else {
-    document = ModelsDocument(providers: [:])
-  }
-  return await ProviderCatalog(document: document, credentials: credentials).resolveTranscriber()
+func spaceCapabilities(space: Space, credentials: CredentialResolver) async throws -> CapabilityClient {
+  try await CapabilityClient.load(read: { path in
+    do { return try await space.fs(.shared).read(path).1 }
+    catch SpaceError.notFound { return nil }
+  }, credentials: credentials)
 }
 
-func transcribeFailure(_ error: TranscriptionError, provider: String?) -> Response {
-  if let provider {
-    Logger(label: "wuhu.transcribe").warning("\(provider) transcription failed: \(error.diagnostic)")
+func capabilityFailure(_ error: CapabilityError) -> Response {
+  let status: Status = switch error.code {
+  case .invalidArgument, .unsupportedFeature: .badRequest
+  case .providerAuth: .unauthorized
+  case .providerRegion, .providerEntitlement: .forbidden
+  case .providerRateLimited: .tooManyRequests
+  case .providerNotConfigured, .providerUnavailable: .serviceUnavailable
   }
-  let message = provider.map { "\($0): \(error.description)" } ?? error.description
-  return switch error {
-  case .noTranscriber:
-    errorResponse(
-      .serviceUnavailable,
-      code: "noTranscriber",
-      message: message,
-      hint: "wuhu auth login codex, or wuhu auth set openai",
-    )
-  case .unsupportedMediaType:
-    errorResponse(.unsupportedMediaType, code: ErrorCode.unsupported.rawValue, message: message)
-  case .tooLarge:
-    errorResponse(.contentTooLarge, code: ErrorCode.invalidArgument.rawValue, message: message)
-  case .empty:
-    errorResponse(.badRequest, code: ErrorCode.invalidArgument.rawValue, message: message)
-  case let .upstream(status, _):
-    errorResponse(
-      status == 429 ? .tooManyRequests : .badGateway,
-      code: ErrorCode.unavailable.rawValue,
-      message: message,
-    )
-  case .transport:
-    errorResponse(.serviceUnavailable, code: ErrorCode.unavailable.rawValue, message: message)
-  case .malformedResponse:
-    errorResponse(.badGateway, code: ErrorCode.unavailable.rawValue, message: message)
-  }
+  return errorResponse(status, code: error.code.rawValue, message: error.message, hint: error.hint)
 }

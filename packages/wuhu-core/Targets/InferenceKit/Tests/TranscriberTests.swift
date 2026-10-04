@@ -132,13 +132,13 @@ private let clip = AudioClip(bytes: Data("RIFFfake-wav-bytes".utf8), mediaType: 
     let emitted = try #require(recorder.held.value.first)
     #expect(emitted.url == "https://api.openai.com/v1/audio/transcriptions")
     #expect(emitted.sensitiveHeaderNames == ["authorization"])
-    #expect(emitted.parts == ["model": "gpt-transcribe", "response_format": "json"])
+    #expect(emitted.parts == ["model": "gpt-4o-mini-transcribe", "response_format": "json"])
     #expect(emitted.fileName == "audio.wav")
 
     #expect(transcription == Transcription(
       text: "hello wuhu",
       provider: "openai",
-      model: "gpt-transcribe",
+      model: "gpt-4o-mini-transcribe",
       language: "en",
       durationSeconds: 3,
     ))
@@ -180,41 +180,6 @@ private let clip = AudioClip(bytes: Data("RIFFfake-wav-bytes".utf8), mediaType: 
       }
     }
     #expect(recorder.held.value.isEmpty)
-  }
-
-  @Test func aChatGPTLoginOutranksAnOpenAIKey() async throws {
-    let catalog = try fixtureCatalog(credentials: CredentialResolver { provider in
-      switch provider {
-      case "codex": .chatGPT(accessToken: "jwt", accountID: "acct")
-      case "openai": .apiKey("sk-test")
-      default: nil
-      }
-    })
-    let transcriber = try #require(await catalog.resolveTranscriber())
-    #expect(transcriber.providerID == "codex")
-
-    let recorder = Recorder()
-    _ = try await withDependencies {
-      $0.uuid = .incrementing
-      $0.fetch = recorder.client(payload: #"{"text":"ok"}"#)
-    } operation: {
-      try await transcriber.transcribe(clip, language: nil)
-    }
-    #expect(recorder.held.value.first?.url == "https://chatgpt.com/backend-api/transcribe")
-  }
-
-  @Test func anOpenAIKeyAloneSelectsTheAPITranscriber() async throws {
-    let catalog = try fixtureCatalog(credentials: CredentialResolver { provider in
-      provider == "openai" ? .apiKey("sk-test") : nil
-    })
-    let transcriber = try #require(await catalog.resolveTranscriber())
-    #expect(transcriber.providerID == "openai")
-    #expect(transcriber.model == "gpt-transcribe")
-  }
-
-  @Test func noCredentialLeavesNoTranscriber() async throws {
-    let catalog = try fixtureCatalog(credentials: .unavailable)
-    #expect(await catalog.resolveTranscriber() == nil)
   }
 
   @Test func mediaTypesAcceptTheAliasesRecordersEmit() {

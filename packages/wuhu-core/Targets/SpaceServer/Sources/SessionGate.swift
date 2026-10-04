@@ -158,6 +158,10 @@ private func sessionRouter(
   router.webSocket("/*") { _, _ in .response(notForSessions()) }
 
   router.get("/v1/server", use: forward)
+  router.get("/v1/transcribe", use: forward)
+  router.post("/v1/transcribe", use: forward)
+  router.post("/v1/web-search", use: forward)
+  router.post("/v1/image", use: forward)
   router.get("/v1/groups", use: forward)
   router.get("/v1/machine", use: forward)
   router.get("/v1/f/*", use: forward)

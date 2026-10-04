@@ -40,7 +40,6 @@ export default function Gallery() {
           <Panel key={name} label={name}>
             <TurnTimeline
               projection={projectTurns(workEvents(state), false)}
-              expanded={new Set()}
               status={null}
               group={sharedGroup}
               names={{
@@ -50,7 +49,6 @@ export default function Gallery() {
                   id,
               }}
               inspect={() => {}}
-              toggle={() => {}}
             />
           </Panel>
         ))}

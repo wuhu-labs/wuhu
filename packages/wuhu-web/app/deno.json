@@ -4,11 +4,13 @@
     "app/lib/contract.gen.ts",
     "app/lib/space-url.vectors.json",
     ".react-router",
-    "build"
+    "build",
+    "app/lib/transcript-semantics.gen.json"
   ],
   "generated": {
     "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
-    "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json"
+    "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json",
+    "app/lib/transcript-semantics.gen.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/transcript-semantics.json"
   },
   "exportedDirs": {
     "shell-sdk": "app/lib/shell-sdk"
@@ -17,12 +19,18 @@
     "~/": "./app/"
   },
   "compilerOptions": {
-    "lib": ["deno.ns", "deno.window", "DOM", "DOM.Iterable", "ES2022"],
+    "lib": [
+      "deno.ns",
+      "deno.window",
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
     "jsx": "react-jsx",
     "jsxImportSource": "react"
   },
   "tasks": {
-    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json)",
+    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/transcript-semantics.json app/lib/transcript-semantics.gen.json)",
     "dev": "deno task gen-contract && deno run -A npm:@react-router/dev dev",
     "build": "deno run -A npm:@react-router/dev build",
     "typecheck": "deno task gen-contract && deno run -A npm:@react-router/dev typegen && deno run -A npm:typescript/tsc -p tsconfig.check.json",

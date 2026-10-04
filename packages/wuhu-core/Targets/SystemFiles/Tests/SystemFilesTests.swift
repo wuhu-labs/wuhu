@@ -5,10 +5,10 @@ import SpaceFS
 import Testing
 
 @Suite struct SystemFilesTests {
-  @Test func theBinaryCarriesTheSystemAgentsAndSevenSkills() {
+  @Test func theBinaryCarriesTheSystemAgentsAndTenSkills() {
     #expect(SystemFiles.files["/AGENTS.md"] != nil)
     #expect(SystemFiles.instructions.skills.map(\.name) == [
-      "avatar", "data-views", "monitor", "read-box", "sessions", "space-html-pages", "widgets",
+      "avatar", "data-views", "image", "monitor", "read-box", "sessions", "space-html-pages", "transcription", "web-search", "widgets",
     ])
     #expect(SystemFiles.instructions.skills.allSatisfy { !$0.description.isEmpty })
     #expect(SystemFiles.instructions.skills.first?.path == "wuhu://system/skills/avatar/SKILL.md")

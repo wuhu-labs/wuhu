@@ -493,6 +493,12 @@ func addSessionRoutes(
           }
           before = value
         }
+        if query["paged"] == "true" {
+          guard tail <= 100 else { return errorResponse(.badRequest, code: "invalidArgument", message: "paged tail must be at most 100") }
+          let rows = try await store.messagesTail(conversation: id, before: before, limit: tail + 1)
+          let records = Array(rows.suffix(tail))
+          return try Response.json(ConversationHistoryOutput(messages: try await messagePayloads(records, sessions: store, space: space, viewer: viewer), before: records.first.map { Int($0.n) } ?? before.map(Int.init), hasEarlier: rows.count > tail, headPosition: records.last.map { Int($0.n) }))
+        }
         let records = try await store.messagesTail(conversation: id, before: before, limit: tail)
         return try Response.json(ConversationReadOutput(messages: try await messagePayloads(records, sessions: store, space: space, viewer: viewer)))
       }
@@ -520,6 +526,47 @@ func addSessionRoutes(
     case let .failure(refusal):
       return refusal.response
     }
+  }
+
+  router.get("/v1/session/:id/transcript/page") { request, parameters in
+    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
+    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
+    let query = queryValues(of: request.url)
+    guard let limit = Int(query["limit"] ?? "200"), (1 ... 200).contains(limit),
+          query["generation"].map({ Int($0) != nil }) ?? true,
+          query["before"].map({ Int($0) != nil }) ?? true
+    else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "invalid transcript page cursor or limit")
+    }
+    do {
+      let page: TranscriptHistoryPage
+      do {
+        page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
+      } catch let TranscriptHistoryError.preparing(generation) {
+        guard try await store.prepareClaudeCodeHistory(id, generation: generation) else {
+          return errorResponse(.serviceUnavailable, code: "transcriptPreparing", message: "Preparing history; retry this page")
+        }
+        page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
+      }
+      return try Response.json(TranscriptHistoryOutput(
+        historyEpoch: page.historyEpoch,
+        generation: page.generation,
+        entries: page.entries.map { TranscriptHistoryEntryPayload(position: $0.position, item: itemJSON($0.item)) },
+        origins: page.origins.map { TranscriptHistoryEntryPayload(position: $0.position, item: itemJSON($0.item)) },
+        before: page.before,
+        hasEarlier: page.hasEarlier,
+        headPosition: page.headPosition,
+      ))
+    } catch let error as TranscriptHistoryError {
+      switch error {
+      case .invalidPage:
+        return errorResponse(.badRequest, code: "invalidArgument", message: "pass a valid generation and exclusive before together")
+      case .generationChanged, .historyChanged:
+        return errorResponse(.conflict, code: "generationChanged", message: "transcript generation changed; bootstrap the recent page")
+      case .preparing:
+        return errorResponse(.serviceUnavailable, code: "transcriptPreparing", message: "Preparing history; retry this page")
+      }
+    } catch { return sessionErrorResponse(error) }
   }
 
   router.get("/v1/session/:id/transcript") { request, parameters in
@@ -552,7 +599,7 @@ func addSessionRoutes(
     } catch {
       return sessionErrorResponse(error)
     }
-    return directStreamResponse(runtime: runtime, session: id, cursor: cursor)
+    return directStreamResponse(runtime: runtime, session: id, cursor: cursor, bounded: query["paged"] == "true", historyEpoch: query["epoch"])
   }
 
   router.post("/v1/watermark") { request, _ in

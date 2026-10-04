@@ -4,6 +4,8 @@
   import Foundation
 #endif
 
+import JSONValue
+
 public enum AudioMediaType: String, Sendable, Hashable, CaseIterable, Codable {
   case wav = "audio/wav"
   case mpeg = "audio/mpeg"
@@ -52,12 +54,32 @@ public struct AudioClip: Sendable, Hashable {
   }
 }
 
+public struct TranscriptionSpan: Sendable, Hashable, Codable {
+  public var text: String
+  public var start: Double?
+  public var end: Double?
+  public var speaker: String?
+  public var confidence: Double?
+
+  public init(text: String, start: Double? = nil, end: Double? = nil, speaker: String? = nil, confidence: Double? = nil) {
+    self.text = text
+    self.start = start
+    self.end = end
+    self.speaker = speaker
+    self.confidence = confidence
+  }
+}
+
 public struct Transcription: Sendable, Hashable, Codable {
   public var text: String
   public var provider: String
   public var model: String
   public var language: String?
   public var durationSeconds: Double?
+  public var segments: [TranscriptionSpan]?
+  public var words: [TranscriptionSpan]?
+  public var confidence: Double?
+  public var usage: JSONValue?
 
   public init(
     text: String,
@@ -65,12 +87,20 @@ public struct Transcription: Sendable, Hashable, Codable {
     model: String,
     language: String? = nil,
     durationSeconds: Double? = nil,
+    segments: [TranscriptionSpan]? = nil,
+    words: [TranscriptionSpan]? = nil,
+    confidence: Double? = nil,
+    usage: JSONValue? = nil,
   ) {
     self.text = text
     self.provider = provider
     self.model = model
     self.language = language
     self.durationSeconds = durationSeconds
+    self.segments = segments
+    self.words = words
+    self.confidence = confidence
+    self.usage = usage
   }
 }
 

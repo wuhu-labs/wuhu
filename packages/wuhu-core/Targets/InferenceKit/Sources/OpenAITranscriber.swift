@@ -7,7 +7,7 @@
 import Fetch
 
 public struct OpenAITranscriber: Transcriber {
-  public static let defaultModel: String = "gpt-transcribe"
+  public static let defaultModel: String = "gpt-4o-mini-transcribe"
   public static let defaultBaseURL: URL = URL(string: "https://api.openai.com/v1")!
 
   public let providerID: String = "openai"

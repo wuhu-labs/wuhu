@@ -4,6 +4,7 @@ import { latestOrdinal, ReadMark } from './read-mark.ts'
 import { useObserve } from './use-observe.ts'
 import type { ConversationMessagePayload } from './contract.gen.ts'
 import type { Liveness } from '~/sdk/observe'
+import type { HistoryEdge } from '~/sdk/paged-observe'
 import { markConversationRead } from '~/sdk/conversation'
 import { conversationSubscription } from '~/sdk/subscriptions'
 
@@ -33,7 +34,7 @@ function usePageReading(): boolean {
 export function useConversation(
   conversationId: string,
   group: string,
-): { messages: MessageMap; liveness: Liveness } {
+): { messages: MessageMap; liveness: Liveness; history?: HistoryEdge } {
   const conversation = useObserve<MessageMap, ConversationMessagePayload>(
     conversationSubscription(conversationId, group),
     foldMessage,
@@ -50,5 +51,9 @@ export function useConversation(
     }
     markConversationRead(conversationId, group).catch(() => {})
   }, [conversationId, group, latest, reading, conversation.liveness])
-  return { messages: conversation.data, liveness: conversation.liveness }
+  return {
+    messages: conversation.data,
+    liveness: conversation.liveness,
+    history: conversation.history,
+  }
 }

@@ -903,3 +903,79 @@ struct TrustVerbTests {
     #expect((await harness.stdout.text).contains("server certificate sha256:"))
   }
 }
+
+@Suite struct CapabilityCLITests {
+  @Test func transcriptionHelpExplainsAuthoritativeCapabilities() async throws {
+    let harness = try Harness(response: .object([:]))
+    #expect(await harness.runner.run(arguments: ["transcribe", "--help"]) == 0)
+    let help = await harness.stdout.text
+    #expect(help.contains("/capabilities.json") && help.contains("unconfigured capability synthesizes Codex"))
+    #expect(help.contains("never falls back") && help.contains("readable timing"))
+    #expect(!help.contains("otherwise through its openai"))
+  }
+
+  @Test func capabilityCallsUseTheLongOperationTransport() async throws {
+    let temp = try TemporaryDirectory(withLocalWallet: true)
+    try Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!.write(to: temp.cwd.appendingPathComponent("clip.wav"))
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
+    let harness = try Harness(temp: temp, response: .object(["query": "moon", "sources": [], "text": "hello", "provider": "openai", "model": "gpt-4o-mini-transcribe", "b64JSON": .string(png)]))
+    let ordinaryCalls = LockIsolated(0)
+    var runner = harness.runner
+    runner.observeFetch = runner.fetch
+    runner.fetch = FetchClient { _ in ordinaryCalls.withValue { $0 += 1 }; return try .json(JSONValue.object(["columns": [], "rows": []])) }
+    #expect(await runner.run(arguments: ["web-search", "moon"]) == 0)
+    #expect(await runner.run(arguments: ["transcribe", "clip.wav"]) == 0)
+    #expect(await runner.run(arguments: ["image", "moon", "--destination", "long.png"]) == 0)
+    #expect(ordinaryCalls.value == 0)
+    #expect(await harness.recorder.requests.count == 3)
+    #expect(await runner.run(arguments: ["query", "SELECT 1"]) == 0)
+    #expect(ordinaryCalls.value == 1)
+  }
+
+  @Test func capabilityErrorsRetainTheirCodeAndHintInTheCLI() async throws {
+    let harness = try Harness(response: .json(JSONValue.object(["code": "provider_not_configured", "message": "Missing key", "hint": "Configure server credentials"]), status: .serviceUnavailable))
+    #expect(await harness.runner.run(arguments: ["web-search", "moon"]) == 1)
+    #expect(await harness.stderr.text == "provider_not_configured: Missing key\nhint: Configure server credentials\n")
+  }
+
+  @Test func webSearchMapsNeutralProviderAndCount() async throws {
+    try await assertRequest(["web-search", "synthetic moon", "--provider", "brave", "--count", "3"], response: .object(["query": "synthetic moon", "provider": "brave", "sources": []])) { request in
+      #expect(request.method == .post && request.url.path == "/v1/web-search")
+      let body = try await requestBodyJSON(request)
+      #expect(body == .object(["query": "synthetic moon", "provider": "brave", "count": 3]))
+    }
+  }
+
+  @Test func transcriptionCarriesTheSameRichOptionsAsScripts() async throws {
+    let temp = try TemporaryDirectory(withLocalWallet: true)
+    let audio = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!
+    try audio.write(to: temp.cwd.appendingPathComponent("clip.wav"))
+    let harness = try Harness(temp: temp, response: .object(["text": "hello", "provider": "qwen", "model": "qwen-audio-3.1-asr-flash-filetrans", "segments": [["text": "hello", "start": 0, "end": 1, "speaker": "1"]]]))
+    #expect(await harness.runner.run(arguments: ["transcribe", "clip.wav", "--provider", "qwen", "--model", "qwen-audio-3.1-asr-flash-filetrans", "--timestamps", "words,segments", "--diarize", "--json"]) == 0)
+    let request = try #require(await harness.recorder.requests.first)
+    let query = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(query.contains(URLQueryItem(name: "provider", value: "qwen")))
+    #expect(query.contains(URLQueryItem(name: "timestamps", value: "words,segments")))
+    #expect(query.contains(URLQueryItem(name: "diarize", value: "true")))
+    #expect(try await request.body?.data() == audio)
+    #expect(await harness.stdout.text.contains("\"speaker\":\"1\""))
+  }
+
+  @Test func imageEditingUploadsPrivateBytesAndNeverOverwrites() async throws {
+    let temp = try TemporaryDirectory(withLocalWallet: true)
+    let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]) + Data("IHDR".utf8) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])
+    try png.write(to: temp.cwd.appendingPathComponent("reference.png"))
+    let harness = try Harness(temp: temp, response: .object(["b64JSON": .string(png.base64EncodedString()), "mimeType": "image/png"]))
+    let args = ["image", "blue moon", "--image", "reference.png", "--destination", "art/result.png", "--provider", "qwen", "--quality", "standard"]
+    #expect(await harness.runner.run(arguments: args) == 0)
+    let request = try #require(await harness.recorder.requests.first)
+    #expect(request.url.path == "/v1/image" && request.method == .post)
+    let body = try await requestBodyJSON(request)
+    #expect(body.object?["images"] == .array([.string(png.base64EncodedString())]))
+    #expect(body.object?["quality"] == .string("standard"))
+    #expect(try Data(contentsOf: temp.cwd.appendingPathComponent("art/result.png")) == png)
+    #expect(await harness.runner.run(arguments: args) == 1)
+    #expect(await harness.recorder.requests.count == 1)
+    #expect(await harness.stderr.text.contains("never overwrites"))
+  }
+}

@@ -1,17 +1,25 @@
 import { byteLength, type CacheKind } from '~/lib/shell-sdk/open-cache.js'
 import type { ViewerCache } from './open-cache'
+import {
+  type HistoryEdge,
+  type HistorySubscription,
+  pagedObserveStore,
+} from './paged-observe'
 
 export type Liveness = 'live' | 'reconnecting'
 
 export interface Snapshot<Data> {
   readonly data: Data
   readonly liveness: Liveness
+  readonly history?: HistoryEdge
+  readonly origins?: readonly unknown[]
 }
 
 export type Fold<Data, Event> = (data: Data, event: Event) => Data
 
 export interface Subscription<Event> {
   readonly from: number | null
+  readonly history?: HistorySubscription<Event>
   url(cursor: number | null): string | null
   cursorOf(event: Event): number | null
   readonly retention?: Retention<Event>
@@ -97,6 +105,7 @@ const alwaysOnline: Network = { online: () => true, onChange: () => () => {} }
 export function observeStore<Data, Event>(
   config: StoreConfig<Data, Event>,
 ): ObserveStore<Data> {
+  if (config.subscription.history) return pagedObserveStore(config)
   const { subscription, fold, initial, open, timer } = config
   const backoff = config.backoff ?? defaultBackoff
   const openTimeoutMs = config.openTimeoutMs ?? defaultOpenTimeoutMs

@@ -1,0 +1,2686 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "name": "latest-batch-declared",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "running"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "queued"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "activeToolCallID": "read",
+      "expectedWorking": true
+    },
+    {
+      "name": "first-result",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "running"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "activeToolCallID": "grep",
+      "expectedWorking": true
+    },
+    {
+      "name": "all-results-still-exposed",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "duplicate-results-no-duplicate-rows",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "attempt-start-does-not-fold",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "kind": "stream",
+          "attempt": "next",
+          "text": ""
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": true
+    },
+    {
+      "name": "delta-does-not-fold",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "kind": "stream",
+          "attempt": "next",
+          "text": "Next answer"
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "stream:next",
+          "kind": "output",
+          "items": [
+            "stream:next"
+          ],
+          "calls": []
+        }
+      ],
+      "expectedWorking": true
+    },
+    {
+      "name": "notice-does-not-fold",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "context",
+          "text": "<AGENTS.md from=\"machines://mac/Users/dev/Wuhu/main/AGENTS.md\">\nRules\n</AGENTS.md>"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:4:0",
+          "kind": "notice",
+          "items": [
+            "7:4:0"
+          ],
+          "calls": [],
+          "inference": "7:1",
+          "label": "Instructions loaded",
+          "subject": "Wuhu/main/AGENTS.md",
+          "sources": [
+            "machines://mac/Users/dev/Wuhu/main/AGENTS.md"
+          ]
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "next-committed-folds",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "context",
+          "text": "<AGENTS.md from=\"machines://mac/Users/dev/Wuhu/main/AGENTS.md\">\nRules\n</AGENTS.md>"
+        },
+        {
+          "generation": 7,
+          "position": 5,
+          "part": 0,
+          "kind": "text",
+          "text": "The plan is ready."
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "summary:7:1:0",
+          "kind": "summary",
+          "items": [
+            "7:1:0",
+            "7:1:1",
+            "7:1:2",
+            "7:1:3",
+            "7:4:0"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            },
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "7:5:0",
+          "kind": "output",
+          "items": [
+            "7:5:0"
+          ],
+          "calls": [],
+          "inference": "7:5"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "empty-committed-entry-folds",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "text",
+          "text": ""
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "summary:7:1:0",
+          "kind": "summary",
+          "items": [
+            "7:1:0",
+            "7:1:1",
+            "7:1:2",
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            },
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "cancelled-batch-truthful",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "missing-current-evidence",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": true
+    },
+    {
+      "name": "failed-result",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "failed": true,
+          "output": "Denied"
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "failed"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "running"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "activeToolCallID": "grep",
+      "expectedWorking": true
+    },
+    {
+      "name": "consecutive-sends-and-trailing-work",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Reasoning before send"
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 1,
+          "kind": "send",
+          "callID": "s1",
+          "name": "send_message",
+          "arguments": {
+            "message": "First"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 2,
+          "kind": "send",
+          "callID": "s2",
+          "name": "report",
+          "arguments": {
+            "content": "Second",
+            "kind": "progress"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 3,
+          "kind": "tool",
+          "callID": "after",
+          "name": "read",
+          "arguments": {
+            "path": "/after"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "text",
+          "text": "Outward answer"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "summary:7:0:0",
+          "kind": "summary",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:0:1",
+          "kind": "send",
+          "items": [
+            "7:0:1"
+          ],
+          "calls": [
+            {
+              "id": "s1",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:0"
+        },
+        {
+          "id": "7:0:2",
+          "kind": "send",
+          "items": [
+            "7:0:2"
+          ],
+          "calls": [
+            {
+              "id": "s2",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:0"
+        },
+        {
+          "id": "summary:7:0:3",
+          "kind": "summary",
+          "items": [
+            "7:0:3"
+          ],
+          "calls": [
+            {
+              "id": "after",
+              "state": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "7:1:0",
+          "kind": "output",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "latest-send-trailing-work",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Reasoning before send"
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 1,
+          "kind": "send",
+          "callID": "s1",
+          "name": "send_message",
+          "arguments": {
+            "message": "First"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 2,
+          "kind": "send",
+          "callID": "s2",
+          "name": "report",
+          "arguments": {
+            "content": "Second",
+            "kind": "progress"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 3,
+          "kind": "tool",
+          "callID": "after",
+          "name": "read",
+          "arguments": {
+            "path": "/after"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "result",
+          "callID": "s1",
+          "output": "posted"
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "s2",
+          "output": "reported"
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "reasoning",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "inference": "7:0"
+        },
+        {
+          "id": "7:0:1",
+          "kind": "send",
+          "items": [
+            "7:0:1"
+          ],
+          "calls": [
+            {
+              "id": "s1",
+              "state": "done"
+            }
+          ],
+          "inference": "7:0"
+        },
+        {
+          "id": "7:0:2",
+          "kind": "send",
+          "items": [
+            "7:0:2"
+          ],
+          "calls": [
+            {
+              "id": "s2",
+              "state": "done"
+            }
+          ],
+          "inference": "7:0"
+        },
+        {
+          "id": "7:0:3",
+          "kind": "tool",
+          "items": [
+            "7:0:3"
+          ],
+          "calls": [
+            {
+              "id": "after",
+              "state": "running"
+            }
+          ],
+          "inference": "7:0"
+        }
+      ],
+      "activeToolCallID": "after",
+      "expectedWorking": true
+    },
+    {
+      "name": "reasoning-only-and-unavailable-body",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "reasoning",
+          "text": ""
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Think again"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "summary:7:0:0",
+          "kind": "summary",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "all-no-tool-answers-visible",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "text",
+          "text": "First answer"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Think"
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "text",
+          "text": "Second answer"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "output",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "inference": "7:0"
+        },
+        {
+          "id": "summary:7:1:0",
+          "kind": "summary",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:2:0",
+          "kind": "output",
+          "items": [
+            "7:2:0"
+          ],
+          "calls": [],
+          "inference": "7:2"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "malformed-notice-no-parent",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "context",
+          "text": "<AGENTS.md from=broken>Available raw text"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Context updated",
+          "subject": "System-provided context",
+          "sources": []
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "explicit-notice-kind",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "compactRequest",
+          "text": "Please compact"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Compaction requested",
+          "subject": "Context housekeeping",
+          "sources": []
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "multiple-explicit-sources",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "context",
+          "text": "<AGENTS.md from=\"wuhu://system/AGENTS.md\">a</AGENTS.md>\n<AGENTS.md from=\"/AGENTS.md\">b</AGENTS.md>\n<AGENTS.md from=\"/AGENTS.md\">b</AGENTS.md>"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Instructions loaded",
+          "subject": "wuhu://system/AGENTS.md + 1 more",
+          "sources": [
+            "wuhu://system/AGENTS.md",
+            "/AGENTS.md"
+          ]
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "unloaded-gap-separates-work",
+      "events": [
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Earlier loaded work"
+        },
+        {
+          "generation": 7,
+          "position": 8,
+          "part": 0,
+          "kind": "tool",
+          "callID": "later",
+          "name": "read",
+          "arguments": {}
+        },
+        {
+          "generation": 7,
+          "position": 9,
+          "part": 0,
+          "kind": "text",
+          "text": "Done"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "summary:7:4:0",
+          "kind": "summary",
+          "items": [
+            "7:4:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "gap:7:8:0",
+          "kind": "gap",
+          "items": [],
+          "calls": []
+        },
+        {
+          "id": "summary:7:8:0",
+          "kind": "summary",
+          "items": [
+            "7:8:0"
+          ],
+          "calls": [
+            {
+              "id": "later",
+              "state": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "7:9:0",
+          "kind": "output",
+          "items": [
+            "7:9:0"
+          ],
+          "calls": [],
+          "inference": "7:9"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "origin-only-receipt-not-inference",
+      "events": [
+        {
+          "generation": 7,
+          "position": 8,
+          "part": 0,
+          "kind": "result",
+          "callID": "origin",
+          "output": "loaded receipt",
+          "origin": {
+            "callID": "origin",
+            "name": "read",
+            "arguments": {
+              "path": "/old"
+            }
+          }
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:8:0",
+          "kind": "result",
+          "items": [
+            "7:8:0"
+          ],
+          "calls": [
+            {
+              "id": "origin",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "partial-window",
+      "events": [
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Old"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "tool",
+          "callID": "recent",
+          "name": "read",
+          "arguments": {}
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "summary:7:3:0",
+          "kind": "summary",
+          "items": [
+            "7:3:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:4:0",
+          "kind": "tool",
+          "items": [
+            "7:4:0"
+          ],
+          "calls": [
+            {
+              "id": "recent",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:4"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "prepend-stable-event-identities",
+      "events": [
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "text",
+          "text": "Older answer"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Old"
+        },
+        {
+          "generation": 7,
+          "position": 4,
+          "part": 0,
+          "kind": "tool",
+          "callID": "recent",
+          "name": "read",
+          "arguments": {}
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:2:0",
+          "kind": "output",
+          "items": [
+            "7:2:0"
+          ],
+          "calls": [],
+          "inference": "7:2"
+        },
+        {
+          "id": "summary:7:3:0",
+          "kind": "summary",
+          "items": [
+            "7:3:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:4:0",
+          "kind": "tool",
+          "items": [
+            "7:4:0"
+          ],
+          "calls": [
+            {
+              "id": "recent",
+              "state": "unknown"
+            }
+          ],
+          "inference": "7:4"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "reconnect-retains-latest",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Plan body"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "grep",
+          "output": "Matches"
+        }
+      ],
+      "working": false,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "done"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "conflicting-result-first-terminal-wins",
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "input",
+          "text": "Review the plan"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 1,
+          "kind": "text",
+          "text": "I will read both files."
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 2,
+          "kind": "tool",
+          "callID": "read",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 3,
+          "kind": "tool",
+          "callID": "grep",
+          "name": "grep",
+          "arguments": {
+            "pattern": "contract"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "failed": true,
+          "output": "Denied"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "result",
+          "callID": "read",
+          "output": "Late duplicate success"
+        }
+      ],
+      "working": true,
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "input",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:1",
+          "kind": "preamble",
+          "items": [
+            "7:1:1"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:2",
+          "kind": "tool",
+          "items": [
+            "7:1:2"
+          ],
+          "calls": [
+            {
+              "id": "read",
+              "state": "failed"
+            }
+          ],
+          "inference": "7:1"
+        },
+        {
+          "id": "7:1:3",
+          "kind": "tool",
+          "items": [
+            "7:1:3"
+          ],
+          "calls": [
+            {
+              "id": "grep",
+              "state": "running"
+            }
+          ],
+          "inference": "7:1"
+        }
+      ],
+      "activeToolCallID": "grep",
+      "expectedWorking": true
+    },
+    {
+      "name": "known-notice-kind-retained",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "timer",
+          "text": "Review the plan now"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Timer",
+          "subject": "Review the plan now",
+          "sources": []
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "restart-notice-kind-retained",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "restart",
+          "text": "Continue from a new generation"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Started over",
+          "subject": "Continue from a new generation",
+          "sources": []
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "malformed-multiline-source-is-context",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 0,
+          "part": 0,
+          "kind": "notice",
+          "noticeKind": "context",
+          "text": "<AGENTS.md from=\"machines://mac/Users/dev/\nAGENTS.md\">\nRules\n</AGENTS.md>"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:0:0",
+          "kind": "notice",
+          "items": [
+            "7:0:0"
+          ],
+          "calls": [],
+          "label": "Context updated",
+          "subject": "System-provided context",
+          "sources": []
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "bookmark-after-assistant-remains-visible",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "bookmark",
+          "text": "Milestone"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "text",
+          "text": "Answer"
+        }
+      ],
+      "expected": [
+        {
+          "id": "summary:7:1:0",
+          "kind": "summary",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:2:0",
+          "kind": "bookmark",
+          "items": [
+            "7:2:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:3:0",
+          "kind": "output",
+          "items": [
+            "7:3:0"
+          ],
+          "calls": [],
+          "inference": "7:3"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "bookmark-first-partial-tail-remains-visible",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 2,
+          "part": 0,
+          "kind": "bookmark",
+          "text": "Milestone"
+        },
+        {
+          "generation": 7,
+          "position": 3,
+          "part": 0,
+          "kind": "text",
+          "text": "Answer"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:2:0",
+          "kind": "bookmark",
+          "items": [
+            "7:2:0"
+          ],
+          "calls": []
+        },
+        {
+          "id": "7:3:0",
+          "kind": "output",
+          "items": [
+            "7:3:0"
+          ],
+          "calls": [],
+          "inference": "7:3"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "receipt-first-tail-with-companion",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 8,
+          "part": 0,
+          "kind": "result",
+          "callID": "read-tail",
+          "output": "Plan",
+          "origin": {
+            "callID": "read-tail",
+            "name": "read",
+            "arguments": {
+              "path": "/plan.md"
+            }
+          }
+        },
+        {
+          "generation": 7,
+          "position": 9,
+          "part": 0,
+          "kind": "text",
+          "text": "Answer"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:8:0",
+          "kind": "result",
+          "items": [
+            "7:8:0"
+          ],
+          "calls": [
+            {
+              "id": "read-tail",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "7:9:0",
+          "kind": "output",
+          "items": [
+            "7:9:0"
+          ],
+          "calls": [],
+          "inference": "7:9"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "receipt-tail-prepend-folded-declaration",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 7,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "generation": 7,
+          "position": 7,
+          "part": 1,
+          "kind": "tool",
+          "callID": "read-tail",
+          "name": "read",
+          "arguments": {
+            "path": "/plan.md"
+          }
+        },
+        {
+          "generation": 7,
+          "position": 8,
+          "part": 0,
+          "kind": "result",
+          "callID": "read-tail",
+          "output": "Plan",
+          "origin": {
+            "callID": "read-tail",
+            "name": "read",
+            "arguments": {
+              "path": "/plan.md"
+            }
+          }
+        },
+        {
+          "generation": 7,
+          "position": 9,
+          "part": 0,
+          "kind": "text",
+          "text": "Answer"
+        }
+      ],
+      "expected": [
+        {
+          "id": "summary:7:7:0",
+          "kind": "summary",
+          "items": [
+            "7:7:0",
+            "7:7:1"
+          ],
+          "calls": [
+            {
+              "id": "read-tail",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "7:9:0",
+          "kind": "output",
+          "items": [
+            "7:9:0"
+          ],
+          "calls": [],
+          "inference": "7:9"
+        }
+      ],
+      "expectedWorking": false
+    },
+    {
+      "name": "empty-stream-placeholder-working-without-fold",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "kind": "stream",
+          "attempt": "new-attempt",
+          "text": ""
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        }
+      ],
+      "expectedWorking": true
+    },
+    {
+      "name": "nonempty-stream-working-without-summary-evidence",
+      "working": false,
+      "events": [
+        {
+          "generation": 7,
+          "position": 1,
+          "part": 0,
+          "kind": "reasoning",
+          "text": "Inspect first"
+        },
+        {
+          "kind": "stream",
+          "attempt": "new-attempt",
+          "text": "A partial answer"
+        }
+      ],
+      "expected": [
+        {
+          "id": "7:1:0",
+          "kind": "reasoning",
+          "items": [
+            "7:1:0"
+          ],
+          "calls": [],
+          "inference": "7:1"
+        },
+        {
+          "id": "stream:new-attempt",
+          "kind": "output",
+          "items": [
+            "stream:new-attempt"
+          ],
+          "calls": []
+        }
+      ],
+      "expectedWorking": true
+    }
+  ]
+}

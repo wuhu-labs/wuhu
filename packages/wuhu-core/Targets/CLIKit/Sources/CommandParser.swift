@@ -76,14 +76,39 @@ extension Command {
       let path = try parser.required("path", verb: verb)
       try parser.finish(verb: verb)
       return .cat(path: path)
+    case "web-search":
+      let provider = try parser.option("--provider", verb: verb)
+      let countText = try parser.option("--count", verb: verb)
+      let count = countText.flatMap(Int.init)
+      if countText != nil, count == nil { throw UsageError(message: "web-search: --count must be an integer") }
+      let query = try parser.required("query", verb: verb)
+      try parser.finish(verb: verb)
+      return .webSearch(query: query, provider: provider, count: count)
+    case "image":
+      let provider = try parser.option("--provider", verb: verb)
+      let model = try parser.option("--model", verb: verb)
+      let quality = try parser.option("--quality", verb: verb)
+      let size = try parser.option("--size", verb: verb)
+      let destination = try parser.option("--destination", verb: verb)
+      var images: [String] = []
+      while let path = try parser.option("--image", verb: verb) { images.append(path) }
+      let prompt = try parser.required("prompt", verb: verb)
+      try parser.finish(verb: verb)
+      guard let destination else { throw UsageError(message: "image: --destination <local-png-path> is required") }
+      return .image(prompt: prompt, images: images, destination: destination, provider: provider, model: model, quality: quality, size: size)
     case "transcribe":
       let language = try parser.option("--language", verb: verb)
+      let provider = try parser.option("--provider", verb: verb)
+      let model = try parser.option("--model", verb: verb)
+      let timestamps = try parser.option("--timestamps", verb: verb)
+      let diarize = parser.flag("--diarize")
+      let json = parser.flag("--json")
       guard let file = parser.pop() else {
         try parser.finish(verb: verb)
         return .transcriber
       }
       try parser.finish(verb: verb)
-      return .transcribe(file: file, language: language)
+      return .transcribe(file: file, language: language, provider: provider, model: model, timestamps: timestamps, diarize: diarize, json: json)
     case "put":
       let force = parser.flag("--force")
       let path = try parser.required("path", verb: verb)
@@ -773,6 +798,8 @@ extension Command {
     cat       write a path's raw bytes to stdout
     put       write raw stdin bytes to a path
     transcribe  transcribe an audio file through the space's provider
+    web-search search the public web through the space's provider
+    image      generate or edit an image; create-only local output
     edit      replace one text span
     rm        remove a path
     mv        move a path
@@ -922,13 +949,27 @@ extension Command {
     recorded — pair it with wuhu put --force, or wuhu read for text.
     \(exitCodes)
     """,
+    "web-search": """
+    usage: wuhu web-search <query> [--provider <id>] [--count <1..20>]
+
+    prints normalized JSON sources from the space capability resolver. Do not build
+    a persistent search corpus or use Brave results to train/evaluate models.
+    """,
+    "image": """
+    usage: wuhu image <prompt> --destination <local-png-path> [--image <local-png-path>]... [--provider <id>] [--model <id>] [--quality draft|standard|fine|ultra] [--size 1024x1024|1536x1024|1024x1536]
+
+    generates a PNG, or edits when --image is present. Uploads private reference
+    bytes internally and creates the local output exclusively; never overwrites.
+    """,
     "transcribe": """
-    usage: wuhu transcribe [<file>] [--language <code>]
+    usage: wuhu transcribe [<file>] [--language <code>] [--provider <id>] [--model <id>] [--timestamps words,segments] [--diarize] [--json]
 
     uploads <file> to the pinned space (POST /v1/transcribe) and prints the
-    transcript. the space transcribes through its chatgpt login when one is
-    stored, otherwise through its openai api key. accepts .wav, .mp3, .mp4,
-    .m4a and .webm up to 25 MB. with no <file> it prints the provider and
+    transcript. /capabilities.json selects the active provider; --provider overrides
+    it explicitly. Only an unconfigured capability synthesizes Codex; broken
+    configuration never falls back. Accepts WAV, MP3, M4A/MP4 and
+    WebM with readable timing, up to 25 MiB/two hours. --json includes available
+    timestamp/speaker metadata. With no <file> it prints the provider and
     model the space would use, or "no transcriber".
     \(exitCodes)
     """,
@@ -1475,7 +1516,7 @@ extension Command {
     "auth": """
     usage: wuhu auth <set|list|remove|login|logout> [provider]
 
-    manages LLM provider credentials for the pinned space, stored per space id
+    manages server provider credentials (inference and capabilities) for the pinned space, stored per space id
     in ~/.wuhu/credentials/<space-id>.json on this host. the space server reads
     that file at inference time, so run these on the host that serves the
     space. environment variables (<PROVIDER>_API_KEY) override the store.
@@ -1491,7 +1532,7 @@ extension Command {
     "auth set": """
     usage: wuhu auth set <provider> < key.txt
 
-    stores an api key for <provider> (a provider id from /models.json), read
+    stores an api key for <provider> (a credential id from /models.json or /capabilities.json), read
     from stdin. replaces any credential already stored for that provider.
     \(exitCodes)
     """,

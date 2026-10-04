@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Foundation
+import struct InferenceKit.CapabilityError
 import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
@@ -106,6 +107,8 @@ public struct ToolExecutor: Sendable {
     }
     do {
       return try await run(tool, session: session, call: call, state: state)
+    } catch let error as CapabilityError {
+      return .failure(.init(message: error.description))
     } catch let problem as ToolProblem {
       return .failure(.init(message: problem.message))
     } catch let error as ToolRunError {

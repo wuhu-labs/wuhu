@@ -11,6 +11,14 @@ public enum ErrorCode: String, Codable, Equatable, Sendable {
   case unsupported
   case unavailable
   case `internal`
+  case providerNotConfigured = "provider_not_configured"
+  case providerAuth = "provider_auth"
+  case providerRegion = "provider_region"
+  case providerEntitlement = "provider_entitlement"
+  case providerRateLimited = "provider_rate_limited"
+  case unsupportedFeature = "unsupported_feature"
+  case capabilityInvalidArgument = "invalid_argument"
+  case providerUnavailable = "provider_unavailable"
 }
 
 @Contract

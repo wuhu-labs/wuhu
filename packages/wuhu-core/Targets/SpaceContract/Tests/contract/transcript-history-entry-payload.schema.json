@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"TranscriptHistoryEntryPayload","type":"object","properties":{"position":{"type":"integer"},"item":{}},"required":["position","item"],"additionalProperties":false}

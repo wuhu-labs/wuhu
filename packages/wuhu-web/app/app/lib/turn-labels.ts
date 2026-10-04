@@ -96,6 +96,8 @@ export function sendTarget(sent: Outgoing, names: Names): string {
 
 export const toolStateLabel: Record<ToolState, string> = {
   running: 'Running',
+  queued: 'Queued',
+  unknown: 'Unknown',
   done: 'Done',
   failed: 'Failed',
 }
@@ -110,12 +112,10 @@ export function durationText(seconds: number): string {
 }
 
 export function summaryText(tools: number, duration: number | null): string {
-  const count = tools === 0
-    ? 'no tools'
-    : tools === 1
-    ? '1 tool'
-    : `${tools} tools`
-  return duration === null ? count : `${count} · ${durationText(duration)}`
+  return [
+    tools === 0 ? null : tools === 1 ? '1 tool' : `${tools} tools`,
+    duration === null ? null : durationText(duration),
+  ].filter((part) => part !== null).join(' · ')
 }
 
 // The reader's locale and time zone unless a test pins them; the date shows

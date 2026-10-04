@@ -115,7 +115,7 @@ extension Executor {
     return session.space
   }
 
-  func sessionClient(_ session: SessionCredential) -> SpaceClient {
+  func sessionClient(_ session: SessionCredential, longRunning: Bool = false) -> SpaceClient {
     let runner = self.runner
     let bearer = "Bearer " + session.token
     var dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)?
@@ -126,7 +126,7 @@ extension Executor {
     }
     return SpaceClient(
       space: session.space,
-      fetch: bearing(runner.fetch, bearer),
+      fetch: bearing(longRunning ? runner.observeFetch : runner.fetch, bearer),
       observeFetch: bearing(runner.observeFetch, bearer),
       dial: dial,
     )

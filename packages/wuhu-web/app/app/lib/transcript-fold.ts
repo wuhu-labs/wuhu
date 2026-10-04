@@ -7,6 +7,8 @@ export interface DirectState {
   bubbles: Map<string, string>
   pendingSwaps: Map<string, string>
   materialized: Map<string, number>
+  activeAttempt?: string | null
+  executingInference?: number | null
 }
 
 export const initialDirectState: DirectState = {
@@ -15,6 +17,8 @@ export const initialDirectState: DirectState = {
   bubbles: new Map(),
   pendingSwaps: new Map(),
   materialized: new Map(),
+  activeAttempt: null,
+  executingInference: null,
 }
 
 // Swift's synthesized enum Codable wraps the single associated value in "_0".
@@ -53,12 +57,22 @@ export function foldDirect(
     case 'reset':
       // A reconnect resets to the same generation and replays its items by
       // position; only a new generation starts empty.
-      return event.generation === state.generation ? state : {
-        ...state,
-        generation: event.generation,
-        items: new Map(),
-        materialized: new Map(),
-      }
+      return event.generation === state.generation
+        ? {
+          ...state,
+          activeAttempt: null,
+          executingInference: null,
+        }
+        : {
+          ...state,
+          generation: event.generation,
+          items: new Map(),
+          bubbles: new Map(),
+          pendingSwaps: new Map(),
+          materialized: new Map(),
+          activeAttempt: null,
+          executingInference: null,
+        }
     case 'item': {
       if (event.generation !== state.generation) return state
       const item = parseTranscriptItem(event.item)
@@ -68,14 +82,32 @@ export function foldDirect(
       // Codable UUIDs are uppercase; attempt-stream ids are lowercase.
       const entryId = item.value.id.toLowerCase()
       const attemptId = state.pendingSwaps.get(entryId)
-      if (attemptId === undefined) return { ...state, items }
+      const executingInference = state.executingInference != null &&
+          event.position > state.executingInference
+        ? null
+        : state.executingInference
+      if (attemptId === undefined) {
+        return { ...state, items, executingInference }
+      }
       const bubbles = new Map(state.bubbles)
       bubbles.delete(attemptId)
       const pendingSwaps = new Map(state.pendingSwaps)
       pendingSwaps.delete(entryId)
       const materialized = new Map(state.materialized)
         .set(attemptId, event.position)
-      return { ...state, items, bubbles, pendingSwaps, materialized }
+      const current = attemptId === state.activeAttempt
+      return {
+        ...state,
+        items,
+        bubbles,
+        pendingSwaps,
+        materialized,
+        activeAttempt: current ? null : state.activeAttempt,
+        executingInference:
+          current && ['tool_use', 'toolUse'].includes(item.value.stopReason)
+            ? event.position
+            : executingInference,
+      }
     }
     case 'started':
       // A repeated started for a known attempt means a reconnect replay: the
@@ -83,6 +115,8 @@ export function foldDirect(
       return {
         ...state,
         bubbles: new Map(state.bubbles).set(event.attemptId, ''),
+        activeAttempt: event.attemptId,
+        executingInference: null,
       }
     case 'delta': {
       const bubbles = new Map(state.bubbles)
@@ -95,7 +129,14 @@ export function foldDirect(
     case 'cancelled': {
       const bubbles = new Map(state.bubbles)
       bubbles.delete(event.attemptId)
-      return { ...state, bubbles }
+      return {
+        ...state,
+        bubbles,
+        executingInference: null,
+        activeAttempt: state.activeAttempt === event.attemptId
+          ? null
+          : state.activeAttempt,
+      }
     }
     case 'materialized': {
       const pendingSwaps = new Map(state.pendingSwaps)

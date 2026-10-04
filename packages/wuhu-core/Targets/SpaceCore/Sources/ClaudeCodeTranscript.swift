@@ -35,8 +35,9 @@ struct ClaudeCodeTranscript: Hashable, Sendable {
   private var seen: Set<String> = []
   private var wuhuCalls: Set<String> = []
 
-  init(generation: Int64) {
+  init(generation: Int64, wuhuCalls: Set<String> = []) {
     self.generation = generation
+    self.wuhuCalls = wuhuCalls
   }
 
   // `lines` continues the generation at `nextLine`. A generation a compaction
@@ -59,7 +60,7 @@ struct ClaudeCodeTranscript: Hashable, Sendable {
     return items
   }
 
-  private mutating func translate(_ entry: ClaudeCodeEntry, joins: ClaudeCodeJoins) -> [TranscriptItem] {
+  mutating func translate(_ entry: ClaudeCodeEntry, joins: ClaudeCodeJoins) -> [TranscriptItem] {
     guard let uuid = entry["uuid"]?.stringValue, seen.insert(uuid).inserted else { return [] }
     let at = entry["timestamp"]?.stringValue.flatMap(claudeCodeTimestamp) ?? .distantPast
     switch entry["type"]?.stringValue {
@@ -75,7 +76,7 @@ struct ClaudeCodeTranscript: Hashable, Sendable {
     }
   }
 
-  private mutating func assistant(_ entry: ClaudeCodeEntry, uuid: String, at: Date) -> [TranscriptItem] {
+  mutating func assistant(_ entry: ClaudeCodeEntry, uuid: String, at: Date) -> [TranscriptItem] {
     guard let message = entry["message"]?.object else { return [] }
     var content: [ContentBlock] = []
     for block in message["content"]?.array ?? [] {
@@ -134,7 +135,7 @@ struct ClaudeCodeTranscript: Hashable, Sendable {
     return handover(uuid, at: at, pieces: pieces, joins: joins)
   }
 
-  private func toolResult(_ block: ClaudeCodeEntry, uuid: String, at: Date, joins: ClaudeCodeJoins) -> TranscriptItem? {
+  func toolResult(_ block: ClaudeCodeEntry, uuid: String, at: Date, joins: ClaudeCodeJoins) -> TranscriptItem? {
     guard let callID = block["tool_use_id"]?.stringValue else { return nil }
     let text = block["content"].map(Self.text(of:)) ?? ""
     let payload: ToolResultPayload = if let receipt = joins.receipts[callID] {
@@ -154,7 +155,7 @@ struct ClaudeCodeTranscript: Hashable, Sendable {
 
   // The loop's own pieces lead the handover. Its restart note is the one read
   // from the text; everything else it carried is a recorded effect.
-  private func handover(_ uuid: String, at: Date, pieces: [String], joins: ClaudeCodeJoins) -> [TranscriptItem] {
+  func handover(_ uuid: String, at: Date, pieces: [String], joins: ClaudeCodeJoins) -> [TranscriptItem] {
     var items: [TranscriptItem] = []
     if let note = Self.restartNote(in: pieces) {
       items.append(.generationHead(GenerationHead(id: UUID.deterministic(uuid, "note"), timestamp: at, summary: "", snapshot: StateSnapshot(), note: note)))

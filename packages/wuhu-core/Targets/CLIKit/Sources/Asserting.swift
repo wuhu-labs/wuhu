@@ -63,16 +63,16 @@ final class BearerSource: Sendable {
 }
 
 extension Executor {
-  mutating func authenticated(_ space: String) async throws -> SpaceClient {
+  mutating func authenticated(_ space: String, longRunning: Bool = false) async throws -> SpaceClient {
     if let session = self.session {
-      return self.sessionClient(session)
+      return self.sessionClient(session, longRunning: longRunning)
     }
     let group = self.group.group
     if let group {
       try await self.requireGroups(space: space, selected: group)
     }
     guard let bearer = try await self.bearerSource(space: space) else {
-      return self.client(space, group: group)
+      return self.client(space, group: group, longRunning: longRunning)
     }
     let runner = self.runner
     var dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)?
@@ -84,7 +84,7 @@ extension Executor {
     }
     return SpaceClient(
       space: space,
-      fetch: authorized(runner.fetch, bearer),
+      fetch: authorized(longRunning ? runner.observeFetch : runner.fetch, bearer),
       observeFetch: authorized(runner.observeFetch, bearer),
       dial: dial,
       group: group,

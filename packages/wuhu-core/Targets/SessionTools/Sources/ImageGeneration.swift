@@ -7,32 +7,14 @@
 import enum Credentials.ProviderCredential
 import Dependencies
 import Fetch
-import struct InferenceKit.ModelsDocument
+import struct InferenceKit.CapabilityError
+import struct InferenceKit.CapabilityOptions
 import SessionDomain
 import struct SpaceCore.SessionHome
 import enum SpaceCore.SpaceError
 import struct SpaceFS.SpacePath
 import Synchronization
 import SystemFiles
-
-private struct ImageGenerationRequest: Encodable {
-  let prompt: String
-  let model = "gpt-image-2"
-  let n = 1
-  let size = "1024x1024"
-}
-
-private struct ImageGenerationResponse: Decodable {
-  struct Image: Decodable {
-    let b64JSON: String
-
-    enum CodingKeys: String, CodingKey {
-      case b64JSON = "b64_json"
-    }
-  }
-
-  let data: [Image]
-}
 
 struct GeneratedImage: Equatable {
   let path: String
@@ -69,7 +51,8 @@ extension ToolExecutor {
     let destination = try await resolve(arguments.destination, as: session)
     if let recorded = try await store.receipt(session, toolCallID: callID) { return recorded }
     try await refuseUnwritable(destination, by: session)
-    let image = try await renderImage(arguments.prompt)
+    let image = try await capabilities().image(arguments.prompt, options: .init(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size))
+    guard PNGHeader(image) != nil else { throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.") }
     let payload = try await place(image, at: destination, by: session, receipt: callID)
     if case .machine = destination {
       try await deliverContext(session, callID, touching: destination.folder, state: state)
@@ -85,14 +68,23 @@ extension ToolExecutor {
     prompt: String,
     destination raw: String,
     claims: MachineWriteClaims,
+    images: [String] = [],
+    options: CapabilityOptions = .init(),
   ) async throws -> GeneratedImage {
     let destination = try await resolve(raw, as: session)
     try claims.claim(destination)
     do {
       try await refuseUnwritable(destination, by: session)
-      let image = try await renderImage(prompt)
+      guard images.count <= 5 else { throw CapabilityError(.invalidArgument, "At most five reference images are accepted.") }
+      var input: [Data] = []
+      for path in images {
+        let bytes = try await capabilityInput(path, as: session, limit: 25 * 1024 * 1024)
+        guard PNGHeader(bytes) != nil else { throw CapabilityError(.invalidArgument, "Reference images must be PNG files.") }
+        input.append(bytes)
+      }
+      let image = try await capabilities().image(prompt, images: input, options: options)
       guard let header = PNGHeader(image) else {
-        throw ToolProblem("image generation returned an image that is not a PNG")
+        throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.")
       }
       _ = try await place(image, at: destination, by: session, receipt: nil)
       return GeneratedImage(path: destination.rendered, bytes: image.count, width: header.width, height: header.height)
@@ -108,51 +100,6 @@ extension ToolExecutor {
       try await SessionHome.refuseForeignWrite(to: target, in: group, by: session, home: space.principal(of: session).group)
     }
     try await refuseExisting(destination)
-  }
-
-  private func renderImage(_ prompt: String) async throws -> Data {
-    let (_, modelsData) = try await space.fs(.shared).read(ModelsDocument.spacePath)
-    let models = try ModelsDocument(json: modelsData)
-    guard let (providerID, provider) = models.providers.first(where: { $0.value.dialect == .codex }) else {
-      throw ToolProblem("image generation is not configured for this space")
-    }
-    guard case let .chatGPT(accessToken, accountID)? = try await credentials.resolve(providerID) else {
-      throw ToolProblem("image generation requires a ChatGPT login for provider \(providerID)")
-    }
-
-    var headers = RequestHeaders()
-    headers.setSensitive("authorization", "Bearer \(accessToken)")
-    headers.setSensitive("chatgpt-account-id", accountID)
-    headers.set("originator", provider.originator ?? "wuhu")
-    let request = Request(
-      url: provider.baseURL.appendingPathComponent("images/generations"),
-      method: .post,
-      headers: headers,
-      body: try .json(ImageGenerationRequest(prompt: prompt)),
-    )
-    @Dependency(\.fetch) var fetch
-    let response: Response
-    do {
-      response = try await fetch(request)
-    } catch {
-      throw ToolProblem("image generation request failed: \(error)")
-    }
-    guard response.status == .ok else {
-      let body = try? await response.body.text(upTo: 512)
-      throw ToolProblem("image generation failed with status \(response.status.code)\(body.map { ": \($0)" } ?? "")")
-    }
-    let payload: ImageGenerationResponse
-    do {
-      payload = try await response.body.json(ImageGenerationResponse.self, upTo: 8 << 20)
-    } catch {
-      throw ToolProblem("image generation returned an invalid response: \(error)")
-    }
-    guard let encoded = payload.data.first?.b64JSON,
-          let image = Data(base64Encoded: encoded)
-    else {
-      throw ToolProblem("image generation returned no decodable image")
-    }
-    return image
   }
 
   private func place(

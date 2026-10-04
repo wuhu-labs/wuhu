@@ -368,6 +368,31 @@ public struct PushRelayGrantDeleteInput: Codable, Equatable, Sendable {
 }
 
 @Contract
+public struct TranscriptHistoryEntryPayload: Codable, Equatable, Sendable {
+  public let position: Int
+  public let item: JSONValue
+}
+
+@Contract
+public struct TranscriptHistoryOutput: Codable, Equatable, Sendable {
+  public let historyEpoch: String?
+  public let generation: Int
+  public let entries: [TranscriptHistoryEntryPayload]
+  public let origins: [TranscriptHistoryEntryPayload]
+  public let before: Int?
+  public let hasEarlier: Bool
+  public let headPosition: Int?
+}
+
+@Contract
+public struct ConversationHistoryOutput: Codable, Equatable, Sendable {
+  public let messages: [ConversationMessagePayload]
+  public let before: Int?
+  public let hasEarlier: Bool
+  public let headPosition: Int?
+}
+
+@Contract
 public struct TranscriptReadOutput: Codable, Equatable, Sendable {
   public let generation: Int
   public let items: [JSONValue]

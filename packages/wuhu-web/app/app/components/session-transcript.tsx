@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useChrome } from '@wuhu/ui'
 import { useFollowLatest } from '~/components/conversation-timeline'
+import { HistoryEdge, useOlderIntent } from '~/components/history-edge'
 import { SessionHeader } from '~/components/session-header'
 import { TurnInspector } from '~/components/turn-inspector'
 import { TurnTimeline } from '~/components/turn-timeline'
@@ -12,6 +13,7 @@ import {
   foldDirect,
   initialDirectState,
   isEmptyDirect,
+  parseTranscriptItem,
 } from '~/lib/transcript-fold'
 import {
   closedInspection,
@@ -19,17 +21,15 @@ import {
   historyReturned,
   inspected,
   type Inspection,
-  turnToggled,
+  validInspection,
 } from '~/lib/turn-inspection'
 import { type Names, turnStatus } from '~/lib/turn-labels'
 import { projectTurns } from '~/lib/turns'
 import { useDirectory, useSessionTitles } from '~/lib/use-directory'
 import { useObserve } from '~/lib/use-observe'
-import { workEvents } from '~/lib/work-events'
+import { runningCall, workEvents } from '~/lib/work-events'
 import { directSubscription } from '~/sdk/subscriptions'
 
-// A task's page and an agent's transcript: the turn view of the session's
-// direct stream, with no composer.
 export function SessionTranscript({
   id,
   record,
@@ -53,20 +53,42 @@ export function SessionTranscript({
 
 function Turns({ id, record }: { id: string; record: SessionRecord }) {
   const { canvas } = useChrome()
-  const { hold } = useFollowLatest(canvas)
   const direct = useObserve<DirectState, SessionStreamEvent>(
     directSubscription(id, record.group),
     foldDirect,
     initialDirectState,
   )
+  useOlderIntent(canvas, direct.history)
   const state = direct.data
+  const identity = `${state.generation}:${direct.history?.historyEpoch ?? ''}:${
+    direct.history?.resetVersion ?? 0
+  }`
+  const { following, pin } = useFollowLatest(canvas, identity)
   const working = record.work === 'has_work'
   const projection = useMemo(
-    () => projectTurns(workEvents(state), working),
-    [state, working],
+    () => {
+      const origins = new Map<number, import('~/sdk/session').TranscriptItem>()
+      for (const raw of direct.origins ?? []) {
+        const event = raw as SessionStreamEvent
+        if (event.kind !== 'item') continue
+        const item = parseTranscriptItem(event.item)
+        if (item) origins.set(event.position, item)
+      }
+      return projectTurns(workEvents(state), working, {
+        origins: workEvents({
+          ...initialDirectState,
+          generation: state.generation,
+          items: origins,
+        }),
+        runningCall: runningCall(state, working, direct.liveness === 'live'),
+      })
+    },
+    [state, working, direct.origins, direct.history, direct.liveness],
   )
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [inspection, setInspection] = useState<Inspection>(closedInspection)
+  useEffect(() => {
+    setInspection(closedInspection)
+  }, [state.generation, direct.history?.historyEpoch])
   const directory = useDirectory()
   const sessions = useSessionTitles()
   const names: Names = {
@@ -77,9 +99,9 @@ function Turns({ id, record }: { id: string; record: SessionRecord }) {
   return (
     <div className='wuhu-content wuhu-page'>
       <SessionHeader id={id} record={record} liveness={direct.liveness} />
+      <HistoryEdge edge={direct.history} />
       <TurnTimeline
         projection={projection}
-        expanded={expanded}
         status={turnStatus(
           isEmptyDirect(state),
           direct.liveness === 'live',
@@ -89,13 +111,23 @@ function Turns({ id, record }: { id: string; record: SessionRecord }) {
         names={names}
         inspect={(destination) =>
           setInspection((current) => inspected(current, destination))}
-        toggle={(turn, anchor) => {
-          hold(anchor)
-          setExpanded((open) => turnToggled(open, turn))
-        }}
       />
+      {!following && !isEmptyDirect(state) && (
+        <button
+          type='button'
+          aria-label='Jump to latest'
+          className='wuhu-jump'
+          onClick={pin}
+        >
+          ↓ latest
+        </button>
+      )}
       <TurnInspector
-        inspection={followInspection(inspection, state)}
+        inspection={validInspection(
+          followInspection(inspection, state),
+          projection,
+          state,
+        )}
         projection={projection}
         state={state}
         inspect={(destination) =>

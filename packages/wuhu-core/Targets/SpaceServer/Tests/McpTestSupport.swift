@@ -43,7 +43,7 @@ func isToolError(_ result: JSONValue) -> Bool {
   return fields["isError"] == .bool(true)
 }
 
-let mcpImagePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+let mcpImagePNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")!
 let mcpImageModels = #"""
 {
   "codex": {

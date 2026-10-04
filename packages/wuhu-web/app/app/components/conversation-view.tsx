@@ -16,12 +16,13 @@ export function ConversationView({
   header: (liveness: Liveness) => ReactNode
   onReply?: (draft: ReplyDraft) => void
 }) {
-  const { messages, liveness } = useConversation(conversationId, group)
+  const { messages, liveness, history } = useConversation(conversationId, group)
   return (
     <div className='wuhu-content wuhu-page'>
       {header(liveness)}
       <ConversationTimeline
         messages={messages}
+        history={history}
         group={group}
         onReply={onReply}
       />

@@ -154,6 +154,11 @@ private func status(of code: ErrorCode) -> Status {
   case .unsupported: .unprocessableContent
   case .unavailable: .serviceUnavailable
   case .internal: .internalServerError
+  case .capabilityInvalidArgument, .unsupportedFeature: .badRequest
+  case .providerAuth: .unauthorized
+  case .providerRegion, .providerEntitlement: .forbidden
+  case .providerRateLimited: .tooManyRequests
+  case .providerNotConfigured, .providerUnavailable: .serviceUnavailable
   }
 }
 

@@ -1,14 +1,14 @@
+import { firstLine, noticeLabel } from './turn-labels.ts'
 import {
   eventKey,
   type WorkEvent,
   type WorkEventID,
-  type WorkHead,
   type WorkInput,
   type WorkNotice,
   type WorkToolResult,
 } from './work-events.ts'
 
-export type ToolState = 'running' | 'done' | 'failed'
+export type ToolState = 'running' | 'queued' | 'done' | 'failed' | 'unknown'
 
 export interface ToolActivity {
   callID: string
@@ -17,10 +17,12 @@ export interface ToolActivity {
   result: WorkToolResult | null
   calledAt: Date | null
   settledAt: Date | null
+  receiptID?: string
+  pending?: 'running' | 'queued' | 'unknown'
 }
 
 export function toolState(tool: ToolActivity): ToolState {
-  if (tool.result === null) return 'running'
+  if (tool.result === null) return tool.pending ?? 'unknown'
   return tool.result.failed ? 'failed' : 'done'
 }
 
@@ -142,377 +144,421 @@ export interface TurnStep {
   content: StepContent
 }
 
-export interface Turn {
-  id: WorkEventID
-  wakes: Wake[]
-  continued: boolean
-  steps: TurnStep[]
+export interface NoticePresentation {
+  label: string
+  subject: string | null
+  sources: string[]
 }
 
-export function turnTools(turn: Turn): ToolActivity[] {
-  return turn.steps.flatMap((step) =>
-    step.content.kind === 'tool' ? [step.content.tool] : []
-  )
-}
-
-export function turnSends(turn: Turn): TurnStep[] {
-  return turn.steps.filter((step) => step.content.kind === 'send')
-}
-
-export function lastText(turn: Turn): string | null {
-  for (let index = turn.steps.length - 1; index >= 0; index -= 1) {
-    const content = turn.steps[index]!.content
-    if (content.kind === 'text' && !content.streaming && content.text !== '') {
-      return content.text
+export function noticePresentation(notice: WorkNotice): NoticePresentation {
+  const sources = [
+    ...new Set(
+      [...notice.text.matchAll(/<AGENTS\.md\s+from="([^"\r\n]+)"\s*>/g)]
+        .map((match) => match[1]!),
+    ),
+  ]
+  if (sources.length > 0) {
+    return {
+      label: 'Instructions loaded',
+      subject:
+        sources[0]!.replace(/^machines:\/\/[^/]+\/Users\/[^/]+\//, '').replace(
+          /^machines:\/\/[^/]+\//,
+          '',
+        ) + (sources.length > 1 ? ` + ${sources.length - 1} more` : ''),
+      sources,
     }
   }
-  return null
-}
-
-function stepMoments(step: TurnStep): (Date | null)[] {
-  switch (step.content.kind) {
-    case 'tool':
-    case 'send':
-      return [step.content.tool.calledAt, step.content.tool.settledAt]
-    default:
-      return [step.timestamp]
+  if (
+    [
+      'timer',
+      'spaceObservation',
+      'script',
+      'owedReply',
+      'parkReminder',
+      'childFailed',
+      'requestDeadline',
+      'restart',
+    ].includes(notice.kind)
+  ) {
+    return {
+      label: noticeLabel(notice.kind),
+      subject: firstLine(notice.text),
+      sources: [],
+    }
+  }
+  return {
+    label: notice.kind === 'compactRequest'
+      ? 'Compaction requested'
+      : 'Context updated',
+    subject: notice.kind === 'compactRequest'
+      ? 'Context housekeeping'
+      : 'System-provided context',
+    sources: [],
   }
 }
 
-// Seconds from the wake-up to the turn's last event.
-export function turnDuration(turn: Turn): number | null {
-  const start = turn.wakes.find((wake) => wake.timestamp !== null)?.timestamp ??
-    turn.steps.find((step) => step.timestamp !== null)?.timestamp
-  const moments = [
-    ...turn.wakes.map((wake) => wake.timestamp),
-    ...turn.steps.flatMap(stepMoments),
-  ].filter((moment): moment is Date => moment !== null)
-  if (start == null || moments.length === 0) return null
-  const end = Math.max(...moments.map((moment) => moment.getTime()))
-  return Math.max(0, (end - start.getTime()) / 1000)
+export interface WorkItem extends TurnStep {
+  inference: string | null
+  label: string
+  subject: string | null
+  sources: string[]
 }
 
-export type TurnItem =
-  | { kind: 'divider'; id: WorkEventID; head: WorkHead }
-  | { kind: 'turn'; turn: Turn }
+export type TranscriptRow =
+  | { kind: 'input'; key: string; wake: Wake }
+  | { kind: 'divider'; key: string; event: WorkEventID }
+  | { kind: 'gap'; key: string }
+  | { kind: 'item'; key: string; item: WorkItem; latest: boolean }
+  | {
+    kind: 'summary'
+    key: string
+    items: WorkItem[]
+    tools: number
+    duration: number | null
+    working: boolean
+  }
 
 export interface TurnProjection {
-  items: TurnItem[]
+  rows: TranscriptRow[]
+  items: WorkItem[]
   isWorking: boolean
 }
 
-export function projectedTurns(projection: TurnProjection): Turn[] {
-  return projection.items.flatMap((item) =>
-    item.kind === 'turn' ? [item.turn] : []
-  )
-}
-
-export function latestTurn(projection: TurnProjection): Turn | null {
-  return projectedTurns(projection).at(-1) ?? null
+export function inferenceID(event: WorkEvent): string | null {
+  if (event.id.kind !== 'kernel') return null
+  switch (event.kind) {
+    case 'assistantText':
+      return event.streaming
+        ? null
+        : `${event.id.generation}:${event.id.position}`
+    case 'reasoning':
+    case 'toolCall':
+      return `${event.id.generation}:${event.id.position}`
+    default:
+      return null
+  }
 }
 
 export function activity(
   projection: TurnProjection,
   callID: string,
 ): ToolActivity | null {
-  for (const turn of projectedTurns(projection)) {
-    for (const step of turn.steps) {
-      const content = step.content
-      if (
-        (content.kind === 'tool' || content.kind === 'send') &&
-        content.tool.callID === callID
-      ) return content.tool
-    }
+  for (const item of projection.items) {
+    if (
+      (item.content.kind === 'tool' || item.content.kind === 'send') &&
+      item.content.tool.callID === callID
+    ) return item.content.tool
   }
   return null
+}
+
+function workItem(
+  event: WorkEvent,
+  content: StepContent,
+  inference: string | null,
+): WorkItem {
+  const item: WorkItem = {
+    key: eventKey(event.id),
+    event: event.id,
+    timestamp: event.timestamp,
+    content,
+    inference,
+    label: '',
+    subject: null,
+    sources: [],
+  }
+  switch (content.kind) {
+    case 'tool':
+    case 'send':
+      item.label = baseName(content.tool)
+      item.subject = toolSubject(content.tool)
+      break
+    case 'reasoning':
+      item.label = 'Reasoning'
+      break
+    case 'text':
+      item.label = 'Preamble'
+      item.subject =
+        content.text.split(/\r?\n/).find((line) => line.trim() !== '') ?? null
+      break
+    case 'notice':
+      Object.assign(item, noticePresentation(content.notice))
+      break
+    case 'bookmark':
+      item.label = 'Bookmark'
+      item.subject = content.name
+      break
+    case 'orphanResult':
+      item.label = 'Tool result'
+      item.subject = content.result.kind
+      break
+  }
+  return item
+}
+
+export function workDuration(items: WorkItem[]): number | null {
+  const moments = items.flatMap((item) =>
+    item.content.kind === 'tool' || item.content.kind === 'send'
+      ? [item.content.tool.calledAt, item.content.tool.settledAt]
+      : [item.timestamp]
+  ).filter((moment): moment is Date =>
+    moment !== null && Number.isFinite(moment.getTime())
+  )
+  if (moments.length < 2) return null
+  const times = moments.map((moment) => moment.getTime())
+  return Math.max(0, (Math.max(...times) - Math.min(...times)) / 1000)
 }
 
 export function projectTurns(
   events: WorkEvent[],
   working: boolean,
+  boundary?: {
+    origins: WorkEvent[]
+    runningCall?: string | null
+  },
 ): TurnProjection {
+  const committed = events.map(inferenceID).filter((id): id is string =>
+    id !== null
+  )
+  const latest = committed.at(-1) ?? null
+  const batchesWithTools = new Set(
+    events.filter((e) => e.kind === 'toolCall').map(inferenceID),
+  )
+  const called = new Set(
+    events.flatMap((e) => e.kind === 'toolCall' ? [e.call.callID] : []),
+  )
+  const origins = new Map(
+    (boundary?.origins ?? []).flatMap((e) =>
+      e.kind === 'toolCall' ? [[e.call.callID, e] as const] : []
+    ),
+  )
   const settled = new Map<
     string,
-    { result: WorkToolResult; at: Date | null }
+    { result: WorkToolResult; at: Date | null; receiptID: string }
   >()
-  const called = new Set<string>()
   for (const event of events) {
-    if (event.kind === 'toolResult' && event.result.callID !== null) {
+    if (
+      event.kind === 'toolResult' && event.result.callID !== null &&
+      !settled.has(event.result.callID)
+    ) {
       settled.set(event.result.callID, {
         result: event.result,
         at: event.timestamp,
+        receiptID: eventKey(event.id),
       })
     }
-    if (event.kind === 'toolCall') called.add(event.call.callID)
   }
-
-  const folding = new TurnFolding()
-  let placeholder = false
+  const running = working
+    ? events.find((e) =>
+      e.kind === 'toolCall' && e.call.callID === boundary?.runningCall &&
+      !settled.has(e.call.callID)
+    )
+    : undefined
+  const runningInference = running ? inferenceID(running) : null
+  let afterRunning = false
+  const makeTool = (
+    event: Extract<WorkEvent, { kind: 'toolCall' }>,
+  ): ToolActivity => {
+    const outcome = settled.get(event.call.callID)
+    let pending: ToolActivity['pending'] = 'unknown'
+    if (event === running && runningInference === latest) {
+      pending = 'running'
+      afterRunning = true
+    } else if (
+      afterRunning && runningInference === latest &&
+      inferenceID(event) === runningInference
+    ) pending = 'queued'
+    return {
+      ...event.call,
+      result: outcome?.result ?? null,
+      calledAt: event.timestamp,
+      settledAt: outcome?.at ?? null,
+      receiptID: outcome?.receiptID,
+      pending,
+    }
+  }
+  const rows: TranscriptRow[] = [], items: WorkItem[] = []
+  let work: WorkItem[] = [], preceding: string | null = null
+  const push = (item: WorkItem, eligible: boolean) => {
+    if (item.content.kind === 'text' && !eligible) item.label = 'Assistant text'
+    items.push(item)
+    if (eligible) work.push(item)
+    else {
+      flush()
+      rows.push({
+        kind: 'item',
+        key: item.key,
+        item,
+        latest: item.inference === latest && latest !== null,
+      })
+    }
+  }
+  const flush = () => {
+    if (work.length === 0) return
+    const hidden = work.filter((item) =>
+      item.inference !== latest || latest === null
+    )
+    let placed = false
+    for (const item of work) {
+      if (item.inference === latest && latest !== null) {
+        rows.push({ kind: 'item', key: item.key, item, latest: true })
+      } else if (!placed) {
+        rows.push({
+          kind: 'summary',
+          key: `summary:${hidden[0]!.key}`,
+          items: hidden,
+          tools: new Set(hidden.flatMap((item) =>
+            item.content.kind === 'tool' ? [item.content.tool.callID] : []
+          )).size,
+          duration: workDuration(hidden),
+          working: hidden.some((item) =>
+            item.content.kind === 'tool' &&
+            toolState(item.content.tool) === 'running'
+          ),
+        })
+        placed = true
+      }
+    }
+    work = []
+  }
+  const represented = new Set<string>()
+  let previousPosition: number | null = null
   for (const event of events) {
-    const step = (content: StepContent, key?: string): TurnStep => ({
-      key: key ?? eventKey(event.id),
-      event: event.id,
-      timestamp: event.timestamp,
-      content,
-    })
+    if (event.id.kind === 'kernel') {
+      if (
+        previousPosition !== null && event.id.position > previousPosition + 1
+      ) {
+        flush()
+        preceding = null
+        rows.push({ kind: 'gap', key: `gap:${eventKey(event.id)}` })
+      }
+      previousPosition = event.id.position
+    }
+    const inference = inferenceID(event)
+    if (inference !== null) preceding = inference
     switch (event.kind) {
       case 'input':
-        folding.wake({
-          id: event.id,
-          timestamp: event.timestamp,
-          source: { kind: 'input', input: event.input },
+        flush()
+        rows.push({
+          kind: 'input',
+          key: eventKey(event.id),
+          wake: {
+            id: event.id,
+            timestamp: event.timestamp,
+            source: { kind: 'input', input: event.input },
+          },
         })
         break
-      case 'notification':
-        if (folding.isMidTurn) {
-          folding.output(step({ kind: 'notice', notice: event.notice }))
-        } else {
-          folding.wake({
-            id: event.id,
-            timestamp: event.timestamp,
-            source: { kind: 'notice', notice: event.notice },
-          })
-        }
-        break
       case 'generationHead':
-        if (event.head.summary !== '') {
-          folding.divide(event.id, event.head)
-        } else if (event.head.note != null && event.head.note !== '') {
-          folding.wake({
-            id: event.id,
-            timestamp: event.timestamp,
-            source: {
-              kind: 'notice',
-              notice: {
-                kind: 'restart',
-                text: event.head.note,
-                conversations: [],
-              },
-            },
-          })
-        }
+        flush()
+        preceding = null
+        rows.push({ kind: 'divider', key: eventKey(event.id), event: event.id })
         break
       case 'assistantText':
-        if (event.streaming && event.text === '') {
-          placeholder = true
-        } else if (event.text !== '') {
-          folding.output(
-            step({
+        if (event.text !== '') {
+          push(
+            workItem(event, {
               kind: 'text',
               text: event.text,
               streaming: event.streaming,
-            }),
+            }, inference),
+            !event.streaming && batchesWithTools.has(inference),
           )
         }
         break
       case 'reasoning':
-        folding.output(step({ kind: 'reasoning', summary: event.summary }))
+        push(
+          workItem(
+            event,
+            { kind: 'reasoning', summary: event.summary },
+            inference,
+          ),
+          true,
+        )
         break
       case 'toolCall': {
-        const outcome = settled.get(event.call.callID)
-        const tool: ToolActivity = {
-          callID: event.call.callID,
-          name: event.call.name,
-          arguments: event.call.arguments,
-          result: outcome?.result ?? null,
-          calledAt: event.timestamp,
-          settledAt: outcome?.at ?? null,
-        }
-        const sent = outgoing(tool)
-        folding.output(
-          step(
-            sent === null
-              ? { kind: 'tool', tool }
-              : { kind: 'send', tool, outgoing: sent },
-            `tool:${tool.callID}`,
+        if (represented.has(event.call.callID)) break
+        represented.add(event.call.callID)
+        const tool = makeTool(event), sent = outgoing(tool)
+        push(
+          workItem(
+            event,
+            sent
+              ? { kind: 'send', tool, outgoing: sent }
+              : { kind: 'tool', tool },
+            inference,
           ),
+          sent === null,
         )
         break
       }
-      case 'toolResult':
-        if (event.result.callID !== null && called.has(event.result.callID)) {
-          folding.settle()
-        } else {
-          folding.output(step({ kind: 'orphanResult', result: event.result }))
-        }
+      case 'notification':
+        // Without a loaded preceding inference, this is an annotation, not a folded invented parent.
+        push(
+          workItem(event, { kind: 'notice', notice: event.notice }, preceding),
+          preceding !== null,
+        )
         break
       case 'bookmark':
-        folding.output(step({ kind: 'bookmark', name: event.name }), true)
+        push(
+          workItem(event, { kind: 'bookmark', name: event.name }, null),
+          false,
+        )
         break
-    }
-    if (event.stopReason !== null) folding.stop(event.stopReason)
-  }
-  return { items: folding.finish(), isWorking: working || placeholder }
-}
-
-class TurnFolding {
-  private items: TurnItem[] = []
-  private current: Turn | null = null
-  private phase: 'waking' | 'working' | 'ended' = 'ended'
-  private afterDivider = false
-  private entryCalledTools = false
-
-  get isMidTurn(): boolean {
-    return this.current !== null && this.phase === 'working'
-  }
-
-  wake(wake: Wake) {
-    if (this.phase === 'waking' && this.current !== null) {
-      this.current.wakes.push(wake)
-    } else {
-      this.close()
-      this.current = { id: wake.id, wakes: [wake], continued: false, steps: [] }
-      this.afterDivider = false
-    }
-    this.phase = 'waking'
-  }
-
-  divide(id: WorkEventID, head: WorkHead) {
-    this.close()
-    this.items.push({ kind: 'divider', id, head })
-    this.afterDivider = true
-    this.phase = 'ended'
-  }
-
-  output(step: TurnStep, keepsPhase = false) {
-    if (this.current === null) {
-      this.current = {
-        id: step.event,
-        wakes: [],
-        continued: this.afterDivider,
-        steps: [],
+      case 'toolResult': {
+        const callID = event.result.callID
+        if (
+          callID !== null && (called.has(callID) || represented.has(callID))
+        ) break
+        const origin = callID === null ? undefined : origins.get(callID)
+        if (origin?.kind === 'toolCall') {
+          represented.add(origin.call.callID)
+          const tool = makeTool(origin)
+          push(workItem(event, { kind: 'tool', tool }, null), false)
+        } else {push(
+            workItem(
+              event,
+              { kind: 'orphanResult', result: event.result },
+              null,
+            ),
+            false,
+          )}
+        break
       }
-      this.afterDivider = false
-      this.phase = 'working'
-    }
-    this.current.steps.push(step)
-    if (step.content.kind === 'tool' || step.content.kind === 'send') {
-      this.entryCalledTools = true
-    }
-    if (!keepsPhase && this.phase === 'waking') this.phase = 'working'
-  }
-
-  settle() {
-    if (this.current !== null) this.phase = 'working'
-  }
-
-  // An entry that called tools goes on; any other stop ends the turn's work.
-  stop(reason: string) {
-    const toolStop = this.entryCalledTools || reason === 'tool_use' ||
-      reason === 'toolUse'
-    this.entryCalledTools = false
-    if (this.current !== null) this.phase = toolStop ? 'working' : 'ended'
-  }
-
-  finish(): TurnItem[] {
-    this.close()
-    return this.items
-  }
-
-  private close() {
-    if (this.current !== null) {
-      this.items.push({ kind: 'turn', turn: this.current })
-    }
-    this.current = null
-  }
-}
-
-export type TurnLine =
-  | { key: string; kind: 'wake'; wake: Wake; clamped: boolean }
-  | { key: 'continued'; kind: 'continued' }
-  | {
-    key: 'summary'
-    kind: 'summary'
-    tools: number
-    duration: number | null
-    expanded: boolean
-  }
-  | { key: string; kind: 'step'; step: TurnStep }
-  | { key: string; kind: 'fold'; tools: ToolActivity[] }
-  | { key: string; kind: 'fallback'; text: string }
-
-function stepLine(step: TurnStep): TurnLine {
-  return { key: step.key, kind: 'step', step }
-}
-
-// A closed turn folds to what woke it, its tool line and what it sent; the
-// latest turn always shows its whole chronology.
-export function turnLines(
-  turn: Turn,
-  closed: boolean,
-  expanded: boolean,
-): TurnLine[] {
-  const folded = closed && !expanded
-  const lines: TurnLine[] = turn.wakes.map((wake) => ({
-    key: `wake:${eventKey(wake.id)}`,
-    kind: 'wake',
-    wake,
-    clamped: folded,
-  }))
-  if (turn.continued) lines.push({ key: 'continued', kind: 'continued' })
-  if (closed) {
-    lines.push({
-      key: 'summary',
-      kind: 'summary',
-      tools: turnTools(turn).length,
-      duration: turnDuration(turn),
-      expanded,
-    })
-  }
-  if (!folded) return [...lines, ...foldToolRuns(turn.steps)]
-  const sends = turnSends(turn)
-  if (sends.length > 0) return [...lines, ...sends.map(stepLine)]
-  const text = lastText(turn)
-  if (text !== null) lines.push({ key: 'fallback', kind: 'fallback', text })
-  return lines
-}
-
-// Three or more tool calls with no text or send between them fold into one
-// line; the running calls and the run's last call stay visible below it, and a
-// fold never hides a single call.
-export function foldToolRuns(steps: TurnStep[]): TurnLine[] {
-  const lines: TurnLine[] = []
-  let run: TurnStep[] = []
-
-  const flush = () => {
-    const tools = run.flatMap((step) =>
-      step.content.kind === 'tool' ? [step.content.tool] : []
-    )
-    const last = tools.at(-1)
-    const hidden = tools.filter((tool) =>
-      tool.callID !== last?.callID && toolState(tool) !== 'running'
-    )
-    if (tools.length < 3 || hidden.length < 2) {
-      lines.push(...run.map(stepLine))
-    } else {
-      const hiddenIDs = new Set(hidden.map((tool) => tool.callID))
-      let placed = false
-      for (const step of run) {
-        const content = step.content
-        if (content.kind === 'tool' && hiddenIDs.has(content.tool.callID)) {
-          if (placed) continue
-          placed = true
-          lines.push({
-            key: `fold:${content.tool.callID}`,
-            kind: 'fold',
-            tools: hidden,
-          })
-        } else {
-          lines.push(stepLine(step))
-        }
-      }
-    }
-    run = []
-  }
-
-  for (const step of steps) {
-    if (step.content.kind === 'text' || step.content.kind === 'send') {
-      flush()
-      lines.push(stepLine(step))
-    } else {
-      run.push(step)
     }
   }
   flush()
-  return lines
+  return {
+    rows,
+    items,
+    isWorking: working ||
+      events.some((event) => event.kind === 'assistantText' && event.streaming),
+  }
+}
+
+export function rowAnchors(row: TranscriptRow): string[] {
+  const items = row.kind === 'summary'
+    ? row.items
+    : row.kind === 'item'
+    ? [row.item]
+    : []
+  return [
+    ...new Set(items.flatMap((item) => {
+      const content = item.content
+      const receipt = content.kind === 'tool' || content.kind === 'send'
+        ? content.tool.receiptID
+        : undefined
+      return [item.key, ...(receipt ? [receipt] : [])]
+    })),
+  ].filter((key) => key !== row.key)
+}
+
+export function rowAtAnchor(
+  projection: TurnProjection,
+  key: string,
+): TranscriptRow | null {
+  const source = key.replace(/^summary:/, '')
+  return projection.rows.find((row) =>
+    row.key === key || rowAnchors(row).includes(source)
+  ) ?? null
 }

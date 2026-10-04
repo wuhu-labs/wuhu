@@ -230,7 +230,9 @@ enum Command: Equatable {
   case read(path: String, rev: Int?, lines: String?)
   case write(path: String, body: String, force: Bool)
   case cat(path: String)
-  case transcribe(file: String, language: String?)
+  case transcribe(file: String, language: String?, provider: String? = nil, model: String? = nil, timestamps: String? = nil, diarize: Bool = false, json: Bool = false)
+  case webSearch(query: String, provider: String?, count: Int?)
+  case image(prompt: String, images: [String], destination: String, provider: String?, model: String?, quality: String?, size: String?)
   case transcriber
   case put(path: String, force: Bool)
   case edit(path: String, old: String, new: String, force: Bool)

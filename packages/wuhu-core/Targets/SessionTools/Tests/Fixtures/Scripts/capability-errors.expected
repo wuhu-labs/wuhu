@@ -1,0 +1,4 @@
+=== run_script
+[{"code":"provider_not_configured","hint":"string","name":"CapabilityError"},{"code":"provider_not_configured","hint":"string","name":"CapabilityError"},{"code":"provider_not_configured","hint":"string","name":"CapabilityError"},{"code":"invalid_argument","hint":"string","name":"CapabilityError"},{"code":"invalid_argument","hint":"string","name":"CapabilityError"}]
+
+[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]

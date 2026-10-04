@@ -156,3 +156,14 @@ Deno.test('unrecognized transcript kinds do not interrupt the direct stream', ()
   assertEquals(state.items.size, 1)
   assertEquals(state.items.get(1)?.kind, 'assistant')
 })
+
+Deno.test('generation reset drops streamed attempts and pending swaps as well as committed rows', () => {
+  const state = fold([
+    { kind: 'started', attemptId: 'old' },
+    { kind: 'delta', attemptId: 'old', text: 'old generation' },
+    { kind: 'materialized', attemptId: 'old', entryId: 'pending' },
+    { kind: 'reset', generation: 2 },
+  ])
+  assertEquals(state.bubbles.size, 0)
+  assertEquals(state.pendingSwaps.size, 0)
+})

@@ -109,6 +109,11 @@ private func fileRouteFailure(_ error: ToolRunError) -> Response {
     case .unsupported: .unsupportedMediaType
     case .unavailable: .serviceUnavailable
     case .internal: .internalServerError
+    case .capabilityInvalidArgument, .unsupportedFeature: .badRequest
+    case .providerAuth: .unauthorized
+    case .providerRegion, .providerEntitlement: .forbidden
+    case .providerRateLimited: .tooManyRequests
+    case .providerNotConfigured, .providerUnavailable: .serviceUnavailable
     }
     return jsonResponse(error.payload, status: status)
   }

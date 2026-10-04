@@ -227,7 +227,7 @@ Deno.test('a bookmark is an event', () => {
   )
 })
 
-Deno.test('an empty reasoning block and an unknown block yield no event', () => {
+Deno.test('unavailable reasoning remains inspectable and skipped media cannot renumber raw parts', () => {
   const events = kernel([item(
     0,
     kernelTurn('A', [
@@ -245,6 +245,10 @@ Deno.test('an empty reasoning block and an unknown block yield no event', () => 
         ? event.text
         : null
     ),
-    ['think', 'web_search · search'],
+    ['', 'think', 'web_search · search'],
+  )
+  assertEquals(
+    events.map((event) => event.id.kind === 'kernel' ? event.id.part : null),
+    [0, 2, 3],
   )
 })

@@ -1,12 +1,10 @@
-import { type CSSProperties, memo } from 'react'
+import { memo } from 'react'
 import { Icon, type IconName } from '@wuhu/ui'
 import { Attachments } from '~/components/attachments'
 import { CopyButton } from '~/components/copy-button'
 import { Markdown } from '~/components/markdown-view'
 import {
-  firstLine,
   type Names,
-  noticeLabel,
   preview,
   sendTarget,
   summaryText,
@@ -17,19 +15,15 @@ import {
 import type { Destination } from '~/lib/turn-inspection'
 import {
   baseName,
-  latestTurn,
+  rowAnchors,
   type ToolActivity,
   toolState,
   toolSubject,
-  type Turn,
-  type TurnLine,
-  turnLines,
   type TurnProjection,
-  type TurnStep,
   type Wake,
   wakeText,
+  type WorkItem,
 } from '~/lib/turns'
-import { eventKey } from '~/lib/work-events'
 import { useGroupOrigin } from '~/lib/use-directory'
 import { crossOriginFor } from '~/lib/groups'
 
@@ -38,7 +32,6 @@ interface Actions {
   group: string
   names: Names
   inspect: (destination: Destination) => void
-  toggle: (turn: string, anchor: Element) => void
 }
 
 const Block = memo(function Block({ source }: { source: string }) {
@@ -79,219 +72,91 @@ function StreamingMarkdown({ text }: { text: string }) {
   )
 }
 
-export function TurnTimeline({
-  projection,
-  expanded,
-  status,
-  ...actions
-}: Actions & {
+export function TurnTimeline({ projection, status, ...actions }: Actions & {
   projection: TurnProjection
-  expanded: ReadonlySet<string>
   status: string | null
 }) {
-  const latest = latestTurn(projection)
   return (
     <div className='wuhu-turns'>
       {status !== null && <p className='wuhu-turn-status'>{status}</p>}
-      {projection.items.map((item, index) => {
-        if (item.kind === 'divider') {
-          return (
-            <Divider
-              key={eventKey(item.id)}
-              open={() => actions.inspect({ kind: 'event', id: item.id })}
-            />
-          )
-        }
-        const key = eventKey(item.turn.id)
-        const isLatest = item.turn === latest
+      {projection.rows.map((row) => {
+        const rail = row.kind === 'summary' ||
+          (row.kind === 'item' &&
+            (!['text', 'send'].includes(row.item.content.kind) ||
+              row.item.label === 'Preamble'))
         return (
-          <TurnSection
-            key={key}
-            turn={item.turn}
-            latest={isLatest}
-            unfolded={isLatest || expanded.has(key)}
-            working={isLatest && projection.isWorking}
-            separated={projection.items[index - 1]?.kind === 'turn'}
-            {...actions}
-          />
+          <div
+            key={row.key}
+            data-history-id={row.key}
+            className={rail ? 'wuhu-transcript-work' : 'wuhu-transcript-output'}
+          >
+            {row.kind === 'input' && (
+              <WakeLine
+                wake={row.wake}
+                clamped={false}
+                group={actions.group}
+                names={actions.names}
+                open={() => actions.inspect({ kind: 'event', id: row.wake.id })}
+              />
+            )}
+            {row.kind === 'divider' && (
+              <button
+                type='button'
+                className='wuhu-turn-divider'
+                onClick={() =>
+                  actions.inspect({ kind: 'event', id: row.event })}
+              >
+                <span>
+                  Context continued <Icon name='chevronRight' />
+                </span>
+              </button>
+            )}
+            {row.kind === 'gap' && (
+              <p className='wuhu-turn-label'>Earlier work is not loaded</p>
+            )}
+            {rowAnchors(row).map((key) => (
+              <span
+                key={key}
+                className='wuhu-summary-anchor'
+                data-history-id={key}
+                aria-hidden='true'
+              />
+            ))}
+            {row.kind === 'summary' && (
+              <button
+                type='button'
+                className='wuhu-turn-summary'
+                onClick={() =>
+                  actions.inspect({ kind: 'history', summary: row.key })}
+              >
+                <Icon name='hammer' />
+                <span>{row.working ? 'Working' : 'Worked'}</span>
+                {summaryText(row.tools, row.duration) !== '' && (
+                  <span className='wuhu-muted'>
+                    {summaryText(row.tools, row.duration)}
+                  </span>
+                )}
+                <Icon name='chevronRight' />
+              </button>
+            )}
+            {row.kind === 'item' && (
+              <StepLine
+                step={row.item}
+                preamble={rail && row.item.content.kind === 'text'}
+                names={actions.names}
+                inspect={actions.inspect}
+              />
+            )}
+          </div>
         )
       })}
-      {projection.isWorking && latest === null && status === null &&
-        <Working />}
+      {projection.isWorking && status === null && (
+        <div className='wuhu-transcript-work'>
+          <Working />
+        </div>
+      )}
     </div>
   )
-}
-
-function Divider({ open }: { open: () => void }) {
-  return (
-    <button type='button' className='wuhu-turn-divider' onClick={open}>
-      <span>
-        <strong>Context continued</strong> · summary and note{' '}
-        <Icon name='chevronRight' />
-      </span>
-    </button>
-  )
-}
-
-type Dot = 'quiet' | 'send' | 'text'
-
-// Where a line sits on the rail, and the height of its dot's centre; null
-// keeps it off.
-function railDot(line: TurnLine): { dot: Dot; center: number } | null {
-  switch (line.kind) {
-    case 'wake':
-    case 'continued':
-    case 'summary':
-    case 'fallback':
-      return null
-    case 'fold':
-      return { dot: 'quiet', center: 14 }
-    case 'step':
-      switch (line.step.content.kind) {
-        case 'text':
-          return { dot: 'text', center: 15 }
-        case 'send':
-          return { dot: 'send', center: 16 }
-        case 'notice':
-          return { dot: 'quiet', center: 18 }
-        default:
-          return { dot: 'quiet', center: 14 }
-      }
-  }
-}
-
-function TurnSection({
-  turn,
-  latest,
-  unfolded,
-  working,
-  separated,
-  ...actions
-}: Actions & {
-  turn: Turn
-  latest: boolean
-  unfolded: boolean
-  working: boolean
-  separated: boolean
-}) {
-  const lines = turnLines(turn, !latest, unfolded)
-  const headingCount = unfolded
-    ? lines.findIndex((line) => railDot(line) !== null)
-    : -1
-  const heading = headingCount === -1 ? lines : lines.slice(0, headingCount)
-  const railed = headingCount === -1 ? [] : lines.slice(headingCount)
-  const key = eventKey(turn.id)
-  return (
-    <section
-      className='wuhu-turn'
-      data-separated={separated || undefined}
-      aria-label={latest ? 'Latest turn' : undefined}
-    >
-      {heading.map((line) => (
-        <Line
-          key={line.key}
-          line={line}
-          group={actions.group}
-          names={actions.names}
-          inspect={actions.inspect}
-          toggle={(anchor) => actions.toggle(key, anchor)}
-        />
-      ))}
-      {(railed.length > 0 || working) && (
-        <ol
-          className='wuhu-turn-rail'
-          data-line={railed.length + (working ? 1 : 0) > 1 || undefined}
-        >
-          {railed.map((line) => {
-            const dot = railDot(line)!
-            return (
-              <li
-                key={line.key}
-                data-dot={dot.dot}
-                style={{ '--dot': `${dot.center}px` } as CSSProperties}
-              >
-                <Line
-                  line={line}
-                  group={actions.group}
-                  names={actions.names}
-                  inspect={actions.inspect}
-                  toggle={(anchor) => actions.toggle(key, anchor)}
-                />
-              </li>
-            )
-          })}
-          {working && (
-            <li data-dot='quiet' style={{ '--dot': '14px' } as CSSProperties}>
-              <Working />
-            </li>
-          )}
-        </ol>
-      )}
-    </section>
-  )
-}
-
-function Line({
-  line,
-  toggle,
-  group,
-  names,
-  inspect,
-}: Omit<Actions, 'toggle'> & {
-  line: TurnLine
-  toggle: (anchor: Element) => void
-}) {
-  switch (line.kind) {
-    case 'wake':
-      return (
-        <WakeLine
-          wake={line.wake}
-          clamped={line.clamped}
-          group={group}
-          names={names}
-          open={() => inspect({ kind: 'event', id: line.wake.id })}
-        />
-      )
-    case 'continued':
-      return (
-        <p className='wuhu-turn-label'>
-          <Icon name='rotate' /> Continued after compaction
-        </p>
-      )
-    case 'summary': {
-      const text = summaryText(line.tools, line.duration)
-      return (
-        <button
-          type='button'
-          className='wuhu-turn-summary'
-          aria-expanded={line.expanded}
-          onClick={(event) => toggle(event.currentTarget)}
-        >
-          <Icon name='hammer' /> {text}{' '}
-          <Icon name={line.expanded ? 'chevronDown' : 'chevronRight'} />
-        </button>
-      )
-    }
-    case 'step':
-      return <StepLine step={line.step} names={names} inspect={inspect} />
-    case 'fold':
-      return (
-        <button
-          type='button'
-          className='wuhu-turn-summary'
-          onClick={() =>
-            inspect({
-              kind: 'history',
-              calls: line.tools.map((tool) => tool.callID),
-            })}
-        >
-          <Icon name='hammer' /> {line.tools.length} tools{' '}
-          <Icon name='chevronRight' />
-        </button>
-      )
-    case 'fallback':
-      return <p className='wuhu-turn-fallback'>{preview(line.text)}</p>
-  }
 }
 
 function WakeLine({
@@ -347,8 +212,10 @@ function StepLine({
   step,
   names,
   inspect,
+  preamble,
 }: {
-  step: TurnStep
+  preamble: boolean
+  step: WorkItem
   names: Names
   inspect: (destination: Destination) => void
 }) {
@@ -356,6 +223,16 @@ function StepLine({
   const content = step.content
   switch (content.kind) {
     case 'text':
+      if (preamble) {
+        return (
+          <Chip
+            icon='reply'
+            title='Preamble'
+            detail={step.subject}
+            open={openEvent}
+          />
+        )
+      }
       return content.streaming
         ? (
           <div className='wuhu-turn-text' data-streaming>
@@ -413,14 +290,20 @@ function StepLine({
       return (
         <Chip
           icon='info'
-          title={noticeLabel(content.notice.kind)}
-          detail={firstLine(content.notice.text)}
-          boxed
+          title={step.label}
+          detail={step.subject}
           open={openEvent}
         />
       )
     case 'bookmark':
-      return <Chip icon='bookmark' title='Bookmark' detail={content.name} />
+      return (
+        <Chip
+          icon='bookmark'
+          title='Bookmark'
+          detail={content.name}
+          open={openEvent}
+        />
+      )
     case 'orphanResult':
       return (
         <Chip
@@ -437,13 +320,11 @@ function Chip({
   icon,
   title,
   detail,
-  boxed = false,
   open,
 }: {
   icon: IconName
   title: string
   detail?: string | null
-  boxed?: boolean
   open?: () => void
 }) {
   const body = (
@@ -456,14 +337,13 @@ function Chip({
           <span className='wuhu-turn-chip-detail'>{detail}</span>
         </>
       )}
-      {open !== undefined && !boxed && <Icon name='chevronRight' />}
+      {open !== undefined && <Icon name='chevronRight' />}
     </>
   )
   return open === undefined ? <p className='wuhu-turn-chip'>{body}</p> : (
     <button
       type='button'
       className='wuhu-turn-chip'
-      data-boxed={boxed || undefined}
       onClick={open}
     >
       {body}

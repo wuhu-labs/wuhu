@@ -522,3 +522,104 @@ extension SessionHarness {
     return (bearer, enrolled)
   }
 }
+
+@Suite struct HistoryRoutesTests {
+  @Test func historyIsAdditiveAuthorizedAndValidatesItsCursor() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let id = try await harness.createSession()
+      let bounded = try await harness.get("/v1/session/\(id.rawValue)/transcript/page")
+      #expect(bounded.status == .ok)
+      let page = try await bounded.json(TranscriptHistoryOutput.self)
+      #expect(page.entries.count <= 200)
+      #expect(!page.hasEarlier)
+      let legacy = try await harness.get("/v1/session/\(id.rawValue)/transcript")
+      #expect(try await legacy.json(TranscriptReadOutput.self).items.count == page.entries.count)
+      let invalid = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["before": "1"])
+      #expect(invalid.status == .badRequest)
+      let over = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["limit": "201"])
+      #expect(over.status == .badRequest)
+      let before = page.generation
+      _ = try await harness.store.restart(id)
+      let stale = try await harness.get("/v1/session/\(id.rawValue)/transcript/page", query: ["generation": String(before), "before": "0"])
+      #expect(stale.status == .conflict)
+      #expect(JSONValue.parse(try await stale.text())?.object?["code"] == "generationChanged")
+    }
+  }
+}
+
+@Suite struct ClaudeHistoryRoutesTests {
+  @Test func preparingAdvancesOneChunkAndOlderPagesPinTheEpoch() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let id = try await harness.store.createSession(group: .shared, title: "cc", kind: .agent, createdBy: "owner", executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")), snapshot: .init())
+      for index in 0 ..< 260 {
+        try await harness.store.appendClaudeCodeMirror(id, entries: [[
+          "type": "assistant", "uuid": .string("a\(index)"),
+          "message": ["content": [["type": "text", "text": .string("entry \(index)")]]],
+        ]])
+      }
+      let path = "/v1/session/\(id.rawValue)/transcript/page"
+      let preparing = try await harness.get(path)
+      #expect(preparing.status == .serviceUnavailable)
+      #expect((try await json(preparing)).object?["code"] == "transcriptPreparing")
+      var tail: TranscriptHistoryOutput?
+      for _ in 0 ..< 20 {
+        let response = try await harness.get(path)
+        if response.status == .ok { tail = try await response.json(TranscriptHistoryOutput.self); break }
+        #expect(response.status == .serviceUnavailable)
+      }
+      let page = try #require(tail)
+      #expect(page.entries.map(\.position) == Array(60 ..< 260))
+      let epoch = try #require(page.historyEpoch)
+      let older = try await harness.get(path, query: ["generation": "0", "before": "60", "epoch": epoch])
+      #expect(older.status == .ok)
+      #expect(try await older.json(TranscriptHistoryOutput.self).entries.map(\.position) == Array(0 ..< 60))
+      let missingEpoch = try await harness.get(path, query: ["generation": "0", "before": "60"])
+      #expect(missingEpoch.status == .conflict)
+      let staleEpoch = try await harness.get(path, query: ["generation": "0", "before": "60", "epoch": "stale"])
+      #expect(staleEpoch.status == .conflict)
+    }
+  }
+}
+
+@Suite struct ConversationHistoryRoutesTests {
+  @Test func sparseOrdinalsUseExtraRowExhaustionAndExclusiveBoundaries() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let id = try await harness.createSession()
+      let other = try await harness.createSession()
+      for index in 0 ..< 5 {
+        _ = try await harness.call("/v1/conversation/message", .object(["message": .string("entry \(index)"), "session": .string(id.rawValue)]), as: ConversationPostOutput.self)
+        _ = try await harness.call("/v1/conversation/message", .object(["message": "unrelated", "session": .string(other.rawValue)]), as: ConversationPostOutput.self)
+      }
+      let path = "/v1/conversation/\(id.rawValue)/messages"
+      let response = try await harness.get(path, query: ["tail": "2", "paged": "true"])
+      let tail = try await response.json(ConversationHistoryOutput.self)
+      #expect(tail.messages.map(\.text) == ["entry 3", "entry 4"])
+      #expect(tail.hasEarlier)
+      #expect(tail.headPosition == tail.messages.last?.n)
+      let middleResponse = try await harness.get(path, query: ["tail": "2", "paged": "true", "before": String(try #require(tail.before))])
+      let middle = try await middleResponse.json(ConversationHistoryOutput.self)
+      #expect(middle.messages.map(\.text) == ["entry 1", "entry 2"])
+      #expect(middle.hasEarlier)
+      let firstResponse = try await harness.get(path, query: ["tail": "2", "paged": "true", "before": String(try #require(middle.before))])
+      let first = try await firstResponse.json(ConversationHistoryOutput.self)
+      #expect(first.messages.map(\.text) == ["entry 0"])
+      #expect(!first.hasEarlier)
+      let legacy = try await harness.get(path, query: ["tail": "2"])
+      #expect(try await legacy.json(ConversationReadOutput.self).messages == tail.messages)
+    }
+  }
+
+  @Test func pagedReadsRemainBehindAuthentication() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness(dev: false)
+      let id = try await harness.store.createSession(group: .shared, title: "private", kind: .agent, createdBy: "owner", model: ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
+      let transcript = try await harness.get("/v1/session/\(id.rawValue)/transcript/page")
+      #expect(transcript.status == .unauthorized)
+      let conversation = try await harness.get("/v1/conversation/\(id.rawValue)/messages", query: ["tail": "100", "paged": "true"])
+      #expect(conversation.status == .unauthorized)
+    }
+  }
+}

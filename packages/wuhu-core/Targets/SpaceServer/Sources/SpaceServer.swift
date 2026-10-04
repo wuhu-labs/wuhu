@@ -149,6 +149,7 @@ public enum SpaceServer {
     addUserRoutes(&router, space: space, dev: dev)
     addProviderRoutes(&router, space: space, usage: sessions?.usage)
     addTranscribeRoutes(&router, space: space, credentials: credentials)
+    addCapabilityRoutes(&router, space: space, credentials: credentials)
     addSecretRoutes(&router, space: space, secrets: secrets) { request in
       try await requestPrincipal(request, space: space, date: clock)
     }

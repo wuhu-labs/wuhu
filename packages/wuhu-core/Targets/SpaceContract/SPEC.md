@@ -306,3 +306,9 @@ materializes the session actor.
 ## Session archive input
 
 `SessionArchiveInput` is the optional JSON body of `POST /v1/session/:id/archive`. Its optional boolean `force` defaults to false when omitted (an absent body also defaults to false). The response remains an empty JSON object on success. A busy non-force subtree returns conflict with every busy session's id and title. Unarchive has no force flag and still requires an empty body.
+
+## Rich transcription
+
+`TranscriptionOutput` retains required text/provider/model and optional language/durationSeconds. Optional segments/words are arrays of objects `{ text, start?, end?, speaker?, confidence? }`; start/end and durationSeconds are seconds. Confidence and usage are optional provider annotations. Missing metadata is omitted, not replaced with request hints. Diarization quality is not guaranteed. These additions are backward-compatible for existing app/browser response decoders.
+
+`ErrorCode` also recognizes all eight capability error strings, including snake-case invalid_argument, so existing SpaceClient.ToolFailure preserves structured provider codes/hints rather than rendering an unknown-code body as generic HTTP text.

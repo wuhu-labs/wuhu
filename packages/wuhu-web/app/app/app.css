@@ -976,3 +976,25 @@ summary,
 .wuhu-member-handle {
   color: var(--color-grey-muted);
 }
+
+.wuhu-history-edge {
+  min-height: 3rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.125rem 0;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  overflow-anchor: none;
+}
+
+.wui-canvas:has([data-history-id]) {
+  overflow-anchor: none;
+}
+
+.wuhu-history-edge > button {
+  min-height: 2.75rem;
+  padding: 0 0.75rem;
+}

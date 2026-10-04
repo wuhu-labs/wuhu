@@ -68,7 +68,6 @@ private func hang() async throws -> Response {
     }
     let machineFS = FakeMachineFS()
     try await withRig(fetch: provider.client, machines: machineFS.seam, credentials: chatGPT) { rig in
-      try await rig.write("/models.json", models)
       try await rig.run("ai-batch")
       rig.probe("prompts: \(provider.started.value.sorted()), peak in flight: \(provider.peak.value)")
       for name in ["moon", "sun", "comet", "star", "nebula"] {

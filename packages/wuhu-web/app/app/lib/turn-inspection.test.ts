@@ -6,15 +6,20 @@ import {
   eventDetails,
   followInspection,
   historyReturned,
+  historyRow,
   inspected,
-  turnToggled,
+  validInspection,
 } from './turn-inspection.ts'
+import {
+  fixtureProjection,
+  semanticFixtures,
+} from './transcript-fixtures.test.ts'
 
 function fold(events: SessionStreamEvent[]) {
   return events.reduce(foldDirect, initialDirectState)
 }
 
-Deno.test('an event opens in the inspector and a turn toggles open and closed', () => {
+Deno.test('an event opens directly without an invented history', () => {
   const event = {
     kind: 'kernel' as const,
     generation: 0,
@@ -23,24 +28,21 @@ Deno.test('an event opens in the inspector and a turn toggles open and closed', 
   }
   assertEquals(inspected(closedInspection, { kind: 'event', id: event }), {
     destination: { kind: 'event', id: event },
-    history: [],
+    history: null,
   })
-  const open = turnToggled(new Set(), '0:3:0')
-  assertEquals(open, new Set(['0:3:0']))
-  assertEquals(turnToggled(open, '0:3:0'), new Set())
 })
 
 Deno.test('history can inspect a call and return without closing the sheet', () => {
-  const calls = ['call-1', 'call-2']
-  const history = inspected(closedInspection, { kind: 'history', calls })
+  const summary = 'summary:1:2:0'
+  const history = inspected(closedInspection, { kind: 'history', summary })
   assertEquals(history, {
-    destination: { kind: 'history', calls },
-    history: calls,
+    destination: { kind: 'history', summary },
+    history: summary,
   })
   const tool = inspected(history, { kind: 'tool', callID: 'call-2' })
   assertEquals(tool, {
     destination: { kind: 'tool', callID: 'call-2' },
-    history: calls,
+    history: summary,
   })
   assertEquals(historyReturned(tool), history)
   assertEquals(historyReturned(closedInspection), closedInspection)
@@ -53,7 +55,7 @@ Deno.test('a tool opened from the timeline starts without a history', () => {
   })
   assertEquals(inspected(event, { kind: 'tool', callID: 'call-1' }), {
     destination: { kind: 'tool', callID: 'call-1' },
-    history: [],
+    history: null,
   })
 })
 
@@ -98,7 +100,7 @@ Deno.test('an inspector open on a streaming attempt follows it to its committed 
         kind: 'event',
         id: { kind: 'kernel', generation: 2, position: 7, part: 1 },
       },
-      history: [],
+      history: null,
     },
   )
 })
@@ -156,5 +158,42 @@ Deno.test('an event keeps its ordinal, stop reason and usage for the inspector',
       part: 0,
     }),
     null,
+  )
+})
+
+Deno.test('history drills into reasoning and returns through the same summary anchor', () => {
+  const history = inspected(closedInspection, {
+    kind: 'history',
+    summary: 'summary:7:1:0',
+  })
+  const detail = inspected(history, {
+    kind: 'event',
+    id: { kind: 'kernel', generation: 7, position: 1, part: 0 },
+  })
+  assertEquals(historyReturned(detail), history)
+})
+
+Deno.test('backfill extends selected history without invalidating its durable source anchor', () => {
+  const base = semanticFixtures.find((fixture) =>
+    fixture.name === 'next-committed-folds'
+  )!
+  const projection = fixtureProjection(base)
+  const summary = historyRow(projection, 'summary:7:1:1')!
+  assertEquals(summary.key, 'summary:7:1:0')
+  const inspection = inspected(closedInspection, {
+    kind: 'history',
+    summary: 'summary:7:1:1',
+  })
+  assertEquals(
+    validInspection(inspection, projection, initialDirectState),
+    inspection,
+  )
+  assertEquals(
+    validInspection(
+      inspection,
+      fixtureProjection({ events: [], working: false }),
+      initialDirectState,
+    ),
+    closedInspection,
   )
 })

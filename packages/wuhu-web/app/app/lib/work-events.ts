@@ -87,10 +87,13 @@ export function workEvents(state: DirectState): WorkEvent[] {
 }
 
 type Block =
-  | { kind: 'text'; text: string }
-  | { kind: 'reasoning'; summary: string }
-  | { kind: 'toolCall'; call: WorkToolCall }
-  | { kind: 'hostedTool'; digest: string }
+  & (
+    | { kind: 'text'; text: string }
+    | { kind: 'reasoning'; summary: string }
+    | { kind: 'toolCall'; call: WorkToolCall }
+    | { kind: 'hostedTool'; digest: string }
+  )
+  & { part: number }
 
 // Arguments travel as the text the provider emitted; spaces older than that
 // send a JSON object.
@@ -104,15 +107,16 @@ function toolArguments(value: unknown): unknown {
 }
 
 export function assistantBlocks(content: ContentBlock[]): Block[] {
-  return content.flatMap((block): Block[] => {
-    if ('text' in block) return [{ kind: 'text', text: block.text.text }]
+  return content.flatMap((block, part): Block[] => {
+    if ('text' in block) return [{ part, kind: 'text', text: block.text.text }]
     if ('reasoning' in block) {
       const summary = block.reasoning.unencrypted ?? block.reasoning.summary ??
         ''
-      return summary === '' ? [] : [{ kind: 'reasoning', summary }]
+      return [{ part, kind: 'reasoning', summary }]
     }
     if ('tool_call' in block) {
       return [{
+        part,
         kind: 'toolCall',
         call: {
           callID: block.tool_call.id,
@@ -123,6 +127,7 @@ export function assistantBlocks(content: ContentBlock[]): Block[] {
     }
     if ('hosted_tool' in block) {
       return [{
+        part,
         kind: 'hostedTool',
         digest: `${block.hosted_tool.type} · ${block.hosted_tool.action}`,
       }]
@@ -238,12 +243,12 @@ function itemEvents(
           ),
         ]
       }
-      return blocks.map((block, part) =>
+      return blocks.map((block, index) =>
         event(
-          part,
+          block.part,
           at,
           blockBody(block),
-          part === blocks.length - 1 ? entry.stopReason : null,
+          index === blocks.length - 1 ? entry.stopReason : null,
         )
       )
     }
@@ -262,4 +267,33 @@ function itemEvents(
         head: { summary: item.value.summary, note: item.value.note ?? null },
       })]
   }
+}
+
+export function runningCall(
+  state: DirectState,
+  working: boolean,
+  live: boolean,
+): string | null {
+  if (
+    !working || !live || state.executingInference == null ||
+    state.activeAttempt != null
+  ) return null
+  const position = state.executingInference
+  const item = state.items.get(position)
+  if (
+    item?.kind !== 'assistant' ||
+    !['tool_use', 'toolUse'].includes(item.value.stopReason)
+  ) return null
+  for (const [at, entry] of state.items) {
+    if (at > position && entry.kind === 'assistant') return null
+  }
+  const received = new Set(
+    [...state.items.values()].flatMap((entry) =>
+      entry.kind === 'toolResult' ? [toolResultOf(entry.value).callID] : []
+    ),
+  )
+  const next = assistantBlocks(item.value.content).find((block) =>
+    block.kind === 'toolCall' && !received.has(block.call.callID)
+  )
+  return next?.kind === 'toolCall' ? next.call.callID : null
 }

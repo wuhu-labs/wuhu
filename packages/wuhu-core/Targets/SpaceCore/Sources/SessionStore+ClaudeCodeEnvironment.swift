@@ -143,6 +143,7 @@ extension Sessions {
         ClaudeCodeHandoverRow(sessionID: key, entryUUID: entry, effect: encoded, handedOverAt: at)
       }.execute(db)
     }
+    try invalidateClaudeHistoryHandover(key, entry: entry, in: db)
   }
 }
 

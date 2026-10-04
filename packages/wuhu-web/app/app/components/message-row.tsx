@@ -76,6 +76,7 @@ export function MessageRow({
     <div
       id={`msg-${message.messageId}`}
       className='wuhu-message'
+      data-history-id={message.messageId}
       data-own={own || undefined}
     >
       <div className='wuhu-entry-head'>

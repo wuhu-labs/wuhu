@@ -8,6 +8,10 @@ public struct TranscriptionOutput: Codable, Equatable, Sendable {
   public let model: String
   public let language: String?
   public let durationSeconds: Double?
+  public let segments: [JSONValue]?
+  public let words: [JSONValue]?
+  public let confidence: Double?
+  public let usage: JSONValue?
 }
 
 @Contract

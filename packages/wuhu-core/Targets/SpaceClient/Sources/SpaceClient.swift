@@ -48,6 +48,14 @@ public struct SpaceClient: Sendable {
 
   public struct TransportFailure: Error {
     public let message: String
+    public let status: Int?
+    public let code: String?
+
+    init(message: String, status: Int? = nil, code: String? = nil) {
+      self.message = message
+      self.status = status
+      self.code = code
+    }
   }
 
   public struct InvalidSpace: Error {
@@ -98,11 +106,12 @@ public struct SpaceClient: Sendable {
     return try await self.send(request, via: self.fetch)
   }
 
-  public func transcribe(_ audio: Data, contentType: String, language: String? = nil) async throws -> TranscriptionOutput {
+  public func transcribe(_ audio: Data, contentType: String, language: String? = nil, provider: String? = nil, model: String? = nil, timestamps: String? = nil, diarize: Bool? = nil) async throws -> TranscriptionOutput {
     guard var components = URLComponents(string: self.base + "/v1/transcribe") else {
       throw InvalidSpace(space: self.base)
     }
-    components.queryItems = language.map { [URLQueryItem(name: "language", value: $0)] }
+    components.queryItems = [("language", language), ("provider", provider), ("model", model), ("timestamps", timestamps), ("diarize", diarize.map(String.init))]
+      .compactMap { name, value in value.map { URLQueryItem(name: name, value: $0) } }
     guard let url = components.url else { throw InvalidSpace(space: self.base) }
     var request = Request(url: url, method: .post, body: .bytes(audio, contentType: contentType))
     request.headers["content-type"] = contentType
@@ -153,7 +162,7 @@ public struct SpaceClient: Sendable {
     {
       return ToolFailure(error: error)
     }
-    return TransportFailure(message: "HTTP \(response.status.code): \(text)")
+    return TransportFailure(message: "HTTP \(response.status.code): \(text)", status: response.status.code, code: JSONValue.parse(text)?.object?["code"]?.stringValue)
   }
 }
 

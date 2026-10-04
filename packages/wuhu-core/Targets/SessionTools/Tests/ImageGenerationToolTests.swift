@@ -9,7 +9,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-private let generatedPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+private let generatedPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")!
 
 private struct ImageRequestSnapshot: Sendable {
   var url: String
@@ -252,7 +252,7 @@ private let ModelsPath = "/models.json"
       } operation: {
         try await world.run("generate_image", .object(["prompt": "unused", "destination": "/unused.png"]))
       }
-      #expect(try failureMessage(result) == "image generation requires a ChatGPT login for provider codex")
+      #expect(try failureMessage(result).contains("provider_not_configured"))
       #expect(recorder.snapshots.withLock(\.count) == 0)
     }
   }
@@ -269,7 +269,7 @@ private let ModelsPath = "/models.json"
       } operation: {
         try await world.run("generate_image", .object(["prompt": "unused", "destination": "/unused.png"]))
       }
-      #expect(try failureMessage(result) == "image generation is not configured for this space")
+      #expect(try failureMessage(result).contains("provider_not_configured"))
       #expect(recorder.snapshots.withLock(\.count) == 0)
     }
   }

@@ -5,6 +5,7 @@
 #endif
 import GRDB
 import SessionDomain
+import StructuredQueries
 
 public struct TranscriptCursor: Hashable, Sendable {
   public var generation: Int
@@ -43,12 +44,14 @@ extension SessionStore {
   public func observeTranscript(
     _ id: SessionID,
     from cursor: TranscriptCursor? = nil,
+    bounded: Bool = false,
+    historyEpoch: String? = nil,
   ) -> AsyncThrowingStream<TranscriptPage, any Error> {
     let key = id.rawValue
     let writer = writer
     return observation(
       writer: writer,
-      tables: ["session_pointers", "session_runtime"],
+      tables: ["session_pointers", "session_runtime", "claude_history_progress", "claude_history_items"],
       state: TranscriptObservation(cursor: cursor),
     ) { db, state in
       let runtime = try Sessions.runtime(key, in: db)
@@ -56,6 +59,27 @@ extension SessionStore {
       let reset = state.cursor?.generation != generation
       let start = reset ? 0 : state.cursor!.position + 1
       var next = state
+      if bounded {
+        if reset { return (TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true), next) }
+        if case .claudeCode = try Sessions.record(key, in: db).executor {
+          let page = try Sessions.claudeCodeHistoryAfter(key, generation: runtime.generation, after: start - 1, epoch: historyEpoch, in: db)
+          if !page.reset, !page.items.isEmpty { next.cursor = TranscriptCursor(generation: generation, position: page.startPosition + page.items.count - 1) }
+          return (page.reset || !page.items.isEmpty ? page : nil, next)
+        }
+        let boundary = Int64(start)
+        let rows = try SessionPointerRow
+          .where { $0.sessionID.eq(key) && $0.generation.eq(runtime.generation) && $0.position >= boundary }
+          .order(by: \.position).limit(201)
+          .join(SessionContentRow.all) { $0.sessionID.eq($1.sessionID) && $0.contentID.eq($1.id) }
+          .select { $1.payload }.fetchAll(db)
+        if rows.count > 200 {
+          return (TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true), next)
+        }
+        let items = try rows.map { try Sessions.decode(TranscriptItem.self, from: $0) }
+        guard !items.isEmpty else { return (nil, next) }
+        next.cursor = TranscriptCursor(generation: generation, position: start + items.count - 1)
+        return (TranscriptPage(generation: generation, startPosition: start, items: items, reset: false), next)
+      }
       let items: [TranscriptItem]
       switch try Sessions.record(key, in: db).executor {
       case .kernel, .contractor:

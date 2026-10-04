@@ -60,7 +60,7 @@ private func mcpToolNames(_ harness: SessionHarness, session: String) async thro
       let roster = try #require(try await sessionToolRosters(harness, executor: .claudeCode).rosters.first)
       let tool = try #require(roster.tools.first { $0.name == "generate_image" })
       let parameters = try #require(tool.parameters.object)
-      #expect(parameters["properties"]?.object?.keys.sorted() == ["destination", "prompt"])
+      #expect(parameters["properties"]?.object?.keys.sorted() == ["destination", "model", "prompt", "provider", "quality", "size"])
       #expect(parameters["required"] == .array(["prompt", "destination"]))
       #expect(parameters["additionalProperties"] == false)
     }

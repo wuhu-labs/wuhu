@@ -1,5 +1,9 @@
 import type { DirectState } from './transcript-fold.ts'
-import { noticeLabel } from './turn-labels.ts'
+import {
+  noticePresentation,
+  type TranscriptRow,
+  type TurnProjection,
+} from './turns.ts'
 import {
   assistantBlocks,
   toolResultOf,
@@ -13,45 +17,65 @@ import {
 
 export type Destination =
   | { kind: 'tool'; callID: string }
-  | { kind: 'history'; calls: string[] }
+  | { kind: 'history'; summary: string }
   | { kind: 'event'; id: WorkEventID }
 
 export interface Inspection {
   destination: Destination | null
-  history: string[]
+  history: string | null
 }
 
-export const closedInspection: Inspection = { destination: null, history: [] }
+export const closedInspection: Inspection = { destination: null, history: null }
 
-// A tool opened from a tool history keeps that history to return to; anything
-// else opened starts afresh.
 export function inspected(
   inspection: Inspection,
   destination: Destination,
 ): Inspection {
   if (
-    destination.kind === 'tool' && inspection.destination?.kind === 'history'
+    destination.kind !== 'history' && inspection.destination?.kind === 'history'
   ) return { ...inspection, destination }
   return {
     destination,
-    history: destination.kind === 'history' ? destination.calls : [],
+    history: destination.kind === 'history' ? destination.summary : null,
   }
 }
 
 export function historyReturned(inspection: Inspection): Inspection {
-  return inspection.history.length === 0 ? inspection : {
+  return inspection.history === null ? inspection : {
     ...inspection,
-    destination: { kind: 'history', calls: inspection.history },
+    destination: { kind: 'history', summary: inspection.history },
   }
 }
 
-export function turnToggled(
-  expanded: ReadonlySet<string>,
-  turn: string,
-): ReadonlySet<string> {
-  const next = new Set(expanded)
-  if (!next.delete(turn)) next.add(turn)
-  return next
+export function historyRow(
+  projection: TurnProjection,
+  key: string,
+): Extract<TranscriptRow, { kind: 'summary' }> | null {
+  const anchor = key.replace(/^summary:/, '')
+  return projection.rows.find((
+    row,
+  ): row is Extract<TranscriptRow, { kind: 'summary' }> =>
+    row.kind === 'summary' &&
+    (row.key === key || row.items.some((item) => item.key === anchor))
+  ) ?? null
+}
+
+export function validInspection(
+  inspection: Inspection,
+  projection: TurnProjection,
+  state: DirectState,
+): Inspection {
+  const destination = inspection.destination
+  if (destination === null) return inspection
+  const valid = destination.kind === 'history'
+    ? historyRow(projection, destination.summary) !== null
+    : destination.kind === 'tool'
+    ? projection.items.some((item) =>
+      (item.content.kind === 'tool' || item.content.kind === 'send') &&
+      item.content.tool.callID === destination.callID
+    )
+    : eventDetails(state, destination.id) !== null
+  return valid ? inspection : closedInspection
 }
 
 // An event opened while its text was still streaming follows the attempt to
@@ -68,13 +92,10 @@ export function followInspection(
   if (position === undefined) return inspection
   const item = state.items.get(position)
   const part = item?.kind === 'assistant'
-    ? Math.max(
-      0,
-      assistantBlocks(item.value.content).findIndex((block) =>
-        block.kind === 'text'
-      ),
-    )
+    ? assistantBlocks(item.value.content).find((block) => block.kind === 'text')
+      ?.part ?? 0
     : 0
+
   return {
     ...inspection,
     destination: {
@@ -164,7 +185,11 @@ function itemDetails(item: TranscriptItem, part: number): EventDetails {
     }
     case 'notification':
       return {
-        title: noticeLabel(item.value.kind),
+        title: noticePresentation({
+          kind: item.value.kind,
+          text: item.value.content.text,
+          conversations: item.value.conversations,
+        }).label,
         timestamp: swiftDate(item.value.timestamp),
         facts: facts([
           ['Kind', item.value.kind],
@@ -230,7 +255,7 @@ function assistantDetails(entry: AssistantEntry, part: number): EventDetails {
     payload: undefined,
   }
   const blocks = assistantBlocks(entry.content)
-  const block = blocks[part]
+  const block = blocks.find((block) => block.part === part)
   switch (block?.kind) {
     case 'text':
       return { ...details, title: 'Assistant text', text: block.text }

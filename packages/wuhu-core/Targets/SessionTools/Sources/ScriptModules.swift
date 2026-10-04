@@ -90,7 +90,7 @@ private let moduleForms = "wuhu:/<path> (this group), wuhu://<group>.localspace/
     }
     guard specifier.hasPrefix("./") || specifier.hasPrefix("../") else {
       throw ScriptError(
-        "unknown module '\(specifier)'; import wuhu:space, wuhu:secret, wuhu:ai, wuhu:machine, wuhu:session, \(moduleForms)",
+        "unknown module '\(specifier)'; import wuhu:space, wuhu:secret, wuhu:ai, wuhu:web_search, wuhu:machine, wuhu:session, \(moduleForms)",
       )
     }
     // A relative import stays where its referrer lives: in its group, or in
