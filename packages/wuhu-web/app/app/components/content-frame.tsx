@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { withGroup } from '~/lib/links'
-import { contentMessage, shellContext, zeroInsets } from '~/lib/shell'
+import {
+  contentMessage,
+  deviceSafeArea,
+  shellContext,
+  totalInsets,
+  zeroInsets,
+} from '~/lib/shell'
 
 export function ContentFrame({
   group,
@@ -19,7 +25,10 @@ export function ContentFrame({
   const navigate = useNavigate()
   const sendContext = useCallback(() => {
     frame.current?.contentWindow?.postMessage(
-      shellContext(globalThis.location.origin, zeroInsets),
+      shellContext(
+        globalThis.location.origin,
+        totalInsets(deviceSafeArea(), zeroInsets),
+      ),
       origin,
     )
   }, [origin])
@@ -44,8 +53,14 @@ export function ContentFrame({
       }
     }
     globalThis.addEventListener('message', receive)
+    globalThis.addEventListener('resize', sendContext)
+    globalThis.visualViewport?.addEventListener('resize', sendContext)
     sendContext()
-    return () => globalThis.removeEventListener('message', receive)
+    return () => {
+      globalThis.removeEventListener('message', receive)
+      globalThis.removeEventListener('resize', sendContext)
+      globalThis.visualViewport?.removeEventListener('resize', sendContext)
+    }
   }, [group, navigate, origin, remint, sendContext, src])
 
   return (

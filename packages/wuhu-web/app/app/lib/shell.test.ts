@@ -1,4 +1,9 @@
-import { contentMessage, shellContext, zeroInsets } from './shell.ts'
+import {
+  contentMessage,
+  shellContext,
+  totalInsets,
+  zeroInsets,
+} from './shell.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
   const a = JSON.stringify(actual)
@@ -43,4 +48,18 @@ Deno.test('shell context names the viewer a member and carries zero insets', () 
     shellOrigin: 'https://shell.test',
     insets: zeroInsets,
   })
+})
+
+Deno.test('host sends device safe area plus chrome on all four edges', () => {
+  const insets = totalInsets(
+    { top: 59, left: 7, right: 11, bottom: 34 },
+    { top: 52, left: 280, right: 13, bottom: 74 },
+  )
+  assertEquals(shellContext('https://shell.test', insets).insets, {
+    top: 111,
+    left: 287,
+    right: 24,
+    bottom: 108,
+  })
+  assertEquals(totalInsets(insets, zeroInsets), insets)
 })

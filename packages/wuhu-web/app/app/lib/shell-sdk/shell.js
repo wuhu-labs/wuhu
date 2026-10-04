@@ -41,11 +41,8 @@ function shellContext(value) {
   return value
 }
 
-// A shell inset is the obstruction the host adds on top of the one the
-// platform already reports, so the variable carries both and a page adds
-// neither itself.
-function insetValue(edge, extent) {
-  return `calc(${extent}px + env(safe-area-inset-${edge}, 0px))`
+function insetValue(extent) {
+  return `${extent}px`
 }
 
 const edges = ['top', 'left', 'right', 'bottom']
@@ -82,7 +79,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (typeof extent === 'number' && Number.isFinite(extent)) {
           root.style.setProperty(
             `--wuhu-inset-${edge}`,
-            insetValue(edge, extent),
+            insetValue(extent),
+          )
+          root.style.setProperty(
+            `scroll-padding-${edge}`,
+            `var(--wuhu-inset-${edge})`,
           )
         }
       }

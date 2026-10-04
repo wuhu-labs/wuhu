@@ -57,15 +57,36 @@ The server injects `/_/shell.js` into every HTML page. It is an ES module: impor
 </script>
 ```
 
-`wuhu.context` resolves to `{mode:"raw"}` in a standalone tab. In a shell it resolves from the `wuhu:ready` / `wuhu:context` handshake with `mode:"shell"`, `access:"member"` (the viewer writes as a member of the page's group), and live chrome insets. There is one shell contract and two shells behind it — the web app embeds the page in an iframe, the native app hosts it in a web view — and a page never has to tell them apart. `shellOrigin` is the web shell's transport detail and is absent natively, so branch on `mode`, never on it.
+`wuhu.context` resolves to `{mode:"raw"}` in a standalone tab. In a shell it resolves from the `wuhu:ready` / `wuhu:context` handshake with `mode:"shell"`, `access:"member"` (the viewer writes as a member of the page's group), and live total insets (device safe area plus chrome). There is one shell contract and two shells behind it — the web app embeds the page in an iframe, the native app hosts it in a web view — and a page never has to tell them apart. `shellOrigin` is the web shell's transport detail and is absent natively, so branch on `mode`, never on it.
 
-The SDK writes the insets to the document root as `--wuhu-inset-top`, `--wuhu-inset-left`, `--wuhu-inset-right`, and `--wuhu-inset-bottom`. Each one already adds the platform's own safe area, so use it with a safe-area fallback for the raw tab and add nothing yourself:
+The SDK writes the insets to the document root as `--wuhu-inset-top`, `--wuhu-inset-left`, `--wuhu-inset-right`, and `--wuhu-inset-bottom`. Every host sends device safe area plus chrome; the SDK writes those totals as plain pixels without adding `env()`. Bottom includes device safe area plus Dock, not keyboard height: WebKit owns keyboard avoidance. The SDK also sets root scroll-padding from these same four variables, so focus reveal and scrollIntoView avoid shell chrome without changing layout width. Native obscuredContentInsets stay zero; page CSS still owns content padding and fixed/sticky offsets. CSS edges are physical left/right, including RTL. Do not add keyboard height or another safe area in page CSS. The fallback below applies only in a raw browser tab, where the shell variables are absent. Paint the background to the edge, pad content by the insets, and add no additional safe area:
+
+Put shell insets on the outer full-width element, then center a max-width column inside the remaining space. The column gets only its own gutters, never shell side insets:
+
+```html
+<body>
+  <main class="page">Page content</main>
+</body>
+```
 
 ```css
-.page {
+body {
+  margin: 0;
+  padding: 0 var(--wuhu-inset-right, env(safe-area-inset-right, 0px))
+    0 var(--wuhu-inset-left, env(safe-area-inset-left, 0px));
   padding-top: var(--wuhu-inset-top, env(safe-area-inset-top, 0px));
+  padding-bottom: var(--wuhu-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+.page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 24px;
 }
 ```
+
+Do not add `--wuhu-inset-left` or `--wuhu-inset-right` to a `max-width` column's padding. With `margin: auto` and `border-box`, that centers the column in the whole window and then shifts its content within the column instead of centering it beside the docked sidebar.
 
 Inside a shell, ordinary same-origin link clicks are sent to shell history as `{type:"wuhu:navigate", path}`, where `path` carries the query and fragment too. The shell decides whether the destination is markdown, a data view, or another embedded page. Standalone links remain raw. This contract covers link clicks only; do not expect History API calls inside a page to drive shell navigation.
 
