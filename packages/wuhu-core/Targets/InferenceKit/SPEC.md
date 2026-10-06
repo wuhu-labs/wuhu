@@ -2,6 +2,10 @@
 
 Each executor attempt, including forced-compaction calls and failed or cancelled attempts, produces one `InferenceMetric`. It carries call start, session, configured provider/model/effort, API-reported served model when available, outcome/error, duration, optional time to first event, and optional usage. The metrics sink is also called on failures. Failed or cancelled attempts retain the last reported partial usage, when present. Usage remains in WuhuAI's total-input form until the server normalizes it for storage. Existing `logs/inference.jsonl` encoding stays unchanged, including zero for unreported reasoning.
 
+## Kernel endpoints
+
+`ProviderCatalog.resolve` builds an Anthropic-dialect endpoint (other than DeepSeek's) with 1-hour automatic prompt caching (`AnthropicPromptCache.oneHour`), and a Responses endpoint with the session id as `prompt_cache_key`.
+
 ## Provider capabilities
 
 The internal `CapabilitiesDocument` decodes the shared `/capabilities.json`, independently of the inference model catalog; clients construct `CapabilityClient` only through its public `load` factory, not a document initializer. `CapabilityClient.load(read:credentials:)` reads it at call time (the injected reader returns nil only for an absent file); malformed/unreadable configuration fails `provider_not_configured`. `CapabilityClient` owns all search, image and transcription resolution, including the existing image tool and dictation/CLI route. The old `ProviderCatalog.resolveTranscriber` ChatGPT-first picker is removed; its public low-level Codex/OpenAI transcribers remain for direct consumers, not provider selection.

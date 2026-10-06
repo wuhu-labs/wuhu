@@ -143,7 +143,7 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect(deepseek.endpoint.model == "deepseek-v4-pro")
 
     let anthropic = try await catalog.resolve(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "low"), session: SessionID("catalog-tests"))
-    #expect(anthropic.endpoint is AnthropicEndpoint)
+    #expect((anthropic.endpoint as? AnthropicEndpoint)?.promptCache == .oneHour)
 
     let openai = try await catalog.resolve(.init(provider: "openai", model: "gpt-5.4", effort: "high"), session: SessionID("catalog-tests"))
     #expect((openai.endpoint as? OpenAIGPTEndpoint)?.promptCacheKey == "catalog-tests")

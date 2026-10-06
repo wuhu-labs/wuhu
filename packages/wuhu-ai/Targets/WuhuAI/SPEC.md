@@ -54,6 +54,10 @@ Stream merge policy:
 - An Anthropic-dialect endpoint's `baseURL` is the one the vendor publishes for Anthropic's SDKs, and requests go to `<baseURL>/v1/messages`: `https://api.anthropic.com`, `https://api.deepseek.com/anthropic`, `https://api.xiaomimimo.com/anthropic`.
 - A `baseURL` whose path already ends in `/v1`, with or without a trailing slash, posts to `<baseURL>/messages`, so `https://api.anthropic.com/v1` and `…/anthropic/v1` keep working.
 
+## Anthropic prompt caching
+
+- `AnthropicEndpoint.promptCache` selects Anthropic's automatic caching: one top-level `cache_control` on the request body, whose breakpoint the API moves to the last cacheable block as the conversation grows. `.oneHour` writes `{"type": "ephemeral", "ttl": "1h"}`, `.fiveMinutes` writes `{"type": "ephemeral"}` at the 5-minute default TTL, and `.disabled`, the default, omits it. Which policy a product runs is the product's choice, never this package's.
+
 ## Usage and served model
 
 `Usage.inputTokens` includes all input, cached or not, across Anthropic, Responses (including Codex), Chat Completions and Gemini. `uncachedInputTokens` subtracts `cacheReadTokens` and `cacheWriteTokens` without double counting and asserts that the remainder is nonnegative. `outputTokens` includes billed reasoning: Gemini adds `thoughtsTokenCount` to `candidatesTokenCount`, while other dialects already include reasoning in their output count. `reasoningTokens` is optional: absent means the provider did not report a separate count, not a reported zero. Anthropic leaves it absent. Existing stored usage with zero remains decodable.

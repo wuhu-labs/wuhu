@@ -80,6 +80,18 @@ import Testing
     ]]])
   }
 
+  @Test func aRelayActivationAuthenticatesWithItsOwnBaseURLAndKey() {
+    var spec = Self.spec
+    spec.oauthToken = nil
+    spec.gateway = .init(baseURL: URL(string: "https://www.jiji.cc")!, key: "sk-relay")
+    let environment = spec.plan.environment
+    #expect(environment["ANTHROPIC_BASE_URL"] == "https://www.jiji.cc")
+    #expect(environment["ANTHROPIC_AUTH_TOKEN"] == "sk-relay")
+    #expect(environment["ANTHROPIC_API_KEY"] == "", "empty, so a saved login cannot take over")
+    #expect(environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1")
+    #expect(environment["CLAUDE_CODE_OAUTH_TOKEN"] == nil)
+  }
+
   @Test func aFirstActivationNamesItsSessionInsteadOfResuming() {
     var spec = Self.spec
     spec.resume = false

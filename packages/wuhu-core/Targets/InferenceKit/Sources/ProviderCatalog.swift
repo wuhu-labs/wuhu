@@ -130,7 +130,7 @@ public struct ProviderCatalog: Sendable {
     case let (.anthropic, .apiKey(key)) where specifier.provider == "deepseek":
       endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: key)
     case let (.anthropic, .apiKey(key)):
-      endpoint = AnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: key)
+      endpoint = AnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
     case let (.responses, .apiKey(key)):
       endpoint = OpenAIGPTEndpoint(
         model: specifier.model,

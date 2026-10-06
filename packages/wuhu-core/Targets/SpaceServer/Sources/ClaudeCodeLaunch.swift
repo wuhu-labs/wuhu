@@ -177,8 +177,16 @@ struct ClaudeCodeLaunchSpec {
   var effort: String
   var autocompact: Int?
   var systemPrompt: String
-  var oauthToken: String
+  var oauthToken: String?
+  var gateway: Gateway?
   var inherited: [String: String]
+
+  // A relay answers the Anthropic wire at its own base URL and authenticates
+  // with a bearer key; the direct Anthropic path uses a setup token instead.
+  struct Gateway: Equatable {
+    var baseURL: URL
+    var key: String
+  }
 
   static let tools = ["Read", "Write", "Edit", "WebSearch"]
   static let inheritedKeys = ["HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR"]
@@ -221,8 +229,17 @@ struct ClaudeCodeLaunchSpec {
     ]]]
     var environment = inherited.filter { Self.inheritedKeys.contains($0.key) }
     environment["CLAUDE_CONFIG_DIR"] = config
-    environment["CLAUDE_CODE_OAUTH_TOKEN"] = oauthToken
     environment["DISABLE_AUTOUPDATER"] = "1"
+    if let oauthToken {
+      environment["CLAUDE_CODE_OAUTH_TOKEN"] = oauthToken
+    }
+    if let gateway {
+      environment["ANTHROPIC_BASE_URL"] = gateway.baseURL.absoluteString
+      environment["ANTHROPIC_AUTH_TOKEN"] = gateway.key
+      // Empty on purpose: a saved Anthropic login must not take the turn over.
+      environment["ANTHROPIC_API_KEY"] = ""
+      environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+    }
     // Claude Code counts a turn silent when it prints no assistant text, but a
     // session answers people through send_message, so its "the user hasn't
     // heard from you" reminder fires on sessions that did answer.

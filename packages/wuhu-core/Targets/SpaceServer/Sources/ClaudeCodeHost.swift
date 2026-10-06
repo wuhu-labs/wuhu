@@ -255,8 +255,20 @@ final class ClaudeCodeHost: Sendable {
     guard case let .claudeCode(model) = record.executor else {
       preconditionFailure("the Claude Code seam spawned for a \(record.executor.kind) session")
     }
-    guard case let .claudeCodeOAuth(oauth)? = try await credentials.resolve(model.provider) else {
-      throw ClaudeCodeLaunchError("provider \(model.provider) has no Claude Code setup token; store one with: wuhu auth login \(model.provider)")
+    let credential = try await credentials.resolve(model.provider)
+    let oauth: String?
+    let gateway: ClaudeCodeLaunchSpec.Gateway?
+    switch credential {
+    case let .claudeCodeOAuth(token)?:
+      oauth = token
+      gateway = nil
+    case let .apiKey(key)?:
+      oauth = nil
+      gateway = .init(baseURL: try await providerBaseURL(of: model), key: key)
+    default:
+      throw ClaudeCodeLaunchError(
+        "provider \(model.provider) has no Claude Code credential; store one with: wuhu auth login \(model.provider) or wuhu auth set \(model.provider)",
+      )
     }
     guard let installation else { throw ClaudeCodeLaunchError("Claude Code has no config directory to be installed in") }
     let binary: String
@@ -285,6 +297,7 @@ final class ClaudeCodeHost: Sendable {
         autocompact: autocompact,
         systemPrompt: systemPrompt,
         oauthToken: oauth,
+        gateway: gateway,
         inherited: inherited,
       )
     }
@@ -377,6 +390,16 @@ final class ClaudeCodeHost: Sendable {
     let (_, data) = try await space.fs(.shared).read(ModelsDocument.spacePath)
     let model = try ProviderCatalog(document: ModelsDocument(json: data), credentials: .unavailable).validate(specifier)
     return try model.claudeCodeAutocompact(specifier)
+  }
+
+  // A relay's base URL from /models.json: the root Claude Code appends its own
+  // /v1/messages to, not the versioned root the kernel's Anthropic path uses.
+  private func providerBaseURL(of specifier: ModelSpecifier) async throws -> URL {
+    let (_, data) = try await space.fs(.shared).read(ModelsDocument.spacePath)
+    guard let url = try ModelsDocument(json: data).providers[specifier.provider]?.baseURL else {
+      throw ClaudeCodeLaunchError("provider \(specifier.provider) is not in \(ModelsDocument.spacePath)")
+    }
+    return url
   }
 
   func render(_ inputs: [QueueInput], channel: ClaudeCodeChannel, session: SessionID) async throws -> [ClaudeCodeBlock] {
