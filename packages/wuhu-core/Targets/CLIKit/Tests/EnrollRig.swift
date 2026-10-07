@@ -141,6 +141,7 @@ struct EnrollRig {
   // `plain` stands in for system trust; by default nothing may reach it.
   func run(
     _ arguments: [String], io: CLIIO = CLIIO(), log: RequestLog? = nil, plain: FetchClient? = nil,
+    environment: [String: String] = [:],
   ) async -> Int32 {
     let plain = plain ?? FetchClient { request in
       Issue.record("enrollment traffic must not reach the plain client: \(request.url)")
@@ -159,7 +160,7 @@ struct EnrollRig {
       environment: [
         "HOME": root.appendingPathComponent("home").path,
         "WUHU_CONFIG_DIR": configDirectory.path,
-      ],
+      ].merging(environment) { $1 },
       currentDirectory: root.appendingPathComponent("work").path,
     )
     return await withDependencies {

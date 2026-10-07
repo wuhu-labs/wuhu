@@ -95,14 +95,15 @@ public struct CommandRunner: Sendable {
         await self.stdout(text + "\n")
         return 0
       }
-      // Resolved before anything else runs: a session's exec never reaches
-      // the wallet or the device keys; the local verbs below open neither.
       let identity = try Identity.resolve(environment: self.environment)
       if case .session = identity {
         _ = try GroupSelection.resolve(flag: invocation.group, environment: self.environment, config: nil)
         if command.isRefusedToSessions {
           throw CLIError(message: sessionRefusal)
         }
+      }
+      if case .wallet(announce: true) = identity, command.runsWithoutWallet {
+        await self.stderr("acting as the local user (wallet)\n")
       }
       if case let .serve(config) = command {
         guard let serve = self.serve else {
@@ -152,8 +153,9 @@ public struct CommandRunner: Sendable {
         environment: self.environment,
         config: command.rewritesWalletGroup ? nil : wallet.configuredGroup,
       )
-      var executor = Executor(runner: self, wallet: &wallet, group: group)
+      var executor = Executor(runner: self, wallet: &wallet, group: group, walletOptIn: identity == .wallet(announce: true))
       let code = try await executor.run(command)
+      await executor.finishWalletAnnouncement()
       for warning in executor.wallet.drainWarnings() {
         await self.stderr(warning)
       }

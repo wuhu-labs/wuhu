@@ -12,6 +12,7 @@
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
     "@std/path": "jsr:@std/path@1.0.8",
     "@std/yaml": "jsr:@std/yaml@1.0.5",
-    "jose": "npm:jose@6.1.0"
+    "jose": "npm:jose@6.1.0",
+    "marked": "npm:marked@17.0.6"
   }
 }

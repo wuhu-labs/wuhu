@@ -1,8 +1,5 @@
 import enum MachineContract.SessionExecEnvironment
 
-/// The group a person's requests act in. Inside a session's exec there is
-/// never one: the exec acts in its session's group, which the server knows
-/// from the token, so naming another is refused rather than ignored.
 struct GroupSelection: Equatable {
   enum Source: Equatable {
     case flag
@@ -19,7 +16,7 @@ struct GroupSelection: Equatable {
 
   static func resolve(flag: String?, environment: [String: String], config: String?) throws -> Self {
     let named = environment[Self.environmentName].flatMap { $0.isEmpty ? nil : $0 }
-    if isSessionExec(environment) {
+    if case .session = try Identity.resolve(environment: environment) {
       if flag != nil {
         throw CLIError(message: "--group is refused in a session's exec: the exec acts in its session's group")
       }

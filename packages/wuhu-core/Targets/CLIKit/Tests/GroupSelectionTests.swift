@@ -116,7 +116,7 @@ import Testing
     #expect(await h.recorder.requests.isEmpty)
 
     let refused = await h.run(["user", "list"], environment: h.execEnvironment)
-    #expect(refused.stderr == "not available to a session\n")
+    #expect(refused.stderr == sessionRefusal + "\n")
   }
 
   @Test func rePinningTheSameSpaceKeepsItsGroup() async throws {
@@ -160,11 +160,11 @@ import Testing
   }
 
   enum ExecAttempt: CaseIterable {
-    case flag, environment, wallet
+    case flag, environment
   }
 
   @Test(arguments: ExecAttempt.allCases)
-  func anExecNamesNoGroupAndNoWallet(attempt: ExecAttempt) async throws {
+  func aSessionExecCannotOverrideItsGroup(attempt: ExecAttempt) async throws {
     let h = try GroupHarness(features: ["groups"])
     var environment = h.execEnvironment
     var arguments = ["ls", "/"]
@@ -176,14 +176,47 @@ import Testing
     case .environment:
       environment["WUHU_GROUP"] = "alice"
       message = "WUHU_GROUP is refused in a session's exec"
-    case .wallet:
-      environment["WUHU_IDENTITY"] = "wallet"
-      message = "WUHU_IDENTITY=wallet is refused in a session's exec"
     }
     let result = await h.run(arguments, environment: environment)
     #expect(result.code == 1)
     #expect(result.stderr.contains(message), "\(result.stderr)")
     #expect(await h.recorder.requests.isEmpty)
+  }
+
+  @Test(arguments: Source.allCases)
+  func aWalletOptInUsesTheNormalGroupSelection(source: Source) async throws {
+    let h = try GroupHarness(features: ["groups"], configGroup: "carol")
+    var environment = h.execEnvironment
+    environment["WUHU_IDENTITY"] = "wallet"
+    var arguments = ["ls", "/"]
+    switch source {
+    case .flag:
+      arguments = ["--group", "alice"] + arguments
+      environment["WUHU_GROUP"] = "bob"
+    case .environment:
+      environment["WUHU_GROUP"] = "alice"
+    case .config:
+      break
+    }
+    let result = await h.run(arguments, environment: environment)
+    #expect(result.code == 0, "\(result.stderr)")
+    #expect(result.stderr == "acting as anonymous (wallet)\n")
+    let requests = await h.recorder.requests
+    #expect(requests.map(\.url.path) == ["/v1/server", "/v1/tools/ls"])
+    #expect(requests.last?.headers["wuhu-group"] == (source == .config ? "carol" : "alice"))
+    #expect(requests.allSatisfy { $0.headers["authorization"] == nil })
+  }
+
+  @Test func aWalletOptInDoesNotDropAnUnsupportedOrInvalidGroup() async throws {
+    let h = try GroupHarness(features: nil)
+    let environment = h.execEnvironment.merging(["WUHU_IDENTITY": "wallet"]) { $1 }
+    let unsupported = await h.run(["--group", "alice", "ls", "/"], environment: environment)
+    #expect(unsupported.code == 1)
+    #expect(unsupported.stderr.contains("this server has no groups"))
+    #expect(await h.recorder.requests.map(\.url.path) == ["/v1/server"])
+    let invalid = await h.run(["--group", "Alice", "ls", "/"], environment: environment)
+    #expect(invalid.code == 64)
+    #expect(invalid.stderr.contains("is not a group id"))
   }
 
   @Test func anExecIgnoresTheConfiguredGroup() async throws {

@@ -1,14 +1,24 @@
 {
   "owner": "wuhu",
-  "lock": false,
+  "lock": "deno.lock",
   "fmt": {
     "semiColons": false,
     "singleQuote": true,
-    "include": ["test"]
+    "include": [
+      "guide.ts",
+      "guide.js",
+      "guide.css",
+      "preview.ts",
+      "test"
+    ]
   },
   "tasks": {
     "fmt": "deno fmt --check",
-    "lint": "deno lint test",
-    "test": "deno test --allow-read --allow-write --allow-net=127.0.0.1 --allow-run --allow-env test"
+    "lint": "deno lint guide.ts guide.js preview.ts test",
+    "test": "deno test --allow-read --allow-write --allow-net=127.0.0.1 --allow-run --allow-env test",
+    "preview": "deno run --allow-read --allow-net=127.0.0.1 preview.ts"
+  },
+  "imports": {
+    "marked": "npm:marked@17.0.6"
   }
 }

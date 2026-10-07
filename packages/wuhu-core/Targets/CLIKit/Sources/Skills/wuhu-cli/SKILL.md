@@ -43,23 +43,10 @@ without groups fails.
 
 ## Inside a session's exec: you are the session
 
-An exec a session runs (its `exec` tool, or a `run_script` spawn) carries
-`WUHU_EXEC=1`, `WUHU_TOKEN` and `WUHU_SPACE_URL`, set by the server. There
-`wuhu` acts as **that session on that space**: no wallet, no pin, no device
-key is read, so a cwd pinned to another space does not matter. It keeps the
-session's rules — its own home only under `/_/sessions/` (for `write`,
-`edit`, `rm`, `mv`, `put`, `checkout`, `table`, and `new`, whose instance
-lands in its `in` folder or next to the template), `session
-archive|interrupt|resume|unarchive|tags` on itself and its descendants
-(`archive` and `unarchive` also on a session it created and, for a top-level
-agent, on any session of its group),
-`session create` makes a child task (`--kind agent` a child agent,
-`--top-level` a top-level agent, agents only), `session request <child>
-<message> [--deadline S]` opens a request, `send` DMs as the session (no
-`--wait`, no `--attach`), `exec`/`ps`/`kill` see only its own execs. Other
-verbs fail with `not available to a session`; a missing or rejected token is
-an error, never a quiet fallback to the wallet. You act in your session's
-group: `WUHU_IDENTITY=wallet`, `--group` and `WUHU_GROUP` are refused.
+An exec a session runs (its `exec` tool, or a `run_script` spawn) carries `WUHU_EXEC=1`, `WUHU_TOKEN` and `WUHU_SPACE_URL`, set by the server. There `wuhu` acts as **that session on that space**: no wallet, no pin, no device key is read, so a cwd pinned to another space does not matter. It keeps the session's rules — its own home only under `/_/sessions/` (for `write`, `edit`, `rm`, `mv`, `put`, `checkout`, `table`, and `new`, whose instance lands in its `in` folder or next to the template), `session archive|interrupt|resume|unarchive|tags` on itself and its descendants (`archive` and `unarchive` also on a session it created and, for a top-level agent, on any session of its group), `session create` makes a child task (`--kind agent` a child agent, `--top-level` a top-level agent, agents only), `session request <child> <message> [--deadline S]` opens a request, `send` DMs as the session (no `--wait`, no `--attach`), `exec`/`ps`/`kill` see only its own execs. Other verbs refused locally by the CLI fail with `not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner`; a missing or rejected token is an error, never a quiet fallback to the wallet. You act in your session's group: `--group` and `WUHU_GROUP` are refused unless you opt into the wallet.
+
+Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, as its owner on its pinned space, ignoring the session token and URL. Use it for another space, or for verbs only the wallet's owner has when that person asked for it. The CLI prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). Wallet mode honors the normal group selection: `--group` beats `WUHU_GROUP`, which beats the wallet's configured group. The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Wallet or identity errors fail, never fall back to the session.
+
 Outside a session's exec (a person's terminal) nothing of this applies.
 
 ## Files

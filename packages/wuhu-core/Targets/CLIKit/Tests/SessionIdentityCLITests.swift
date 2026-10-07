@@ -184,7 +184,7 @@ private final class IdentityHarness: Sendable {
     }
   }
 
-  @Test func userListIsRefusedToTheSessionAndTheWalletOptInIsRefusedToo() async throws {
+  @Test func userListIsRefusedToTheSessionButWorksWithTheWalletOptIn() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()
       let refused = await h.asSession(["user", "list"])
@@ -195,9 +195,9 @@ private final class IdentityHarness: Sendable {
       var environment = h.sessionEnvironment
       environment["WUHU_IDENTITY"] = "wallet"
       let wallet = await h.run(["user", "list"], environment: environment)
-      #expect(wallet.code == 1)
-      #expect(wallet.stderr.contains("WUHU_IDENTITY=wallet is refused"), "\(wallet.stderr)")
-      #expect(wallet.hosts.isEmpty, "the cwd's wallet is never opened")
+      #expect(wallet.code == 0, "\(wallet.stderr)")
+      #expect(wallet.stderr == "acting as anonymous (wallet)\n")
+      #expect(wallet.hosts == ["elsewhere.test"], "the wallet chooses the space, not the session URL")
     }
   }
 
@@ -222,6 +222,51 @@ private final class IdentityHarness: Sendable {
       #expect(elsewhere.hosts.isEmpty)
       let same = await h.asSession(["read", "wuhu://space.test:5530\(notes)"])
       #expect(same.stdout == "ours")
+    }
+  }
+
+  @Test func theWalletOptInIgnoresMissingOrRejectedSessionCredentialsAndFindsAnAncestorWallet() async throws {
+    try await withIdentityDeps {
+      let h = try await IdentityHarness()
+      var wallet = Wallet(directory: h.wallet)
+      try wallet.recordPersona("cedar-kite-lantern", space: "elsewhere.test")
+      let nested = h.cwd.appendingPathComponent("nested/child", isDirectory: true)
+      try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+      let output = Output()
+      let error = Output()
+      let runner = CommandRunner(
+        fetch: h.fetch,
+        stdin: { "" },
+        stdout: { await output.append($0) },
+        stderr: { await error.append($0) },
+        environment: ["HOME": h.home.path, "WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"],
+        currentDirectory: nested.path,
+      )
+      #expect(await runner.run(arguments: ["ls", "/"]) == 0)
+      #expect(await error.take() == "acting as anonymous (wallet)\n")
+      #expect(h.hosts.list.withLock { $0 } == ["elsewhere.test"])
+
+      var environment = h.sessionEnvironment
+      environment["WUHU_IDENTITY"] = "wallet"
+      environment["WUHU_TOKEN"] = "wst_" + String(repeating: "0", count: 64)
+      environment["WUHU_SPACE_URL"] = "not a URL"
+      let opted = await h.run(["ls", "/"], environment: environment)
+      #expect(opted.code == 0, "\(opted.stderr)")
+      #expect(opted.stderr == "acting as anonymous (wallet)\n")
+      #expect(opted.hosts == ["elsewhere.test"])
+    }
+  }
+
+  @Test func aMalformedWalletConfigFailsWithoutActingAsTheSession() async throws {
+    try await withIdentityDeps {
+      let h = try await IdentityHarness()
+      var environment = h.sessionEnvironment
+      environment["WUHU_IDENTITY"] = "wallet"
+      try Data("{".utf8).write(to: h.wallet.appendingPathComponent("config.json"))
+      let config = await h.run(["ls", "/"], environment: environment)
+      #expect(config.code == 64)
+      #expect(config.stderr.contains("malformed .wuhu/config.json"))
+      #expect(config.hosts.isEmpty)
     }
   }
 
@@ -324,6 +369,30 @@ private final class IdentityHarness: Sendable {
     }
   }
 
+  @Test func sessionCreateHelpDistinguishesWalletRootsFromSessionChildren() async throws {
+    try await withIdentityDeps {
+      let h = try await IdentityHarness()
+      let help = await h.asSession(["session", "create", "--help"])
+      #expect(help.code == 0)
+      #expect(help.stdout.contains("without WUHU_IDENTITY=wallet"))
+      #expect(help.stdout.contains("WUHU_IDENTITY=wallet takes the human path"))
+      #expect(help.stdout.contains("human-owned root"))
+      #expect(help.stdout.contains("template supplying them"))
+      var environment = h.sessionEnvironment
+      environment["WUHU_IDENTITY"] = "wallet"
+      let missing = await h.run(["session", "create", "needs model"], environment: environment)
+      #expect(missing.code == 1)
+      #expect(missing.stderr.contains("provider"))
+      let root = await h.run(["session", "create", "--provider", "testing", "--model", "test-model", "wallet agent"], environment: environment)
+      #expect(root.code == 0, "\(root.stderr)")
+      let id = SessionID(root.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+      let record = try await h.store.record(id)
+      #expect(record.kind == .agent)
+      #expect(record.parent == nil)
+      #expect(record.createdBy != h.parent.rawValue)
+    }
+  }
+
   @Test func localOnlyVerbsAreRefusedBeforeAnyTraffic() async throws {
     try await withIdentityDeps {
       let h = try await IdentityHarness()
@@ -335,7 +404,8 @@ private final class IdentityHarness: Sendable {
       }
       let server = await h.asSession(["secret", "list"])
       #expect(server.code == 1)
-      #expect(server.stderr.contains(sessionRefusal))
+      #expect(server.stderr.contains("not available to a session"))
+      #expect(!server.stderr.contains("WUHU_IDENTITY"))
     }
   }
 }

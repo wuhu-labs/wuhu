@@ -151,16 +151,17 @@ struct UpgradeCLITests {
     }
   }
 
-  @Test func walletModeInAnExecIsRefusedAndASessionMayOnlyCheck() async throws {
+  @Test func walletModeInAnExecMayUpgradeButASessionMayOnlyCheck() async throws {
     let inExec = try UpgradeHarness()
     let code = await inExec.run(
-      ["upgrade", "--check"],
+      ["upgrade"],
       environment: inExec.feed(),
       extraEnvironment: ["WUHU_EXEC": "1", "WUHU_IDENTITY": "wallet"],
     )
-    #expect(code == 1)
-    #expect(await inExec.stderr.text.contains("WUHU_IDENTITY=wallet is refused"))
-    #expect(inExec.requests.withLock { $0 }.isEmpty)
+    #expect(code == 0)
+    #expect(await inExec.stderr.text.hasPrefix("acting as the local user (wallet)\n"))
+    #expect(inExec.layout.currentVersion() == "0.1.0-dev.2")
+    #expect(!inExec.requests.withLock { $0 }.isEmpty)
 
     let session = ["WUHU_EXEC": "1", "WUHU_TOKEN": "exec-token", "WUHU_SPACE_URL": "https://space.test:5530"]
     let checking = try UpgradeHarness()
@@ -171,7 +172,7 @@ struct UpgradeCLITests {
       let installing = try UpgradeHarness()
       let code = await installing.run(arguments, environment: installing.feed(), extraEnvironment: session)
       #expect(code == 1, "\(arguments): on a server's host this swaps the server's binary")
-      #expect(await installing.stderr.text == "not available to a session\n")
+      #expect(await installing.stderr.text == sessionRefusal + "\n")
       #expect(installing.requests.withLock { $0 }.isEmpty)
     }
   }

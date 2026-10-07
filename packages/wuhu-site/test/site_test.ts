@@ -251,3 +251,10 @@ Deno.test('before the pointer loads, the pill is hidden and downloads go to inst
     .map((match) => match[1])
   assertEquals(JSON.stringify(downloads), '["/install.sh","/install.sh"]')
 })
+
+Deno.test('the homepage Docs link uses the canonical extensionless landing', async () => {
+  const html = await Deno.readTextFile(`${siteDir}/index.html`)
+  if (!html.includes('href="/docs">Docs</a>')) {
+    throw new Error('Canonical Docs link missing')
+  }
+})

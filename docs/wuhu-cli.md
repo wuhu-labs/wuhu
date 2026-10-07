@@ -163,7 +163,7 @@ replayable after the command finished; `122` server unreachable; `64` usage;
 | Verb | Purpose |
 | --- | --- |
 | `wuhu session compact <session-id> [--instructions ...]` | Ask a session to fold its context at its next quiet point. A Claude Code session writes `/compact [instructions]` on its process's standard input between turns, never mid-turn. A kernel session pins its next settled turn to the compact tool, with the instructions injected first as one `compact request` notification. Either way the boundary and the resulting summary land in the session log. |
-| `wuhu session create [--kind agent\|task] [--top-level] [--home-group G] [--provider P] [--model M] [--effort E] [--template N] [--tag T]... <title>` | Create an inert session and its owning channel. From a session's exec it is that session's child — a task unless `--kind agent`, on the parent's model unless named — and `--top-level` (agents only) makes a top-level agent instead; see *Session execs* below. Provider and model are required, validated against `/models.json`; effort defaults to the model's declared default. The provider's dialect picks the executor: a `claude` provider runs Claude Code, every other one the kernel loop. `--template N` applies `/templates/N/template.json` underneath the flags (its `kind` stands in for `--kind`) and clones the template's other files into the session's home — denormalized at creation, explicit flags win, later template edits never touch existing sessions. `--home-group G` places a top-level agent in group `G`, which the acting group must read; a child always lives in its creator's group. |
+| `wuhu session create [--kind agent\|task] [--top-level] [--home-group G] [--provider P] [--model M] [--effort E] [--template N] [--tag T]... <title>` | Create an inert session and its owning channel. From a session's exec without `WUHU_IDENTITY=wallet` it is that session's child — a task unless `--kind agent`, on the parent's model unless named — and `--top-level` (agents only) makes a top-level agent instead; see *Session execs* below. With `WUHU_IDENTITY=wallet` it takes the human path, creating a human-owned root agent, not a child inheriting the session model. Provider and model are required, validated against `/models.json`; effort defaults to the model's declared default. The provider's dialect picks the executor: a `claude` provider runs Claude Code, every other one the kernel loop. `--template N` applies `/templates/N/template.json` underneath the flags (its `kind` stands in for `--kind`) and clones the template's other files into the session's home — denormalized at creation, explicit flags win, later template edits never touch existing sessions. `--home-group G` places a top-level agent in group `G`, which the acting group must read; a child always lives in its creator's group. |
 | `wuhu session restart [--provider P] [--model M] [--effort E] [--message TEXT] <id>` | Start the session over: same id, same box, same DMs, same home folder, empty transcript. Drops undrained work, subscriptions and timers, and clears the interrupt/error axes. Omitted fields keep the live spec on the same provider, so a bare restart is a pure wipe; naming another provider keeps nothing of the old model, and the new spec is validated exactly as `session create` does. Refused while the session has unfinished work. `--message` posts an opening input so the fresh session starts working. |
 | `wuhu session request [--deadline SECS] <id> <message>` | A session's exec only: open a request on a child of the session, posted into their DM; prints `requested <request-id> in <conversation-id>`. |
 | `wuhu session rename <id> <title>` | Retitle a session. The title is trimmed, one non-empty line, at most 200 characters. |
@@ -282,45 +282,19 @@ A space holds groups: `shared`, and one personal group per person. A request nam
 | `wuhu group set --space-layer on\|off <id>` | Whether the sessions of group `<id>` render the space-wide instruction layer (`shared`'s `/AGENTS.md` and skills); they pick the change up at their next turn. Needs an admin of the group (`PUT /v1/groups/<id>`). Prints `<id> space-layer on\|off`. |
 | `wuhu group current` | Print the selected group and its source; with none, the group the server picks for this caller (`group` in `GET /v1/server`), or `none` on a server without groups. |
 
-A selected group is never dropped: when `GET /v1/server` answers without `groups` in `features`, the command fails with `this server has no groups` before sending anything else; when the probe itself fails, that failure is the error. In a session's exec the acting group is the session's; `--group` and `WUHU_GROUP` are refused there.
+A selected group is never dropped: when `GET /v1/server` answers without `groups` in `features`, the command fails with `this server has no groups` before sending anything else; when the probe itself fails, that failure is the error. In a session's exec the acting group is the session's; `--group` and `WUHU_GROUP` are refused unless `WUHU_IDENTITY=wallet` opts into the wallet, where the same group selection applies.
 
 ## Session execs
 
-An exec a session runs — its `exec` tool or a `run_script` spawn — is started
-with `WUHU_EXEC=1`, `WUHU_TOKEN` (a per-exec token, masked in the exec's
-output, dead once the exec ends, its timeout passes or the server restarts)
-and `WUHU_SPACE_URL`. The server owns those three names: it strips them from
-any caller's `env` and `secrets`, and the machine agent unsets them for every
-other exec. The agent also unsets a `WUHU_IDENTITY` or `WUHU_GROUP` it
-inherited, unless the exec itself sets it.
+An exec a session runs — its `exec` tool or a `run_script` spawn — is started with `WUHU_EXEC=1`, `WUHU_TOKEN` (a per-exec token, masked in the exec's output, dead once the exec ends, its timeout passes or the server restarts) and `WUHU_SPACE_URL`. The server owns those three names: it strips them from any caller's `env` and `secrets`, and the machine agent unsets them for every other exec. The agent also unsets a `WUHU_IDENTITY` or `WUHU_GROUP` it inherited, unless the exec itself sets it.
 
-With `WUHU_EXEC` set (any non-empty value), the CLI acts as that session on
-that space, in its group. `WUHU_IDENTITY` may be unset or `session`; `WUHU_IDENTITY=wallet`,
-`--group` and `WUHU_GROUP` are refused, because each would act outside the
-session's group. It reads no wallet and no device key — a cwd
-pinned elsewhere changes nothing, and an address on another server is
-refused. Read-before-write tokens and observe cursors live in a scratch
-folder under the temp directory keyed by the token. The server applies the
-session's own rules (home rule, ancestry, child-only create, own
-execs only). The home rule covers every verb that writes: the file verbs,
-`checkout`, `table create|alter|mutate` and `new`, which checks its `in`
-folder, else its template's, where the instance lands. Verbs a session lacks — `user list|handle|profile|remove`, `key`, `auth`,
-`machine add|join|run|rotate|revoke`, `models update`, `use`, `trust`,
-`untrust`, `login`, `share-login`, `group use`, `upgrade` (all but
-`--check`, since on a server's host it swaps the binary the server runs), and
-every other route the server keeps for people — fail with exactly `not
-available to a session`. `serve`, `upgrade --check` and `user add|reset
---space` open no wallet and act on no space, so they run. `send`
-refuses `--wait` and `--attach`. A missing `WUHU_TOKEN` or `WUHU_SPACE_URL`,
-or a token the server rejects, is an error saying which — never a fallback
-to the wallet.
+With `WUHU_EXEC` set (any non-empty value) and `WUHU_IDENTITY` unset, empty or `session`, the CLI acts as that session on that space, in its group. `--group` and `WUHU_GROUP` are refused. It reads no wallet and no device key — a cwd pinned elsewhere changes nothing, and an address on another server is refused. Read-before-write tokens and observe cursors live in a scratch folder under the temp directory keyed by the token. The server applies the session's own rules (home rule, ancestry, child-only create, own execs only). The home rule covers every verb that writes: the file verbs, `checkout`, `table create|alter|mutate` and `new`, which checks its `in` folder, else its template's, where the instance lands. Verbs a session lacks — `user list|handle|profile|remove`, `key`, `auth`, `machine add|join|run|rotate|revoke`, `models update`, `use`, `trust`, `untrust`, `login`, `share-login`, `group use`, `upgrade` (all but `--check`, since on a server's host it swaps the binary the server runs) — are refused locally with `not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner`. Routes the server keeps for people return its bare `not available to a session` refusal. `serve`, `upgrade --check` and `user add|reset --space` open no wallet and act on no space, so they run. `send` refuses `--wait` and `--attach`. A missing `WUHU_TOKEN` or `WUHU_SPACE_URL`, or a token the server rejects, is an error saying which — never a fallback to the wallet.
 
-These refusals are advisory, not a boundary: they keep an exec's CLI in its
-session's group, but a process that unsets `WUHU_EXEC` can still reach a
-wallet in its cwd.
+Set `WUHU_IDENTITY=wallet` in the exec's `env` to deliberately act as the wallet's owner. The CLI ignores the session token and URL and finds the wallet from cwd up, so it can act on another space the wallet pins. It prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Normal group selection applies: `--group`, then `WUHU_GROUP`, then the wallet's configured group. A malformed wallet or failed identity lookup is an error, not a fallback to the session. Use this for another space, or for verbs only the wallet's owner has when that person asked for it.
 
-Without `WUHU_EXEC` — a person's terminal — none of this applies and
-`WUHU_IDENTITY` is ignored.
+These defaults prevent accidents, not deliberate wallet access: agents on a machine holding a human wallet can opt into it.
+
+Without `WUHU_EXEC` — a person's terminal — none of this applies and `WUHU_IDENTITY` is ignored.
 
 ## Addressing
 

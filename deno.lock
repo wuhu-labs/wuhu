@@ -4,7 +4,8 @@
     "jsr:@std/path@1.0.8": "1.0.8",
     "jsr:@std/yaml@1.0.5": "1.0.5",
     "npm:@opentelemetry/api@1.9.0": "1.9.0",
-    "npm:jose@6.1.0": "6.1.0"
+    "npm:jose@6.1.0": "6.1.0",
+    "npm:marked@17.0.6": "17.0.6"
   },
   "jsr": {
     "@std/path@1.0.8": {
@@ -20,6 +21,10 @@
     },
     "jose@6.1.0": {
       "integrity": "sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA=="
+    },
+    "marked@17.0.6": {
+      "integrity": "sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA==",
+      "bin": true
     }
   },
   "workspace": {
@@ -27,7 +32,8 @@
       "jsr:@std/path@1.0.8",
       "jsr:@std/yaml@1.0.5",
       "npm:@opentelemetry/api@1.9.0",
-      "npm:jose@6.1.0"
+      "npm:jose@6.1.0",
+      "npm:marked@17.0.6"
     ]
   }
 }

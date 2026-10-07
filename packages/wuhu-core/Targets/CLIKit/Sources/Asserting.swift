@@ -72,7 +72,9 @@ extension Executor {
       try await self.requireGroups(space: space, selected: group)
     }
     guard let bearer = try await self.bearerSource(space: space) else {
-      return self.client(space, group: group, longRunning: longRunning)
+      let client = self.client(space, group: group, longRunning: longRunning)
+      try await self.announceWallet(space: space, client: client, hasBearer: false)
+      return client
     }
     let runner = self.runner
     var dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)?
@@ -82,13 +84,15 @@ extension Executor {
         return try await inner(url, headers + [("authorization", "Bearer " + assertion)])
       }
     }
-    return SpaceClient(
+    let client = SpaceClient(
       space: space,
       fetch: authorized(longRunning ? runner.observeFetch : runner.fetch, bearer),
       observeFetch: authorized(runner.observeFetch, bearer),
       dial: dial,
       group: group,
     )
+    try await self.announceWallet(space: space, client: client, hasBearer: true)
+    return client
   }
 
   mutating func bearerSource(space: String) async throws -> BearerSource? {

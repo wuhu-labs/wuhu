@@ -1410,8 +1410,9 @@ extension Command {
     a request names its group in a Wuhu-Group header, from --group <id>, else
     WUHU_GROUP, else the wallet's group; with none it sends no header and the
     server picks. naming a group on a server without groups fails instead of
-    acting elsewhere. a session's exec always acts in its session's group, so
-    --group and WUHU_GROUP are refused there.
+    acting elsewhere. a session's exec acts in its session's group and refuses
+    --group and WUHU_GROUP unless WUHU_IDENTITY=wallet opts into the wallet's
+    owner and space; wallet mode uses the same group selection as a terminal.
     \(exitCodes)
     """,
     "group list": """
@@ -1622,10 +1623,16 @@ extension Command {
     is wuhu://<group>.localspace/templates/<NAME>. The template's other files
     are cloned into the new session's home, /_/sessions/<id>/.
 
-    from a session's exec (WUHU_EXEC=1) the new session is that session's
-    child, in its group: a task unless --kind agent, on the parent's own model
-    unless --provider/--model name another. --top-level creates a top-level
-    agent that belongs to the humans instead; only an agent may.
+    from a session's exec (WUHU_EXEC=1), without WUHU_IDENTITY=wallet, the new
+    session is that session's child, in its group: a task unless --kind agent,
+    on the parent's own model unless --provider/--model name another.
+    --top-level creates a top-level agent that belongs to the humans instead;
+    only an agent may.
+
+    WUHU_IDENTITY=wallet takes the human path: it creates a human-owned root
+    agent on the wallet's space and selected group, not a child inheriting the
+    session's model. --provider/--model or a template supplying them are
+    required; --kind task is refused.
 
     --home-group G places a top-level agent in group G instead of the acting
     group, which must read G; a child always lives in its creator's group.

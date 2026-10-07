@@ -9,7 +9,7 @@ import protocol MachineChannel.FrameTransport
 import enum MachineContract.SessionExecEnvironment
 import SpaceClient
 
-let sessionRefusal = "not available to a session"
+let sessionRefusal = "not available to a session; set WUHU_IDENTITY=wallet to act as the wallet's owner"
 
 // What a session's exec was handed by the server that started it: the bearer
 // that acts as that session, and the one space it acts on.
@@ -18,22 +18,19 @@ struct SessionCredential: Equatable, Sendable {
   var space: String
 }
 
-// Who the CLI acts as: the wallet outside a session's exec (WUHU_EXEC unset or empty),
-// the session inside one. The wallet's owner is out of reach there, since it
-// would act outside the session's group.
 enum Identity: Equatable {
-  case wallet
+  case wallet(announce: Bool)
   case session(SessionCredential)
 
   static func resolve(environment: [String: String]) throws -> Self {
-    guard isSessionExec(environment) else { return .wallet }
+    guard isSessionExec(environment) else { return .wallet(announce: false) }
     switch environment[SessionExecEnvironment.identity] {
     case nil, "", "session":
       break
     case "wallet":
-      throw CLIError(message: "WUHU_IDENTITY=wallet is refused in a session's exec: the exec acts as its session, in its group")
+      return .wallet(announce: true)
     case let other?:
-      throw UsageError(message: "WUHU_IDENTITY is session, not \(other)")
+      throw UsageError(message: "WUHU_IDENTITY is session or wallet, not \(other)")
     }
     guard let token = environment[SessionExecEnvironment.token], !token.isEmpty else {
       throw CLIError(message: """
@@ -59,6 +56,13 @@ func isSessionExec(_ environment: [String: String]) -> Bool {
 }
 
 extension Command {
+  var runsWithoutWallet: Bool {
+    switch self {
+    case .serve, .upgrade, .user: true
+    default: false
+    }
+  }
+
   // Verbs that act on the wallet, the device keys or the wallet's owner
   // rather than on the session's space. The server refuses every other verb a
   // session lacks; these never reach it (models update would otherwise write

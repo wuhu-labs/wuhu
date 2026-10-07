@@ -19,13 +19,17 @@ struct Executor {
   var session: SessionCredential?
   private(set) var group: GroupSelection
   var groupsConfirmed: Set<String> = []
+  let walletOptIn: Bool
+  var walletAnnouncementPending: Bool
 
-  init(runner: CommandRunner, wallet: inout Wallet, session: SessionCredential? = nil, group: GroupSelection = .none) {
+  init(runner: CommandRunner, wallet: inout Wallet, session: SessionCredential? = nil, group: GroupSelection = .none, walletOptIn: Bool = false) {
     self.runner = runner
     self.wallet = wallet
     self.session = session
     self.group = group
     self.wallet.group = group.group
+    self.walletOptIn = walletOptIn
+    self.walletAnnouncementPending = walletOptIn
   }
 
   mutating func select(_ group: GroupSelection) {
@@ -46,6 +50,7 @@ struct Executor {
     case let .machineJoin(server, fingerprint, name):
       try await self.machineJoin(server: server, fingerprint: fingerprint, name: name)
     case .machineRun:
+      await self.finishWalletAnnouncement()
       try await self.machineRun()
     case .machineList:
       try await self.machineList()
@@ -347,6 +352,9 @@ struct Executor {
     let recorded = group ?? kept
     let wallet = try self.wallet.pin(space, group: recorded)
     self.select(try GroupSelection.resolve(flag: nil, environment: self.runner.environment, config: recorded))
+    if self.walletAnnouncementPending {
+      _ = try await self.authenticated(space)
+    }
     let identity = try await self.persona(space: space)
     await self.runner.stdout(
       "pinned \(space) -> \(wallet.path)" + (recorded.map { " in group \($0)" } ?? "") + (identity.map { " as \($0)" } ?? "") + "\n",
