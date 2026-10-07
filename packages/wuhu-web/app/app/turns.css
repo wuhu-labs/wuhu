@@ -340,10 +340,10 @@
 }
 
 .wuhu-composer-dialog.wuhu-inspector {
-  width: min(58.75rem, calc(100dvw - 3rem));
-  max-height: calc(100dvh - 3rem);
+  width: min(44rem, calc(100dvw - 2rem));
+  max-height: 85dvh;
   overflow: hidden;
-  border-radius: 1.6rem;
+  border-radius: 1rem;
 }
 
 .wuhu-inspector[open] {
@@ -355,24 +355,23 @@
   display: flex;
   align-items: center;
   flex: none;
-  gap: 1rem;
-  padding: 1.5rem 2rem;
-  border-bottom: 1px solid rgba(var(--wui-border-ink), 0.1);
+  gap: 0.6rem;
+  padding: 1.25rem 1.25rem 0;
 }
 
 .wuhu-inspector-head .wuhu-dialog-title {
   flex: 1;
-  font-size: 1.4rem;
+  font-size: 1rem;
   overflow-wrap: anywhere;
 }
 
 .wuhu-inspector-body {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.9rem;
   min-height: 0;
   overflow-y: auto;
-  padding: 1.4rem 2rem 2rem;
+  padding: 0.9rem 1.25rem 1.25rem;
   scrollbar-gutter: stable;
 }
 
@@ -384,11 +383,11 @@
 .wuhu-history-row {
   display: flex;
   align-items: center;
-  gap: 0.9rem;
+  gap: 0.5rem;
   width: 100%;
-  min-height: 4.75rem;
-  border-bottom: 1px solid rgba(var(--wui-border-ink), 0.1);
-  font-size: 0.875rem;
+  min-height: 44px;
+  border-top: 1px solid rgba(var(--wui-border-ink), 0.1);
+  font-size: 0.75rem;
 }
 
 .wuhu-history-row .wui-icon {
@@ -400,7 +399,7 @@
 
 .wuhu-history-row strong {
   flex: none;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .wuhu-history-subject {
@@ -410,7 +409,7 @@
   white-space: nowrap;
   color: var(--color-grey-muted);
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.6875rem;
 }
 
 .wuhu-history-back {
@@ -424,6 +423,7 @@
   color: var(--color-grey-muted);
   cursor: pointer;
   font: inherit;
+  font-size: 0.75rem;
 }
 
 .wuhu-inspector-facts {
@@ -434,7 +434,7 @@
   margin: 0;
   color: var(--color-grey-muted);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.625rem;
   overflow-wrap: anywhere;
 }
 
@@ -445,6 +445,7 @@
 }
 
 .wuhu-inspector-section-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -453,16 +454,23 @@
 
 .wuhu-inspector-section .wuhu-eyebrow {
   margin: 0;
+  padding-right: 44px;
+}
+
+.wuhu-inspector-section-head .wuhu-quiet-button {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .wuhu-inspector-payload {
   margin: 0;
-  padding: 1rem;
-  border: 1px solid rgba(var(--wui-border-ink), 0.1);
-  border-radius: 0.5rem;
-  background: var(--wui-field);
+  padding: 0.875rem;
+  border-radius: 0.75rem;
+  background: rgba(var(--wui-border-ink), 0.05);
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.6875rem;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -476,7 +484,7 @@
   margin: 0;
   color: var(--color-grey-muted);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.625rem;
 }
 
 .wuhu-inspector-grid dt {
@@ -489,7 +497,15 @@
   user-select: text;
 }
 
-@media (max-width: 47.999rem) {
+.wuhu-inspector-text {
+  margin: 0;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+@media (max-width: 47.999rem), (pointer: coarse) and (max-height: 47.999rem) {
   .wuhu-composer-dialog.wuhu-inspector {
     width: 100dvw;
     height: 100dvh;
@@ -500,27 +516,26 @@
 
   .wuhu-inspector-head {
     padding: max(1rem, env(safe-area-inset-top)) max(1rem,
-      env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+      env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left));
   }
 
   .wuhu-inspector-body {
     flex: 1;
-    padding: 1rem max(1rem, env(safe-area-inset-right)) max(1rem,
+    padding: 0.9rem max(1rem, env(safe-area-inset-right)) max(1rem,
       env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   }
 
   .wuhu-history-row {
     flex-wrap: wrap;
     gap: 0.5rem;
-    padding: 0.8rem 0;
-    min-height: 4.75rem;
+    padding: 0.5rem 0;
   }
 
   .wuhu-history-subject {
     flex: 1 1 45%;
   }
 }
-.wuhu-composer-dialog.wuhu-inspector-head h2:focus {
+.wuhu-inspector-head h2:focus {
   outline: none;
 }
 

@@ -9,6 +9,17 @@ if [[ -z "$real" ]]; then
   exit 2
 fi
 
+if [[ "${WUHU_POOL:-}" != "0" && ( "${WUHU_POOL:-}" == "1" || -n "${WUHU_POOL_URL:-}" ) ]]; then
+  if deno run --allow-env=WUHU_POOL,WUHU_POOL_URL --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" --probe "$@"; then
+    exec deno run --allow-env=WUHU_POOL,WUHU_POOL_URL --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" "$@"
+  fi
+fi
+args=()
+for arg in "$@"; do
+  if [[ "$arg" != "--local" ]]; then args+=("$arg"); fi
+done
+set -- ${args[@]+"${args[@]}"}
+
 stamp="$repo/.wuhu/manifest-stamp"
 outputs="$repo/.wuhu/manifest-outputs"
 provenance="$repo/.wuhu/manifest-provenance"
@@ -83,13 +94,14 @@ if [[ "${WUHU_BAZEL_RAW:-0}" != "1" ]]; then
   fi
 fi
 
-# Bazel keys its output base on the workspace path. The CI runner mints a
-# random workspace directory per job, so without a pin every job leaks a fresh
-# multi-gigabyte output base that nothing ever prunes.
-# `bazel --version` is answered by the client without a server and rejects any
-# startup option before it, so that one form stays bare.
-if [[ -n "${WUHU_BAZEL_OUTPUT_BASE:-}" && "${1:-}" != "--version" ]]; then
-  exec "$real" --output_base="$WUHU_BAZEL_OUTPUT_BASE" "$@"
+startup=()
+if [[ "${1:-}" != "--version" ]]; then
+  if [[ -n "${WUHU_BAZEL_OUTPUT_BASE:-}" ]]; then startup+=("--output_base=$WUHU_BAZEL_OUTPUT_BASE"); fi
+  if [[ -n "${WUHU_POOL_BAZELRC:-}" ]]; then startup+=("--bazelrc=$WUHU_POOL_BAZELRC"); fi
 fi
-
-exec "$real" "$@"
+if [[ -n "${WUHU_POOL_BEP:-}" && ( "${1:-}" == "build" || "${1:-}" == "test" ) ]]; then
+  verb="$1"
+  shift
+  exec "$real" ${startup[@]+"${startup[@]}"} "$verb" "--build_event_json_file=$WUHU_POOL_BEP" --build_event_publish_all_actions "--execution_log_json_file=$WUHU_POOL_EXECUTION_LOG" "$@"
+fi
+exec "$real" ${startup[@]+"${startup[@]}"} "$@"

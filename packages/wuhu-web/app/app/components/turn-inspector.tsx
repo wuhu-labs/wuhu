@@ -223,6 +223,15 @@ export function TurnInspector(
       {inspecting !== null && (
         <>
           <header className='wuhu-inspector-head'>
+            {inspecting.kind !== 'history' && inspection.history !== null && (
+              <button
+                type='button'
+                className='wuhu-history-back'
+                onClick={returnToHistory}
+              >
+                <span aria-hidden='true'>‹</span> Back to work history
+              </button>
+            )}
             <h2 className='wuhu-dialog-title' tabIndex={-1}>{title}</h2>
             <button
               type='button'
@@ -240,15 +249,6 @@ export function TurnInspector(
               if (inspecting.kind === 'history') rememberHistory()
             }}
           >
-            {inspecting.kind !== 'history' && inspection.history !== null && (
-              <button
-                type='button'
-                className='wuhu-history-back'
-                onClick={returnToHistory}
-              >
-                <span aria-hidden='true'>‹</span> Back to work history
-              </button>
-            )}
             {item?.inference && (
               <p className='wuhu-inspector-facts'>
                 Inference {item.inference} · block{' '}
@@ -277,7 +277,7 @@ export function TurnInspector(
             {tool && (
               <>
                 <p className='wuhu-inspector-facts'>
-                  <span>{tool.name} · {tool.callID}</span>
+                  <span>{tool.callID}</span>
                   <span>{toolStateLabel[toolState(tool)]}</span>
                 </p>
                 <Payload title='Arguments' value={tool.arguments} />
@@ -334,10 +334,15 @@ function Event({ details, tool }: { details: EventDetails; tool: boolean }) {
         ))}
       </dl>
       {details.text !== null && (
-        <Payload
-          title='Text'
-          value={details.text || 'No source body available.'}
-        />
+        <section className='wuhu-inspector-section'>
+          <div className='wuhu-inspector-section-head'>
+            <h3 className='wuhu-eyebrow'>Text</h3>
+            <CopyButton text={details.text} />
+          </div>
+          <p className='wuhu-inspector-text'>
+            {details.text || 'No source body available.'}
+          </p>
+        </section>
       )}
       {!tool && details.payload !== undefined && (
         <Payload title='Payload' value={details.payload} />

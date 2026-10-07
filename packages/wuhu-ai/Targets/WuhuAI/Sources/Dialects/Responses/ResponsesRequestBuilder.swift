@@ -60,8 +60,7 @@ func buildResponsesRequest(
   if !isCodex, let maxTokens = options.maxTokens {
     body["max_output_tokens"] = .integer(maxTokens)
   }
-  var tools = context.tools ?? []
-  if isCodex { tools.append(.hosted(type: "web_search")) }
+  let tools = context.tools ?? []
   if !tools.isEmpty {
     body["tools"] = .array(tools.map(buildTool))
   }

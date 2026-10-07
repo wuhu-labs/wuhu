@@ -4,7 +4,7 @@ import type {
   AppManifest,
   PlistValue,
 } from './generate.ts'
-import { appBundles } from './generate.ts'
+import { appProfileName, variantBundle } from './generate.ts'
 
 export interface LocalPackageRef {
   // The SwiftPM package name, which is also the xcodegen `packages:` key.
@@ -167,13 +167,14 @@ function resolveDependencies(
 
 function targetSpec(
   app: AppManifest,
-  target: AppBundleManifest,
+  declared: AppBundleManifest,
   resolved: ResolvedDependencies,
   teamID: string | undefined,
   launchArguments: string[],
   type: 'application' | 'app-extension',
   embeddedExtensions: string[] = [],
 ): Record<string, unknown> {
+  const target = variantBundle(declared, 'dev')
   const icons = target.appIcons
     .map(appIconSource)
     .filter((icon): icon is AppIconSource => icon !== undefined)
@@ -202,7 +203,7 @@ function targetSpec(
     SWIFT_VERSION: '6.0',
   }
   if (teamID) settings.DEVELOPMENT_TEAM = teamID
-  const profile = developmentProfileName(app, target)
+  const profile = appProfileName(app, declared, 'dev')
   if (profile) settings.PROVISIONING_PROFILE_SPECIFIER = profile
   // app.yml `linkopts:` are linker arguments (the ffmpeg frameworks' flat
   // `@rpath/<name>` install names need one -rpath per framework directory, for
@@ -242,25 +243,6 @@ function targetSpec(
         : {}),
     },
   }
-}
-
-function developmentProfileName(
-  app: AppManifest,
-  target: AppBundleManifest,
-): string | undefined {
-  if (target.bundleID.startsWith('tech.lakeridge.previews.')) {
-    return target.platform === 'iOS' ? 'Wuhu Dev Previews' : undefined
-  }
-  const platforms = new Set(
-    appBundles(app)
-      .filter((candidate) => candidate.bundleID === target.bundleID)
-      .map((candidate) => candidate.platform),
-  )
-  const suffix = platforms.size > 1 || target.platform === 'visionOS' ||
-      target.platform === 'watchOS'
-    ? ` ${target.platform}`
-    : ''
-  return `Wuhu Dev ${target.bundleID}${suffix}`
 }
 
 // Per-machine scheme knobs, read from the untracked

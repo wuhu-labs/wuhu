@@ -464,7 +464,7 @@ _SIMULATOR_UNIT_TEST_RULES = {
 # toolchain for a simulator target platform. rules_apple's `*_unit_test` bundles
 # the same sources into an `.xctest` and runs it on a booted simulator instead,
 # so the sources compile and execute for the platform they claim.
-def wuhu_sim_test(name, lane, module_name, srcs, deps, package_name, minimum_os_version, target_compatible_with, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, copts = [], plugins = [], env = None, env_inherit = None, size = None, tags = None):
+def wuhu_sim_test(name, lane, module_name, srcs, deps, package_name, minimum_os_version, target_compatible_with, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, copts = [], plugins = [], env = None, env_inherit = None, size = None, tags = None, test_host = None):
     copy_resources = copy_resources or []
     process_resources = process_resources or []
     resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, module_name, resource_root, resource_sentinel, copy_resources, process_resources)
@@ -507,6 +507,9 @@ def wuhu_sim_test(name, lane, module_name, srcs, deps, package_name, minimum_os_
         size = size,
         tags = tags or [],
         target_compatible_with = target_compatible_with,
+        # With a host, the runner injects the bundle into that application
+        # rather than spawning the bare `xctest` agent (tools/sim/runner.ts).
+        test_host = test_host,
         deps = [":{}".format(library_name)],
     )
 

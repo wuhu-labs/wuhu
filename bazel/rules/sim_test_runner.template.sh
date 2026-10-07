@@ -14,11 +14,12 @@ exec "$PWD/%(deno)s" run \
   --allow-write \
   --allow-env \
   --allow-sys=userInfo,uid,gid \
-  --allow-run=/usr/bin/xcrun,/usr/bin/xcode-select,/bin/cp,/usr/bin/unzip \
+  --allow-run=/usr/bin/xcrun,/usr/bin/xcode-select,/bin/cp,/usr/bin/unzip,/usr/bin/plutil,/usr/bin/codesign \
   "$PWD/%(runner)s" \
   --lane "%(lane)s" \
   --platform-dir "%(platform_dir)s" \
   --bundle "%(test_bundle_path)s" \
+  --host "%(test_host_path)s" \
   --filter "%(test_filter)s" \
   --env "%(test_env)s" \
   -- ${test_env_inherit[@]+"${test_env_inherit[@]}"}

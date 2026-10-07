@@ -5,7 +5,7 @@
 Provides `ModelEndpoint` types with streaming inference support across multiple backends:
 
 - **OpenAI** (Responses API)
-- **OpenAI Codex** (Responses API, Codex-tuned)
+- **OpenAI Codex** (Responses API, Codex-tuned; caller-supplied tools only, no automatic hosted web search)
 - **Anthropic** (Messages API)
 - OpenAI-compatible chat-completions providers, Gemini, and more
 

@@ -194,6 +194,13 @@ interface TestConfig {
   // process. `--test_env=NAME` reaches the runner on its own; nothing carries
   // it across `simctl spawn` without this.
   envInherit?: string[]
+  // Per simulator lane, the application the test bundle runs inside instead
+  // of the bare `xctest` agent: a real UIApplication with a connected scene.
+  // Bazel-only, like `env`.
+  host?: Partial<Record<CheckPlatform, string>>
+  // false keeps the test target, folder and references included, out of the
+  // public tree (tools/public/tree.ts dropPrivateTests). Generation ignores it.
+  public?: boolean
   exclude?: string[]
   swiftSettings?: SwiftSetting[]
   size?: TestSize
@@ -341,6 +348,17 @@ export interface EntitlementOverlays {
   release?: { [key: string]: PlistValue }
 }
 
+// The identity the dev and adhoc variants sign as, so a development build
+// installs beside the store app instead of replacing it. Each field overrides
+// the bundle's own; `entitlements` merges over `entitlements.common`.
+export interface DevIdentityManifest {
+  bundleID: string
+  displayName?: string
+  appIcons?: string[]
+  entitlements?: { [key: string]: PlistValue }
+  info?: { [key: string]: PlistValue }
+}
+
 export interface AppBundleManifest {
   name: string
   platform: 'macOS' | 'iOS' | 'tvOS' | 'visionOS' | 'watchOS'
@@ -348,6 +366,7 @@ export interface AppBundleManifest {
   bundleName: string
   displayName?: string
   entitlements: EntitlementOverlays
+  devIdentity?: DevIdentityManifest
   families: string[]
   appIcons: string[]
   resources?: string[]
@@ -601,25 +620,85 @@ export function validateAppEntitlements(
         }`,
       )
     }
-    for (const [overlay, values] of Object.entries(declaration)) {
+    const checkAuthored = (values: unknown, label: string): void => {
       if (
         typeof values !== 'object' || values === null || Array.isArray(values)
       ) {
-        throw new Error(
-          `${source}: ${target.name}.entitlements.${overlay} must be a dictionary`,
-        )
+        throw new Error(`${source}: ${label} must be a dictionary`)
       }
       assertPlistValues(
-        values,
-        `${source}: ${target.name}.entitlements.${overlay}`,
+        values as Record<string, unknown>,
+        `${source}: ${label}`,
       )
       for (const key of Object.keys(values)) {
         if (generatedKeys.has(key)) {
           throw new Error(
-            `${source}: ${target.name}.entitlements.${overlay}.${key} is generated and must not be authored`,
+            `${source}: ${label}.${key} is generated and must not be authored`,
           )
         }
       }
+    }
+    for (const [overlay, values] of Object.entries(declaration)) {
+      checkAuthored(values, `${target.name}.entitlements.${overlay}`)
+    }
+    if (target.devIdentity?.entitlements !== undefined) {
+      checkAuthored(
+        target.devIdentity.entitlements,
+        `${target.name}.devIdentity.entitlements`,
+      )
+    }
+  }
+  validateDevIdentities(app, source)
+}
+
+function validateDevIdentities(app: AppManifest, source: string): void {
+  for (const target of appBundles(app)) {
+    const identity = target.devIdentity
+    if (identity === undefined) continue
+    if (typeof identity.bundleID !== 'string' || identity.bundleID === '') {
+      throw new Error(`${source}: ${target.name}.devIdentity needs a bundleID`)
+    }
+    if (isPreviewBundle(target) || isPreviewBundle(identity)) {
+      throw new Error(
+        `${source}: ${target.name} is a preview bundle, which has a single identity`,
+      )
+    }
+    if (identity.bundleID === target.bundleID) {
+      throw new Error(
+        `${source}: ${target.name}.devIdentity.bundleID repeats the store bundle ID`,
+      )
+    }
+  }
+  const extensions = new Map(
+    (app.extensions ?? []).map((target) => [target.name, target]),
+  )
+  for (const target of app.targets) {
+    for (const name of target.extensions ?? []) {
+      const extension = extensions.get(name)
+      if (extension === undefined) continue
+      if (
+        (target.devIdentity === undefined) !==
+          (extension.devIdentity === undefined)
+      ) {
+        throw new Error(
+          `${source}: ${target.name} and its extension ${name} must both declare a devIdentity or neither`,
+        )
+      }
+      if (
+        target.devIdentity !== undefined &&
+        !extension.devIdentity!.bundleID.startsWith(
+          `${target.devIdentity.bundleID}.`,
+        )
+      ) {
+        throw new Error(
+          `${source}: ${name}.devIdentity.bundleID must extend ${target.devIdentity.bundleID}`,
+        )
+      }
+    }
+    if (target.watchApplication !== undefined && target.devIdentity) {
+      throw new Error(
+        `${source}: ${target.name} embeds a watch application, which devIdentity does not support yet`,
+      )
     }
   }
 }
@@ -2166,6 +2245,16 @@ ${
           `${location} declares tests but no checks.test platforms`,
         )
       }
+      const strayHosts = Object.keys(config.host ?? {}).filter((lane) =>
+        !simulatorLanes.some((simulator) => simulator.lane === lane)
+      )
+      if (strayHosts.length > 0) {
+        throw new Error(
+          `${location} names a test host for ${
+            strayHosts.join(', ')
+          }, which is not one of its simulator test lanes`,
+        )
+      }
       if (runnable.length > 0) {
         chunks.push(
           `wuhu_swift_test(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${sharedAttrs}${
@@ -2175,7 +2264,11 @@ ${
       }
       for (const { lane, minimumOSVersion } of simulatorLanes) {
         chunks.push(
-          `wuhu_sim_test(\n    name = "${test.name}.${lane}",\n    lane = "${lane}",\n    module_name = "${test.name}",\n    package_name = "${pkg.packageName}",\n    minimum_os_version = "${minimumOSVersion}",\n${sharedAttrs}${
+          `wuhu_sim_test(\n    name = "${test.name}.${lane}",\n    lane = "${lane}",\n    module_name = "${test.name}",\n    package_name = "${pkg.packageName}",\n    minimum_os_version = "${minimumOSVersion}",\n${
+            config.host?.[lane]
+              ? `    test_host = "${config.host[lane]}",\n`
+              : ''
+          }${sharedAttrs}${
             config.tags?.length
               ? testTagsAttr([
                 'resources:simulators:1',
@@ -3117,13 +3210,44 @@ function appResourcePatterns(paths: string[]): string[] {
   return paths.flatMap((path) => [path, `${path}/**`])
 }
 
-type SigningVariant = 'dev' | 'adhoc' | 'store'
+export type SigningVariant = 'dev' | 'adhoc' | 'store'
+
+export function isPreviewBundle(bundle: { bundleID: string }): boolean {
+  return bundle.bundleID.startsWith('tech.lakeridge.previews.')
+}
+
+// The bundle as one signing variant builds it: dev and adhoc take its
+// devIdentity, store keeps the declared identity.
+export function variantBundle<T extends AppBundleManifest>(
+  target: T,
+  variant: SigningVariant,
+): T {
+  const identity = target.devIdentity
+  if (identity === undefined || variant === 'store') return target
+  return {
+    ...target,
+    bundleID: identity.bundleID,
+    displayName: identity.displayName ?? target.displayName,
+    appIcons: identity.appIcons ?? target.appIcons,
+    entitlements: {
+      ...target.entitlements,
+      common: { ...target.entitlements.common, ...identity.entitlements },
+    },
+    info: { ...target.info, ...identity.info },
+    devIdentity: undefined,
+  }
+}
 
 export function appEmbedsViewPilot(app: AppManifest): boolean {
-  const preview = app.targets.some((target) =>
-    target.bundleID.startsWith('tech.lakeridge.previews.')
-  )
-  return preview || app.viewPilot !== false
+  return app.targets.some(isPreviewBundle) || app.viewPilot !== false
+}
+
+export function bundleEmbedsViewPilot(
+  app: AppManifest,
+  target: AppBundleManifest,
+): boolean {
+  return app.targets.some((candidate) => candidate.name === target.name) &&
+    appEmbedsViewPilot(app)
 }
 
 export const viewPilotPackage = 'packages/view-pilot'
@@ -3224,24 +3348,61 @@ function shellPath(prefix: string, path: string): string {
   return prefix.length === 0 ? path : `${prefix}/${path}`
 }
 
-function entitlementPath(target: AppBundleManifest, release: boolean): string {
-  return `${target.name}-${release ? 'release' : 'dev'}.entitlements`
+// adhoc shares the store file unless a devIdentity gives it its own identity.
+export function entitlementPath(
+  target: AppBundleManifest,
+  variant: SigningVariant,
+): string {
+  const file = variant === 'dev'
+    ? 'dev'
+    : variant === 'adhoc' && target.devIdentity !== undefined
+    ? 'adhoc'
+    : 'release'
+  return `${target.name}-${file}.entitlements`
+}
+
+// Each entitlements file the bundle's variants select, with the first variant
+// that selects it; variants sharing a file resolve to the same entitlements.
+export function entitlementSourcesByVariant(
+  app: AppManifest,
+  target: AppBundleManifest,
+): Map<string, SigningVariant> {
+  const sources = new Map<string, SigningVariant>()
+  for (const variant of variantsFor(app, target)) {
+    const path = entitlementPath(target, variant)
+    if (!sources.has(path)) sources.set(path, variant)
+  }
+  return sources
+}
+
+function siblingPlistPath(path: string, variant: string): string {
+  const suffix = '.plist'
+  return path.endsWith(suffix)
+    ? `${path.slice(0, -suffix.length)}-${variant}${suffix}`
+    : `${path}-${variant}.plist`
 }
 
 export function releaseInfoPlistPath(path: string): string {
-  const suffix = '.plist'
-  return path.endsWith(suffix)
-    ? `${path.slice(0, -suffix.length)}-release${suffix}`
-    : `${path}-release.plist`
+  return siblingPlistPath(path, 'release')
 }
 
-export function entitlementVariants(
-  _app: AppManifest,
+// The dev plist is the one app.yml names and carries the ViewPilot keys; store
+// and, with a devIdentity, adhoc get `-release` and `-adhoc` siblings whenever
+// their content differs from it.
+export function infoPlistPaths(
   target: AppBundleManifest,
-): readonly ('dev' | 'release')[] {
-  return target.bundleID.startsWith('tech.lakeridge.previews.')
-    ? ['dev']
-    : ['dev', 'release']
+  embedsViewPilot: boolean,
+): Record<SigningVariant, string> {
+  const dev = target.infoPlist
+  const store = embedsViewPilot || target.devIdentity !== undefined
+    ? releaseInfoPlistPath(dev)
+    : dev
+  const adhoc = target.devIdentity === undefined
+    ? store
+    : embedsViewPilot
+    ? siblingPlistPath(dev, 'adhoc')
+    : dev
+  return { dev, adhoc, store }
 }
 
 function profileName(
@@ -3249,9 +3410,9 @@ function profileName(
   variant: SigningVariant,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
 ): string | undefined {
-  const preview = target.bundleID.startsWith('tech.lakeridge.previews.')
-  if (preview) {
-    return target.platform === 'iOS' ? 'Wuhu Dev Previews' : undefined
+  if (isPreviewBundle(target)) {
+    if (target.platform !== 'iOS') return undefined
+    return variant === 'dev' ? 'Wuhu Dev Previews' : 'Wuhu AdHoc Previews'
   }
   // A macOS development bundle needs MAC_APP_DEVELOPMENT when it claims
   // restricted entitlements. Direct distribution would be MAC_APP_DIRECT,
@@ -3262,12 +3423,21 @@ function profileName(
     : variant === 'adhoc'
     ? 'AdHoc'
     : 'Store'
-  const platforms = platformsByIdentifier.get(target.bundleID)
+  const identifier = variantBundle(target, variant).bundleID
+  const platforms = platformsByIdentifier.get(identifier)
   const suffix = (platforms?.size ?? 0) > 1 ||
       target.platform === 'visionOS' || target.platform === 'watchOS'
     ? ` ${target.platform}`
     : ''
-  return `Wuhu ${label} ${target.bundleID}${suffix}`
+  return `Wuhu ${label} ${identifier}${suffix}`
+}
+
+export function appProfileName(
+  app: AppManifest,
+  target: AppBundleManifest,
+  variant: SigningVariant,
+): string | undefined {
+  return profileName(target, variant, profilePlatforms([app]))
 }
 
 export function referencedProfileNames(
@@ -3290,23 +3460,45 @@ function profileTargetName(
   return `${target.name}_${variant}_profile__run_deno_task_prepare_profiles`
 }
 
+// An iOS preview builds adhoc on the wildcard AdHoc profile so it can be
+// published as a try link; no preview ever builds store.
 function variantsFor(
   _app: AppManifest,
   target: AppBundleManifest,
 ): SigningVariant[] {
-  return target.bundleID.startsWith('tech.lakeridge.previews.')
-    ? ['dev']
-    : ['dev', 'adhoc', 'store']
+  if (!isPreviewBundle(target)) return ['dev', 'adhoc', 'store']
+  return target.platform === 'iOS' ? ['dev', 'adhoc'] : ['dev']
 }
 
-function selectExpr(entries: [string, string | null][]): string {
+function selectExpr(
+  entries: [string, string | null][],
+  render: (value: string) => string = (value) => JSON.stringify(value),
+): string {
   return `select({\n${
     entries.map(([condition, value]) =>
       `        "//bazel/signing:${condition}": ${
-        value === null ? 'None' : JSON.stringify(value)
+        value === null ? 'None' : render(value)
       },\n`
     ).join('')
   }    })`
+}
+
+// One value when every variant agrees, a select over the variants otherwise.
+function variantExpr(
+  values: Record<SigningVariant, string>,
+  render: (value: string) => string,
+  renderInSelect: (value: string) => string = render,
+): string {
+  const entries = Object.entries(values) as [SigningVariant, string][]
+  return entries.every(([_, value]) => value === values.dev)
+    ? render(values.dev)
+    : selectExpr(entries, renderInSelect)
+}
+
+function perVariant<T>(
+  map: (variant: SigningVariant) => T,
+): Record<SigningVariant, T> {
+  return { dev: map('dev'), adhoc: map('adhoc'), store: map('store') }
 }
 
 function generateAppBundleRule(
@@ -3333,15 +3525,28 @@ function generateAppBundleRule(
   )
   const entitlements = variants.map((variant): [string, string] => [
     variant,
-    shellPath(
-      pathPrefix,
-      entitlementPath(target, variant !== 'dev'),
-    ),
+    shellPath(pathPrefix, entitlementPath(target, variant)),
   ])
-  return `${rule}(\n    name = "${target.name}",\n    bundle_id = "${target.bundleID}",\n    bundle_name = "${target.bundleName}",\n    families = ${
+  const bundles = perVariant((variant) => variantBundle(target, variant))
+  const icons = perVariant((variant) =>
+    JSON.stringify(
+      bundles[variant].appIcons.map((path) => shellPath(pathPrefix, path)),
+    )
+  )
+  const plists = infoPlistPaths(target, embedsViewPilot)
+  return `${rule}(\n    name = "${target.name}",\n    bundle_id = ${
+    variantExpr(
+      perVariant((variant) => bundles[variant].bundleID),
+      (value) => JSON.stringify(value),
+    )
+  },\n    bundle_name = "${target.bundleName}",\n    families = ${
     quotedStarlarkList(target.families)
   },\n    entitlements = ${selectExpr(entitlements)},\n    app_icons = ${
-    appIconExpr(target.appIcons.map((path) => shellPath(pathPrefix, path)))
+    variantExpr(
+      icons,
+      (value) => appIconExpr(JSON.parse(value)),
+      (value) => JSON.parse(value).length ? `glob(${value})` : '[]',
+    )
   },\n${
     target.resources?.length
       ? `    resources = glob(${
@@ -3353,15 +3558,10 @@ function generateAppBundleRule(
       }, allow_empty = True),\n`
       : ''
   }    infoplists = ${
-    embedsViewPilot
-      ? `select({\n        "//bazel/signing:dev": ["${
-        shellPath(pathPrefix, target.infoPlist)
-      }"],\n        "//bazel/signing:adhoc": ["${
-        shellPath(pathPrefix, releaseInfoPlistPath(target.infoPlist))
-      }"],\n        "//bazel/signing:store": ["${
-        shellPath(pathPrefix, releaseInfoPlistPath(target.infoPlist))
-      }"],\n    })`
-      : `["${shellPath(pathPrefix, target.infoPlist)}"]`
+    variantExpr(
+      plists,
+      (path) => `["${shellPath(pathPrefix, path)}"]`,
+    )
   },\n    minimum_os_version = "${target.minimumOSVersion}",\n${
     profiles.some(([_, value]) => value !== null)
       ? `    provisioning_profile = ${selectExpr(profiles)},\n`
@@ -3477,10 +3677,13 @@ function profilePlatforms(
   const result = new Map<string, Set<string>>()
   for (const app of apps) {
     for (const target of appBundles(app)) {
-      if (target.bundleID.startsWith('tech.lakeridge.previews.')) continue
-      const platforms = result.get(target.bundleID) ?? new Set<string>()
-      platforms.add(target.platform)
-      result.set(target.bundleID, platforms)
+      if (isPreviewBundle(target)) continue
+      for (const variant of variantsFor(app, target)) {
+        const identifier = variantBundle(target, variant).bundleID
+        const platforms = result.get(identifier) ?? new Set<string>()
+        platforms.add(target.platform)
+        result.set(identifier, platforms)
+      }
     }
   }
   return result
@@ -3490,11 +3693,7 @@ export function generateAppBuildBazel(
   app: AppManifest,
   entitlementSources: readonly string[] = [
     ...appBundles(app),
-  ].flatMap((target) =>
-    entitlementVariants(app, target).map((variant) =>
-      entitlementPath(target, variant === 'release')
-    )
-  ),
+  ].flatMap((target) => [...entitlementSourcesByVariant(app, target).keys()]),
   pathPrefix = '',
   emitReleaseManifest = true,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>> =
@@ -3798,15 +3997,36 @@ export function appBundleInfo(
   }
 }
 
+// A devIdentity's `info` becomes the complete dev plist, so `variantBundle`
+// over a populated bundle yields the populated dev bundle.
 export function populateAppBundleInfo(app: AppManifest): void {
-  for (const target of app.targets) {
-    target.info = appBundleInfo(app, target, 'application')
+  const populate = (
+    target: AppBundleManifest,
+    kind: 'application' | 'extension',
+  ): void => {
+    if (target.devIdentity !== undefined) {
+      target.devIdentity.info = appBundleInfo(
+        app,
+        variantBundle(target, 'dev'),
+        kind,
+      )
+    }
+    target.info = appBundleInfo(app, target, kind)
+    if (
+      kind === 'application' &&
+      target.bundleID.startsWith('tech.lakeridge.previews.')
+    ) {
+      const name = target.bundleID.slice('tech.lakeridge.previews.'.length)
+      target.info.CFBundleURLTypes = [{
+        CFBundleURLName: target.bundleID,
+        CFBundleURLSchemes: [`${name}-preview`],
+      }]
+    }
   }
-  for (const target of app.extensions ?? []) {
-    target.info = appBundleInfo(app, target, 'extension')
-  }
+  for (const target of app.targets) populate(target, 'application')
+  for (const target of app.extensions ?? []) populate(target, 'extension')
   for (const target of app.watchApplications ?? []) {
-    target.info = appBundleInfo(app, target, 'application')
+    populate(target, 'application')
   }
 }
 
@@ -3877,10 +4097,12 @@ async function validateAppResources(
 }
 
 export function resolvedEntitlements(
-  target: AppBundleManifest,
-  variant: 'dev' | 'release',
+  declared: AppBundleManifest,
+  signing: SigningVariant,
   teamID: string,
 ): { [key: string]: PlistValue } {
+  const target = variantBundle(declared, signing)
+  const variant = signing === 'dev' ? 'dev' : 'release'
   const values = {
     ...(target.entitlements.common ?? {}),
     ...(variant === 'dev'
@@ -3892,7 +4114,7 @@ export function resolvedEntitlements(
     'com.apple.developer.icloud-services',
     'com.apple.developer.icloud-container-environment',
   ].some((key) => values[key] !== undefined)
-  const preview = target.bundleID.startsWith('tech.lakeridge.previews.')
+  const preview = isPreviewBundle(target)
   if (target.platform === 'macOS') {
     // Both variants sign the identifier in: a store bundle whose signature
     // lacks it is TestFlight-ineligible (ASC 90886) even though upload and
@@ -3964,28 +4186,36 @@ async function prepareApp(
   const entitlementSources: string[] = []
 
   for (const target of bundles) {
-    const plistOutput = join(appDir, target.infoPlist)
-    await Deno.mkdir(dirname(plistOutput), { recursive: true })
-    const embedsViewPilot = app.targets.includes(target) &&
-      appEmbedsViewPilot(app)
-    await writeIfChanged(
-      plistOutput,
-      generatePlist(embedsViewPilot ? pilotInfo(target) : target.info),
-    )
-    if (embedsViewPilot) {
-      const releasePlist = join(appDir, releaseInfoPlistPath(target.infoPlist))
-      await writeIfChanged(releasePlist, generatePlist(target.info))
+    const embedsViewPilot = bundleEmbedsViewPilot(app, target)
+    const plists = infoPlistPaths(target, embedsViewPilot)
+    const written = new Set<string>()
+    for (const variant of ['dev', 'store', 'adhoc'] as const) {
+      const path = plists[variant]
+      if (written.has(path)) continue
+      written.add(path)
+      const bundle = variantBundle(target, variant)
+      const output = join(appDir, path)
+      await Deno.mkdir(dirname(output), { recursive: true })
+      await writeIfChanged(
+        output,
+        generatePlist(
+          variant === 'dev' && embedsViewPilot
+            ? pilotInfo(bundle)
+            : bundle.info,
+        ),
+      )
     }
-    for (const variant of entitlementVariants(app, target)) {
-      const path = entitlementPath(target, variant === 'release')
+    const sources = entitlementSourcesByVariant(app, target)
+    for (const [path, variant] of sources) {
       entitlementSources.push(path)
       await writeIfChanged(
         join(appDir, path),
         generatePlist(resolvedEntitlements(target, variant, teamID)),
       )
     }
-    if (!entitlementVariants(app, target).includes('release')) {
-      await removeIfPresent(join(appDir, entitlementPath(target, true)))
+    for (const file of ['adhoc', 'release']) {
+      const path = `${target.name}-${file}.entitlements`
+      if (!sources.has(path)) await removeIfPresent(join(appDir, path))
     }
   }
   await removeGeneratedNestedBuild(appDir)
@@ -4096,7 +4326,7 @@ async function generateXcodeWorkspace(packageDir: string): Promise<void> {
       await Deno.mkdir(dirname(plistPath), { recursive: true })
       await writeIfChanged(
         plistPath,
-        generatePlist(xcodeInfoPlist(target.info)),
+        generatePlist(xcodeInfoPlist(variantBundle(target, 'dev').info)),
       )
       await writeIfChanged(
         join(appDir, xcodeShellSourcePath(target)),

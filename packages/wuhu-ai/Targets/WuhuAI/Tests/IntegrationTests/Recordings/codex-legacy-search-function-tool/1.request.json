@@ -1,0 +1,106 @@
+{
+  "url": "https://chatgpt.com/backend-api/codex/responses",
+  "method": "POST",
+  "headers": {
+    "content-type": "application/json",
+    "accept": "text/event-stream",
+    "originator": "codex_cli_rs"
+  },
+  "body": {
+    "model": "gpt-6.1-sol",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Search for example.com."
+          }
+        ]
+      },
+      {
+        "id": "ws_legacy_search",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {
+          "type": "search",
+          "queries": [
+            "example.com"
+          ],
+          "sources": [
+            {
+              "type": "url",
+              "url": "https://example.com/"
+            }
+          ]
+        }
+      },
+      {
+        "id": "ws_legacy_open",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {
+          "type": "open_page",
+          "url": "https://example.com/"
+        }
+      },
+      {
+        "id": "ws_legacy_find",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {
+          "type": "find_in_page",
+          "url": "https://example.com/",
+          "pattern": "Example"
+        }
+      },
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Example Domain. \ue200cite\ue202turn0search0\ue201",
+            "annotations": []
+          }
+        ],
+        "status": "completed",
+        "id": "msg_0"
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Reply with only OK. Do not search."
+          }
+        ]
+      }
+    ],
+    "stream": true,
+    "store": false,
+    "instructions": "Follow the latest user instruction.",
+    "text": {
+      "verbosity": "medium"
+    },
+    "tools": [
+      {
+        "type": "function",
+        "name": "run_script",
+        "description": "Run a script using Wuhu's webSearch when search is needed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source"
+          ]
+        },
+        "strict": false
+      }
+    ]
+  }
+}

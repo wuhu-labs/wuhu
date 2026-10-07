@@ -1,0 +1,62 @@
+{
+  "url": "https://chatgpt.com/backend-api/codex/responses",
+  "method": "POST",
+  "headers": {
+    "content-type": "application/json",
+    "accept": "text/event-stream",
+    "originator": "codex_cli_rs"
+  },
+  "body": {
+    "model": "gpt-6.1-sol",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Search for example.com."
+          }
+        ]
+      },
+      {
+        "id": "ws_legacy_search",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {
+          "type": "search",
+          "queries": [
+            "example.com"
+          ]
+        }
+      },
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Example Domain. \ue200cite\ue202turn0search0\ue201",
+            "annotations": []
+          }
+        ],
+        "status": "completed",
+        "id": "msg_0"
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Reply with only OK. Do not search."
+          }
+        ]
+      }
+    ],
+    "stream": true,
+    "store": false,
+    "instructions": "Follow the latest user instruction.",
+    "text": {
+      "verbosity": "medium"
+    }
+  }
+}

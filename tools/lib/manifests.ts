@@ -1,13 +1,13 @@
 import { basename, dirname, join } from '@std/path'
 import { parse } from '@std/yaml'
 import {
-  appEmbedsViewPilot,
   type AppManifest,
   type AppTargetManifest,
   assertReleaseNamespacesDistinct,
+  bundleEmbedsViewPilot,
   discoverAppDirs,
   discoverPackageDirs,
-  releaseInfoPlistPath,
+  infoPlistPaths,
   type TargetManifest,
   validateAppEntitlements,
   validateAppExtensions,
@@ -108,10 +108,7 @@ function releaseAppView(
   const watchApplications = new Map(
     (manifest.watchApplications ?? []).map((target) => [target.name, target]),
   )
-  // The dev plist carries the ViewPilot keys and is what the shell names; the
-  // adhoc and store variants select the `-release` sibling, so that is the one
-  // a release archive stamps.
-  const embedsViewPilot = appEmbedsViewPilot(manifest)
+  // A release archive stamps the plists the store variant selects.
   for (const target of manifest.targets) {
     targets.push({
       name: target.name,
@@ -120,9 +117,7 @@ function releaseAppView(
       bundleName: target.bundleName,
       releaseInfoPlist: join(
         dir,
-        embedsViewPilot
-          ? releaseInfoPlistPath(target.infoPlist)
-          : target.infoPlist,
+        infoPlistPaths(target, bundleEmbedsViewPilot(manifest, target)).store,
       ),
       embeddedInfoPlists: [
         ...(target.extensions ?? []).map((name) => {
@@ -132,7 +127,7 @@ function releaseAppView(
               `${dir}/app.yml: ${target.name} embeds unknown extension ${name}`,
             )
           }
-          return join(dir, extension.infoPlist)
+          return join(dir, infoPlistPaths(extension, false).store)
         }),
         ...(target.watchApplication === undefined ? [] : [
           join(

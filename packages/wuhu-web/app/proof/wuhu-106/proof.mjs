@@ -527,7 +527,7 @@ try {
       await page.locator('.wuhu-history-row').first().evaluate((e) =>
         getComputedStyle(e).fontSize
       ),
-      '21px',
+      '18px',
     )
     await capture('history-large-text')
     assert.equal(
@@ -776,8 +776,18 @@ try {
       Math.abs(restored - saved.offset) < 2,
       `Back moved stable history item ${saved.offset} -> ${restored}`,
     )
+    const prependedHeight = await page.locator('.wuhu-history-row').evaluateAll(
+      (rows) =>
+        rows.slice(0, 20).reduce(
+          (sum, row) => sum + row.getBoundingClientRect().height,
+          0,
+        ),
+    )
     assert.ok(
-      (await body.evaluate((e) => e.scrollTop)) > saved.scrollTop + 1000,
+      Math.abs(
+        (await body.evaluate((e) => e.scrollTop)) - saved.scrollTop -
+          prependedHeight,
+      ) < 2,
     )
     await capture('back-after-prepend-stable-item-focus')
     await f.append(

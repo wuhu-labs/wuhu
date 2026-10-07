@@ -4,7 +4,13 @@ import {
   loadTargetManifest,
   releaseApps,
 } from './manifests.ts'
-import { generateAppBuildBazel } from '../manifest-gen/generate.ts'
+import {
+  appBundles,
+  generateAppBuildBazel,
+  populateAppBundleInfo,
+  resolvedEntitlements,
+  variantBundle,
+} from '../manifest-gen/generate.ts'
 import { assertEquals } from '../manifest-gen/assertions.ts'
 
 // The BUILD text is the only place the variant mapping actually exists; parsing
@@ -170,6 +176,37 @@ Deno.test('the release view names the plist a sign-store build consumes', async 
       )
     }
   }
+})
+
+// RosterStore and WidgetFiles find the container through WuhuAppGroup, so a
+// bundle whose plist names another group than it is entitled to reads nothing.
+Deno.test('every wuhu iOS bundle names its own app group in both identities', async () => {
+  const wuhu = (await releaseApps()).find((app) => app.name === 'wuhu-app')!
+  const manifest = structuredClone(wuhu.manifest)
+  populateAppBundleInfo(manifest)
+  const checked: string[] = []
+  for (const bundle of appBundles(manifest)) {
+    if (bundle.platform !== 'iOS') continue
+    for (const variant of ['dev', 'adhoc', 'store'] as const) {
+      const signed = variantBundle(bundle, variant)
+      const groups = resolvedEntitlements(bundle, variant, 'TEAM123456')[
+        'com.apple.security.application-groups'
+      ] as string[] | undefined
+      assertEquals(
+        [signed.bundleID, signed.info.WuhuAppGroup],
+        [signed.bundleID, groups?.[0]],
+      )
+      checked.push(signed.bundleID)
+    }
+  }
+  assertEquals([...new Set(checked)].sort(), [
+    'ai.wuhu.app',
+    'ai.wuhu.app.NotificationService',
+    'ai.wuhu.app.Widgets',
+    'ai.wuhu.app.dev',
+    'ai.wuhu.app.dev.NotificationService',
+    'ai.wuhu.app.dev.Widgets',
+  ])
 })
 
 Deno.test('the Gika iOS archive stamps its embedded Watch application', async () => {

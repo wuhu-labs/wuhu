@@ -375,6 +375,199 @@ Deno.test('native platforms select their complete profile-backed variants', () =
   }
 })
 
+Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () => {
+  const app: AppManifest = {
+    name: 'Example',
+    signingTeamID: 'TEAM123456',
+    release: { name: 'example', platforms: ['ios'] },
+    extensions: [{
+      name: 'ExampleWidgets',
+      platform: 'iOS',
+      bundleID: 'tech.example.app.Widgets',
+      bundleName: 'Widgets',
+      entitlements: {
+        common: { 'com.apple.security.application-groups': ['group.example'] },
+      },
+      devIdentity: {
+        bundleID: 'tech.example.app.dev.Widgets',
+        entitlements: {
+          'com.apple.security.application-groups': ['group.example.dev'],
+        },
+      },
+      families: ['iphone'],
+      appIcons: [],
+      infoPlist: 'Widgets/Info.plist',
+      minimumOSVersion: '18.0',
+      dependencies: [],
+      info: {},
+    }],
+    targets: [{
+      name: 'ExampleiOS',
+      platform: 'iOS',
+      bundleID: 'tech.example.app',
+      bundleName: 'Example',
+      entitlements: {
+        common: { 'com.apple.security.application-groups': ['group.example'] },
+        dev: { 'aps-environment': 'development' },
+        release: { 'aps-environment': 'production' },
+      },
+      devIdentity: {
+        bundleID: 'tech.example.app.dev',
+        displayName: 'Example Dev',
+        appIcons: ['Dev/AppIcon.icon/**'],
+        entitlements: {
+          'com.apple.security.application-groups': ['group.example.dev'],
+        },
+        info: { CFBundleURLTypes: [{ CFBundleURLSchemes: ['example-dev'] }] },
+      },
+      families: ['iphone'],
+      appIcons: ['AppIcon.icon/**'],
+      infoPlist: 'Sources/Info.plist',
+      minimumOSVersion: '18.0',
+      dependencies: [],
+      extensions: ['ExampleWidgets'],
+      info: { CFBundleURLTypes: [{ CFBundleURLSchemes: ['example'] }] },
+    }],
+  }
+  validateAppEntitlements(app, 'app.yml')
+  populateAppBundleInfo(app)
+  const build = generateAppBuildBazel(app, undefined, 'Apps/example')
+  assertIncludes(
+    build,
+    'bundle_id = select({\n        "//bazel/signing:dev": "tech.example.app.dev",\n        "//bazel/signing:adhoc": "tech.example.app.dev",\n        "//bazel/signing:store": "tech.example.app",\n    })',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/signing:adhoc": "Apps/example/ExampleiOS-adhoc.entitlements"',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/signing:store": "Apps/example/ExampleiOS-release.entitlements"',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/signing:adhoc": ["Apps/example/Sources/Info-adhoc.plist"]',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/signing:dev": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:adhoc": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:store": ["Apps/example/Widgets/Info-release.plist"]',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/signing:adhoc": glob(["Apps/example/Dev/AppIcon.icon/**"])',
+  )
+  for (
+    const name of [
+      'Wuhu Dev tech.example.app.dev',
+      'Wuhu AdHoc tech.example.app.dev',
+      'Wuhu Store tech.example.app',
+      'Wuhu AdHoc tech.example.app.dev.Widgets',
+      'Wuhu Store tech.example.app.Widgets',
+    ]
+  ) assertIncludes(build, `profile_name = "${name}"`)
+  if (build.includes('profile_name = "Wuhu Dev tech.example.app"')) {
+    throw new Error('store identity must not get a Dev profile')
+  }
+
+  const target = app.targets[0]!
+  assertEquals(resolvedEntitlements(target, 'adhoc', 'TEAM123456'), {
+    'com.apple.security.application-groups': ['group.example.dev'],
+    'aps-environment': 'production',
+    'application-identifier': 'TEAM123456.tech.example.app.dev',
+    'com.apple.developer.team-identifier': 'TEAM123456',
+  })
+  assertEquals(
+    resolvedEntitlements(target, 'store', 'TEAM123456')[
+      'application-identifier'
+    ],
+    'TEAM123456.tech.example.app',
+  )
+  assertEquals(target.info.CFBundleIdentifier, 'tech.example.app')
+  assertEquals(
+    target.devIdentity?.info?.CFBundleIdentifier,
+    'tech.example.app.dev',
+  )
+  assertEquals(target.devIdentity?.info?.CFBundleDisplayName, 'Example Dev')
+  assertEquals(target.devIdentity?.info?.CFBundleURLTypes, [
+    { CFBundleURLSchemes: ['example-dev'] },
+  ])
+})
+
+Deno.test('a devIdentity must cover the whole app and extend its bundle ID', () => {
+  const extension = {
+    name: 'ExampleWidgets',
+    platform: 'iOS' as const,
+    bundleID: 'tech.example.app.Widgets',
+    bundleName: 'Widgets',
+    entitlements: {},
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Widgets/Info.plist',
+    minimumOSVersion: '18.0',
+    dependencies: [],
+    info: {},
+  }
+  const app = (
+    extensionIdentity: string | undefined,
+  ): AppManifest => ({
+    name: 'Example',
+    extensions: [{
+      ...extension,
+      devIdentity: extensionIdentity === undefined
+        ? undefined
+        : { bundleID: extensionIdentity },
+    }],
+    targets: [{
+      ...extension,
+      name: 'ExampleiOS',
+      bundleID: 'tech.example.app',
+      bundleName: 'Example',
+      infoPlist: 'Info.plist',
+      devIdentity: { bundleID: 'tech.example.app.dev' },
+      extensions: ['ExampleWidgets'],
+    }],
+  })
+  assertThrows(
+    () => validateAppEntitlements(app(undefined), 'app.yml'),
+    'must both declare a devIdentity or neither',
+  )
+  assertThrows(
+    () => validateAppEntitlements(app('tech.example.other.Widgets'), 'app.yml'),
+    'must extend tech.example.app.dev',
+  )
+  validateAppEntitlements(app('tech.example.app.dev.Widgets'), 'app.yml')
+})
+
+Deno.test('an iOS preview builds adhoc on the wildcard AdHoc profile', () => {
+  const preview: AppManifest['targets'][number] = {
+    name: 'ExamplePreviewiOS',
+    platform: 'iOS',
+    bundleID: 'tech.lakeridge.previews.example',
+    bundleName: 'ExamplePreview',
+    entitlements: {},
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Sources/Info.plist',
+    minimumOSVersion: '18.0',
+    dependencies: [],
+    info: {},
+  }
+  const build = generateAppBuildBazel(
+    { name: 'ExamplePreview', signingTeamID: 'TEAM123456', targets: [preview] },
+    undefined,
+    'Apps/example-preview',
+  )
+  assertIncludes(build, 'profile_name = "Wuhu AdHoc Previews"')
+  assertIncludes(
+    build,
+    '"//bazel/signing:adhoc": "Apps/example-preview/ExamplePreviewiOS-release.entitlements"',
+  )
+  assertEquals(resolvedEntitlements(preview, 'adhoc', 'TEAM123456'), {
+    'application-identifier': 'TEAM123456.tech.lakeridge.previews.example',
+    'com.apple.developer.team-identifier': 'TEAM123456',
+  })
+})
+
 Deno.test('entitlement overlays inject only variant-owned signing values', () => {
   const target: AppManifest['targets'][number] = {
     name: 'ExampleiOS',
@@ -405,7 +598,7 @@ Deno.test('entitlement overlays inject only variant-owned signing values', () =>
     'application-identifier': 'TEAM123456.tech.example.app',
     'get-task-allow': true,
   })
-  assertEquals(resolvedEntitlements(target, 'release', 'TEAM123456'), {
+  assertEquals(resolvedEntitlements(target, 'store', 'TEAM123456'), {
     'com.apple.developer.icloud-services': ['CloudKit'],
     'aps-environment': 'production',
     'application-identifier': 'TEAM123456.tech.example.app',
@@ -435,7 +628,7 @@ Deno.test('entitlement overlays inject only variant-owned signing values', () =>
   assertEquals(
     resolvedEntitlements(
       { ...target, platform: 'macOS' },
-      'release',
+      'store',
       'TEAM123456',
     ),
     {
@@ -1745,6 +1938,32 @@ Deno.test('generateBuildBazel threads execution tags into host and simulator tes
   )
 })
 
+Deno.test('generateBuildBazel hosts a simulator test only on the lanes that name a host', async () => {
+  const build = await generateBuildBazel(applePkg, [{
+    ...minimalTarget('Hosted', 'library'),
+    tests: {
+      checks: { test: ['mac', 'ios'] },
+      host: { ios: '//packages/preview-kit:TestHostiOS' },
+    },
+  }])
+  assertIncludes(
+    build,
+    `    minimum_os_version = "18.4",\n    test_host = "//packages/preview-kit:TestHostiOS",\n`,
+  )
+  assertEquals(build.split('test_host = ').length, 2)
+  await assertRejects(
+    () =>
+      generateBuildBazel(applePkg, [{
+        ...minimalTarget('Stray', 'library'),
+        tests: {
+          checks: { test: ['ios'] },
+          host: { tvos: '//packages/preview-kit:TestHostiOS' },
+        },
+      }]),
+    'names a test host for tvos, which is not one of its simulator test lanes',
+  )
+})
+
 const applePkg: PackageManifest = {
   name: 'A',
   owner: 'shared',
@@ -2320,4 +2539,29 @@ Deno.test('only the public tree may lack view-pilot', async () => {
   )
   assertEquals(await viewPilotProducts(present, true), ['ViewPilot'])
   assertEquals(await viewPilotProducts(present, false), ['ViewPilot'])
+})
+
+Deno.test('preview schemes are generated per shell without changing real apps', () => {
+  const target = (bundleID: string): AppManifest['targets'][number] => ({
+    name: 'Example',
+    platform: 'iOS',
+    bundleID,
+    bundleName: 'Example',
+    entitlements: {},
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Info.plist',
+    minimumOSVersion: '18.0',
+    dependencies: [],
+    info: {},
+  })
+  const preview = target('tech.lakeridge.previews.wuhu')
+  const production = target('ai.wuhu.app')
+  const app: AppManifest = { name: 'Example', targets: [preview, production] }
+  populateAppBundleInfo(app)
+  assertEquals(preview.info.CFBundleURLTypes, [{
+    CFBundleURLName: preview.bundleID,
+    CFBundleURLSchemes: ['wuhu-preview'],
+  }])
+  assertEquals(production.info.CFBundleURLTypes, undefined)
 })

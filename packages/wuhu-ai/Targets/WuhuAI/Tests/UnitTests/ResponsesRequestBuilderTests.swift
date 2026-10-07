@@ -535,7 +535,7 @@ private struct NilMediaResolver: MediaResolver {
 }
 
 extension ResponsesRequestBuilderTests {
-  @Test func codexIncludesHostedWebSearch() async throws {
+  @Test func codexDoesNotInjectHostedWebSearch() async throws {
     let context = Context(messages: [.user(.init(content: [.text(.init(text: "search"))]))])
     let (_, _, body) = try await buildResponsesRequest(
       model: "gpt-5.6-sol",
@@ -543,6 +543,42 @@ extension ResponsesRequestBuilderTests {
       context: context,
       options: RequestOptions(),
       isCodex: true,
+    )
+
+    #expect(body["tools"] == nil)
+  }
+
+  @Test func codexDeclaresOnlyCallerTools() async throws {
+    let tool = Tool(
+      name: "run_script",
+      description: "Run a script.",
+      parameters: .object(["type": .string("object")]),
+    )
+    let (_, _, body) = try await buildResponsesRequest(
+      model: "gpt-6.1-sol",
+      baseURL: URL(string: "https://chatgpt.com/backend-api/codex")!,
+      context: Context(messages: [], tools: [tool]),
+      options: RequestOptions(),
+      isCodex: true,
+    )
+
+    #expect(body["tools"]?.array == [.object([
+      "type": .string("function"),
+      "name": .string("run_script"),
+      "description": .string("Run a script."),
+      "parameters": .object(["type": .string("object")]),
+      "strict": .bool(false),
+    ])])
+  }
+
+  @Test(arguments: [false, true])
+  func explicitlyRequestedHostedToolsRemainSupported(isCodex: Bool) async throws {
+    let (_, _, body) = try await buildResponsesRequest(
+      model: "gpt-6.1-sol",
+      baseURL: URL(string: "https://example.com")!,
+      context: Context(messages: [], tools: [.hosted(type: "web_search")]),
+      options: RequestOptions(),
+      isCodex: isCodex,
     )
 
     #expect(body["tools"]?.array == [.object(["type": .string("web_search")])])
@@ -569,5 +605,6 @@ extension ResponsesRequestBuilderTests {
     )
     #expect(wire == JSONValue.object(replay.body).jsonString())
     #expect(request.body["input"]?.array == [payload])
+    #expect(request.body["tools"] == nil)
   }
 }

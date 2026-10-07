@@ -44,6 +44,14 @@ Stream merge policy:
   same reasoning item.
 - After merging, apply the persistence/replay policy above.
 
+## Codex tools and legacy hosted search
+
+Codex inference requests declare only the tools supplied by the caller. WuhuAI no longer automatically appends OpenAI's hosted `web_search`; Wuhu sessions use their ordinary `run_script` tool and `wuhu:web_search` capability instead. There is no feature flag or fallback that restores the hosted declaration. Explicit caller-supplied hosted tools remain supported for dedicated capability requests.
+
+Hosted output parsing, provider-scoped transcript storage and native Responses replay remain supported. A same-provider `web_search_call` history item is replayed as its original payload, including its id, status, action, query and any exported source metadata, even when no hosted search tool is declared. Assistant text containing old citation markers is replayed unchanged; this change does not alter citation annotation parsing or the existing empty replay annotations. This does not recover provider-private page bodies that were never exported.
+
+On October 7, 2026, tiny live calls to the subscription `/backend-api/codex/responses` accepted synthetic legacy `search`, `open_page` and `find_in_page` items without the hosted declaration, both with no tools and with only an ordinary function tool. Both successful streams emitted `OK` via `response.output_item.done` and finished with `response.completed`, `status: "completed"`, `error: null` and zero new hosted searches. The final response's `output` array was empty; the finalized output-item events carry the answer. These two successful calls are offline request/response fixtures in `Tests/IntegrationTests/Recordings/codex-legacy-search-*`.
+
 ## Media
 
 - A `MediaResolver` may answer `.text` for media it cannot deliver in a form the request takes. Every dialect sends those words as a text part where the media would have gone, so the model knows something was there.
