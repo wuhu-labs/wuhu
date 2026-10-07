@@ -15,6 +15,9 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
 
   public init(from decoder: any Decoder) throws {
     providers = try decoder.singleValueContainer().decode([String: Provider].self)
+    for (id, provider) in providers where provider.transport == .websocket && provider.dialect != .responses && provider.dialect != .codex {
+      throw CatalogError.invalidTransport(provider: id)
+    }
   }
 
   public func encode(to encoder: any Encoder) throws {
@@ -28,14 +31,21 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var dialect: Dialect
     public var baseURL: URL
     public var originator: String?
+    public var transport: Transport?
     public var models: [String: Model]
 
-    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, models: [String: Model]) {
+    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, models: [String: Model]) {
       self.dialect = dialect
       self.baseURL = baseURL
       self.originator = originator
+      self.transport = transport
       self.models = models
     }
+  }
+
+  public enum Transport: String, Hashable, Sendable, Codable {
+    case sse
+    case websocket
   }
 
   public enum Dialect: String, Hashable, Sendable, Codable {

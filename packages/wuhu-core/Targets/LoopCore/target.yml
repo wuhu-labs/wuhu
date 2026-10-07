@@ -31,3 +31,7 @@ tests:
     - Clocks
     - ControlledTime
     - GRDB
+    - InferenceKit
+    - Credentials
+    - FetchWebSocket
+    - Serve

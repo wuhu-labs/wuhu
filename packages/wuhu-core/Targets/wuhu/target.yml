@@ -17,6 +17,7 @@ dependencies:
   - SpaceCore
   - SpaceServer
   - Fetch
+  - FetchWebSocket
   - FetchAsyncHTTPClient
   - AsyncHTTPClient
   - Logging

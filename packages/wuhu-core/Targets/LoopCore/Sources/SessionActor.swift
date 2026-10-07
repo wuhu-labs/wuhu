@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import SpaceCore
 
@@ -157,7 +161,7 @@ actor SessionActor {
     return max(lhs, rhs)
   }
 
-  func tryRetire(ttl: Duration, now: Date) -> Bool {
+  func tryRetire(ttl: Duration, now: Date) async -> Bool {
     guard let idleSince, now.timeIntervalSince(idleSince) >= ttl.timeInterval
     else { return false }
     // An idle Claude Code process is ended first, so its last mirror frames
@@ -168,15 +172,16 @@ actor SessionActor {
     }
     // The park wake lives here; the process may end, the actor may not.
     if liveState?.parkWake != nil { return false }
-    shutdown()
+    await shutdown()
     return true
   }
 
-  func shutdown() {
+  func shutdown() async {
     retired = true
     handlerTask?.cancel()
     handlerTask = nil
     dismountLive()
+    await loopConfig.invalidateInference(id)
   }
 
   private func dismountLive() {
@@ -363,6 +368,7 @@ actor SessionActor {
     try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
     dismountLive()
+    await loopConfig.invalidateInference(id)
   }
 
   // No ensureLifecycle: the store's refusal is the single gate, and
@@ -374,6 +380,7 @@ actor SessionActor {
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
+    await loopConfig.invalidateInference(id)
     return restart
   }
 
@@ -386,6 +393,7 @@ actor SessionActor {
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
+    await loopConfig.invalidateInference(id)
   }
 
   private func handleInterrupt() async throws {

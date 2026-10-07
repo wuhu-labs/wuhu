@@ -74,6 +74,7 @@ tests:
     - JSONValue
     - Fetch
     - FetchSSE
+    - FetchWebSocket
     - FetchAsyncHTTPClient
     - AsyncHTTPClient
     - NIOCore

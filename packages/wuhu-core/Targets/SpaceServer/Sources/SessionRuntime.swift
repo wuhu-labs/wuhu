@@ -8,6 +8,7 @@ import Dependencies
   import Foundation
 #endif
 import InferenceKit
+import JSONValue
 import LoopCore
 import struct MachineContract.ExecID
 import Serve
@@ -18,6 +19,7 @@ import SpaceCore
 import SpaceTools
 import Synchronization
 import SystemFiles
+import WuhuAI
 
 public struct SessionRuntime: Sendable {
   public let service: SessionService
@@ -25,6 +27,7 @@ public struct SessionRuntime: Sendable {
   let store: SessionStore
   let firing: SubscriptionFiring
   let scripts: Scripts
+  let sockets: ResponsesSocketRegistry
   let usage: UsageBoard
   let refresher: UsageRefresher?
   let resolveModelExecutor: @Sendable (String, String, String?) async throws -> SessionExecutor
@@ -34,6 +37,7 @@ public struct SessionRuntime: Sendable {
     self.service = service
     self.attempts = attempts
     store = space.sessions
+    sockets = ResponsesSocketRegistry()
     usage = UsageBoard()
     refresher = nil
     resolveModelExecutor = modelExecutorResolver(space: space)
@@ -47,6 +51,7 @@ public struct SessionRuntime: Sendable {
     service: SessionService,
     attempts: AttemptHub,
     usage: UsageBoard,
+    sockets: ResponsesSocketRegistry,
     refresher: UsageRefresher?,
     scripts: Scripts,
   ) {
@@ -54,6 +59,7 @@ public struct SessionRuntime: Sendable {
     self.attempts = attempts
     store = space.sessions
     self.usage = usage
+    self.sockets = sockets
     self.refresher = refresher
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(space: space)
@@ -66,6 +72,7 @@ public struct SessionRuntime: Sendable {
       group.addTask { try? await service.start() }
       group.addTask { await firing.run() }
       group.addTask { await scripts.run() }
+      group.addTask { await sockets.run() }
       if let refresher {
         group.addTask { await refresher.run() }
       }
@@ -101,6 +108,7 @@ extension SessionRuntime {
     probeClaude: (@Sendable (String) async -> ClaudeUsageProbe)?,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
+    let sockets = ResponsesSocketRegistry()
     let store = space.sessions
     let thresholds = CompactionThresholds()
     @Dependency(\.date) var date
@@ -136,32 +144,60 @@ extension SessionRuntime {
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
       },
       inference: { request in
-        let record = try await store.record(request.sessionID)
-        guard case let .kernel(model) = record.executor else {
-          preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
+        let record: SessionRecord
+        let resolved: ResolvedModel
+        do {
+          record = try await store.record(request.sessionID)
+          guard case let .kernel(model) = record.executor else {
+            preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
+          }
+          resolved = try await catalog().resolve(model, session: request.sessionID)
+        } catch {
+          await sockets.invalidate(request.sessionID)
+          throw error
         }
-        let resolved = try await catalog().resolve(model, session: request.sessionID)
-        let inferenceExecutor = InferenceExecutor(
-          session: request.sessionID,
-          model: resolved,
-          systemPrompt: try await systemPrompt(space: space, record: record),
-          tools: SessionToolExecutor.kernel.tools,
-          thresholds: thresholds,
-          compactToolName: KernelToolset.compactToolName,
-          hub: attempts,
-          log: attemptLog,
-          metrics: metrics,
-          mediaResolver: { [group = record.group] in SpaceMediaResolver(space: space, limits: $0, group: group) },
-        )
-        let completed = try await inferenceExecutor.run(
-          attemptID: request.attemptID,
-          transcript: request.transcript,
-          mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
-          idleTimeout: request.idleTimeout,
-          handles: try await space.handlesByPrincipal(),
-          devices: try await space.deviceNames(),
-        )
-        return InferenceReply(message: completed.message, metadata: completed.metadata)
+        let lease: (session: ResponsesWebSocketSession, lease: UUID)?
+        if resolved.transport == .websocket {
+          lease = try await sockets.acquire(session: request.sessionID, model: resolved)
+        } else {
+          await sockets.invalidate(request.sessionID)
+          lease = nil
+        }
+        do {
+          let inferenceExecutor = InferenceExecutor(
+            session: request.sessionID,
+            model: resolved,
+            systemPrompt: try await systemPrompt(space: space, record: record),
+            tools: SessionToolExecutor.kernel.tools,
+            thresholds: thresholds,
+            compactToolName: KernelToolset.compactToolName,
+            hub: attempts,
+            log: attemptLog,
+            metrics: metrics,
+            webSocket: lease?.session,
+            receiveQuota: { event in
+              let parsed = codexSocketUsage(event)
+              if !parsed.windows.isEmpty { usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now) }
+            },
+            mediaResolver: { [group = record.group] in SpaceMediaResolver(space: space, limits: $0, group: group) },
+          )
+          let completed = try await inferenceExecutor.run(
+            attemptID: request.attemptID,
+            transcript: request.transcript,
+            mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
+            idleTimeout: request.idleTimeout,
+            handles: try await space.handlesByPrincipal(),
+            devices: try await space.deviceNames(),
+          )
+          if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
+          return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
+            await inferenceExecutor.acknowledge(entry: entry, transcript: transcript, handles: (try? await space.handlesByPrincipal()) ?? [:], devices: (try? await space.deviceNames()) ?? [:])
+          })
+        } catch {
+          if let lease { await sockets.invalidate(request.sessionID, lease: lease.lease) }
+          if error is InferenceCancelled { throw InferenceError.cancelled }
+          throw error
+        }
       },
       compact: { id, transcript in
         await mechanicalCompaction(of: transcript, images: budget(id).images)
@@ -172,6 +208,7 @@ extension SessionRuntime {
           space: space, hub: hub, session: invocation.sessionID, call: invocation.call.name, id: ToolCallID(invocation.call.id),
         )
       },
+      invalidateInference: { await sockets.invalidate($0) },
       claudeCode: claudeCode,
       thresholds: thresholds,
     )
@@ -183,6 +220,7 @@ extension SessionRuntime {
       service: service,
       attempts: attempts,
       usage: usage,
+      sockets: sockets,
       refresher: probeClaude.map { probe in
         UsageRefresher(board: usage, space: space, credentials: credentials, probeClaude: probe)
       },

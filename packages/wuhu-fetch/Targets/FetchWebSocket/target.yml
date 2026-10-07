@@ -4,6 +4,9 @@ sources: Sources
 checks:
   build: [linux, mac]
 dependencies:
+  - Fetch
+  - HTTPTypes
+  - Dependencies
   - NIOCore
   - NIOHTTP1
   - NIOPosix

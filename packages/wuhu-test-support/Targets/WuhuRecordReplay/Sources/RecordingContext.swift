@@ -5,7 +5,12 @@
 #endif
 import Fetch
 import FetchURLSession
-import Foundation
+import FetchWebSocket
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import HTTPTypes
 import JSONValue
 
@@ -16,10 +21,13 @@ import JSONValue
 // touch disk. Responses are assumed to be Server-Sent Events.
 struct RecordingContext: Sendable {
   let fetchClient: FetchClient
+  let webSocketConnector: WebSocketConnector
+  private let sockets: SocketRecording?
+  private let replaySockets: SocketReplay?
   private let collector: RecordingCollector?
   private let recordDir: URL
 
-  init(name: String, mode: RecordingMode, recordingsRoot: URL, matchIgnoringBodyFields: Set<String> = []) {
+  init(name: String, mode: RecordingMode, recordingsRoot: URL, matchIgnoringBodyFields: Set<String> = [], webSocketConnector: WebSocketConnector = .live) {
     self.recordDir = recordingsRoot.appendingPathComponent(name)
     let recordDir = self.recordDir
 
@@ -27,6 +35,10 @@ struct RecordingContext: Sendable {
     case .recordAll, .recordOnly:
       let collector = RecordingCollector()
       self.collector = collector
+      let sockets = SocketRecording()
+      self.sockets = sockets
+      self.replaySockets = nil
+      self.webSocketConnector = sockets.connector(webSocketConnector)
       let realClient = FetchClient.urlSession()
 
       self.fetchClient = FetchClient { request in
@@ -39,6 +51,10 @@ struct RecordingContext: Sendable {
 
     case .replay:
       self.collector = nil
+      self.sockets = nil
+      let replaySockets = SocketReplay(directory: recordDir)
+      self.replaySockets = replaySockets
+      self.webSocketConnector = replaySockets.connector
       let ledger = ReplayLedger(recordDir: recordDir, ignoredFields: matchIgnoringBodyFields)
       self.fetchClient = FetchClient { request in
         try await replayResponse(request: request, ledger: ledger, recordDir: recordDir)
@@ -46,9 +62,17 @@ struct RecordingContext: Sendable {
     }
   }
 
+  func finishSockets() async {
+    await sockets?.finish()
+    replaySockets?.finish()
+  }
+
+  func verifyReplay() throws { try replaySockets?.verify() }
+
   func flushRecordings() async throws {
     guard let collector else { return }
     try await collector.flush(to: recordDir)
+    try sockets?.flush(to: recordDir)
   }
 }
 

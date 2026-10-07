@@ -17,9 +17,12 @@ public enum CatalogError: Error, Equatable, Sendable, CustomStringConvertible {
   case unknownEffort(provider: String, model: String, effort: String)
   case missingCredential(provider: String)
   case credentialMismatch(provider: String)
+  case invalidTransport(provider: String)
 
   public var description: String {
     switch self {
+    case let .invalidTransport(provider):
+      "websocket transport requires a Responses or Codex provider: \(provider)"
     case let .unknownProvider(provider):
       "unknown provider: \(provider) (edit \(ModelsDocument.spacePath) or run `wuhu models update`)"
     case let .unknownModel(provider, model):
@@ -38,11 +41,14 @@ public struct ResolvedModel: Sendable {
   public var specifier: ModelSpecifier
   public var endpoint: any ModelEndpoint
   public var budget: ContextBudget
+  public var transport: ModelsDocument.Transport
+  var socketIdentity: SocketRegistryIdentity?
 
-  public init(specifier: ModelSpecifier, endpoint: any ModelEndpoint, budget: ContextBudget) {
+  public init(specifier: ModelSpecifier, endpoint: any ModelEndpoint, budget: ContextBudget, transport: ModelsDocument.Transport = .sse) {
     self.specifier = specifier
     self.endpoint = endpoint
     self.budget = budget
+    self.transport = transport
   }
 }
 
@@ -65,6 +71,9 @@ public struct ProviderCatalog: Sendable {
   public func validate(_ specifier: ModelSpecifier) throws -> ModelsDocument.Model {
     guard let provider = document.providers[specifier.provider] else {
       throw CatalogError.unknownProvider(specifier.provider)
+    }
+    guard provider.transport != .websocket || provider.dialect == .responses || provider.dialect == .codex else {
+      throw CatalogError.invalidTransport(provider: specifier.provider)
     }
     guard let model = provider.models[specifier.model] else {
       throw CatalogError.unknownModel(provider: specifier.provider, model: specifier.model)
@@ -157,7 +166,9 @@ public struct ProviderCatalog: Sendable {
         body: CatalogError.credentialMismatch(provider: specifier.provider).description,
       )
     }
-    return ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect))
+    var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect), transport: provider.transport ?? .sse)
+    resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: credential)
+    return resolved
   }
 }
 

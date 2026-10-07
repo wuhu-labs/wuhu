@@ -5,12 +5,15 @@ dependencies:
   - Dependencies
   - Fetch
   - FetchSSE
+  - FetchWebSocket
+  - Clocks
   - HTTPTypes
   - JSONValue
   - OrderedCollections
 tests:
   dependencies:
     - WuhuRecordReplay
+    - Serve
     - Fetch
     - HTTPTypes
     - JSONValue

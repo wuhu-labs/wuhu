@@ -1,7 +1,12 @@
 import Clocks
 import Dependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import JSONValue
 import Logging
 import SessionDomain
 import WuhuAI
@@ -33,6 +38,8 @@ public struct InferenceExecutor: Sendable {
   public var hub: AttemptHub?
   public var log: AttemptLogConfig?
   public var metrics: InferenceMetricsSink
+  public var webSocket: ResponsesWebSocketSession?
+  public var receiveQuota: @Sendable (JSONValue) async -> Void
   public var mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)?
 
   public init(
@@ -45,6 +52,8 @@ public struct InferenceExecutor: Sendable {
     hub: AttemptHub? = nil,
     log: AttemptLogConfig? = nil,
     metrics: InferenceMetricsSink = .noop,
+    webSocket: ResponsesWebSocketSession? = nil,
+    receiveQuota: @escaping @Sendable (JSONValue) async -> Void = { _ in },
     mediaResolver: (@Sendable (ImageLimits) -> any MediaResolver)? = nil,
   ) {
     self.session = session
@@ -57,6 +66,8 @@ public struct InferenceExecutor: Sendable {
     self.log = log
     self.metrics = metrics
     self.mediaResolver = mediaResolver
+    self.webSocket = webSocket
+    self.receiveQuota = receiveQuota
   }
 
   public func run(
@@ -89,7 +100,12 @@ public struct InferenceExecutor: Sendable {
 
     let sizes = TrafficSizes()
     var endpoint: any ModelEndpoint = model.endpoint
-    if let log {
+    if model.transport == .websocket {
+      guard let webSocket, let responses = endpoint as? any ResponsesEndpoint else {
+        throw InferenceError.invalidInput(status: 422, body: "WebSocket transport has no runtime session")
+      }
+      endpoint = responses.withWebSocket(session: webSocket, attemptID: attemptID.uuidString, observer: try socketAttemptObserver(file: log?.fileURL(attemptID: attemptID), sizes: sizes), receiveQuota: receiveQuota)
+    } else if let log {
       @Dependency(\.fetch) var fetch
       endpoint = endpoint.withFetch(attemptLoggingFetch(
         base: fetch,
@@ -172,6 +188,12 @@ public struct InferenceExecutor: Sendable {
     )
     await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, servedModel: completed.metadata.servedModel, ttft: ttft, elapsed: elapsed))
     return completed
+  }
+
+  public func acknowledge(entry: AssistantEntry, transcript: Transcript, handles: [String: String] = [:], devices: [String: String] = [:]) async {
+    guard let webSocket, model.transport == .websocket else { return }
+    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools, budget: model.budget, thresholds: thresholds, handles: handles, devices: devices)
+    await webSocket.acknowledge(attemptID: entry.id.uuidString, committedMessage: .init(content: entry.content), toolCallIDs: entry.toolCallIDs.mapValues(\.rawValue), renderedContext: context)
   }
 
   private func metric(

@@ -1,4 +1,5 @@
 exports_files([
+    "rspm-stable-trait-requests.patch",
     "concurrency-extras-linux-locking.patch",
     "concurrency-extras-linux-lockisolated.patch",
     "issue-reporting-linux-app-host.patch",

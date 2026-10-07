@@ -17,7 +17,10 @@ externalPackages:
     products: [JSONValue]
   wuhu-fetch:
     path: ../wuhu-fetch
-    products: [Fetch, FetchSSE]
+    products: [Fetch, FetchSSE, FetchWebSocket]
+  wuhu-serve:
+    path: ../wuhu-serve
+    products: [Serve]
   wuhu-test-support:
     path: ../wuhu-test-support
     products: [WuhuRecordReplay]

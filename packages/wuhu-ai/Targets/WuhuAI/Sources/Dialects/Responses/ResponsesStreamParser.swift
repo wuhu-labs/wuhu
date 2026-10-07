@@ -1,15 +1,20 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
 // MARK: - Responses Stream Parser
 
 /// Parse OpenAI Responses SSE stream into InferenceEvent domain events.
-func parseResponsesStream(
-  _ sse: AsyncThrowingStream<SSEEvent, any Error>,
+func parseResponsesStream<Events: AsyncSequence & Sendable>(
+  _ sse: Events,
   providerID: String,
   model: String,
-) -> AsyncThrowingStream<InferenceEvent, any Error> {
+  finiteResponse: Bool = false,
+) -> AsyncThrowingStream<InferenceEvent, any Error> where Events.Element == SSEEvent {
   AsyncThrowingStream { continuation in
     let task = Task {
       var content: [ContentBlock] = []
@@ -36,6 +41,7 @@ func parseResponsesStream(
       var currentToolCallArguments: String = ""
       var reasoningIndexByID: [String: Int] = [:]
       var sawResponseCompleted = false
+      var toolStates: [String: (index: Int?, id: String?, name: String?, arguments: String)] = [:]
 
       do {
         for try await sseEvent in sse {
@@ -67,6 +73,18 @@ func parseResponsesStream(
             )
             usage = current
             continuation.yield(.usage(current, servedModel: servedModel, partial: partial()))
+          }
+
+          let toolItemID = dict["item_id"]?.stringValue ?? dict["item"]?.object?["id"]?.stringValue
+          let isToolEvent = type.hasPrefix("response.function_call_arguments.")
+            || dict["item"]?.object?["type"]?.stringValue == "function_call"
+          if finiteResponse, isToolEvent, let toolItemID,
+             let state = toolStates[toolItemID]
+          {
+            currentToolCallIndex = state.index
+            currentToolCallID = state.id
+            currentToolCallName = state.name
+            currentToolCallArguments = state.arguments
           }
 
           switch type {
@@ -195,8 +213,18 @@ func parseResponsesStream(
 
             if itemType == "message" {
               if let idx = currentTextIndex, idx < content.count,
-                 case let .text(part) = content[idx]
+                 case var .text(part) = content[idx]
               {
+                if finiteResponse, let finalContent = item["content"]?.array {
+                  part.text = finalContent.compactMap { part -> String? in
+                    switch part.object?["type"]?.stringValue {
+                    case "output_text": return part.object?["text"]?.stringValue
+                    case "refusal": return part.object?["refusal"]?.stringValue
+                    default: return nil
+                    }
+                  }.joined()
+                  content[idx] = .text(part)
+                }
                 continuation.yield(.textEnd(
                   contentIndex: idx,
                   text: part.text,
@@ -293,6 +321,9 @@ func parseResponsesStream(
 
           default:
             break
+          }
+          if finiteResponse, isToolEvent, let toolItemID {
+            toolStates[toolItemID] = (currentToolCallIndex, currentToolCallID, currentToolCallName, currentToolCallArguments)
           }
         }
 

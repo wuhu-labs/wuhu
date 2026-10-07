@@ -1,5 +1,6 @@
 import {
   appBundleInfo,
+  appBundles,
   appEmbedsViewPilot,
   type AppManifest,
   appSigningTeamID,
@@ -12,6 +13,7 @@ import {
   collectLoweredDependencies,
   combineBuildBazel,
   comparePlatformVersions,
+  discoverAppDirs,
   type ExternalPackage,
   generateAppBuildBazel,
   generateBuildBazel,
@@ -36,12 +38,15 @@ import {
   validateAppExtensions,
   validateAppIntents,
   validateAppRelease,
+  validateAppTransportSecurity,
   validateTargetInfo,
   validateTargetLinkedFrameworks,
   validateTargetRelease,
+  variantBundle,
   viewPilotProducts,
 } from './generate.ts'
 import { join } from '@std/path'
+import { parse } from '@std/yaml'
 import { assertEquals, assertIncludes, assertThrows } from './assertions.ts'
 
 Deno.test('ViewPilot defaults on, opt-out is honored, and previews cannot opt out', () => {
@@ -2564,4 +2569,76 @@ Deno.test('preview schemes are generated per shell without changing real apps', 
     CFBundleURLSchemes: ['wuhu-preview'],
   }])
   assertEquals(production.info.CFBundleURLTypes, undefined)
+})
+
+Deno.test('ATS rejects every arbitrary-load override, including false values', () => {
+  for (
+    const key of [
+      'NSAllowsLocalNetworking',
+      'NSAllowsArbitraryLoadsForMedia',
+      'NSAllowsArbitraryLoadsInWebContent',
+    ]
+  ) {
+    for (const enabled of [true, false]) {
+      const info = {
+        NSAppTransportSecurity: {
+          NSAllowsArbitraryLoads: true,
+          [key]: enabled,
+        },
+      }
+      for (
+        const value of [
+          info,
+          { targets: [{ info }] },
+          { extensions: [{ devIdentity: { info } }] },
+          { watchApplications: [{ info }] },
+        ]
+      ) {
+        assertThrows(
+          () => validateAppTransportSecurity(value, 'app.yml'),
+          `combines NSAllowsArbitraryLoads with ${key}`,
+        )
+      }
+    }
+    validateAppTransportSecurity({
+      NSAppTransportSecurity: { [key]: true },
+    }, 'Info.plist')
+  }
+  validateAppTransportSecurity({
+    NSAppTransportSecurity: { NSAllowsArbitraryLoads: true },
+  }, 'Info.plist')
+  validateAppTransportSecurity({}, 'Info.plist')
+})
+
+Deno.test('ATS permits local networking when arbitrary loads are disabled', () => {
+  validateAppTransportSecurity({
+    NSAppTransportSecurity: {
+      NSAllowsArbitraryLoads: false,
+      NSAllowsLocalNetworking: true,
+    },
+  }, 'Info.plist')
+})
+
+Deno.test('all wuhu-app shells and generated bundle variants keep ATS overrides separate', async () => {
+  const packageDir =
+    new URL('../../packages/wuhu-app', import.meta.url).pathname
+  const appDirs = await discoverAppDirs(packageDir)
+  assertEquals(appDirs.length > 0, true)
+  for (const appDir of appDirs) {
+    const source = join(appDir, 'app.yml')
+    const app = parse(await Deno.readTextFile(source)) as AppManifest
+    validateAppTransportSecurity(app, source)
+    populateAppBundleInfo(app)
+    for (const target of appBundles(app)) {
+      for (const variant of ['dev', 'store', 'adhoc'] as const) {
+        const bundle = variantBundle(target, variant)
+        validateAppTransportSecurity(bundle.info, `${target.name}.${variant}`)
+        validateAppTransportSecurity(pilotInfo(bundle), `${target.name}.pilot`)
+        const ats = bundle.info.NSAppTransportSecurity
+        if (ats !== undefined) {
+          assertEquals(ats, { NSAllowsArbitraryLoads: true })
+        }
+      }
+    }
+  }
 })

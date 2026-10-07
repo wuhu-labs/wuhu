@@ -22,6 +22,42 @@ private func compactCall(
 }
 
 @Suite struct CompactionTests {
+  @Test func cancellationAfterForcedCommitSkipsMechanicalFallback() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.createSession(group: .shared, title: "cancel compact", kind: .agent, createdBy: "morgan", model: .test)
+      let attempts = Box(0)
+      let compacted = Box(0)
+      let committed = AsyncStream<Void>.makeStream()
+      let config = makeConfig(inference: { request in
+        attempts.withLock { $0 += 1 }
+        var reply = Fix.reply("done", tokens: request.mode == .forcedCompact ? 950 : 900)
+        if request.mode == .forcedCompact {
+          reply.committed = { _, _ in
+            withUnsafeCurrentTask { $0?.cancel() }
+            committed.continuation.yield(())
+          }
+        }
+        return reply
+      }, compact: { _ in
+        compacted.withLock { $0 += 1 }
+        return .init(summary: "should not run")
+      }, budget: tightBudget)
+      let service = await SessionService(sessions: sessions, loopConfig: config)
+      try await runService(service) { _ in
+        _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
+        for await _ in committed.stream { break }
+        let actor = try #require(await service.registry.existing(sid))
+        try await until("cancelled forced pass exited") { await actor.liveState?.lastUpdatedByLoopAt != nil }
+        #expect(compacted.value == 0)
+        #expect(attempts.value == 2)
+        let transcript = try await sessions.hydrate(sid).transcript.kernel
+        #expect(transcript.assistantEntries.count == 2)
+        if case .generationHead(let head)? = transcript.items.first { #expect(head.summary.isEmpty) }
+      }
+    }
+  }
+
   @Test func `hard pressure schedules a forced-compact inference and re-establishes state`() async throws {
     try await withKernelDeps { _ in
       let sessions = try Space.inMemory().sessions

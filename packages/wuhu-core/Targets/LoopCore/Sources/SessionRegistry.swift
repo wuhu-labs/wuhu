@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SessionDomain.SessionID
 
 actor SessionRegistry {
@@ -8,6 +12,7 @@ actor SessionRegistry {
   private let liveness: LivenessTracker
 
   private(set) var sessions: [SessionID: SessionActor] = [:]
+  private var stopped = false
   private var reaper: Task<Void, Never>?
 
   @Dependency(\.continuousClock) private var clock
@@ -29,6 +34,7 @@ actor SessionRegistry {
   }
 
   func post(_ action: SessionActor.ExternalAction, to id: SessionID) async {
+    guard !stopped else { return }
     let session: SessionActor
     if let existing = sessions[id] {
       session = existing
@@ -39,6 +45,7 @@ actor SessionRegistry {
       sessions[id] = session
       await session.activate()
     }
+    guard !stopped else { return }
     session.post(action)
   }
 
@@ -47,8 +54,11 @@ actor SessionRegistry {
   }
 
   func stop() async {
+    stopped = true
+    let reaper = self.reaper
     reaper?.cancel()
-    reaper = nil
+    self.reaper = nil
+    await reaper?.value
     for session in sessions.values {
       await session.shutdown()
     }

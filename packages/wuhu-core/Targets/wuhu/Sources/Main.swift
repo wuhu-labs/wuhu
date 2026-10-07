@@ -18,6 +18,7 @@ import Dependencies
 import Dispatch
 import struct Fetch.FetchClient
 import FetchAsyncHTTPClient
+import FetchWebSocket
 import Logging
 import enum PinnedTLS.PinnedTLS
 import enum PinnedTLS.SystemTrust
@@ -53,6 +54,7 @@ enum Main {
     // binds the real transport once here.
     prepareDependencies {
       $0.fetch = .asyncHTTPClient(inferenceClient, timeout: nil)
+      $0[WebSocketConnector.self] = .live
       $0[ServerTrustProbe.self] = ServerTrustProbe(
         validateSystem: { host, port in
           try await SystemTrust.validate(host: host, port: port, anchors: .platformDefault)

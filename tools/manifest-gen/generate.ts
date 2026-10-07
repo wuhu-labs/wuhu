@@ -703,6 +703,41 @@ function validateDevIdentities(app: AppManifest, source: string): void {
   }
 }
 
+export function validateAppTransportSecurity(
+  value: unknown,
+  source: string,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      validateAppTransportSecurity(item, `${source}[${index}]`)
+    )
+    return
+  }
+  if (value === null || typeof value !== 'object') return
+  const dictionary = value as Record<string, unknown>
+  const ats = dictionary.NSAppTransportSecurity as
+    | Record<string, unknown>
+    | undefined
+  if (ats?.NSAllowsArbitraryLoads === true) {
+    for (
+      const key of [
+        'NSAllowsLocalNetworking',
+        'NSAllowsArbitraryLoadsForMedia',
+        'NSAllowsArbitraryLoadsInWebContent',
+      ]
+    ) {
+      if (ats[key] !== undefined) {
+        throw new Error(
+          `${source}.NSAppTransportSecurity combines NSAllowsArbitraryLoads with ${key}, which overrides it`,
+        )
+      }
+    }
+  }
+  for (const [key, item] of Object.entries(dictionary)) {
+    validateAppTransportSecurity(item, `${source}.${key}`)
+  }
+}
+
 function assertPlistValues(
   values: Record<string, unknown>,
   source: string,
@@ -1423,6 +1458,35 @@ function simulatorTestLanes(
       }
       return { lane, minimumOSVersion }
     })
+}
+
+export async function targetCheckPlatforms(
+  packageDir: string,
+): Promise<Map<string, CheckPlatform[]>> {
+  const pkg = await readPackageManifest(packageDir)
+  const result = new Map<string, CheckPlatform[]>()
+  for (const target of await discoverTargets(packageDir)) {
+    if (target.kind === 'macro') continue
+    const platforms = libraryPlatforms(pkg, target)
+    result.set(target.name, platforms)
+    if (target.kind === 'executable' && target.productName) {
+      result.set(target.productName, platforms)
+    }
+    if (target.kind === 'systemLibrary' || target.kind === 'objcLibrary') {
+      continue
+    }
+    for (const test of testTargets(target)) {
+      const location = `${target.manifestDir}/target.yml`
+      const hosts = testTargetPlatforms(pkg, target, test.config, location)
+      if (hosts.length) result.set(test.name, hosts)
+      for (
+        const { lane } of simulatorTestLanes(pkg, target, test.config, location)
+      ) {
+        result.set(`${test.name}.${lane}`, [lane])
+      }
+    }
+  }
+  return result
 }
 
 function platformsAttr(
@@ -3900,7 +3964,11 @@ function plistValueXml(value: PlistValue, indent: number): string {
   }\n${pad}</dict>`
 }
 
-function generatePlist(info: { [key: string]: PlistValue }): string {
+function generatePlist(
+  info: { [key: string]: PlistValue },
+  source = 'Info.plist',
+): string {
+  validateAppTransportSecurity(info, source)
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n${
     plistValueXml(info, 0)
   }\n</plist>\n`
@@ -4175,6 +4243,7 @@ async function prepareApp(
 ): Promise<PreparedApp> {
   const source = join(appDir, 'app.yml')
   const app = await readYaml<AppManifest>(source)
+  validateAppTransportSecurity(app, source)
   validateAppRelease(app, source)
   validateAppExtensions(app, source)
   validateAppIntents(app, source)
@@ -4202,6 +4271,7 @@ async function prepareApp(
           variant === 'dev' && embedsViewPilot
             ? pilotInfo(bundle)
             : bundle.info,
+          output,
         ),
       )
     }

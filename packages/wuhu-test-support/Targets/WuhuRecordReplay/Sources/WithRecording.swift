@@ -1,5 +1,10 @@
 import Dependencies
-import Foundation
+import FetchWebSocket
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 // Replay by default; record when `RECORDING` matches `name`. Fixtures live in
 // `Recordings/<name>` next to the calling file, or under `RECORDINGS_ROOT`
@@ -22,18 +27,35 @@ public func withRecording(
       .deletingLastPathComponent()
       .appendingPathComponent("Recordings")
   }
+  let connector: WebSocketConnector
+  if mode.isRecording {
+    @Dependency(WebSocketConnector.self) var ambientConnector
+    connector = ambientConnector
+  } else {
+    connector = .testValue
+  }
   let ctx = RecordingContext(
     name: name,
     mode: mode,
     recordingsRoot: recordingsRoot,
     matchIgnoringBodyFields: matchIgnoringBodyFields,
+    webSocketConnector: connector,
   )
 
-  try await withDependencies {
-    $0.fetch = ctx.fetchClient
-  } operation: {
-    try await body()
+  do {
+    try await withDependencies {
+      $0.fetch = ctx.fetchClient
+      $0[WebSocketConnector.self] = ctx.webSocketConnector
+    } operation: {
+      try await body()
+    }
+
+  } catch {
+    await ctx.finishSockets()
+    throw error
   }
+  await ctx.finishSockets()
+  try ctx.verifyReplay()
 
   // Fixtures persist only when the body passed: a failed run must not
   // overwrite a good recording.

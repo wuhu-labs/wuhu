@@ -1,24 +1,27 @@
 # FetchWebSocket
 
-A minimal cross-platform (macOS + Linux) WebSocket client in the web-platform
-spirit of wuhu-fetch: `WebSocketClient.connect` dials, runs the RFC 6455 client
-upgrade over NIO, and returns a `WebSocketDuplex` — an `AsyncStream<[UInt8]>`
-inbound plus async `send` / fire-and-forget `close`.
+FetchWebSocket provides a general, injectable WebSocket effect with no application-protocol knowledge. `WebSocketConnector` is a `TestDependencyKey`: absent installation throws `.unimplemented`; composition installs `.live` explicitly. Capture the connector before starting asynchronous producer work. `WebSocketRequest` is an implicit GET upgrade with no request body. It carries `RequestHeaders` including sensitivity marks, independent limits, trust policy, and bounded connect/close timeouts.
 
-- Schemes: `ws://`/`http://` dial cleartext TCP; `wss://`/`https://` dial TLS.
-  For a secure scheme the `tls` argument selects trust: `.pinned(fingerprint:)`
-  rides the PinnedTLS leaf-pinning dial, `.configuration` uses a caller-supplied
-  `TLSConfiguration`, and the default (`nil`) is system trust. SNI is set from
-  the host, except for IP literals, which handshake without a server hostname.
-- Extra request headers ride the upgrade request, so a server can gate the
-  upgrade on credentials before any frame flows. A refused upgrade surfaces as
-  `WebSocketClientError.refused`; TCP failures throw the underlying error.
-- Inbound text and binary frames both arrive as their raw bytes; fragmented
-  messages are reassembled; pings are answered with pongs at the channel layer;
-  a close frame (or channel death) finishes `inbound`. There is no pump task —
-  the NIO handler yields bytes straight into the stream.
-- Outbound `send` writes one masked binary frame per call and throws once the
-  connection is severed. `close` sends a normal-closure frame and closes the
-  channel.
-- `maxFrameBytes` is the inbound frame ceiling handed to the NIO decoder; size
-  it to the peer's advertised maximum (wuhu's machine wire uses 16 MiB).
+## Connection contract
+
+`WebSocketConnection` is closure-constructible for adapters, recordings and offline servers. It exposes upgrade `responseHeaders`, one `WebSocketInbound` consumer, asynchronous `send` and `close`, and synchronous `abort`. The shape follows the WHATWG WebSocketStream proposal where applicable: opening produces a duplex connection, messages retain text/binary identity, and shutdown is explicit. It is not a browser WebSocket or a literal implementation of JavaScript ReadableStream/WritableStream. **Request headers on the upgrade and status/headers/body of a refused upgrade are extensions beyond the browser WebSocket standard.**
+
+- `ws`/`http` use TCP; `wss`/`https` use TLS. Default TLS uses system trust; `.configuration` uses the supplied NIOSSL configuration; `.pinned` uses PinnedTLS. SNI omits IP literals. Request targets preserve percent-encoded path and query bytes.
+- Upgrade negotiation rejects unsolicited subprotocols, multiple protocol selections, and all extension selections (extensions are not implemented). An offered subprotocol can be selected only with an exact matching token.
+- Text is validated UTF-8, including across fragments. Binary is arbitrary bytes. Fragments retain their initial opcode; overlapping data messages, unexpected continuations, masked server frames, unnegotiated extensions and malformed control/close frames fail with a typed protocol error. Ping/pong is transport-internal.
+- `inbound` yields `.message` and then a typed `.closed(code:reason:)` for a peer close. An empty close payload has the RFC sentinel code 1005. Invalid UTF-8/code/length fails rather than fabricating a close. EOF without a close is `.connectionClosed`, never successful stream exhaustion. Stream cancellation closes the channel. A second iterator throws `.multipleConsumers`.
+- Sends serialize at the NIO event-loop boundary, emit one masked text or binary frame and complete after the write. A failed send is typed; cancellation closes the socket. Concurrent callers have no ordering guarantee before they reach that boundary.
+- `close` sends the supplied code/reason and waits for the peer only until `closeTimeout`, then forcibly closes. Codes must be valid wire codes and the UTF-8 reason at most 123 bytes. A timed-out handshake leaves receive with `.connectionClosed`, not a fabricated peer acknowledgement. `abort` closes promptly and fails receive with `.cancelled`; no close acknowledgement is required. Cancelling a dial closes its half-open channel, including cancellation before the initializer runs.
+- A refused upgrade throws `.refused(status:headers:body:)`. Its retained body is bounded by `refusalBodyBytes`, and no refusal body is forwarded into the pending upgrade handler. Reaching that budget ends capture and closes promptly, without waiting for the rest of an oversized body. Early EOF or HTTP decoder failure after the refusal head preserves status, headers and the bounded partial body rather than becoming an IO/EOF error. A connect timeout bounds both TCP and upgrade negotiation. Network, TLS configuration, URL, configuration and protocol failures are typed. Task cancellation throws `CancellationError`.
+
+## Independent resource limits
+
+`WebSocketLimits` defaults to 1 MiB each for frame, reassembled message, receive-buffer bytes and outbound message, and 8192 bytes for the refusal body. Frame limits apply to inbound payloads; outbound messages have their own limit. Message accumulation and buffered delivery are independently bounded. Received bytes are charged until `next()` consumes an event; empty messages cost one byte to bound their queue overhead. Buffer overflow fails rather than dropping messages. The sole terminal close event is not charged to the message-byte budget; its reason is bounded by RFC 6455. Each overflow names its limit in `.limitExceeded`. Consumers may explicitly request larger budgets (inference selects 16 MiB); this is not a statement about any provider's ceiling. Adapters built through the closure initializer own enforcement of their transport/limits.
+
+## Compatibility facade
+
+`WebSocketClient.connect` delegates to the same NIO engine and returns the existing `WebSocketDuplex` byte stream. Text and binary messages both appear as bytes, outbound sends remain binary, errors/close finish the legacy stream, refused upgrades map to `WebSocketClientError.refused`, and invalid URLs retain the legacy error. Repeated header fields, including differently cased spellings, are appended independently as before. `maxFrameBytes` still defaults to 1 MiB; the legacy facade preserves unbounded message/receive/outbound behavior. `close()` remains fire-and-forget normal closure. No machine-channel caller changes are required.
+
+## Verification
+
+Black-box tests in ServeNIO exercise TCP and TLS round trips, upgrade headers/refusal metadata, percent-encoded targets, text/binary identity, fragmentation and cross-fragment UTF-8, invalid frames/close codes, explicit close versus abrupt EOF, every independent limit, single-consumer enforcement, bounded close, abort and half-open cancellation. A closure-constructed connection over `WebSocket.pair()` demonstrates offline injection separately from actual framing. Existing binary facade tests remain unchanged.

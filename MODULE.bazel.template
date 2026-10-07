@@ -47,6 +47,8 @@ single_version_override(
 # xnzg/rules_swift_package_manager#consumer-traits, intended for upstreaming.
 archive_override(
     module_name = "rules_swift_package_manager",
+    patch_strip = 1,
+    patches = ["//bazel/patches:rspm-stable-trait-requests.patch"],
     integrity = "sha256-Gk9qolXlI5HfkcOwihD11MMlAbXpSVIz2Ws8+z3rLKc=",
     strip_prefix = "rules_swift_package_manager-20be64cf7ddfd1254bc381384b1ef593522e28f8",
     urls = ["https://github.com/xnzg/rules_swift_package_manager/archive/20be64cf7ddfd1254bc381384b1ef593522e28f8.tar.gz"],

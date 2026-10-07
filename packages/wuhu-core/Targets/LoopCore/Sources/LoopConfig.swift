@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
@@ -46,10 +50,12 @@ public struct ToolInvocation: Sendable {
 public struct InferenceReply: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
+  public var committed: @Sendable (AssistantEntry, Transcript) async -> Void
 
-  public init(message: AssistantMessage, metadata: AssistantMessageMetadata) {
+  public init(message: AssistantMessage, metadata: AssistantMessageMetadata, committed: @escaping @Sendable (AssistantEntry, Transcript) async -> Void = { _, _ in }) {
     self.message = message
     self.metadata = metadata
+    self.committed = committed
   }
 }
 
@@ -90,6 +96,7 @@ public struct LoopConfig: Sendable {
   // propagates the kill to the effector (a crash-shaped cancellation never
   // reaches this seam, so crash-retry rejoin stays possible).
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
+  public var invalidateInference: @Sendable (SessionID) async -> Void
   var claudeCode: ClaudeCodeSeam
   public var thresholds: CompactionThresholds
   public var archiveGrace: Duration
@@ -101,6 +108,7 @@ public struct LoopConfig: Sendable {
     compact: @escaping @Sendable (SessionID, Transcript) async throws -> CompactionResult,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
+    invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     claudeCode: ClaudeCodeSeam = .unavailable,
     thresholds: CompactionThresholds = .init(),
     archiveGrace: Duration = .seconds(24 * 3600),
@@ -112,6 +120,7 @@ public struct LoopConfig: Sendable {
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
     self.claudeCode = claudeCode
+    self.invalidateInference = invalidateInference
     self.thresholds = thresholds
     self.archiveGrace = archiveGrace
     self.eviction = eviction

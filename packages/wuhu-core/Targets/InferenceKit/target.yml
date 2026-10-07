@@ -11,6 +11,7 @@ dependencies:
   - Dependencies
   - Fetch
   - Logging
+  - SystemPackage
 swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
@@ -22,5 +23,6 @@ tests:
     - Dependencies
     - Fetch
     - FetchURLSession
+    - FetchWebSocket
     - Clocks
     - Scratch

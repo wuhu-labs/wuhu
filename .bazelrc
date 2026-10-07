@@ -13,6 +13,7 @@ common --show_progress_rate_limit=0.2
 # simulator platform retargets every swift_library in the graph, so iOS-only
 # API and #if os(...) branches are actually compiled. The mac and linux lanes
 # stay on the host platform so neither is pinned to an architecture.
+build:mac --macos_minimum_os=26.0
 common:ios --platforms=@build_bazel_apple_support//platforms:ios_sim_arm64
 common:ios-device --platforms=@build_bazel_apple_support//platforms:ios_arm64 --apple_platform_type=ios --cpu=ios_arm64
 test:ios --local_resources=simulators=1

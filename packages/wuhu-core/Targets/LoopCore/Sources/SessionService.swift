@@ -1,5 +1,9 @@
 import ClaudeStream
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import Logging
 import SessionDomain
@@ -29,34 +33,38 @@ public struct SessionService: Sendable {
   }
 
   public func start() async throws {
-    let signals = sessions.workSignals()
-    for id in try await sessions.bootSessions() {
-      try await wake(id)
-    }
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask {
-        let log = Logger(label: "wuhu.session-service")
-        for await session in signals {
-          do {
-            try await wake(session)
-          } catch {
-            guard !Task.isCancelled else { break }
-            // A dropped signal is dropped work: put it back and try again.
-            log.warning("wake failed for \(session.rawValue), re-signaling: \(error)")
-            signals.repost(session)
+    do {
+      let signals = sessions.workSignals()
+      for id in try await sessions.bootSessions() {
+        try await wake(id)
+      }
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask {
+          let log = Logger(label: "wuhu.session-service")
+          for await session in signals {
+            do {
+              try await wake(session)
+            } catch {
+              guard !Task.isCancelled else { break }
+              log.warning("wake failed for \(session.rawValue), re-signaling: \(error)")
+              signals.repost(session)
+            }
           }
         }
-      }
-      group.addTask { [livenessTracker, registry] in
-        await withTaskCancellationHandler {
+        group.addTask { [livenessTracker] in
           await livenessTracker.drain()
-        } onCancel: {
-          Task { [registry] in
-            await registry.stop()
-          }
         }
+        group.addTask { [registry] in
+          let (parking, continuation) = AsyncStream<Void>.makeStream()
+          for await _ in parking {}
+          continuation.finish()
+          await registry.stop()
+        }
+        await group.waitForAll()
       }
-      await group.waitForAll()
+    } catch {
+      await registry.stop()
+      throw error
     }
   }
 

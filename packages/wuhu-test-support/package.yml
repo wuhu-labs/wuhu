@@ -34,4 +34,4 @@ externalPackages:
     products: [JSONValue]
   wuhu-fetch:
     path: ../wuhu-fetch
-    products: [Fetch, FetchURLSession]
+    products: [Fetch, FetchURLSession, FetchWebSocket]

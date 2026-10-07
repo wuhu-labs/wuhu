@@ -104,6 +104,16 @@ private let codexAndClaudeModels = """
     #expect(codexUsage(headers: ["content-type": "text/event-stream"]).isEmpty)
   }
 
+  @Test func codexSocketQuotaUsesItsOwnSchemaAndRejectsMalformedWindows() throws {
+    let valid = try #require(JSONValue.parse(#"{"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"reset_at":1800000300},"secondary":{"used_percent":34,"window_minutes":10080,"reset_at":1800600000}}}"#))
+    let result = codexSocketUsage(valid)
+    #expect(result.plan == "pro")
+    #expect(result.windows == [UsageWindow(name: "five_hour", usedPercent: 12.5, resetsAt: 1_800_000_300), UsageWindow(name: "seven_day", usedPercent: 34, resetsAt: 1_800_600_000)])
+    for text in [#"{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":300,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":12,"window_minutes":0,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":101,"window_minutes":300,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":12,"window_minutes":300}}}"#] {
+      #expect(codexSocketUsage(try #require(JSONValue.parse(text))).windows.isEmpty)
+    }
+  }
+
   @Test func theCodexUsageReadBecomesWindows() throws {
     let payload = try #require(JSONValue.parse("""
     {"plan_type":"pro","rate_limit":{"allowed":true,"primary_window":{"used_percent":61,"limit_window_seconds":604800,

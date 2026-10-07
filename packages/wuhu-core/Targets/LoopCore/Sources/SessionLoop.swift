@@ -1,6 +1,15 @@
 import Dependencies
 import enum Fetch.TransportFailureKind
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+#if canImport(Darwin)
+  import Darwin
+#else
+  import Glibc
+#endif
 import Logging
 import SessionDomain
 import SpaceCore
@@ -256,6 +265,7 @@ extension SessionActor {
     )
     let compacted = try await repo.writeCompaction(closing: closing, head: head, kept: kept)
     try modify { $0.transcript = compacted }
+    await loopConfig.invalidateInference(id)
   }
 
   func runInference(mode: InferenceMode) async throws {
@@ -294,6 +304,8 @@ extension SessionActor {
         }
         try await repo.append(Array(appended.items[before...]), transcript: appended)
         try modify { $0.transcript = appended }
+        await reply.committed(entry, appended)
+        try Task.checkCancellation()
         if mode == .forcedCompact, !reply.message.callsCompact {
           try await fallbackCompact()
         }
@@ -398,6 +410,7 @@ extension SessionActor {
       )
       let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept)
       try modify { $0.transcript = compacted }
+      await loopConfig.invalidateInference(id)
     case .failure(is CancellationError):
       return
     case .failure(let error):

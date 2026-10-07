@@ -1,6 +1,13 @@
 import Fetch
-import Foundation
+import SystemPackage
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import JSONValue
 import Synchronization
+import WuhuAI
 
 public struct AttemptLogConfig: Sendable {
   public var directory: URL
@@ -27,19 +34,20 @@ final class TrafficSizes: Sendable {
 // Appends the raw request body, then raw SSE bytes as they stream, so partial
 // evidence survives a kill mid-attempt.
 private actor AttemptLogFile {
-  private let handle: FileHandle
+  private let handle: FileDescriptor
 
   init(url: URL) throws {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(),
       withIntermediateDirectories: true,
     )
-    FileManager.default.createFile(atPath: url.path, contents: nil)
-    handle = try FileHandle(forWritingTo: url)
+    handle = try FileDescriptor.open(FilePath(url.path), .writeOnly, options: [.create, .truncate], permissions: [.ownerRead, .ownerWrite])
   }
 
+  deinit { try? handle.close() }
+
   func append(_ data: Data) {
-    try? handle.write(contentsOf: data)
+    _ = try? data.withUnsafeBytes { try handle.writeAll($0) }
   }
 }
 
@@ -86,4 +94,25 @@ func attemptLoggingFetch(
       body: .stream(contentType: response.body.contentType, teed),
     )
   }
+}
+
+func socketAttemptObserver(file: URL?, sizes: TrafficSizes) throws -> ResponsesWebSocketObserver {
+  let log = try file.map { try AttemptLogFile(url: $0) }
+  return ResponsesWebSocketObserver(request: { subattempt, _, body in
+    let bytes = Data(body.jsonString().utf8)
+    sizes.addRequest(bytes.count)
+    await log?.append(Data("\n[websocket request \(subattempt)]\n".utf8))
+    await log?.append(bytes)
+    await log?.append(Data("\n".utf8))
+  }, received: { subattempt, message in
+    let bytes: Data
+    switch message {
+    case .text(let text): bytes = Data(text.utf8)
+    case .binary(let payload): bytes = Data(payload)
+    }
+    sizes.addResponse(bytes.count)
+    await log?.append(Data("[websocket event \(subattempt)] ".utf8))
+    await log?.append(bytes)
+    await log?.append(Data("\n".utf8))
+  })
 }

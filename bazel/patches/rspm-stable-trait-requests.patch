@@ -1,0 +1,45 @@
+--- a/swiftpkg/bzlmod/swift_deps.bzl
++++ b/swiftpkg/bzlmod/swift_deps.bzl
+@@ -17,6 +17,26 @@
+ # MARK: - swift_deps bzlmod Extension
+ 
+ _DO_WHILE_RANGE = range(1000)
++
++
++def _trait_request_key(request):
++    return (request["name"], json.encode(request))
++
++def canonical_trait_requests(requests):
++    """Canonicalize SwiftPM trait Sets before recording repository attributes."""
++    if requests == None:
++        return None
++    result = []
++    for request in requests:
++        canonical = {key: request[key] for key in sorted(request.keys())}
++        condition = canonical.get("condition")
++        if condition:
++            canonical["condition"] = {
++                key: sorted(condition[key]) if key == "traits" else condition[key]
++                for key in sorted(condition.keys())
++            }
++        result.append(canonical)
++    return sorted(result, key = _trait_request_key)
+ 
+ def _declare_pkgs_from_package(module_ctx, from_package, config_pkgs, config_swift_package):
+     """Declare Swift packages from `Package.swift` and `Package.resolved`.
+@@ -212,13 +232,13 @@
+             manifest_label = "@{}//:dump.json".format(manifest_repo_name)
+             manifests[manifest_label] = dep.identity
+         root_trait_requests = {
+-            dep.identity: dep.trait_requests
++            dep.identity: canonical_trait_requests(dep.trait_requests)
+             for dep in pkg_info.dependencies
+         }
+         swift_deps_traits(
+             name = "swift_package_traits",
+             manifests = manifests,
+-            root_enabled_traits = pkg_info.enabled_traits,
++            root_enabled_traits = sorted(pkg_info.enabled_traits),
+             root_trait_requests_json = json.encode(root_trait_requests),
+         )
+         resolved_traits = "@swift_package_traits//:traits.json"

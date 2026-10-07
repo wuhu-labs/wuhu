@@ -199,3 +199,14 @@ struct UsageRefresher: Sendable {
     }
   }
 }
+
+func codexSocketUsage(_ payload: JSONValue) -> (plan: String?, windows: [UsageWindow]) {
+  let rates = payload.object?["rate_limits"]?.object
+  let windows = ["primary", "secondary"].compactMap { key -> UsageWindow? in
+    guard let window = rates?[key]?.object, let minutes = window["window_minutes"]?.intValue, minutes > 0,
+          let used = window["used_percent"]?.doubleValue, used.isFinite, (0 ... 100).contains(used),
+          let reset = window["reset_at"]?.doubleValue, reset.isFinite, reset >= 0 else { return nil }
+    return UsageWindow(name: usageWindowName(minutes: minutes), usedPercent: used, resetsAt: reset)
+  }
+  return (payload.object?["plan_type"]?.stringValue, windows)
+}

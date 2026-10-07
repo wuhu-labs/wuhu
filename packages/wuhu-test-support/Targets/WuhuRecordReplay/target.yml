@@ -5,6 +5,12 @@ dependencies:
   - Dependencies
   - Fetch
   - FetchURLSession
+  - FetchWebSocket
   - HTTPTypes
   - JSONValue
   - Crypto
+tests:
+  dependencies:
+    - FetchWebSocket
+    - Fetch
+    - JSONValue
