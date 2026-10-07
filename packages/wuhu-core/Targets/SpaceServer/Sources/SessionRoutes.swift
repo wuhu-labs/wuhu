@@ -750,6 +750,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
     }
   case let busy as SubtreeArchiveBusy:
     return errorResponse(.conflict, code: "conflict", message: busy.message)
+  case let SessionError.unreadableData(id):
+    return errorResponse(.conflict, code: "unreadableSessionData", message: SessionError.unreadableData(id).description)
   case SessionError.archiveInProgress:
     return errorResponse(.conflict, code: "conflict", message: "session is being archived; retry after the archive finishes")
   case SessionError.archiveReservationLost:

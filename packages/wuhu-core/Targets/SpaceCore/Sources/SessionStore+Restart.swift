@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 
@@ -64,6 +68,16 @@ extension SessionStore {
       let generation = runtime.generation + 1
       switch executor ?? record.executor {
       case .kernel, .contractor:
+        var head = head
+        do {
+          head.settle = try Sessions.settleState(key, through: nowDate, in: db)
+        } catch where isUnreadableSessionData(error) {
+          head.settle = SettleState()
+        }
+        head.settleBoundary = .init(
+          queueTail: queueHead,
+          messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
+        )
         try Sessions.openGeneration(key, generation: generation, keptCount: 1, in: db)
         try Sessions.append(key, generation: generation, items: [TranscriptItem.generationHead(head)], in: db)
       case .claudeCode:

@@ -573,6 +573,8 @@ An exec whose registry row has a `caller` session — the exec tool's claim, a
     transcripts and logs, `sync` — is 403 with
     exactly `not available to a session`.
 
+Resume of a session with unreadable stored transcript/history is refused with a conflict explaining that the data cannot be loaded and directing the caller to Start over. The HTTP and `wuhu:session` script surfaces both retain that guidance; readable errored sessions still resume normally.
+
 ## Resume and restart
 
 Re-dial with the same exec id and the channel protocol heals byte-exactly:
@@ -706,3 +708,5 @@ Capability error bodies preserve code/message/hint. HTTP mapping: invalid_argume
 SessionRuntime owns the bounded Responses socket registry and its structured sweeper. Model and credential resolution happen per attempt; selected WebSocket transport never falls back to SSE. The process composition root explicitly installs the live connector, while offline callers inject it. Session commit acknowledgements use actual persisted entries and current rendered attribution, and lifecycle changes invalidate the registry entry. `codex.rate_limits` uses a separate validated `rate_limits.primary/secondary` projection (`window_minutes`, `used_percent`, `reset_at`), not the `/wham/usage` schema. Zero/negative windows, percentages outside 0–100, missing values and nonfinite values are ignored. Quota observation never changes inference token usage or durable transcript state.
 
 Assembled-runtime WebSocket tests exercise the production inference closure rather than substituting a test LoopConfig: actual durable assistant/tool commits establish a warm provider-ID continuation, successive successful calls release leases, provider 401/409 and cancellation invalidate owned leases before resume, and on-connect/inference/post-completion quota reaches the runtime UsageBoard.
+
+The session runtime logs unexpected session-service termination errors instead of silently swallowing them; cancellation is normal shutdown.

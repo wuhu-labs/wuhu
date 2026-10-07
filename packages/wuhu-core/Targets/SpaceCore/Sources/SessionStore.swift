@@ -1,6 +1,10 @@
 import struct ClaudeStream.ClaudeCodeLog
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -162,9 +166,10 @@ extension SessionStore {
     return restored
   }
 
-  // The session service's boot scan: a session left from the removed
-  // contractor executor is never materialized by it.
-  public func bootSessions() async throws -> [SessionID] {
+  /// Failure handling runs in the read snapshot: collect errors here and handle them after the scan, without reentering the store. Returning skips the failed session; throwing aborts the scan.
+  public func bootSessions(
+    onFailure: @escaping @Sendable (SessionID, any Error) throws -> Void = { _, error in throw error },
+  ) async throws -> [SessionID] {
     try await writer.read { db in
       // A task's park wake lives only in its loaded actor, computed from its
       // session environment; loading every task with an open request is what
@@ -180,8 +185,15 @@ extension SessionStore {
         """,
       ).compactMap { row -> SessionID? in
         let key: String = row["id"]
-        guard row["parked"] as Bool else { return SessionID(key) }
-        return try Sessions.settleState(key, in: db).openRequests.isEmpty ? nil : SessionID(key)
+        let id = SessionID(key)
+        do {
+          _ = try Sessions.record(key, in: db)
+          guard row["parked"] as Bool else { return id }
+          return try Sessions.settleState(key, in: db).openRequests.isEmpty ? nil : id
+        } catch {
+          try onFailure(id, error)
+          return nil
+        }
       }
     }
   }

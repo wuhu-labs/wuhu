@@ -9,6 +9,7 @@ import Dependencies
 #endif
 import InferenceKit
 import JSONValue
+import Logging
 import LoopCore
 import struct MachineContract.ExecID
 import Serve
@@ -69,7 +70,14 @@ public struct SessionRuntime: Sendable {
 
   public func run() async {
     await withTaskGroup(of: Void.self) { group in
-      group.addTask { try? await service.start() }
+      group.addTask {
+        do {
+          try await service.start()
+        } catch is CancellationError {
+        } catch {
+          Logger(label: "wuhu.session-runtime").error("session service stopped", metadata: ["error": "\(error)"])
+        }
+      }
       group.addTask { await firing.run() }
       group.addTask { await scripts.run() }
       group.addTask { await sockets.run() }
@@ -285,6 +293,8 @@ func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> Ses
       }
     } catch let busy as SubtreeArchiveBusy {
       throw SessionControlRefusal(busy.message, reason: busy.sessions.contains { $0.id == id } ? .busy : .other)
+    } catch let SessionError.unreadableData(id) {
+      throw SessionControlRefusal(SessionError.unreadableData(id).description)
     } catch SessionError.archiveInProgress {
       throw SessionControlRefusal("session \(id.rawValue) is being archived; retry after the archive finishes")
     } catch SessionError.archiveReservationLost {

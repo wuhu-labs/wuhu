@@ -151,11 +151,11 @@ extension SessionActor {
   func markErrored(error: any Error) async {
     do {
       let errorDescription = String(describing: error)
-      try await repo.markErrored(errorDescription: errorDescription)
       try modify { $0.sessionStatus = .errored(errorDescription) }
+      try await repo.markErrored(errorDescription: errorDescription)
     } catch is CancellationError {
     } catch {
-      assertionFailure("Errored when trying to mark the session as errored.")
+      Logger(label: "wuhu.loop").error("could not persist session error", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     }
   }
 }

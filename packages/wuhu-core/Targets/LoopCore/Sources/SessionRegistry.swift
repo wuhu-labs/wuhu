@@ -53,6 +53,10 @@ actor SessionRegistry {
     sessions[id]
   }
 
+  func discard(_ id: SessionID) async {
+    await sessions.removeValue(forKey: id)?.shutdown()
+  }
+
   func stop() async {
     stopped = true
     let reaper = self.reaper

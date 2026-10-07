@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 
@@ -6,17 +10,17 @@ extension Sessions {
   // The fold's event source: what the session was shown (drained queue rows)
   // interleaved with what it posted. An undrained row is not yet seen and does
   // not open an owe the session could not have answered.
-  static func settleEvents(_ key: String, through: Date = .distantFuture, in db: Database) throws -> [SettleEvent] {
+  static func settleEvents(_ key: String, through: Date = .distantFuture, after boundary: GenerationHead.SettleBoundary? = nil, in db: Database) throws -> [SettleEvent] {
     var events: [SettleEvent] = []
     for row in try Row.fetchAll(
       db,
       // Rows from the retired direct input path settle nothing and no longer decode.
       sql: """
       SELECT payload, drained_at FROM session_queue
-      WHERE session_id = ? AND drained_at IS NOT NULL AND payload NOT LIKE '{"direct":%'
+      WHERE session_id = ? AND id > ? AND drained_at IS NOT NULL AND payload NOT LIKE '{"direct":%'
       ORDER BY id
       """,
-      arguments: [key],
+      arguments: [key, boundary?.queueTail ?? 0],
     ) {
       let drainedAt = try SQLiteDateFormat.date(from: row["drained_at"])
       guard drainedAt <= through, var event = try decode(QueueInput.self, from: row["payload"]).settleEvent else { continue }
@@ -26,7 +30,7 @@ extension Sessions {
       }
       events.append(event)
     }
-    for record in try Conversations.fetch(db, where: "sender_session_id = ?", arguments: [key]) where record.createdAt <= through {
+    for record in try Conversations.fetch(db, where: "sender_session_id = ? AND n > ?", arguments: [key, boundary?.messageTail ?? 0]) where record.createdAt <= through {
       events.append(.posted(.init(
         conversation: record.conversation,
         kind: record.kind,
@@ -39,7 +43,34 @@ extension Sessions {
   }
 
   static func settleState(_ key: String, through: Date = .distantFuture, in db: Database) throws -> SettleState {
-    SettleState(folding: try settleEvents(key, through: through, in: db))
+    let checkpoint = try settleCheckpoint(key, through: through, in: db)
+    var state = checkpoint?.settle ?? SettleState()
+    for event in try settleEvents(key, through: through, after: checkpoint?.settleBoundary, in: db) {
+      state.apply(event)
+    }
+    return state
+  }
+
+  private static func settleCheckpoint(_ key: String, through: Date, in db: Database) throws -> GenerationHead? {
+    let heads = try String.fetchAll(
+      db,
+      sql: """
+      SELECT c.payload FROM session_pointers p
+      JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
+      WHERE p.session_id = ? AND p.position = 0
+      ORDER BY p.generation DESC
+      """,
+      arguments: [key],
+    )
+    for payload in heads {
+      guard let item = try? decode(TranscriptItem.self, from: payload),
+            case let .generationHead(head) = item,
+            head.timestamp <= through,
+            head.settle != nil, head.settleBoundary != nil
+      else { continue }
+      return head
+    }
+    return nil
   }
 
   // A head the store wrote (creation, restart, or any head from before

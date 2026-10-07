@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -327,15 +331,31 @@ extension SessionStore {
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
     let parent = try await writer.write { db -> SessionID? in
-      let record = try Sessions.record(key, in: db)
+      let record: SessionRecord?
+      do {
+        record = try Sessions.record(key, in: db)
+      } catch where isUnreadableSessionData(error) {
+        record = nil
+      }
       try db.execute(
         sql: "UPDATE sessions SET work = 'errored', error_message = ?, last_activity_at = ? WHERE id = ?",
         arguments: [message, now, key],
       )
-      guard let parent = try self.notifyParentOfFailure(key, error: message, now: now, in: db) else {
-        let transcript = switch record.executor {
-        case .kernel, .contractor: try Sessions.transcript(key, in: db)
-        case .claudeCode: Transcript()
+      let parent: SessionID?
+      do {
+        parent = record == nil ? nil : try self.notifyParentOfFailure(key, error: message, now: now, in: db)
+      } catch where isUnreadableSessionData(error) {
+        parent = nil
+      }
+      guard let parent else {
+        let transcript: Transcript
+        do {
+          transcript = switch record?.executor {
+          case .kernel, .contractor: try Sessions.transcript(key, in: db)
+          case .claudeCode, nil: Transcript()
+          }
+        } catch where isUnreadableSessionData(error) {
+          transcript = Transcript()
         }
         try Notifications.fireErrored(key, error: message, transcript: transcript, now: now, in: db)
         return nil

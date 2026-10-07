@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct SpaceContract.GroupID
 import WuhuAI
 
@@ -182,19 +186,31 @@ public struct BookmarkMarker: Hashable, Sendable, Codable {
 // the carried tail included; only a compaction records it, because only the
 // transcript knows which nags were shown.
 public struct GenerationHead: Hashable, Sendable, Codable {
+  public struct SettleBoundary: Hashable, Sendable, Codable {
+    public var queueTail: Int64
+    public var messageTail: Int64
+
+    public init(queueTail: Int64, messageTail: Int64) {
+      self.queueTail = queueTail
+      self.messageTail = messageTail
+    }
+  }
+
   public var id: UUID
   public var timestamp: Date
   public var summary: String
   public var snapshot: StateSnapshot
   public var settle: SettleState?
+  public var settleBoundary: SettleBoundary?
   public var note: String?
 
-  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, note: String? = nil) {
+  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil) {
     self.id = id
     self.timestamp = timestamp
     self.summary = summary
     self.snapshot = snapshot
     self.settle = settle
+    self.settleBoundary = settleBoundary
     self.note = note
   }
 }

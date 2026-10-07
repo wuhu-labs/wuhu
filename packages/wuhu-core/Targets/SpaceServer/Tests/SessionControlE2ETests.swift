@@ -1,7 +1,8 @@
 import Foundation
+import GRDB
 import JSONValue
 import SessionDomain
-import SpaceCore
+@testable import SpaceCore
 import SpaceServer
 import Testing
 
@@ -9,6 +10,39 @@ import Testing
 // route's executor, the SessionService behind sessionControl, and the
 // session loops themselves. Nothing here fakes SessionControl.
 @Suite struct SessionControlE2ETests {
+  @Test func unreadableResumeExplainsStartOverOnHTTPAndScriptSurfaces() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let caller = try await harness.createSession(title: "caller")
+      let bad = try await harness.store.createSession(group: .shared, title: "bad", kind: .task, parent: caller, createdBy: caller.rawValue, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")), snapshot: .init())
+      try await harness.store.markErrored(bad, message: "old failure")
+      try await harness.space.writer.write { db in
+        try db.execute(sql: "UPDATE session_contents SET payload = '{}' WHERE session_id = ?", arguments: [bad.rawValue])
+      }
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await harness.runtime.run() }
+        defer { group.cancelAll() }
+        let response = try await harness.post("/v1/session/\(bad.rawValue)/resume", .null)
+        #expect(response.status == .conflict)
+        let refusal = try await response.text()
+        #expect(refusal.contains("cannot load its stored data"))
+        #expect(refusal.contains("Start over"))
+        let output = try await callResult(harness, caller.rawValue, tool: "run_script", .object([
+          "source": .string("import { resume } from \"wuhu:session\"; result(await resume(\"\(bad.rawValue)\").then(() => \"unexpected success\", e => e.message))"),
+        ]))
+        #expect(resultText(output)?.contains("Start over") == true)
+        #expect(try await harness.store.record(bad).work == .errored)
+        #expect(try await harness.post("/v1/session/\(bad.rawValue)/restart", .null).status == .ok)
+        #expect(try await harness.store.hydrate(bad).record.work == .noWork)
+        #expect(try await harness.post("/v1/session/\(bad.rawValue)/resume", .null).status == .ok)
+        let old = try await harness.space.writer.read { db in
+          try String.fetchOne(db, sql: "SELECT payload FROM session_contents WHERE session_id = ? AND payload = '{}' LIMIT 1", arguments: [bad.rawValue])
+        }
+        #expect(old == "{}")
+      }
+    }
+  }
+
   @Test func scriptsRefuseForceSelfArchiveAndRejectNonBooleanForce() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

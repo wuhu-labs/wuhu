@@ -1,4 +1,6 @@
 import ClaudeStream
+import Dependencies
+import GRDB
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,13 +18,15 @@ public struct SessionService: Sendable {
   let sessions: SessionStore
   let archiveGrace: Duration
   private let archives = ArchiveCoordinator()
+  private let log: Logger
 
   public init(sessions: SessionStore, loopConfig: LoopConfig) async {
     await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(sessions: sessions, id: $0) }
   }
 
-  init(sessions: SessionStore, loopConfig: LoopConfig, makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
+  init(sessions: SessionStore, loopConfig: LoopConfig, log: Logger = Logger(label: "wuhu.session-service"), makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
     self.sessions = sessions
+    self.log = log
     archiveGrace = loopConfig.archiveGrace
     registry = SessionRegistry(
       makeRepo: makeRepo,
@@ -33,38 +37,114 @@ public struct SessionService: Sendable {
   }
 
   public func start() async throws {
-    do {
-      let signals = sessions.workSignals()
-      for id in try await sessions.bootSessions() {
-        try await wake(id)
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { [livenessTracker] in
+        await livenessTracker.drain()
       }
-      await withTaskGroup(of: Void.self) { group in
-        group.addTask {
-          let log = Logger(label: "wuhu.session-service")
+      group.addTask { [registry] in
+        let (parking, continuation) = AsyncStream<Void>.makeStream()
+        for await _ in parking {}
+        continuation.finish()
+        await registry.stop()
+      }
+      let signals = sessions.workSignals()
+      let boot: [SessionID]
+      let failures = Mutex<[(SessionID, any Error)]>([])
+      do {
+        boot = try await sessions.bootSessions { id, error in
+          failures.withLock { $0.append((id, error)) }
+        }
+      } catch {
+        guard !Task.isCancelled else { return }
+        log.error("boot session scan failed", metadata: ["error": "\(error)"])
+        boot = []
+      }
+      for (id, error) in failures.withLock({ $0 }) {
+        guard !Task.isCancelled else { return }
+        await failSession(id, error: error, phase: "boot eligibility")
+      }
+      for id in boot {
+        guard !Task.isCancelled else { return }
+        do {
+          try await wake(id)
+        } catch {
+          guard !Task.isCancelled else { return }
+          await failSession(id, error: error, phase: "boot wake")
+        }
+      }
+      group.addTask {
+        let pending = PendingWakes()
+        await withDiscardingTaskGroup { wakes in
           for await session in signals {
-            do {
-              try await wake(session)
-            } catch {
-              guard !Task.isCancelled else { break }
-              log.warning("wake failed for \(session.rawValue), re-signaling: \(error)")
-              signals.repost(session)
+            guard !Task.isCancelled else { break }
+            let admitted = pending.state.withLock { state in
+              if state[session] != nil {
+                state[session] = true
+                return false
+              }
+              state[session] = false
+              return true
+            }
+            guard admitted else { continue }
+            wakes.addTask {
+              while !Task.isCancelled {
+                let succeeded = await wakeWithRetry(session)
+                let repeatWake = pending.state.withLock { state in
+                  if succeeded, state[session] == true {
+                    state[session] = false
+                    return true
+                  }
+                  state[session] = nil
+                  return false
+                }
+                guard repeatWake else { return }
+              }
             }
           }
+          wakes.cancelAll()
         }
-        group.addTask { [livenessTracker] in
-          await livenessTracker.drain()
-        }
-        group.addTask { [registry] in
-          let (parking, continuation) = AsyncStream<Void>.makeStream()
-          for await _ in parking {}
-          continuation.finish()
-          await registry.stop()
-        }
-        await group.waitForAll()
       }
+      try await group.waitForAll()
+    }
+  }
+
+  private func wakeWithRetry(_ id: SessionID) async -> Bool {
+    @Dependency(\.continuousClock) var clock
+    for attempt in 0 ... 3 {
+      do {
+        try await wake(id)
+        return true
+      } catch {
+        guard !Task.isCancelled else { return false }
+        if case SessionStoreError.unknownSession = error { return false }
+        let transient: Bool
+        if let database = error as? DatabaseError {
+          transient = database.resultCode == .SQLITE_BUSY || database.resultCode == .SQLITE_LOCKED
+        } else {
+          transient = error is UnfulfilledError
+        }
+        guard transient, attempt < 3 else {
+          await failSession(id, error: error, phase: "work signal wake")
+          return false
+        }
+        log.warning("session wake retry scheduled", metadata: ["session": "\(id.rawValue)", "error": "\(error)", "attempt": "\(attempt + 1)"])
+        do {
+          try await clock.sleep(for: .seconds(1 << attempt))
+        } catch {
+          return false
+        }
+      }
+    }
+    return false
+  }
+
+  private func failSession(_ id: SessionID, error: any Error, phase: String) async {
+    log.error("\(phase) failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
+    await registry.discard(id)
+    do {
+      try await sessions.markErrored(id, message: "\(phase) failed: \(error)")
     } catch {
-      await registry.stop()
-      throw error
+      log.error("could not mark session errored", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     }
   }
 
@@ -97,7 +177,9 @@ public struct SessionService: Sendable {
 
   public func wake(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { return }
-    guard try await contractorRecord(sessionID) == nil else { return }
+    let record = try await sessions.record(sessionID)
+    if case .contractor = record.executor { return }
+    guard record.work != .errored else { return }
     try await retryingEviction {
       try await withCallback(of: Void.self) {
         send(action: .wake($0), to: sessionID)
@@ -134,14 +216,19 @@ public struct SessionService: Sendable {
 
   public func resume(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await contractorRecord(sessionID) != nil {
-      try await sessions.markResumed(sessionID)
-      return
-    }
-    try await retryingEviction {
-      try await withCallback(of: Void.self) {
-        send(action: .resume($0), to: sessionID)
+    do {
+      if try await contractorRecord(sessionID) != nil {
+        try await sessions.markResumed(sessionID)
+        return
       }
+      try await retryingEviction {
+        try await withCallback(of: Void.self) {
+          send(action: .resume($0), to: sessionID)
+        }
+      }
+    } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting {
+      await registry.discard(sessionID)
+      throw SessionError.unreadableData(sessionID)
     }
   }
 
@@ -324,4 +411,8 @@ private actor ArchiveCoordinator {
     try Task.checkCancellation()
     try await operation()
   }
+}
+
+private final class PendingWakes: Sendable {
+  let state = Mutex<[SessionID: Bool]>([:])
 }

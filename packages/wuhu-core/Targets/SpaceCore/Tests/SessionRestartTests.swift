@@ -70,6 +70,35 @@ struct SessionRestartTests {
     }
   }
 
+  @Test func restartCarriesHealthySettleStateAndRetiresQueuedInputs() async throws {
+    try await withSessionDeps {
+      let store = try makeSpace().sessions
+      let parent = try await store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
+      let task = try await store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: "morgan", executor: .kernel(.test))
+      _ = try await store.openRequest(on: task, from: parent, messageID: .init("r1"), text: "existing duty", deadline: nil)
+      _ = try await store.drainQueue(task)
+      _ = try await store.enqueue(task, input: SessionFix.message("queued", message: "queued", owesReply: true))
+      try await store.markInterrupted(task)
+      let before = try await store.hydrate(task)
+      #expect(before.undrained.count == 1)
+      _ = try await store.restart(task)
+      let hydration = try await store.hydrate(task)
+      #expect(hydration.undrained.isEmpty)
+      #expect(hydration.queueHead == hydration.queueTail)
+      #expect(hydration.transcript.kernel.items.count == 1)
+      #expect(hydration.transcript.kernel.environment.settle.openRequests[.init("r1")] != nil)
+      #expect(hydration.transcript.kernel.environment.settle.owedConversations.contains(.init("ch1")))
+      #expect(hydration.transcript.kernel.environment.settle == (try await store.settleState(task)))
+      _ = try await store.report(task, request: .init("r1"), kind: .final, messageID: .init("f1"), text: "done")
+      #expect(try await store.settleState(task).openRequests.isEmpty)
+      _ = try await store.openRequest(on: task, from: parent, messageID: .init("r2"), text: "new duty", deadline: nil)
+      _ = try await store.drainQueue(task)
+      #expect(try await store.settleState(task).openRequests[.init("r2")] != nil)
+      _ = try await store.report(task, request: .init("r2"), kind: .final, messageID: .init("f2"), text: "done again")
+      #expect(try await store.settleState(task).openRequests.isEmpty)
+    }
+  }
+
   @Test func queueIdsStayMonotonicAcrossARestart() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
