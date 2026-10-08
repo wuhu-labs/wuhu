@@ -6,7 +6,8 @@ import {
   useState,
 } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
-import { AppShell, type Crumb, Crumbs, Pill, Topbar } from '@wuhu/ui'
+import { type Crumb, Crumbs, Pill, Topbar } from '@wuhu/ui'
+import { SpaceRouteFrame } from '~/lib/space-route-frame'
 import { NewDocumentDialog } from '~/components/new-document'
 import { SessionCreateDialog } from '~/components/session-create'
 import { SpaceComposer } from '~/components/space-composer'
@@ -243,7 +244,7 @@ function SpaceBody(
 
   return (
     <>
-      <AppShell
+      <SpaceRouteFrame
         style={shellStyle}
         canvas={shownPath?.endsWith('.md') ? 'quiet' : 'atmospheric'}
         sidebar={
@@ -308,7 +309,7 @@ function SpaceBody(
             reviewAISharing: () => setReviewingAISharing(true),
           } satisfies SpaceContext}
         />
-      </AppShell>
+      </SpaceRouteFrame>
       <SessionCreateDialog
         open={creating}
         groups={members}

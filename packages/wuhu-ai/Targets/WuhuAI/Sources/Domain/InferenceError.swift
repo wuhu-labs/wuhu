@@ -13,6 +13,7 @@ import HTTPTypes
 public enum InferenceError: Error, Sendable, Equatable {
   case rateLimited(retryAt: Date?)
   case contextTooLong
+  case malformedModelMessage(message: String, reason: String?)
   case invalidInput(status: Int, body: String?)
   case transient(status: Int?, body: String?)
   case transport(TransportFailureKind)

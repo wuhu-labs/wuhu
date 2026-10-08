@@ -141,6 +141,47 @@ import WuhuAI
     #expect(await server.sent.count == 1)
   }
 
+  @Test(arguments: [nil, "invalid_tool_use_name"] as [String?])
+  func malformedModelMessageIsTypedAndRetryUsesOnlyCommittedHistory(reason: String?) async throws {
+    let failed = JSONValue.object([
+      "type": .string("response.failed"),
+      "response": .object(["error": .object([
+        "code": .string("malformed_model_message"),
+        "message": .string("The model sent a malformed tool_use block."),
+        "reason": reason.map(JSONValue.string) ?? .null,
+      ])]),
+    ])
+    let partial = Array(textResponse("resp_bad").dropLast())
+    let server = ScriptedResponsesSocket(scripts: [textResponse("resp_committed"), partial + [json(failed.jsonString())], textResponse("resp_retry")])
+    let session = ResponsesWebSocketSession()
+    try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      let reply = try await endpoint().withWebSocket(session: session, attemptID: "committed").inference(context: initial()).collect()
+      var baseline = initial()
+      baseline.messages.append(.assistant(reply))
+      await session.acknowledge(attemptID: "committed", committedMessage: reply, toolCallIDs: [:], renderedContext: baseline)
+      baseline.messages.append(.user(UserMessage(content: [.text(TextContent(text: "next"))])))
+      var sawPartial = false
+      do {
+        for try await event in endpoint().withWebSocket(session: session, attemptID: "bad").inference(context: baseline).stream() {
+          if case .textDelta = event { sawPartial = true }
+          if case .done = event { Issue.record("Failed attempt completed") }
+        }
+        Issue.record("Failed attempt returned success")
+      } catch {
+        #expect(InferenceError.normalize(error) == .malformedModelMessage(message: "The model sent a malformed tool_use block.", reason: reason))
+      }
+      #expect(sawPartial)
+      _ = try await endpoint().withWebSocket(session: session, attemptID: "retry").inference(context: baseline).collect()
+    }
+    let sent = await server.sent
+    #expect(sent.count == 3)
+    #expect(sent[1].object?["previous_response_id"] == .string("resp_committed"))
+    #expect(sent[2].object?["previous_response_id"] == nil)
+    #expect(sent[2].object?["input"]?.array?.count == 4)
+    #expect(sent[2].object?["input"]?.array?.filter { $0.object?["role"] == .string("assistant") }.count == 1)
+    await session.invalidate()
+  }
+
   @Test func malformedToolArgumentsFailInsteadOfBecomingEmptyObject() async throws {
     let server = ScriptedResponsesSocket(scripts: [toolResponse("resp_1", arguments: "not json")])
     let session = ResponsesWebSocketSession()

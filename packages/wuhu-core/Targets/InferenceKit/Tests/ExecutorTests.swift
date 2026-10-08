@@ -152,6 +152,13 @@ private func run(
 }
 
 @Suite struct ExecutorTests {
+  @Test func malformedModelMessageMetricKeepsTypedKind() {
+    let classified = InferenceMetric.classify(.malformedModelMessage(message: "bad tool_use", reason: "invalid_tool_use_name"))
+    #expect(classified.outcome == .httpError)
+    #expect(classified.kind == "malformedModelMessage")
+    #expect(classified.status == nil)
+  }
+
   @Test func normalTurnCarriesEffortVerbatimAndNoForcing() async throws {
     let (reply, requests) = try await run(try await makeExecutor(), sse: textSSE, mode: .normal)
 

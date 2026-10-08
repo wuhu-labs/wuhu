@@ -303,7 +303,10 @@ extension SessionActor {
           appended.append(.notification(nag.notification(id: uuid(), at: now)))
         }
         try await repo.append(Array(appended.items[before...]), transcript: appended)
-        try modify { $0.transcript = appended }
+        try modify {
+          $0.transcript = appended
+          $0.malformedMessages = 0
+        }
         await reply.committed(entry, appended)
         try Task.checkCancellation()
         if mode == .forcedCompact, !reply.message.callsCompact {
@@ -315,6 +318,16 @@ extension SessionActor {
         switch classify(error) {
         case .cancelled:
           return
+        case .malformedModelMessage:
+          try modify { $0.malformedMessages += 1 }
+          if live.malformedMessages >= 3 {
+            await markErrored(error: InferenceError.normalize(error))
+            return
+          }
+          idleTimeouts = 0
+          boundedFailures = 0
+          attempt += 1
+          guard await backoff(attempt: attempt) else { return }
         case .outage(let retryAt):
           idleTimeouts = 0
           boundedFailures = 0
@@ -485,6 +498,7 @@ let boundedFailureLimit = 8
 
 private enum FailureClass {
   case cancelled
+  case malformedModelMessage
   case outage(retryAt: Date?)
   case transient(timedOut: Bool)
   case contextTooLong
@@ -499,6 +513,7 @@ private func classify(_ error: any Error) -> FailureClass {
   case .cancelled: .cancelled
   // Throttling and an unreachable network are the two failures that state
   // outright they are about right now rather than about the request.
+  case .malformedModelMessage: .malformedModelMessage
   case .rateLimited(let retryAt): .outage(retryAt: retryAt)
   // Only a silent model stream escalates the idle-timeout schedule: it is the
   // one transport failure that re-burned the prompt to learn nothing.

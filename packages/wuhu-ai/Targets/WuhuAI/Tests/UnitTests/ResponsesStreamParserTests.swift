@@ -20,6 +20,34 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     return SSEEvent(data: String(data: data, encoding: .utf8)!)
   }
 
+  @Test(arguments: ["response.failed", "error"], [nil, "invalid_tool_use_input"] as [String?])
+  func malformedModelMessageIsTyped(type: String, reason: String?) async throws {
+    let error: JSONValue = .object([
+      "code": .string("malformed_model_message"),
+      "message": .string("The model sent a malformed tool_use block."),
+      "reason": reason.map(JSONValue.string) ?? .null,
+    ])
+    let event: JSONValue = type == "response.failed"
+      ? .object(["type": .string(type), "response": .object(["status": .string("failed"), "error": error])])
+      : .object(["type": .string(type), "error": error])
+    do {
+      for try await _ in parseResponsesStream(sse([SSEEvent(data: event.jsonString())]), providerID: "offline", model: "test") {}
+      Issue.record("Failed response completed")
+    } catch {
+      #expect(InferenceError.normalize(error) == .malformedModelMessage(message: "The model sent a malformed tool_use block.", reason: reason))
+    }
+  }
+
+  @Test func malformedDiagnosticsAreBoundedAndOptional() {
+    let error: JSONValue = .object([
+      "code": .string("malformed_model_message"),
+      "message": .string(String(repeating: "m", count: 9000)),
+      "reason": .string(String(repeating: "r", count: 9000)),
+    ])
+    #expect(responsesMalformedMessage(error) == .malformedModelMessage(message: String(repeating: "m", count: 8192), reason: String(repeating: "r", count: 8192)))
+    #expect(responsesMalformedMessage(.object(["code": .string("malformed_model_message")])) == .malformedModelMessage(message: "malformed_model_message", reason: nil))
+  }
+
   @Test func parsesSimpleTextStream() async throws {
     let events = [
       jsonEvent(["type": "response.output_item.added", "item": [

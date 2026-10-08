@@ -312,7 +312,11 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
               }
             }
 
+          case "error":
+            if let error = responsesMalformedMessage(dict["error"] ?? .object(dict)) { throw error }
+
           case "response.failed":
+            if let error = responsesMalformedMessage(dict["response"]?.object?["error"] ?? dict["error"] ?? .object(dict)) { throw error }
             let status = dict["response"]?.object?["status"]?.stringValue ?? type
             throw ResponsesStreamError.failed(status: status)
 

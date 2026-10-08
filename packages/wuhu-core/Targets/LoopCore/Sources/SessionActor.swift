@@ -44,6 +44,7 @@ actor SessionActor {
     var parkWake: (at: Date, task: Task<Void, Never>)?
     var archiving = false
     var claimingCompactRequest = false
+    var malformedMessages = 0
 
     var hasSettled: Bool {
       if sessionStatus.stopped {

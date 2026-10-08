@@ -71,6 +71,15 @@ summary,
   -webkit-overflow-scrolling: touch;
 }
 
+.wuhu-embedded-body {
+  position: relative;
+  min-height: 100%;
+  padding: calc(1.5rem + var(--wui-safe-top))
+    calc(1.5rem + var(--wui-safe-right))
+    calc(1.5rem + var(--wui-safe-bottom) + var(--wui-keyboard-inset, 0px))
+    calc(1.5rem + var(--wui-safe-left));
+}
+
 .wuhu-standalone {
   min-height: 100dvh;
   padding-top: max(1.5rem, env(safe-area-inset-top));

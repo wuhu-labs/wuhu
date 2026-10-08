@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { isEmbeddedHost } from '~/lib/embedded'
 import { parseEnrollFragment } from '~/lib/enroll-link'
 import { screens } from '~/lib/links'
 import { enroll } from '~/sdk/auth'
@@ -43,7 +44,11 @@ export default function Enroll() {
   return (
     <div className='wui-root'>
       <div className='wui-canvas'>
-        <main className='wuhu-standalone flex items-center justify-center'>
+        <main
+          className={`${
+            isEmbeddedHost() ? 'wuhu-embedded-body' : 'wuhu-standalone'
+          } flex items-center justify-center`}
+        >
           <div className='wuhu-card w-full max-w-sm'>
             <h1 className='wuhu-dialog-title'>Enroll this browser?</h1>
             {link == null

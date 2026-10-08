@@ -153,6 +153,7 @@ struct ResponsesWebSocketEvents {
   }
 
   static func providerError(_ value: JSONValue, status: Int?, headers: Headers) -> InferenceError {
+    if let malformed = responsesMalformedMessage(value) { return malformed }
     let object = value.object
     let code = object?["code"]?.stringValue ?? object?["type"]?.stringValue ?? "unknown_error"
     let message = String((object?["message"]?.stringValue ?? code).prefix(8192))
