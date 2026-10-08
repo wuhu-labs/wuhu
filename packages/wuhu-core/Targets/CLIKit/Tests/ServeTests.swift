@@ -11,6 +11,15 @@ struct ServeParsingTests {
     )))
   }
 
+  @Test func parsesAIDisclosureFile() throws {
+    guard case let .serve(config) = try Command.parse(["serve", "store", "--ai-disclosure", "/config/disclosure.json"]) else {
+      Issue.record("expected serve command")
+      return
+    }
+    #expect(config.aiDisclosure == "/config/disclosure.json")
+    #expect(throws: (any Error).self) { try Command.parse(["serve", "store", "--ai-disclosure"]) }
+  }
+
   @Test func parsesThePort() throws {
     #expect(try Command.parse(["serve", "store", "--port", "7000"]) == .serve(ServeCommand(
       folder: "store", host: "127.0.0.1", port: 7000, dev: false, devImport: nil, devExport: nil,

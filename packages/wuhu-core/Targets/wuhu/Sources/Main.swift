@@ -96,6 +96,7 @@ enum Main {
             certificate: config.certificate.map { URL(fileURLWithPath: $0) },
             privateKey: config.privateKey.map { URL(fileURLWithPath: $0) },
             contentHostPattern: config.contentHostPattern,
+            aiDisclosureFile: config.aiDisclosure.map { URL(fileURLWithPath: $0) },
             groupCertificate: config.groupCertificate.map { URL(fileURLWithPath: $0) },
             groupPrivateKey: config.groupPrivateKey.map { URL(fileURLWithPath: $0) },
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },

@@ -52,6 +52,8 @@ public enum ContractSchemas {
     ("NewOutput", NewOutput.jsonSchema),
     ("ObserveInput", ObserveInput.jsonSchema),
     ("ServerInfo", ServerInfo.jsonSchema),
+    ("AIDisclosure", AIDisclosure.jsonSchema),
+    ("AIProviderDisclosure", AIProviderDisclosure.jsonSchema),
     ("GroupSummary", GroupSummary.jsonSchema),
     ("TranscriptionOutput", TranscriptionOutput.jsonSchema),
     ("TranscriberInfo", TranscriberInfo.jsonSchema),

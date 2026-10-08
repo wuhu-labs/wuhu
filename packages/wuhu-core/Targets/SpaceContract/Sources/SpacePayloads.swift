@@ -129,8 +129,23 @@ public struct ServerInfo: Codable, Equatable, Sendable {
   /// `contentBase`; when both are present, `contentHost` applies.
   public let contentHost: String?
   public let features: [String]?
+  public let aiDisclosure: AIDisclosure?
   /// The group the caller acts in: its `Wuhu-Group` header, else the server's default for it.
   public let group: String?
+}
+
+@Contract
+public struct AIDisclosure: Codable, Equatable, Sendable {
+  public let version: String
+  public let providers: [AIProviderDisclosure]
+}
+
+@Contract
+public struct AIProviderDisclosure: Codable, Equatable, Sendable {
+  public let name: String
+  public let location: String
+  public let via: String
+  public let policy: String
 }
 
 /// A group as the caller stands to it, whatever group the request names. The

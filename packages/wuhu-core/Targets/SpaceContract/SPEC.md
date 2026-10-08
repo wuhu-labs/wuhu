@@ -316,3 +316,7 @@ materializes the session actor.
 ## Content host discovery
 
 `ServerInfo.contentBase` is the legacy `host[:port]` authority used as `https://<group>.<contentBase>`. `contentHost`, when present, is a template authority with exactly one `{group}` at the start; replace it with a group's id and prepend `https://`. Flat servers omit `contentBase`. `ContentHostPattern` validates a DNS authority beginning with exactly one placeholder, accepts only a port equal to the origin's effective port, and uses the origin's explicit port in its template. Matching accepts a valid `GroupID` prefix except labels with `--` at positions 3–4 (reserved for IDNA), rejects deeper host labels and overlong DNS labels, and leaves lowercasing/trailing-dot normalization to the host router.
+
+## AI disclosure in server discovery
+
+`ServerInfo.aiDisclosure` is optional and omitted when unconfigured. It is `AIDisclosure {version: String, providers: [AIProviderDisclosure]}`, where each provider has required `name`, `location`, `via`, `policy` strings. Example: `{"aiDisclosure":{"version":"trial-2026-10","providers":[{"name":"DeepSeek","location":"China","via":"Wuhu metering proxy","policy":"https://wuhu.ai/privacy"}]}}`. The operator changes `version` whenever the provider set changes, so clients can bind AI-sharing consent to that version and re-ask on change. Older server payloads decode with `aiDisclosure == nil`; older clients ignore the added field. This fact comes from operator configuration, not the tenant-editable models document.

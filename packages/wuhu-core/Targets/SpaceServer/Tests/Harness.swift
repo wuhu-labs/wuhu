@@ -32,6 +32,7 @@ struct Harness {
     publicRead: Bool = false,
     origin: String? = nil,
     contentHostPattern: String? = nil,
+    aiDisclosure: AIDisclosure? = nil,
     fingerprint: String? = nil,
     webApp: WebApp? = nil,
     views: ViewProviders? = nil,
@@ -48,7 +49,7 @@ struct Harness {
       let space = try opening()
       let hub = MachineHub(space: space)
       let handler = SpaceServer.configuredHandler(
-        space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern,
+        space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
         fingerprint: fingerprint, dev: dev, publicRead: publicRead, webApp: webApp, views: views,
         webPushApplicationServerKey: webPushApplicationServerKey,
         credentials: credentials,

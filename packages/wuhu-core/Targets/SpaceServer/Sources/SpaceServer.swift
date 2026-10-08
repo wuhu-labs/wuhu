@@ -20,11 +20,14 @@ import Serve
 import ServeNIO
 import ServeRouting
 import ServeTLS
+import struct SpaceContract.AIDisclosure
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
 import SpaceCore
 import SpaceTools
 import WebPush
+import struct WuhuVFS.DiskVFSNode
+import struct WuhuVFS.NodeTreeVFS
 
 public enum SpaceServer {
   public static let unstampedVersion: String = "0.0.0-unstamped"
@@ -35,6 +38,7 @@ public enum SpaceServer {
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
     contentHostPattern: String? = nil,
+    aiDisclosure: AIDisclosure? = nil,
     fingerprint: String? = nil,
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
@@ -48,6 +52,7 @@ public enum SpaceServer {
       sessions: sessions,
       origin: origin,
       contentHostPattern: contentHostPattern,
+      aiDisclosure: aiDisclosure,
       fingerprint: fingerprint,
       dev: dev,
       version: version,
@@ -66,6 +71,7 @@ public enum SpaceServer {
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
     contentHostPattern: String? = nil,
+    aiDisclosure: AIDisclosure? = nil,
     port: Int? = nil,
     fingerprint: String? = nil,
     dev: Bool,
@@ -149,6 +155,9 @@ public enum SpaceServer {
       // Public discovery names the group asked for and checks nothing; the
       // routes that act in it do.
       info["group"] = .string(namedGroup(request).rawValue)
+      if let aiDisclosure {
+        info["aiDisclosure"] = aiDisclosureJSON(aiDisclosure)
+      }
       return jsonResponse(.object(info))
     }
     addGroupRoutes(&router, space: space, dev: dev)
@@ -282,11 +291,22 @@ public enum SpaceServer {
     certificate: URL? = nil,
     privateKey: URL? = nil,
     contentHostPattern: String? = nil,
+    aiDisclosureFile: URL? = nil,
     groupCertificate: URL? = nil,
     groupPrivateKey: URL? = nil,
     webAppDirectory: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
+    let aiDisclosure: AIDisclosure?
+    if let aiDisclosureFile {
+      aiDisclosure = try await loadAIDisclosure(
+        from: NodeTreeVFS(root: DiskVFSNode(path: aiDisclosureFile.deletingLastPathComponent().path, isMutable: false)),
+        path: "/" + aiDisclosureFile.lastPathComponent,
+        file: aiDisclosureFile.path,
+      )
+    } else {
+      aiDisclosure = nil
+    }
     if let contentHostPattern {
       guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }
       guard let origin, ContentHost(origin: origin.absoluteString, pattern: contentHostPattern) != nil else {
@@ -405,6 +425,7 @@ public enum SpaceServer {
         sessions: sessions,
         origin: advertisedOrigin,
         contentHostPattern: contentHostPattern,
+        aiDisclosure: aiDisclosure,
         port: port,
         fingerprint: deployment.pin,
         dev: dev,

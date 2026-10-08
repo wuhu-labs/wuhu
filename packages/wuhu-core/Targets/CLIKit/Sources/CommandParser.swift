@@ -274,6 +274,7 @@ extension Command {
       if (cert == nil) != (key == nil) {
         throw UsageError(message: "serve requires --cert and --key together")
       }
+      let aiDisclosure = try parser.option("--ai-disclosure", verb: verb)
       let contentHostPattern = try parser.option("--content-host-pattern", verb: verb)
       let groupCert = try parser.option("--group-certificate", verb: verb)
       let groupKey = try parser.option("--group-private-key", verb: verb)
@@ -322,6 +323,7 @@ extension Command {
         devExport: devExport,
         certificate: cert,
         privateKey: key,
+        aiDisclosure: aiDisclosure,
         contentHostPattern: contentHostPattern,
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
@@ -1107,7 +1109,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--web-app <dir>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1118,6 +1120,9 @@ extension Command {
     serves the API and the web app; each group's content (pages, files,
     page APIs) is served at <group>.<host>, the shared group at
     shared.<host>, so the certificate must cover both <host> and *.<host>.
+    --ai-disclosure <json-file> publishes the configured AI provider set in
+    server discovery. Unreadable or invalid disclosure refuses startup.
+
     --content-host-pattern '{group}--alex.wuhu.studio' instead serves flat
     group hosts such as shared--alex.wuhu.studio. It needs --origin, starts
     with exactly one {group}, and any port must match --origin. It cannot

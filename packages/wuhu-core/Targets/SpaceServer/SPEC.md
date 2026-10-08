@@ -712,3 +712,7 @@ SessionRuntime owns the bounded Responses socket registry and its structured swe
 Assembled-runtime WebSocket tests exercise the production inference closure rather than substituting a test LoopConfig: actual durable assistant/tool commits establish a warm provider-ID continuation, successive successful calls release leases, provider 401/409 and cancellation invalidate owned leases before resume, and on-connect/inference/post-completion quota reaches the runtime UsageBoard.
 
 The session runtime logs unexpected session-service termination errors instead of silently swallowing them; cancellation is normal shutdown.
+
+## Configured AI disclosure
+
+`SpaceServer.serve(aiDisclosureFile:)` / `wuhu serve --ai-disclosure <json-file>` reads a disclosure object once at startup, before store creation or listener binding. The file format is `{"version":"trial-2026-10","providers":[{"name":"DeepSeek","location":"China","via":"Wuhu metering proxy","policy":"https://wuhu.ai/privacy"}]}`: nonempty version, at least one provider, nonempty name/location/via, and an absolute HTTPS policy URL without credentials. Unreadable files throw `AIDisclosureError.unreadable`; malformed JSON, missing fields or invalid values throw `.invalid`, with a readable option/file diagnostic. There is no fallback or silent omission. The public `GET /v1/server` payload adds exactly `aiDisclosure: {version, providers}` when configured. Without the option the response bytes are unchanged. Editing the file requires a restart, and changing provider sets requires a new consent version.

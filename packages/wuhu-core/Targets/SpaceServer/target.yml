@@ -50,6 +50,7 @@ dependencies:
   - NIOCore
   - Subprocess
   - WebPush
+  - WuhuVFS
 tests:
   size: large
   dependencies:
