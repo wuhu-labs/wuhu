@@ -312,3 +312,7 @@ materializes the session actor.
 `TranscriptionOutput` retains required text/provider/model and optional language/durationSeconds. Optional segments/words are arrays of objects `{ text, start?, end?, speaker?, confidence? }`; start/end and durationSeconds are seconds. Confidence and usage are optional provider annotations. Missing metadata is omitted, not replaced with request hints. Diarization quality is not guaranteed. These additions are backward-compatible for existing app/browser response decoders.
 
 `ErrorCode` also recognizes all eight capability error strings, including snake-case invalid_argument, so existing SpaceClient.ToolFailure preserves structured provider codes/hints rather than rendering an unknown-code body as generic HTTP text.
+
+## Content host discovery
+
+`ServerInfo.contentBase` is the legacy `host[:port]` authority used as `https://<group>.<contentBase>`. `contentHost`, when present, is a template authority with exactly one `{group}` at the start; replace it with a group's id and prepend `https://`. Flat servers omit `contentBase`. `ContentHostPattern` validates a DNS authority beginning with exactly one placeholder, accepts only a port equal to the origin's effective port, and uses the origin's explicit port in its template. Matching accepts a valid `GroupID` prefix except labels with `--` at positions 3–4 (reserved for IDNA), rejects deeper host labels and overlong DNS labels, and leaves lowercasing/trailing-dot normalization to the host router.

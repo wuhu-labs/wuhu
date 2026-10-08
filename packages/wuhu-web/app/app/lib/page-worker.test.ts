@@ -7,6 +7,7 @@ import {
   scopeKey,
 } from './shell-sdk/open-cache.js'
 import {
+  cookieViewer,
   freshMessage,
   pageWorker,
   unauthorizedMessage,
@@ -695,4 +696,25 @@ Deno.test('watch, attribute reads, methods other than POST and writes elsewhere 
     )
   }
   assertEquals(sent.length, 0)
+})
+
+Deno.test('the viewer cookie prefers the __Host- name and falls back to the self-hosted one', async () => {
+  const store = (cookies: Record<string, string>) => ({
+    get: (name: string) =>
+      Promise.resolve(
+        name in cookies ? { name, value: cookies[name] } : null,
+      ),
+  })
+  assertEquals(
+    await cookieViewer(store({ '__Host-wuhu_viewer': 'flat' })),
+    'flat',
+  )
+  assertEquals(await cookieViewer(store({ wuhu_viewer: 'legacy' })), 'legacy')
+  assertEquals(
+    await cookieViewer(
+      store({ '__Host-wuhu_viewer': 'flat', wuhu_viewer: 'legacy' }),
+    ),
+    'flat',
+  )
+  assertEquals(await cookieViewer(store({})), '')
 })

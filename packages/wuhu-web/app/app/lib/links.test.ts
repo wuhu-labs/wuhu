@@ -24,7 +24,7 @@ Deno.test('a share link to this host stays in the SPA', () => {
       'https://Space.example:5530/_/sessions/s1?view=transcript',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/_/sessions/s1?view=transcript',
   )
@@ -33,7 +33,7 @@ Deno.test('a share link to this host stays in the SPA', () => {
       'https://space.example:5530/notes/My%20Plan.md#top',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/notes/My%20Plan.md#top',
   )
@@ -45,7 +45,7 @@ Deno.test('a hostless wuhu link means this space', () => {
       'wuhu:/_/sessions/s1?view=transcript',
       'shared',
       '/notes/a.md',
-      origin,
+      { origin },
     ),
     '/_/sessions/s1?view=transcript',
   )
@@ -54,7 +54,7 @@ Deno.test('a hostless wuhu link means this space', () => {
       'WUHU:/notes/My%20Plan.md#top',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/notes/My%20Plan.md#top',
   )
@@ -63,7 +63,7 @@ Deno.test('a hostless wuhu link means this space', () => {
       'wuhu:/a/../b',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     null,
   )
@@ -75,7 +75,7 @@ Deno.test('links to other hosts and the wuhu twin leave the SPA', () => {
       'https://elsewhere.test/_/sessions/s1',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     null,
   )
@@ -84,7 +84,7 @@ Deno.test('links to other hosts and the wuhu twin leave the SPA', () => {
       'wuhu://space.example:5530/_/sessions/s1',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     null,
   )
@@ -93,7 +93,7 @@ Deno.test('links to other hosts and the wuhu twin leave the SPA', () => {
       'mailto:a@b.c',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     null,
   )
@@ -105,7 +105,7 @@ Deno.test('plain and relative paths resolve against the document', () => {
       '/_/conversations/c1',
       'shared',
       '/notes/a.md',
-      origin,
+      { origin },
     ),
     '/_/conversations/c1',
   )
@@ -114,7 +114,7 @@ Deno.test('plain and relative paths resolve against the document', () => {
       '../b.md?q=1',
       'shared',
       '/notes/deep/a.md',
-      origin,
+      { origin },
     ),
     '/notes/b.md?q=1',
   )
@@ -123,7 +123,7 @@ Deno.test('plain and relative paths resolve against the document', () => {
       '#part',
       'shared',
       '/notes/a.md',
-      origin,
+      { origin },
     ),
     null,
   )
@@ -154,7 +154,7 @@ Deno.test('a share link with ?group= opens that group in the SPA', () => {
       'https://space.example:5530/notes/a.md?q=1&group=sail-clock-pepper#top',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/notes/a.md?q=1&group=sail-clock-pepper#top',
   )
@@ -163,7 +163,7 @@ Deno.test('a share link with ?group= opens that group in the SPA', () => {
       'https://space.example:5530/_/sessions/s1?group=sail-clock-pepper',
       'design',
       undefined,
-      origin,
+      { origin },
     ),
     '/_/sessions/s1?group=sail-clock-pepper',
   )
@@ -175,7 +175,7 @@ Deno.test('an old group-host link opens that group in the SPA', () => {
       'https://sail-clock-pepper.space.example:5530/notes/a.md',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/notes/a.md?group=sail-clock-pepper',
   )
@@ -184,12 +184,12 @@ Deno.test('an old group-host link opens that group in the SPA', () => {
       'wuhu://sail-clock-pepper.localspace/notes/a.md',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     '/notes/a.md?group=sail-clock-pepper',
   )
   assertEquals(
-    spaceLink('/notes/b.md', 'sail-clock-pepper', '/notes/a.md', origin),
+    spaceLink('/notes/b.md', 'sail-clock-pepper', '/notes/a.md', { origin }),
     '/notes/b.md?group=sail-clock-pepper',
   )
   assertEquals(
@@ -197,7 +197,7 @@ Deno.test('an old group-host link opens that group in the SPA', () => {
       'https://a.b.space.example:5530/x.md',
       'shared',
       undefined,
-      origin,
+      { origin },
     ),
     null,
   )
@@ -246,4 +246,109 @@ Deno.test('a system entry opens on the system screen, a space entry as a file', 
   for (const pathname of ['/_/system', '/_/system/', '/_/systems/a.md']) {
     assertEquals(systemAddress(pathname), null)
   }
+})
+
+Deno.test('flat group hosts link into this tenant, not another tenant', () => {
+  assertEquals(
+    spaceLink(
+      'https://alice--alex.wuhu.studio/note.md',
+      'shared',
+      undefined,
+      {
+        origin: 'https://alex.wuhu.studio',
+        contentHost: '{group}--alex.wuhu.studio',
+      },
+    ),
+    '/note.md?group=alice',
+  )
+  assertEquals(
+    spaceLink(
+      'https://shared--alex.wuhu.studio/note.md',
+      'alice',
+      undefined,
+      {
+        origin: 'https://alex.wuhu.studio',
+        contentHost: '{group}--alex.wuhu.studio',
+      },
+    ),
+    '/note.md',
+  )
+  assertEquals(
+    spaceLink(
+      'https://alice--bob.wuhu.studio/note.md',
+      'shared',
+      undefined,
+      {
+        origin: 'https://alex.wuhu.studio',
+        contentHost: '{group}--alex.wuhu.studio',
+      },
+    ),
+    null,
+  )
+  assertEquals(
+    spaceLink(
+      'https://nested.alice--alex.wuhu.studio/note.md',
+      'shared',
+      undefined,
+      {
+        origin: 'https://alex.wuhu.studio',
+        contentHost: '{group}--alex.wuhu.studio',
+      },
+    ),
+    null,
+  )
+})
+
+Deno.test('flat-looking links on a self-hosted server remain external', () => {
+  assertEquals(
+    spaceLink(
+      'https://alice--box.test/note.md',
+      'shared',
+      undefined,
+      { origin: 'https://box.test' },
+    ),
+    null,
+  )
+  assertEquals(
+    spaceLink(
+      'https://alice.box.test/note.md',
+      'shared',
+      undefined,
+      { origin: 'https://box.test' },
+    ),
+    '/note.md?group=alice',
+  )
+})
+
+Deno.test('flat links follow the advertised template and canonical port', () => {
+  assertEquals(
+    spaceLink(
+      'https://alice--alex.test/note.md',
+      'shared',
+      undefined,
+      { origin: 'https://alex.test', contentHost: '{group}--alex.test:443' },
+    ),
+    '/note.md?group=alice',
+  )
+  assertEquals(
+    spaceLink(
+      'https://alice--alex.test:5530/note.md',
+      'shared',
+      undefined,
+      {
+        origin: 'https://alex.test:5530',
+        contentHost: '{group}--alex.test:5530',
+      },
+    ),
+    '/note.md?group=alice',
+  )
+  assertEquals(
+    spaceLink(
+      'https://alice--bob.test/note.md',
+      'shared',
+      undefined,
+      { origin: 'https://alex.test', contentHost: '{group}--alex.test' },
+    ),
+    null,
+  )
 })

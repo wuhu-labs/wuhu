@@ -113,3 +113,20 @@ Deno.test('a refused mint throws and is not remembered', async () => {
   equal(await client.contentOrigin(), origin)
   equal(mints.length, 2)
 })
+
+Deno.test('a flat template names each group and takes precedence over contentBase', async () => {
+  equal(await originsOf({ contentHost: '{group}--alex.wuhu.studio' }), [
+    'https://shared--alex.wuhu.studio',
+    'https://alice--alex.wuhu.studio',
+  ])
+  equal(
+    await originsOf({
+      contentHost: '{group}--alex.test:5791',
+      contentBase: 'old.test',
+    }),
+    [
+      'https://shared--alex.test:5791',
+      'https://alice--alex.test:5791',
+    ],
+  )
+})

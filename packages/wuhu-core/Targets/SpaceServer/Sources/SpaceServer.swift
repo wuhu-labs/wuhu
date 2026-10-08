@@ -11,6 +11,7 @@ import enum Credentials.UserConfig
 import Dependencies
 import Fetch
 import struct InferenceKit.AttemptLogConfig
+import struct InferenceKit.ModelsDocument
 import JSONValue
 import Logging
 import MachineContract
@@ -33,6 +34,7 @@ public enum SpaceServer {
     hub: MachineHub,
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
+    contentHostPattern: String? = nil,
     fingerprint: String? = nil,
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
@@ -45,6 +47,7 @@ public enum SpaceServer {
       hub: hub,
       sessions: sessions,
       origin: origin,
+      contentHostPattern: contentHostPattern,
       fingerprint: fingerprint,
       dev: dev,
       version: version,
@@ -62,6 +65,7 @@ public enum SpaceServer {
     hub: MachineHub,
     sessions: SessionRuntime? = nil,
     origin: String? = nil,
+    contentHostPattern: String? = nil,
     port: Int? = nil,
     fingerprint: String? = nil,
     dev: Bool,
@@ -77,7 +81,13 @@ public enum SpaceServer {
     let machines = machineSeam(hub: hub)
     // Without --origin, content lives under localhost at the listener's port.
     let localhost = "https://localhost" + (port.map { ":\($0)" } ?? "")
-    let contentHost = ContentHost(origin: origin ?? localhost) ?? ContentHost(origin: localhost)!
+    let contentHost: ContentHost
+    if let contentHostPattern {
+      precondition(origin != nil, "a content host pattern requires an origin")
+      contentHost = ContentHost(origin: origin!, pattern: contentHostPattern)!
+    } else {
+      contentHost = ContentHost(origin: origin ?? localhost) ?? ContentHost(origin: localhost)!
+    }
     @Dependency(\.date) var clock
     let contextOf: @Sendable (Request) async throws -> ToolContextVerdict = { request in
       switch try await requestPrincipal(request, space: space, date: clock) {
@@ -130,7 +140,11 @@ public enum SpaceServer {
       var info: OrderedDictionary<String, JSONValue> = [:]
       info["space"] = .string(try await space.identity().rawValue)
       info["origin"] = origin.map(JSONValue.string)
-      info["contentBase"] = .string(contentHost.base)
+      if let pattern = contentHost.pattern {
+        info["contentHost"] = .string(pattern.template)
+      } else {
+        info["contentBase"] = .string(contentHost.base)
+      }
       info["features"] = .array([.string(GroupHeader.feature)])
       // Public discovery names the group asked for and checks nothing; the
       // routes that act in it do.
@@ -171,7 +185,7 @@ public enum SpaceServer {
     }
     if let webApp {
       router.get("/*") { request, _ in
-        webAppResponse(webApp, request: request)
+        webAppResponse(webApp, request: request, contentHostPattern: contentHost.pattern)
       }
     }
     let routed = router.upgradingHandler
@@ -267,11 +281,18 @@ public enum SpaceServer {
     devExport: URL? = nil,
     certificate: URL? = nil,
     privateKey: URL? = nil,
+    contentHostPattern: String? = nil,
     groupCertificate: URL? = nil,
     groupPrivateKey: URL? = nil,
     webAppDirectory: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
+    if let contentHostPattern {
+      guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }
+      guard let origin, ContentHost(origin: origin.absoluteString, pattern: contentHostPattern) != nil else {
+        throw ContentHostPatternError.invalid
+      }
+    }
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     // Group hosts `<g>.<host>` get the group identity (a `*.<host>` leaf); the
     // bare host and every other name keep `identity`.
@@ -298,7 +319,7 @@ public enum SpaceServer {
     }
     let (identity, certificateKind) = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
     func groupHosts(_ origin: String?) -> [String: TLSIdentity] {
-      guard let groupIdentity, let host = origin.flatMap(ContentHost.init(origin:))?.host else { return [:] }
+      guard let groupIdentity, let host = origin.flatMap({ ContentHost(origin: $0) })?.host else { return [:] }
       return [host: groupIdentity]
     }
     let fingerprint = try identity.fingerprint()
@@ -345,7 +366,9 @@ public enum SpaceServer {
       origin: advertisedOrigin ?? "https://\(host):\(port)",
       spaceID: try await space.identity().rawValue,
     )
-    claudeCode.installInBackground()
+    if preinstallClaude(flatHosts: contentHostPattern != nil, models: await modelsDocument(space: space)) {
+      claudeCode.installInBackground()
+    }
     let sessions = await SessionRuntime.assemble(
       space: space,
       hub: hub,
@@ -381,6 +404,7 @@ public enum SpaceServer {
         hub: hub,
         sessions: sessions,
         origin: advertisedOrigin,
+        contentHostPattern: contentHostPattern,
         port: port,
         fingerprint: deployment.pin,
         dev: dev,
@@ -480,6 +504,11 @@ private func pemIdentity(certificate: URL, privateKey: URL) throws -> TLSIdentit
   )
 }
 
+public enum ContentHostPatternError: Error, Equatable {
+  case invalid
+  case groupCertificate
+}
+
 public enum GroupTLSError: Error, Equatable, CustomStringConvertible {
   case unpaired
   case noOrigin
@@ -564,4 +593,8 @@ func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
   case .machineUnattached, .execNotFound, .severed:
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
   }
+}
+
+func preinstallClaude(flatHosts: Bool, models: InferenceKit.ModelsDocument?) -> Bool {
+  !flatHosts || models?.providers.values.contains(where: { $0.dialect == .claude }) == true
 }

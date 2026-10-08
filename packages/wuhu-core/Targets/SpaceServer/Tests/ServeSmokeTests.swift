@@ -158,6 +158,41 @@ import Testing
       )
     }
   }
+
+  @Test func aContentHostPatternIsExclusiveWithAGroupCertificate() async throws {
+    let base = try scratch()
+    defer { try? FileManager.default.removeItem(at: base) }
+    let group = try TLSIdentity.selfSigned(hosts: ["*.space.test"])
+    let certificate = base.appendingPathComponent("group.pem")
+    let privateKey = base.appendingPathComponent("group.key")
+    try group.certificatePEM.write(to: certificate, atomically: true, encoding: .utf8)
+    try group.privateKeyPEM.write(to: privateKey, atomically: true, encoding: .utf8)
+    await #expect(throws: ContentHostPatternError.groupCertificate) {
+      try await SpaceServer.serve(
+        folder: base.appendingPathComponent("store"), port: 0, origin: URL(string: "https://space.test:5530"),
+        dev: true, contentHostPattern: "{group}--space.test",
+        groupCertificate: certificate, groupPrivateKey: privateKey,
+      )
+    }
+    #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("store").path))
+  }
+
+  @Test(arguments: [
+    (nil, "{group}--space.test"),
+    ("https://space.test:5530", "space.test"),
+    ("https://space.test:5530", "{group}--space.test:443"),
+  ] as [(String?, String)])
+  func aContentHostPatternNeedsAnOriginAndAValidTemplate(origin: String?, pattern: String) async throws {
+    let base = try scratch()
+    defer { try? FileManager.default.removeItem(at: base) }
+    await #expect(throws: ContentHostPatternError.invalid) {
+      try await SpaceServer.serve(
+        folder: base.appendingPathComponent("store"), port: 0, origin: origin.flatMap(URL.init(string:)),
+        dev: true, contentHostPattern: pattern,
+      )
+    }
+    #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("store").path))
+  }
 }
 
 // A P-256 key and self-signed leaf spelled with explicit curve parameters

@@ -31,6 +31,7 @@ struct Harness {
     dev: Bool = true,
     publicRead: Bool = false,
     origin: String? = nil,
+    contentHostPattern: String? = nil,
     fingerprint: String? = nil,
     webApp: WebApp? = nil,
     views: ViewProviders? = nil,
@@ -38,7 +39,7 @@ struct Harness {
     credentials: CredentialResolver = .unavailable,
     opening: () throws -> Space = { try Space.inMemory() },
   ) throws {
-    let contentHost = ContentHost(origin: origin ?? "https://localhost")!
+    let contentHost = ContentHost(origin: origin ?? "https://localhost", pattern: contentHostPattern)!
     let (space, handler) = try withDependencies {
       $0.date = .constant(fixedDate)
       $0.continuousClock = ContinuousClock()
@@ -47,7 +48,7 @@ struct Harness {
       let space = try opening()
       let hub = MachineHub(space: space)
       let handler = SpaceServer.configuredHandler(
-        space: space, hub: hub, origin: origin,
+        space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern,
         fingerprint: fingerprint, dev: dev, publicRead: publicRead, webApp: webApp, views: views,
         webPushApplicationServerKey: webPushApplicationServerKey,
         credentials: credentials,

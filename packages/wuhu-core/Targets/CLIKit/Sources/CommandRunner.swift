@@ -23,6 +23,7 @@ public struct ServeCommand: Equatable, Sendable {
   public var devExport: String?
   public var certificate: String?
   public var privateKey: String?
+  public var contentHostPattern: String? = nil
   public var groupCertificate: String? = nil
   public var groupPrivateKey: String? = nil
   public var webApp: String? = nil

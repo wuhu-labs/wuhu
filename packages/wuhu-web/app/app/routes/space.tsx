@@ -62,6 +62,7 @@ export interface SpaceContext {
   group: string
   client: SpaceClient
   contentOrigin: ContentOrigin
+  contentHost: string | null
   viewRevs: Record<string, number>
   capability: SessionCapability
   members: ConversationMemberPayload[]
@@ -138,6 +139,7 @@ function SpaceBody(
   const navigate = useNavigate()
   const location = useLocation()
   const [spaceName, setSpaceName] = useState('Wuhu')
+  const [contentHost, setContentHost] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newDocument, setNewDocument] = useState<
     { directory: string; group: string } | null
@@ -174,7 +176,10 @@ function SpaceBody(
     let cancelled = false
     server.info()
       .then((info) => {
-        if (!cancelled && info.space) setSpaceName(info.space)
+        if (!cancelled) {
+          if (info.space) setSpaceName(info.space)
+          setContentHost(info.contentHost ?? null)
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -294,6 +299,7 @@ function SpaceBody(
             group,
             client,
             contentOrigin,
+            contentHost,
             viewRevs,
             capability,
             members: access.members,

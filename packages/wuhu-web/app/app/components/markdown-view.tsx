@@ -83,12 +83,14 @@ export function Markdown({
   children: string
   sourcePath?: string
 }) {
-  const { group } = useOutletContext<SpaceContext>()
+  const { group, contentHost } = useOutletContext<SpaceContext>()
   const components = useMemo<Components>(
     () => ({
       ...blockComponents,
       a({ node: _node, href, children: label, ...props }) {
-        const to = href == null ? null : spaceLink(href, group, sourcePath)
+        const to = href == null
+          ? null
+          : spaceLink(href, group, sourcePath, { contentHost })
         if (to == null) {
           return (
             <a href={href} {...props}>
@@ -103,7 +105,7 @@ export function Markdown({
         )
       },
     }),
-    [group, sourcePath],
+    [group, sourcePath, contentHost],
   )
   return (
     // Raw HTML in markdown stays inert: no rehype-raw, so react-markdown drops

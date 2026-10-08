@@ -4,6 +4,7 @@
   import Foundation
 #endif
 
+import struct SpaceContract.ContentHostPattern
 import struct SpaceContract.GroupID
 
 /// The host a space's content lives under: the bare host serves the API and
@@ -15,12 +16,19 @@ struct ContentHost: Sendable, Equatable {
   let base: String
   /// The bare host's origin, where the web app runs.
   let origin: String
+  let pattern: ContentHostPattern?
 
   /// The host of `origin`, which is --origin or, without one,
   /// `https://localhost:<port>`.
-  init?(origin: String) {
+  init?(origin: String, pattern: String? = nil) {
     guard let url = URL(string: origin), let host = url.host.map(withoutTrailingDot)?.lowercased(), !host.isEmpty
     else { return nil }
+    if let pattern {
+      guard let parsed = ContentHostPattern(pattern, origin: url) else { return nil }
+      self.pattern = parsed
+    } else {
+      self.pattern = nil
+    }
     self.host = host
     base = url.port.map { "\(host):\($0)" } ?? host
     self.origin = "\(url.scheme ?? "https")://\(base)"
@@ -31,6 +39,11 @@ struct ContentHost: Sendable, Equatable {
   /// 421, and the browser retries on a fresh one. Every other name — an IP
   /// address, a LAN name a machine dials — reaches the API.
   func plane(of requestHost: String?) -> HostPlane {
+    if let pattern {
+      guard let requested = requestHost.map(withoutTrailingDot)?.lowercased() else { return .misdirected }
+      if requested == host { return .api }
+      return pattern.group(host: requested).map(HostPlane.content) ?? .misdirected
+    }
     guard let requested = requestHost.map(withoutTrailingDot)?.lowercased(), requested.hasSuffix("." + host)
     else { return .api }
     let label = requested.dropLast(host.count + 1)

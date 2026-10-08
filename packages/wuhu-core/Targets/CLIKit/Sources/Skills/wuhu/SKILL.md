@@ -178,6 +178,8 @@ seconds. `wuhu device list` / `wuhu device set` are the CLI side (see the
 - **The space's host** (the `--origin` host, else `localhost`) — `POST /v1/tools/<name>`, `GET /v1/observe`, and (in binaries with the embedded SPA) the Wuhu web app on every non-`/v1` path. No space content.
 - **A group's host**, `<group>.<host>` on the same port (`shared.<host>` for `shared`; the base is `contentBase` in `GET /v1/server`) — that group's files served raw at `/` (`index.html` / `index.md` resolution, MIME by extension). This is the origin space HTML/JS runs on; `/_/` is reserved for page-embedded query/observe (`/_/query`, `/_/observe`) and bundled view providers. No `/v1`.
 
+Hosted servers can advertise `contentHost` from `GET /v1/server`, a template such as `{group}--alex.wuhu.studio`. Replace `{group}` with the group's id and prepend `https://`; otherwise use `https://<group>.<contentBase>` as on self-hosted servers. `wuhu serve --content-host-pattern '{group}--alex.wuhu.studio' --origin https://alex.wuhu.studio` selects flat hosts, requires exactly one `{group}` at the start, requires any pattern port to match the origin, and is exclusive with `--group-certificate`.
+
 Both sit behind the auth wall by default: API calls need an enrolled device and group-host reads a live browser read session. Serving with `--public-read` opens content reads of `shared.<host>` to anyone (other group hosts still need a read session, writes stay walled); `--dev` drops both walls for local iteration. A link to a group's page is `https://<host>/<path>?group=<group>` (no `group` for `shared`), which the web app opens.
 
 Two document conventions the web app understands:

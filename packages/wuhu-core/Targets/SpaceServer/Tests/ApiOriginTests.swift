@@ -131,6 +131,7 @@ import Testing
       #expect(response.status == .ok)
       let info = try await json(response).object
       #expect(info?["contentBase"] == .string(base))
+      #expect(info?["contentHost"] == nil)
     }
   }
 

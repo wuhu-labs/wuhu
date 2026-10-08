@@ -170,3 +170,20 @@ struct ServeRoutingTests {
     #expect(await received.stderr.hasSuffix("bind failed\n"))
   }
 }
+
+@Suite struct FlatServeParsingTests {
+  @Test func parsesTheFlatTemplate() throws {
+    guard case let .serve(config) = try Command.parse([
+      "serve", "store", "--origin", "https://alex.test:5530", "--content-host-pattern", "{group}--alex.test:5530",
+    ]) else { Issue.record("expected serve"); return }
+    #expect(config.contentHostPattern == "{group}--alex.test:5530")
+  }
+
+  @Test(arguments: [
+    ["serve", "store", "--content-host-pattern", "{group}--alex.test"],
+    ["serve", "store", "--origin", "https://alex.test", "--content-host-pattern", "{group}--alex.test:5530"],
+    ["serve", "store", "--origin", "https://alex.test", "--content-host-pattern", "{group}--alex.test", "--cert", "cert", "--key", "key", "--group-certificate", "gc", "--group-private-key", "gk"],
+  ]) func rejectsInvalidConfiguration(arguments: [String]) {
+    #expect(throws: UsageError.self) { try Command.parse(arguments) }
+  }
+}

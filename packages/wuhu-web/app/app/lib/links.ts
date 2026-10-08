@@ -122,13 +122,28 @@ const externalHref = /^([a-z][a-z0-9+.-]*:|\/\/)/i
 
 // The group a link's host names: an https link's own host is shared, its
 // `?group=` then naming any other, and one label under it, the form older
-// share links take, that label's group; a wuhu link names `<g>.localspace`.
+// share links take, that label's group. Flat hosts use `<group>--<host>`;
+// a wuhu link names `<g>.localspace`.
 function hostGroup(
   linkHost: string,
   host: string,
   wuhu: boolean,
+  contentHost: string | null | undefined,
 ): string | null {
   if (!wuhu && linkHost === host) return sharedGroup
+  if (!wuhu && contentHost != null) {
+    const [prefix, rawSuffix] = contentHost.split('{group}')
+    const suffix = rawSuffix?.replace(/:443$/, '')
+    if (
+      suffix != null && linkHost.startsWith(prefix) && linkHost.endsWith(suffix)
+    ) {
+      const group = linkHost.slice(
+        prefix.length,
+        linkHost.length - suffix.length,
+      )
+      return group.includes('.') ? null : group
+    }
+  }
   const parent = wuhu ? 'localspace' : host
   if (!linkHost.endsWith(`.${parent}`)) return null
   const label = linkHost.slice(0, -parent.length - 1)
@@ -142,7 +157,10 @@ export function spaceLink(
   href: string,
   group: string,
   sourcePath?: string,
-  origin: string = globalThis.location?.origin ?? '',
+  { origin = globalThis.location?.origin ?? '', contentHost }: {
+    origin?: string
+    contentHost?: string | null
+  } = {},
 ): string | null {
   const hostless = /^wuhu:\/(?!\/)/i.test(href)
   if (hostless || /^(https|wuhu):\/\//i.test(href)) {
@@ -151,7 +169,7 @@ export function spaceLink(
     if (url == null) return null
     const linked = hostless
       ? group
-      : hostGroup(url.host, host!, /^wuhu:/i.test(href))
+      : hostGroup(url.host, host!, /^wuhu:/i.test(href), contentHost)
     if (linked == null) return null
     const query = url.query == null ? '' : `?${url.query}`
     const fragment = url.fragment == null ? '' : `#${url.fragment}`

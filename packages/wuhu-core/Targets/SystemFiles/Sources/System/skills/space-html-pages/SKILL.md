@@ -5,7 +5,9 @@ description: Author live HTML pages served from space files — read and write s
 
 # Live HTML pages in a Wuhu space
 
-Any HTML file in the space is a real page on its group's host, `https://<group>.<contentBase>` (`contentBase` from `GET /v1/server`). Write `/dash.html`, open it, done — no build step, native ESM only, and everything the page fetches must be same-origin.
+Hosted servers can advertise `contentHost` from `GET /v1/server`, a template such as `{group}--alex.wuhu.studio`. Replace `{group}` with the group's id and prepend `https://`; otherwise use `https://<group>.<contentBase>` as on self-hosted servers. `wuhu serve --content-host-pattern '{group}--alex.wuhu.studio' --origin https://alex.wuhu.studio` selects flat hosts, requires exactly one `{group}` at the start, requires any pattern port to match the origin, and is exclusive with `--group-certificate`.
+
+Any HTML file in the space is a real page on its group's host. Discover it through `GET /v1/server`: use `https://` plus `contentHost` with `{group}` replaced by the group's id when advertised, otherwise `https://<group>.<contentBase>`. Write `/dash.html`, open it, done — no build step, native ESM only, and everything the page fetches must be same-origin.
 
 ## Data: `wuhu:space`
 

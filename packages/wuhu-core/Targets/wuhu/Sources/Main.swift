@@ -95,6 +95,7 @@ enum Main {
             devExport: config.devExport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             certificate: config.certificate.map { URL(fileURLWithPath: $0) },
             privateKey: config.privateKey.map { URL(fileURLWithPath: $0) },
+            contentHostPattern: config.contentHostPattern,
             groupCertificate: config.groupCertificate.map { URL(fileURLWithPath: $0) },
             groupPrivateKey: config.groupPrivateKey.map { URL(fileURLWithPath: $0) },
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },

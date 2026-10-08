@@ -74,6 +74,10 @@ function contentOriginOf(
   info: ServerInfo,
   group: string,
 ): string | null {
+  if (info.contentHost != null) {
+    return new URL(`https://${info.contentHost.replace('{group}', group)}`)
+      .origin
+  }
   if (info.contentBase == null) return null
   return new URL(`https://${group}.${info.contentBase}`).origin
 }

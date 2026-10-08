@@ -62,13 +62,20 @@ function forgiving(cache) {
   }
 }
 
+// A flat-host server names the viewer in __Host-wuhu_viewer, a self-hosted one
+// in wuhu_viewer.
+export async function cookieViewer(cookieStore) {
+  return (await cookieStore.get('__Host-wuhu_viewer'))?.value ??
+    (await cookieStore.get('wuhu_viewer'))?.value ?? ''
+}
+
 // Page HTML, /_/query and /_/space/query are stale-while-revalidate;
 // /_/observe?sql= and /_/space/observe answer with the cached snapshot as their
 // first event, then the live stream. /_/space/watch and page writes go
 // straight to the network, and nothing of a write is kept.
 //
 // Entries are written under the viewer the server names in Wuhu-Viewer and
-// read under the one the browser's wuhu_viewer cookie names, which the mint
+// read under the one the browser's viewer cookie names, which the mint
 // sets with the read cookie, so one account's results never answer another.
 // The first request after that cookie changes, sign-out included, purges what
 // the previous viewer kept.
@@ -287,8 +294,7 @@ if (
     cache: openCache({ budgets: pageCacheBudgets }),
     fetch: (input, init) => fetch(input, init),
     origin: self.location.origin,
-    viewer: () =>
-      self.cookieStore.get('wuhu_viewer').then((cookie) => cookie?.value ?? ''),
+    viewer: () => cookieViewer(self.cookieStore),
   })
   self.addEventListener('install', () => self.skipWaiting())
   self.addEventListener(

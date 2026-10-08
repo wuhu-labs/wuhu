@@ -7,6 +7,7 @@
 import Fetch
 import HTTPTypes
 import Serve
+import struct SpaceContract.ContentHostPattern
 import struct SpaceContract.GroupID
 import struct SpaceContract.SpaceURL
 
@@ -56,7 +57,7 @@ func isAPIPath(_ url: URL) -> Bool {
   return String(first).removingPercentEncoding.map { $0 == "v1" } ?? true
 }
 
-func webAppResponse(_ webApp: WebApp, request: Request) -> Response {
+func webAppResponse(_ webApp: WebApp, request: Request, contentHostPattern: ContentHostPattern? = nil) -> Response {
   guard let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else {
     return plainStatus(.badRequest)
   }
@@ -77,16 +78,16 @@ func webAppResponse(_ webApp: WebApp, request: Request) -> Response {
       return Response(status: .ok, headers: headers, body: .bytes(data, contentType: mimeType(for: path)))
     }
   }
-  return shellResponse(webApp, components: components)
+  return shellResponse(webApp, components: components, contentHostPattern: contentHostPattern)
 }
 
 private let appStoreID = "6807771419"
 private let serviceWorkerAllowed = HTTPField.Name("Service-Worker-Allowed")!
 
-private func shellResponse(_ webApp: WebApp, components: URLComponents) -> Response {
+private func shellResponse(_ webApp: WebApp, components: URLComponents, contentHostPattern: ContentHostPattern?) -> Response {
   var shell = String(decoding: webApp.files["index.html"]!, as: UTF8.self)
   if let head = shell.firstRange(of: "</head>") {
-    shell.insert(contentsOf: "<meta name=\"apple-itunes-app\" content=\"\(escaped(smartBanner(components)))\">", at: head.lowerBound)
+    shell.insert(contentsOf: "<meta name=\"apple-itunes-app\" content=\"\(escaped(smartBanner(components, contentHostPattern: contentHostPattern)))\">", at: head.lowerBound)
   }
   let data = Data(shell.utf8)
   var headers = staticHeaders(path: "index.html", length: data.count)
@@ -96,13 +97,19 @@ private func shellResponse(_ webApp: WebApp, components: URLComponents) -> Respo
 
 // The SPA names a group by `?group=`; the app's link names it by host label,
 // `wuhu://<group>.<host>/<path>`.
-private func smartBanner(_ components: URLComponents) -> String {
+private func smartBanner(_ components: URLComponents, contentHostPattern: ContentHostPattern?) -> String {
   var authority = (components.percentEncodedHost ?? "") + (components.port.map { ":\($0)" } ?? "")
   var items = components.percentEncodedQuery.map { $0.split(separator: "&", omittingEmptySubsequences: false) } ?? []
   if let index = items.firstIndex(where: { $0.hasPrefix("group=") }) {
     let group = items[index].dropFirst("group=".count)
     guard GroupID.isValid(group) else { return "app-id=\(appStoreID)" }
-    if group != GroupID.shared.rawValue { authority = "\(group).\(authority)" }
+    if group != GroupID.shared.rawValue {
+      if let contentHostPattern {
+        authority = String(group) + contentHostPattern.template.dropFirst("{group}".count)
+      } else {
+        authority = "\(group).\(authority)"
+      }
+    }
     items.remove(at: index)
   }
   let query = items.isEmpty ? "" : "?" + items.joined(separator: "&")

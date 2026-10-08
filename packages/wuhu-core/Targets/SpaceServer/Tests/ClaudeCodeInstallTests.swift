@@ -5,6 +5,7 @@ import Crypto
 import Dependencies
 import Fetch
 import Foundation
+import struct InferenceKit.ModelsDocument
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -15,6 +16,17 @@ private struct Offline: Error, CustomStringConvertible {
 }
 
 @Suite struct ClaudeCodeInstallTests {
+  @Test func onlyFlatServersWithoutClaudeSkipPreinstallation() {
+    #expect(preinstallClaude(flatHosts: false, models: nil))
+    #expect(!preinstallClaude(flatHosts: true, models: nil))
+    #expect(!preinstallClaude(flatHosts: true, models: ModelsDocument(providers: [:])))
+    for dialect in [ModelsDocument.Dialect.anthropic, .responses, .codex, .claude] {
+      let models = ModelsDocument(providers: ["provider": .init(dialect: dialect, baseURL: URL(string: "https://models.test")!, models: [:])])
+      #expect(preinstallClaude(flatHosts: true, models: models) == (dialect == .claude))
+      #expect(preinstallClaude(flatHosts: false, models: models))
+    }
+  }
+
   @Test func aSessionStartWaitsForTheInstallAndRetriesOneThatFailed() async throws {
     let offline = Mutex(true)
     let fetches = Mutex(0)

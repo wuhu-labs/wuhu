@@ -39,6 +39,7 @@ func webResponse(
       caller: WebCaller(
         group: group, crossOrigin: crossOrigin(request, paired: paired != nil),
         contentOrigins: contentOrigins(request: request), webApp: contentHost.origin,
+        cookies: contentHost.pattern == nil ? .legacy : .hostOnly,
       ),
       now: now,
       dev: dev,
@@ -130,12 +131,21 @@ private func contentOrigins(request: Request) -> [String] {
 /// The group a web request reads, from its Host, whether its caller is a
 /// cross-origin script the cookie must not serve, and the origin a page on
 /// this host has.
+enum ContentCookies {
+  case legacy
+  case hostOnly
+
+  var read: String { self == .legacy ? "wuhu_read" : "__Host-wuhu_read" }
+  var viewer: String { self == .legacy ? "wuhu_viewer" : "__Host-wuhu_viewer" }
+}
+
 struct WebCaller {
   let group: GroupID
   let crossOrigin: Bool
   let contentOrigins: [String]
   /// The bare host's origin, where the web app runs.
   var webApp: String? = nil
+  let cookies: ContentCookies
 }
 
 // Sibling group hosts are same-site, so SameSite=Lax still attaches a host's
@@ -181,10 +191,10 @@ private func routedWebResponse(
     case .options:
       return Response(status: .noContent)
     case .post:
-      return try await mintReadSession(space: space, group: caller.group, dev: dev, now: now, request: request)
+      return try await mintReadSession(space: space, group: caller.group, dev: dev, now: now, cookies: caller.cookies, request: request)
     case .delete:
       if caller.crossOrigin { return crossOriginRefusal() }
-      return try await endReadSession(space: space, request: request)
+      return try await endReadSession(space: space, cookies: caller.cookies, request: request)
     default:
       return plainStatus(.methodNotAllowed)
     }
@@ -226,7 +236,7 @@ private func routedWebResponse(
   }
 
   let viewer: AccountID?
-  let admitted = try await admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, request: request)
+  let admitted = try await admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, cookies: caller.cookies, request: request)
   switch guarded(admitted, caller: caller, script: false) {
   case let .refused(wall):
     if let opened = openedInWebApp(request, caller: caller) { return opened }
@@ -343,16 +353,16 @@ enum ContentAdmission {
   case refused(Response)
 }
 
-func admission(space: Space, group: GroupID, dev: Bool, publicRead: Bool, request: Request) async throws -> ContentAdmission {
+func admission(space: Space, group: GroupID, dev: Bool, publicRead: Bool, cookies: ContentCookies, request: Request) async throws -> ContentAdmission {
   if dev || (publicRead && group == .shared) { return .admitted(nil) }
-  return try await cookieAdmission(space: space, group: group, request: request)
+  return try await cookieAdmission(space: space, group: group, cookies: cookies, request: request)
 }
 
 /// A live read session minted on this host, for a member of its group.
-func cookieAdmission(space: Space, group: GroupID, request: Request) async throws -> ContentAdmission {
+func cookieAdmission(space: Space, group: GroupID, cookies: ContentCookies, request: Request) async throws -> ContentAdmission {
   // Every wuhu_read the browser sent is tried: a sibling host may toss its
   // own cookie at the parent domain, and it must not shadow this host's.
-  for raw in readCookieTokens(request: request) {
+  for raw in readCookieTokens(request: request, cookies: cookies) {
     guard let account = try await space.account(readSession: ReadSessionToken(rawValue: raw), in: group) else { continue }
     let member = group == .shared ? true : try await space.isMember(account, of: group)
     guard member else {
@@ -398,7 +408,7 @@ private let viewerCookieTTL: TimeInterval = 400 * 24 * 3600
 
 // The cookie carries no Domain: it is host-only, so a group host's session
 // never reaches the bare host or a sibling group.
-private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date, request: Request) async throws -> Response {
+private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date, cookies: ContentCookies, request: Request) async throws -> Response {
   if dev, request.headers[.authorization] == nil {
     return Response(status: .noContent)
   }
@@ -407,7 +417,7 @@ private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date,
     if group != .shared, try await !space.isMember(credential.key.account, of: group) {
       return errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(group.rawValue)")
     }
-    let supersedes = readCookieTokens(request: request).first.map(ReadSessionToken.init(rawValue:))
+    let supersedes = readCookieTokens(request: request, cookies: cookies).first.map(ReadSessionToken.init(rawValue:))
     let token = try await space.createReadSession(
       account: credential.key.account,
       group: group,
@@ -417,11 +427,11 @@ private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date,
     var headers = Headers()
     headers.append(HTTPField(
       name: .setCookie,
-      value: "wuhu_read=\(token.rawValue); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=\(Int(readSessionTTL))",
+      value: "\(cookies.read)=\(token.rawValue); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=\(Int(readSessionTTL))",
     ))
     headers.append(HTTPField(
       name: .setCookie,
-      value: "wuhu_viewer=\(credential.key.account.rawValue); Path=/; Secure; SameSite=Lax; Max-Age=\(Int(viewerCookieTTL))",
+      value: "\(cookies.viewer)=\(credential.key.account.rawValue); Path=/; Secure; SameSite=Lax; Max-Age=\(Int(viewerCookieTTL))",
     ))
     return Response(status: .noContent, headers: headers)
   case let .rejected(response):
@@ -433,21 +443,22 @@ private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date,
 
 // Ending a read session authenticates by the cookie it deletes; absent or
 // unknown cookies still succeed so logout is idempotent.
-private func endReadSession(space: Space, request: Request) async throws -> Response {
-  for token in readCookieTokens(request: request) {
+private func endReadSession(space: Space, cookies: ContentCookies, request: Request) async throws -> Response {
+  for token in readCookieTokens(request: request, cookies: cookies) {
     try await space.deleteReadSession(ReadSessionToken(rawValue: token))
   }
   var headers = Headers()
-  headers.append(HTTPField(name: .setCookie, value: "wuhu_read=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"))
-  headers.append(HTTPField(name: .setCookie, value: "wuhu_viewer=; Path=/; Secure; SameSite=Lax; Max-Age=0"))
+  headers.append(HTTPField(name: .setCookie, value: "\(cookies.read)=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"))
+  headers.append(HTTPField(name: .setCookie, value: "\(cookies.viewer)=; Path=/; Secure; SameSite=Lax; Max-Age=0"))
   return Response(status: .noContent, headers: headers)
 }
 
-private func readCookieTokens(request: Request) -> [String] {
+private func readCookieTokens(request: Request, cookies: ContentCookies) -> [String] {
   var tokens: [String] = []
   for pair in (request.headers[.cookie] ?? "").split(separator: ";") {
     let trimmed = pair.trimmingCharacters(in: .whitespaces)
-    if trimmed.hasPrefix("wuhu_read=") { tokens.append(String(trimmed.dropFirst("wuhu_read=".count))) }
+    let prefix = cookies.read + "="
+    if trimmed.hasPrefix(prefix) { tokens.append(String(trimmed.dropFirst(prefix.count))) }
   }
   return tokens
 }
@@ -511,7 +522,7 @@ private func underscoreResponse(
 /// but only its own origin and the paired SPA may script its reads.
 func scriptAdmission(space: Space, caller: WebCaller, dev: Bool, publicRead: Bool, request: Request) async throws -> ContentAdmission {
   try await guarded(
-    admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, request: request),
+    admission(space: space, group: caller.group, dev: dev, publicRead: publicRead, cookies: caller.cookies, request: request),
     caller: caller,
     script: true,
   )

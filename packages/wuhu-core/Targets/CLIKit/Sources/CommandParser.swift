@@ -274,6 +274,7 @@ extension Command {
       if (cert == nil) != (key == nil) {
         throw UsageError(message: "serve requires --cert and --key together")
       }
+      let contentHostPattern = try parser.option("--content-host-pattern", verb: verb)
       let groupCert = try parser.option("--group-certificate", verb: verb)
       let groupKey = try parser.option("--group-private-key", verb: verb)
       if (groupCert == nil) != (groupKey == nil) {
@@ -294,6 +295,14 @@ extension Command {
         }
         origin = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
       }
+      if let contentHostPattern {
+        guard groupCert == nil else {
+          throw UsageError(message: "serve: --content-host-pattern is exclusive with --group-certificate")
+        }
+        guard let origin, let url = URL(string: origin), ContentHostPattern(contentHostPattern, origin: url) != nil else {
+          throw UsageError(message: "serve: --content-host-pattern needs --origin and a DNS authority starting with exactly one {group}; any port must match --origin")
+        }
+      }
       if groupCert != nil, origin == nil {
         throw UsageError(message: "serve: --group-certificate needs --origin, whose host names the group hosts")
       }
@@ -313,6 +322,7 @@ extension Command {
         devExport: devExport,
         certificate: cert,
         privateKey: key,
+        contentHostPattern: contentHostPattern,
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
         webApp: webApp,
@@ -1097,7 +1107,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--web-app <dir>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--web-app <dir>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1108,6 +1118,10 @@ extension Command {
     serves the API and the web app; each group's content (pages, files,
     page APIs) is served at <group>.<host>, the shared group at
     shared.<host>, so the certificate must cover both <host> and *.<host>.
+    --content-host-pattern '{group}--alex.wuhu.studio' instead serves flat
+    group hosts such as shared--alex.wuhu.studio. It needs --origin, starts
+    with exactly one {group}, and any port must match --origin. It cannot
+    be combined with --group-certificate. Foreign hosts get 421.
     With --group-certificate/--group-private-key (a *.<host> leaf, needs
     --origin and --cert/--key) the listener presents it to the group
     hosts by SNI, and the --cert leaf to every other name. serve refuses

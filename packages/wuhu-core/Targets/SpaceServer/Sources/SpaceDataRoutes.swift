@@ -196,7 +196,7 @@ private func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request:
   if dev {
     viewer = nil
   } else {
-    switch try await cookieAdmission(space: space, group: caller.group, request: request) {
+    switch try await cookieAdmission(space: space, group: caller.group, cookies: caller.cookies, request: request) {
     case let .refused(wall): return .refused(wall)
     case let .admitted(account): viewer = account
     }

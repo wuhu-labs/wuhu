@@ -50,7 +50,7 @@ export function DocumentEditor({
   onChange: (markdown: string) => void
 }) {
   const navigate = useNavigate()
-  const { group } = useOutletContext<SpaceContext>()
+  const { group, contentHost } = useOutletContext<SpaceContext>()
   const loaded = useRef(content)
   const editor = useEditor({
     ...markdownEditorOptions(content, editable, (markdown) => {
@@ -101,7 +101,7 @@ export function DocumentEditor({
     if (anchor == null || !(event.currentTarget.contains(anchor))) return
     const href = anchor.getAttribute('href')
     if (href == null) return
-    const to = spaceLink(href, group, sourcePath)
+    const to = spaceLink(href, group, sourcePath, { contentHost })
     if (to != null) {
       event.preventDefault()
       void navigate(to)
