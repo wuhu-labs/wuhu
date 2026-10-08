@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import SpaceContract
 
@@ -76,10 +80,7 @@ private func kindWord(_ kind: EntryKind) -> String {
 }
 
 func formatTimestamp(_ seconds: Double) -> String {
-  let formatter = ISO8601DateFormatter()
-  formatter.timeZone = .current
-  formatter.formatOptions = [.withInternetDateTime]
-  return formatter.string(from: Date(timeIntervalSince1970: seconds))
+  isoFormatted(Date(timeIntervalSince1970: seconds), in: .current)
 }
 
 private func formatCell(_ value: JSONValue) -> String {

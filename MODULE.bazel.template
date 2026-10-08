@@ -40,7 +40,10 @@ single_version_override(
 single_version_override(
     module_name = "rules_swift",
     patch_strip = 1,
-    patches = ["//bazel/patches:rules-swift-swift-testing-quiet.patch"],
+    patches = [
+        "//bazel/patches:rules-swift-swift-testing-quiet.patch",
+        "//bazel/patches:rules-swift-test-runner-completion.patch",
+    ],
     version = "3.6.1",
 )
 

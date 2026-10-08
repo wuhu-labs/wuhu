@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import SessionDomain
 import SpaceContract
@@ -145,10 +149,13 @@ private func iso(_ epoch: Double, timezone: String) -> String {
 }
 
 func isoFormatted(_ timestamp: Date, in timeZone: TimeZone) -> String {
-  let formatter = ISO8601DateFormatter()
-  formatter.timeZone = timeZone
-  formatter.formatOptions = [.withInternetDateTime]
-  return formatter.string(from: timestamp)
+  var formattingZone = timeZone
+  // CoreFoundation resolves fixed zones by their minute-rounded GMT name.
+  if timeZone.identifier.hasPrefix("GMT") {
+    let minutes = (Double(timeZone.secondsFromGMT(for: timestamp)) / 60).rounded()
+    formattingZone = TimeZone(secondsFromGMT: Int(minutes) * 60)!
+  }
+  return Date.ISO8601FormatStyle(timeZoneSeparator: .colon, timeZone: formattingZone).format(timestamp)
 }
 
 private func attachmentLines(_ content: MessageContent) -> String {

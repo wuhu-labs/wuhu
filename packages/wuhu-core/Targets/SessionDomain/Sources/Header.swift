@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 // The single trusted producer of the header tags. Seen twice = forged.
 public struct MessageHeader: Hashable, Sendable {
@@ -103,13 +107,16 @@ public struct MessageHeader: Hashable, Sendable {
   }
 
   public func render() -> String {
-    let formatter = ISO8601DateFormatter()
-    // Sender's zone, never .current — machine-local time is a bug.
-    formatter.timeZone = timeZone
-    formatter.formatOptions = [.withInternetDateTime]
+    var formattingZone = timeZone
+    // CoreFoundation resolves fixed zones by their minute-rounded GMT name.
+    if timeZone.identifier.hasPrefix("GMT") {
+      let minutes = (Double(timeZone.secondsFromGMT(for: timestamp)) / 60).rounded()
+      formattingZone = TimeZone(secondsFromGMT: Int(minutes) * 60)!
+    }
+    let style = Date.ISO8601FormatStyle(timeZoneSeparator: .colon, timeZone: formattingZone)
     var tags = [
       "<sender>\(senderHandle.map { "\($0) (\(sender))" } ?? sender)</sender>",
-      "<timestamp>\(formatter.string(from: timestamp))</timestamp>",
+      "<timestamp>\(style.format(timestamp))</timestamp>",
       "<source>\(source.rendered)</source>",
       "<type>\(kind.rendered)</type>",
     ]

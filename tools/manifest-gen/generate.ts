@@ -189,6 +189,12 @@ interface TestConfig {
   // `data`, and reaching one from the test needs an `env` entry whose value
   // uses `$(rootpath <label>)`.
   externalData?: string[]
+  platformRuntime?: Partial<
+    Record<CheckPlatform, {
+      externalData?: string[]
+      env?: Record<string, string>
+    }>
+  >
   // Environment for the Bazel test action. Bazel-only: SwiftPM has no
   // equivalent, and a test that NEEDS an env var to be correct belongs on the
   // Bazel path anyway.
@@ -1973,6 +1979,58 @@ function testDataAttr(
   return `    extra_data = ${parts.join(' + ')},\n`
 }
 
+function testRuntimeAttrs(config: TestConfig, lane?: CheckPlatform): string {
+  const entries = Object.entries(config.platformRuntime ?? {})
+  for (const [platform] of entries) {
+    if (!checkPlatforms.includes(platform as CheckPlatform)) {
+      throw new Error(`unknown test runtime platform: ${platform}`)
+    }
+  }
+  if (lane) {
+    const runtime = config.platformRuntime?.[lane]
+    return testDataAttr(config.data, [
+      ...(config.externalData ?? []),
+      ...(runtime?.externalData ?? []),
+    ]) +
+      testEnvAttr({ ...config.env, ...runtime?.env })
+  }
+  if (!entries.length) {
+    return testDataAttr(config.data, config.externalData) +
+      testEnvAttr(config.env)
+  }
+  const data = entries.filter(([, runtime]) => runtime.externalData?.length)
+  let attrs = testDataAttr(config.data, config.externalData)
+  if (data.length) {
+    const selection = `select({${
+      data.map(([platform, runtime]) =>
+        `"//bazel/constraints:${platform}": ${
+          quotedStarlarkList(runtime.externalData!)
+        },`
+      ).join(' ')
+    } "//conditions:default": []})`
+    attrs = attrs
+      ? `${attrs.slice(0, -2)} + ${selection},\n`
+      : `    extra_data = ${selection},\n`
+  }
+  const env = entries.filter(([, runtime]) =>
+    runtime.env && Object.keys(runtime.env).length
+  )
+  if (!env.length) return attrs + testEnvAttr(config.env)
+  const dictionary = (values: Record<string, string>) =>
+    `{${
+      Object.keys(values).sort().map((key) => `"${key}": "${values[key]}"`)
+        .join(', ')
+    }}`
+  return attrs +
+    `    env = select({${
+      env.map(([platform, runtime]) =>
+        `"//bazel/constraints:${platform}": ${
+          dictionary({ ...config.env, ...runtime.env })
+        },`
+      ).join(' ')
+    } "//conditions:default": ${dictionary(config.env ?? {})}}),\n`
+}
+
 function testEnvAttr(env: Record<string, string> | undefined): string {
   const keys = Object.keys(env ?? {}).sort()
   if (!keys.length) return ''
@@ -2386,9 +2444,7 @@ ${
         testRoot,
         config.resources,
         testSentinel,
-      )}${testDataAttr(config.data, config.externalData)}${
-        testEnvAttr(config.env)
-      }${
+      )}${
         config.envInherit?.length
           ? `    env_inherit = ${quotedStarlarkList(config.envInherit)},\n`
           : ''
@@ -2407,6 +2463,19 @@ ${
           `${location} declares tests but no checks.test platforms`,
         )
       }
+      const strayRuntimes = Object.keys(config.platformRuntime ?? {}).filter((
+        lane,
+      ) =>
+        !runnable.includes(lane as CheckPlatform) &&
+        !simulatorLanes.some((simulator) => simulator.lane === lane)
+      )
+      if (strayRuntimes.length > 0) {
+        throw new Error(
+          `${location} names test runtime for ${
+            strayRuntimes.join(', ')
+          }, which is not one of its test lanes`,
+        )
+      }
       const strayHosts = Object.keys(config.host ?? {}).filter((lane) =>
         !simulatorLanes.some((simulator) => simulator.lane === lane)
       )
@@ -2420,8 +2489,8 @@ ${
       if (runnable.length > 0) {
         chunks.push(
           `wuhu_swift_test(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${sharedAttrs}${
-            testTagsAttr(config.tags)
-          }${platformsAttr(runnable, location)})\n`,
+            testRuntimeAttrs(config)
+          }${testTagsAttr(config.tags)}${platformsAttr(runnable, location)})\n`,
         )
       }
       for (const { lane, minimumOSVersion } of simulatorLanes) {
@@ -2430,7 +2499,7 @@ ${
             config.host?.[lane]
               ? `    test_host = "${config.host[lane]}",\n`
               : ''
-          }${sharedAttrs}${
+          }${sharedAttrs}${testRuntimeAttrs(config, lane)}${
             config.tags?.length
               ? testTagsAttr([
                 'resources:simulators:1',

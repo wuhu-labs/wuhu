@@ -2793,3 +2793,55 @@ Deno.test('rules_apple override patches each touch one file for Bazel native ctx
     })
   }
 })
+
+Deno.test('platform runtime data and env stay out of simulator test actions', async () => {
+  const build = await generateBuildBazel(applePkg, [{
+    ...minimalTarget('Capture', 'library'),
+    tests: {
+      checks: { test: ['mac', 'ios'] },
+      externalData: ['//fixtures:shared'],
+      env: { SHARED: 'yes' },
+      platformRuntime: {
+        mac: {
+          externalData: ['//tools:holder'],
+          env: { HOLDER: '$(rootpath //tools:holder)' },
+        },
+      },
+    },
+  }])
+  const host = build.slice(
+    build.indexOf('wuhu_swift_test('),
+    build.indexOf('wuhu_sim_test('),
+  )
+  const simulator = build.slice(build.indexOf('wuhu_sim_test('))
+  assertIncludes(
+    host,
+    'extra_data = [\n        "//fixtures:shared",\n    ] + select({',
+  )
+  assertIncludes(
+    host,
+    '"//bazel/constraints:mac": [\n        "//tools:holder",\n    ]',
+  )
+  assertIncludes(
+    host,
+    'env = select({"//bazel/constraints:mac": {"HOLDER": "$(rootpath //tools:holder)", "SHARED": "yes"}, "//conditions:default": {"SHARED": "yes"}})',
+  )
+  assertIncludes(simulator, '"//fixtures:shared"')
+  assertIncludes(simulator, 'env = {"SHARED": "yes"}')
+  assertEquals(simulator.includes('//tools:holder'), false)
+  assertEquals(simulator.includes('HOLDER'), false)
+})
+
+Deno.test('platform runtime rejects platforms outside the test lanes', async () => {
+  await assertRejects(
+    () =>
+      generateBuildBazel(applePkg, [{
+        ...minimalTarget('Capture', 'library'),
+        tests: {
+          checks: { test: ['ios'] },
+          platformRuntime: { mac: { externalData: ['//tools:holder'] } },
+        },
+      }]),
+    'names test runtime for mac, which is not one of its test lanes',
+  )
+})

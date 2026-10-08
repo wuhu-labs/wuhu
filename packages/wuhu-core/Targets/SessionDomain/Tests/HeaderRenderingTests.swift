@@ -3,6 +3,33 @@ import SessionDomain
 import Testing
 
 @Suite struct HeaderRenderingTests {
+  @Test(arguments: ["UTC", "Asia/Kolkata", "America/St_Johns", "America/New_York"], [
+    -0.125, 1_767_225_600.999,
+    1_772_953_199.999, 1_772_953_200.001,
+    1_793_512_799.999, 1_793_512_800.001,
+  ])
+  func timestampsMatchThePreviousFormatter(zone: String, epoch: Double) throws {
+    let timeZone = try #require(TimeZone(identifier: zone))
+    let date = Date(timeIntervalSince1970: epoch)
+    let previous = ISO8601DateFormatter()
+    previous.timeZone = timeZone
+    previous.formatOptions = [.withInternetDateTime]
+    let header = MessageHeader(sender: "alice", timestamp: date, timeZone: timeZone, source: .direct, kind: .message)
+    #expect(header.render().contains("<timestamp>\(previous.string(from: date))</timestamp>"))
+  }
+
+  @Test(arguments: [
+    (1_772_953_199.999, "2026-03-08T01:59:59-05:00"),
+    (1_772_953_200.001, "2026-03-08T03:00:00-04:00"),
+    (1_793_512_799.999, "2026-11-01T01:59:59-04:00"),
+    (1_793_512_800.001, "2026-11-01T01:00:00-05:00"),
+  ])
+  func daylightSavingTransitionsKeepTheSendersOffset(sample: (Double, String)) throws {
+    let timeZone = try #require(TimeZone(identifier: "America/New_York"))
+    let header = MessageHeader(sender: "alice", timestamp: Date(timeIntervalSince1970: sample.0), timeZone: timeZone, source: .direct, kind: .message)
+    #expect(header.render().contains("<timestamp>\(sample.1)</timestamp>"))
+  }
+
   @Test func `a conversation message header carries the sender's timezone offset and message id`() {
     guard case let .message(message) = Fix.message(id: "m1", sender: "alice") else {
       Issue.record("fixture shape")

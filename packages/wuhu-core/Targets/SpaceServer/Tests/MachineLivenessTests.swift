@@ -1,4 +1,10 @@
-import Clocks
+import ControlledTime
+import Dependencies
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import MachineChannel
 import MachineContract
@@ -11,7 +17,8 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct MachineLivenessTests {
   @Test func attachedButSilentMachineFailsExecAndPendingReadGrepFind() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock(), grace: .seconds(1))
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await server.run() }
@@ -22,6 +29,9 @@ import Testing
         let exec = try await mintExec(server, machine: machine)
         let caller = try await connectCaller(server, exec: exec)
         let log = FrameLog()
+        try await caller.send(.binary(FrameCodec.encode(
+          Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
+        )))
         try await withThrowingTaskGroup(of: Void.self) { readers async throws -> Void in
           readers.addTask {
             for await message in caller.inbound {
@@ -48,6 +58,24 @@ import Testing
                 #expect(payload["message"] == .string("machine \(machine.rawValue) stopped responding"))
               }
             }
+            var requests = 0
+            var callerBound = false
+            for await message in machineSocket.inbound {
+              guard case let .binary(bytes) = message else { continue }
+              let frame = try FrameCodec.decode(bytes)
+              switch frame.opcode {
+              case .control: callerBound = true
+              case .vfsRequest:
+                if case .read = try frame.payload(VFSRequest.self).op { requests += 1 }
+              case .searchRequest: requests += 1
+              default: break
+              }
+              if requests == 3, callerBound { break }
+            }
+            #expect(requests == 3)
+            #expect(callerBound)
+            try await time.control.asleep("machine silence", dueIn: 60)
+            await time.advance(to: 60.000001)
             try await calls.waitForAll()
           }
           #expect(try await realPollUntil { log.finished() })
@@ -64,8 +92,8 @@ import Testing
 
   @Test func callerReboundWithStaleLiveRecordDuringExpiryIsClosed() async throws {
     let space = try makeMachineSpace()
-    let clock = TestClock()
-    let server = TestServer(space: space, clock: clock)
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     let exec = try await mintExec(server, machine: machine)
     let liveRecord = try #require(try await space.execRecord(exec))
@@ -84,7 +112,8 @@ import Testing
       for await message in firstMachine.inbound {
         if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .execStart { break }
       }
-      await clock.advance(by: .seconds(61))
+      try await time.control.asleep("machine silence", dueIn: 60)
+      await time.advance(to: 60.000001)
       #expect(try await realPollUntil { blocked.started })
       #expect(try await space.execRecord(exec)?.terminal == .machineLost)
 
@@ -106,7 +135,8 @@ import Testing
       group.addTask { await server.hub.runCallerSession(liveRecord, socket: currentCallerLeg) }
       #expect(try await realPollUntil { currentLog.finished() })
       #expect(try await space.execRecord(exec)?.terminal == .machineLost)
-      await clock.advance(by: .milliseconds(101))
+      try await time.control.asleep("blocked loss send", dueIn: 0.1)
+      await time.advance(to: 60.100002)
       #expect(try await realPollUntil { blocked.aborted })
       group.cancelAll()
     }
@@ -114,7 +144,8 @@ import Testing
 
   @Test func backpressuredCallerCannotHoldOtherLossRecordsOrLegsOpen() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock(), grace: .seconds(1))
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     let blockedExec = try await mintExec(server, machine: machine)
     let otherExec = try await mintExec(server, machine: machine)
@@ -148,10 +179,14 @@ import Testing
         if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .execStart { starts += 1 }
         if starts == 2 { break }
       }
+      try await time.control.asleep("machine silence", dueIn: 60)
+      await time.advance(to: 60.000001)
       #expect(try await realPollUntil { blocked.started && otherLog.finished() })
       #expect(otherLog.machineLost())
       #expect(try await space.execRecord(blockedExec)?.terminal == .machineLost)
       #expect(try await space.execRecord(otherExec)?.terminal == .machineLost)
+      try await time.control.asleep("blocked loss send", dueIn: 0.1)
+      await time.advance(to: 60.100002)
       #expect(try await realPollUntil { blocked.aborted })
       group.cancelAll()
     }
@@ -159,8 +194,8 @@ import Testing
 
   @Test func terminalDrainAtSilenceExpiryKeepsTheKnownVerdict() async throws {
     let space = try makeMachineSpace()
-    let clock = TestClock()
-    let server = TestServer(space: space, clock: clock)
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     let exec = try await mintExec(server, machine: machine)
     try await space.finishExec(exec, .exited(code: 0))
@@ -173,7 +208,8 @@ import Testing
       group.addTask { await server.hub.run() }
       group.addTask { await server.hub.runMachineSession(machine, pubkey: key.pubkeyLabel, capabilities: [], socket: machineLeg) }
       #expect(try await realPollUntil { await server.hub.attachedMachines().contains(machine) })
-      await clock.advance(by: .seconds(40))
+      try await time.control.asleep("machine silence", dueIn: 60)
+      await time.advance(to: 40)
       group.addTask { await server.hub.runCallerSession(record, socket: callerLeg) }
       group.addTask {
         for await message in caller.inbound {
@@ -191,7 +227,7 @@ import Testing
       for await message in machineSocket.inbound {
         if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .control { break }
       }
-      await clock.advance(by: .seconds(21))
+      await time.advance(to: 60.000001)
       #expect(try await realPollUntil { log.finished() })
       #expect(log.stalledDrain())
       #expect(!log.machineLost())
@@ -203,8 +239,8 @@ import Testing
 
   @Test func socketRebindWithoutMachineEvidenceDoesNotRenewSilenceWindow() async throws {
     let space = try makeMachineSpace()
-    let clock = TestClock()
-    let server = TestServer(space: space, clock: clock)
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await server.run() }
@@ -212,14 +248,21 @@ import Testing
         let first = try await connectMachine(server, key: key)
         defer { first.close() }
         #expect(try await realPollUntil { await server.hub.attachedMachines().contains(machine) })
-        await clock.advance(by: .seconds(40))
+        try await time.control.asleep("machine silence", dueIn: 60)
+        await time.advance(to: 40)
         let second = try await connectMachine(server, key: key)
         defer { second.close() }
         for await _ in first.inbound {}
         let exec = try await mintExec(server, machine: machine)
         let caller = try await connectCaller(server, exec: exec)
         defer { caller.close() }
-        await clock.advance(by: .seconds(21))
+        try await caller.send(.binary(FrameCodec.encode(
+          Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
+        )))
+        for await message in second.inbound {
+          if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .control { break }
+        }
+        await time.advance(to: 60.000001)
         #expect(try await realPollUntil { try await space.execRecord(exec)?.terminal == .machineLost })
       }
       _ = try await group.next()
@@ -229,16 +272,45 @@ import Testing
 
   @Test func installedAgentKeepsSilentCommandAliveThroughStatProbes() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock(), grace: .seconds(1))
+    let time = LivenessTime()
+    let server = time.server(space: space)
     let (machine, key) = try await addMachine(server)
     try await runScenario(server: server) { dialer, host in
-      dialer.offer(try await connectMachine(server, key: key))
+      let machineSocket = try await connectMachine(server, key: key)
+      let responses = Mutex(0)
+      dialer.offer(WebSocket(inbound: machineSocket.inbound, send: { message in
+        try await machineSocket.send(message)
+        if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .vfsResponse {
+          responses.withLock { $0 += 1 }
+        }
+      }, close: { machineSocket.close() }, abort: { machineSocket.abort() }))
       let exec = try await mintExec(server, machine: machine)
       host.attach(try await connectCaller(server, exec: exec))
-      let outgoing = await host.endpoint.startExec(makeExecStart(exec, command: ["sh", "-c", "sleep 3; echo survived"]))
+      let outgoing = await host.endpoint.startExec(makeExecStart(exec, command: ["sh", "-c", "printf 'ready\\n'; cat"]))
+      var iterator = outgoing.events.makeAsyncIterator()
       var output = ""
+      while !output.contains("ready\n"), let event = try await iterator.next() {
+        if case let .output(_, _, data) = event { output += String(decoding: data.bytes, as: UTF8.self) }
+      }
+      try #require(output == "ready\n")
+      try await time.control.asleep("machine silence", dueIn: 60)
+      for tick in 1 ... 4 {
+        let before = responses.withLock { $0 }
+        try await time.waitForSleeps(tick == 3 ? 2 : 1, dueIn: 20)
+        await time.advance(to: Double(tick * 20) + Double(tick) * 1e-6)
+        try #require(try await realPollUntil { responses.withLock { $0 } > before })
+        // The round trip proves the hub processed the preceding automatic probe response.
+        guard case .entry = try await server.hub.vfs(machine: machine, op: .stat(path: "/")) else {
+          Issue.record("installed agent did not answer stat")
+          return
+        }
+        #expect(await server.hub.attachedMachines().contains(machine))
+        #expect(try await space.execRecord(exec)?.terminal == nil)
+      }
+      try await outgoing.sendStdin(Array("survived\n".utf8))
+      await outgoing.closeStdin()
       var exited = false
-      for try await event in outgoing.events {
+      while let event = try await iterator.next() {
         switch event {
         case let .output(_, _, data): output += String(decoding: data.bytes, as: UTF8.self)
         case let .exit(status):
@@ -249,7 +321,7 @@ import Testing
         }
       }
       #expect(exited)
-      #expect(output == "survived\n")
+      #expect(output == "ready\nsurvived\n")
       #expect(try await space.execRecord(exec)?.terminal == .exited(code: 0))
     }
   }
@@ -293,5 +365,33 @@ private final class BlockedCallerSend: Sendable {
       self.base.abort()
       for waiter in waiters { waiter.resume() }
     })
+  }
+}
+
+private struct LivenessTime: Sendable {
+  private let clock: any Clock<Duration>
+  let control: TimeControl
+
+  init() {
+    (clock, control) = withDependencies {
+      $0.installTimeControl()
+    } operation: {
+      @Dependency(\.continuousClock) var clock
+      @Dependency(\.timeControl) var control
+      return (clock, control)
+    }
+  }
+
+  func server(space: Space) -> TestServer {
+    // Distinct, shorter deadlines keep silence/probe sleep registration unambiguous.
+    TestServer(space: space, clock: clock, callerGrace: .seconds(10), keyRecheck: .seconds(10))
+  }
+
+  func waitForSleeps(_ count: Int, dueIn seconds: Double) async throws {
+    try #require(try await realPollUntil { control.sleeping(dueIn: seconds) >= count })
+  }
+
+  func advance(to seconds: Double) async {
+    await control.advance(to: Date(timeIntervalSinceReferenceDate: seconds))
   }
 }

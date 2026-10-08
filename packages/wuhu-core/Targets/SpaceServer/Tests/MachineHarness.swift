@@ -57,13 +57,14 @@ final class TestServer: Sendable {
   init(
     space: Space, clock: any Clock<Duration>, grace: Duration = .seconds(60), dev: Bool = true, tokens: ExecTokens? = nil,
     secrets: SpaceSecretStores? = nil,
+    callerGrace: Duration? = nil, keyRecheck: Duration = .seconds(30),
   ) {
     self.space = space
     hub = withDependencies {
       $0.continuousClock = clock
       $0.date = DateGenerator { Date() }
     } operation: {
-      MachineHub(space: space, callerGrace: grace, machineGrace: grace, tokens: tokens, secrets: secrets)
+      MachineHub(space: space, callerGrace: callerGrace ?? grace, machineGrace: grace, keyRecheck: keyRecheck, tokens: tokens, secrets: secrets)
     }
     handler = SpaceServer.handler(space: space, hub: hub, dev: dev, secrets: secrets)
     api = ServeTesting.client(upgrading: handler)

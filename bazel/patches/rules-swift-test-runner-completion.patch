@@ -1,0 +1,44 @@
+--- a/tools/test_discoverer/TestDiscoverer.swift
++++ b/tools/test_discoverer/TestDiscoverer.swift
+@@ -110,12 +110,24 @@
+     var contents = """
+       import BazelTestObservation
+       import Foundation
++      import Synchronization
+       import XCTest
++      #if os(macOS)
++      import AppKit
++      #endif
+ 
+       \(availabilityAttribute)
+       @main
+       struct Main {
++        nonisolated static let completed = Mutex(false)
++
+         static func main() {
++          atexit {
++            guard Main.completed.withLock({ $0 }) else {
++              FileHandle.standardError.write(Data("ERROR: test runner exited before recording its completed result\\n".utf8))
++              _exit(1)
++            }
++          }
+           do {
+             try loadTestingLibraries()
+           } catch {
+@@ -145,8 +157,16 @@
+               print("ERROR: No tests were executed")
+               exit(1)
+             }
++            Main.completed.withLock { $0 = true }
+             exit(XUnitTestRecorder.shared.hasFailure ? 1 : 0)
+           }
++          #if os(macOS)
++          MainActor.assumeIsolated {
++            NSApplication.shared.setActivationPolicy(.accessory)
++            NSApplication.shared.run()
++          }
++          #else
+           _asyncMainDrainQueue()
++          #endif
+         }
+       }
