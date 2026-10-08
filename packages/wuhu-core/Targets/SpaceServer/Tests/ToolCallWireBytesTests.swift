@@ -83,7 +83,6 @@ private func renderedRequestBody(_ store: SessionStore, _ session: SessionID) as
   let context = await transcript.renderRequest(
     session: session,
     systemPrompt: "sys",
-    budget: ContextBudget(maxInput: 100_000, maxOutput: 10000),
   )
   _ = try? await capturing.inference(context: context).collect()
   return try #require(bodies.withLock { $0.first })

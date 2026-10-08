@@ -4,7 +4,7 @@ import type {
   AppManifest,
   PlistValue,
 } from './generate.ts'
-import { appProfileName, variantBundle } from './generate.ts'
+import { appProfileName, entitlementPath, variantBundle } from './generate.ts'
 
 export interface LocalPackageRef {
   // The SwiftPM package name, which is also the xcodegen `packages:` key.
@@ -198,7 +198,10 @@ function targetSpec(
     PRODUCT_NAME: target.bundleName,
     INFOPLIST_FILE: xcodeInfoPlistPath(target),
     GENERATE_INFOPLIST_FILE: 'NO',
-    CODE_SIGN_ENTITLEMENTS: `${target.name}-dev.entitlements`,
+    CODE_SIGN_ENTITLEMENTS: entitlementPath(
+      declared,
+      declared.distribution === 'direct' ? 'store' : 'dev',
+    ),
     CODE_SIGN_STYLE: 'Manual',
     SWIFT_VERSION: '6.0',
   }

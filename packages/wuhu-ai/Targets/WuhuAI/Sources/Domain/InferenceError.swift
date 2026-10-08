@@ -6,13 +6,17 @@ import Fetch
   import Foundation
 #endif
 import HTTPTypes
+import JSONValue
 
 // MARK: - InferenceError
 
 /// The bounded failure surface for model inference.
 public enum InferenceError: Error, Sendable, Equatable {
   case rateLimited(retryAt: Date?)
+  case capacityExceeded(code: String, message: String, status: Int?)
   case contextTooLong
+  case requestTooLarge(limitBytes: Int)
+  case requestTooLargeAfterCompaction(limitBytes: Int)
   case malformedModelMessage(message: String, reason: String?)
   case invalidInput(status: Int, body: String?)
   case transient(status: Int?, body: String?)
@@ -29,7 +33,13 @@ extension InferenceError {
     headers: Headers,
     body: String?,
   ) -> InferenceError {
-    switch status {
+    if let body, let value = JSONValue.parse(body) {
+      let object = (value.object?["error"] ?? value).object
+      if let capacity = capacityError(code: object?["code"]?.stringValue ?? object?["type"]?.stringValue, message: object?["message"]?.stringValue, status: status) {
+        return capacity
+      }
+    }
+    return switch status {
     case 429:
       .rateLimited(retryAt: parseRetryAfter(headers))
 
@@ -48,6 +58,16 @@ extension InferenceError {
 
     default:
       .other(status: status, body: body)
+    }
+  }
+
+  static func capacityError(code: String?, message: String?, status: Int?) -> InferenceError? {
+    guard let code else { return nil }
+    switch code {
+    case "websocket_backpressure", "response_too_large", "websocket_message_too_large":
+      return .capacityExceeded(code: code, message: String((message ?? code).prefix(8192)), status: status)
+    default:
+      return nil
     }
   }
 

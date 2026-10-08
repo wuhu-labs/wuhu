@@ -157,6 +157,7 @@ struct ResponsesWebSocketEvents {
     let object = value.object
     let code = object?["code"]?.stringValue ?? object?["type"]?.stringValue ?? "unknown_error"
     let message = String((object?["message"]?.stringValue ?? code).prefix(8192))
+    if let capacity = InferenceError.capacityError(code: code, message: message, status: status) { return capacity }
     if InferenceError.bodyIndicatesContextOverflow(code + " " + message) { return .contextTooLong }
     switch code {
     case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota", "usage_limit_reached": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
@@ -190,7 +191,7 @@ func responsesWebSocketError(_ error: any Error) -> InferenceError {
   case .tls(let message): return .invalidInput(status: 400, body: String(message.prefix(8192)))
   case .protocolViolation(let message): return ResponsesWebSocketEvents.invalid(String(message.prefix(8192)))
   case .multipleConsumers: return .invalidInput(status: 400, body: "Multiple WebSocket receive consumers")
-  case .limitExceeded(.outboundMessage): return .invalidInput(status: 413, body: "WebSocket outbound payload limit exceeded")
+  case .limitExceeded(.outboundMessage): return .requestTooLarge(limitBytes: responsesWebSocketByteLimit)
   case .limitExceeded: return ResponsesWebSocketEvents.invalid("WebSocket inbound payload limit exceeded")
   case .unimplemented, .invalidURL, .invalidConfiguration:
     return .invalidInput(status: 400, body: String(describing: socketError))

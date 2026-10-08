@@ -37,10 +37,19 @@ final class MessageBridge: ChannelInboundHandler {
           try await channel.eventLoop.submit {
             guard !bridge.value.closed && !bridge.value.closing else { throw WebSocketError.connectionClosed }
             guard message.byteCount <= bridge.value.limits.outboundMessageBytes else { throw WebSocketError.limitExceeded(.outboundMessage) }
-            let bytes = message.bytes
+            var buffer = channel.allocator.buffer(bytes: message.bytes)
             let opcode: WebSocketOpcode = if case .text = message { .text } else { .binary }
-            let frame = WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: channel.allocator.buffer(bytes: bytes))
-            return channel.writeAndFlush(frame)
+            var writes: [EventLoopFuture<Void>] = []
+            var first = true
+            repeat {
+              let length = min(buffer.readableBytes, 16 << 20)
+              let data = buffer.readSlice(length: length)!
+              let frame = WebSocketFrame(fin: buffer.readableBytes == 0, opcode: first ? opcode : .continuation, maskKey: .random(), data: data)
+              writes.append(channel.write(frame))
+              first = false
+            } while buffer.readableBytes > 0
+            channel.flush()
+            return EventLoopFuture.andAllSucceed(writes, on: channel.eventLoop)
           }.flatMap { $0 }.get()
         } onCancel: { channel.close(promise: nil) }
       } catch {

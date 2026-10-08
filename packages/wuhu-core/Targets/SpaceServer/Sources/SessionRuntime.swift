@@ -114,6 +114,7 @@ extension SessionRuntime {
     claudeCode: ClaudeCodeSeam,
     usage: UsageBoard,
     probeClaude: (@Sendable (String) async -> ClaudeUsageProbe)?,
+    oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let sockets = ResponsesSocketRegistry()
@@ -127,6 +128,7 @@ extension SessionRuntime {
       return ProviderCatalog(
         document: try ModelsDocument(json: data),
         credentials: credentials,
+        oidcToken: oidcToken,
         receiveCodexResponseHeaders: { providerID, headers in
           usage.record(providerID, plan: headers["x-codex-plan-type"], windows: codexUsage(headers: headers), at: date.now)
         },
@@ -177,7 +179,6 @@ extension SessionRuntime {
             model: resolved,
             systemPrompt: try await systemPrompt(space: space, record: record),
             tools: SessionToolExecutor.kernel.tools,
-            thresholds: thresholds,
             compactToolName: KernelToolset.compactToolName,
             hub: attempts,
             log: attemptLog,

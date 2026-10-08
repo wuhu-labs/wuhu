@@ -159,6 +159,27 @@ private func run(
     #expect(classified.status == nil)
   }
 
+  @Test func capacityMetricsKeepProviderCode() {
+    for code in ["websocket_backpressure", "response_too_large", "websocket_message_too_large"] {
+      let metric = InferenceMetric.classify(.capacityExceeded(code: code, message: "capacity", status: 429))
+      #expect(metric.outcome == .httpError)
+      #expect(metric.kind == code)
+      #expect(metric.status == 429)
+    }
+  }
+
+  @Test func payloadMetricsKeepTypedKinds() {
+    for (error, kind) in [
+      (InferenceError.requestTooLarge(limitBytes: 128 << 20), "requestTooLarge"),
+      (.requestTooLargeAfterCompaction(limitBytes: 128 << 20), "requestTooLargeAfterCompaction"),
+    ] {
+      let classified = InferenceMetric.classify(error)
+      #expect(classified.outcome == .httpError)
+      #expect(classified.kind == kind)
+      #expect(classified.status == 413)
+    }
+  }
+
   @Test func normalTurnCarriesEffortVerbatimAndNoForcing() async throws {
     let (reply, requests) = try await run(try await makeExecutor(), sse: textSSE, mode: .normal)
 

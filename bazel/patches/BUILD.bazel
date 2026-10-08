@@ -1,4 +1,5 @@
 exports_files([
+    "rules-apple-imported-framework-helper-modes.patch",
     "rspm-stable-trait-requests.patch",
     "concurrency-extras-linux-locking.patch",
     "concurrency-extras-linux-lockisolated.patch",

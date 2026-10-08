@@ -125,8 +125,6 @@ extension Transcript {
     session: SessionID,
     systemPrompt: String,
     tools: [Tool]? = nil,
-    budget: ContextBudget,
-    thresholds: CompactionThresholds = .init(),
     handles: [String: String] = [:],
     devices: [String: String] = [:],
   ) async -> Context {
@@ -171,19 +169,6 @@ extension Transcript {
     }
 
     messages += notices
-
-    // Volatile by design: a persisted item with a live percentage is
-    // incoherent. Recomputed per render, appended at the tail only.
-    let fullness = contextFullness(budget: budget)
-    if fullness >= thresholds.soft {
-      let percent = Int((fullness * 100).rounded())
-      messages.append(.user(.init(content: [.text("""
-      <compaction-notice>
-      Context is \(percent)% full. Compact at a natural boundary of your choosing: \
-      call bookmark to mark a cut point, then compact to fold everything before it.
-      </compaction-notice>
-      """)])))
-    }
 
     return Context(systemPrompt: systemPrompt, messages: messages, tools: tools)
   }

@@ -178,6 +178,7 @@ const testSizes = ['small', 'medium', 'large', 'enormous'] as const
 type TestSize = (typeof testSizes)[number]
 
 interface TestConfig {
+  hostLinkopts?: string[]
   dependencies?: Dependency[]
   resources?: Resource[]
   // Folders elsewhere in the same Bazel package that the tests read back by
@@ -370,6 +371,8 @@ export interface DevIdentityManifest {
 }
 
 export interface AppBundleManifest {
+  distribution?: 'store' | 'direct'
+  releaseChannels?: Record<string, { [key: string]: PlistValue }>
   name: string
   platform: 'macOS' | 'iOS' | 'tvOS' | 'visionOS' | 'watchOS'
   bundleID: string
@@ -477,6 +480,51 @@ export function validateTargetInfo(target: TargetManifest): void {
 }
 
 export function validateAppRelease(app: AppManifest, source: string): void {
+  for (const target of appBundles(app)) {
+    if (target.releaseChannels !== undefined) {
+      if (
+        target.distribution !== 'direct' || !target.releaseChannels.stable ||
+        Object.keys(target.releaseChannels).some((channel) =>
+          !/^[a-z][a-z0-9-]*$/.test(channel)
+        )
+      ) {
+        throw new Error(
+          `${source}: ${target.name}.releaseChannels requires direct distribution and a stable default`,
+        )
+      }
+      for (const [channel, info] of Object.entries(target.releaseChannels)) {
+        assertPlistValues(
+          info,
+          `${source}: ${target.name}.releaseChannels.${channel}`,
+        )
+        if (
+          Object.keys(info).some((key) =>
+            key.startsWith('CFBundle') || stampedInfoKeys.includes(key)
+          )
+        ) {
+          throw new Error(
+            `${source}: releaseChannels cannot change bundle identity or version`,
+          )
+        }
+      }
+    }
+    if (target.distribution === undefined || target.distribution === 'store') {
+      continue
+    }
+    if (target.distribution !== 'direct' || target.platform !== 'macOS') {
+      throw new Error(
+        `${source}: ${target.name}.distribution direct requires macOS`,
+      )
+    }
+    if (
+      !app.targets.includes(target) || target.devIdentity ||
+      target.entitlements.dev
+    ) {
+      throw new Error(
+        `${source}: ${target.name} direct distribution requires a release-only app identity`,
+      )
+    }
+  }
   const release = app.release
   if (!release) return
   if (!releaseNamePattern.test(release.name)) {
@@ -2247,6 +2295,15 @@ export async function generateBuildBazel(
     `exports_files([\n${
       [
         'package.yml',
+        ...(targets[0] &&
+            await exists(
+              join(
+                dirname(dirname(targets[0].manifestDir)),
+                'MODULE.fragment.bazel',
+              ),
+            )
+          ? ['MODULE.fragment.bazel']
+          : []),
         ...targets.map((target) => `Targets/${target.name}/target.yml`),
       ].map((path) => `    "${path}",\n`).join('')
     }])\n`,
@@ -2489,8 +2546,12 @@ ${
       if (runnable.length > 0) {
         chunks.push(
           `wuhu_swift_test(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${sharedAttrs}${
-            testRuntimeAttrs(config)
-          }${testTagsAttr(config.tags)}${platformsAttr(runnable, location)})\n`,
+            config.hostLinkopts?.length
+              ? `    linkopts = ${quotedStarlarkList(config.hostLinkopts)},\n`
+              : ''
+          }${testRuntimeAttrs(config)}${testTagsAttr(config.tags)}${
+            platformsAttr(runnable, location)
+          })\n`,
         )
       }
       for (const { lane, minimumOSVersion } of simulatorLanes) {
@@ -3477,7 +3538,8 @@ export function bundleEmbedsViewPilot(
   app: AppManifest,
   target: AppBundleManifest,
 ): boolean {
-  return app.targets.some((candidate) => candidate.name === target.name) &&
+  return target.distribution !== 'direct' &&
+    app.targets.some((candidate) => candidate.name === target.name) &&
     appEmbedsViewPilot(app)
 }
 
@@ -3641,13 +3703,11 @@ function profileName(
   variant: SigningVariant,
   platformsByIdentifier: ReadonlyMap<string, ReadonlySet<string>>,
 ): string | undefined {
+  if (target.distribution === 'direct') return undefined
   if (isPreviewBundle(target)) {
     if (target.platform !== 'iOS') return undefined
     return variant === 'dev' ? 'Wuhu Dev Previews' : 'Wuhu AdHoc Previews'
   }
-  // A macOS development bundle needs MAC_APP_DEVELOPMENT when it claims
-  // restricted entitlements. Direct distribution would be MAC_APP_DIRECT,
-  // which this repo does not ship.
   if (target.platform === 'macOS' && variant === 'adhoc') return undefined
   const label = variant === 'dev'
     ? 'Dev'
@@ -3697,6 +3757,7 @@ function variantsFor(
   _app: AppManifest,
   target: AppBundleManifest,
 ): SigningVariant[] {
+  if (target.distribution === 'direct') return ['store']
   if (!isPreviewBundle(target)) return ['dev', 'adhoc', 'store']
   return target.platform === 'iOS' ? ['dev', 'adhoc'] : ['dev']
 }
@@ -3743,6 +3804,8 @@ function generateAppBundleRule(
   embedsViewPilot = false,
   watchApplication?: string,
 ): string {
+  const direct = target.distribution === 'direct'
+  embedsViewPilot &&= !direct
   const variants = variantsFor(app, target)
   const profiles = variants.flatMap(
     (variant): [string, string | null][] => {
@@ -3766,6 +3829,19 @@ function generateAppBundleRule(
     )
   )
   const plists = infoPlistPaths(target, embedsViewPilot)
+  const channelPlist = (channel: string) =>
+    channel === 'stable'
+      ? plists.store
+      : siblingPlistPath(plists.store, channel)
+  const directPlists = target.releaseChannels === undefined
+    ? `["${shellPath(pathPrefix, plists.store)}"]`
+    : `select({\n${
+      Object.keys(target.releaseChannels).map((channel) =>
+        `        ":${target.name}_channel_${channel}": ["${
+          shellPath(pathPrefix, channelPlist(channel))
+        }"],\n`
+      ).join('')
+    }    })`
   return `${rule}(\n    name = "${target.name}",\n    bundle_id = ${
     variantExpr(
       perVariant((variant) => bundles[variant].bundleID),
@@ -3773,7 +3849,11 @@ function generateAppBundleRule(
     )
   },\n    bundle_name = "${target.bundleName}",\n    families = ${
     quotedStarlarkList(target.families)
-  },\n    entitlements = ${selectExpr(entitlements)},\n    app_icons = ${
+  },\n    entitlements = ${
+    direct
+      ? JSON.stringify(shellPath(pathPrefix, entitlementPath(target, 'store')))
+      : selectExpr(entitlements)
+  },\n    app_icons = ${
     variantExpr(
       icons,
       (value) => appIconExpr(JSON.parse(value)),
@@ -3790,11 +3870,12 @@ function generateAppBundleRule(
       }, allow_empty = True),\n`
       : ''
   }    infoplists = ${
-    variantExpr(
-      plists,
-      (path) => `["${shellPath(pathPrefix, path)}"]`,
-    )
+    direct
+      ? directPlists
+      : variantExpr(plists, (path) => `["${shellPath(pathPrefix, path)}"]`)
   },\n    minimum_os_version = "${target.minimumOSVersion}",\n${
+    direct ? '    features = ["disable_legacy_signing"],\n' : ''
+  }${
     profiles.some(([_, value]) => value !== null)
       ? `    provisioning_profile = ${selectExpr(profiles)},\n`
       : ''
@@ -3957,6 +4038,11 @@ export function generateAppBuildBazel(
     `load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")`,
   ]
   const bundles = appBundles(app)
+  if (bundles.some((target) => target.releaseChannels !== undefined)) {
+    loads.push(
+      'load("@bazel_skylib//rules:common_settings.bzl", "string_flag")',
+    )
+  }
   if (
     app.signingTeamID &&
     bundles.some((target) =>
@@ -3998,6 +4084,18 @@ export function generateAppBuildBazel(
   ]
 
   for (const target of bundles) {
+    if (target.releaseChannels !== undefined) {
+      chunks.push(
+        `string_flag(\n    name = "${target.name}_release_channel",\n    build_setting_default = "stable",\n    values = ${
+          quotedStarlarkList(Object.keys(target.releaseChannels))
+        },\n)\n`,
+      )
+      for (const channel of Object.keys(target.releaseChannels)) {
+        chunks.push(
+          `config_setting(\n    name = "${target.name}_channel_${channel}",\n    flag_values = {":${target.name}_release_channel": "${channel}"},\n)\n`,
+        )
+      }
+    }
     if (!app.signingTeamID) continue
     for (const variant of variantsFor(app, target)) {
       const name = profileName(target, variant, platformsByIdentifier)
@@ -4047,7 +4145,18 @@ export function generateAppBuildBazel(
     const coptsExpr = [
       ...new Set([
         'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
-        ...(embedsViewPilot ? ['WUHU_UI_CONTROL_COPTS'] : []),
+        ...(appBundles(app).some((target) =>
+            bundleEmbedsViewPilot(app, target) &&
+            reachesLibrary(
+              target.dependencies,
+              library.name,
+              new Map(
+                (app.libraries ?? []).map((entry) => [entry.name, entry]),
+              ),
+            )
+          )
+          ? ['WUHU_UI_CONTROL_COPTS']
+          : []),
         ...(library.copts ?? []),
       ]),
     ].join(' + ')
@@ -4227,6 +4336,7 @@ export function appBundleInfo(
       : { ITSAppUsesNonExemptEncryption: app.usesNonExemptEncryption }),
     ...platformDefaults,
     ...target.info,
+    ...target.releaseChannels?.stable,
     ...(capabilities === undefined
       ? {}
       : { UIRequiredDeviceCapabilities: capabilities }),
@@ -4337,6 +4447,7 @@ export function resolvedEntitlements(
   signing: SigningVariant,
   teamID: string,
 ): { [key: string]: PlistValue } {
+  if (declared.distribution === 'direct') signing = 'store'
   const target = variantBundle(declared, signing)
   const variant = signing === 'dev' ? 'dev' : 'release'
   const values = {
@@ -4441,6 +4552,16 @@ async function prepareApp(
             : bundle.info,
           output,
         ),
+      )
+    }
+    for (
+      const [channel, info] of Object.entries(target.releaseChannels ?? {})
+    ) {
+      if (channel === 'stable') continue
+      const output = join(appDir, siblingPlistPath(plists.store, channel))
+      await writeIfChanged(
+        output,
+        generatePlist({ ...target.info, ...info }, output),
       )
     }
     const sources = entitlementSourcesByVariant(app, target)

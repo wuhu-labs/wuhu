@@ -273,6 +273,25 @@ extension SessionActor {
       guard try await reestablish() else { return }
     }
 
+    let fullness = await live.transcript.contextFullness(budget: loopConfig.budget(id))
+    try Task.checkCancellation()
+    guard let state = liveState, !state.archiving else { return }
+    if fullness >= loopConfig.thresholds.soft, !state.transcript.hasPendingPressureNotice {
+      let percent = Int((fullness * 100).rounded())
+      try await appended([.notification(.init(
+        id: uuid(),
+        timestamp: date(),
+        kind: .context,
+        subscriptionID: SubscriptionID("context-pressure"),
+        content: .init(text: """
+        <compaction-notice>
+        Context is \(percent)% full. Compact at a natural boundary of your choosing: \
+        call bookmark to mark a cut point, then compact to fold everything before it.
+        </compaction-notice>
+        """),
+      ))])
+    }
+
     var attempt = 0
     var idleTimeouts = 0
     var boundedFailures = 0
@@ -306,6 +325,8 @@ extension SessionActor {
         try modify {
           $0.transcript = appended
           $0.malformedMessages = 0
+          $0.capacityFailures = 0
+          $0.compactedForPayload = false
         }
         await reply.committed(entry, appended)
         try Task.checkCancellation()
@@ -318,6 +339,14 @@ extension SessionActor {
         switch classify(error) {
         case .cancelled:
           return
+        case .capacity:
+          try modify { $0.capacityFailures += 1 }
+          if live.capacityFailures >= 3 {
+            await markErrored(error: InferenceError.normalize(error))
+            return
+          }
+          attempt += 1
+          guard await backoff(attempt: attempt) else { return }
         case .malformedModelMessage:
           try modify { $0.malformedMessages += 1 }
           if live.malformedMessages >= 3 {
@@ -359,6 +388,29 @@ extension SessionActor {
           }
           attempt += 1
           guard await backoff(attempt: attempt) else { return }
+        case .requestTooLarge(let normalized):
+          let compactedError: InferenceError
+          if case let .requestTooLarge(limit) = normalized {
+            compactedError = .requestTooLargeAfterCompaction(limitBytes: limit)
+          } else {
+            compactedError = normalized
+          }
+          if live.compactedForPayload {
+            await markErrored(error: compactedError)
+            return
+          }
+          do {
+            if try await fallbackCompact() {
+              try modify { $0.compactedForPayload = true }
+            }
+          } catch {
+            if case .requestTooLarge = classify(error) {
+              await markErrored(error: compactedError)
+            } else {
+              throw error
+            }
+          }
+          return
         case .contextTooLong:
           try await fallbackCompact()
           return
@@ -405,7 +457,8 @@ extension SessionActor {
     return true
   }
 
-  func fallbackCompact() async throws {
+  @discardableResult
+  func fallbackCompact() async throws -> Bool {
     let transcript = live.transcript
     let sessionID = id
     let result = await runLongRunningTask { [loopConfig] in
@@ -424,8 +477,9 @@ extension SessionActor {
       let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept)
       try modify { $0.transcript = compacted }
       await loopConfig.invalidateInference(id)
+      return true
     case .failure(is CancellationError):
-      return
+      return false
     case .failure(let error):
       // Fallback compaction failing is terminal: the looper parks the session.
       throw error
@@ -499,9 +553,11 @@ let boundedFailureLimit = 8
 private enum FailureClass {
   case cancelled
   case malformedModelMessage
+  case capacity
   case outage(retryAt: Date?)
   case transient(timedOut: Bool)
   case contextTooLong
+  case requestTooLarge(InferenceError)
   case terminal
 }
 
@@ -509,7 +565,8 @@ private enum FailureClass {
 // hops before the model stream (catalog resolution, credential refresh) carry
 // their own vocabularies. A downcast reads every one of them as terminal.
 private func classify(_ error: any Error) -> FailureClass {
-  switch InferenceError.normalize(error) {
+  let normalized = InferenceError.normalize(error)
+  return switch normalized {
   case .cancelled: .cancelled
   // Throttling and an unreachable network are the two failures that state
   // outright they are about right now rather than about the request.
@@ -521,7 +578,11 @@ private func classify(_ error: any Error) -> FailureClass {
   case .transport: .outage(retryAt: nil)
   case .transient: .transient(timedOut: false)
   case .contextTooLong: .contextTooLong
-  case .invalidInput, .other: .terminal
+  case .requestTooLarge: .requestTooLarge(normalized)
+  case let .capacityExceeded(code, _, _):
+    code == "response_too_large" || code == "websocket_message_too_large"
+      ? .requestTooLarge(normalized) : .capacity
+  case .requestTooLargeAfterCompaction, .invalidInput, .other: .terminal
   }
 }
 
@@ -531,5 +592,21 @@ extension AssistantMessage {
       guard case let .toolCall(call) = block else { return false }
       return call.name == KernelTool.compact.rawValue
     }
+  }
+}
+
+extension Transcript {
+  fileprivate var hasPendingPressureNotice: Bool {
+    for item in items.reversed() {
+      switch item {
+      case .assistant, .generationHead:
+        return false
+      case let .notification(notification) where notification.kind == .context && notification.subscriptionID == SubscriptionID("context-pressure"):
+        return true
+      default:
+        continue
+      }
+    }
+    return false
   }
 }

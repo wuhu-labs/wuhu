@@ -1,0 +1,9 @@
+--- a/tools/imported_dynamic_framework_processor/imported_dynamic_framework_processor.py
++++ b/tools/imported_dynamic_framework_processor/imported_dynamic_framework_processor.py
+@@ -154,5 +154,5 @@
+   if not os.path.exists(temp_framework_dirs):
+     os.makedirs(temp_framework_dirs)
+   shutil.copy(framework_file, temp_framework_path)
+-  os.chmod(temp_framework_path, 0o755 if executable else 0o644)
++  os.chmod(temp_framework_path, 0o755 if executable or os.access(framework_file, os.X_OK) else 0o644)
+   return temp_framework_path

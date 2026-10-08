@@ -282,3 +282,16 @@ Deno.test('a shell cannot claim the CLI release namespace', async () => {
       ),
   )
 })
+
+Deno.test('the existing Store release plan never selects the direct Mac edition', async () => {
+  const app = (await releaseApps()).find((app) => app.name === 'wuhu-app')!
+  assertEquals(app.targets.map((target) => target.name), [
+    'WuhuApp',
+    'WuhuAppIOS',
+    'WuhuAppVision',
+  ])
+  assertEquals(
+    app.targets.every((target) => target.bundleID === 'ai.wuhu.app'),
+    true,
+  )
+})

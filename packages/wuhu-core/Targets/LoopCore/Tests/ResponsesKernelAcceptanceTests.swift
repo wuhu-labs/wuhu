@@ -66,7 +66,7 @@ import WuhuAI
     }
   }
 
-  @Test(arguments: ["committed", "no-ack", "phase", "handles", "fullness"])
+  @Test(arguments: ["committed", "no-ack", "phase", "handles"])
   func actualKernelCommitToolExecutionAndRendering(kind: String) async throws {
     try await withKernelDeps { _ in
       let sessions = try Space.inMemory().sessions
@@ -94,7 +94,7 @@ import WuhuAI
         return .failure(.init(message: "lookup complete"))
       }, inference: { request in
         let lease = try await registry.acquire(session: sid, model: resolved)
-        let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], thresholds: kind == "fullness" ? .init(soft: 0, hard: 100) : .init(), webSocket: lease.session)
+        let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], webSocket: lease.session)
         let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal, handles: ["morgan": "old-handle"])
         await registry.release(session: sid, lease: lease.lease)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in

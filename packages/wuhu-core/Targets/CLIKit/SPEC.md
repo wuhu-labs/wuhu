@@ -23,3 +23,5 @@ Any non-empty `WUHU_EXEC` marks a session exec. With `WUHU_IDENTITY` unset, empt
 ## AI provider disclosure
 
 `serve --ai-disclosure <json-file>` passes the disclosure file to server startup. The optional file is an object with a nonempty `version` and a nonempty `providers` array; every provider has nonempty `name`, `location`, `via` strings and an absolute HTTPS `policy` URL without credentials. The file is read and validated before the server creates its store or binds listeners; an unreadable or invalid file is a typed startup error, never an omitted disclosure. Without this option server discovery remains unchanged.
+
+Policy URLs must use the literal lowercase `https://` scheme prefix and have no leading or trailing whitespace. Host config and server startup reject, rather than normalize, other spellings.

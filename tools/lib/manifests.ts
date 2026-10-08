@@ -109,7 +109,11 @@ function releaseAppView(
     (manifest.watchApplications ?? []).map((target) => [target.name, target]),
   )
   // A release archive stamps the plists the store variant selects.
-  for (const target of manifest.targets) {
+  for (
+    const target of manifest.targets.filter((target) =>
+      target.distribution !== 'direct'
+    )
+  ) {
     targets.push({
       name: target.name,
       platform: platformOfManifest(target.platform),

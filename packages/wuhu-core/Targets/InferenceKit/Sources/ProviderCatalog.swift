@@ -18,9 +18,12 @@ public enum CatalogError: Error, Equatable, Sendable, CustomStringConvertible {
   case missingCredential(provider: String)
   case credentialMismatch(provider: String)
   case invalidTransport(provider: String)
+  case invalidOIDCDialect(provider: String)
 
   public var description: String {
     switch self {
+    case let .invalidOIDCDialect(provider):
+      "OIDC authentication is unsupported for Codex and Claude Code providers: \(provider)"
     case let .invalidTransport(provider):
       "websocket transport requires a Responses or Codex provider: \(provider)"
     case let .unknownProvider(provider):
@@ -55,15 +58,18 @@ public struct ResolvedModel: Sendable {
 public struct ProviderCatalog: Sendable {
   public var document: ModelsDocument
   public var credentials: CredentialResolver
+  private let oidcToken: (@Sendable (URL, SessionID) async throws -> String)?
   private let receiveCodexResponseHeaders: @Sendable (String, [String: String]) async -> Void
 
   public init(
     document: ModelsDocument,
     credentials: CredentialResolver,
+    oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     receiveCodexResponseHeaders: @escaping @Sendable (String, [String: String]) async -> Void = { _, _ in },
   ) {
     self.document = document
     self.credentials = credentials
+    self.oidcToken = oidcToken
     self.receiveCodexResponseHeaders = receiveCodexResponseHeaders
   }
 
@@ -71,6 +77,9 @@ public struct ProviderCatalog: Sendable {
   public func validate(_ specifier: ModelSpecifier) throws -> ModelsDocument.Model {
     guard let provider = document.providers[specifier.provider] else {
       throw CatalogError.unknownProvider(specifier.provider)
+    }
+    guard provider.auth != .oidc || (provider.dialect != .codex && provider.dialect != .claude) else {
+      throw CatalogError.invalidOIDCDialect(provider: specifier.provider)
     }
     guard provider.transport != .websocket || provider.dialect == .responses || provider.dialect == .codex else {
       throw CatalogError.invalidTransport(provider: specifier.provider)
@@ -117,6 +126,31 @@ public struct ProviderCatalog: Sendable {
     let provider = document.providers[specifier.provider]!
     guard provider.dialect != .claude else {
       throw .invalidInput(status: 422, body: "provider \(specifier.provider) is run by the Claude Code executor, never by kernel inference")
+    }
+    if provider.auth == .oidc {
+      guard let oidcToken else {
+        throw .invalidInput(status: 422, body: "OIDC authentication is not configured on this server.")
+      }
+      let token: String
+      do { token = try await oidcToken(provider.baseURL, session) }
+      catch {
+        let failure = InferenceError.normalize(error)
+        // Unknown signer diagnostics may contain private key or credential material.
+        if case let .other(status, _) = failure { throw .other(status: status, body: nil) }
+        throw failure
+      }
+      let endpoint: any ModelEndpoint
+      switch provider.dialect {
+      case .responses:
+        endpoint = OpenAIGPTEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: token, promptCacheKey: session.rawValue)
+      case .anthropic:
+        endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek")
+      case .codex, .claude:
+        throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
+      }
+      var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect), transport: provider.transport ?? .sse)
+      resolved.socketIdentity = SocketRegistryIdentity(provider: specifier.provider, model: specifier.model, configuration: provider, credential: .apiKey(token))
+      return resolved
     }
     let held: ProviderCredential?
     do {

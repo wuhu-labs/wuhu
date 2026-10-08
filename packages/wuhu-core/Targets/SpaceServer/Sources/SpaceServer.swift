@@ -83,6 +83,7 @@ public enum SpaceServer {
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
     execTokens: ExecTokens? = nil,
+    identityJWKS: JSONValue? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
     // Without --origin, content lives under localhost at the listener's port.
@@ -102,6 +103,18 @@ public enum SpaceServer {
       }
     }
     var router = Router()
+    for path in ["/.well-known/openid-configuration", "/.well-known/jwks.json"] {
+      router.get(path) { _, _ in
+        guard let issuer = try? ServerIdentity.issuer(origin), let identityJWKS else {
+          return errorResponse(.unprocessableContent, code: "oidcConfiguration", message: "OIDC requires a server identity key and a configured HTTPS --origin.")
+        }
+        if path == "/.well-known/jwks.json" { return jsonResponse(identityJWKS) }
+        return jsonResponse(.object([
+          "issuer": .string(issuer), "jwks_uri": .string(issuer + "/.well-known/jwks.json"),
+          "id_token_signing_alg_values_supported": .array([.string("ES256")]),
+        ]))
+      }
+    }
     router.post("/v1/tools/:name") { request, parameters in
       let name = parameters["name"] ?? ""
       guard let tool = SpaceToolbox.all.first(where: { $0.name == name }) else {
@@ -227,6 +240,7 @@ public enum SpaceServer {
       "/v1/enroll/consume",
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
       "/v1/server", "/v1/groups",
+      "/.well-known/openid-configuration", "/.well-known/jwks.json",
     ]
     return hostRouted(contentHost, api: gated { request in
       if selfAuthenticating.contains(request.url.path) {
@@ -346,6 +360,7 @@ public enum SpaceServer {
     let logger = Logger(label: "wuhu.serve")
     logger.notice("TLS certificate fingerprint: \(fingerprint)")
     let advertisedOrigin = origin.map(normalizedOrigin)
+    let serverIdentity = try await ServerIdentity.loadOrCreate(directory: folder.appendingPathComponent("identity"))
     // Apple's push service rejects VAPID subjects that are not public https/mailto
     // contacts, so the contact must never derive from --origin (LAN or localhost hosts).
     let vapid = try await WebPushKeyStore.loadOrCreate(
@@ -399,6 +414,12 @@ public enum SpaceServer {
       claudeCode: claudeCode.seam,
       usage: usage,
       probeClaude: { await claudeCode.probeUsage(provider: $0) },
+      oidcToken: { audience, session in
+        @Dependency(\.date) var date
+        @Dependency(\.uuid) var uuid
+        let record = try await space.sessions.record(session)
+        return try await serverIdentity.tokenForInference(issuer: advertisedOrigin, audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
+      },
     )
     let webPushRuntime = WebPushRuntime(
       space: space,
@@ -436,6 +457,7 @@ public enum SpaceServer {
         credentials: credentials,
         secrets: secrets,
         execTokens: execTokens,
+        identityJWKS: serverIdentity.jwks,
       ),
     )
     let loopback: ServeNIOServer

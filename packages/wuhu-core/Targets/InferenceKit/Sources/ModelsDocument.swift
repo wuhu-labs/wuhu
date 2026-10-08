@@ -32,15 +32,21 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var baseURL: URL
     public var originator: String?
     public var transport: Transport?
+    public var auth: Auth?
     public var models: [String: Model]
 
-    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, models: [String: Model]) {
+    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, models: [String: Model]) {
       self.dialect = dialect
       self.baseURL = baseURL
       self.originator = originator
       self.transport = transport
+      self.auth = auth
       self.models = models
     }
+  }
+
+  public enum Auth: String, Hashable, Sendable, Codable {
+    case oidc
   }
 
   public enum Transport: String, Hashable, Sendable, Codable {

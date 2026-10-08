@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from './assertions.ts'
-import type { AppManifest } from './generate.ts'
+import { parse } from '@std/yaml'
+import type { AppManifest, PackageManifest } from './generate.ts'
 import { takeFlagValue } from './generate.ts'
 import {
   appIconSource,
@@ -395,4 +396,64 @@ Deno.test('no local config leaves the scheme argument-free', () => {
   const target = (spec.targets as Record<string, Record<string, unknown>>)
     .ExampleiOS
   assertEquals(target.scheme, { testTargets: [] })
+})
+
+Deno.test('direct macOS workspace uses its only release entitlements variant', () => {
+  const app = shell()
+  app.targets[0] = {
+    ...app.targets[0],
+    name: 'WuhuAppDirect',
+    platform: 'macOS',
+    distribution: 'direct',
+    bundleID: 'ai.wuhu.app.direct',
+    families: ['mac'],
+  }
+  const { spec } = xcodeProjectSpec(app, packages)
+  const targets = spec.targets as Record<
+    string,
+    { settings: { base: Record<string, string> } }
+  >
+  const settings = targets.WuhuAppDirect.settings.base
+  assertEquals(
+    settings.CODE_SIGN_ENTITLEMENTS,
+    'WuhuAppDirect-release.entitlements',
+  )
+  assertEquals(settings.PRODUCT_BUNDLE_IDENTIFIER, 'ai.wuhu.app.direct')
+  assertEquals(settings.PROVISIONING_PROFILE_SPECIFIER, undefined)
+})
+
+Deno.test('the real direct Wuhu workspace resolves SoftwareUpdate as a package product', async () => {
+  const app = parse(
+    await Deno.readTextFile(
+      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
+    ),
+  ) as AppManifest
+  const pkg = parse(
+    await Deno.readTextFile(
+      new URL('../../packages/wuhu-app/package.yml', import.meta.url),
+    ),
+  ) as PackageManifest
+  assertEquals(Array.isArray(pkg.products), true)
+  const { spec, unresolved } = xcodeProjectSpec(app, {
+    'packages/wuhu-app': {
+      name: pkg.packageName,
+      products: pkg.products as string[],
+      path: '../..',
+    },
+  })
+  const targets = spec.targets as Record<
+    string,
+    { dependencies: { package: string; product: string }[] }
+  >
+  assertEquals(
+    targets.WuhuAppDirect.dependencies.some((dependency) =>
+      dependency.package === pkg.packageName &&
+      dependency.product === 'SoftwareUpdate'
+    ),
+    true,
+  )
+  assertEquals(
+    unresolved.includes('WuhuAppDirect: //packages/wuhu-app:SoftwareUpdate'),
+    false,
+  )
 })

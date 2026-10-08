@@ -40,7 +40,10 @@ import WuhuAI
     #expect(handshake.url.absoluteString == "wss://offline.test/v1/responses")
     #expect(handshake.headers.sensitiveValues["authorization"] == "Bearer offline-token")
     #expect(handshake.headers.sensitiveValues["authorization"] != nil)
-    #expect(handshake.limits.messageBytes == 16 << 20)
+    #expect(handshake.limits.frameBytes == 128 << 20)
+    #expect(handshake.limits.messageBytes == 128 << 20)
+    #expect(handshake.limits.bufferedReceiveBytes == 128 << 20)
+    #expect(handshake.limits.outboundMessageBytes == 128 << 20)
     let body = try #require(await server.sent.first?.object)
     #expect(body["type"]?.stringValue == "response.create")
     #expect(body["stream"] == nil && body["background"] == nil)
@@ -53,6 +56,103 @@ import WuhuAI
       #expect(metadata.servedModel == "served-model")
     } else { Issue.record("Missing done") }
     #expect(observations.withLock { $0.first } == "request-1")
+    await session.invalidate()
+  }
+
+  @Test func createAbove128MiBIsTypedBeforeDialAndDoesNotFallback() async throws {
+    let session = ResponsesWebSocketSession()
+    let context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: 128 << 20)))]))])
+    await withDependencies {
+      $0[WebSocketConnector.self] = WebSocketConnector { _ in Issue.record("oversized request dialed"); throw WebSocketError.unimplemented }
+      $0.fetch = FetchClient { _ in Issue.record("SSE fallback"); throw FetchError.unimplemented }
+    } operation: {
+      await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) {
+        try await endpoint().withWebSocket(session: session, attemptID: "large").inference(context: context).collect()
+      }
+    }
+    await session.invalidate()
+  }
+
+  @Test(.timeLimit(.minutes(3)), arguments: [false, true])
+  func oversizedAcknowledgedHistoryChecksPhysicalDeltaAndCorrectiveCreate(missingPrevious: Bool) async throws {
+    let largeReply = String(repeating: "y", count: 9 << 20)
+    var firstResponse = textResponse("resp_large_history")
+    firstResponse[2] = json(JSONValue.object([
+      "type": .string("response.output_text.delta"), "item_id": .string("msg_1"), "delta": .string(largeReply),
+    ]).jsonString())
+    let secondResponse = missingPrevious
+      ? [json(#"{"type":"error","error":{"code":"previous_response_not_found"}}"#)]
+      : textResponse("resp_delta")
+    let server = ScriptedResponsesSocket(scripts: [firstResponse, secondResponse])
+    let session = ResponsesWebSocketSession()
+    var context = Context(messages: [.user(.init(content: [.text(.init(text: String(repeating: "x", count: 120 << 20)))]))])
+    let requests = Mutex<[Int]>([])
+    try await withDependencies {
+      $0[WebSocketConnector.self] = server.connector
+      $0.fetch = FetchClient { _ in Issue.record("SSE fallback"); throw FetchError.unimplemented }
+    } operation: {
+      let committed = try await endpoint().withWebSocket(session: session, attemptID: "large-history").inference(context: context).collect()
+      #expect(committed.content == [.text(.init(text: largeReply))])
+      context.messages.append(.assistant(committed))
+      await session.acknowledge(attemptID: "large-history", committedMessage: committed, toolCallIDs: [:], renderedContext: context)
+      context.messages.append(.user(.init(content: [.text("small delta")])))
+      let inference = endpoint().withWebSocket(session: session, attemptID: "delta", observer: .init(request: { number, _, _ in
+        requests.withLock { $0.append(number) }
+      })).inference(context: context)
+      if missingPrevious {
+        await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) { try await inference.collect() }
+      } else {
+        let completed = try await inference.collect()
+        #expect(completed.content == [.text(.init(text: "hello"))])
+      }
+    }
+    let sent = await server.sent
+    #expect(sent.count == 2)
+    #expect(await server.handshakes.count == 1)
+    #expect(requests.withLock { $0 } == [1])
+    #expect(sent[0].jsonString().utf8.count < 128 << 20)
+    #expect(sent[1].object?["previous_response_id"] == .string("resp_large_history"))
+    #expect(sent[1].object?["input"]?.array?.count == 1)
+    #expect(sent[1].jsonString().utf8.count < 1024)
+    await session.invalidate()
+  }
+
+  @Test func outboundTransportOverflowIsTypedWithoutAdapterRetry() async throws {
+    let session = ResponsesWebSocketSession()
+    let sends = Mutex(0)
+    await withDependencies {
+      $0[WebSocketConnector.self] = WebSocketConnector { _ in
+        WebSocketConnection(inbound: .init(AsyncThrowingStream { _ in }), send: { _ in
+          sends.withLock { $0 += 1 }
+          throw WebSocketError.limitExceeded(.outboundMessage)
+        }, close: { _ in }, abort: {})
+      }
+    } operation: {
+      await #expect(throws: InferenceError.requestTooLarge(limitBytes: 128 << 20)) {
+        try await endpoint().withWebSocket(session: session, attemptID: "overflow").inference(context: initial()).collect()
+      }
+    }
+    #expect(sends.withLock { $0 } == 1)
+    await session.invalidate()
+  }
+
+  @Test func fullCreateAboveFormerLimitPreservesOpaqueRecordsAndImages() async throws {
+    let server = ScriptedResponsesSocket(scripts: [textResponse("resp_large")])
+    let session = ResponsesWebSocketSession()
+    let opaque = String(repeating: "a", count: 9 << 20)
+    let imageURL = "data:image/png;base64," + String(repeating: "A", count: 8 << 20)
+    let context = Context(messages: [
+      .user(.init(content: [.text("large"), .media(.init(url: URL(string: imageURL)!, mimeType: "image/png"))])),
+      .assistant(.init(content: [.reasoning(.encrypted(.init(providerID: "openai", model: "test-model", opaque: opaque)))])),
+    ])
+    try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      _ = try await endpoint().withWebSocket(session: session, attemptID: "large").inference(context: context).collect()
+    }
+    let body = try #require(await server.sent.first)
+    #expect(body.jsonString().utf8.count > 16 << 20)
+    let input = try #require(body.object?["input"]?.array)
+    #expect(input[0].object?["content"]?.array?.last?.object?["image_url"]?.stringValue == imageURL)
+    #expect(input[1].object?["encrypted_content"]?.stringValue == opaque)
     await session.invalidate()
   }
 

@@ -56,6 +56,18 @@ import WuhuVFS
     }
   }
 
+  @Test(arguments: [" https://wuhu.ai/privacy ", "HTTPS://wuhu.ai/privacy", "https://wuhu.ai/privacy\n", "https:wuhu.ai/privacy"])
+  func policyMustBeUnpaddedLiteralHTTPS(_ policy: String) async throws {
+    let invalid = AIDisclosure(version: "trial-2026-10", providers: [
+      AIProviderDisclosure(name: "DeepSeek", location: "China", via: "Wuhu metering proxy", policy: policy),
+    ])
+    let fs = NodeTreeVFS(root: InMemoryVFSNode())
+    try await fs.createFile(at: VFSPath(absoluteFilePath: "/bad.json"), data: JSONEncoder().encode(invalid))
+    await #expect(throws: AIDisclosureError.invalid(file: "bad.json")) {
+      try await loadAIDisclosure(from: fs, path: "/bad.json", file: "bad.json")
+    }
+  }
+
   @Test func badConfigRefusesBeforeCreatingStore() async throws {
     let dir = try scratchURL("ai-disclosure")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

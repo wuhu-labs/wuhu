@@ -2747,7 +2747,9 @@ Deno.test('unsigned Store profile bypass covers every real Wuhu app and embedded
   const app = parse(await Deno.readTextFile(source)) as AppManifest
   app.signingTeamID = 'TEAM123456'
   const build = generateAppBuildBazel(app, [], 'Apps/wuhu')
-  const bundles = appBundles(app)
+  const bundles = appBundles(app).filter((bundle) =>
+    bundle.distribution !== 'direct'
+  )
   assertEquals(
     bundles.some((bundle) => bundle.name === 'WuhuNotificationService'),
     true,
@@ -2844,4 +2846,211 @@ Deno.test('platform runtime rejects platforms outside the test lanes', async () 
       }]),
     'names test runtime for mac, which is not one of its test lanes',
   )
+})
+
+Deno.test('Wuhu direct distribution separates Sparkle, identity, entitlements and release channels', async () => {
+  const app = parse(
+    await Deno.readTextFile(
+      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
+    ),
+  ) as AppManifest
+  validateAppRelease(app, 'wuhu/app.yml')
+  const direct = app.targets.find((target) => target.distribution === 'direct')!
+  const store = app.targets.find((target) => target.name === 'WuhuApp')!
+  assertEquals(direct.bundleID, 'ai.wuhu.app.direct')
+  assertEquals(store.bundleID, 'ai.wuhu.app')
+  assertEquals(direct.bundleID === store.bundleID, false)
+  assertEquals(direct.bundleName, store.bundleName)
+  const libraries = new Map(
+    app.libraries!.map((library) => [library.name, library]),
+  )
+  function dependencies(labels: string[]): string[] {
+    return labels.flatMap((
+      label,
+    ) => [
+      label,
+      ...(label.startsWith(':')
+        ? dependencies(libraries.get(label.slice(1))?.dependencies ?? [])
+        : []),
+    ])
+  }
+  for (const target of app.targets) {
+    assertEquals(
+      dependencies(target.dependencies).includes(
+        '//packages/wuhu-app:SoftwareUpdate',
+      ),
+      target === direct,
+    )
+    const entitlements = resolvedEntitlements(target, 'store', '97W7A3Y9GD')
+    assertEquals(
+      entitlements[
+        'com.apple.security.temporary-exception.mach-lookup.global-name'
+      ],
+      undefined,
+    )
+    if (target !== direct) {
+      assertEquals(
+        Object.keys(target.info).some((key) => key.startsWith('SU')),
+        false,
+      )
+      assertEquals(target.info.WuhuStorageNamespace, undefined)
+      continue
+    }
+    assertEquals(entitlements['com.apple.security.app-sandbox'], undefined)
+    assertEquals(entitlements['com.apple.security.device.audio-input'], true)
+    assertEquals(entitlements['keychain-access-groups'], [
+      '97W7A3Y9GD.ai.wuhu.app.direct',
+    ])
+    assertEquals(
+      entitlements['com.apple.application-identifier'],
+      '97W7A3Y9GD.ai.wuhu.app.direct',
+    )
+    assertEquals(
+      entitlements['com.apple.developer.team-identifier'],
+      '97W7A3Y9GD',
+    )
+    assertEquals(entitlements['get-task-allow'], undefined)
+    assertEquals(
+      entitlements['com.apple.security.cs.disable-library-validation'],
+      undefined,
+    )
+    assertEquals(entitlements['com.apple.security.network.server'], undefined)
+    assertEquals(target.info.SUEnableInstallerLauncherService, undefined)
+    assertEquals(target.info.SUEnableDownloaderService, undefined)
+    assertEquals(target.info.SUEnableAutomaticChecks, true)
+    assertEquals(target.info.SUAutomaticallyUpdate, false)
+    assertEquals(
+      target.info.SUPublicEDKey,
+      'FDHcWJqmjGNaFO726V0NXy9hKZWoaBYGaCW7zRd/CG4=',
+    )
+    assertEquals(target.info.WuhuStorageNamespace, target.bundleID)
+  }
+  assertEquals(
+    store.entitlements.common!['com.apple.security.app-sandbox'],
+    true,
+  )
+  assertEquals(direct.releaseChannels, {
+    stable: {
+      SUFeedURL: 'https://wuhu.ai/releases/app/mac/appcast.xml',
+      WuhuUpdateChannel: 'stable',
+    },
+    staging: {
+      SUFeedURL: 'https://wuhu.ai/releases/app/mac-staging/appcast.xml',
+      WuhuUpdateChannel: 'staging',
+    },
+  })
+  const build = generateAppBuildBazel(app, [], 'Apps/wuhu')
+  const directRule = build.split('\n)\n').find((rule) =>
+    rule.includes('name = "WuhuAppDirect",')
+  )!
+  assertIncludes(directRule, 'features = ["disable_legacy_signing"]')
+  assertEquals(directRule.includes('provisioning_profile'), false)
+  assertEquals(directRule.includes('ViewPilot'), false)
+  assertIncludes(directRule, ':WuhuAppDirect_channel_stable')
+  assertIncludes(directRule, 'BazelInfo-direct-staging.plist')
+  assertIncludes(build, 'build_setting_default = "stable"')
+  const directLibrary = build.split('\n)\n').find((rule) =>
+    rule.includes('name = "WuhuAppDirectLibrary",')
+  )!
+  assertIncludes(directLibrary, 'Commands/Direct/**/*.swift')
+  assertEquals(directLibrary.includes('WUHU_UI_CONTROL_COPTS'), false)
+  populateAppBundleInfo(app)
+  assertEquals(
+    direct.info.SUFeedURL,
+    'https://wuhu.ai/releases/app/mac/appcast.xml',
+  )
+  assertEquals(direct.info.WuhuUpdateChannel, 'stable')
+})
+
+Deno.test('direct distribution rejects mobile, development identity and channel identity overrides', async () => {
+  const source = await Deno.readTextFile(
+    new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
+  )
+  const change = (mutate: (target: AppManifest['targets'][number]) => void) => {
+    const app = parse(source) as AppManifest
+    mutate(app.targets.find((target) => target.distribution === 'direct')!)
+    return () => validateAppRelease(app, 'wuhu/app.yml')
+  }
+  assertThrows(
+    change((target) => {
+      target.platform = 'iOS'
+    }),
+    'direct requires macOS',
+  )
+  assertThrows(
+    change((target) => {
+      target.devIdentity = { bundleID: 'dev.example' }
+    }),
+    'release-only app identity',
+  )
+  assertThrows(
+    change((target) => {
+      delete target.releaseChannels!.stable
+    }),
+    'stable default',
+  )
+  assertThrows(
+    change((target) => {
+      target.releaseChannels!.staging.CFBundleIdentifier = 'wrong'
+    }),
+    'cannot change bundle identity',
+  )
+})
+
+Deno.test('Sparkle official XCFramework and tools share one pin and exclude unused XPC services', async () => {
+  const fragment = await Deno.readTextFile(
+    new URL('../../packages/wuhu-app/MODULE.fragment.bazel', import.meta.url),
+  )
+  const target = parse(
+    await Deno.readTextFile(
+      new URL(
+        '../../packages/wuhu-app/Targets/SoftwareUpdate/target.yml',
+        import.meta.url,
+      ),
+    ),
+  ) as TargetManifest
+  assertEquals(target.checks?.build, ['mac'])
+  const dependency = target.dependencies![0] as {
+    name: string
+    swiftpm: { binaryTarget: { url: string; checksum: string } }
+  }
+  assertEquals(dependency.name, '@sparkle//:Sparkle')
+  const { url, checksum } = dependency.swiftpm.binaryTarget
+  assertEquals(
+    url,
+    'https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip',
+  )
+  assertEquals(
+    checksum,
+    '17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959',
+  )
+  assertIncludes(fragment, `sha256 = "${checksum}"`)
+  assertIncludes(fragment, `url = "${url}"`)
+  assertIncludes(fragment, 'Sparkle.framework/Versions/B/XPCServices')
+  for (const name of ['sign_update', 'generate_appcast', 'generate_keys']) {
+    assertIncludes(fragment, `name = "${name}"`)
+  }
+})
+
+Deno.test('host linker arguments reach the native test without entering simulator tests', async () => {
+  const build = await generateBuildBazel(applePkg, [{
+    ...minimalTarget('Updater', 'library'),
+    tests: {
+      checks: { test: ['mac', 'ios'] },
+      hostLinkopts: [
+        '-Wl,-rpath,@loader_path/UpdaterTests.runfiles/frameworks',
+      ],
+    },
+  }])
+  const host = build.slice(
+    build.indexOf('wuhu_swift_test('),
+    build.indexOf('wuhu_sim_test('),
+  )
+  const simulator = build.slice(build.indexOf('wuhu_sim_test('))
+  assertIncludes(host, 'linkopts = [')
+  assertIncludes(
+    host,
+    '"-Wl,-rpath,@loader_path/UpdaterTests.runfiles/frameworks"',
+  )
+  assertEquals(simulator.includes('linkopts ='), false)
 })

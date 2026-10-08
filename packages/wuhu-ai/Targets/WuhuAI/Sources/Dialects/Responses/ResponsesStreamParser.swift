@@ -313,10 +313,14 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
             }
 
           case "error":
-            if let error = responsesMalformedMessage(dict["error"] ?? .object(dict)) { throw error }
+            let value = dict["error"] ?? .object(dict)
+            if let error = responsesMalformedMessage(value) { throw error }
+            if let error = InferenceError.capacityError(code: value.object?["code"]?.stringValue ?? value.object?["type"]?.stringValue, message: value.object?["message"]?.stringValue, status: dict["status"]?.intValue) { throw error }
 
           case "response.failed":
-            if let error = responsesMalformedMessage(dict["response"]?.object?["error"] ?? dict["error"] ?? .object(dict)) { throw error }
+            let value = dict["response"]?.object?["error"] ?? dict["error"] ?? .object(dict)
+            if let error = responsesMalformedMessage(value) { throw error }
+            if let error = InferenceError.capacityError(code: value.object?["code"]?.stringValue ?? value.object?["type"]?.stringValue, message: value.object?["message"]?.stringValue, status: dict["status"]?.intValue) { throw error }
             let status = dict["response"]?.object?["status"]?.stringValue ?? type
             throw ResponsesStreamError.failed(status: status)
 

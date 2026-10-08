@@ -45,6 +45,8 @@ func loadAIDisclosure(from fs: any VirtualFileSystem, path: String, file: String
 
 private func validProvider(_ provider: AIProviderDisclosure) -> Bool {
   guard [provider.name, provider.location, provider.via].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+        provider.policy == provider.policy.trimmingCharacters(in: .whitespacesAndNewlines),
+        provider.policy.hasPrefix("https://"),
         let policy = URLComponents(string: provider.policy),
         policy.scheme == "https", let host = policy.host, !host.isEmpty,
         policy.user == nil, policy.password == nil

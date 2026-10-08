@@ -33,7 +33,6 @@ public struct InferenceExecutor: Sendable {
   public var model: ResolvedModel
   public var systemPrompt: String
   public var tools: [Tool]
-  public var thresholds: CompactionThresholds
   public var compactToolName: String
   public var hub: AttemptHub?
   public var log: AttemptLogConfig?
@@ -47,7 +46,6 @@ public struct InferenceExecutor: Sendable {
     model: ResolvedModel,
     systemPrompt: String,
     tools: [Tool],
-    thresholds: CompactionThresholds = .init(),
     compactToolName: String = "compact",
     hub: AttemptHub? = nil,
     log: AttemptLogConfig? = nil,
@@ -60,7 +58,6 @@ public struct InferenceExecutor: Sendable {
     self.model = model
     self.systemPrompt = systemPrompt
     self.tools = tools
-    self.thresholds = thresholds
     self.compactToolName = compactToolName
     self.hub = hub
     self.log = log
@@ -82,8 +79,6 @@ public struct InferenceExecutor: Sendable {
       session: session,
       systemPrompt: systemPrompt,
       tools: tools,
-      budget: model.budget,
-      thresholds: thresholds,
       handles: handles,
       devices: devices,
     )
@@ -192,7 +187,7 @@ public struct InferenceExecutor: Sendable {
 
   public func acknowledge(entry: AssistantEntry, transcript: Transcript, handles: [String: String] = [:], devices: [String: String] = [:]) async {
     guard let webSocket, model.transport == .websocket else { return }
-    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools, budget: model.budget, thresholds: thresholds, handles: handles, devices: devices)
+    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools, handles: handles, devices: devices)
     await webSocket.acknowledge(attemptID: entry.id.uuidString, committedMessage: .init(content: entry.content), toolCallIDs: entry.toolCallIDs.mapValues(\.rawValue), renderedContext: context)
   }
 

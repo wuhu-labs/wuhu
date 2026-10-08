@@ -56,3 +56,11 @@ agent 的脚本和命令也能用密钥，比如某个 web 服务的 token。这
 组的 admin 在那个组里（`--group <id>`，见[组](/guide/zh/3-people-and-devices.md#组)）用 `wuhu secret set <NAME> < value` 存一条；`wuhu secret list` 列出名字，`wuhu secret remove <NAME>` 删掉一条。它们存在服务器所在主机的 `~/.wuhu/secrets/<space-id>/<group>.json` 里。一个组永远看不到另一个组的。
 
 脚本的密钥来自它的 agent 所在的组；值会被填进脚本对外的请求里，回来的内容里也会被打码。机器上的命令拿到的是机器所在组的密钥，作为环境变量。见[机器](/guide/zh/4-machines.md#机器上的密钥)。
+
+## 无密钥提供商与服务器身份
+
+兼容的提供商可在 `/models.json` 条目中设置 `"auth": "oidc"`。Wuhu 为每次内核推理调用签发一个有效期为 5 分钟的 ES256 令牌，通过 `Authorization: Bearer <jwt>` 发送，不读取存储的凭据。Anthropic Messages 和 OpenAI Responses 支持此方式；ChatGPT Codex 和 Claude Code 不支持。提供商必须能够验证 Wuhu 的令牌，普通厂商 API 不会因此接受它们。能力调用的认证配置保持独立。
+
+令牌的 audience 是提供商 `baseURL` 的 origin，也可使用内部 HTTP 地址；issuer 是服务器配置的 HTTPS `--origin`，托管租户使用自己的主机地址。无需额外配置 issuer 或 audience 字段。配置缺失或签名失败会返回有类型的错误，绝不回退到已存储的密钥或其他提供商。
+
+空间主机公开无需认证的 `GET /.well-known/openid-configuration`（`issuer`、`jwks_uri`、支持的 `ES256` 算法）和 `GET /.well-known/jwks.json`（P-256 公钥及其 `kid`）。未配置 HTTPS `--origin` 时，两者均返回 HTTP 422，错误码为 `oidcConfiguration`。令牌包含空间、组及执行会话的 id，不包含姓名或邮箱。私钥存储在空间文档之外的 `<server-state>/identity/identity.p256`，重启和升级后保持不变；请保留该状态目录。

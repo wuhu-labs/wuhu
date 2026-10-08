@@ -90,8 +90,14 @@ extension InferenceMetric {
       return (.cancelled, nil, nil)
     case .rateLimited:
       return (.httpError, "rateLimited", 429)
+    case let .capacityExceeded(code, _, status):
+      return (.httpError, code, status)
     case .malformedModelMessage:
       return (.httpError, "malformedModelMessage", nil)
+    case .requestTooLarge:
+      return (.httpError, "requestTooLarge", 413)
+    case .requestTooLargeAfterCompaction:
+      return (.httpError, "requestTooLargeAfterCompaction", 413)
     case .contextTooLong:
       return (.httpError, "contextTooLong", 413)
     case let .invalidInput(status, _):

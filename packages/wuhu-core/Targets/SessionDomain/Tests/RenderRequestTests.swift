@@ -5,8 +5,6 @@ import Testing
 import WuhuAI
 
 @Suite struct RenderRequestTests {
-  private let budget = ContextBudget(maxInput: 100_000, maxOutput: 10000)
-
   @Test func `snapshot renders as the generation's first user-role message`() async {
     let head = GenerationHead(
       id: UUID(),
@@ -18,7 +16,7 @@ import WuhuAI
       ),
     )
     let transcript = Transcript(items: [.generationHead(head), Fix.message()], keptCount: 1)
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
 
     #expect(context.systemPrompt == "sys")
     let first = context.messages[0].user
@@ -46,7 +44,7 @@ import WuhuAI
   @Test func `a creation head carries no summary and no nudge`() async {
     let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init())
     let transcript = Transcript(items: [.generationHead(head), Fix.message()], keptCount: 1)
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     #expect(context.messages.count == 2)
     #expect(!context.messages.contains { message in
       if case let .text(text)? = message.user?.content.first { return text.text.contains("compacted") }
@@ -63,7 +61,7 @@ import WuhuAI
         provenance: .toolCall(.init("k-1")),
       ),
     ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
 
     #expect(context.messages[0].assistant?.content.contains(.toolCall(call)) == true)
     let result = context.messages[1].toolResult
@@ -81,7 +79,7 @@ import WuhuAI
       Fix.result(.read(.init(path: "machines://m1/tmp/b", revision: .journal(1), content: "b")), provenance: .toolCall(.init("k-2"))),
       Fix.context(["machines://m1/tmp": nil]),
     ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     #expect(context.messages.count == 4)
     #expect(context.messages[1].toolResult?.toolCallId == "k-1")
     #expect(context.messages[2].toolResult?.toolCallId == "k-2")
@@ -96,7 +94,7 @@ import WuhuAI
     let transcript = Transcript(items: [
       Fix.result(.failure(.init(message: "no such file")), provenance: .toolCall(.init("k-2"))),
     ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     let result = context.messages[0].toolResult
     #expect(result?.isError == true)
     #expect(result?.content == [.text("no such file")])
@@ -109,7 +107,7 @@ import WuhuAI
         provenance: .compactionReestablishment,
       ),
     ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     guard case let .text(text) = context.messages[0].user?.content.first else {
       Issue.record("re-established read must be user role")
       return
@@ -120,7 +118,7 @@ import WuhuAI
 
   @Test func `messages render header then blank line then verbatim body`() async {
     let transcript = Transcript(items: [Fix.message(text: "hello there")])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     guard case let .text(text) = context.messages[0].user?.content.first,
           case let .message(message) = transcript.items[0]
     else {
@@ -132,7 +130,7 @@ import WuhuAI
 
   @Test func `handles passed to a render attribute every message sender`() async {
     let transcript = Transcript(items: [Fix.message(sender: "alice", text: "hello there")])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget, handles: ["alice": "ali"])
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", handles: ["alice": "ali"])
     guard case let .text(text) = context.messages[0].user?.content.first else {
       Issue.record("a conversation message must be user role")
       return
@@ -140,41 +138,10 @@ import WuhuAI
     #expect(text.text.hasPrefix("<sender>ali (alice)</sender>\n"))
   }
 
-  @Test func `compaction notice appears past the soft threshold with the live percentage`() async {
+  @Test func `render never synthesizes pressure notices`() async {
     let transcript = Transcript(items: [Fix.assistant(totalTokens: 800)])
-    let tight = ContextBudget(maxInput: 1000, maxOutput: 0)
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: tight)
-
-    guard case let .text(text) = context.messages.last?.user?.content.first else {
-      Issue.record("notice must be the tail user message")
-      return
-    }
-    #expect(text.text.contains("<compaction-notice>"))
-    #expect(text.text.contains("80% full"))
-    #expect(transcript.items.count == 1)
-  }
-
-  @Test func `no compaction notice below the soft threshold`() async {
-    let transcript = Transcript(items: [Fix.assistant(totalTokens: 400)])
-    let tight = ContextBudget(maxInput: 1000, maxOutput: 0)
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: tight)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     #expect(context.messages.count == 1)
     #expect(context.messages[0].assistant != nil)
-  }
-
-  @Test func `thresholds are caller policy`() async {
-    let transcript = Transcript(items: [Fix.assistant(totalTokens: 400)])
-    let tight = ContextBudget(maxInput: 1000, maxOutput: 0)
-    let context = await transcript.renderRequest(
-      session: Fix.session,
-      systemPrompt: "sys",
-      budget: tight,
-      thresholds: .init(soft: 0.3, hard: 0.5),
-    )
-    guard case let .text(text) = context.messages.last?.user?.content.first else {
-      Issue.record("notice must appear at the caller's soft threshold")
-      return
-    }
-    #expect(text.text.contains("40% full"))
   }
 }

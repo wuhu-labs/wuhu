@@ -41,7 +41,6 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   let context = await transcript.renderRequest(
     session: SessionID("s-1"),
     systemPrompt: "sys",
-    budget: ContextBudget(maxInput: 100_000, maxOutput: 10000),
   )
   _ = try? await capturing.inference(context: context).collect()
   return try #require(bodies.withLock { $0.first })
@@ -72,7 +71,6 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
       let context = await imageRead(missing).renderRequest(
         session: SessionID("s-1"),
         systemPrompt: "sys",
-        budget: ContextBudget(maxInput: 100_000, maxOutput: 10000),
       )
       _ = try await endpoint
         .withMediaResolver(SpaceMediaResolver(space: space, limits: .claude, group: .shared))

@@ -152,6 +152,10 @@ public actor ResponsesWebSocketSession {
     var body = chain.body
     var aliases = chain.aliases
     for subattempt in 1 ... 2 {
+      let text = JSONValue.object(body).jsonString()
+      guard text.utf8.count <= request.handshake.limits.outboundMessageBytes else {
+        throw InferenceError.requestTooLarge(limitBytes: request.handshake.limits.outboundMessageBytes)
+      }
       quotaReceiver = receiveQuota
       let connection = try await connection(request: request, identity: identity, connector: connector, token: token)
       let currentGeneration = generation
@@ -163,7 +167,7 @@ public actor ResponsesWebSocketSession {
       await observer.request(subattempt, request.handshake.headers, .object(body))
       try Task.checkCancellation()
       guard generation == currentGeneration, inFlight == token, active?.events === events else { throw WebSocketError.connectionClosed }
-      try await connection.send(.text(JSONValue.object(body).jsonString()))
+      try await connection.send(.text(text))
       activity += 1
       var terminal: InferenceEvent?
       do {

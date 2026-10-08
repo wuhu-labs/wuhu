@@ -75,7 +75,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
       default: throw WebSocketError.invalidURL(built.url.absoluteString)
       }
       guard let url = components?.url else { throw WebSocketError.invalidURL(built.url.absoluteString) }
-      let size = 16 << 20
+      let size = responsesWebSocketByteLimit
       return ResponsesSocketRequest(
         handshake: WebSocketRequest(url: url, headers: headers, limits: .init(frameBytes: size, messageBytes: size, bufferedReceiveBytes: size, outboundMessageBytes: size)),
         body: body,
@@ -106,3 +106,5 @@ struct ResponsesSocketRequest: Sendable {
   var handshake: WebSocketRequest
   var body: OrderedDictionary<String, JSONValue>
 }
+
+let responsesWebSocketByteLimit = 128 << 20

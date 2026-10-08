@@ -137,7 +137,7 @@ import WuhuAI
 
   @Test func `a message with an attachment renders text plus a reference to the file`() async {
     let transcript = Transcript(items: [Fix.message(text: "what does this say?", attachments: [attachment])])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
 
     let content = context.messages[0].user?.content
     #expect(content?.count == 2)
@@ -159,7 +159,7 @@ import WuhuAI
     let clip = Attachment.file(path: "/c/clip.mp4", mimeType: "video/mp4", size: 41_943_040)
     let big = Attachment.image(path: "/c/big.png", mimeType: "image/png", size: ImageMedia.maxBytes + 1)
     let transcript = Transcript(items: [Fix.message(text: "see", attachments: [attachment, clip, big])])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
 
     let content = context.messages[0].user?.content ?? []
     guard case let .text(text) = content.first else {
@@ -188,7 +188,7 @@ import WuhuAI
     """#
     let content = try JSONDecoder().decode(MessageContent.self, from: Data(stored.utf8))
     let transcript = Transcript(items: [Fix.message(text: content.text, attachments: content.attachments)])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
 
     let blocks = context.messages[0].user?.content ?? []
     #expect(blocks.count == 1)
@@ -216,7 +216,7 @@ import WuhuAI
       Fix.direct(),
       Fix.message(conversation: "ch2", text: "b", attachments: [attachment]),
     ])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", budget: budget)
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     let references = context.messages.flatMap { message in
       (message.user?.content ?? []).compactMap { block -> MediaReference? in
         guard case let .media(media) = block else { return nil }

@@ -45,6 +45,8 @@ actor SessionActor {
     var archiving = false
     var claimingCompactRequest = false
     var malformedMessages = 0
+    var capacityFailures = 0
+    var compactedForPayload = false
 
     var hasSettled: Bool {
       if sessionStatus.stopped {

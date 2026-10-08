@@ -4,3 +4,5 @@ A generation head may carry a settle snapshot and an optional settle boundary id
 
 
 `ImageLimits.fitted` derives its area ratio in floating point before multiplying image dimensions, so untrusted header dimensions do not overflow an integer width×height product. Model long-edge, patch-count and byte budgets retain their existing meanings.
+
+`Transcript.renderRequest` is a projection of stored transcript entries and explicit attribution/system/tool inputs. It does not compute fullness or synthesize context-pressure notices. A pressure notice is an ordinary persisted context notification, grouped after a turn's tool results like other context notifications; its historical percentage, timestamp and position survive replay and Codable round trips.
