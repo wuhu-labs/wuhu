@@ -26,7 +26,7 @@ public struct Frame: Codable, Equatable, Sendable {
 
 @Contract
 public enum ControlMessage: Codable, Equatable, Sendable {
-  case hello(protocolVersion: Int)
+  case hello(protocolVersion: Int, execs: [ExecID]? = nil)
   case ping
   case error(error: MachineError)
 }

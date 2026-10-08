@@ -26,6 +26,7 @@ import Testing
         .object(["name": "b", "type": "boolean"]),
       ])]),
     ])),
+    ("table.schema", ["path": "/data/t.table"]),
     ("table.alter", .object([
       "path": "/data/t.table",
       "header": .object(["columns": .array([
@@ -68,6 +69,11 @@ import Testing
     validated.insert("sync")
     for (tool, input) in Self.samples {
       let schema = try outputSchema(tool)
+      var input = input
+      if tool == "table.alter", case var .object(fields) = input {
+        fields["ifMatch"] = try await run("table.schema", ["path": "/data/t.table"], context).object?["token"]
+        input = .object(fields)
+      }
       let output = try await run(tool, input, context)
       #expect(schemaIssues(output, schema: schema) == [], "\(tool)")
       validated.insert(tool)

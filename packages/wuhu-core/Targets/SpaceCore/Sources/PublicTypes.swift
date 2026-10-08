@@ -155,6 +155,7 @@ public enum SpaceError: Error, Equatable, Sendable {
   case invalidRevision(Int)
   case columnCountMismatch(String)
   case columnTypeChanged(String)
+  case invalidTableHeader(String)
   case invalidCellValue(String)
   case reservedTablePath(String)
   case reservedAccountName(String)

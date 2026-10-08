@@ -13,7 +13,7 @@ import { createSession, request, setTags, archive, unarchive, interrupt, resume 
 
 - `createSession({ title, kind, topLevel, group, provider, model, effort, template, tags, message, expectsReply, key })` resolves to `{ id, requestId? }` as soon as the session exists. It takes what the `create_session` tool takes:
   - `kind` is `"task"` (the default) or `"agent"`. An agent has a box; a task answers only through `report`. An agent template, or `topLevel`, makes `"agent"` the default.
-  - `topLevel: true` makes a root agent with no parent. Only an agent may create one, and `expectsReply` is refused: a root has nobody to report to. It belongs to the humans: after creation you have no rights over it, and `created_by` records you only as its creator.
+  - `topLevel: true` makes a root agent with no parent. Only an agent may create one, and `expectsReply` is refused: a root has nobody to report to. It belongs to the humans: it gives you no parent/ancestry control, but you retain the creator archive/unarchive exception below. `created_by` records you as its creator.
   - A child lives in your group. Only a top-level agent takes `group`: it lands in your group unless `group` names another one your group reads.
   - With `expectsReply` (and a `message`) the child starts on the message and owes you one final report. Without it, `message` arrives as a DM from you and nothing is owed.
   - Omitted `provider`, `model` and `effort` default to your own; a template's values win over that, explicit arguments over both.
@@ -50,7 +50,7 @@ const { id } = await createSession({
 result(id)
 ```
 
-The agent appears in the humans' roster as a root session. The brief waits for it in its DM with you. Tell the person who asked for it its id; from here on, only they and the agent itself can archive, retag or interrupt it.
+The agent appears in the humans' roster as a root session. The brief waits for it in its DM with you. Tell the person who asked for it its id; it is not your descendant, so you cannot retag or interrupt it. You retain creator archive/unarchive rights, and a top-level agent also has archive/unarchive rights in its own group; the human’s rights are unchanged.
 
 ## Three researchers in parallel, then wait for their reports
 

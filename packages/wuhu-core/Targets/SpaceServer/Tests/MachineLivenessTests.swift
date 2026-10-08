@@ -30,7 +30,7 @@ import Testing
         let caller = try await connectCaller(server, exec: exec)
         let log = FrameLog()
         try await caller.send(.binary(FrameCodec.encode(
-          Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
+          Frame(streamID: 1, opcode: .execStart, payload: makeExecStart(exec, command: ["true"])),
         )))
         try await withThrowingTaskGroup(of: Void.self) { readers async throws -> Void in
           readers.addTask {
@@ -222,7 +222,7 @@ import Testing
         log.finish()
       }
       try await caller.send(.binary(FrameCodec.encode(
-        Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
+        Frame(streamID: 1, opcode: .execStart, payload: makeExecStart(exec, command: ["true"])),
       )))
       for await message in machineSocket.inbound {
         if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .control { break }
@@ -257,7 +257,7 @@ import Testing
         let caller = try await connectCaller(server, exec: exec)
         defer { caller.close() }
         try await caller.send(.binary(FrameCodec.encode(
-          Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)),
+          Frame(streamID: 1, opcode: .execStart, payload: makeExecStart(exec, command: ["true"])),
         )))
         for await message in second.inbound {
           if case let .binary(bytes) = message, try FrameCodec.decode(bytes).opcode == .control { break }

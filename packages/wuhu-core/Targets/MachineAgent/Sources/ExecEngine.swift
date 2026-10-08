@@ -83,17 +83,36 @@ struct ExecEngine: Sendable {
     defer { registry.unregister(start.id) }
 
     do {
-      let result = try await Subprocess.run(
-        executable.contains("/") ? .path(FilePath(executable)) : .name(executable),
-        arguments: Arguments(Array(start.command.dropFirst())),
-        environment: .inherit.updating(overlay),
-        workingDirectory: FilePath(start.cwd),
-        platformOptions: options,
-        input: .inputWriter,
-        output: .sequence,
-        error: .sequence,
-      ) { execution in
-        await pump(exec, execution, secrets: masked, agentKills: agentKills)
+      let result = try await withThrowingTaskGroup(of: Void.self) { group in
+        let (executions, executionContinuation) = AsyncStream<ChildProcess>.makeStream()
+        let (kills, killContinuation) = AsyncStream<Void>.makeStream()
+        defer {
+          executionContinuation.finish()
+          killContinuation.finish()
+          group.cancelAll()
+        }
+        group.addTask {
+          for await execution in executions {
+            await supervise(exec, execution, agentKills: agentKills, kills: kills, kill: killContinuation)
+          }
+        }
+        let outcome = try await Subprocess.run(
+          executable.contains("/") ? .path(FilePath(executable)) : .name(executable),
+          arguments: Arguments(Array(start.command.dropFirst())),
+          environment: .inherit.updating(overlay),
+          workingDirectory: FilePath(start.cwd),
+          platformOptions: options,
+          input: .inputWriter,
+          output: .sequence,
+          error: .sequence,
+        ) { execution in
+          executionContinuation.yield(execution)
+          await pump(exec, execution, secrets: masked, kill: killContinuation)
+        }
+        executionContinuation.finish()
+        killContinuation.finish()
+        try await group.waitForAll()
+        return outcome
       }
       await exec.exit(status(of: result.terminationStatus))
     } catch is CancellationError {
@@ -103,32 +122,48 @@ struct ExecEngine: Sendable {
     }
   }
 
+  private func supervise(
+    _ exec: IncomingExec,
+    _ execution: ChildProcess,
+    agentKills: AsyncStream<Void>,
+    kills: AsyncStream<Void>,
+    kill: AsyncStream<Void>.Continuation,
+  ) async {
+    await withTaskGroup(of: Void.self) { group in
+      group.addTask {
+        for await _ in exec.kills { kill.yield(()) }
+      }
+      group.addTask {
+        for await _ in agentKills { kill.yield(()) }
+      }
+      if let timeout = exec.start.timeout {
+        group.addTask {
+          do { try await clock.sleep(for: .seconds(min(timeout, execTimeoutCeiling))) } catch { return }
+          kill.yield(())
+        }
+      }
+      var iterator = kills.makeAsyncIterator()
+      if await iterator.next() != nil, !Task.isCancelled {
+        await exec.stopOutput()
+        try? execution.send(signal: .terminate, toProcessGroup: true)
+        do {
+          try await clock.sleep(for: killGrace)
+          try Task.checkCancellation()
+          try? execution.send(signal: .kill, toProcessGroup: true)
+        } catch {}
+      }
+      group.cancelAll()
+    }
+  }
+
   private func pump(
     _ exec: IncomingExec,
     _ execution: ChildProcess,
     secrets: [String],
-    agentKills: AsyncStream<Void>,
+    kill: AsyncStream<Void>.Continuation,
   ) async {
     let budget = OutputBudget(limit: exec.start.maxOutput)
-    let (kills, killContinuation) = AsyncStream<Void>.makeStream()
-    let (drained, drainContinuation) = AsyncStream<Void>.makeStream()
-
-    async let escalation: Void = escalate(execution, kills: kills, drained: drained)
-
     await withTaskGroup(of: Void.self) { group in
-      group.addTask {
-        for await _ in exec.kills { killContinuation.yield(()) }
-      }
-      group.addTask {
-        for await _ in agentKills { killContinuation.yield(()) }
-      }
-      if let timeout = exec.start.timeout {
-        group.addTask {
-          try? await clock.sleep(for: .seconds(min(timeout, execTimeoutCeiling)))
-          guard !Task.isCancelled else { return }
-          killContinuation.yield(())
-        }
-      }
       group.addTask {
         do {
           for try await chunk in exec.stdin {
@@ -139,37 +174,14 @@ struct ExecEngine: Sendable {
       }
       await withTaskGroup(of: Void.self) { pumps in
         pumps.addTask {
-          await relay(execution.standardOutput, as: .stdout, exec: exec, secrets: secrets, budget: budget, kill: killContinuation)
+          await relay(execution.standardOutput, as: .stdout, exec: exec, secrets: secrets, budget: budget, kill: kill)
         }
         pumps.addTask {
-          await relay(execution.standardError, as: .stderr, exec: exec, secrets: secrets, budget: budget, kill: killContinuation)
+          await relay(execution.standardError, as: .stderr, exec: exec, secrets: secrets, budget: budget, kill: kill)
         }
       }
       group.cancelAll()
     }
-    killContinuation.finish()
-    drainContinuation.finish()
-    await escalation
-  }
-
-  // Escalation outlives the pump group on purpose: a TERM-trapping child must
-  // still get its KILL after the grace even though the feeders are cancelled.
-  // Both pipes reaching EOF (`drained` finishing) short-circuits the grace wait.
-  private func escalate(_ execution: ChildProcess, kills: AsyncStream<Void>, drained: AsyncStream<Void>) async {
-    var iterator = kills.makeAsyncIterator()
-    guard await iterator.next() != nil else { return }
-    try? execution.send(signal: .terminate, toProcessGroup: true)
-    await withTaskGroup(of: Void.self) { race in
-      race.addTask {
-        try? await clock.sleep(for: killGrace)
-      }
-      race.addTask {
-        for await _ in drained {}
-      }
-      _ = await race.next()
-      race.cancelAll()
-    }
-    try? execution.send(signal: .kill, toProcessGroup: true)
   }
 
   private func relay(
@@ -200,9 +212,10 @@ struct ExecEngine: Sendable {
     guard !masked.isEmpty else { return }
     let (allowed, exceeded) = budget.admit(masked)
     if !allowed.isEmpty {
-      try await exec.send(stream, allowed)
+      try await exec.send(stream, allowed, waitForCapacity: !exceeded)
     }
     if exceeded {
+      await exec.stopOutput()
       kill.yield(())
     }
   }

@@ -5,7 +5,7 @@ description: Read a box, a DM or a group from run_script with conversation() and
 
 # Reading a conversation
 
-`run_script` reads any conversation page by page:
+`run_script` reads readable conversations page by page:
 
 ```js
 import { conversation, dm } from "wuhu:space"
@@ -13,7 +13,7 @@ import { conversation, dm } from "wuhu:space"
 const { messages, next } = await conversation(id, { after, before, limit })
 ```
 
-- `id` is a conversation id. An agent's box id is its session id, so `conversation(import.meta.session)` is your own box. A message header's `<source>conversation/<id></source>` names the conversation it came from. `dm(a, b)` returns the DM id between two sessions, or `null` when they have never talked; it never creates one.
+- `id` is a conversation id. An agent's box id is its session id, so `conversation(import.meta.session)` is your own box. A message header's `<source>conversation/<id></source>` names the conversation it came from. `dm(a, b)` returns the DM id between two sessions, or `null` when no readable DM exists; it never creates one.
 - Each message is `{ id, sender: { id, handle?, session?, title? }, kind, text, attachments: [path], replyTarget, requestId, createdAt }`. `handle` names a person, `session` and `title` a session. `attachments` are space paths: `read` them. `createdAt` is ISO 8601 in the sender's zone, to the millisecond.
 - `after` and `before` each take a message id, as a header's `<message-id>` or a `replyTarget` shows it, or an ISO time with a zone (`"2026-09-26T11:00+08:00"`, seconds optional, or a `Date`). Pass one of them, never both. An unknown message id is an error, not an empty page.
 - Messages always come oldest first. `limit` defaults to 50, at most 500.
@@ -22,7 +22,7 @@ const { messages, next } = await conversation(id, { after, before, limit })
   - `before`: the last `limit` messages before the cursor. `next` is the oldest id, to pass as `before` again.
   - `next` is `null` when nothing more lies in that direction.
 - Reading marks nothing. Keep your own last-seen message id, for example in a note in your home. A time is only a starting point for a first read.
-- Boxes and DMs are direct, not private: every session in the space can read every one of them. A group is readable only by its members. The `query` tool reads the raw `messages` table without that check.
+- A box is readable when your group reads its group. A DM is readable when you are a member or it is homed in your group. A group conversation is readable only by its members; other conversations answer as missing. The `query` tool is also scoped: unqualified `messages` includes conversations homed in the acting group or ones you are a member of, not unrestricted cross-group messages. That SQL scope is not identical to `conversation()`’s group-conversation membership check.
 
 ## Catch up on my box since a time
 

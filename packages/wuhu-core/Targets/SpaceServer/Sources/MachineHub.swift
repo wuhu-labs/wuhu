@@ -27,6 +27,7 @@ public actor MachineHub {
 
   private enum TimerKind {
     case callerGone(ExecID, generation: Int)
+    case refusalExpired(ExecID)
     case machineGone(MachineID, generation: Int)
     case drainStalled(ExecID, generation: Int)
     case machineSilent(MachineID)
@@ -49,6 +50,7 @@ public actor MachineHub {
   private var lastMachineOpcode: [MachineID: Opcode] = [:]
   private var machineGenerations: [MachineID: Int] = [:]
   private var callerLegs: [ExecID: Leg] = [:]
+  private var nextCallerGeneration: Int = 0
   private var callerGenerations: [ExecID: Int] = [:]
   private var callerStreamIDs: [ExecID: Int] = [:]
   private var callerMachines: [ExecID: MachineID] = [:]
@@ -57,11 +59,22 @@ public actor MachineHub {
   private var machineStreamIDs: [ExecID: Int] = [:]
   // Execs the hub failed before spawning, with the stderr line their caller
   // gets again should it replay the start.
-  private var refusals: [ExecID: [UInt8]] = [:]
+  private struct RefusalResult {
+    let line: [UInt8]
+    let elapsed: @Sendable () -> Duration
+  }
+
+  private var refusals: [ExecID: RefusalResult] = [:]
   // The secret values each exec's first relayed start carried, for the
   // exec's lifetime: a replay reuses them, so a running exec never changes
   // group and is never refused late.
   private var relayedSecrets: [ExecID: StringMap?] = [:]
+
+  func retainsExec(_ id: ExecID) -> Bool {
+    callerGenerations[id] != nil || callerStreamIDs[id] != nil || callerMachines[id] != nil
+      || machineStreamIDs[id] != nil || exitDelivered.contains(id) || refusals[id] != nil
+      || relayedSecrets[id] != nil || execsByStream.values.contains { $0.values.contains(id) }
+  }
 
   private var nextRequestID: Int = 1
   private var pendingRequests: [Int: AsyncThrowingStream<Frame, any Error>.Continuation] = [:]
@@ -168,9 +181,10 @@ public actor MachineHub {
       await failCaller(record.id, machine: record.machine)
     }
     for await message in socket.inbound {
+      guard callerGenerations[record.id] == generation else { break }
       await routeFromCaller(record, frameBytes(message))
     }
-    unbindCaller(record.id, generation: generation)
+    await unbindCaller(record.id, generation: generation)
   }
 
   public func noteMinted(_ record: ExecRecord) {
@@ -190,6 +204,7 @@ public actor MachineHub {
     guard let record = try await space.execRecord(id) else { throw MachineHubError.execNotFound(id) }
     guard record.terminal == nil else { return }
     try await space.finishExec(id, .cancelled)
+    await forgetTerminal(id)
     if let leg = machineLegs[record.machine] {
       try await leg.send(FrameCodec.encode(Frame(streamID: record.streamID, opcode: .kill, payload: Kill(id: id))))
       try await space.markKillDelivered(id)
@@ -277,9 +292,11 @@ public actor MachineHub {
   private func bindCaller(_ record: ExecRecord, socket: WebSocket) -> Int {
     remember(record)
     callerLegs[record.id]?.close()
-    callerGenerations[record.id, default: 0] += 1
+    nextCallerGeneration += 1
+    callerGenerations[record.id] = nextCallerGeneration
     callerLegs[record.id] = Leg(send: { try await socket.send(.binary($0)) }, close: { socket.close() }, abort: { socket.abort() })
     callerMachines[record.id] = record.machine
+    callerStreamIDs[record.id] = nil
     exitDelivered.remove(record.id)
     // A caller must never wait in silence: if the machine is not attached now,
     // its absence grace runs from this bind (covers a machine that never
@@ -296,10 +313,11 @@ public actor MachineHub {
     return callerGenerations[record.id, default: 0]
   }
 
-  private func unbindCaller(_ id: ExecID, generation: Int) {
+  private func unbindCaller(_ id: ExecID, generation: Int) async {
     guard callerGenerations[id] == generation else { return }
     callerLegs[id] = nil
-    timersContinuation.yield((callerGrace, .callerGone(id, generation: generation)))
+    let forgotten = await forgetTerminal(id)
+    timersContinuation.yield((callerGrace, .callerGone(id, generation: forgotten ? 0 : generation)))
   }
 
   private func remember(_ record: ExecRecord) {
@@ -308,17 +326,38 @@ public actor MachineHub {
     callerMachines[record.id] = record.machine
   }
 
+  @discardableResult
+  private func forgetTerminal(_ id: ExecID) async -> Bool {
+    guard callerLegs[id] == nil,
+          let record = try? await space.execRecord(id), record.terminal != nil,
+          callerLegs[id] == nil else { return false }
+    callerGenerations[id] = nil
+    callerStreamIDs[id] = nil
+    callerMachines[id] = nil
+    machineStreamIDs[id] = nil
+    execsByStream[record.machine]?[record.streamID] = nil
+    if execsByStream[record.machine]?.isEmpty == true { execsByStream[record.machine] = nil }
+    exitDelivered.remove(id)
+    relayedSecrets[id] = nil
+    return true
+  }
+
   // MARK: - Grace timers
 
   private func remainingDelay(_ delay: Duration, for kind: TimerKind) -> Duration {
     if case let .machineSilent(machine) = kind, let elapsed = machineSilence[machine] {
       return max(.zero, machineGrace - elapsed())
     }
+    if case let .refusalExpired(id) = kind, let refusal = refusals[id] {
+      return max(.zero, .seconds(600) - refusal.elapsed())
+    }
     return delay
   }
 
   private func fire(_ kind: TimerKind) async {
     switch kind {
+    case let .refusalExpired(id):
+      refusals[id] = nil
     // The rejoin deadline: a caller absent past callerGrace gets its exec
     // reaped by policy; the machine buffers output to termination, so a late
     // retry drains the tail and reads the honest reap verdict in the registry.
@@ -326,9 +365,9 @@ public actor MachineHub {
     // it: it gets the kill, now or on the machine's next connect.
     case let .callerGone(id, generation):
       guard callerGenerations[id, default: 0] == generation, callerLegs[id] == nil else { return }
-      refusals[id] = nil
       relayedSecrets[id] = nil
       guard let record = try? await space.execRecord(id) else { return }
+      await forgetTerminal(id)
       switch record.terminal {
       case nil:
         try? await space.finishExec(id, .reaped)
@@ -341,6 +380,7 @@ public actor MachineHub {
         try? await leg.send(FrameCodec.encode(Frame(streamID: record.streamID, opcode: .kill, payload: Kill(id: id))))
         try? await space.markKillDelivered(id)
       }
+      await forgetTerminal(id)
     case let .machineGone(machine, generation):
       guard machineGenerations[machine, default: 0] == generation, machineLegs[machine] == nil else { return }
       await failMachineCallers(machine)
@@ -448,12 +488,8 @@ public actor MachineHub {
 
   private func routeFromCaller(_ record: ExecRecord, _ bytes: [UInt8]) async {
     guard let frame = try? FrameCodec.decode(bytes) else { return }
-    if frame.streamID == 0 {
-      guard frame.opcode == .control, case .hello = try? frame.payload(ControlMessage.self) else { return }
-      guard let leg = machineLegs[record.machine] else { return }
-      try? await leg.send(bytes)
-      return
-    }
+    // Replay needs the caller's stream mapping; its hello precedes that mapping.
+    guard frame.streamID != 0 else { return }
     switch frame.opcode {
     case .execStart:
       guard let start = try? frame.payload(ExecStart.self), start.id == record.id else { return }
@@ -461,7 +497,12 @@ public actor MachineHub {
       // rebinds, its bind-time replay must already find this caller mapped, or
       // the replay is dropped and the exec ack-starves (caller-first double
       // sever).
+      let firstStart = callerStreamIDs[record.id] == nil
       callerStreamIDs[record.id] = frame.streamID
+      if firstStart, let leg = machineLegs[record.machine] {
+        let hello = ControlMessage.hello(protocolVersion: 1, execs: [record.id])
+        try? await leg.send(FrameCodec.encode(Frame(streamID: 0, opcode: .control, payload: hello)))
+      }
       if refusals[record.id] != nil {
         await deliverRefusal(record.id)
         return
@@ -492,7 +533,20 @@ public actor MachineHub {
         try? await leg.send(FrameCodec.encode(Frame(streamID: record.streamID, opcode: .kill, payload: Kill(id: record.id))))
       }
     case .stdin, .stdinEof, .ack, .kill:
-      guard frame.streamID == callerStreamIDs[record.id], let leg = machineLegs[record.machine] else { return }
+      if frame.opcode == .ack, callerStreamIDs[record.id] == nil,
+         let ack = try? frame.payload(Ack.self), ack.id == record.id, ack.terminal == true
+      {
+        callerStreamIDs[record.id] = frame.streamID
+      }
+      guard frame.streamID == callerStreamIDs[record.id] else { return }
+      if frame.opcode == .ack, let refusal = refusals[record.id],
+         let ack = try? frame.payload(Ack.self), ack.id == record.id,
+         ack.terminal == true, ack.cursor == refusal.line.count
+      {
+        refusals[record.id] = nil
+        return
+      }
+      guard let leg = machineLegs[record.machine] else { return }
       try? await leg.send(FrameCodec.encode(Frame(streamID: record.streamID, opcode: frame.opcode, body: frame.body)))
     default:
       return
@@ -569,18 +623,21 @@ public actor MachineHub {
   // A refused exec fails the way one the machine cannot spawn does: one
   // `wuhu:` line on stderr, then exit 127. Nothing reaches the machine.
   private func refuse(_ id: ExecID, _ message: String) async {
-    refusals[id] = Array("wuhu: \(message)\n".utf8)
+    refusals[id] = RefusalResult(line: Array("wuhu: \(message)\n".utf8), elapsed: elapsedSinceNow(clock))
+    timersContinuation.yield((.seconds(600), .refusalExpired(id)))
     try? await space.finishExec(id, .exited(code: 127))
     await deliverRefusal(id)
   }
 
   private func deliverRefusal(_ id: ExecID) async {
-    guard let line = refusals[id], let leg = callerLegs[id], let streamID = callerStreamIDs[id] else { return }
+    guard let refusal = refusals[id], let leg = callerLegs[id], let streamID = callerStreamIDs[id] else { return }
+    let line = refusal.line
     let output = OutputChunk(id: id, stream: .stderr, cursor: 0, data: Base64Data(line))
     let exit = ExecExit(id: id, cursor: line.count, status: .exited(code: 127))
     try? await leg.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .output, payload: output)))
     try? await leg.send(FrameCodec.encode(Frame(streamID: streamID, opcode: .execExit, payload: exit)))
-    exitDelivered.insert(id)
+    if callerLegs[id] != nil { exitDelivered.insert(id) }
+    await forgetTerminal(id)
   }
 
   private func routeFromMachine(_ machine: MachineID, generation: Int, _ bytes: [UInt8]) async {
@@ -601,10 +658,14 @@ public actor MachineHub {
       case let .signaled(signal): try? await space.finishExec(id, .signaled(signal: signal))
       }
     }
-    guard let leg = callerLegs[id], let callerStreamID = callerStreamIDs[id] else { return }
+    guard let leg = callerLegs[id], let callerStreamID = callerStreamIDs[id] else {
+      await forgetTerminal(id)
+      return
+    }
     try? await leg.send(FrameCodec.encode(Frame(streamID: callerStreamID, opcode: frame.opcode, body: frame.body)))
     if frame.opcode == .execExit {
-      exitDelivered.insert(id)
+      if callerLegs[id] != nil { exitDelivered.insert(id) }
+      await forgetTerminal(id)
     }
   }
 
@@ -643,7 +704,7 @@ public actor MachineHub {
   private func execID(machine: MachineID, streamID: Int) async -> ExecID? {
     if let id = execsByStream[machine]?[streamID] { return id }
     guard let record = try? await space.execRecord(machine: machine, streamID: streamID) else { return nil }
-    remember(record)
+    if record.terminal == nil || callerLegs[record.id] != nil { remember(record) }
     return record.id
   }
 

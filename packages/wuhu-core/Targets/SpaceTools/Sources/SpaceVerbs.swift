@@ -40,15 +40,15 @@ extension SpaceToolbox {
   }
 
   static let tableCreate = SpaceTool("table.create", schema: TableCreateInput.jsonSchema) { (context, input: TableCreateInput) in
-    let target = try await context.spaceTarget(input.path)
-    let rev = try await context.space.createTable(target.path, header: header(input.header), in: target.group, acting: context.principal.group)
-    return Wire.object([("rev", .integer(rev.value))])
+    try await context.createTable(input.path, header: input.header)
+  }
+
+  static let tableSchema = SpaceTool("table.schema", schema: TableSchemaInput.jsonSchema) { (context, input: TableSchemaInput) in
+    try await context.tableSchema(input.path, rev: input.rev)
   }
 
   static let tableAlter = SpaceTool("table.alter", schema: TableAlterInput.jsonSchema) { (context, input: TableAlterInput) in
-    let target = try await context.spaceTarget(input.path)
-    let rev = try await context.space.alterTable(target.path, header: header(input.header), in: target.group, acting: context.principal.group)
-    return Wire.object([("rev", .integer(rev.value))])
+    try await context.alterTable(input.path, header: input.header, ifMatch: input.ifMatch, allowDropColumns: input.allowDropColumns ?? false)
   }
 
   static let tableMutate = SpaceTool("table.mutate", schema: TableMutateInput.jsonSchema) { (context, input: TableMutateInput) in
@@ -59,37 +59,11 @@ extension SpaceToolbox {
       case let .delete(row): .delete(id: Int64(row))
       }
     }
-    let target = try await context.spaceTarget(input.path)
-    let commit = try await context.space.commitRows(target.path, ops, in: target.group, acting: context.principal.group)
+    let commit = try await context.commitRows(input.path, ops: ops)
     return Wire.object([("rev", .integer(commit.rev.value)), ("ids", .array(commit.ids.map { .integer(Int($0)) }))])
   }
 
   static let new = SpaceTool("new", schema: NewInput.jsonSchema) { (context, input: NewInput) in
-    let template = try await context.spaceTarget(input.template)
-    var destination: (group: GroupID, path: SpacePath, qualified: Bool)?
-    if let raw = input.`in` { destination = try await context.spaceTarget(raw) }
-    try await context.space.refuseLayerWrite(
-      destination?.path ?? template.path.parent, in: destination?.group ?? template.group, by: context.principal.actor,
-    )
-    let created = try await context.space.instantiate(
-      template: template.path, of: template.group,
-      in: destination?.path, of: destination?.group ?? template.group,
-      acting: context.principal.group,
-    )
-    let (group, qualified) = destination.map { ($0.group, $0.qualified) } ?? (template.group, template.qualified)
-    return Wire.object([("path", .string(qualified ? FSResolver.address(created.rawValue, inGroup: group.rawValue) : created.rawValue))])
+    try await context.instantiateTemplate(input.template, in: input.`in`)
   }
-}
-
-private func header(_ header: SpaceContract.TableHeader) -> SpaceCore.TableHeader {
-  SpaceCore.TableHeader(columns: header.columns.map { column in
-    let type: TableColumn.ColumnType = switch column.type {
-    case .string: .text
-    case .integer: .integer
-    case .number: .real
-    case .boolean: .boolean
-    case .json: .json
-    }
-    return TableColumn(name: column.name, type: type)
-  })
 }

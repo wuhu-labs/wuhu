@@ -100,6 +100,9 @@ import Testing
         let start = makeExecStart(exec, command: ["true"])
         try await callerSocket.send(.binary(FrameCodec.encode(Frame(streamID: 1, opcode: .execStart, payload: start))))
 
+        // Socket upgrade queues the caller session; advancing before its start is
+        // processed races the unbound caller's reap grace, not machine absence.
+        #expect(try await realPollUntil { try await space.execRecord(exec)?.command == "true" })
         let lost = try await realPollUntil {
           await clock.advance(by: .seconds(61))
           return received.machineLost()

@@ -17,6 +17,10 @@ public struct OutgoingExec: Sendable {
     await endpoint.requestKill(exec: id)
   }
 
+  public func acknowledgeExit() async {
+    await endpoint.acknowledgeExit(exec: id)
+  }
+
   public func acknowledge(through cursor: Int) async {
     await endpoint.acknowledgeConsumption(exec: id, through: cursor)
   }
@@ -28,8 +32,12 @@ public struct IncomingExec: Sendable {
   public let kills: AsyncStream<Void>
   let endpoint: ChannelEndpoint
 
-  public func send(_ stream: ExecOutputStream, _ bytes: [UInt8]) async throws {
-    try await endpoint.sendData(exec: start.id, stream: stream, bytes: bytes)
+  public func send(_ stream: ExecOutputStream, _ bytes: [UInt8], waitForCapacity: Bool = true) async throws {
+    try await endpoint.sendData(exec: start.id, stream: stream, bytes: bytes, waitForCapacity: waitForCapacity)
+  }
+
+  public func stopOutput() async {
+    await endpoint.stopOutput(exec: start.id)
   }
 
   public func exit(_ status: ExitStatus) async {
@@ -76,10 +84,16 @@ public struct ExecEvents: AsyncSequence, Sendable {
     var frames: AsyncStream<Frame>.AsyncIterator
     var consumed: Int
     let autoAcknowledge: Bool
+    var pendingExit: ExitStatus?
     var finished: Bool = false
 
     public mutating func next() async throws -> ExecEvent? {
       guard !finished else { return nil }
+      if let status = pendingExit {
+        finished = true
+        if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
+        return .exit(status: status)
+      }
       while let frame = await frames.next() {
         switch frame.opcode {
         case .output:
@@ -126,6 +140,12 @@ public struct ExecEvents: AsyncSequence, Sendable {
           guard exit.cursor == consumed else {
             throw ChannelError.protocolViolation("exit at \(exit.cursor) with output consumed through \(consumed)")
           }
+          if exit.outputCut == true {
+            finished = false
+            pendingExit = exit.status
+            return .truncated(limit: consumed)
+          }
+          if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
           return .exit(status: exit.status)
         default:
           continue

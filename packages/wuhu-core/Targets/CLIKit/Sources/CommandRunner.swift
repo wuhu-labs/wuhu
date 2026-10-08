@@ -250,7 +250,7 @@ enum Command: Equatable {
   case checkout(path: String, rev: Int)
   case query(sql: String)
   case tableCreate(path: String, header: JSONValue)
-  case tableAlter(path: String, header: JSONValue)
+  case tableAlter(path: String, header: JSONValue, allowDropColumns: Bool = false)
   case tableMutate(path: String, ops: JSONValue)
   case new(template: String, in: String?)
   case observe(ObserveCommand)

@@ -43,8 +43,7 @@ itself. `run` returns only on task cancellation. The clock is `@Dependency(\.con
   in a group does not put its execs there.
 - **Kill escalation** (kill frame, timeout expiry, maxOutput exceeded,
   server-absence grace): SIGTERM to the group, then `killGrace` (5s default,
-  clock-injected), then SIGKILL to the group. Both pipes reaching EOF
-  short-circuits the grace wait. Under task cancellation (agent orderly
+  clock-injected), then SIGKILL to the group. Supervision lasts until the process exits, independently of stdout/stderr EOF; once TERM is sent, escalation still completes for surviving group members even if the direct child exits first. Under task cancellation (agent orderly
   shutdown) swift-subprocess's uncancellable teardown runs the same
   TERM → grace → KILL against the group, with the grace on the library's own
   wall clock.
@@ -55,26 +54,22 @@ itself. `run` returns only on task cancellation. The clock is `@Dependency(\.con
   followed by `exited(code: 127)` — the wire has no separate failure op; the
   caller-facing `ExecEvent.failed` is composed by the caller leg.
 - **Orphans**: agent crash (SIGKILL) leaks the child groups — accepted; there
-  is no pid ledger. A child that detaches (closes its pipes and survives) is
-  the deliberate-survival case; kill routing is only guaranteed while the
-  exec's pipes are open.
+  is no pid ledger. Closing stdout/stderr does not detach the direct child from timeout or kill supervision.
 
 ## Enforcement locus
 
 `maxOutput` and `timeout` are enforced **machine-side**, so they survive
 caller blips:
 
-- `maxOutput` counts **masked bytes actually sent** (what crosses the wire),
-  stdout and stderr into one budget. On exceed the final chunk is clamped so
-  total output equals `maxOutput` exactly, and the group is killed. The
-  `.truncated` marker is composed caller-side (it knows the limit and the
-  cursors); no wire change.
+- `maxOutput` budgets masked output across stdout and stderr together. On exceed, total transmitted output is **at most**, not necessarily exactly, `maxOutput`, and the group is killed. The final allowed prefix is sent only while the window has room; its unsent suffix is dropped rather than delaying termination. For example, an unread one-byte window with a two-byte budget and a three-byte output chunk emits one byte before terminating. `ExecExit.outputCut` records a cutoff, rendered as `ExecEvent.truncated` before the exit.
 - `timeout` is wall clock from spawn on the injected clock; expiry kills the
   group.
 
 Backpressure is the channel window: `send` suspends when the window fills,
 which stops the pipe read loop, so the child blocks on write — local-pipe
-semantics, no loss, no unbounded memory.
+semantics, no loss during normal execution, no unbounded per-exec buffer. Kill and timeout stop output admission and wake blocked sends: unsent output is discarded and the exit is marked `outputCut` (unread pipe data may also be lost on termination). Already-transmitted bytes keep their cursors and remain replayable until terminal acknowledgement or expiry, including for older callers.
+
+Finished execs retain replay state for at most 10 minutes from exit, including while disconnected. A terminal acknowledgement releases output, start/environment/credentials, streams and bookkeeping immediately; an older server sends no terminal acknowledgement and uses the expiry. The agent owns the endpoint retention task alongside connection and request serving.
 
 ## Secrets
 

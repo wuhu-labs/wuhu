@@ -99,7 +99,7 @@ import Testing
 
     _ = try await harness.call(
       "table.alter",
-      .object(["path": "/t.table", "header": .object(["columns": .array([
+      .object(["path": "/t.table", "ifMatch": .string(String(created.rev)), "header": .object(["columns": .array([
         .object(["name": "j", "type": "json"]),
         .object(["name": "b", "type": "boolean"]),
         .object(["name": "s", "type": "string"]),

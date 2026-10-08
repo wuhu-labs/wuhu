@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
@@ -19,15 +23,34 @@ extension Space {
     return rev
   }
 
-  public func alterTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID) async throws -> Rev {
+  public func alterTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, ifMatch: VersionToken? = nil, allowDropColumns: Bool = true) async throws -> Rev {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let rev = try await writer.write { db in
+      let old = try Tables.currentHeader(path, group: group, in: db)
+      try LiveFS.checkIfMatch(ifMatch, head: Substrate.head(path, group: group, in: db), path: path)
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      if !allowDropColumns, !Set(old.columns.map(\.name)).isSubset(of: Set(header.columns.map(\.name))) {
+        throw SpaceError.invalidTableHeader("omitting a column requires allowDropColumns: true")
+      }
       try Tables.alter(path, group: group, header: header, rev: rev, mtime: mtime, in: db)
       return Rev(Int(rev))
     }
     broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: rev.value, kind: .write, entry: .table))
     return rev
+  }
+
+  public func tableSchema(_ path: SpacePath, in group: GroupID, rev: Rev? = nil) async throws -> (header: TableHeader, token: VersionToken) {
+    try await writer.read { db in
+      if let rev {
+        try HistoricalFS.requireRevision(Int64(rev.value), in: db)
+        guard let node = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: Int64(rev.value), in: db) else { throw SpaceError.notFound(path.rawValue) }
+        guard node.kind == "table" else { throw SpaceError.notATable(path.rawValue) }
+        return (try TableReplay.state(path, group: group, ceiling: Int64(rev.value), in: db).0, VersionToken(rev: Int(node.rev)))
+      }
+      guard let head = try Substrate.head(path, group: group, in: db) else { throw SpaceError.notFound(path.rawValue) }
+      guard head.kind == "table" else { throw SpaceError.notATable(path.rawValue) }
+      return (try Tables.currentHeader(path, group: group, in: db), VersionToken(rev: Int(head.rev)))
+    }
   }
 
   public func mutateRows(_ path: SpacePath, _ ops: [RowOp], in group: GroupID, acting: GroupID) async throws -> Rev {

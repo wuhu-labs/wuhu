@@ -350,7 +350,7 @@ private func sessionRouter(
 private let sessionToolFields: [String: [String]] = [
   "read": [], "ls": [], "stat": [], "grep": [], "find": [], "history": [], "query": [],
   "write": ["path"], "edit": ["path"], "rm": ["path"], "mv": ["from", "to"], "checkout": ["path"],
-  "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "new": ["in"],
+  "table.schema": [], "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "new": ["in"],
   "attributes.read": [], "attributes.patch": ["path"],
 ]
 

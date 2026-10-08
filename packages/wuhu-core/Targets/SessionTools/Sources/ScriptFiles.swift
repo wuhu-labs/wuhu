@@ -21,11 +21,6 @@ struct ScriptFiles: Sendable {
       let replace = arguments.count > 2 && arguments[2] == JSONValue.bool(true)
       return try await run("mv", replace ? ["from": .string(from), "to": .string(to), "replace": .bool(true)] : ["from": .string(from), "to": .string(to)], as: principal)
     })
-    engine.define("__wuhu_remove", promising: { arguments in
-      let principal = try await space.principal(of: session)
-      let path = try writable(text(arguments, 0), as: principal)
-      return try await run("rm", ["path": .string(path)], as: principal)
-    })
   }
 
   private func writable(_ raw: String, as principal: Principal) throws -> String {
@@ -83,13 +78,9 @@ private func text(_ arguments: [JSONValue], _ index: Int) -> String {
 let spaceFilesModule = #"""
 
 const moveEntry = __wuhu_move
-const removeEntry = __wuhu_remove
 
 export async function move(from, to, options = {}) {
   return await moveEntry(String(from), String(to), options?.replace === true)
 }
 
-export async function remove(path) {
-  return await removeEntry(String(path))
-}
 """#

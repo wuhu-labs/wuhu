@@ -54,15 +54,25 @@ import Testing
     #expect(hint?.contains(".table") == true)
   }
 
-  @Test func tableVerbsWhereATableWasSayItIsGone() async throws {
+  @Test(arguments: ["moved", "deleted", "non-table"])
+  func tableVerbsWhereATableWasSayItIsGone(state: String) async throws {
     let context = try makeContext()
-    let columns: JSONValue = .object(["columns": .array([.object(["name": "n", "type": "integer"])])])
-    _ = try await run("table.create", .object(["path": "/data/log.table", "header": columns]), context)
-    _ = try await run("mv", .object(["from": "/data/log.table", "to": "/data/kept.table"]), context)
+    let columns: JSONValue = ["columns": [["name": "n", "type": "integer"]]]
+    let path = state == "non-table" ? "/data/log.md" : "/data/log.table"
+    if state == "non-table" {
+      _ = try await seedFile(path, "not a table", context)
+    } else {
+      _ = try await run("table.create", ["path": .string(path), "header": columns], context)
+      if state == "moved" {
+        _ = try await run("mv", ["from": .string(path), "to": "/data/kept.table"], context)
+      } else {
+        _ = try await run("rm", ["path": .string(path)], context)
+      }
+    }
 
     for attempt: (String, JSONValue) in [
-      ("table.mutate", .object(["path": "/data/log.table", "ops": .array([.object(["kind": "insert", "values": .array([.integer(1)])])])])),
-      ("table.alter", .object(["path": "/data/log.table", "header": columns])),
+      ("table.mutate", ["path": .string(path), "ops": [["kind": "insert", "values": [1]]]]),
+      ("table.alter", ["path": .string(path), "ifMatch": "0", "header": columns]),
     ] {
       let error = try #require(await failure(attempt.0, attempt.1, context))
       guard case let .failed(code, message, hint, _) = error else {
@@ -70,9 +80,26 @@ import Testing
         continue
       }
       #expect(code == .invalidArgument)
-      #expect(message == "not a table: /data/log.table")
-      #expect(hint?.contains("moved or deleted") == true)
+      #expect(message == "not a table: \(path)")
+      #expect(hint == (state == "non-table" ? "table paths end with .table" : "no table lives at this path now: it was moved or deleted, or never created"))
     }
+  }
+
+  @Test func tableMutateRejectsUnknownIfMatch() async throws {
+    let context = try makeContext()
+    let created = try await run("table.create", ["path": "/data/log.table", "header": ["columns": [["name": "n", "type": "integer"]]]], context)
+    let error = try #require(await failure("table.mutate", [
+      "path": "/data/log.table", "ifMatch": created.object?["token"] ?? .null,
+      "ops": [["kind": "insert", "values": [1]]],
+    ], context))
+    guard case .undecodableInput = error else {
+      Issue.record("expected undecodable input, got \(error)")
+      return
+    }
+    let schema = try await run("table.schema", ["path": "/data/log.table"], context)
+    #expect(schema.object?["token"] == created.object?["token"])
+    let rows = try await run("query", ["sql": "SELECT n FROM \"/data/log.table\""], context, as: QueryOutput.self)
+    #expect(rows.rows.isEmpty)
   }
 
   @Test func tableLifecycleThroughVerbs() async throws {
@@ -108,7 +135,7 @@ import Testing
 
     _ = try await run(
       "table.alter",
-      .object(["path": "/data/habits.table", "header": .object(["columns": .array([
+      .object(["path": "/data/habits.table", "ifMatch": .string(String(mutated.rev)), "header": .object(["columns": .array([
         .object(["name": "name", "type": "string"]),
         .object(["name": "done", "type": "boolean"]),
         .object(["name": "note", "type": "string"]),

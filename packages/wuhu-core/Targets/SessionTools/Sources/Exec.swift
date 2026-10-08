@@ -79,8 +79,8 @@ extension ToolExecutor {
       command: ["sh", "-c", arguments.command],
       env: environment.env,
       secrets: environment.secrets,
-      // The consumer never acks (autoAcknowledge: false), so the machine
-      // retains the whole stream and a crash-retry replays it from byte 0;
+      // Until the receipt is durable the consumer withholds acknowledgements,
+      // so a crash-retry replays the retained stream from byte 0;
       // the window must therefore cover the full output budget.
       window: maxOutput + 65536,
       maxOutput: maxOutput,
@@ -91,81 +91,91 @@ extension ToolExecutor {
     // retry must be able to rejoin the still-running exec. An interrupted
     // exec is never retried, so its caller leg stays gone and the
     // machine-domain rejoin deadline delivers the kill.
-    let drive = try await runExec(start, backend: backend)
-
-    var record: ExecRecord?
-    if let fetched = try? await backend.status(claim.record.id) { record = fetched }
-    switch drive {
-    case let .exited(output, status):
-      let exitCode: Int32 = switch status {
-      case let .exited(code): Int32(truncatingIfNeeded: code)
-      case let .signaled(signal): Int32(128 + signal)
-      }
-      // The transcript gets the tail: the end of a run is where the verdict is.
-      let full = String(decoding: output, as: UTF8.self)
-      let clamp = ToolOutput.tail(full)
-      var text = clamp.text
-      if clamp.clamped {
-        let extent = clamp.shownLines.map { "lines \($0.lowerBound)-\($0.upperBound) of \(clamp.totalLines)" }
-          ?? "the tail of the last line"
-        text += "\n[output was \(output.count) bytes; showing \(extent)]"
-      }
-      if output.count >= maxOutput {
-        text += "\n[output hit the \(maxOutput)-byte budget; the command was killed]"
-      }
-      let payload = ToolResultPayload.exec(.init(output: text, exitCode: exitCode, reaped: record?.terminal == .reaped))
-      try await deliverContext(session, callID, touching: address, state: state)
-      try await store.recordReceipt(session, toolCallID: callID, payload: payload)
-      return payload
-    case let .lost(message):
-      switch record?.terminal {
-      case .cancelled:
-        throw ToolProblem("exec \(claim.record.id.rawValue) was cancelled")
-      case .machineLost:
-        throw ToolProblem("machine \(machine.rawValue) stopped responding while the command ran; remote process outcome is unknown")
-      case .reaped:
-        throw ToolProblem("exec \(claim.record.id.rawValue) was reaped and its buffered output is no longer replayable")
-      default:
-        throw ToolProblem(message)
+    return try await runExec(start, backend: backend) { drive in
+      var record: ExecRecord?
+      if let fetched = try? await backend.status(claim.record.id) { record = fetched }
+      switch drive {
+      case let .exited(output, status, cut):
+        let exitCode: Int32 = switch status {
+        case let .exited(code): Int32(truncatingIfNeeded: code)
+        case let .signaled(signal): Int32(128 + signal)
+        }
+        // The transcript gets the tail: the end of a run is where the verdict is.
+        let full = String(decoding: output, as: UTF8.self)
+        let clamp = ToolOutput.tail(full)
+        var text = clamp.text
+        if clamp.clamped {
+          let extent = clamp.shownLines.map { "lines \($0.lowerBound)-\($0.upperBound) of \(clamp.totalLines)" }
+            ?? "the tail of the last line"
+          text += "\n[output was \(output.count) bytes; showing \(extent)]"
+        }
+        if cut { text += "\n[output was cut when the command stopped]" }
+        if output.count >= maxOutput {
+          text += "\n[output hit the \(maxOutput)-byte budget; the command was killed]"
+        }
+        let payload = ToolResultPayload.exec(.init(output: text, exitCode: exitCode, reaped: record?.terminal == .reaped))
+        try await deliverContext(session, callID, touching: address, state: state)
+        try await store.recordReceipt(session, toolCallID: callID, payload: payload)
+        return payload
+      case let .lost(message):
+        switch record?.terminal {
+        case .cancelled:
+          throw ToolProblem("exec \(claim.record.id.rawValue) was cancelled")
+        case .machineLost:
+          throw ToolProblem("machine \(machine.rawValue) stopped responding while the command ran; remote process outcome is unknown")
+        case .reaped:
+          throw ToolProblem("exec \(claim.record.id.rawValue) was reaped and its buffered output is no longer replayable")
+        default:
+          throw ToolProblem(message)
+        }
       }
     }
   }
 
   private enum DriveOutcome: Sendable {
-    case exited(output: [UInt8], status: ExitStatus)
+    case exited(output: [UInt8], status: ExitStatus, cut: Bool)
     case lost(String)
   }
 
-  private func runExec(_ start: ExecStart, backend: ExecBackend) async throws -> DriveOutcome {
+  private func runExec(
+    _ start: ExecStart, backend: ExecBackend,
+    consume: @escaping @Sendable (DriveOutcome) async throws -> ToolResultPayload,
+  ) async throws -> ToolResultPayload {
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(start, autoAcknowledge: false)
-    return try await withThrowingTaskGroup(of: DriveOutcome?.self, returning: DriveOutcome.self) { group in
+    return try await withThrowingTaskGroup(of: ToolResultPayload?.self, returning: ToolResultPayload.self) { group in
       group.addTask {
-        try await holdExecLeg(start.id, endpoint: endpoint, backend: backend).map(DriveOutcome.lost)
+        if let message = try await holdExecLeg(start.id, endpoint: endpoint, backend: backend) {
+          return try await consume(.lost(message))
+        }
+        return nil
       }
       group.addTask {
         await outgoing.closeStdin()
         var output: [UInt8] = []
+        var cut = false
         do {
           for try await event in outgoing.events {
             switch event {
             case let .output(_, _, data):
               output += data.bytes
             case let .exit(status):
-              return .exited(output: output, status: status)
+              let payload = try await consume(.exited(output: output, status: status, cut: cut))
+              await outgoing.acknowledgeExit()
+              return payload
             case .truncated:
-              continue
+              cut = true
             case let .failed(error):
-              return .lost(error.message)
+              return try await consume(.lost(error.message))
             }
           }
         } catch is CancellationError {
           return nil
         } catch {
-          return .lost(String(describing: error))
+          return try await consume(.lost(String(describing: error)))
         }
         if Task.isCancelled { return nil }
-        return .lost("exec stream ended without an exit event")
+        return try await consume(.lost("exec stream ended without an exit event"))
       }
       defer { group.cancelAll() }
       while let outcome = try await group.next() {

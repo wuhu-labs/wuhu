@@ -105,7 +105,8 @@ wuhu checkout /notes/plan.md 3   # restores rev 3 content by minting a NEW rev
 ```bash
 wuhu table create /tasks.table '{"columns":[{"name":"title","type":"string"},{"name":"status","type":"string"},{"name":"priority","type":"integer"}]}'
 wuhu table mutate /tasks.table '[{"kind":"insert","values":["Ship it","doing",1]},{"kind":"update","row":1,"values":["Shipped","done",1]},{"kind":"delete","row":1}]'
-wuhu table alter  /tasks.table '{"columns":[...]}'   # replaces the whole header
+wuhu stat /tasks.table                              # records the current token
+wuhu table alter /tasks.table '{"columns":[...]}'    # guarded whole-header replacement; --allow-drop-columns to omit columns
 wuhu query 'SELECT * FROM "/tasks.table"'
 ```
 

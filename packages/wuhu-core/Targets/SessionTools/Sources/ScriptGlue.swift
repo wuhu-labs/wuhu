@@ -16,6 +16,7 @@ const closeStream = __wuhu_space_close
 const hostRows = __wuhu_space_rows
 const hostAttributes = __wuhu_space_attributes
 const hostPatch = __wuhu_space_patch
+const hostVerb = __wuhu_space_verb
 const read = __wuhu_conversation
 const between = __wuhu_dm
 
@@ -63,6 +64,22 @@ export const { query, observe, watch, mutateRows, readAttributes, patchAttribute
   readAttributes: (path) => call(() => hostAttributes(path)),
   patchAttributes: (path, patch) => call(() => hostPatch(path, patch)),
 })
+
+export function createTable(path, header) {
+  return call(() => hostVerb("table.create", { path, header }, {}))
+}
+export function tableSchema(path, options = {}) {
+  return call(() => hostVerb("table.schema", { path }, options))
+}
+export function alterTable(path, header, options = {}) {
+  return call(() => hostVerb("table.alter", { path, header }, options))
+}
+export function instantiateTemplate(template, options = {}) {
+  return call(() => hostVerb("new", { template }, options))
+}
+export function remove(path, options = {}) {
+  return call(() => hostVerb("rm", { path }, options))
+}
 
 const anchor = (value) => (value instanceof Date ? value.toISOString() : value)
 

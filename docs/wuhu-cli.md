@@ -1,11 +1,6 @@
 # Wuhu CLI
 
-`wuhu` is the wuhu-core space CLI. It talks to a pinned space server through
-the same `POST /v1/tools/<name>` contract the web app and LLM sessions use,
-plus the machine and session HTTP routes. Run `wuhu --help` for the verb list
-or `wuhu <verb> --help` for per-verb arguments, flags, and exit codes — the
-help strings are the authoritative reference; this page organizes them. The CLI
-is pre-1.0 and may change with any release.
+`wuhu` is the wuhu-core space CLI. It talks to a pinned server through HTTP `POST /v1/tools/<name>`, plus the machine and session routes. The HTTP space toolbox is not the LLM kernel roster: sessions use model-facing tools for common operations and typed `run_script` modules for code-mode operations such as tables and document templates. Both HTTP and scripts use the same checked server services under the caller’s identity. Run `wuhu --help` for the verb list or `wuhu <verb> --help` for arguments, flags and exit codes. The CLI is pre-1.0 and may change with any release.
 
 ## Files, search, history
 
@@ -44,14 +39,18 @@ Bytes travel over the byte routes on the space's host, `GET /v1/f<path>` and `PU
 | --- | --- |
 | `wuhu query <sql>` | Run a SELECT query (SELECT-only, enforced structurally). |
 | `wuhu table create <path> <header-json>` | Create a table at a `*.table` path. |
-| `wuhu table alter <path> <header-json>` | Replace a table header. |
+| `wuhu table alter <path> <header-json> [--allow-drop-columns]` | Replace the whole header at its recorded token; use `wuhu stat` first to refresh it. Dropping columns requires the flag; changing types is refused. |
 | `wuhu table mutate <path> <ops-json>` | Apply row operations. |
+
+Table creation/alteration returns a revision and token. Headers use ordered string/integer/number/boolean/json columns; `id` is implicit and reserved, names are unique case-insensitively and nonempty, and headers are bounded to 256 columns. Delete a table with `wuhu rm <path>`; there are no table-drop or index-management subcommands. CLI row operations are positional (`{kind:"insert",values:[...]}`); `wuhu:space.mutateRows` uses named fields (`{insert:{title:"..."}}`), not interchangeable JSON.
+
+In `run_script`, use `createTable`, `tableSchema`, guarded `alterTable`, `mutateRows` and conditional `remove` from `wuhu:space` without a machine or CLI. The actual module namespace inventory is generated at `wuhu://system/module-exports.json`; pages expose only the shared data subset, not these script-only schema/template/file APIs.
 
 ## Templates
 
 | Verb | Purpose |
 | --- | --- |
-| `wuhu new <template> [in]` | Instantiate a template file, optionally under `[in]`; prints the new path. |
+| `wuhu new <template> [in]` | Instantiate a template file, optionally under `[in]`; prints the new path. In `run_script`, `instantiateTemplate(template, { in? })` allocates/creates atomically under the calling session’s read/write permissions, including the default destination’s home/layer checks. |
 
 ## Observe
 

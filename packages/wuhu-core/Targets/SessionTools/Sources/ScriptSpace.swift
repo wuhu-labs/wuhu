@@ -23,6 +23,35 @@ struct ScriptSpace: Sendable {
   }
 
   func install(in engine: JSEngine) {
+    engine.define("__wuhu_space_verb", promising: { arguments in
+      await answer {
+        let name = string(arguments, 0)
+        guard ["table.create", "table.schema", "table.alter", "new", "rm"].contains(name) else {
+          throw ToolRunError.failed(code: .invalidArgument, message: "unknown space operation", hint: nil)
+        }
+        let principal = try await principal()
+        guard case var .object(fields)? = arguments[safe: 1], case let .object(options)? = arguments[safe: 2] else {
+          throw ToolRunError.failed(code: .invalidArgument, message: "space operation options must be an object", hint: nil)
+        }
+        let allowed: Set<String> = switch name {
+        case "table.schema": ["rev"]
+        case "table.alter": ["ifMatch", "allowDropColumns"]
+        case "new": ["in"]
+        case "rm": ["ifMatch"]
+        default: []
+        }
+        guard Set(options.keys).isSubset(of: allowed) else {
+          throw ToolRunError.failed(code: .invalidArgument, message: "unsupported options for \(name)", hint: nil)
+        }
+        for (key, value) in options { fields[key] = value }
+        var input = JSONValue.object(fields)
+        if name == "rm", case var .object(fields) = input, let raw = fields["path"]?.stringValue {
+          fields["path"] = .string(try scriptWritable(raw, by: session, as: principal))
+          input = .object(fields)
+        }
+        return try await run(name, input, as: principal)
+      }
+    })
     engine.define("__wuhu_space_query", promising: { arguments in
       await answer {
         let room = execution.buffers.withLock(\.room)

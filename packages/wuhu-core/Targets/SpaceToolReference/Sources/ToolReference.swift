@@ -73,12 +73,16 @@ public enum ToolReference {
       summary: "Run a read-only `SELECT` over the space's tables and induced tables.",
     ),
     Entry(
-      tool: "table.create", input: "TableCreateInput", output: "RevisionOutput",
+      tool: "table.create", input: "TableCreateInput", output: "TableWriteOutput",
       summary: "Create a table at a `.table` path with the given columns.",
     ),
     Entry(
-      tool: "table.alter", input: "TableAlterInput", output: "RevisionOutput",
-      summary: "Replace a table's header.",
+      tool: "table.schema", input: "TableSchemaInput", output: "TableSchemaOutput",
+      summary: "Read a table's ordered header and token, at the head or at rev.",
+    ),
+    Entry(
+      tool: "table.alter", input: "TableAlterInput", output: "TableWriteOutput",
+      summary: "Replace a table's header at required ifMatch. Dropping columns requires allowDropColumns; changing types is refused.",
     ),
     Entry(
       tool: "table.mutate", input: "TableMutateInput", output: "TableMutateOutput",

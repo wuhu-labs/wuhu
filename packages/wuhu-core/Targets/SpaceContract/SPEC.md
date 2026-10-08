@@ -320,3 +320,7 @@ materializes the session actor.
 ## AI disclosure in server discovery
 
 `ServerInfo.aiDisclosure` is optional and omitted when unconfigured. It is `AIDisclosure {version: String, providers: [AIProviderDisclosure]}`, where each provider has required `name`, `location`, `via`, `policy` strings. Example: `{"aiDisclosure":{"version":"trial-2026-10","providers":[{"name":"DeepSeek","location":"China","via":"Wuhu metering proxy","policy":"https://wuhu.ai/privacy"}]}}`. The operator changes `version` whenever the provider set changes, so clients can bind AI-sharing consent to that version and re-ask on change. Older server payloads decode with `aiDisclosure == nil`; older clients ignore the added field. This fact comes from operator configuration, not the tenant-editable models document.
+
+## Checked table wire contract
+
+`TableCreateInput` is path/header; `TableAlterInput` adds required ifMatch and optional allowDropColumns. Both return `TableWriteOutput` (rev/token). `TableSchemaInput` is path/optional rev and returns `TableSchemaOutput` (header/token). These closed inputs reject unknown fields, including unsupported header/column fields. Table headers have ordered string/integer/number/boolean/json columns, never an explicit id. `new` keeps its existing template/in -> path shape. All wire errors retain the existing code/message/hint and optional conflict token vocabulary.

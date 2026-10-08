@@ -95,17 +95,18 @@ struct RequestMappingTests {
     }
 
     let headerJSON = "{\"columns\":[{\"name\":\"title\",\"type\":\"string\"}]}"
-    try await assertRequest(["table", "create", "/t.table", headerJSON], response: .object(["rev": 1])) { request in
+    try await assertRequest(["table", "create", "/t.table", headerJSON], response: .object(["rev": 1, "token": "1"])) { request in
       #expect(request.url.path == "/v1/tools/table.create")
       let input = try await requestBodyJSON(request)
       #expect(input == ["path": "/t.table", "header": ["columns": [["name": "title", "type": "string"]]]])
     }
 
-    try await assertRequest(["table", "alter", "/t.table", headerJSON], response: .object(["rev": 2])) { request in
-      #expect(request.url.path == "/v1/tools/table.alter")
-      let input = try await requestBodyJSON(request)
-      #expect(input == ["path": "/t.table", "header": ["columns": [["name": "title", "type": "string"]]]])
-    }
+    let alter = try Harness(response: ["rev": 2, "token": "2"])
+    #expect(await alter.runner.run(arguments: ["table", "create", "/t.table", headerJSON]) == 0)
+    #expect(await alter.runner.run(arguments: ["table", "alter", "/t.table", headerJSON, "--allow-drop-columns"]) == 0)
+    let alterRequest = try #require(await alter.recorder.requests.last)
+    #expect(alterRequest.url.path == "/v1/tools/table.alter")
+    #expect(try await requestBodyJSON(alterRequest) == ["path": "/t.table", "header": ["columns": [["name": "title", "type": "string"]]], "ifMatch": "2", "allowDropColumns": true])
 
     let opsJSON = "[{\"kind\":\"insert\",\"values\":[\"a\",1]}]"
     try await assertRequest(["table", "mutate", "/t.table", opsJSON], response: .object(["rev": 3])) { request in

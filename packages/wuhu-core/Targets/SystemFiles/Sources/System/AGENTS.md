@@ -13,8 +13,25 @@ You are a session inside a Wuhu space: one folder of files, tables, and conversa
 ## Tables and the query sandbox
 
 - A path ending in `.table` is a filesystem node AND a real SQLite table named by its quoted path: `SELECT * FROM "/tasks.table"`.
-- The query tool is SELECT-only, enforced structurally. Mutations go through the table verbs. Every table has an implicit auto-assigned `id` column.
+- The query tool is SELECT-only, enforced structurally. Mutations go through `wuhu:space` in `run_script`: `createTable`, guarded `alterTable`, `mutateRows`, and `remove`; the CLI uses the HTTP table verbs. `.table` is not an ordinary file-write path. Every table has an implicit auto-assigned `id` column.
 - Besides `*.table` files, these induced tables are queryable: `docs` (path, title, kind, status — markdown metadata), `links` (src, dst — markdown links between documents), `doc_custom_attrs`, `sessions`, `inferences`, `conversations`, `conversation_members`, `messages`, `notifications`, `watermarks`, `devices`.
+
+### Create a table, then insert
+
+In `run_script`, without a machine or CLI:
+
+```js
+import { createTable, mutateRows, tableSchema, alterTable } from "wuhu:space"
+await createTable("/reading.table", { columns: [
+  { name: "title", type: "string" },
+  { name: "read", type: "boolean" },
+] })
+await mutateRows("/reading.table", [{ insert: { title: "The Left Hand of Darkness", read: false } }])
+const { header, token } = await tableSchema("/reading.table")
+await alterTable("/reading.table", { columns: [...header.columns, { name: "author", type: "string" }] }, { ifMatch: token })
+```
+
+Create is create-only. Headers have at most 256 columns; names are nonempty, case-insensitively unique, at most 256 UTF-8 bytes, contain no controls, and cannot be `id`. Dropping a column requires `allowDropColumns: true`; changing its type is refused. `tableSchema(path, { rev })` reads a historical header, whose token is not a current overwrite receipt. `remove(path, { ifMatch? })` deletes a table like any entry. All checks run as the calling session on the server; stale guarded operations raise `SpaceError` (`code: "conflict"`, current `token` when available), and unsupported options are `invalidArgument`. A page can render this table with `query`; author the HTML with the `write` tool. The generated script module-export inventory is `wuhu://system/module-exports.json`.
 
 ## Your home: `/_/sessions/<your-id>/`
 
@@ -26,7 +43,7 @@ One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput
 
 ## Templates
 
-A template is a markdown file whose frontmatter has a `template` attribute. `wuhu new <template> [in]` (the space `new` tool) instantiates it and prints the new path, next to the template unless a destination is given. Exactly two strategies exist — do not invent other conventions:
+A template is a markdown file whose frontmatter has a `template` attribute. `instantiateTemplate(template, { in? })` from `wuhu:space` in `run_script` (or `wuhu new <template> [in]`, the CLI’s HTTP `new` verb) instantiates it next to the template unless a destination is given; the module resolves `{ path }`, and the CLI prints the path. Exactly two strategies exist — do not invent other conventions:
 
 - `template: {"strategy":"incr","prefix":"TASK","pad":3}` — sequential `TASK-001.md`, `TASK-002.md`, ... (prefix uppercase ASCII; pad = minimum digit width).
 - `template: {"strategy":"date","folders":false,"specificity":"minute"}` — local-time date names, `2026-07-06.md` (nested `2026/07/06.md` with folders; `-HH-MM` appended at minute specificity).
@@ -45,7 +62,7 @@ A device is an app install a person is signed into: a phone, pad, mac, vision or
 
 The space's files ARE a website. Each group's host comes from `GET /v1/server`: when it advertises `contentHost`, replace `{group}` in that template with the group's id and prepend `https://` (for example `https://shared--alex.wuhu.studio`); otherwise use `https://<group>.<contentBase>` (`contentBase` is the server's own host and port). That host serves that group's files raw at `/`: `/report.html` is a live page, a directory resolves `index.html` then `index.md` and otherwise renders a listing, MIME follows the extension. Any HTML file you write is immediately a page a human can open. The server injects `/_/shell.js` into HTML so the same page composes with the Wuhu shell when embedded and stays raw when opened directly.
 
-A page module imports `wuhu:space`, the same data module `run_script` has: `query` resolves to row objects, `observe` iterates live snapshots, `watch` iterates file events, and `mutateRows`, `readAttributes` and `patchAttributes` write table rows and frontmatter as a member of the page's group. So a live dashboard is one HTML file: ``for await (const rows of observe`SELECT …`) render(rows)``. `/_/query` and `/_/observe` are deprecated. Read the `space-html-pages` skill before authoring one.
+A page module imports `wuhu:space`, the shared data subset of `run_script` (query/observe/watch/mutateRows/readAttributes/patchAttributes, not its table/schema/template/file/session exports): `query` resolves to row objects, `observe` iterates live snapshots, `watch` iterates file events, and `mutateRows`, `readAttributes` and `patchAttributes` write table rows and frontmatter as a member of the page's group. So a live dashboard is one HTML file: ``for await (const rows of observe`SELECT …`) render(rows)``. `/_/query` and `/_/observe` are deprecated. Read the `space-html-pages` skill before authoring one.
 
 ## Data views: `*.view` documents
 

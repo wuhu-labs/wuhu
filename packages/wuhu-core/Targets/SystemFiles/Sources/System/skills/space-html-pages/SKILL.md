@@ -11,7 +11,7 @@ Any HTML file in the space is a real page on its group's host. Discover it throu
 
 ## Data: `wuhu:space`
 
-A page imports `wuhu:space`, the same module `run_script` has, with the same data names, shapes and values. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
+A page imports `wuhu:space`, the shared data subset of `run_script`, with the same query/observe/watch/mutateRows/readAttributes/patchAttributes names, shapes and values. The script-only table/schema/template/file/conversation exports are not page exports. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
 
 - `query` — one shot, resolves to an array of row objects. Bind values with a tagged template or `query(sql, params)`; never splice them into the SQL. Table names are quoted paths (`"/tasks.table"`); induced tables (`docs`, `links`, `sessions`, ...) work too.
 - `observe` — live: an async iterable of whole snapshots, the current rows first, then new rows after every commit that changes them.

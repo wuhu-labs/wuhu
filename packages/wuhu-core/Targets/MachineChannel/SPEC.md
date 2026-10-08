@@ -46,7 +46,7 @@ child-blocking backpressure. Receivers ack on consumption: each `ExecEvents` /
 a consumer that never iterates stalls the producer at exactly `window` buffered
 bytes.
 
-Resume needs no wire additions:
+Resume and retirement use optional v1 fields; older peers ignore them:
 
 - On every bind, an endpoint sends a stream-0 `hello` first, then per live exec
   retransmits `exec-start` for outgoing execs (delivery is at-most-once by exec
@@ -59,8 +59,7 @@ Resume needs no wire additions:
   hello-queued replay it arrives in order instead of being dropped and
   redelivered.
 - Receiving `hello` means the peer (re)connected and anything un-acked may have
-  been lost on the way to it: the receiver of the hello resumes every live exec
-  exactly as at bind — `exec-start` retransmit for outgoing execs included —
+  been lost on the way to it: outgoing execs resume as at bind, while incoming execs replay only the ids listed in `hello.execs`. An absent list is a legacy unscoped hello, and an empty list requests no incoming replay. New caller hellos list their outstanding exec ids; the hub additionally scopes each caller leg to its authorized exec. Resumption runs exactly as at bind — `exec-start` retransmit for outgoing execs included —
   and replays all of its own un-acked tails, synchronously, before routing any
   later frame from that peer. The replay runs from the cursor acked before the
   blip (the peer's announcement ack arrives after its hello); the over-replay
@@ -97,6 +96,8 @@ decode fails only its own consumer (the exec's iterator or the awaiting round
 trip). The pump itself never blocks on a consumer and never crashes on peer
 input.
 
-Exec state is retained for the endpoint's lifetime; retirement (grace windows,
-`machine-lost`, registry-driven cleanup) is server/agent policy layered on top
-in M3/M4.
+A byte acknowledgement never retires an exec, even when its cursor covers all output: the exit itself may still need replay. `OutgoingExec.acknowledgeExit()` sends `Ack.terminal = true` at the received exit cursor and waits until the frame is sent or the binding is lost. Automatic consumers do this when they consume the exit; manual consumers call it only after storing their durable result. If the leg is absent or lost before transmission, the terminal-ACK intent survives and is resent on rebind or peer hello without replaying `exec-start`. Successful transmission releases local outgoing state. Receipt of a matching terminal acknowledgement releases all incoming state and cancels its expiry timer. Invalid id/cursor acknowledgements cannot retire an exec.
+
+The owner of incoming execs runs `runRetention()` for its whole lifetime, independently of transports. Every incoming exit schedules expiry 10 minutes later on the injected continuous clock; acknowledgement cancels that timer. Expiry releases the same state even while disconnected. Bind replay therefore includes only running or still-unacknowledged, unexpired execs. An old server's ordinary byte ACKs keep working; expiry bounds its finished history.
+
+`IncomingExec.stopOutput()` marks a forced output cutoff, stops output admission and releases capacity waiters without waiting for the caller. Subsequent unsent bytes are discarded; `send(..., waitForCapacity: false)` sends only the immediately available prefix and marks any dropped suffix. Already-transmitted chunks retain their cursor/replay semantics for mixed-version callers. `ExecEvents` translates an output-cut exit into `.truncated(limit: emittedCursor)` followed by the unchanged exit status.

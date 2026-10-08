@@ -80,12 +80,14 @@ public struct ExecExit: Codable, Equatable, Sendable {
   public let id: ExecID
   public let cursor: Int
   public let status: ExitStatus
+  public let outputCut: Bool?
 }
 
 @Contract
 public struct Ack: Codable, Equatable, Sendable {
   public let id: ExecID
   public let cursor: Int
+  public let terminal: Bool?
 }
 
 @Contract

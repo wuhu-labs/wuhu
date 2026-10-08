@@ -89,6 +89,33 @@ import Testing
     }
   }
 
+  @Test func tableHTTPChecksReadableSharedLayerWrites() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
+      let group = try await t.harness.space.ensurePersonalGroup(account: account.id)
+      let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+      let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: group))
+      let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)
+      let token = t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
+      let path = "wuhu://shared.localspace/.agents/skills/test/data.table"
+      let header: JSONValue = ["columns": [["name": "s", "type": "string"]]]
+      let refused = try await t.harness.post("/v1/tools/table.create", ["path": .string(path), "header": header], bearer: token)
+      #expect(refused.status == .unprocessableContent)
+      #expect(try await refused.json(ToolError.self).code == .unauthorized)
+      let created = try await t.harness.call("/v1/tools/table.create", ["path": .string(path), "header": header], as: TableWriteOutput.self, bearer: t.token)
+      #expect(try await t.harness.post("/v1/tools/table.schema", ["path": .string(path)], bearer: token).status == .ok)
+      for (verb, input) in [
+        ("table.alter", JSONValue.object(["path": .string(path), "header": header, "ifMatch": .string(created.token)])),
+        ("table.mutate", JSONValue.object(["path": .string(path), "ops": [["kind": "insert", "values": ["injected"]]]])),
+      ] {
+        let response = try await t.harness.post("/v1/tools/\(verb)", input, bearer: token)
+        #expect(response.status == .unprocessableContent)
+        #expect(try await response.json(ToolError.self).code == .unauthorized)
+      }
+    }
+  }
+
   @Test func newTablesAndCheckoutActUnderTheSessionHomeRule() async throws {
     try await withSessionDeps {
       let t = try await tree()
@@ -123,7 +150,9 @@ import Testing
       #expect(try await tool("table.create", .object(["path": .string("\(own)/t.table"), "header": header])).status == .ok)
       let insert: JSONValue = .array([.object(["kind": "insert", "values": .array(["x"])])])
       #expect(try await tool("table.mutate", .object(["path": .string("\(own)/t.table"), "ops": insert])).status == .ok)
-      #expect(try await tool("table.alter", .object(["path": .string("\(own)/t.table"), "header": header])).status == .ok)
+      let schema = try await t.harness.call("/v1/tools/table.schema", ["path": .string("\(own)/t.table")], as: TableSchemaOutput.self, bearer: t.token)
+      #expect(schema.header.columns.map(\.name) == ["s"])
+      #expect(try await tool("table.alter", .object(["path": .string("\(own)/t.table"), "header": header, "ifMatch": .string(schema.token)])).status == .ok)
       for name in ["table.create", "table.alter"] {
         let refused = try await tool(name, .object(["path": .string("\(foreign)/t.table"), "header": header]))
         #expect(refused.status == .unprocessableContent, "\(name)")

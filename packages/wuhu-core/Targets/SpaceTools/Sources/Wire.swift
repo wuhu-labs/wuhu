@@ -213,7 +213,7 @@ public enum Wire {
       )
     case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .personalGroupEdge,
          .notAFile, .notADirectory, .pathIsDirectory, .invalidRevision,
-         .columnCountMismatch, .columnTypeChanged, .reservedTablePath,
+         .columnCountMismatch, .columnTypeChanged, .invalidTableHeader, .reservedTablePath,
          .queryNotReadOnly, .templateInvalid, .importInvalid:
       .failed(code: .invalidArgument, message: "\(error)", hint: nil)
     }

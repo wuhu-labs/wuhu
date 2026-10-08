@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"TableWriteOutput","type":"object","properties":{"rev":{"type":"integer"},"token":{"type":"string"}},"required":["rev","token"],"additionalProperties":false}

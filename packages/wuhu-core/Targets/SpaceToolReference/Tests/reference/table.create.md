@@ -2,7 +2,7 @@
 
 Create a table at a `.table` path with the given columns.
 
-`POST /v1/tools/table.create` takes a [`TableCreateInput`](../../../SpaceContract/Tests/contract/table-create-input.schema.json) body and answers `200` with a [`RevisionOutput`](../../../SpaceContract/Tests/contract/revision-output.schema.json).
+`POST /v1/tools/table.create` takes a [`TableCreateInput`](../../../SpaceContract/Tests/contract/table-create-input.schema.json) body and answers `200` with a [`TableWriteOutput`](../../../SpaceContract/Tests/contract/table-write-output.schema.json).
 
 ## Input
 
@@ -19,6 +19,7 @@ Create a table at a `.table` path with the given columns.
 | Field | Type | Required |
 | --- | --- | --- |
 | `rev` | integer | yes |
+| `token` | string | yes |
 
 ## Errors
 

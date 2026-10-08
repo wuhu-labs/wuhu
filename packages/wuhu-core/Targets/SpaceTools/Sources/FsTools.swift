@@ -61,7 +61,13 @@ extension SpaceToolbox {
 
   static let rm = SpaceTool("rm", schema: RemoveInput.jsonSchema) { (context, input: RemoveInput) in
     let target = try context.resolve(input.path)
-    try await target.backend.delete(target.path, ifMatch: input.ifMatch.map(Wire.token))
+    if let group = target.group { try await context.refuseWrite(context.spacePath(target.path), in: group) }
+    do {
+      try await target.backend.delete(target.path, ifMatch: input.ifMatch.map(Wire.token))
+    } catch SpaceError.versionMismatch {
+      let token = try? await target.backend.stat(target.path).token
+      throw ToolRunError.failed(code: .conflict, message: "version mismatch: \(input.path)", hint: Wire.staleHint, token: token.map(Wire.string))
+    }
     guard target.isSpace, let group = target.group else { return Wire.object([]) }
     let path = target.path
     let entries = try await context.space.history(try context.spacePath(path), in: group)

@@ -751,8 +751,9 @@ extension Command {
       return .tableCreate(path: path, header: header)
     case "alter":
       let header = try contractArgument(TableHeader.self, parser.required("header-json", verb: "table alter"), verb: "table alter")
+      let allowDropColumns = parser.flag("--allow-drop-columns")
       try parser.finish(verb: "table alter")
-      return .tableAlter(path: path, header: header)
+      return .tableAlter(path: path, header: header, allowDropColumns: allowDropColumns)
     case "mutate":
       let ops = try contractArgument([RowOp].self, parser.required("ops-json", verb: "table mutate"), verb: "table mutate")
       try parser.finish(verb: "table mutate")
@@ -1068,7 +1069,7 @@ extension Command {
 
     subcommands:
       create <path> <header-json>
-      alter  <path> <header-json>
+      alter  <path> <header-json> [--allow-drop-columns]
       mutate <path> <ops-json>
     \(exitCodes)
     """,
@@ -1079,9 +1080,10 @@ extension Command {
     \(exitCodes)
     """,
     "table alter": """
-    usage: wuhu table alter <path> <header-json>
+    usage: wuhu table alter <path> <header-json> [--allow-drop-columns]
 
-    replaces a table header.
+    replaces the whole header at the recorded token (stat first to refresh it).
+    dropping columns requires --allow-drop-columns; changing types is refused.
     \(exitCodes)
     """,
     "table mutate": """

@@ -1,8 +1,8 @@
 # `table.alter`
 
-Replace a table's header.
+Replace a table's header at required ifMatch. Dropping columns requires allowDropColumns; changing types is refused.
 
-`POST /v1/tools/table.alter` takes a [`TableAlterInput`](../../../SpaceContract/Tests/contract/table-alter-input.schema.json) body and answers `200` with a [`RevisionOutput`](../../../SpaceContract/Tests/contract/revision-output.schema.json).
+`POST /v1/tools/table.alter` takes a [`TableAlterInput`](../../../SpaceContract/Tests/contract/table-alter-input.schema.json) body and answers `200` with a [`TableWriteOutput`](../../../SpaceContract/Tests/contract/table-write-output.schema.json).
 
 ## Input
 
@@ -13,12 +13,15 @@ Replace a table's header.
 | `header.columns` | array of object | yes |
 | `header.columns[].name` | string | yes |
 | `header.columns[].type` | one of `"string"`, `"integer"`, `"number"`, `"boolean"`, `"json"` | yes |
+| `ifMatch` | string | yes |
+| `allowDropColumns` | boolean or null | no |
 
 ## Output
 
 | Field | Type | Required |
 | --- | --- | --- |
 | `rev` | integer | yes |
+| `token` | string | yes |
 
 ## Errors
 

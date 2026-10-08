@@ -65,7 +65,13 @@ import struct WuhuAI.ToolArguments
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       let machine = try await space.addMachine(name: "box").id
-      let scripted = ScriptedExecMachine()
+      let acknowledged = Box(false)
+      let scripted = ScriptedExecMachine(onTerminalAck: { ack in
+        #expect(ack.cursor == 6)
+        let receipt = try await space.sessions.receipt(session, toolCallID: .init("tc-exec"))
+        #expect(receipt != nil)
+        acknowledged.withLock { $0 = true }
+      })
       var world = ToolWorld(
         executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
         session: session,
@@ -83,6 +89,7 @@ import struct WuhuAI.ToolArguments
         guard case let .exec(result) = try await world.run(
           "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]), id: "tc-exec",
         ) else { throw Mismatch("exec failed") }
+        #expect(acknowledged.value)
         #expect(result.output == "hello\n")
         #expect(result.exitCode == 0)
         #expect(!result.reaped)

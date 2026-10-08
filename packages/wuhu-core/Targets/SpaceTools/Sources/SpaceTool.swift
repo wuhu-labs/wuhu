@@ -30,6 +30,9 @@ public struct SpaceToolContext: Sendable {
   /// meets the layer rule as themselves.
   func refuseWrite(_ path: SpacePath, in group: GroupID) async throws {
     guard page != nil else {
+      if case let .session(session) = principal.actor {
+        try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
+      }
       try await space.refuseLayerWrite(path, in: group, by: principal.actor)
       return
     }
@@ -188,6 +191,13 @@ public struct SpaceTool: Sendable {
     self.execute = { context, json async throws(ToolRunError) in
       let input: Input
       do {
+        if ["table.create", "table.schema", "table.alter", "table.mutate", "new"].contains(name) {
+          try checkedFields(json, allowed: Set(schema.object?["properties"]?.object?.keys.map { $0 } ?? []))
+          if let header = json.object?["header"] {
+            try checkedFields(header, allowed: ["columns"])
+            for column in header.object?["columns"]?.array ?? [] { try checkedFields(column, allowed: ["name", "type"]) }
+          }
+        }
         input = try JSONValueDecoder().decode(Input.self, from: json)
       } catch {
         throw ToolRunError.undecodableInput("\(name): input does not match the contract schema")
@@ -265,5 +275,11 @@ struct SpaceView: SpaceVFS {
 
   func stat(_ path: String) async throws -> SpaceFS.Entry {
     try await view(path).stat(path)
+  }
+}
+
+private func checkedFields(_ input: JSONValue, allowed: Set<String>) throws {
+  guard case let .object(fields) = input, Set(fields.keys).isSubset(of: allowed) else {
+    throw ToolRunError.undecodableInput("unsupported fields")
   }
 }

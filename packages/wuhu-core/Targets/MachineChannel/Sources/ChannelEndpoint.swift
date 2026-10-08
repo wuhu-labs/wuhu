@@ -1,3 +1,4 @@
+import Dependencies
 import JSONValue
 import MachineContract
 
@@ -10,13 +11,26 @@ public actor ChannelEndpoint {
 
   private var execs: [ExecID: ExecState] = [:]
   private var execsByStream: [Int: ExecState] = [:]
+  var retainedExecCount: Int {
+    precondition(execs.count == execsByStream.count)
+    return execs.count
+  }
+
   private var nextStreamID: Int = 1
   var nextRequestID: Int = 1
   var pendingRequests: [Int: AsyncThrowingStream<Frame, any Error>.Continuation] = [:]
   var outbound: AsyncStream<Frame>.Continuation?
   private var bindingGeneration: Int = 0
 
+  private let clock: any Clock<Duration>
+  private let expirations: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>
+  private let expirationContinuation: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>.Continuation
+  private var terminalWaiters: [ExecID: [AsyncStream<Void>.Continuation]] = [:]
+
   public init() {
+    @Dependency(\.continuousClock) var clock
+    self.clock = clock
+    (expirations, expirationContinuation) = AsyncStream.makeStream()
     (incomingExecs, incomingExecsContinuation) = AsyncStream.makeStream()
     (inboundRequests, inboundRequestsContinuation) = AsyncStream.makeStream()
   }
@@ -29,6 +43,7 @@ public actor ChannelEndpoint {
         for await frame in frames {
           do {
             try await transport.send(FrameCodec.encode(frame))
+            await self.didSend(frame)
           } catch {
             break
           }
@@ -83,7 +98,7 @@ public actor ChannelEndpoint {
 
   // MARK: Exec plumbing for the handles
 
-  func sendData(exec id: ExecID, stream: ExecOutputStream?, bytes: [UInt8]) async throws {
+  func sendData(exec id: ExecID, stream: ExecOutputStream?, bytes: [UInt8], waitForCapacity: Bool = true) async throws {
     var index = 0
     while index < bytes.count {
       guard let exec = execs[id] else { return }
@@ -93,9 +108,17 @@ public actor ChannelEndpoint {
         if exec.exitReceived { return }
       case .incoming:
         precondition(exec.sender.exit == nil, "output after exit")
+        if exec.outputStopped {
+          exec.outputCut = true
+          return
+        }
       }
       let room = exec.sender.room
       guard room > 0 else {
+        if !waitForCapacity {
+          exec.outputCut = true
+          return
+        }
         let (signal, continuation) = AsyncStream<Void>.makeStream()
         exec.sender.addWaiter(continuation)
         for await _ in signal {}
@@ -126,13 +149,82 @@ public actor ChannelEndpoint {
   func finish(exec id: ExecID, status: ExitStatus) {
     guard let exec = execs[id], exec.role == .incoming, exec.sender.exit == nil else { return }
     exec.sender.exit = status
-    outbound?.yield(Frame(streamID: exec.streamID, opcode: .execExit, payload: ExecExit(id: id, cursor: exec.sender.nextCursor, status: status)))
+    let (cancelled, cancellation) = AsyncStream<Void>.makeStream()
+    exec.retentionCancellation = cancellation
+    expirationContinuation.yield((id, expiryWait(clock), cancelled))
+    outbound?.yield(exitFrame(for: exec))
   }
 
   func acknowledgeConsumption(exec id: ExecID, through cursor: Int) {
     guard let exec = execs[id] else { return }
     exec.acknowledgedInbound = max(exec.acknowledgedInbound, cursor)
     outbound?.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: id, cursor: cursor)))
+  }
+
+  public func runRetention() async {
+    await withDiscardingTaskGroup { group in
+      for await (id, wait, cancelled) in expirations {
+        group.addTask {
+          let expired = await withTaskGroup(of: Bool.self) { race in
+            race.addTask {
+              do { try await wait(); return true } catch { return false }
+            }
+            race.addTask {
+              for await _ in cancelled {}
+              return false
+            }
+            let expired = await race.next() ?? false
+            race.cancelAll()
+            return expired
+          }
+          if expired { await self.retire(id) }
+        }
+      }
+    }
+  }
+
+  private func expiryWait<C: Clock>(_ clock: C) -> @Sendable () async throws -> Void where C.Duration == Duration {
+    let deadline = clock.now.advanced(by: .seconds(600))
+    return { try await clock.sleep(until: deadline, tolerance: nil) }
+  }
+
+  private func retire(_ id: ExecID) {
+    guard let exec = execs.removeValue(forKey: id) else { return }
+    execsByStream[exec.streamID] = nil
+    exec.retentionCancellation?.finish()
+    exec.sender.resumeWaiters()
+    exec.framesContinuation.finish()
+    exec.killsContinuation.finish()
+    for waiter in terminalWaiters.removeValue(forKey: id) ?? [] { waiter.finish() }
+  }
+
+  func stopOutput(exec id: ExecID) {
+    guard let exec = execs[id], exec.role == .incoming else { return }
+    exec.outputStopped = true
+    exec.outputCut = true
+    exec.sender.resumeWaiters()
+  }
+
+  func acknowledgeExit(exec id: ExecID) async {
+    guard let exec = execs[id], let cursor = exec.exitCursor else { return }
+    exec.acknowledgedInbound = cursor
+    exec.terminalAckPending = true
+    guard let outbound else { return }
+    let (sent, continuation) = AsyncStream<Void>.makeStream()
+    terminalWaiters[id, default: []].append(continuation)
+    outbound.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: id, cursor: cursor, terminal: true)))
+    for await _ in sent {}
+  }
+
+  private func didSend(_ frame: Frame) {
+    guard frame.opcode == .ack, let ack = try? frame.payload(Ack.self), ack.terminal == true else { return }
+    retire(ack.id)
+  }
+
+  private func exitFrame(for exec: ExecState) -> Frame {
+    Frame(streamID: exec.streamID, opcode: .execExit, payload: ExecExit(
+      id: exec.start.id, cursor: exec.sender.nextCursor, status: exec.sender.exit!, outputCut: exec.outputCut ? true : nil,
+    ))
   }
 
   // MARK: Binding
@@ -149,10 +241,10 @@ public actor ChannelEndpoint {
     outbound?.finish()
     outbound = continuation
     bindingGeneration += 1
-    continuation.yield(Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1)))
+    continuation.yield(Frame(streamID: 0, opcode: .control, payload: ControlMessage.hello(protocolVersion: 1, execs: execs.values.filter { $0.role == .outgoing && !$0.exitReceived }.map { $0.start.id })))
     for exec in execs.values.sorted(by: { $0.streamID < $1.streamID }) {
-      if exec.role == .outgoing, exec.exitReceived { continue }
       yieldResume(for: exec, into: continuation)
+      if exec.role == .outgoing, exec.exitReceived { continue }
       continuation.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: exec.start.id, cursor: exec.acknowledgedInbound)))
     }
     return bindingGeneration
@@ -160,6 +252,12 @@ public actor ChannelEndpoint {
 
   private func yieldResume(for exec: ExecState, into continuation: AsyncStream<Frame>.Continuation) {
     if exec.role == .outgoing {
+      if exec.exitReceived {
+        if exec.terminalAckPending, let cursor = exec.exitCursor {
+          continuation.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: exec.start.id, cursor: cursor, terminal: true)))
+        }
+        return
+      }
       continuation.yield(Frame(streamID: exec.streamID, opcode: .execStart, payload: exec.start))
     }
     yieldReplay(for: exec, above: exec.sender.ackedThrough, into: continuation)
@@ -170,6 +268,8 @@ public actor ChannelEndpoint {
     outbound?.finish()
     outbound = nil
     failPendingRequests(with: ChannelError.severed)
+    for waiters in terminalWaiters.values { for waiter in waiters { waiter.finish() } }
+    terminalWaiters.removeAll()
   }
 
   func failPendingRequests(with error: any Error) {
@@ -192,9 +292,7 @@ public actor ChannelEndpoint {
         continuation.yield(Frame(streamID: exec.streamID, opcode: .kill, payload: Kill(id: exec.start.id)))
       }
     case .incoming:
-      if let exit = exec.sender.exit {
-        continuation.yield(Frame(streamID: exec.streamID, opcode: .execExit, payload: ExecExit(id: exec.start.id, cursor: exec.sender.nextCursor, status: exit)))
-      }
+      if exec.sender.exit != nil { continuation.yield(exitFrame(for: exec)) }
     }
   }
 
@@ -239,6 +337,7 @@ public actor ChannelEndpoint {
     case .execExit:
       guard let exec = execsByStream[frame.streamID] else { return }
       exec.exitReceived = true
+      exec.exitCursor = (try? frame.payload(ExecExit.self))?.cursor
       exec.sender.resumeWaiters()
       exec.framesContinuation.yield(frame)
     case .kill:
@@ -256,7 +355,7 @@ public actor ChannelEndpoint {
   private func routeControl(_ frame: Frame) {
     guard let message = try? frame.payload(ControlMessage.self) else { return }
     switch message {
-    case .hello:
+    case let .hello(_, scope):
       // The peer (re)connected. Any in-flight response may have died with the
       // peer's old binding, so pending round trips fail instead of hanging.
       // Live execs resume exactly as at bind — including the exec-start
@@ -268,7 +367,7 @@ public actor ChannelEndpoint {
       failPendingRequests(with: ChannelError.severed)
       guard let outbound else { return }
       for exec in execs.values.sorted(by: { $0.streamID < $1.streamID }) {
-        if exec.role == .outgoing, exec.exitReceived { continue }
+        if exec.role == .incoming, let scope, !scope.contains(exec.start.id) { continue }
         yieldResume(for: exec, into: outbound)
       }
     case .ping:
@@ -304,7 +403,11 @@ public actor ChannelEndpoint {
 
   private func routeAck(_ frame: Frame) {
     guard let exec = execsByStream[frame.streamID], let ack = try? frame.payload(Ack.self) else { return }
+    guard ack.id == exec.start.id else { return }
     exec.sender.acknowledge(through: ack.cursor)
+    if exec.role == .incoming, exec.sender.exit != nil, ack.terminal == true, ack.cursor == exec.sender.nextCursor {
+      retire(ack.id)
+    }
   }
 
   private func routeResponse(_ frame: Frame) {
@@ -347,6 +450,11 @@ private final class ExecState {
   let killsContinuation: AsyncStream<Void>.Continuation
   var acknowledgedInbound: Int = 0
   var exitReceived: Bool = false
+  var exitCursor: Int?
+  var terminalAckPending: Bool = false
+  var retentionCancellation: AsyncStream<Void>.Continuation?
+  var outputStopped: Bool = false
+  var outputCut: Bool = false
   var killRequested: Bool = false
   var killDelivered: Bool = false
 

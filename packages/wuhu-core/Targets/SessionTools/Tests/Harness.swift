@@ -4,6 +4,7 @@ import Dependencies
 import Foundation
 import JSONValue
 import MachineChannel
+import struct MachineContract.Ack
 import struct MachineContract.Base64Data
 import struct MachineContract.ExecID
 import struct MachineContract.MachineEntry
@@ -335,7 +336,10 @@ final class ScriptedExecMachine: Sendable {
   private let fresh: AsyncStream<ChannelEndpoint>
   private let freshContinuation: AsyncStream<ChannelEndpoint>.Continuation
 
-  init() {
+  private let onTerminalAck: @Sendable (Ack) async throws -> Void
+
+  init(onTerminalAck: @escaping @Sendable (Ack) async throws -> Void = { _ in }) {
+    self.onTerminalAck = onTerminalAck
     (transports, transportsContinuation) = AsyncStream.makeStream()
     (fresh, freshContinuation) = AsyncStream.makeStream()
   }
@@ -350,7 +354,7 @@ final class ScriptedExecMachine: Sendable {
         let (caller, machineSide) = InMemoryTransport.pair()
         links.withLock { $0[id] = machineSide }
         transportsContinuation.yield((endpoint(for: id), machineSide))
-        return caller
+        return TerminalAckTransport(base: caller, observe: onTerminalAck)
       },
       status: { id in try await space.execRecord(id) },
       mintScript: { machine, session, script in
@@ -420,5 +424,19 @@ struct Gate: Sendable {
   func wait() async {
     var iterator = stream.makeAsyncIterator()
     _ = await iterator.next()
+  }
+}
+
+private struct TerminalAckTransport: FrameTransport {
+  let base: InMemoryTransport
+  let observe: @Sendable (Ack) async throws -> Void
+  var inbound: AsyncStream<[UInt8]> { base.inbound }
+  func close() { base.close() }
+  func send(_ bytes: [UInt8]) async throws {
+    let frame = try FrameCodec.decode(bytes)
+    if frame.opcode == .ack, let ack = try? frame.payload(Ack.self), ack.terminal == true {
+      try await observe(ack)
+    }
+    try await base.send(bytes)
   }
 }

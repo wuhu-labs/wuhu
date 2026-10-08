@@ -1,0 +1,48 @@
+{
+  "wuhu:ai": [
+    "CapabilityError",
+    "editImage",
+    "generateImage",
+    "transcribe"
+  ],
+  "wuhu:machine": [
+    "machine",
+    "machines"
+  ],
+  "wuhu:secret": [
+    "list",
+    "remove",
+    "secret",
+    "set"
+  ],
+  "wuhu:session": [
+    "archive",
+    "createSession",
+    "interrupt",
+    "request",
+    "resume",
+    "setTags",
+    "unarchive"
+  ],
+  "wuhu:space": [
+    "alterTable",
+    "conversation",
+    "createTable",
+    "dm",
+    "instantiateTemplate",
+    "move",
+    "mutateRows",
+    "observe",
+    "patchAttributes",
+    "query",
+    "readAttributes",
+    "remove",
+    "tableSchema",
+    "watch"
+  ],
+  "wuhu:web_search": [
+    "CapabilityError",
+    "default",
+    "webSearch"
+  ]
+}

@@ -35,6 +35,7 @@ public final class MachineAgent: Sendable {
       logger.notice("\(legacyVault.path) is no longer used: an exec's secrets are its machine's group secrets (wuhu secret set)")
     }
     await withTaskGroup(of: Void.self) { group in
+      group.addTask { await self.endpoint.runRetention() }
       group.addTask { await self.serveExecs() }
       group.addTask { await self.serveRequests() }
       group.addTask { await self.maintainConnection(dial: dial) }

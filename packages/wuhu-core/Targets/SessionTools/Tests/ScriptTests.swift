@@ -573,6 +573,12 @@ final class ScriptRig: Sendable {
     record("run_script", try await call("run_script", arguments))
   }
 
+  func evaluate(_ source: String) async throws -> JSONValue {
+    let output = try await call("run_script", ["source": .string(source)])
+    let first = String(output.prefix { $0 != "\n" })
+    return JSONValue.parse(first) ?? .string(first)
+  }
+
   func write(_ path: String, _ text: String) async throws {
     _ = try await space.fs(.shared).write(path, Data(text.utf8), ifMatch: nil)
   }
@@ -758,6 +764,7 @@ func withRig(
   control: SessionControl? = nil,
   group: GroupID = .shared,
   task: Bool = false,
+  childAgent: Bool = false,
   prepare: (Space, SessionID) async throws -> Void = { _, _ in },
   _ body: @escaping (ScriptRig) async throws -> Void,
 ) async throws {
@@ -773,9 +780,9 @@ func withRig(
         try await space.addEdge(src: group, dst: .shared, kind: .read, by: nil)
       }
       var session = try await makeSession(space, group: group)
-      if task {
+      if task || childAgent {
         session = try await space.sessions.createSession(
-          group: group, title: "task", kind: .task, parent: session, createdBy: session.rawValue,
+          group: group, title: "child", kind: task ? .task : .agent, parent: session, createdBy: session.rawValue,
           executor: .kernel(.init(provider: "deepseek", model: "deepseek-v4-pro", effort: "high")),
         )
       }

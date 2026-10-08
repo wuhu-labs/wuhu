@@ -65,6 +65,26 @@ public struct TableCreateInput: Codable, Equatable, Sendable {
 public struct TableAlterInput: Codable, Equatable, Sendable {
   public let path: String
   public let header: TableHeader
+  public let ifMatch: String
+  public let allowDropColumns: Bool?
+}
+
+@Contract
+public struct TableSchemaInput: Codable, Equatable, Sendable {
+  public let path: String
+  public let rev: Int?
+}
+
+@Contract
+public struct TableSchemaOutput: Codable, Equatable, Sendable {
+  public let header: TableHeader
+  public let token: String
+}
+
+@Contract
+public struct TableWriteOutput: Codable, Equatable, Sendable {
+  public let rev: Int
+  public let token: String
 }
 
 @Contract

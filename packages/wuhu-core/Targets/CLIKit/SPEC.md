@@ -25,3 +25,7 @@ Any non-empty `WUHU_EXEC` marks a session exec. With `WUHU_IDENTITY` unset, empt
 `serve --ai-disclosure <json-file>` passes the disclosure file to server startup. The optional file is an object with a nonempty `version` and a nonempty `providers` array; every provider has nonempty `name`, `location`, `via` strings and an absolute HTTPS `policy` URL without credentials. The file is read and validated before the server creates its store or binds listeners; an unreadable or invalid file is a typed startup error, never an omitted disclosure. Without this option server discovery remains unchanged.
 
 Policy URLs must use the literal lowercase `https://` scheme prefix and have no leading or trailing whitespace. Host config and server startup reject, rather than normalize, other spellings.
+
+## Guarded table alteration
+
+Table create/alter responses carry rev/token, both printed and recorded. Table mutate records its revision as the current table token. `wuhu table alter <path> <header-json> [--allow-drop-columns]` requires a recorded token (use `wuhu stat` to refresh it), sends ifMatch, and never bypasses the precondition. Omitting existing columns requires the flag; in-place type changes remain refused by the server. `wuhu rm` deletes tables; there is no separate drop or index-management command. HTTP row edits stay positional, whereas script mutateRows edits are named fields. The HTTP space toolbox and kernel roster are distinct surfaces; scripts now expose checked tables and atomic document templates without requiring the CLI.

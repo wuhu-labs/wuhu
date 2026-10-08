@@ -5,9 +5,12 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - Dependencies
   - MachineContract
   - JSONValue
 tests:
   dependencies:
+    - Clocks
+    - Dependencies
     - MachineContract
     - JSONValue

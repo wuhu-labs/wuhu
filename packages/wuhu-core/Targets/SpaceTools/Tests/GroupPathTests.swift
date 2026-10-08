@@ -80,7 +80,7 @@ import Testing
       ("history", ["path": .string(qualifiedAt)]),
       ("checkout", ["path": .string(at), "rev": .integer(written.rev!)]),
       ("table.create", ["path": "/n.table@1", "header": ["columns": [["name": "a", "type": "string"]]]]),
-      ("table.alter", ["path": "/n.table@1", "header": ["columns": [["name": "a", "type": "string"]]]]),
+      ("table.alter", ["path": "/n.table@1", "ifMatch": "1", "header": ["columns": [["name": "a", "type": "string"]]]]),
       ("table.mutate", ["path": "/n.table@1", "ops": []]),
       ("new", ["template": .string(at)]),
       ("new", ["template": "/t.md", "in": "/dir@1"]),

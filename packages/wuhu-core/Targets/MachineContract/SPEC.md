@@ -119,6 +119,12 @@ secret's value reaches it only inside the `ExecStart` that needs it.
   `machineLost` there means the machine stayed gone past its grace and the
   output already delivered is all there is.
 
+## v1 replay retirement and output cutoff
+
+- `ControlMessage.hello.execs` optionally scopes incoming-exec replay to those ids. New caller endpoints list their outgoing execs; the server scopes a caller leg to its authorized exec. An empty list requests none, while an absent list preserves legacy unscoped replay. Outgoing-exec resume is unaffected, so a machine reconnect still recovers starts lost during its outage.
+- `Ack.terminal = true` acknowledges the exit and its entire output at `ExecExit.cursor`. It is sent only once the consumer has its durable result (or has consumed the exit for streaming callers). A matching terminal ACK retires the agent's full exec state; byte ACKs alone do not. Unacknowledged finished state expires 10 minutes after exit, even disconnected. Old servers/agents ignore additive fields or omit them, and continue working with ordinary byte replay and the new agent's expiry.
+- `ExecExit.outputCut = true` means stopping the command forcibly cut off output admission; unsent bytes are discarded, and unread pipe data may be lost. Its cursor still counts bytes admitted to the wire, preserving replay for older consumers; the unsent suffix cannot hold kill/timeout behind a full window. New event consumers emit `.truncated(limit: cursor)` before the exit. Absent `outputCut` means the peer made no cutoff claim.
+
 ## VFS and search
 
 - Machine fs is raw: **version token = mtime**, opaque on the wire

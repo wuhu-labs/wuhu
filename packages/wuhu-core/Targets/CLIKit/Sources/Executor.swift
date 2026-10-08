@@ -210,17 +210,23 @@ struct Executor {
     case let .tableCreate(path, header):
       let route = try self.route(path)
       let input: JSONValue = ["path": .string(route.path), "header": header]
-      let output: RevisionOutput = try await self.tool("table.create", input, space: route.space)
-      await self.runner.stdout("rev \(output.rev)\n")
-    case let .tableAlter(path, header):
+      let output: TableWriteOutput = try await self.tool("table.create", input, space: route.space)
+      try self.wallet.record(token: output.token, space: route.space, path: route.path)
+      await self.runner.stdout("rev \(output.rev) token \(output.token)\n")
+    case let .tableAlter(path, header, allowDropColumns):
       let route = try self.route(path)
-      let input: JSONValue = ["path": .string(route.path), "header": header]
-      let output: RevisionOutput = try await self.tool("table.alter", input, space: route.space)
-      await self.runner.stdout("rev \(output.rev)\n")
+      guard let token = try self.wallet.token(space: route.space, path: route.path) else {
+        throw CLIError(message: "refusing to alter \(path): stat it first to record its version token")
+      }
+      let input: JSONValue = ["path": .string(route.path), "header": header, "ifMatch": .string(token), "allowDropColumns": .bool(allowDropColumns)]
+      let output: TableWriteOutput = try await self.tool("table.alter", input, space: route.space)
+      try self.wallet.record(token: output.token, space: route.space, path: route.path)
+      await self.runner.stdout("rev \(output.rev) token \(output.token)\n")
     case let .tableMutate(path, ops):
       let route = try self.route(path)
       let input: JSONValue = ["path": .string(route.path), "ops": ops]
       let output: RevisionOutput = try await self.tool("table.mutate", input, space: route.space)
+      try self.wallet.record(token: String(output.rev), space: route.space, path: route.path)
       await self.runner.stdout("rev \(output.rev)\n")
     case let .new(template, container):
       let paths = [template] + (container.map { [$0] } ?? [])

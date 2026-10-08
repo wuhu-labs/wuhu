@@ -231,11 +231,11 @@ struct SecretRig: Sendable {
   }
 }
 
-func withSecretServer(_ body: (SecretRig) async throws -> Void) async throws {
+func withSecretServer(clock: any Clock<Duration> = ContinuousClock(), _ body: (SecretRig) async throws -> Void) async throws {
   let scratch = try ScratchFolder("group-secrets")
   defer { scratch.remove() }
   let stores = SpaceSecretStores(configDirectory: scratch.url.appendingPathComponent("config", isDirectory: true), spaceID: "spc_test")
   let space = try makeMachineSpace()
-  let server = TestServer(space: space, clock: ContinuousClock(), secrets: stores)
+  let server = TestServer(space: space, clock: clock, secrets: stores)
   try await body(SecretRig(server: server, stores: stores, scratch: scratch))
 }
