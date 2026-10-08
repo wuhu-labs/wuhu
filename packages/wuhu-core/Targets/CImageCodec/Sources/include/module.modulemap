@@ -1,0 +1,1 @@
+module CImageCodec { header "ImageCodec.h" export * }

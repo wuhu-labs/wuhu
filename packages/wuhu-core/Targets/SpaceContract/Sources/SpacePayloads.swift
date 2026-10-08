@@ -122,8 +122,12 @@ public struct NewOutput: Codable, Equatable, Sendable {
 public struct ServerInfo: Codable, Equatable, Sendable {
   public let space: String?
   public let origin: String?
-  /// A group's content origin is `https://<group>.<contentBase>`, `shared` included.
+  /// Without `contentHost`, a group's content origin is `https://<group>.<contentBase>`, `shared` included.
   public let contentBase: String?
+  /// A flat-host server's template authority, such as `{group}--alex.example`: a group's content origin is
+  /// `https://` and the template with `{group}` replaced by the group, `shared` included. Such a server omits
+  /// `contentBase`; when both are present, `contentHost` applies.
+  public let contentHost: String?
   public let features: [String]?
   /// The group the caller acts in: its `Wuhu-Group` header, else the server's default for it.
   public let group: String?

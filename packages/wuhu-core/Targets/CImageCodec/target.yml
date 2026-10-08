@@ -1,0 +1,19 @@
+name: CImageCodec
+kind: cLibrary
+sources: Sources
+checks:
+  build: [linux]
+  test: [linux]
+dependencies:
+  - name: '@libpng//:png'
+    swiftpm:
+      systemLibrary:
+        module: CPNG
+        path: Targets/CImageCodec/SystemPNG
+        apt: [libpng-dev]
+  - name: '@libjpeg_turbo//:turbojpeg'
+    swiftpm:
+      systemLibrary:
+        module: CTurboJPEG
+        path: Targets/CImageCodec/SystemJPEG
+        apt: [libturbojpeg0-dev]

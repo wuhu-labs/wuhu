@@ -1,0 +1,56 @@
+--- a/apple/internal/ios_rules.bzl
++++ b/apple/internal/ios_rules.bzl
+@@ -438,7 +438,7 @@
+         ),
+     )
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -773,7 +773,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -1401,7 +1401,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -2067,7 +2067,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -2328,7 +2328,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -2533,7 +2533,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,

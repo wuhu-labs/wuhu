@@ -17,19 +17,25 @@ public enum FittedImage: Hashable, Sendable {
 }
 
 public enum ImageFitting {
-  // An image already within the limits goes out byte for byte. Past them it is
-  // scaled where the platform has an image codec (ImageIO), and replaced by a
-  // line saying so where it has none.
   public static func fit(_ data: Data, mimeType: String, limits: ImageLimits) -> FittedImage {
     let size = ImageMedia.pixelSize(ofBytes: data)
+    if let size, size.width > Int32.max || size.height > Int32.max
+      || size.width.multipliedReportingOverflow(by: size.height).overflow
+    {
+      return refusal(data, size: size, limits: limits)
+    }
     if let size, data.count <= limits.maxBytes, limits.fitted(size) == size {
       return .image(data, mimeType: mimeType)
     }
-    #if canImport(ImageIO)
+    #if canImport(ImageIO) || os(Linux)
       if let scaled = scaled(data, limits: limits) { return scaled }
     #endif
     // Bytes no codec here can size are left for the provider to judge.
     if size == nil, data.count <= limits.maxBytes { return .image(data, mimeType: mimeType) }
+    return refusal(data, size: size, limits: limits)
+  }
+
+  private static func refusal(_ data: Data, size: PixelSize?, limits: ImageLimits) -> FittedImage {
     let shape = size.map { "\($0.width)x\($0.height) px, " } ?? ""
     return .note(
       "[image not sent: at \(shape)\(data.count) bytes it is past what this model takes (\(limits.maxLongEdge) px on the long edge, \(limits.maxBytes) bytes), and this server could not scale it]",
@@ -85,6 +91,34 @@ public enum ImageFitting {
       CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
       guard CGImageDestinationFinalize(destination) else { return nil }
       return output as Data
+    }
+  }
+#endif
+
+#if os(Linux)
+  extension ImageFitting {
+    private static func scaled(_ data: Data, limits: ImageLimits) -> FittedImage? {
+      guard let original = LinuxImage(data) else { return nil }
+      var size = limits.fitted(original.size)
+      while size.width > 0, size.height > 0 {
+        let image = original.resized(to: size)
+        if original.isPNG, let encoded = image.encoded(png: true), encoded.count <= limits.maxBytes {
+          return .image(encoded, mimeType: "image/png")
+        }
+        for quality in [85, 70, 55, 40, 25] {
+          if let encoded = image.encoded(png: false, quality: quality), encoded.count <= limits.maxBytes {
+            return .image(encoded, mimeType: "image/jpeg")
+          }
+        }
+        if size.longEdge == 1 { break }
+        let longEdge = max(1, size.longEdge * 3 / 4)
+        let scale = Double(longEdge) / Double(original.size.longEdge)
+        size = limits.fitted(PixelSize(
+          width: max(1, Int(Double(original.size.width) * scale)),
+          height: max(1, Int(Double(original.size.height) * scale)),
+        ))
+      }
+      return nil
     }
   }
 #endif

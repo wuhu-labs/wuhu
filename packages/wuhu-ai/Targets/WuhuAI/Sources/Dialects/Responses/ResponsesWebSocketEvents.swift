@@ -158,7 +158,7 @@ struct ResponsesWebSocketEvents {
     let message = String((object?["message"]?.stringValue ?? code).prefix(8192))
     if InferenceError.bodyIndicatesContextOverflow(code + " " + message) { return .contextTooLong }
     switch code {
-    case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
+    case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota", "usage_limit_reached": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
     case "server_error", "internal_server_error", "overloaded_error", "temporarily_unavailable":
       return .transient(status: nil, body: message)
     case "invalid_api_key", "authentication_error", "unauthorized": return .invalidInput(status: 401, body: message)

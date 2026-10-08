@@ -315,11 +315,11 @@ extension SessionActor {
         switch classify(error) {
         case .cancelled:
           return
-        case .outage:
+        case .outage(let retryAt):
           idleTimeouts = 0
           boundedFailures = 0
           attempt += 1
-          guard await backoff(attempt: attempt) else { return }
+          guard await backoff(attempt: attempt, until: retryAt) else { return }
         case .transient(let timedOut):
           if timedOut {
             idleTimeouts += 1
@@ -419,13 +419,19 @@ extension SessionActor {
     }
   }
 
-  private func backoff(attempt: Int) async -> Bool {
-    let raw = min(backoffCeiling, pow(2.0, Double(attempt - 1)))
-    let jitter = withRandomNumberGenerator { generator in
-      Double.random(in: 0 ... 1, using: &generator)
+  private func backoff(attempt: Int, until retryAt: Date? = nil) async -> Bool {
+    let delay: Double
+    if let wait = retryAt.map({ $0.timeIntervalSince(date()) }), wait > 0 {
+      delay = min(retryAtCeiling, wait)
+    } else {
+      let raw = min(backoffCeiling, pow(2.0, Double(attempt - 1)))
+      let jitter = withRandomNumberGenerator { generator in
+        Double.random(in: 0 ... 1, using: &generator)
+      }
+      delay = raw * jitter
     }
     let result = await runLongRunningTask { [clock] in
-      try await clock.sleep(for: .seconds(raw * jitter))
+      try await clock.sleep(for: .seconds(delay))
     }
     if case .failure = result { return false }
     return true
@@ -467,6 +473,11 @@ private let idleTimeoutSchedule: [Duration] = [.seconds(120), .seconds(300), .se
 // not by attempts — the backoff settles into a slow poll and waits.
 let backoffCeiling: Double = 300
 
+// A provider's own reset time replaces the exponential step, but no single
+// header may stall a session for more than an hour: a weekly limit is re-asked
+// hourly rather than trusted for days.
+let retryAtCeiling: Double = 3600
+
 // Everything retryable that is not obviously self-healing: a 5xx that never
 // clears, a stream this build cannot parse, a token endpoint answering 400.
 // Those do not get better by waiting, so they report instead of spinning.
@@ -474,7 +485,7 @@ let boundedFailureLimit = 8
 
 private enum FailureClass {
   case cancelled
-  case outage
+  case outage(retryAt: Date?)
   case transient(timedOut: Bool)
   case contextTooLong
   case terminal
@@ -488,11 +499,11 @@ private func classify(_ error: any Error) -> FailureClass {
   case .cancelled: .cancelled
   // Throttling and an unreachable network are the two failures that state
   // outright they are about right now rather than about the request.
-  case .rateLimited: .outage
+  case .rateLimited(let retryAt): .outage(retryAt: retryAt)
   // Only a silent model stream escalates the idle-timeout schedule: it is the
   // one transport failure that re-burned the prompt to learn nothing.
   case .transport(.idleTimeout): .transient(timedOut: true)
-  case .transport: .outage
+  case .transport: .outage(retryAt: nil)
   case .transient: .transient(timedOut: false)
   case .contextTooLong: .contextTooLong
   case .invalidInput, .other: .terminal

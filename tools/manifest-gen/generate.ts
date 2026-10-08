@@ -133,15 +133,18 @@ interface CTargetLowering {
 // `http_archive`), so every such dependency must also declare how SwiftPM
 // obtains the same artifact: a `binaryTarget` (a hosted xcframework zip) or a
 // `cTarget` (a sha256-pinned source checkout compiled as a local C target —
-// local because SwiftPM rejects unsafeFlags in remote dependencies).
+// local because SwiftPM rejects unsafeFlags in remote dependencies), or a
+// systemLibrary for a platform codec supplied by the editing host.
 interface SwiftPMLowering {
   binaryTarget?: BinaryTargetLowering
   cTarget?: CTargetLowering
+  systemLibrary?: { module: string; path: string; apt?: string[] }
 }
 
 interface DependencyOptions {
   name: string
   bazel?: boolean
+  platforms?: CheckPlatform[]
   swiftpm?: SwiftPMLowering
 }
 
@@ -233,6 +236,7 @@ export type TargetKind =
   | 'executable'
   | 'macro'
   | 'objcLibrary'
+  | 'cLibrary'
   | 'systemLibrary'
 
 export interface TargetReleaseManifest {
@@ -1157,7 +1161,7 @@ function dependencyName(dep: Dependency): string {
     throw new Error(
       `dependency ${
         JSON.stringify(dep.name)
-      } uses the retired \`swift:\` toggle; a raw Bazel label declares a \`swiftpm:\` lowering (binaryTarget or cTarget) instead, so the dependency exists in both graphs`,
+      } uses the retired \`swift:\` toggle; a raw Bazel label declares a \`swiftpm:\` lowering (binaryTarget, cTarget or systemLibrary) instead, so the dependency exists in both graphs`,
     )
   }
   if (dep.name) return dep.name
@@ -1179,16 +1183,20 @@ export function rawLabelLowering(dep: Dependency): SwiftPMLowering {
     throw new Error(
       `raw Bazel label dependency ${
         JSON.stringify(name)
-      } declares no swiftpm: lowering; give it a binaryTarget (hosted xcframework zip) or a cTarget (pinned source checkout) so the package stays buildable under SwiftPM`,
+      } declares no swiftpm: lowering; give it a binaryTarget (hosted xcframework zip), cTarget (pinned source checkout), or systemLibrary so the package stays buildable under SwiftPM`,
     )
   }
-  const declared = [lowering.binaryTarget, lowering.cTarget]
+  const declared = [
+    lowering.binaryTarget,
+    lowering.cTarget,
+    lowering.systemLibrary,
+  ]
     .filter((kind) => kind !== undefined)
   if (declared.length !== 1) {
     throw new Error(
       `raw Bazel label dependency ${
         JSON.stringify(name)
-      } must declare exactly one of swiftpm.binaryTarget or swiftpm.cTarget`,
+      } must declare exactly one of swiftpm.binaryTarget, cTarget or systemLibrary`,
     )
   }
   return lowering
@@ -1197,6 +1205,7 @@ export function rawLabelLowering(dep: Dependency): SwiftPMLowering {
 export function loweredTargetName(dep: Dependency): string {
   const lowering = rawLabelLowering(dep)
   if (lowering.cTarget) return lowering.cTarget.module
+  if (lowering.systemLibrary) return lowering.systemLibrary.module
   const name = dependencyName(dep)
   const target = name.split(':').pop()
   if (!target) throw new Error(`cannot derive a target name from ${name}`)
@@ -1209,6 +1218,28 @@ function swiftDependency(
   dep: Dependency,
 ): string {
   const name = dependencyName(dep)
+  const platforms = typeof dep === 'string' ? undefined : dep.platforms
+  if (platforms) {
+    validateDependencyPlatforms(platforms)
+    const names = {
+      linux: 'linux',
+      mac: 'macOS',
+      ios: 'iOS',
+      tvos: 'tvOS',
+      visionos: 'visionOS',
+      watchos: 'watchOS',
+    }
+    const plain = swiftDependency(pkg, targetNames, {
+      ...dep as DependencyOptions,
+      platforms: undefined,
+    })
+    const condition = `.when(platforms: [${
+      platforms.map((p) => `.${names[p]}`).join(', ')
+    }])`
+    return plain.startsWith('"')
+      ? `.target(name: ${plain}, condition: ${condition})`
+      : plain.replace(/\)$/, `, condition: ${condition})`)
+  }
   if (isRawLabel(name)) return `"${loweredTargetName(dep)}"`
   if (targetNames.has(name)) return `"${name}"`
   const [, external] = externalForProduct(pkg, name)
@@ -1216,6 +1247,14 @@ function swiftDependency(
     throw new Error(`External package for ${name} was not resolved`)
   }
   return `.product(name: "${name}", package: "${external.identity}")`
+}
+
+function validateDependencyPlatforms(platforms: CheckPlatform[]): void {
+  if (!platforms.length || platforms.some((p) => !checkPlatforms.includes(p))) {
+    throw new Error(
+      'dependency platforms must be a nonempty list of check platforms',
+    )
+  }
 }
 
 function bazelDependency(
@@ -1265,12 +1304,29 @@ export function partitionBazelDeps(
     const name = dependencyName(dep)
     const macroSibling = targetNames.has(name) &&
       kindByName.get(name) === 'macro'
+    if (macroSibling && typeof dep !== 'string' && dep.platforms) {
+      throw new Error(
+        'compiler-plugin dependencies do not support platform conditions',
+      )
+    }
     if (macroSibling && !macrosToDeps) {
       plugins.push(`":${name}"`)
     } else if (macroSibling) {
       deps.push(`":${name}"`)
     } else {
-      deps.push(bazelDependency(pkg, targetNames, dep))
+      const label = bazelDependency(pkg, targetNames, dep)
+      const platforms = typeof dep === 'string' ? undefined : dep.platforms
+      if (platforms) {
+        validateDependencyPlatforms(platforms)
+        deps.push(
+          `select({${
+            platforms.map((p) => `"//bazel/constraints:${p}": [${label}],`)
+              .join(' ')
+          } "//conditions:default": []})`,
+        )
+      } else {
+        deps.push(label)
+      }
     }
   }
   return { deps, plugins }
@@ -1472,7 +1528,10 @@ export async function targetCheckPlatforms(
     if (target.kind === 'executable' && target.productName) {
       result.set(target.productName, platforms)
     }
-    if (target.kind === 'systemLibrary' || target.kind === 'objcLibrary') {
+    if (
+      target.kind === 'systemLibrary' || target.kind === 'objcLibrary' ||
+      target.kind === 'cLibrary'
+    ) {
       continue
     }
     for (const test of testTargets(target)) {
@@ -1554,9 +1613,9 @@ function swiftTargetDecl(
     : ''
   return `    .${factory}(\n      name: "${target.name}",\n      dependencies: [${
     deps ? `\n${deps},\n      ` : ''
-  }],\n      path: "${
-    targetRelativePath(packageDir, target, target.sources)
-  }"${embeddedExcludes}${swiftResources(target.resources)}${
+  }],\n      path: "${targetRelativePath(packageDir, target, target.sources)}"${
+    target.kind === 'cLibrary' ? ',\n      publicHeadersPath: "include"' : ''
+  }${embeddedExcludes}${swiftResources(target.resources)}${
     swiftSettingsExpr(target.swiftSettings)
   }${linkedFrameworksExpr(target.linkedFrameworks)}\n    )`
 }
@@ -1686,6 +1745,12 @@ function loweredTargetDecl(name: string, lowering: SwiftPMLowering): string {
     const { url, checksum } = lowering.binaryTarget
     return `    .binaryTarget(\n      name: "${name}",\n      url: "${url}",\n      checksum: "${checksum}"\n    )`
   }
+  if (lowering.systemLibrary) {
+    const lib = lowering.systemLibrary
+    return `    .systemLibrary(name: "${name}", path: "${lib.path}"${
+      lib.apt?.length ? `, providers: [.apt(${JSON.stringify(lib.apt)})]` : ''
+    })`
+  }
   const c = lowering.cTarget!
   const sources = c.sources.map((source) => `"${source}"`).join(', ')
   const excluded = (c.exclude ?? []).map((path) => `"${path}"`).join(', ')
@@ -1776,6 +1841,13 @@ export function generatePackageSwift(
 }
 
 function starlarkList(items: string[], indent = '        '): string {
+  const selected = items.filter((item) => item.startsWith('select('))
+  if (selected.length) {
+    return [
+      starlarkList(items.filter((item) => !item.startsWith('select(')), indent),
+      ...selected,
+    ].join(' + ')
+  }
   if (!items.length) return '[]'
   return `[\n${items.map((item) => `${indent}${item},`).join('\n')}\n    ]`
 }
@@ -2044,7 +2116,10 @@ export async function generateBuildBazel(
       )
     }
     if (catalogs.length === 1) {
-      if (target.kind === 'systemLibrary' || target.kind === 'objcLibrary') {
+      if (
+        target.kind === 'systemLibrary' || target.kind === 'objcLibrary' ||
+        target.kind === 'cLibrary'
+      ) {
         throw new Error(
           `${sourceDirectory}/${catalogs[0]} cannot document a ${target.kind}`,
         )
@@ -2095,6 +2170,9 @@ export async function generateBuildBazel(
   ) {
     loadSymbols.push('wuhu_sim_test')
   }
+  if (targets.some((target) => target.kind === 'cLibrary')) {
+    loadSymbols.push('wuhu_c_library')
+  }
   if (targets.some((target) => target.kind === 'systemLibrary')) {
     loadSymbols.push('wuhu_system_library')
   }
@@ -2132,6 +2210,26 @@ export async function generateBuildBazel(
       chunks.push(
         `wuhu_system_library(\n    name = "${target.name}",\n    hdrs = glob(["${root}/**/*.h"]),\n    module_map = "${root}/module.modulemap",\n    linkopts = ${
           quotedStarlarkList((target.link ?? []).map((lib) => `-l${lib}`))
+        },\n${
+          platformsAttr(
+            libraryPlatforms(pkg, target),
+            `${target.manifestDir}/target.yml`,
+          )
+        })\n`,
+      )
+      continue
+    }
+    if (target.kind === 'cLibrary') {
+      const root = `Targets/${target.name}/${target.sources}`
+      const { deps } = partitionBazelDeps(
+        pkg,
+        targetNames,
+        kindByName,
+        target.dependencies,
+      )
+      chunks.push(
+        `wuhu_c_library(\n    name = "${target.name}",\n    srcs = glob(["${root}/**/*.c"]),\n    hdrs = glob(["${root}/**/*.h"]),\n    module_map = "${root}/include/module.modulemap",\n    deps = ${
+          starlarkList(deps)
         },\n${
           platformsAttr(
             libraryPlatforms(pkg, target),
@@ -3587,6 +3685,7 @@ function generateAppBundleRule(
         : [[`${variant}_simulator`, null], [variant, profile]]
     },
   )
+  if (variants.includes('store')) profiles.push(['store_unsigned', null])
   const entitlements = variants.map((variant): [string, string] => [
     variant,
     shellPath(pathPrefix, entitlementPath(target, variant)),

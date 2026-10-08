@@ -7,6 +7,13 @@ if [ -n "${describe}" ]; then
 else
   version="0.0.0-untagged"
 fi
+if [ "${1:-}" = --release-tag ]; then
+  if [ "$#" -ne 2 ] || ! [[ "$2" =~ ^wuhu/v[0-9]+\.[0-9]+\.[0-9]+(-(dev|beta)\.[0-9]+)?$ ]]; then
+    echo "invalid release tag" >&2
+    exit 64
+  fi
+  version="${2#wuhu/v}"
+fi
 commit="$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown)"
 
 echo "STABLE_WUHU_VERSION ${version}"

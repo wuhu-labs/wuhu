@@ -1,0 +1,20 @@
+--- a/apple/internal/tvos_rules.bzl
++++ b/apple/internal/tvos_rules.bzl
+@@ -379,7 +379,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -1278,7 +1278,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,

@@ -72,7 +72,7 @@ public struct ImageLimits: Hashable, Sendable {
   public func fitted(_ size: PixelSize) -> PixelSize {
     guard size.width > 0, size.height > 0 else { return size }
     let byEdge = Double(maxLongEdge) / Double(size.longEdge)
-    let byArea = (Double(maxPatches * patch * patch) / Double(size.width * size.height)).squareRoot()
+    let byArea = (Double(maxPatches) * Double(patch) * Double(patch) / (Double(size.width) * Double(size.height))).squareRoot()
     var scale = min(1, byEdge, byArea)
     var fit = size.scaled(by: scale)
     while patches(fit) > maxPatches {

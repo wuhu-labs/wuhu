@@ -404,6 +404,9 @@ def wuhu_swift_library(name, srcs, deps, package_name, copy_resources = None, pr
         **kwargs
     )
 
+def wuhu_c_library(name, srcs, hdrs, module_map, deps, **kwargs):
+    wuhu_system_library(name, hdrs, module_map, srcs = srcs, deps = deps, **kwargs)
+
 def wuhu_system_library(name, hdrs, module_map, linkopts = None, **kwargs):
     hint = "{}_swift_interop".format(name)
     swift_interop_hint(

@@ -41,6 +41,7 @@ common:watchos-device --platforms=@build_bazel_apple_support//platforms:watchos_
 # error out, and the analysis-shaped signing checks query before they build.
 common:sign-adhoc --//bazel/signing:variant=adhoc
 common:sign-store --//bazel/signing:variant=store
+common:release-unsigned --define=wuhu_unsigned_release=true --features=disable_legacy_signing
 
 # Version stamping. Always on, for all builds including local: BuildStamp
 # skew detection only works if every binary carries its true provenance.

@@ -4,11 +4,11 @@ module(
     bazel_compatibility = [">=9.0.0"],
 )
 
-bazel_dep(name = "apple_support", version = "2.5.4", repo_name = "build_bazel_apple_support")
-bazel_dep(name = "bazel_skylib", version = "1.8.1")
-bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "apple_support", version = "2.8.0", repo_name = "build_bazel_apple_support")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_apple", version = "4.5.3", repo_name = "build_bazel_rules_apple")
-bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rules_swift")
 bazel_dep(name = "rules_swift_package_manager", version = "1.17.1")
 
@@ -19,6 +19,13 @@ single_version_override(
         "//bazel/patches:rules-apple-visionos-dynamic-framework-constraints.patch",
         "//bazel/patches:rules-apple-app-intents-single-module-shortcuts.patch",
         "//bazel/patches:rules-apple-visionos-test-rule-keywords.patch",
+        # One target file per patch: Bazel's native patcher (ctx.patch) rejects these identical
+        # profile-guard hunks when several files share one patch (CONTENT_DOES_NOT_MATCH_TARGET),
+        # though GNU patch applies the combined file cleanly.
+        "//bazel/patches:rules-apple-unsigned-device-profiles-ios.patch",
+        "//bazel/patches:rules-apple-unsigned-device-profiles-tvos.patch",
+        "//bazel/patches:rules-apple-unsigned-device-profiles-visionos.patch",
+        "//bazel/patches:rules-apple-unsigned-device-profiles-watchos.patch",
     ],
     version = "4.5.3",
 )

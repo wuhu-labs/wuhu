@@ -290,6 +290,7 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
     '"//bazel/signing:store": ":ExampleiOS_store_profile__run_deno_task_prepare_profiles"',
   )
   assertIncludes(build, 'tags = ["manual"]')
+  assertIncludes(build, '"//bazel/signing:store_unsigned": None,')
   assertIncludes(
     build,
     '"//bazel/signing:dev_simulator": None,\n        "//bazel/signing:dev": ":ExampleiOS_dev_profile',
@@ -1468,7 +1469,7 @@ Deno.test('a raw Bazel label without a swiftpm lowering is rejected on every pat
         name: '@quickjs//:quickjs',
         swiftpm: { ...avcodecLowering, ...quickjsLowering },
       }),
-    'exactly one of swiftpm.binaryTarget or swiftpm.cTarget',
+    'exactly one of swiftpm.binaryTarget, cTarget or systemLibrary',
   )
 })
 
@@ -2640,5 +2641,155 @@ Deno.test('all wuhu-app shells and generated bundle variants keep ATS overrides 
         }
       }
     }
+  }
+})
+
+Deno.test('compiled C libraries and platform dependencies lower into both graphs', async () => {
+  const codec: TargetManifest = {
+    name: 'Codec',
+    kind: 'cLibrary',
+    sources: 'Sources',
+    manifestDir: 'packages/demo/Targets/Codec',
+    checks: { build: ['linux'], test: ['linux'] },
+    dependencies: [{
+      name: '@png//:png',
+      swiftpm: {
+        systemLibrary: {
+          module: 'CPNG',
+          path: 'Targets/Codec/SystemPNG',
+          apt: ['libpng-dev'],
+        },
+      },
+    }],
+  }
+  const consumer: TargetManifest = {
+    name: 'Consumer',
+    kind: 'library',
+    sources: 'Sources',
+    manifestDir: 'packages/demo/Targets/Consumer',
+    dependencies: [{ name: 'Codec', platforms: ['linux'] }],
+  }
+  const swift = generatePackageSwift(basePkg, 'packages/demo', [
+    codec,
+    consumer,
+  ])
+  assertIncludes(swift, 'publicHeadersPath: "include"')
+  assertIncludes(
+    swift,
+    '.systemLibrary(name: "CPNG", path: "Targets/Codec/SystemPNG", providers: [.apt(["libpng-dev"])])',
+  )
+  assertIncludes(
+    swift,
+    '.target(name: "Codec", condition: .when(platforms: [.linux]))',
+  )
+  const bazel = await generateBuildBazel(basePkg, [codec, consumer])
+  assertIncludes(bazel, 'wuhu_c_library(')
+  assertIncludes(
+    bazel,
+    'module_map = "Targets/Codec/Sources/include/module.modulemap"',
+  )
+  assertIncludes(bazel, '"@png//:png"')
+  assertIncludes(
+    bazel,
+    'select({"//bazel/constraints:linux": [":Codec"], "//conditions:default": []})',
+  )
+  assertThrows(
+    () =>
+      partitionBazelDeps(basePkg, new Set(['Codec']), new Map(), [
+        { name: 'Codec', platforms: [] },
+      ]),
+    'dependency platforms must be a nonempty list',
+  )
+})
+
+Deno.test('compiler-plugin edges reject platform conditions, including test dependencies', () => {
+  for (const macrosToDeps of [false, true]) {
+    assertThrows(
+      () =>
+        partitionBazelDeps(
+          basePkg,
+          new Set(['Plugin']),
+          new Map([['Plugin', 'macro']]),
+          [
+            { name: 'Plugin', platforms: ['linux'] },
+          ],
+          macrosToDeps,
+        ),
+      'compiler-plugin dependencies do not support platform conditions',
+    )
+  }
+})
+
+Deno.test('compiled C targets reject DocC catalogs', async () => {
+  const root = await Deno.makeTempDir()
+  try {
+    const target: TargetManifest = {
+      ...minimalTarget('Codec', 'cLibrary'),
+      manifestDir: join(root, 'Targets/Codec'),
+    }
+    await Deno.mkdir(join(target.manifestDir, 'Sources', 'Codec.docc'), {
+      recursive: true,
+    })
+    await assertRejects(
+      () => generateBuildBazel(basePkg, [target]),
+      'cannot document a cLibrary',
+    )
+  } finally {
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
+Deno.test('unsigned Store profile bypass covers every real Wuhu app and embedded bundle', async () => {
+  const source = new URL(
+    '../../packages/wuhu-app/Apps/wuhu/app.yml',
+    import.meta.url,
+  )
+  const app = parse(await Deno.readTextFile(source)) as AppManifest
+  app.signingTeamID = 'TEAM123456'
+  const build = generateAppBuildBazel(app, [], 'Apps/wuhu')
+  const bundles = appBundles(app)
+  assertEquals(
+    bundles.some((bundle) => bundle.name === 'WuhuNotificationService'),
+    true,
+  )
+  assertEquals(bundles.some((bundle) => bundle.name === 'WuhuAppVision'), true)
+  assertEquals(
+    build.match(/"\/\/bazel\/signing:store_unsigned": None,/g)?.length,
+    bundles.length,
+  )
+  for (const bundle of bundles) {
+    assertIncludes(
+      build,
+      `"//bazel/signing:store": ":${bundle.name}_store_profile__run_deno_task_prepare_profiles"`,
+    )
+  }
+})
+
+Deno.test('rules_apple override patches each touch one file for Bazel native ctx.patch', async () => {
+  const template = await Deno.readTextFile(
+    new URL('../../MODULE.bazel.template', import.meta.url),
+  )
+  const override = template.match(
+    /single_version_override\(\s*module_name = "rules_apple",[\s\S]*?\n\)/,
+  )?.[0]
+  if (!override) throw new Error('missing rules_apple single_version_override')
+  const patches = [...override.matchAll(/"\/\/bazel\/patches:([^"]+\.patch)"/g)]
+    .map((match) => match[1])
+  for (
+    const platform of ['ios', 'tvos', 'visionos', 'watchos']
+  ) {
+    assertIncludes(
+      patches.join('\n'),
+      `rules-apple-unsigned-device-profiles-${platform}.patch`,
+    )
+  }
+  for (const patch of patches) {
+    const text = await Deno.readTextFile(
+      new URL(`../../bazel/patches/${patch}`, import.meta.url),
+    )
+    assertEquals({ patch, files: text.match(/^--- /gm)?.length }, {
+      patch,
+      files: 1,
+    })
   }
 })

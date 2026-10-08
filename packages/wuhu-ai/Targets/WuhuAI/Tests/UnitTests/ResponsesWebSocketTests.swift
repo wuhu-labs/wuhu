@@ -330,17 +330,23 @@ import WuhuAI
     await session.invalidate()
   }
 
-  @Test func statusCodeAndNestedRetryHeadersAreClassified() async throws {
-    let server = ScriptedResponsesSocket(scripts: [[json(#"{"type":"error","status_code":429,"error":{"message":"limited","headers":{"retry-after":"60"}}}"#)]])
+  @Test(arguments: [
+    #"{"type":"error","status_code":429,"error":{"message":"limited","headers":{"retry-after":"60"}}}"#,
+    #"{"type":"error","error":{"code":"usage_limit_reached","message":"limited","headers":{"retry-after":"60"}}}"#,
+  ])
+  func statusCodeAndNestedRetryHeadersAreClassified(_ frame: String) async throws {
+    let server = ScriptedResponsesSocket(scripts: [[json(frame)]])
     let session = ResponsesWebSocketSession()
-    let before = Date()
-    await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+    let now = Date(timeIntervalSince1970: 1_792_567_680)
+    await withDependencies {
+      $0[WebSocketConnector.self] = server.connector
+      $0.date = .constant(now)
+    } operation: {
       do {
         _ = try await endpoint().withWebSocket(session: session, attemptID: "one").inference(context: initial()).collect()
         Issue.record("Rate limit succeeded")
       } catch {
-        guard case let .rateLimited(retryAt) = error as? InferenceError else { Issue.record("Wrong failure"); return }
-        #expect((retryAt?.timeIntervalSince(before) ?? 0) >= 60)
+        #expect(error as? InferenceError == .rateLimited(retryAt: now.addingTimeInterval(60)))
       }
     }
   }

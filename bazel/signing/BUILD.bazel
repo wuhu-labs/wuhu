@@ -54,3 +54,10 @@ config_setting(
     flag_values = {":variant": "store"},
     visibility = ["//visibility:public"],
 )
+
+config_setting(
+    name = "store_unsigned",
+    define_values = {"wuhu_unsigned_release": "true"},
+    flag_values = {":variant": "store"},
+    visibility = ["//visibility:public"],
+)

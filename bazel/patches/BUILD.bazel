@@ -14,3 +14,10 @@ exports_files([
     "swift-dependencies-linux-typename.patch",
     "swift-dependencies-linux-uuid-hex.patch",
 ])
+
+# check-tooling-test asserts each rules_apple override patch touches one file.
+filegroup(
+    name = "rules_apple_patches",
+    srcs = glob(["rules-apple-*.patch"]),
+    visibility = ["//tools:__pkg__"],
+)

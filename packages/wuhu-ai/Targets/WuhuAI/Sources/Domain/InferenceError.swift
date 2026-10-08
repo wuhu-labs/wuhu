@@ -1,3 +1,4 @@
+import Dependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -55,7 +56,9 @@ extension InferenceError {
     guard !raw.isEmpty else { return nil }
 
     if let seconds = TimeInterval(raw) {
-      return Date().addingTimeInterval(seconds)
+      guard seconds.isFinite, seconds >= 0 else { return nil }
+      @Dependency(\.date) var date
+      return date.now.addingTimeInterval(seconds)
     }
 
     return parseHTTPDate(raw)

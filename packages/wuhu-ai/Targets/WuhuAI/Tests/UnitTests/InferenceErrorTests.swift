@@ -1,3 +1,4 @@
+import Dependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -43,24 +44,17 @@ struct InferenceErrorTests {
   func rateLimitedDeltaSeconds() async throws {
     var headers = Headers()
     headers[.retryAfter] = "30"
-    let before = Date()
+    let now = Date(timeIntervalSince1970: 1_792_567_680)
     let response = Response(
       status: .init(code: 429),
       headers: headers,
       body: .string(#"{"error":{"type":"rate_limit_error","message":"slow down"}}"#),
     )
 
-    let error = await captureInferenceError(fetch: stubFetch(response))
-    let inferenceError = try #require(error)
-
-    guard case let .rateLimited(retryAt) = inferenceError else {
-      Issue.record("expected .rateLimited, got \(inferenceError)")
-      return
+    let error = await withDependencies { $0.date = .constant(now) } operation: {
+      await captureInferenceError(fetch: stubFetch(response))
     }
-
-    let resolvedRetryAt = try #require(retryAt)
-    #expect(resolvedRetryAt.timeIntervalSince(before) >= 29)
-    #expect(resolvedRetryAt.timeIntervalSince(before) <= 32)
+    #expect(error == .rateLimited(retryAt: now.addingTimeInterval(30)))
   }
 
   @Test("429 with HTTP-date Retry-After parses an absolute instant")
@@ -113,6 +107,13 @@ struct InferenceErrorTests {
     #expect(retryAt("Wed, 21 Foo 2026 07:28:00 GMT") == nil)
     #expect(retryAt("Wed, 21 Oct 2026 24:28:00 GMT") == nil)
     #expect(retryAt("garbage") == nil)
+  }
+
+  @Test("Non-finite or negative delta-seconds carry no retryAt", arguments: ["NaN", "inf", "-inf", "-5"])
+  func rateLimitedRejectsUnusableDelta(_ value: String) {
+    var headers = Headers()
+    headers[.retryAfter] = value
+    #expect(InferenceError.classify(status: 429, headers: headers, body: nil) == .rateLimited(retryAt: nil))
   }
 
   @Test("429 without Retry-After still maps to .rateLimited with nil retryAt")

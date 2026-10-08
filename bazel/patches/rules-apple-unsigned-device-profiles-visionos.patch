@@ -1,0 +1,20 @@
+--- a/apple/internal/visionos_rules.bzl
++++ b/apple/internal/visionos_rules.bzl
+@@ -380,7 +380,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,
+@@ -1273,7 +1273,7 @@
+         ),
+     ]
+ 
+-    if platform_prerequisites.platform.is_device:
++    if platform_prerequisites.platform.is_device and "disable_legacy_signing" not in features:
+         processor_partials.append(
+             partials.provisioning_profile_partial(
+                 actions = actions,

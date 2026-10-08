@@ -5,6 +5,8 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - name: CImageCodec
+    platforms: [linux]
   - Assertion
   - SpaceFS
   - DocIndex
@@ -36,6 +38,8 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - name: CImageCodec
+      platforms: [linux]
     - ClaudeStream
     - OrderedCollections
     - SpaceFS
