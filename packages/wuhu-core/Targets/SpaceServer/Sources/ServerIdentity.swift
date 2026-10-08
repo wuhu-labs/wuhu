@@ -53,7 +53,7 @@ struct ServerIdentity: Sendable {
     ])])])
   }
 
-  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID) throws -> String {
+  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil) throws -> String {
     let issuer = try Self.issuer(issuer)
     guard var origin = URLComponents(url: audience, resolvingAgainstBaseURL: false),
           origin.scheme != nil, let host = origin.host, !host.isEmpty, origin.user == nil, origin.password == nil
@@ -67,11 +67,13 @@ struct ServerIdentity: Sendable {
     guard let audience = origin.string else { throw IdentityError.invalidAudience }
     let issued = Int(now.timeIntervalSince1970)
     var claims: OrderedDictionary<String, JSONValue> = [
-      "iss": .string(issuer), "aud": .string(audience), "iat": .integer(issued), "exp": .integer(issued + 300),
+      "iss": .string(issuer), "aud": .string(audience), "iat": .integer(issued), "exp": .integer(issued + lifetime),
       "jti": .string(id.uuidString.lowercased()), "space": .string(space), "group": .string(group),
       "sub": .string(session.map { "\(group)/\($0)" } ?? group),
     ]
     if let session { claims["session"] = .string(session) }
+    if let page { claims["path"] = .string(page) }
+    if let viewer { claims["viewer"] = .string(viewer) }
     let header: JSONValue = .object(["alg": .string("ES256"), "typ": .string("JWT"), "kid": .string(kid)])
     let signingInput = Data(header.jsonString().utf8).base64URL + "." + Data(JSONValue.object(claims).jsonString().utf8).base64URL
     do {
@@ -82,10 +84,8 @@ struct ServerIdentity: Sendable {
   func tokenForInference(issuer: String?, audience: URL, space: String, group: String, session: String, now: Date, id: UUID) throws(InferenceError) -> String {
     do {
       return try token(issuer: issuer, audience: audience, space: space, group: group, session: session, now: now, id: id)
-    } catch IdentityError.invalidAudience {
-      throw .invalidInput(status: 422, body: "OIDC token audience is invalid; check the provider baseURL.")
-    } catch IdentityError.invalidIssuer {
-      throw .invalidInput(status: 422, body: "OIDC token issuer is invalid; check HTTPS --origin.")
+    } catch let error as IdentityError {
+      throw error.inferenceError
     } catch {
       throw InferenceError.normalize(error)
     }
@@ -102,6 +102,16 @@ struct ServerIdentity: Sendable {
 
 enum IdentityError: Error, Equatable, CustomStringConvertible {
   case invalidIssuer, invalidAudience, keyUnavailable, signingFailed
+
+  var inferenceError: InferenceError {
+    let hint: String = switch self {
+    case .invalidAudience: "OIDC token audience is invalid; check the provider baseURL."
+    case .invalidIssuer: "OIDC token issuer is invalid; check HTTPS --origin."
+    case .keyUnavailable: "OIDC identity key is unavailable; check the server identity key configuration."
+    case .signingFailed: "OIDC token signing failed; check the server identity key configuration."
+    }
+    return .invalidInput(status: 422, body: hint)
+  }
 
   var description: String {
     switch self {

@@ -41,6 +41,29 @@ import Testing
     }
   }
 
+  @Test(arguments: ["error", "response.failed"], ["status_code", "error.status", "error.status_code"])
+  func sseAndWebSocketCapacityShareStatusExtraction(type: String, shape: String) async throws {
+    var error: JSONValue = .object(["code": .string("response_too_large")])
+    if shape == "error.status" { error = .object(["code": .string("response_too_large"), "status": .integer(413)]) }
+    if shape == "error.status_code" { error = .object(["code": .string("response_too_large"), "status_code": .integer(413)]) }
+    var event: JSONValue = type == "error"
+      ? .object(["type": .string(type), "error": error])
+      : .object(["type": .string(type), "response": .object(["error": error])])
+    if shape == "status_code" {
+      var object = try #require(event.object)
+      object["status_code"] = .integer(413)
+      event = .object(object)
+    }
+    let expected = InferenceError.capacityExceeded(code: "response_too_large", message: "response_too_large", status: 413)
+    var socket = ResponsesWebSocketEvents()
+    #expect(throws: expected) { try socket.accept(event) }
+    let text = "data: \(event.jsonString())\n\n"
+    let endpoint = OpenAIGPTEndpoint(model: "test", apiKey: "offline").withFetch(FetchClient { _ in
+      Response(status: .ok, body: .bytes(Data(text.utf8), contentType: "text/event-stream"))
+    })
+    await #expect(throws: expected) { try await endpoint.inference(context: Context(messages: [])).collect() }
+  }
+
   @Test func realRateLimitRetainsRetryAt() {
     var headers = Headers()
     headers[.retryAfter] = "30"

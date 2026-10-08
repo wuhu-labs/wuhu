@@ -718,3 +718,67 @@ Deno.test('the viewer cookie prefers the __Host- name and falls back to the self
   )
   assertEquals(await cookieViewer(store({})), '')
 })
+
+Deno.test('proxied fetch through the worker cannot purge caches, bump query epoch or notify cookie failures', async () => {
+  const { fetch: spaceFetch } = await import('./shell-sdk/space.js')
+  const cache = new MemoryCache()
+  cache.seed('bob', 'query', 'kept', {
+    body: 'bob query',
+    type: 'application/json',
+    etag: null,
+  })
+  cache.seed('alice', 'query', 'kept', {
+    body: 'alice query',
+    type: 'application/json',
+    etag: null,
+  })
+  let answerQuery!: (response: Response) => void
+  let upstreamStatus = 200
+  const { fetch } = network((url) =>
+    url.includes('/_/space/fetch')
+      ? viewed('backend result', {
+        status: upstreamStatus,
+        viewer: 'bob',
+        headers: { 'wuhu-fetch-result': 'upstream' },
+      })
+      : new Promise<Response>((resolve) => answerQuery = resolve)
+  )
+  const worker = pageWorker({ cache, fetch, origin, viewer: as('alice') })
+  const crossed = events()
+  const pending = worker.respond(request(typedPath('query', '[]')), crossed)!
+  await tick()
+  const nativeFetch = globalThis.fetch
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { origin, pathname: '/dashboard/' },
+  })
+  const proxied = events()
+  globalThis.fetch = (input, init) =>
+    worker.respond(new Request(input, init), proxied)!
+  try {
+    const ok = await spaceFetch('https://backend.test/q', {
+      method: 'POST',
+      body: 'query',
+    })
+    assertEquals(ok.status, 200)
+    upstreamStatus = 401
+    const denied = await spaceFetch('https://backend.test/q')
+    assertEquals(denied.status, 401)
+    answerQuery(
+      viewed(typed('crossed fetch'), { headers: jsonType, viewer: 'alice' }),
+    )
+    await (await pending).text()
+    await crossed.settled()
+    await proxied.settled()
+    assertEquals(cache.purged, [])
+    assertEquals(cache.kept('bob', 'query', 'kept') !== undefined, true)
+    assertEquals(cache.kept('alice', 'query', 'kept') !== undefined, true)
+    assertEquals(
+      cache.kept('alice', 'query', typedKey('[]')) !== undefined,
+      true,
+    )
+    assertEquals(proxied.notes, [])
+  } finally {
+    globalThis.fetch = nativeFetch
+  }
+})

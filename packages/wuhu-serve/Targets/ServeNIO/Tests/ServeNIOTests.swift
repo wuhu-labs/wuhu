@@ -582,6 +582,63 @@ struct ServeNIOTests {
     }
   }
 
+  @Test func cancelledBodyReadClosesOrdinaryResponseAndCannotServeSecondRequest() async throws {
+    let requests = Mutex(0)
+    try await withTCPServer { request in
+      requests.withLock { $0 += 1 }
+      let cancelled = await withTaskGroup(of: Bool.self) { tasks in
+        tasks.addTask {
+          do { _ = try await request.body?.data(); return false }
+          catch is CancellationError { return true }
+          catch { return false }
+        }
+        tasks.addTask {
+          try? await ContinuousClock().sleep(for: .milliseconds(100))
+          return false
+        }
+        _ = await tasks.next()
+        tasks.cancelAll()
+        return await tasks.next() ?? false
+      }
+      return Response(status: .ok, body: .string(cancelled ? "cancelled" : "unexpected read result"))
+    } operation: { server in
+      let port = try #require(server.boundAddress.port)
+      try await withRawConnection(port: port) { channel, accumulator in
+        let head = "POST /one HTTP/1.1\r\nHost: local\r\nContent-Length: 1048576\r\n\r\nx"
+        try await channel.writeAndFlush(channel.allocator.buffer(string: head))
+        try await waitUntil(timeout: .seconds(3)) { accumulator.isInactive }
+        #expect(accumulator.text.contains("HTTP/1.1 200"))
+        #expect(accumulator.text.contains("cancelled"))
+        #expect(accumulator.text.lowercased().contains("connection: close"))
+        try? await channel.writeAndFlush(channel.allocator.buffer(bytes: rawRequest(path: "/two", keepAlive: true)))
+        #expect(requests.withLock { $0 } == 1)
+        #expect(accumulator.isInactive)
+      }
+    }
+  }
+
+  @Test func explicitCloseResponseSkipsUnreadTricklingBodyDrain() async throws {
+    let options = ServeOptions(keepAliveIdleTimeout: nil, requestReadInactivityTimeout: nil)
+    try await withTCPServer(options: options) { _ in
+      var headers = Headers()
+      headers[.init("Connection")!] = "close"
+      return Response(status: .unauthorized, headers: headers)
+    } operation: { server in
+      let port = try #require(server.boundAddress.port)
+      try await withRawConnection(port: port) { channel, accumulator in
+        let head = "POST /reject HTTP/1.1\r\nHost: local\r\nContent-Length: 1048576\r\n\r\nx"
+        try await channel.writeAndFlush(channel.allocator.buffer(string: head))
+        let limit = ContinuousClock.now + .seconds(2)
+        while !accumulator.isInactive && ContinuousClock.now < limit {
+          try await ContinuousClock().sleep(for: .milliseconds(40))
+          if !accumulator.isInactive { try? await channel.writeAndFlush(channel.allocator.buffer(string: "x")) }
+        }
+        #expect(accumulator.text.contains("HTTP/1.1 401"))
+        #expect(accumulator.isInactive)
+      }
+    }
+  }
+
   @Test func earlyResponseOnOversizedChunkedUploadClosesConnection() async throws {
     let options = ServeOptions(maximumBodyBytes: 8192, keepAliveIdleTimeout: nil, requestReadInactivityTimeout: nil)
 

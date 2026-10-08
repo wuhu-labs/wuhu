@@ -226,7 +226,7 @@ private func writeAdmission(space: Space, caller: WebCaller, dev: Bool, request:
 
 /// A page's `location.pathname`: hostless and absolute, percent-decoded, a
 /// directory's trailing slash dropped.
-private func pagePath(_ raw: String) -> SpacePath? {
+func pagePath(_ raw: String) -> SpacePath? {
   guard raw.hasPrefix("/"), !raw.hasPrefix("//"), let decoded = raw.removingPercentEncoding else { return nil }
   let trimmed = decoded.count > 1 && decoded.hasSuffix("/") ? String(decoded.dropLast()) : decoded
   return try? SpacePath(validating: trimmed)

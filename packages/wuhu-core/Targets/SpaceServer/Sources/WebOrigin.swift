@@ -26,6 +26,7 @@ func webResponse(
   publicRead: Bool,
   views: ViewProviders?,
   shell: ShellSDK?,
+  pageFetch: PageFetchHandler? = nil,
   request: Request,
 ) async throws -> Response {
   let pairs = pairedOrigins(request: request, contentHost: contentHost, advertisedOrigin: advertisedOrigin)
@@ -46,6 +47,7 @@ func webResponse(
       publicRead: publicRead,
       views: views,
       shell: shell,
+      pageFetch: pageFetch,
       request: request,
     )
   }
@@ -184,8 +186,12 @@ private func routedWebResponse(
   publicRead: Bool,
   views: ViewProviders?,
   shell: ShellSDK?,
+  pageFetch: PageFetchHandler?,
   request: Request,
 ) async throws -> Response {
+  if request.url.path == "/_/space/fetch" {
+    return await pageFetchResponse(space: space, caller: caller, proxy: pageFetch, request: request)
+  }
   if request.url.path == "/_/session" {
     switch request.method {
     case .options:

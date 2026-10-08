@@ -8,3 +8,5 @@ export const watch: Space['watch']
 export const mutateRows: Space['mutateRows']
 export const readAttributes: Space['readAttributes']
 export const patchAttributes: Space['patchAttributes']
+
+export const fetch: typeof globalThis.fetch

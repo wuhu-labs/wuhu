@@ -34,7 +34,7 @@ async function answer(response) {
 }
 
 function send(route, body) {
-  return fetch(address(route), {
+  return globalThis.fetch(address(route), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...body, page: location.pathname }),
@@ -73,7 +73,9 @@ async function* messages(body) {
 
 async function* connections(target, signal) {
   while (!signal.aborted) {
-    const response = await fetch(target(), { signal }).catch(() => null)
+    const response = await globalThis.fetch(target(), { signal }).catch(() =>
+      null
+    )
     if (response !== null && !response.ok) throw await refusal(response)
     if (response !== null) {
       for await (const { event, data } of messages(response.body)) {
@@ -105,9 +107,10 @@ function stream(target, frames = {}) {
 
 const httpTransport = {
   query: (sql, params) =>
-    fetch(address('query', { sql, params: boundParameters(params) })).then(
-      answer,
-    ),
+    globalThis.fetch(address('query', { sql, params: boundParameters(params) }))
+      .then(
+        answer,
+      ),
   observe: (sql, params) =>
     stream(() => address('observe', { sql, params: boundParameters(params) })),
   // Without `from`, the server opens with a `head` frame naming the revision
@@ -128,7 +131,8 @@ const httpTransport = {
     }
   },
   mutateRows: (path, ops) => send('rows', { path, ops }),
-  readAttributes: (path) => fetch(address('attributes', { path })).then(answer),
+  readAttributes: (path) =>
+    globalThis.fetch(address('attributes', { path })).then(answer),
   patchAttributes: (path, { set, remove, ifMatch }) =>
     send('attributes', { path, set, remove, ifMatch }),
 }
@@ -142,3 +146,64 @@ export const {
   patchAttributes,
 } = createSpace(httpTransport)
 export { SpaceError }
+
+export async function fetch(input, init = {}) {
+  const target = new Request(input, init)
+  const headers = Object.fromEntries(target.headers)
+  if (target.headers.has('authorization')) {
+    throw new SpaceError(
+      'fetchAuthorizationForbidden',
+      'a page cannot set Authorization on proxied fetch',
+    )
+  }
+  const response = await globalThis.fetch(
+    address('fetch', {
+      url: target.url,
+      method: target.method,
+      headers: JSON.stringify(headers),
+      page: location.pathname,
+    }),
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: await fetchRequestBody(target),
+      signal: target.signal,
+    },
+  )
+  if (response.headers.get('wuhu-fetch-result') !== 'upstream') {
+    throw await refusal(response)
+  }
+  return response
+}
+
+async function fetchRequestBody(target) {
+  target.signal.throwIfAborted()
+  if (target.body === null) return undefined
+  const reader = target.body.getReader()
+  const abort = () => {
+    void reader.cancel(target.signal.reason).catch(() => {})
+  }
+  target.signal.addEventListener('abort', abort, { once: true })
+  const chunks = []
+  let length = 0
+  try {
+    for (;;) {
+      target.signal.throwIfAborted()
+      const { value, done } = await reader.read()
+      target.signal.throwIfAborted()
+      if (done) break
+      chunks.push(value)
+      length += value.byteLength
+    }
+    const bytes = new Uint8Array(length)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return bytes.buffer
+  } finally {
+    target.signal.removeEventListener('abort', abort)
+    reader.releaseLock()
+  }
+}

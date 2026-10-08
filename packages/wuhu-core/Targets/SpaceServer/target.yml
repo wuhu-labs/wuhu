@@ -48,6 +48,7 @@ dependencies:
   - Dependencies
   - AsyncHTTPClient
   - NIOCore
+  - NIOHTTP1
   - Subprocess
   - WebPush
   - WuhuVFS
@@ -73,12 +74,14 @@ tests:
     - SpaceFS
     - SystemFiles
     - JSONValue
+    - OrderedCollections
     - Fetch
     - FetchSSE
     - FetchWebSocket
     - FetchAsyncHTTPClient
     - AsyncHTTPClient
     - NIOCore
+    - NIOPosix
     - Serve
     - ServeNIO
     - ServeTesting

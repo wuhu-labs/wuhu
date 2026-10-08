@@ -246,7 +246,9 @@ export function pageWorker({ cache: backing, fetch, origin, viewer }) {
   }
 
   const written = async (request, { notify }) => {
-    const response = answered(await fetch(request), notify)
+    const response = await fetch(request)
+    if (response.headers.has('wuhu-fetch-result')) return response
+    answered(response, notify)
     if (response.ok) {
       epoch += 1
       await cache.purge(writeScope(response), 'query')

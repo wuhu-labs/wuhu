@@ -39,7 +39,7 @@ struct ResponsesWebSocketEvents {
       let headers = object["headers"]?.object ?? error.object?["headers"]?.object ?? [:]
       throw Self.providerError(
         error,
-        status: object["status"]?.intValue ?? object["status_code"]?.intValue ?? error.object?["status"]?.intValue ?? error.object?["status_code"]?.intValue,
+        status: responsesProviderErrorStatus(value, error: error),
         headers: RequestHeaders(values: Dictionary(uniqueKeysWithValues: headers.compactMap { key, value in value.stringValue.map { (key, $0) } })).fields,
       )
     }

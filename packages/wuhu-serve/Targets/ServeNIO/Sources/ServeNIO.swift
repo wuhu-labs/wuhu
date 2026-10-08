@@ -982,7 +982,9 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
     // cannot cleanly drain within the body cap (e.g. an oversized chunked
     // upload), reusing the connection would misframe the next request — so a
     // failed or incomplete drain forces the connection closed.
-    let drained = await Self.drainBody(inbound.bodyBuffer)
+    let requestedClose = response.headers[HTTPField.Name("Connection")!]?.lowercased()
+      .split(separator: ",").contains { $0.trimmingCharacters(in: .whitespaces) == "close" } ?? false
+    let drained = requestedClose ? false : await Self.drainBody(inbound.bodyBuffer)
     // HTTP/2 multiplexes over streams; a stream carries a single request and
     // must be closed after its response. Keep-alive looping is HTTP/1.x only.
     let keepAlive = drained && inbound.keepAlive && inbound.version.major == 1 && !serverState.isShuttingDown
@@ -1209,9 +1211,10 @@ final class RequestBodyBuffer: Sendable {
   // reused. Returns false when the body cannot be cleanly consumed within the
   // cap (oversized/errored), signalling the caller to close instead.
   func drainForKeepAlive() async -> Bool {
+    guard self.state.withLock({ $0.failure == nil }) else { return false }
     do {
       while try await self.next() != nil {}
-      return true
+      return self.state.withLock { $0.failure == nil }
     } catch {
       return false
     }
@@ -1305,44 +1308,50 @@ final class RequestBodyBuffer: Sendable {
   }
 
   fileprivate func next() async throws -> Data? {
-    let immediate: Immediate = self.state.withLock { state in
-      Self.takeImmediate(&state, lowWatermark: self.lowWatermark)
-    }
-
-    switch immediate {
-    case let .chunk(chunk, resumeReads):
-      if resumeReads {
-        self.setBackpressurePaused(false)
+    try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      let immediate: Immediate = self.state.withLock { state in
+        Self.takeImmediate(&state, lowWatermark: self.lowWatermark)
       }
-      return chunk
-    case .end:
-      return nil
-    case let .failure(error):
-      throw error
-    case .suspend:
-      return try await withCheckedThrowingContinuation { continuation in
-        let action: Immediate = self.state.withLock { state in
-          let immediate = Self.takeImmediate(&state, lowWatermark: self.lowWatermark)
-          if case .suspend = immediate {
-            state.waiter = continuation
-          }
-          return immediate
-        }
 
-        switch action {
-        case let .chunk(chunk, resumeReads):
-          if resumeReads {
-            self.setBackpressurePaused(false)
+      switch immediate {
+      case let .chunk(chunk, resumeReads):
+        if resumeReads {
+          self.setBackpressurePaused(false)
+        }
+        return chunk
+      case .end:
+        return nil
+      case let .failure(error):
+        throw error
+      case .suspend:
+        return try await withCheckedThrowingContinuation { continuation in
+          let action: Immediate = self.state.withLock { state in
+            let immediate = Self.takeImmediate(&state, lowWatermark: self.lowWatermark)
+            if case .suspend = immediate {
+              state.waiter = continuation
+            }
+            return immediate
           }
-          continuation.resume(returning: chunk)
-        case .end:
-          continuation.resume(returning: nil)
-        case let .failure(error):
-          continuation.resume(throwing: error)
-        case .suspend:
-          break
+
+          switch action {
+          case let .chunk(chunk, resumeReads):
+            if resumeReads {
+              self.setBackpressurePaused(false)
+            }
+            continuation.resume(returning: chunk)
+          case .end:
+            continuation.resume(returning: nil)
+          case let .failure(error):
+            continuation.resume(throwing: error)
+          case .suspend:
+            break
+          }
         }
       }
+
+    } onCancel: {
+      self.finish(throwing: CancellationError())
     }
   }
 

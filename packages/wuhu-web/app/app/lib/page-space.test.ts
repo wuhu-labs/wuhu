@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1'
 import {
+  fetch as spaceFetch,
   mutateRows,
   observe,
   patchAttributes,
@@ -194,4 +195,100 @@ Deno.test('a watch opened without from resumes after its head frame when it drop
     sent.map(({ url }) => url.search),
     ['?glob=%2Fnotes%2F**', '?glob=%2Fnotes%2F**&from=7'],
   )
+})
+
+Deno.test('proxied fetch preserves body, target headers, upstream errors and streaming Response', async () => {
+  const upstream = new Response('backend says no', {
+    status: 422,
+    headers: { 'wuhu-fetch-result': 'upstream', 'x-backend': 'yes' },
+  })
+  const sent = page([() => upstream])
+  const response = await spaceFetch('https://dash.test/q', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain', 'x-query': 'test' },
+    body: 'select 1',
+  })
+  assertEquals(response, upstream)
+  assertEquals(response.status, 422)
+  assertEquals(await response.text(), 'backend says no')
+  assertEquals(sent[0]!.url.pathname, '/_/space/fetch')
+  assertEquals(sent[0]!.url.searchParams.get('url'), 'https://dash.test/q')
+  assertEquals(sent[0]!.url.searchParams.get('method'), 'POST')
+  assertEquals(sent[0]!.url.searchParams.get('page'), '/apps/tasks.html')
+  assertEquals(JSON.parse(sent[0]!.url.searchParams.get('headers')!), {
+    'content-type': 'text/plain',
+    'x-query': 'test',
+  })
+  assertEquals(
+    new TextDecoder().decode(sent[0]!.init!.body as ArrayBuffer),
+    'select 1',
+  )
+  assertEquals(sent[0]!.init!.credentials, 'same-origin')
+})
+
+Deno.test('proxied fetch refusals are SpaceError and Authorization never makes a request', async () => {
+  const sent = page([
+    () =>
+      json(
+        { code: 'fetchListMissing', message: '/fetch.json is missing' },
+        403,
+      ),
+  ])
+  const denied = await assertRejects(
+    () => spaceFetch('https://dash.test'),
+    SpaceError,
+  )
+  assertEquals((denied as SpaceError).code, 'fetchListMissing')
+  assertEquals(denied.message, '/fetch.json is missing')
+  const authorization = await assertRejects(
+    () =>
+      spaceFetch('https://dash.test', { headers: { Authorization: 'secret' } }),
+    SpaceError,
+  )
+  assertEquals(
+    (authorization as SpaceError).code,
+    'fetchAuthorizationForbidden',
+  )
+  assertEquals(sent.length, 1)
+})
+
+Deno.test('proxied fetch accepts Request input and propagates cancellation', async () => {
+  const sent = page([
+    () => new Response(null, { headers: { 'wuhu-fetch-result': 'upstream' } }),
+  ])
+  const controller = new AbortController()
+  await spaceFetch(
+    new Request('https://dash.test', {
+      method: 'HEAD',
+      signal: controller.signal,
+    }),
+  )
+  assertEquals(sent[0]!.url.searchParams.get('method'), 'HEAD')
+  controller.abort()
+  assertEquals(sent[0]!.init!.signal!.aborted, true)
+})
+
+Deno.test('abort cancels an open streaming request body before any native fetch', async () => {
+  const sent = page([])
+  let cancelled = false
+  const controller = new AbortController()
+  const init = {
+    method: 'POST',
+    signal: controller.signal,
+    duplex: 'half',
+    body: new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1]))
+      },
+      cancel() {
+        cancelled = true
+      },
+    }),
+  }
+  const pending = spaceFetch(new Request('https://dash.test/q', init))
+  controller.abort()
+  const error = await assertRejects(() => pending, DOMException)
+  assertEquals(error.name, 'AbortError')
+  assertEquals(cancelled, true)
+  assertEquals(sent.length, 0)
 })

@@ -56,7 +56,10 @@ public struct Transcript: Hashable, Sendable, Codable {
   }
 
   public func compacted(head: GenerationHead, kept: Range<Int>?) -> Transcript {
-    let keptItems = kept.map { Array(items[$0]) } ?? []
+    let keptItems = kept.map { items[$0].filter { item in
+      guard case let .notification(notification) = item else { return true }
+      return notification.kind != .context || notification.subscriptionID != SubscriptionID("context-pressure")
+    } } ?? []
     let carried = [TranscriptItem.generationHead(head)] + keptItems
     return Transcript(items: carried, keptCount: carried.count)
   }

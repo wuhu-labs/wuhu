@@ -7,11 +7,11 @@ description: Author live HTML pages served from space files — read and write s
 
 Hosted servers can advertise `contentHost` from `GET /v1/server`, a template such as `{group}--alex.wuhu.studio`. Replace `{group}` with the group's id and prepend `https://`; otherwise use `https://<group>.<contentBase>` as on self-hosted servers. `wuhu serve --content-host-pattern '{group}--alex.wuhu.studio' --origin https://alex.wuhu.studio` selects flat hosts, requires exactly one `{group}` at the start, requires any pattern port to match the origin, and is exclusive with `--group-certificate`.
 
-Any HTML file in the space is a real page on its group's host. Discover it through `GET /v1/server`: use `https://` plus `contentHost` with `{group}` replaced by the group's id when advertised, otherwise `https://<group>.<contentBase>`. Write `/dash.html`, open it, done — no build step, native ESM only, and everything the page fetches must be same-origin.
+Any HTML file in the space is a real page on its group's host. Discover it through `GET /v1/server`: use `https://` plus `contentHost` with `{group}` replaced by the group's id when advertised, otherwise `https://<group>.<contentBase>`. Write `/dash.html`, open it, done — no build step, native ESM only, and direct browser fetches remain subject to CORS. Use the proxied fetch below for outside backends.
 
 ## Data: `wuhu:space`
 
-A page imports `wuhu:space`, the same module `run_script` has, with the same names, shapes and values. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
+A page imports `wuhu:space`, the same module `run_script` has, with the same data names, shapes and values. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
 
 - `query` — one shot, resolves to an array of row objects. Bind values with a tagged template or `query(sql, params)`; never splice them into the SQL. Table names are quoted paths (`"/tasks.table"`); induced tables (`docs`, `links`, `sessions`, ...) work too.
 - `observe` — live: an async iterable of whole snapshots, the current rows first, then new rows after every commit that changes them.
@@ -44,6 +44,20 @@ Prefer `observe` over query-then-poll: its first snapshot replaces the initial q
 A page acts as an ordinary member of the group it lives in, as the person viewing it. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. Admin-only targets (`shared`'s `/AGENTS.md` and skills, group settings) are refused. Writes are online only and never queued.
 
 `/_/query` and `/_/observe` are deprecated: they still serve existing pages their old untyped `{columns, rows}` shape, but new pages use `wuhu:space`.
+
+## Outside backends: proxied `fetch`
+
+Add `{"allow":["https://dashboard.example.com"]}` to `/fetch.json` in the page's own group, then call the page-only `import { fetch } from "wuhu:space"`. It has the standard browser fetch signature and returns a streaming Response; GET/POST/PUT/PATCH/DELETE/HEAD are supported. The backend needs no CORS rule for this call. Exact HTTP(S) origins only (scheme/host/port), no wildcards, credentials or nonempty paths (a trailing `/` is accepted); a listed LAN host may use HTTP. The group-local list is read every call, and edits apply immediately. A sibling/shared group's list never applies.
+
+```html
+<script type="module">
+  import { fetch } from "wuhu:space";
+  const response = await fetch("https://dashboard.example.com/q", { method: "POST", body: "select 1" });
+  console.log(await response.text());
+</script>
+```
+
+The server sends Authorization Bearer with a fresh 60 s ES256 JWT from its existing identity key. Backends verify the signature/kid with the space API origin's `/.well-known/jwks.json` and check iss/aud/exp; aud is the target origin, claims include space/group/path/viewer, and viewer is the authenticated stable id, never email. The path is the page's own claim. Currently only signed-in read-cookie viewers can fetch; anonymous public visitors, --dev without a viewer cookie and exec bearers are refused. Never put an Authorization key in page code: page Authorization is a typed refusal, Cookies/Host never forward and response Set-Cookie is stripped. Request bodies are capped at 10 MiB, total time at 60 s, and redirects must remain in listed origins. Missing/empty `/fetch.json`, unlisted origins and other policy refusals reject as SpaceError with a readable code/message; backend 4xx/5xx return ordinary Responses. A network/timeout failure after response headers rejects body consumption. There is no direct-fetch fallback.
 
 ## Shell embedding
 

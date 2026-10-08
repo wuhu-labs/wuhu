@@ -38,6 +38,8 @@ struct Harness {
     views: ViewProviders? = nil,
     webPushApplicationServerKey: String? = nil,
     credentials: CredentialResolver = .unavailable,
+    pageFetch: PageFetchHandler? = nil,
+    identityJWKS: JSONValue? = nil,
     opening: () throws -> Space = { try Space.inMemory() },
   ) throws {
     let contentHost = ContentHost(origin: origin ?? "https://localhost", pattern: contentHostPattern)!
@@ -52,7 +54,7 @@ struct Harness {
         space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
         fingerprint: fingerprint, dev: dev, publicRead: publicRead, webApp: webApp, views: views,
         webPushApplicationServerKey: webPushApplicationServerKey,
-        credentials: credentials,
+        credentials: credentials, identityJWKS: identityJWKS, pageFetch: pageFetch,
       )
       return (space, handler)
     }

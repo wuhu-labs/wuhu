@@ -15,6 +15,7 @@ import struct InferenceKit.ModelsDocument
 import JSONValue
 import Logging
 import MachineContract
+import NIOCore
 import OrderedCollections
 import Serve
 import ServeNIO
@@ -84,6 +85,7 @@ public enum SpaceServer {
     secrets: SpaceSecretStores? = nil,
     execTokens: ExecTokens? = nil,
     identityJWKS: JSONValue? = nil,
+    pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
     // Without --origin, content lives under localhost at the listener's port.
@@ -221,7 +223,7 @@ public enum SpaceServer {
       )
     }
     let content = contentHandler(
-      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, views: views,
+      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, views: views, pageFetch: pageFetch,
     )
     if dev { return hostRouted(contentHost, api: gated(routed), content: content) }
     @Dependency(\.date) var dateGen
@@ -272,6 +274,7 @@ public enum SpaceServer {
     dev: Bool,
     publicRead: Bool,
     views: ViewProviders?,
+    pageFetch: PageFetchHandler? = nil,
   ) -> @Sendable (GroupID, Request) async throws -> Response {
     @Dependency(\.date) var dateGen
     // Forcing the embed here fails at bind time, not on the first request.
@@ -287,6 +290,7 @@ public enum SpaceServer {
         publicRead: publicRead,
         views: views,
         shell: shell,
+        pageFetch: pageFetch,
         request: request,
       )
     }
@@ -458,6 +462,7 @@ public enum SpaceServer {
         secrets: secrets,
         execTokens: execTokens,
         identityJWKS: serverIdentity.jwks,
+        pageFetch: PageFetch(identity: serverIdentity, issuer: advertisedOrigin).response,
       ),
     )
     let loopback: ServeNIOServer

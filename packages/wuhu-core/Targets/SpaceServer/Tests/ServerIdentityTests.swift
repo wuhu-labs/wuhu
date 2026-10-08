@@ -52,6 +52,11 @@ import WuhuVFS
     }
   }
 
+  @Test func inferenceKeyErrorsHaveStaticActionable422Hints() {
+    #expect(IdentityError.keyUnavailable.inferenceError == .invalidInput(status: 422, body: "OIDC identity key is unavailable; check the server identity key configuration."))
+    #expect(IdentityError.signingFailed.inferenceError == .invalidInput(status: 422, body: "OIDC token signing failed; check the server identity key configuration."))
+  }
+
   @Test func diskKeySurvivesRestartWithPrivatePermissions() async throws {
     let scratch = try scratchURL("server-identity")
     defer { try? FileManager.default.removeItem(at: scratch) }
