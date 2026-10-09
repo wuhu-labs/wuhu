@@ -28,6 +28,29 @@ extension Command {
     }
 
     switch verb {
+    case "identity":
+      switch parser.pop() {
+      case nil: return .identity
+      case "register-new":
+        try parser.finish(verb: verb)
+        return .identityRegisterNew
+      case "rotate":
+        try parser.finish(verb: verb)
+        return .identityRotate
+      case "issuer-for":
+        let origin = try parser.required("origin", verb: verb)
+        try parser.finish(verb: verb)
+        return .identityIssuerFor(origin)
+      case "set":
+        let target = try parser.required("default|origin", verb: verb)
+        let issuer = try parser.required("self|directory|inherit", verb: verb)
+        try parser.finish(verb: verb)
+        guard ["self", "directory", "inherit"].contains(issuer), target != "default" || issuer != "inherit" else {
+          throw UsageError(message: "identity set: use self|directory; inherit removes an origin override")
+        }
+        return .identitySet(defaultIssuer: target == "default" ? issuer : nil, audience: target == "default" ? nil : target, issuer: target == "default" || issuer == "inherit" ? nil : issuer)
+      default: throw UsageError(message: "identity: use register-new, rotate, issuer-for <origin>, or set <default|origin> <self|directory|inherit>")
+      }
     case "use":
       let pin = parser.flag("--pin")
       let group = try parser.option("--group", verb: verb)
@@ -839,6 +862,7 @@ extension Command {
     skill     install the bundled agent skills into coding agent homes
     models    sync the space models document from the published basis
     usage     print each provider's plan usage windows (codex, claude)
+    identity     inspect issuer URLs or set default/audience issuer choices (admin)
     tool-roster  print the tools a kernel or Claude Code session is given
     auth      manage the space's provider credentials (api keys, chatgpt login)
     send      post a message to a session (an agent's box; a task takes no messages from people)
@@ -1506,6 +1530,19 @@ extension Command {
     idempotent: prints one line per file (wrote/updated/unchanged), and skips
     any existing SKILL.md it did not install itself.
     \(exitCodes)
+    """,
+    "identity": """
+    usage: wuhu identity
+           wuhu identity register-new
+           wuhu identity rotate
+           wuhu identity issuer-for <origin>
+           wuhu identity set default <self|directory>
+           wuhu identity set <origin> <self|directory|inherit>
+
+    Prints resolved issuer URLs; set accepts choices, not URLs. inherit removes an override.
+    set, rotate and register-new require a human space admin. rotate preserves the issuer.
+    register-new starts a fresh directory issuer. Changing issuer breaks verifier trust;
+    configure the verifier to trust both URLs before switching.
     """,
     "tool-roster": """
     usage: wuhu tool-roster [--executor kernel|claude-code] [--json]

@@ -53,6 +53,7 @@ import WuhuVFS
   }
 
   @Test func inferenceKeyErrorsHaveStaticActionable422Hints() {
+    #expect(IdentityError.directoryUnavailable.inferenceError == .invalidInput(status: 422, body: "OIDC directoryUnavailable: the key directory has not confirmed this server key; retry publication with wuhu identity set."))
     #expect(IdentityError.keyUnavailable.inferenceError == .invalidInput(status: 422, body: "OIDC identity key is unavailable; check the server identity key configuration."))
     #expect(IdentityError.signingFailed.inferenceError == .invalidInput(status: 422, body: "OIDC token signing failed; check the server identity key configuration."))
   }

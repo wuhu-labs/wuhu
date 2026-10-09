@@ -82,7 +82,7 @@ struct MessagingTests {
       var world = ToolWorld(executor: ToolExecutor(space: space), session: a)
 
       let both = try await world.run("send_message", .object([
-        "message": .string("x"), "session": .string(key(a)), "user": .string("morgan"),
+        "message": .string("x"), "session": .string(key(a)), "conversation": .string(key(a)),
       ]))
       #expect(try failureMessage(both).contains("at most one"))
 

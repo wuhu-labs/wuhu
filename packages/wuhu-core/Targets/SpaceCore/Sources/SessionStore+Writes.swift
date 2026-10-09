@@ -201,20 +201,7 @@ extension SessionStore {
       }
       let compacted = transcript.compacted(head: head, kept: kept)
       let generation = runtime.generation + 1
-      try Sessions.openGeneration(key, generation: generation, keptCount: compacted.keptCount, in: db)
-      let headID = head.id.uuidString.lowercased()
-      try db.execute(
-        sql: "INSERT INTO session_contents (session_id, id, payload) VALUES (?, ?, ?)",
-        arguments: [key, headID, try Sessions.encode(TranscriptItem.generationHead(head))],
-      )
-      // Kept items share their content rows with the parent generation; only
-      // pointers are minted for the new one.
-      for (position, item) in compacted.items.enumerated() {
-        try db.execute(
-          sql: "INSERT INTO session_pointers (session_id, generation, position, content_id) VALUES (?, ?, ?, ?)",
-          arguments: [key, generation, position, item.id.uuidString.lowercased()],
-        )
-      }
+      try Sessions.writeGeneration(key, generation: generation, transcript: compacted, in: db)
       try Sessions.refreshWork(key, transcript: compacted, now: now, in: db)
       try PromptRevisions.advance(key, in: db)
       return compacted
@@ -439,5 +426,24 @@ extension Duration {
   fileprivate var timeInterval: TimeInterval {
     let (seconds, attoseconds) = components
     return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
+  }
+}
+
+extension Sessions {
+  static func writeGeneration(_ key: String, generation: Int64, transcript: Transcript, in db: Database) throws {
+    guard case let .generationHead(head)? = transcript.items.first else {
+      preconditionFailure("a generation must open with its head")
+    }
+    try openGeneration(key, generation: generation, keptCount: transcript.keptCount, in: db)
+    try db.execute(
+      sql: "INSERT INTO session_contents (session_id, id, payload) VALUES (?, ?, ?)",
+      arguments: [key, head.id.uuidString.lowercased(), try encode(TranscriptItem.generationHead(head))],
+    )
+    for (position, item) in transcript.items.enumerated() {
+      try db.execute(
+        sql: "INSERT INTO session_pointers (session_id, generation, position, content_id) VALUES (?, ?, ?, ?)",
+        arguments: [key, generation, position, item.id.uuidString.lowercased()],
+      )
+    }
   }
 }

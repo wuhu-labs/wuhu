@@ -291,7 +291,8 @@ import Testing
       return "bobp"
     }
     let dm = try await rig.store.post(
-      .dm(with: persona), messageID: MessageID("m1"), sender: sender(rig.p), senderSession: rig.p, content: .init(text: "hi bob"),
+      .dm(with: persona), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
+      content: .init(text: "hi bob"), acting: Principal(actor: .anonymous, group: Self.alice),
     )
     #expect(try await rig.store.conversation(dm.message.conversation).group == Self.alice)
     let asBob = Principal(actor: .person(persona: persona, account: bob.id), group: Self.bob)
@@ -314,7 +315,8 @@ import Testing
     }
     let carol = Sender(id: "carol", timeZone: Self.utc)
     let dm = try await rig.store.post(
-      .dm(with: "carol"), messageID: MessageID("m1"), sender: sender(rig.p), senderSession: rig.p, content: .init(text: "from alice"),
+      .dm(with: "carol"), messageID: MessageID("m1"), sender: Sender(id: "alice-person", timeZone: Self.utc),
+      content: .init(text: "from alice"), acting: Principal(actor: .anonymous, group: Self.alice),
     )
     _ = try await rig.store.post(.box(rig.s), messageID: MessageID("m2"), sender: carol, content: .init(text: "joining"))
     _ = try await rig.store.post(

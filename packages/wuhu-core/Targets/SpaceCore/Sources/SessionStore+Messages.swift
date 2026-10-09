@@ -94,16 +94,20 @@ extension SessionStore {
       try await staged.append((upload, blobs.stage(upload.bytes)))
     }
     let (delivery, written) = try await writer.write { [staged] db in
-      if let existing = try Conversations.message(id: messageID.rawValue, in: db) {
-        return (MessageDelivery(message: existing, enqueued: [], replayed: true), nil as (group: GroupID, rev: Int64, attachments: [Attachment])?)
-      }
+      let existing = try Conversations.message(id: messageID.rawValue, in: db)
       // A session posts from its own group, a person from the one it acts in.
       let poster = Poster(
         actor: senderSession.map(Actor.session) ?? acting?.actor,
         persona: sender.id,
         group: try senderSession.map { try Sessions.group(of: $0.rawValue, in: db) } ?? acting?.group ?? .shared,
       )
-      let conversation = try resolve(target, sender: sender, senderSession: senderSession, poster: poster, now: now, in: db)
+      let conversation = try resolve(existing.map { .conversation($0.conversation) } ?? target, sender: sender, senderSession: senderSession, poster: poster, now: now, in: db)
+      guard conversation.kind != .dmUser || (senderSession == nil && !conversation.members.contains(where: { $0.kind == .session })) else {
+        throw SessionStoreError.humanAgentDirectMessage
+      }
+      if let existing {
+        return (MessageDelivery(message: existing, enqueued: [], replayed: true), nil as (group: GroupID, rev: Int64, attachments: [Attachment])?)
+      }
       if let replyTarget {
         guard let parent = try Conversations.message(id: replyTarget.rawValue, in: db) else {
           throw SessionStoreError.unknownMessage(replyTarget.rawValue)
@@ -467,8 +471,7 @@ extension SessionStore {
   ) throws -> Bool {
     guard message.kind == .message else { return false }
     guard try Sessions.record(recipient, in: db).kind == .agent else { return false }
-    if conversation.ownerSession?.rawValue == recipient { return true }
-    return conversation.kind == .dmUser
+    return conversation.ownerSession?.rawValue == recipient
   }
 }
 

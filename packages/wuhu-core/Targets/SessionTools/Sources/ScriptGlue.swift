@@ -18,6 +18,7 @@ const hostAttributes = __wuhu_space_attributes
 const hostPatch = __wuhu_space_patch
 const hostVerb = __wuhu_space_verb
 const discover = __wuhu_discovery
+const identityOrigin = __wuhu_identity_origin
 const read = __wuhu_conversation
 const between = __wuhu_dm
 
@@ -68,6 +69,14 @@ export const { query, observe, watch, mutateRows, readAttributes, patchAttribute
 
 export const context = () => call(() => discover("context"))
 export const groups = () => call(() => discover("groups"))
+export async function identity() {
+  const snapshot = await call(() => discover("identity"))
+  return { ...snapshot, issuerFor(origin) {
+    const canonical = identityOrigin(origin)
+    if (canonical === null) throw new TypeError("issuerFor takes an exact HTTP(S) audience origin")
+    return snapshot.overrides[canonical] ?? snapshot.defaultIssuer
+  } }
+}
 
 export function createTable(path, header) {
   return call(() => hostVerb("table.create", { path, header }, {}))

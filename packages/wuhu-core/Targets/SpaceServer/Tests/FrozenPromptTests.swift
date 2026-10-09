@@ -109,6 +109,10 @@ import Testing
       let second = try await create("second")
 
       let firstPrompt = try await launched(first)
+      #expect(firstPrompt.contains("People talk to you by posting into your box; other sessions can post into conversations or DM you. There is no DM between a person and a session."))
+      #expect(firstPrompt.contains("Reach a person only by posting into a box, optionally naming `reply_target`"))
+      #expect(!firstPrompt.contains("`user` addresses"))
+      #expect(!firstPrompt.contains("`session` or `user`"))
       let identity = "You are `"
       let shared = try sharedPart(firstPrompt, before: identity)
       #expect(shared == (try sharedPart(try await launched(second), before: identity)))

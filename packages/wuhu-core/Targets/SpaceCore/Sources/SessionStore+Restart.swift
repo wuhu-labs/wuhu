@@ -42,7 +42,7 @@ extension SessionStore {
       id: uuid(), timestamp: nowDate, summary: "", snapshot: StateSnapshot(), note: note,
     )
     let claudeSessionID = uuid().uuidString.lowercased()
-    return try await writer.write { db in
+    let (restart, hasQueuedInput) = try await writer.write { db in
       let record = try Sessions.record(key, in: db)
       guard record.lifecycle == .live else { throw SessionStoreError.restartOfArchivedSession(key) }
       let stopped = record.hold == .interrupted || record.work == .errored
@@ -54,37 +54,61 @@ extension SessionStore {
         )
       }
       let runtime = try Sessions.runtime(key, in: db)
-      // Retiring the queue by advancing the tail, not by deleting rows: ids are
-      // minted from MAX(id), and a daemon's in-memory cursor outlives the
-      // restart, so a shrinking id space would strand the next delivery.
-      let queueHead = try Sessions.queueHead(key, tail: runtime.queueTail, in: db)
-      try db.execute(
-        sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?",
-        arguments: [queueHead, key],
-      )
-      try Sessions.markDrained(key, through: queueHead, now: now, in: db)
       try db.execute(sql: "DELETE FROM session_commands WHERE session_id = ?", arguments: [key])
-      try db.execute(sql: "DELETE FROM session_subscriptions WHERE session_id = ?", arguments: [key])
+      var subscriptions: [SubscriptionID: Subscription] = [:]
+      for armed in try Row.fetchAll(
+        db, sql: "SELECT * FROM session_subscriptions WHERE session_id = ?", arguments: [key],
+      ).map(self.armedSubscription) {
+        switch armed.slot.kind {
+        case let .observe(sql, _): subscriptions[armed.slot.id] = .observe(sql: sql)
+        case let .timer(schedule, _): subscriptions[armed.slot.id] = .timer(schedule)
+        case .requestDeadline:
+          guard let deadline = armed.nextFireAt else { throw SessionStoreError.requestDeadlineWithoutFireDate(armed.slot.id.rawValue) }
+          subscriptions[armed.slot.id] = .requestDeadline(deadline)
+        case .parkReminder:
+          try db.execute(
+            sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
+            arguments: [key, armed.slot.id.rawValue],
+          )
+        }
+      }
+      var head = head
+      switch executor ?? record.executor {
+      case .kernel, .contractor:
+        var settle: SettleState
+        do {
+          settle = try Sessions.settleState(key, through: nowDate, in: db)
+        } catch where isUnreadableSessionData(error) {
+          settle = SettleState()
+        }
+        settle.openRequests = settle.openRequests.mapValues { request in
+          var request = request
+          request.parkReminderCount = 0
+          request.lastParkReminderAt = nil
+          return request
+        }
+        head.settle = settle
+      case .claudeCode: break
+      }
+      let queue = try Sessions.recoverRestartQueue(key, tail: runtime.queueTail, in: db)
+      if queue.dropped > 0 {
+        let dropped = "Dropped \(queue.dropped) queued input(s) that could not be read."
+        head.note = [note, dropped].compactMap(\.self).joined(separator: "\n")
+      }
       let generation = runtime.generation + 1
       switch executor ?? record.executor {
       case .kernel, .contractor:
-        var head = head
-        do {
-          head.settle = try Sessions.settleState(key, through: nowDate, in: db)
-        } catch where isUnreadableSessionData(error) {
-          head.settle = SettleState()
-        }
+        head.snapshot = .init(subscriptions: subscriptions)
         head.settleBoundary = .init(
-          queueTail: queueHead,
+          queueTail: queue.tail,
           messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
         )
-        try Sessions.openGeneration(key, generation: generation, keptCount: 1, in: db)
-        try Sessions.append(key, generation: generation, items: [TranscriptItem.generationHead(head)], in: db)
+        try Sessions.writeGeneration(key, generation: generation, transcript: Transcript().compacted(head: head, kept: nil), in: db)
       case .claudeCode:
         // Claude Code's log has no head row: the note waits beside the fresh
         // conversation id and goes in with the first delivery.
         try Sessions.openGeneration(key, generation: generation, keptCount: 0, in: db)
-        try Sessions.beginClaudeCodeGeneration(key, claudeSessionID: claudeSessionID, note: note, in: db)
+        try Sessions.beginClaudeCodeGeneration(key, claudeSessionID: claudeSessionID, note: head.note, in: db)
       }
       try db.execute(
         sql: """
@@ -97,13 +121,16 @@ extension SessionStore {
         arguments: [now, key],
       )
       try PromptRevisions.advance(key, in: db)
-      // Deliberately no work signal: a restarted session is as inert as a
-      // created one, and waking it would spend a turn on its own note.
-      return SessionRestart(
+      let queueHead = try Sessions.queueHead(key, tail: queue.tail, in: db)
+      let hasQueuedInput = queueHead > queue.tail
+      if hasQueuedInput { try Sessions.markHasWork(key, now: now, in: db) }
+      return (SessionRestart(
         generation: Int(generation),
         executor: try Sessions.record(key, in: db).executor,
-      )
+      ), hasQueuedInput)
     }
+    if hasQueuedInput { signals.post(id) }
+    return restart
   }
 
   public func generationState(_ id: SessionID) async throws -> GenerationState {
@@ -134,5 +161,35 @@ extension Sessions {
       return GenerationState(generation: Int(generation), note: nil)
     }
     return GenerationState(generation: Int(generation), note: head.note)
+  }
+}
+
+extension Sessions {
+  static func recoverRestartQueue(_ key: String, tail: Int64, in db: Database) throws -> (tail: Int64, dropped: Int) {
+    let rows = try Row.fetchAll(
+      db, sql: "SELECT * FROM session_queue WHERE session_id = ? AND id > ? ORDER BY id", arguments: [key, tail],
+    )
+    var readable: [Int64] = []
+    var dropped = 0
+    for row in rows {
+      do {
+        _ = try decode(QueueInput.self, from: row["payload"])
+        _ = try SQLiteDateFormat.date(from: row["enqueued_at"])
+        if let drainedAt = row["drained_at"] as String? { _ = try SQLiteDateFormat.date(from: drainedAt) }
+        readable.append(row["id"])
+      } catch where isUnreadableSessionData(error) {
+        dropped += 1
+      }
+    }
+    guard dropped > 0 else { return (tail, 0) }
+    let head = try queueHead(key, tail: tail, in: db)
+    for (offset, id) in readable.enumerated() {
+      try db.execute(
+        sql: "UPDATE session_queue SET id = ? WHERE session_id = ? AND id = ?",
+        arguments: [head + Int64(offset) + 1, key, id],
+      )
+    }
+    try db.execute(sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?", arguments: [head, key])
+    return (head, dropped)
   }
 }

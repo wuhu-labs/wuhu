@@ -76,7 +76,7 @@ extension Command {
     case .use, .trust, .untrust, .userList, .userHandle, .userProfile, .userRemove,
          .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineJoin, .machineRun, .machineRotate,
          .machineRevoke, .machineMove, .authSet, .authList, .authRemove, .authLogin,
-         .authLogout, .modelsUpdate, .groupUse:
+         .authLogout, .modelsUpdate, .groupUse, .identitySet, .identityRotate, .identityRegisterNew:
       true
     default:
       false

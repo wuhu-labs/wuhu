@@ -60,6 +60,59 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
 }
 
 @Suite struct SubscriptionTests {
+  @Test func startOverKeepsLiveObservationCronOneShotAndRequestDeadline() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let child = try await space.sessions.createSession(group: .shared, title: "child", kind: .task, parent: session, createdBy: session.rawValue, executor: try await space.sessions.record(session).executor)
+      let watched = try tablePath("/restart.table")
+      _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
+      var world = ToolWorld(executor: ToolExecutor(space: space), session: session)
+      guard case let .observe(observation) = try await world.run("observe", .object(["sql": "SELECT n FROM \"/restart.table\"", "throttle_seconds": 1])) else { throw Mismatch("observe failed") }
+      _ = try await world.run("timer", .object(["message": "cron survives", "cron": "* * * * *"]))
+      _ = try await world.run("timer", .object(["message": "once survives", "in_seconds": 120]))
+      _ = try await space.sessions.openRequest(on: child, from: session, messageID: .init("restart-duty"), text: "still owed", deadline: anchor.addingTimeInterval(120))
+      _ = try await space.sessions.drainQueue(child)
+      _ = try await space.sessions.enqueue(session, input: .message(.init(id: UUID(), messageID: .init("queued"), conversationID: .init("ch1"), sender: .init(id: "morgan", timeZone: TimeZone(identifier: "UTC")!), timestamp: anchor, content: .init(text: "queued before Start over"))))
+      try await space.sessions.markInterrupted(session)
+      let before = try await space.sessions.armedSubscriptions(session)
+      try await runningFiring(space) { nudged in
+        try await time.asleep("one-shot and deadline are armed", dueIn: 120)
+        _ = try await space.sessions.restart(session, note: "catch up")
+        #expect(try await space.sessions.armedSubscriptions(session) == before)
+        let hydration = try await space.sessions.hydrate(session)
+        #expect(hydration.undrained.count == 1)
+        #expect(hydration.record.work == .hasWork)
+        #expect(try await space.sessions.transcript(session).environment.tools.subscriptions.count == 4)
+        _ = try await space.sessions.drainQueue(session)
+        try await until("Start over posts a work signal") { nudged.value.contains(session) }
+        _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
+        try await until("the existing observation still fires") { try await observationNotifications(space, session: session).count == 1 }
+        #expect(try await observationNotifications(space, session: session).first?.subscriptionID == observation.subscriptionID)
+        await time.advance(by: 121)
+        try await untilAdvancing("cron, one-shot and request deadline still fire", time) {
+          let entries = try await space.sessions.hydrate(session).undrained
+          let notifications = entries.compactMap { entry -> SystemNotification? in
+            guard case let .notification(notification) = entry.input else { return nil }
+            return notification
+          }
+          return notifications.contains { $0.content.text == "cron survives" }
+            && notifications.contains { $0.content.text == "once survives" }
+            && notifications.contains { $0.kind == .requestDeadline && $0.requestID == .init("restart-duty") }
+        }
+        #expect(try await space.sessions.armedSubscriptions(session).count == 2)
+        #expect(try await space.sessions.settleState(child).openRequests[.init("restart-duty")] != nil)
+        await time.advance(by: 60)
+        try await untilAdvancing("cron fires again", time) {
+          try await space.sessions.hydrate(session).undrained.filter {
+            guard case let .notification(notification) = $0.input else { return false }
+            return notification.content.text == "cron survives"
+          }.count >= 2
+        }
+      }
+    }
+  }
+
   @Test func oneShotTimerFiresEnqueuesAndRetiresItsSlot() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()

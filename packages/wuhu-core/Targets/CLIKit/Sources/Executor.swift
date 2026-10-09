@@ -271,6 +271,16 @@ struct Executor {
       try await self.toolRoster(executor: executor, json: json)
     case let .authSet(provider):
       try await self.authSet(provider: provider)
+    case .identity:
+      try await self.serverIdentity()
+    case .identityRegisterNew:
+      try await serverIdentityRegisterNew()
+    case .identityRotate:
+      try await serverIdentityRotate()
+    case let .identityIssuerFor(origin):
+      try await self.serverIdentityIssuerFor(origin)
+    case let .identitySet(defaultIssuer, audience, issuer):
+      try await self.serverIdentitySet(defaultIssuer: defaultIssuer, audience: audience, issuer: issuer)
     case .authList:
       try await self.authList()
     case let .authRemove(provider):

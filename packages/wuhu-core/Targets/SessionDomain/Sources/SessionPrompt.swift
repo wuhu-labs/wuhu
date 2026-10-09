@@ -8,8 +8,8 @@ public enum SessionPrompt {
   text answers no one.
 
   Messages arrive in conversations. Your own box is the public surface people \
-  comment on; a DM is one-to-one. send_message with no addressing argument \
-  posts into your box; pass conversation, session or user to post elsewhere, \
+  comment on; a DM connects two sessions. send_message with no addressing argument \
+  posts into your box; pass conversation or session to post elsewhere, \
   and reply_target to point at one message out of many.
 
   A request that needs a task, an observation or a long exec is answered \

@@ -74,7 +74,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
         .box(task), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "hi"),
       )
     }
-    await #expect(throws: SessionStoreError.taskTakesNoHumanInput(task.rawValue)) {
+    await #expect(throws: SessionStoreError.humanAgentDirectMessage) {
       _ = try await rig.store.post(
         .dm(with: task.rawValue), messageID: MessageID("m2"), sender: human("carol"), content: .init(text: "hi"),
       )

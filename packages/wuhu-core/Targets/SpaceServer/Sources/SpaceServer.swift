@@ -66,7 +66,7 @@ public enum SpaceServer {
 
   // The full handler: `serve()` wires the session tokens here, and so do the
   // package's tests.
-  package static func configuredHandler(
+  static func configuredHandler(
     space: Space,
     hub: MachineHub,
     sessions: SessionRuntime? = nil,
@@ -85,6 +85,7 @@ public enum SpaceServer {
     secrets: SpaceSecretStores? = nil,
     execTokens: ExecTokens? = nil,
     identityJWKS: JSONValue? = nil,
+    identityController: IdentityController? = nil,
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
@@ -107,10 +108,11 @@ public enum SpaceServer {
     var router = Router()
     for path in ["/.well-known/openid-configuration", "/.well-known/jwks.json"] {
       router.get(path) { _, _ in
-        guard let issuer = try? ServerIdentity.issuer(origin), let identityJWKS else {
+        let keys = await identityController?.jwks ?? identityJWKS
+        guard let issuer = try? ServerIdentity.issuer(origin), let keys else {
           return errorResponse(.unprocessableContent, code: "oidcConfiguration", message: "OIDC requires a server identity key and a configured HTTPS --origin.")
         }
-        if path == "/.well-known/jwks.json" { return jsonResponse(identityJWKS) }
+        if path == "/.well-known/jwks.json" { return jsonResponse(keys) }
         return jsonResponse(.object([
           "issuer": .string(issuer), "jwks_uri": .string(issuer + "/.well-known/jwks.json"),
           "id_token_signing_alg_values_supported": .array([.string("ES256")]),
@@ -177,7 +179,11 @@ public enum SpaceServer {
     }
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
     sessions?.scripts.configureDiscovery(contentHost: discoveryContentHost)
+    if let identityController {
+      sessions?.scripts.configureDiscovery(identity: { try await identityController.snapshot() })
+    }
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
+    addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
     addGroupRoutes(&router, space: space, dev: dev)
     addMachineRoutes(
       &router, space: space, hub: hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
@@ -367,7 +373,10 @@ public enum SpaceServer {
     let logger = Logger(label: "wuhu.serve")
     logger.notice("TLS certificate fingerprint: \(fingerprint)")
     let advertisedOrigin = origin.map(normalizedOrigin)
-    let serverIdentity = try await ServerIdentity.loadOrCreate(directory: folder.appendingPathComponent("identity"))
+    let identityDirectory = folder.appendingPathComponent("identity")
+    let serverKey = try await ServerIdentity.loadOrCreate(directory: identityDirectory)
+    @Dependency(\.fetch) var identityFetch
+    let serverIdentity = try await IdentityController.load(identity: serverKey, origin: advertisedOrigin, store: .disk(identityDirectory), fetch: identityFetch)
     // Apple's push service rejects VAPID subjects that are not public https/mailto
     // contacts, so the contact must never derive from --origin (LAN or localhost hosts).
     let vapid = try await WebPushKeyStore.loadOrCreate(
@@ -411,7 +420,7 @@ public enum SpaceServer {
     if preinstallClaude(flatHosts: contentHostPattern != nil, models: await modelsDocument(space: space)) {
       claudeCode.installInBackground()
     }
-    let scriptFetch = ScriptFetch(identity: serverIdentity, issuer: advertisedOrigin)
+    let scriptFetch = ScriptFetch(controller: serverIdentity)
     let sessions = await SessionRuntime.assemble(
       space: space,
       hub: hub,
@@ -426,7 +435,7 @@ public enum SpaceServer {
         @Dependency(\.date) var date
         @Dependency(\.uuid) var uuid
         let record = try await space.sessions.record(session)
-        return try await serverIdentity.tokenForInference(issuer: advertisedOrigin, audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
+        return try await serverIdentity.tokenForInference(audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
       },
       identityFetch: { request, session, protect in
         try await scriptFetch.response(request, session: session, space: space, protect: protect)
@@ -468,8 +477,8 @@ public enum SpaceServer {
         credentials: credentials,
         secrets: secrets,
         execTokens: execTokens,
-        identityJWKS: serverIdentity.jwks,
-        pageFetch: PageFetch(identity: serverIdentity, issuer: advertisedOrigin).response,
+        identityController: serverIdentity,
+        pageFetch: PageFetch(controller: serverIdentity).response,
       ),
     )
     let loopback: ServeNIOServer
@@ -492,6 +501,7 @@ public enum SpaceServer {
     @Dependency(\.continuousClock) var clock
     @Dependency(\.date) var dateGen
     await withTaskGroup(of: Void.self) { group in
+      group.addTask { await serverIdentity.run() }
       group.addTask { await hub.run() }
       group.addTask { await sessions.run() }
       group.addTask { await webPushRuntime.run() }

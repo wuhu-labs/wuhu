@@ -11,6 +11,7 @@ export function attachmentDisplay(
   attachment: AttachmentView,
   canPlay: (mimeType: string) => boolean,
 ): AttachmentDisplay {
+  if (attachmentIsActiveDocument(attachment)) return 'file'
   if (attachment.kind === 'image') return 'image'
   if (
     attachment.mimeType.startsWith('video/') && canPlay(attachment.mimeType)
@@ -18,6 +19,19 @@ export function attachmentDisplay(
     return 'video'
   }
   return 'file'
+}
+
+export function attachmentIsActiveDocument(
+  attachment: AttachmentView,
+): boolean {
+  return /\.(?:html?|xhtml|xht|svg|xml)$/i.test(attachment.path) ||
+    [
+      'text/html',
+      'application/xhtml+xml',
+      'image/svg+xml',
+      'application/xml',
+      'text/xml',
+    ].includes(attachment.mimeType)
 }
 
 export function attachmentName(path: string): string {

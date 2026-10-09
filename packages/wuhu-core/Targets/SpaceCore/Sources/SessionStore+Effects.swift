@@ -200,7 +200,7 @@ extension SessionStore {
     }
   }
 
-  private func armedSubscription(_ row: Row) throws -> ArmedSubscription {
+  func armedSubscription(_ row: Row) throws -> ArmedSubscription {
     ArmedSubscription(
       session: SessionID(row["session_id"] as String),
       slot: try Sessions.decode(SubscriptionSlot.self, from: row["payload"]),
@@ -326,9 +326,7 @@ public struct NonAdvancingSubscription: Error, CustomStringConvertible {
   }
 }
 
-// An arming's incarnation is the whole callback identity: a cancel, a re-arm or
-// a restart mints a new one, so every callback still holding the old one is by
-// definition speaking for a subscription that no longer stands.
+// Re-arming after cancellation changes callback identity; transcript generation changes do not.
 func observationToken(_ subscription: ArmedSubscription) -> UUID {
   observationProgress(subscription).incarnation
 }

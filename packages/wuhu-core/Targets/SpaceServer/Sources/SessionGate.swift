@@ -159,6 +159,8 @@ private func sessionRouter(
 
   router.get("/v1/server", use: forward)
   router.get("/v1/context", use: forward)
+  router.get("/v1/identity", use: forward)
+  router.get("/v1/identity/issuer-for", use: forward)
   router.get("/v1/session-tools", use: forward)
   router.get("/v1/capabilities/:kind", use: forward)
   router.get("/v1/transcribe", use: forward)
@@ -325,15 +327,19 @@ private func sessionRouter(
       )
     }
     let input: ConversationPostInput
+    let body: JSONValue
     do {
-      input = try await request.json(ConversationPostInput.self, upTo: maximumPostFieldsBytes)
+      body = try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes)
+      input = try JSONValueDecoder().decode(ConversationPostInput.self, from: body)
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a conversation-post body: \(error)")
     }
     var arguments: OrderedDictionary<String, JSONValue> = ["message": .string(input.message)]
     arguments["conversation"] = input.conversation.map(JSONValue.string)
     arguments["session"] = input.session.map(JSONValue.string)
-    arguments["user"] = input.user.map(JSONValue.string)
+    if case let .object(fields) = body {
+      arguments["user"] = fields["user"]
+    }
     arguments["reply_target"] = input.replyTarget.map(JSONValue.string)
     arguments["attachments"] = input.attachments.map { .array($0.map(JSONValue.string)) }
     let payload = try await tool("send_message", .object(arguments))

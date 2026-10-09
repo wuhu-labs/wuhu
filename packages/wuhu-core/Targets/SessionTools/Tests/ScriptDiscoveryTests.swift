@@ -41,6 +41,16 @@ import enum WuhuAI.Tool
     }
   }
 
+  @Test func identityIsReadOnlyAndResolvesCanonicalOrigins() async throws {
+    try await withRig { rig in
+      rig.scripts.configureDiscovery(identity: { ["defaultIssuer": "https://id.wuhu.ai/opaque", "overrides": ["https://lab.test": "https://space.test"]] })
+      let resolved = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); result([i.defaultIssuer,i.issuerFor('https://LAB.test:443'),i.issuerFor('https://cloud.test')])")
+      #expect(resolved == ["https://id.wuhu.ai/opaque", "https://space.test", "https://id.wuhu.ai/opaque"])
+      let refused = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); try {i.issuerFor('https://user:pass@lab.test')} catch(e) {result(e.name)}")
+      #expect(refused == "TypeError")
+    }
+  }
+
   @Test func rosterIsTheConfiguredRuntimeDeclaration() async throws {
     try await withRig { rig in
       let missing = try await rig.evaluate("import {toolRoster} from 'wuhu:session';try {await toolRoster()} catch(e) {result({name:e.name,code:e.code})}")

@@ -11,7 +11,7 @@ import ServeTesting
 import SessionDomain
 import SpaceContract
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Synchronization
 import Testing
 import WuhuAI

@@ -66,3 +66,22 @@ Deno.test('a video the browser cannot play is a file row', () => {
     true,
   )
 })
+
+Deno.test('active document attachments are plain download links', () => {
+  for (const name of ['proof.html', 'proof.xhtml', 'proof.svg', 'proof.xml']) {
+    const markup = renderToStaticMarkup(
+      <Attachments
+        origin={origin}
+        attachments={[{
+          kind: 'file',
+          path: '/_/conversations/chat/attachments/' + name,
+          mimeType: 'application/octet-stream',
+        }]}
+      />,
+    )
+    assertEquals(markup.includes('?download=1'), true)
+    assertEquals(markup.includes(`download="${name}"`), true)
+    assertEquals(markup.includes('target='), false)
+    assertEquals(markup.includes('<iframe'), false)
+  }
+})

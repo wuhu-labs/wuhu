@@ -11,11 +11,27 @@ import struct SessionTools.ScriptIdentityUnavailable
 import SpaceCore
 
 struct ScriptFetch: Sendable {
-  let identity: ServerIdentity
-  let issuer: String?
-  var hop: @Sendable (Request, NIODeadline) async throws -> Response = {
+  let mint: @Sendable (URL, String, String, String, Date, UUID) async throws -> String
+
+  init(identity: ServerIdentity, issuer: String?, hop: @escaping @Sendable (Request, NIODeadline) async throws -> Response = Self.liveHop) {
+    mint = { audience, space, group, session, now, id in
+      try identity.token(issuer: issuer, audience: audience, space: space, group: group, session: session, now: now, id: id, lifetime: 60)
+    }
+    self.hop = hop
+  }
+
+  init(controller: IdentityController, hop: @escaping @Sendable (Request, NIODeadline) async throws -> Response = Self.liveHop) {
+    mint = { audience, space, group, session, now, id in
+      try await controller.token(audience: audience, space: space, group: group, session: session, now: now, id: id, lifetime: 60)
+    }
+    self.hop = hop
+  }
+
+  static let liveHop: @Sendable (Request, NIODeadline) async throws -> Response = {
     try await pinnedPageFetch($0, deadline: $1, stripCookies: false, timeoutError: FetchError.transportFailure(kind: .deadlineExceeded))
   }
+
+  var hop: @Sendable (Request, NIODeadline) async throws -> Response
 
   func response(_ request: Request, session: SessionID, space: Space, protect: @Sendable (String) -> Void) async throws -> Response {
     @Dependency(\.date) var date
@@ -27,10 +43,9 @@ struct ScriptFetch: Sendable {
       guard let named = fetchOrigin(request.url) else { throw IdentityError.invalidAudience }
       origin = named
       let record = try await space.sessions.record(session)
-      token = try await identity.token(
-        issuer: issuer, audience: request.url, space: space.identity().rawValue,
-        group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid(), lifetime: 60,
-      )
+      token = try await mint(request.url, space.identity().rawValue, record.group.rawValue, session.rawValue, date.now, uuid())
+    } catch let error as IdentityError where error.directoryCode != nil {
+      throw ScriptIdentityUnavailable(message: error.description, code: error.directoryCode!)
     } catch is CancellationError {
       throw CancellationError()
     } catch {

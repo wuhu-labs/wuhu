@@ -17,8 +17,25 @@ import SpaceCore
 typealias PageFetchHandler = @Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response
 
 struct PageFetch: Sendable {
-  let identity: ServerIdentity
-  let issuer: String?
+  let initialJWKS: JSONValue?
+  let mint: @Sendable (URL, String, String, Date, UUID, String, String) async throws -> String
+
+  init(identity: ServerIdentity, issuer: String?, hop: @escaping @Sendable (Request, NIODeadline) async throws -> Response = { try await pinnedPageFetch($0, deadline: $1) }) {
+    initialJWKS = identity.jwks
+    mint = { audience, space, group, now, id, page, viewer in
+      try identity.token(issuer: issuer, audience: audience, space: space, group: group, now: now, id: id, lifetime: 60, page: page, viewer: viewer)
+    }
+    self.hop = hop
+  }
+
+  init(controller: IdentityController, hop: @escaping @Sendable (Request, NIODeadline) async throws -> Response = { try await pinnedPageFetch($0, deadline: $1) }) {
+    initialJWKS = nil
+    mint = { audience, space, group, now, id, page, viewer in
+      try await controller.token(audience: audience, space: space, group: group, now: now, id: id, lifetime: 60, page: page, viewer: viewer)
+    }
+    self.hop = hop
+  }
+
   var hop: @Sendable (Request, NIODeadline) async throws -> Response = { try await pinnedPageFetch($0, deadline: $1) }
 
   func response(_ request: Request, allow: Set<String>, space: String, group: String, page: String, viewer: String, deadline: NIODeadline) async throws -> Response {
@@ -31,10 +48,9 @@ struct PageFetch: Sendable {
       }
       guard NIODeadline.now() < deadline else { throw PageFetchError.timeout }
       do {
-        target.headers[.authorization] = "Bearer " + (try identity.token(
-          issuer: issuer, audience: target.url, space: space, group: group, now: date.now, id: uuid(),
-          lifetime: 60, page: page, viewer: viewer,
-        ))
+        target.headers[.authorization] = "Bearer " + (try await mint(target.url, space, group, date.now, uuid(), page, viewer))
+      } catch let error as IdentityError where error.directoryCode != nil {
+        throw PageFetchError(code: error.directoryCode!, message: error.description, status: .serviceUnavailable)
       } catch {
         throw PageFetchError(code: "fetchIdentityUnavailable", message: "the server could not mint the fetch identity token", status: .serviceUnavailable)
       }

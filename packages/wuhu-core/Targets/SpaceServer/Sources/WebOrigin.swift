@@ -226,7 +226,7 @@ private func routedWebResponse(
     let rest = segments.dropFirst()
     let response: Response
     if rest.first == "views" {
-      response = providerResponse(views, shell: shell, group: caller.group, file: rest.dropFirst().joined(separator: "/"))
+      response = providerResponse(views, shell: shell, group: caller.group, file: rest.dropFirst().joined(separator: "/"), request: request)
     } else {
       response = try await underscoreResponse(
         space: space,
@@ -262,13 +262,14 @@ private func routedWebResponse(
     shell: attachment || download ? nil : shell,
     path: path,
     trailingSlash: trailingSlash,
+    indexes: !attachment,
     headOnly: headOnly,
     range: request.headers[.range],
     ifNoneMatch: request.headers[.ifNoneMatch],
     ifRange: request.headers[.ifRange],
   ).viewed(by: viewer)
   if attachment { response.headers[contentSecurityPolicy] = attachmentSandbox }
-  if download, let name = segments.last {
+  if download || (attachment && isActiveAttachment(path)), let name = segments.last {
     response.headers[contentDisposition] = "attachment; filename*=UTF-8''" + extValue(name)
   }
   return response
@@ -341,11 +342,13 @@ private func attachmentConversation(_ path: String) -> ConversationID? {
   return ConversationID(String(parts[2]))
 }
 
-/// An attachment is message content, whoever sent it and whichever group
-/// homes it, never a page of the host: it runs its scripts in an opaque
-/// origin, so it carries no cookie and every write it sends has `Origin:
-/// null`, which write admission refuses.
 private let attachmentSandbox = "sandbox allow-scripts"
+private let activeAttachmentExtensions: Set<String> = ["html", "htm", "xhtml", "xht", "svg", "xml"]
+
+private func isActiveAttachment(_ path: String) -> Bool {
+  guard let name = path.split(separator: "/").last, let dot = name.lastIndex(of: "."), dot != name.startIndex else { return false }
+  return activeAttachmentExtensions.contains(name[name.index(after: dot)...].lowercased())
+}
 
 // The content-origin wall. Space content — files, /_/query, /_/observe — is
 // admitted by a live read-session cookie minted on this host, for a member of
@@ -554,7 +557,15 @@ func revalidatedJSON(_ value: JSONValue, ifNoneMatch: String?) -> Response {
 
 private let drawnFlatByTheListProvider = ["wall": "list", "map": "list"]
 
-private func providerResponse(_ views: ViewProviders?, shell: ShellSDK?, group: GroupID, file: String) -> Response {
+private func providerResponse(_ views: ViewProviders?, shell: ShellSDK?, group: GroupID, file: String, request: Request) -> Response {
+  if let target = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value {
+    guard let resolved = URL(string: target, relativeTo: request.url)?.absoluteURL.standardized else {
+      return errorResponse(.badRequest, code: "invalidViewPath", message: "The view target is not a valid URL.")
+    }
+    if attachmentConversation(resolved.path) != nil {
+      return errorResponse(.forbidden, code: "attachmentViewForbidden", message: "Conversation attachments cannot be view definitions.", hint: "Copy the definition to a space path outside the attachments folder.")
+    }
+  }
   guard let views, !file.isEmpty else { return plainStatus(.notFound) }
   let asset = drawnFlatByTheListProvider[file] ?? file
   guard let (name, data) = views.files[asset].map({ (asset, $0) }) ?? views.files[asset + ".html"].map({ (asset + ".html", $0) }) else {
@@ -574,6 +585,7 @@ private func contentResponse(
   shell: ShellSDK?,
   path: String,
   trailingSlash: Bool,
+  indexes: Bool,
   headOnly: Bool,
   range: String?,
   ifNoneMatch: String?,
@@ -640,7 +652,7 @@ private func contentResponse(
     if trailingSlash { return plainStatus(.notFound) }
     return await file(path) ?? plainStatus(.notFound)
   case .directory:
-    return await index(path)
+    return indexes ? await index(path) : plainStatus(.notFound)
   case .table, .symlink:
     return plainStatus(.notFound)
   }

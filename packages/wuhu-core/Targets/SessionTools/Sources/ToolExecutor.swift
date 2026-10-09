@@ -155,6 +155,9 @@ public struct ToolExecutor: Sendable {
     case .query:
       return try await query(session, decoded(QueryArguments.self, call))
     case .sendMessage:
+      if case let .object(fields) = call.arguments.json, fields["user"] != nil {
+        throw problem(.humanAgentDirectMessage)
+      }
       return try await sendMessage(session, callID, decoded(SendMessageArguments.self, call))
     case .request:
       return try await request(session, callID, decoded(RequestArguments.self, call))

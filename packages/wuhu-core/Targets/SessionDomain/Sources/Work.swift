@@ -41,10 +41,7 @@ extension Transcript {
     case .assistant:
       return false
     case let .generationHead(head):
-      // A head that folded nothing and asks for no re-establishment — a fresh
-      // session, a restart — leaves the session with nothing to answer. A
-      // compaction's head always carries a summary and drives the next turn.
-      return !head.summary.isEmpty || !head.snapshot.isEmpty
+      return !head.summary.isEmpty || !head.snapshot.preReads.isEmpty
     default:
       return true
     }

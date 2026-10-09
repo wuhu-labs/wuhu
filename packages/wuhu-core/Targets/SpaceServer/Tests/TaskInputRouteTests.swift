@@ -45,7 +45,7 @@ import Testing
           .object(["message": "hi", route: .string(value), "identity": .string(t.person)]),
         )
         #expect(refused.status == .forbidden, "\(route)")
-        #expect(try await code(refused) == "taskInput", "\(route)")
+        #expect(try await code(refused) == (route == "user" ? "humanAgentDM" : "taskInput"), "\(route)")
       }
 
       let group = try await t.harness.store.createConversation(members: [t.person, task], in: .shared)

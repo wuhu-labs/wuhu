@@ -1,6 +1,6 @@
 import { ApiError } from '~/sdk/errors'
 import type { EntryKind, ReadOutput } from './contract.gen.ts'
-import { type OpenedFile, openFile } from './file-opening.ts'
+import { fileOpening, type OpenedFile, openFile } from './file-opening.ts'
 import type { ContentOrigin } from './use-content-origin.ts'
 import { viewOpening } from './view-opening.ts'
 
@@ -50,6 +50,22 @@ export async function loadNode(
   const { path, entry: { kind, size } } = requested === '/'
     ? await homepage(source)
     : { path: requested, entry: await source.stat(requested) }
+  if (/^\/_\/conversations\/[^/]+\/attachments(?:\/|$)/.test(path)) {
+    if (kind !== 'directory' && fileOpening(path) !== 'text') {
+      return openFile(
+        path,
+        size,
+        () => resolvedContentOrigin(contentOrigin),
+        source.read,
+      )
+    }
+    const origin = resolvedContentOrigin(contentOrigin)
+    if (origin === undefined) return { state: 'loading' }
+    if (!origin) {
+      return { state: 'error', message: 'Server reports no web origin.' }
+    }
+    return { state: 'file', path, size, src: origin + encodeURI(path) }
+  }
   if (kind === 'table') return { state: 'table', path }
   if (kind === 'directory') {
     const origin = resolvedContentOrigin(contentOrigin)

@@ -301,9 +301,45 @@ import Testing
     let attachment = try await harness.get(harness.web, path)
     #expect(attachment.status == .ok)
     #expect(attachment.headers[.contentType] == "image/png")
+    #expect(attachment.headers[HTTPField.Name("Content-Disposition")!] == nil)
 
     let reserved = try await harness.get(harness.web, "/_/blobs/\(String(repeating: "0", count: 64))")
     #expect(reserved.status == .notFound)
+  }
+
+  @Test(arguments: [false, true])
+  func attachmentDirectoriesDoNotResolveHTMLIndexes(trailingSlash: Bool) async throws {
+    let harness = try Harness()
+    let conversation = try await harness.space.sessions.createConversation(members: ["owner"], in: .shared)
+    let posted = try await harness.space.sessions.post(
+      .conversation(conversation), messageID: MessageID("m1"),
+      sender: Sender(id: "owner", timeZone: .gmt), content: MessageContent(text: "look"),
+      uploads: [AttachmentUpload(name: "index.html", bytes: Array("<html>proof</html>".utf8))],
+    )
+    let path = try #require(posted.message.content.attachments.first?.path)
+    let folder = String(path[..<path.lastIndex(of: "/")!]) + (trailingSlash ? "/" : "")
+    let response = try await harness.get(harness.web, folder)
+    #expect(response.status == .notFound)
+    #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == "sandbox allow-scripts")
+    #expect(try await response.text() != "<html>proof</html>")
+  }
+
+  @Test(arguments: ["html", "htm", "xhtml", "xht", "svg", "xml", "HTML"])
+  func activeConversationAttachmentsAreDownloads(extension suffix: String) async throws {
+    let harness = try Harness()
+    let conversation = try await harness.space.sessions.createConversation(members: ["owner"], in: .shared)
+    let posted = try await harness.space.sessions.post(
+      .conversation(conversation), messageID: MessageID("m1"),
+      sender: Sender(id: "owner", timeZone: .gmt),
+      content: MessageContent(text: "look"),
+      uploads: [AttachmentUpload(name: "proof.\(suffix)", bytes: Array("<html>proof</html>".utf8))],
+    )
+    let path = try #require(posted.message.content.attachments.first?.path)
+    let response = try await harness.get(harness.web, path)
+    #expect(response.status == .ok)
+    #expect(response.headers[HTTPField.Name("Content-Disposition")!] == "attachment; filename*=UTF-8''proof.\(suffix)")
+    #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == "sandbox allow-scripts")
+    #expect(try await response.text() == "<html>proof</html>")
   }
 
   @Test func aDownloadQueryAnswersTheRawBytesAsAnAttachment() async throws {
@@ -440,6 +476,27 @@ import Testing
     let changed = try await harness.web(Request(url: components.url!, headers: headers))
     #expect(changed.status == .ok)
     #expect(changed.headers[.eTag] != tag)
+  }
+
+  @Test(arguments: ["kanban", "list", "wall", "map"])
+  func providersRefuseAttachmentDefinitions(provider: String) async throws {
+    let views = ViewProviders(files: ["kanban.html": Data("<main>kanban</main>".utf8), "list.html": Data("<main>list</main>".utf8)])
+    let harness = try Harness(views: views)
+    for target in [
+      "/_/conversations/chat/attachments/proof.view",
+      "../conversations/chat/attachments/proof.view",
+      "http://space/_/conversations/chat/attachments/proof.view",
+      "/%5F/conversations/chat/attachments/proof.view",
+    ] {
+      var url = URLComponents(string: "http://space/_/views/\(provider)")!
+      url.queryItems = [URLQueryItem(name: "path", value: target), URLQueryItem(name: "path", value: "/ordinary.view")]
+      let response = try await harness.web(Request(url: url.url!))
+      #expect(response.status == .forbidden)
+      #expect(JSONValue.parse(try await response.text())?.object?["code"]?.stringValue == "attachmentViewForbidden")
+    }
+    var url = URLComponents(string: "http://space/_/views/\(provider)")!
+    url.queryItems = [URLQueryItem(name: "path", value: "/ordinary.view")]
+    #expect(try await harness.web(Request(url: url.url!)).status == .ok)
   }
 
   @Test func everyHTMLResponseIsInjectedAndLengthsDescribeTransformedBytes() async throws {

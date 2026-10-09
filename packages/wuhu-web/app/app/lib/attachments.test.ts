@@ -150,3 +150,23 @@ Deno.test('an oversized file is named as oversized even past the count', () => {
     'Not attached. big.mov: a file can be at most 50 MiB. j.png: a message can carry at most 8 files.',
   )
 })
+
+Deno.test('active attachment types are files even if their payload says image', () => {
+  for (
+    const mimeType of [
+      'text/html',
+      'application/xhtml+xml',
+      'image/svg+xml',
+      'application/xml',
+      'text/xml',
+    ]
+  ) {
+    assertEquals(
+      attachmentDisplay(
+        { kind: 'image', path: '/proof.svg', mimeType },
+        everything,
+      ),
+      'file',
+    )
+  }
+})

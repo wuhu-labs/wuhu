@@ -316,9 +316,9 @@ public struct SubscriptionFiring: Sendable {
       case .archiveGraceExpired, .unknownSession:
         try await retire(subscription)
       case .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
-           .selfDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .noParent, .notTheParent,
+           .selfDirectMessage, .humanAgentDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .noParent, .notTheParent,
            .requestAlreadyOpen, .unknownRequest,
-           .busyForRestart, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
+           .busyForRestart, .requestDeadlineWithoutFireDate, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:
         throw error
       }
     }

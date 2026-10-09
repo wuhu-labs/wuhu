@@ -38,6 +38,7 @@
     "dm",
     "groups",
     "history",
+    "identity",
     "instantiateTemplate",
     "list",
     "move",

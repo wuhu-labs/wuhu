@@ -121,7 +121,6 @@ import WuhuAI
         await #expect(throws: SessionError.unreadableData(bad)) { try await service.resume(bad) }
         #expect(try await sessions.record(bad).work == .errored)
         _ = try await service.restart(bad, executor: nil, note: nil)
-        _ = try await service.enqueue(item: Fix.message("fresh", message: "bad-fresh"), to: bad)
         #expect(await iterator.next() == bad)
         let payload = try await space.writer.read { db in
           try String.fetchOne(db, sql: "SELECT payload FROM session_contents WHERE session_id = ? AND payload = '{}' LIMIT 1", arguments: [bad.rawValue])

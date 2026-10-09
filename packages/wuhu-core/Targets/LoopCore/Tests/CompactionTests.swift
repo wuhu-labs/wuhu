@@ -22,6 +22,32 @@ private func compactCall(
 }
 
 @Suite struct CompactionTests {
+  @Test(arguments: ["", " \n "], [false, true])
+  func emptySummaryIsATypedRefusalAndTheTurnContinues(summary: String, preRead: Bool) async throws {
+    let call = compactCall(summary: summary, preReads: preRead ? ["/notes.md"] : [])
+    #expect(throws: CompactArgumentsError.emptySummary) { _ = try decodeArguments(CompactArguments.self, from: call) }
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let id = try await sessions.createSession(group: .shared, title: "compact misuse", kind: .agent, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("compact", calls: [call]),
+        { request in
+          guard case let .toolResult(result)? = request.transcript.items.last,
+                case let .failure(failure) = result.payload else { throw UnexpectedCall("missing compact refusal") }
+          #expect(failure.message.contains("emptySummary"))
+          #expect(failure.message.contains("non-empty summary"))
+          return Fix.reply("continued after refusal")
+        },
+      ])
+      try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+        _ = try await service.enqueue(item: Fix.message("work"), to: id)
+        try await until("compact refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
+      }
+      #expect(try await sessions.generationState(id).generation == 0)
+      #expect(try await sessions.record(id).errorMessage == nil)
+    }
+  }
+
   @Test func cancellationAfterForcedCommitSkipsMechanicalFallback() async throws {
     try await withKernelDeps { _ in
       let sessions = try Space.inMemory().sessions

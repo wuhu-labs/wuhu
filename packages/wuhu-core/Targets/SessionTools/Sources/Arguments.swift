@@ -110,7 +110,6 @@ struct SendMessageArguments: Decodable {
   var message: String
   var conversation: String?
   var session: String?
-  var user: String?
   var replyTarget: String?
   var attachments: [String]?
 
@@ -118,7 +117,6 @@ struct SendMessageArguments: Decodable {
     case message
     case conversation
     case session
-    case user
     case replyTarget = "reply_target"
     case attachments
   }

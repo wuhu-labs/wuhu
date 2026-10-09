@@ -300,9 +300,6 @@ import Testing
     let messages = MessageCollector()
     let (space, owner) = try await relaySpace(grants: ["g1_live"])
     let persona = try #require(await onlyPersona(space))
-    let helperRow = try await space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
-    guard case let .text(helperID)? = helperRow.first?.first else { Issue.record("no helper"); return }
-    let helper = SessionID(helperID)
     let utc = TimeZone(identifier: "UTC")!
     let runtime = PushRelayRuntime(
       space: space,
@@ -317,8 +314,8 @@ import Testing
       for id in ["d1", "d2"] {
         if id == "d2" { try await space.sessions.archive(owner, grace: .seconds(3600)) }
         _ = try await space.sessions.post(
-          .dm(with: persona), messageID: MessageID(id), sender: Sender(id: helper.rawValue, timeZone: utc),
-          senderSession: helper, content: .init(text: id),
+          .dm(with: persona), messageID: MessageID(id), sender: Sender(id: "other-person", timeZone: utc),
+          content: .init(text: id),
         )
         try await runtime.drain()
       }

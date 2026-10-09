@@ -201,7 +201,7 @@ final class ScriptBindings: Sendable {
           secrets.protect(token.lowercased())
         }
       } catch let error as ScriptIdentityUnavailable {
-        return fetchFailure("fetchIdentityUnavailable", secrets.mask(error.message))
+        return fetchFailure(error.code, secrets.mask(error.message))
       } catch {
         throw masked(error)
       }

@@ -2,6 +2,7 @@ import { Icon } from '@wuhu/ui'
 import {
   attachmentDetail,
   attachmentDisplay,
+  attachmentIsActiveDocument,
   attachmentName,
   attachmentURL,
   type AttachmentView,
@@ -28,6 +29,7 @@ export function Attachments({
   const shown = attachments.map((attachment) => ({
     attachment,
     display: attachmentDisplay(attachment, canPlay),
+    download: attachmentIsActiveDocument(attachment),
     url: origin == null ? null : attachmentURL(origin, attachment.path),
   }))
   const media = shown.filter((item) => item.display !== 'file')
@@ -71,13 +73,14 @@ export function Attachments({
           )}
         </div>
       )}
-      {files.map(({ attachment, url }) => (
+      {files.map(({ attachment, url, download }) => (
         <a
           key={attachment.path}
           className='wuhu-attachment-file'
-          href={url ?? undefined}
-          target='_blank'
-          rel='noreferrer'
+          href={url == null ? undefined : url + (download ? '?download=1' : '')}
+          download={download ? attachmentName(attachment.path) : undefined}
+          target={download ? undefined : '_blank'}
+          rel={download ? undefined : 'noreferrer'}
         >
           <Icon name='note' />
           <span>

@@ -271,7 +271,7 @@ func addSessionRoutes(
       }
       let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor)
       let restart = try await service.restart(
-        id, executor: executor, note: restartOpening(executor: executor, at: dateGen.now),
+        id, executor: executor, note: restartOpening(executor: executor, record: record, at: dateGen.now),
       )
       var queued: Int?
       if let message = input.message, !message.isEmpty {
@@ -690,6 +690,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
       return errorResponse(.notFound, code: "notFound", message: "unknown message: \(id)")
     case let .archiveGraceExpired(key):
       return errorResponse(.conflict, code: "archiveGraceExpired", message: "session \(key) is archived and its grace has expired")
+    case let .requestDeadlineWithoutFireDate(id):
+      return errorResponse(.conflict, code: "invalidSubscription", message: "request deadline \(id) has no stored fire date")
     case let .busyForRestart(key):
       return errorResponse(
         .conflict,
@@ -704,6 +706,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
       return errorResponse(.notFound, code: "notFound", message: "unknown conversation: \(id)")
     case let .replyTargetInAnotherConversation(id):
       return errorResponse(.unprocessableContent, code: "invalidArgument", message: "message \(id) is in another conversation")
+    case .humanAgentDirectMessage:
+      return errorResponse(.forbidden, code: "humanAgentDM", message: SessionStoreError.humanAgentDirectMessageExplanation)
     case let .selfDirectMessage(id):
       return errorResponse(.unprocessableContent, code: "invalidArgument", message: "\(id) cannot open a DM with itself")
     case let .taskHasNoBox(key):
@@ -866,15 +870,16 @@ private func notificationPayload(_ record: NotificationRecord) -> NotificationPa
   )
 }
 
-private func restartOpening(executor: SessionExecutor, at now: Date) -> String {
+private func restartOpening(executor: SessionExecutor, record: SessionRecord, at now: Date) -> String {
   let spec: String = switch executor {
   case let .kernel(model), let .claudeCode(model):
     "\(executor.kind) \(model.provider)/\(model.model) (\(model.effort))"
   case .contractor:
     executor.kind
   }
+  let conversation = record.kind == .task ? "your DM with your parent" : "your box"
   return """
-  Started over on \(spec) at \(now.ISO8601Format()); the previous transcript is archived and your box history is unchanged.
+  Started over on \(spec) at \(now.ISO8601Format()); the previous transcript is archived and your conversations are unchanged. Catch up from \(conversation) before acting, using the read-box skill (for example, read its last 2–5 messages).
   """
 }
 

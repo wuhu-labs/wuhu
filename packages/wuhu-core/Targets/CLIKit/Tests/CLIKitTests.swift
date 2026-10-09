@@ -16,6 +16,44 @@ import Testing
 
 @Suite
 struct RequestMappingTests {
+  @Test func identityVerbsMapToReadOnlyDiscoveryAndHumanOnlySettings() async throws {
+    try await assertRequest(["identity"], response: ["defaultIssuer": "https://space.test", "overrides": [:]]) { request in
+      #expect(request.method == .get)
+      #expect(request.url.path == "/v1/identity")
+    }
+    try await assertRequest(["identity", "issuer-for", "https://provider.test:8080"], response: ["issuer": "https://space.test"]) { request in
+      #expect(request.method == .get)
+      #expect(request.url.path == "/v1/identity/issuer-for")
+      #expect(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == "https://provider.test:8080")
+    }
+    for (arguments, expected) in [
+      (["identity", "set", "default", "directory"], JSONValue.object(["defaultIssuer": "directory"])),
+      (["identity", "set", "https://lab.test", "self"], ["audience": "https://lab.test", "issuer": "self"]),
+      (["identity", "set", "https://lab.test", "inherit"], ["audience": "https://lab.test", "remove": true]),
+    ] {
+      #expect(try Command.parse(arguments).isRefusedToSessions)
+      try await assertRequest(arguments, response: ["defaultIssuer": "https://space.test", "overrides": [:]]) { request in
+        #expect(request.method == .put)
+        #expect(request.url.path == "/v1/identity")
+        let actual = try await requestBodyJSON(request)
+        #expect(actual == expected)
+      }
+    }
+    #expect(try Command.parse(["identity", "register-new"]).isRefusedToSessions)
+    try await assertRequest(["identity", "register-new"], response: ["defaultIssuer": "https://id.wuhu.ai/new", "overrides": [:]]) { request in
+      #expect(request.method == .post)
+      #expect(request.url.path == "/v1/identity/register-new")
+    }
+    #expect(try Command.parse(["identity", "rotate"]).isRefusedToSessions)
+    try await assertRequest(["identity", "rotate"], response: ["rotating": true]) { request in
+      #expect(request.method == .post)
+      #expect(request.url.path == "/v1/identity/rotate")
+    }
+    #expect(throws: UsageError.self) { try Command.parse(["identity", "rotate", "extra"]) }
+    #expect(try !Command.parse(["identity"]).isRefusedToSessions)
+    #expect(throws: UsageError.self) { try Command.parse(["identity", "set", "default", "inherit"]) }
+  }
+
   @Test func mapsEveryToolVerb() async throws {
     try await assertRequest(["read", "/a", "--rev", "2", "--lines", "1-3"], response: .object(["token": "t1", "content": "hello"])) { request in
       #expect(request.method == .post)

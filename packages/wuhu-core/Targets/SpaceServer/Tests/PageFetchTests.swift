@@ -25,7 +25,7 @@ import Testing
   }
 
   func rig(proxy: PageFetch, publicRead: Bool = false) async throws -> Rig {
-    let h = try Harness(dev: false, publicRead: publicRead, origin: "https://space.test", pageFetch: proxy.response, identityJWKS: proxy.identity.jwks)
+    let h = try Harness(dev: false, publicRead: publicRead, origin: "https://space.test", pageFetch: proxy.response, identityJWKS: proxy.initialJWKS)
     let account = try await h.space.addAccount(kind: .human, name: "alice", admin: true).id
     let persona = try await h.space.persona(account: account)?.name ?? account.rawValue
     let token = try await h.space.createReadSession(account: account, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))

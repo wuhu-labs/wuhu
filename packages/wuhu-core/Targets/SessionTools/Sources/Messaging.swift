@@ -18,20 +18,22 @@ extension ToolExecutor {
     // again: the machine may be gone by now, and a failure here would make the
     // model send the message twice.
     if let posted = try await store.message(messageID) {
-      return sendReceipt(posted)
+      let delivery = try await deliver(
+        .conversation(posted.conversation), session: session, messageID: messageID,
+        text: arguments.message, replyTarget: arguments.replyTarget.map { MessageID($0) }, uploads: [],
+      )
+      return sendReceipt(delivery.message)
     }
     let target: ConversationTarget
-    switch (arguments.conversation, arguments.session, arguments.user) {
-    case (nil, nil, nil):
+    switch (arguments.conversation, arguments.session) {
+    case (nil, nil):
       target = .box(session)
-    case let (id?, nil, nil):
+    case let (id?, nil):
       target = .conversation(ConversationID(id))
-    case let (nil, other?, nil):
+    case let (nil, other?):
       target = try await dm(to: SessionID(other))
-    case let (nil, nil, user?):
-      target = .dm(with: user)
     default:
-      throw ToolProblem("send_message wants at most one of conversation, session or user")
+      throw ToolProblem("send_message wants at most one of conversation or session")
     }
     let delivery = try await deliver(
       target,
@@ -212,10 +214,12 @@ extension ToolExecutor {
       ToolProblem("unknown conversation: \(id)")
     case let .replyTargetInAnotherConversation(id):
       ToolProblem("message \(id) is in another conversation; reply_target names a message in the one you are posting to")
+    case .humanAgentDirectMessage:
+      ToolProblem(SessionStoreError.humanAgentDirectMessageExplanation)
     case let .selfDirectMessage(id):
       ToolProblem("\(id) cannot open a DM with itself")
     case let .taskHasNoBox(key):
-      ToolProblem("session \(key) is a task and has no box; name a conversation, session or user")
+      ToolProblem("session \(key) is a task and has no box; name a conversation or session")
     case let .taskTakesNoHumanInput(key):
       ToolProblem("session \(key) is a task and takes no messages from people")
     case let .noParent(key):
@@ -228,6 +232,8 @@ extension ToolExecutor {
       ToolProblem("no open request \(id)")
     case let .archiveGraceExpired(key):
       ToolProblem("session \(key) is archived and no longer accepts messages")
+    case let .requestDeadlineWithoutFireDate(id):
+      ToolProblem("request deadline \(id) has no stored fire date")
     case let .busyForRestart(key):
       ToolProblem("session \(key) has unfinished work or an open run and cannot start over")
     case let .parentUnavailableForCreation(key):

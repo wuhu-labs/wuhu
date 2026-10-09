@@ -81,15 +81,19 @@ public struct SessionHydration: Hashable, Sendable {
 }
 
 public enum SessionStoreError: Error, Equatable, Sendable {
+  public static let humanAgentDirectMessageExplanation = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
+
   case unknownSession(String)
   case archiveGraceExpired(String)
   case busyForRestart(String)
+  case requestDeadlineWithoutFireDate(String)
   case restartOfArchivedSession(String)
   case parentUnavailableForCreation(String)
   case unknownMessage(String)
   case unknownConversation(String)
   case replyTargetInAnotherConversation(String)
   case selfDirectMessage(String)
+  case humanAgentDirectMessage
   case taskHasNoBox(String)
   case taskTakesNoHumanInput(String)
   case noParent(String)

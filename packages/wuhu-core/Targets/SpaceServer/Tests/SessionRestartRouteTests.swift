@@ -32,8 +32,23 @@ import enum WuhuAI.InferenceError
       }
       let note = try #require(head.note)
       #expect(note.hasPrefix("Started over on kernel testing/test-model"))
-      #expect(note.contains("your box history is unchanged"))
+      #expect(note.contains("Catch up from your box before acting"))
+      #expect(note.contains("read-box skill"))
+      #expect(note.contains("last 2–5 messages"))
       #expect(try await harness.store.record(id).hold == .normal)
+    }
+  }
+
+  @Test func aTaskRestartNamesItsParentDMInsteadOfABox() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let parent = try await harness.createSession()
+      let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: try await harness.store.record(parent).executor)
+      _ = try await harness.call("/v1/session/\(task.rawValue)/restart", .null, as: SessionRestartOutput.self)
+      let note = try #require(await harness.store.generationState(task).note)
+      #expect(note.contains("Catch up from your DM with your parent before acting"))
+      #expect(!note.contains("your box"))
+      #expect(note.contains("last 2–5 messages"))
     }
   }
 

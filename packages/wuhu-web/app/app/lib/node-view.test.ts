@@ -73,3 +73,55 @@ Deno.test('a lookup failure that is not notFound fails the load', async () => {
   const failure = await home(source).then(() => null, (error) => error)
   expectEqual(failure?.message, 'offline')
 })
+
+Deno.test('an HTML conversation attachment opens as a file, not a frame', async () => {
+  const path = '/_/conversations/chat/attachments/proof.html'
+  const source = space({ [path]: '<html>proof</html>' })
+  source.read = () => Promise.reject(new Error('must not read attachment'))
+  expectEqual(await loadNode(source, origin, path, '', 0), {
+    state: 'file',
+    path,
+    src: origin + path,
+  })
+})
+
+Deno.test('an image conversation attachment retains its image view', async () => {
+  const path = '/_/conversations/chat/attachments/proof.png'
+  const source = space({ [path]: '' })
+  source.read = () => Promise.reject(new Error('must not read image as text'))
+  expectEqual(await loadNode(source, origin, path, '', 0), {
+    state: 'image',
+    path,
+    src: origin + path,
+  })
+})
+
+Deno.test('attachment definitions and directories never enter trusted frames', async () => {
+  for (const name of ['proof.view', 'proof.md', 'proof.txt', 'proof.json']) {
+    const path = '/_/conversations/chat/attachments/' + name
+    const source = space({
+      [path]: JSON.stringify({
+        sql: 'SELECT 1',
+        view: 'kanban',
+        config: { groupBy: 'status', cardTitle: 'title' },
+      }),
+    })
+    source.read = () =>
+      Promise.reject(new Error('must not interpret attachment'))
+    expectEqual(await loadNode(source, origin, path, '', 0), {
+      state: 'file',
+      path,
+      src: origin + path,
+    })
+  }
+  const path = '/_/conversations/chat/attachments'
+  const source: NodeSource = {
+    stat: () => Promise.resolve({ kind: 'directory' }),
+    read: () => Promise.reject(new Error('must not interpret attachment')),
+  }
+  expectEqual(await loadNode(source, origin, path, '', 0), {
+    state: 'file',
+    path,
+    src: origin + path,
+  })
+})

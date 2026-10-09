@@ -61,6 +61,24 @@ struct CompactArguments: Codable {
     case preReads = "pre_reads"
     case bookmark
   }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    summary = try container.decode(String.self, forKey: .summary)
+    guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CompactArgumentsError.emptySummary }
+    preReads = try container.decodeIfPresent([String].self, forKey: .preReads)
+    bookmark = try container.decodeIfPresent(String.self, forKey: .bookmark)
+  }
+}
+
+enum CompactArgumentsError: Error, Equatable, CustomStringConvertible {
+  case emptySummary
+
+  var description: String {
+    switch self {
+    case .emptySummary: "emptySummary: compact requires a non-empty summary"
+    }
+  }
 }
 
 func decodeArguments<T: Decodable>(_ type: T.Type, from call: ToolCall) throws -> T {

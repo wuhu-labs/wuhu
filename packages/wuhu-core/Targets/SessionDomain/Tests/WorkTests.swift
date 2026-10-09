@@ -57,6 +57,13 @@ struct WorkTests {
     #expect(Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)
   }
 
+  @Test func subscriptionsAloneDoNotMakeAnEmptySummaryHeadWork() {
+    var head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init(subscriptions: [.init("timer.t1"): .timer(.cron("* * * * *"))]))
+    #expect(!Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)
+    head.snapshot.preReads = ["/notes.md"]
+    #expect(Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)
+  }
+
   @Test func queueInputMapsToItsTranscriptItem() {
     let item = Fix.message()
     guard case let .message(message) = item else { fatalError() }

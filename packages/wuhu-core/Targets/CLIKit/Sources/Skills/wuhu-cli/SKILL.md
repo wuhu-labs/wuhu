@@ -369,3 +369,9 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 `wuhu image 'prompt' --destination ./output.png [--image ./reference.png]... [--provider qwen] [--model id] [--quality draft|standard|fine|ultra] [--size 1536x1024]` generates, or edits when references are present. Private reference bytes upload internally; local output is exclusive/create-only.
 
 `wuhu transcribe recording.m4a [--provider qwen] [--model id] [--language en] [--timestamps words,segments] [--diarize] [--json]` uses the same capability resolver as dictation and code mode. JSON returns optional seconds-based timestamp/speaker metadata. Audio is bounded to 25 MiB/two hours. `/capabilities.json` active selection is authoritative: unconfigured capabilities synthesize Codex, broken explicit configuration never falls back. Provider keys are installed by an authorized human on the server with `wuhu auth set <credential-id>` on stdin, not `wuhu secret set`.
+
+## Identity
+
+`wuhu identity` prints resolved default and per-audience issuer URLs. `wuhu identity issuer-for <origin>` prints one issuer. A human space admin chooses `wuhu identity set default self|directory` or `wuhu identity set <origin> self|directory`; `wuhu identity set <origin> inherit` removes an override. Origins are exact canonical HTTP(S) origins. Configure a verifier to trust both issuer URLs before changing its setting; there is no automatic fallback when the directory is unavailable.
+
+`wuhu identity rotate` starts the issuer-preserving key overlap immediately. `wuhu identity register-new` recovers a stale/lost directory registration by creating a new issuer; verifiers must migrate. Both are human space-admin-only and unavailable to session execs.

@@ -21,6 +21,10 @@ struct ServerIdentity: Sendable {
     kid = Data(SHA256.hash(data: key.publicKey.x963Representation)).base64URL
   }
 
+  var rawKey: Data { key.rawRepresentation }
+
+  static func generate() throws -> Self { try Self(rawKey: P256.Signing.PrivateKey().rawRepresentation) }
+
   static func loadOrCreate(from fs: any VirtualFileSystem) async throws -> Self {
     let path = try VFSPath(absoluteFilePath: "/identity.p256")
     if try await fs.status(at: path) != nil {
@@ -53,18 +57,9 @@ struct ServerIdentity: Sendable {
     ])])])
   }
 
-  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil) throws -> String {
-    let issuer = try Self.issuer(issuer)
-    guard var origin = URLComponents(url: audience, resolvingAgainstBaseURL: false),
-          origin.scheme != nil, let host = origin.host, !host.isEmpty, origin.user == nil, origin.password == nil
-    else { throw IdentityError.invalidAudience }
-    origin.scheme = origin.scheme?.lowercased()
-    origin.host = host.lowercased()
-    if (origin.scheme == "https" && origin.port == 443) || (origin.scheme == "http" && origin.port == 80) { origin.port = nil }
-    origin.path = ""
-    origin.query = nil
-    origin.fragment = nil
-    guard let audience = origin.string else { throw IdentityError.invalidAudience }
+  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, directoryIssuer: String? = nil) throws -> String {
+    let issuer = try directoryIssuer ?? Self.issuer(issuer)
+    let audience = try Self.audience(audience)
     let issued = Int(now.timeIntervalSince1970)
     var claims: OrderedDictionary<String, JSONValue> = [
       "iss": .string(issuer), "aud": .string(audience), "iat": .integer(issued), "exp": .integer(issued + lifetime),
@@ -91,6 +86,31 @@ struct ServerIdentity: Sendable {
     }
   }
 
+  static func audience(_ audience: URL) throws -> String {
+    guard var origin = URLComponents(url: audience, resolvingAgainstBaseURL: false),
+          origin.scheme != nil, let host = origin.host, !host.isEmpty, origin.user == nil, origin.password == nil
+    else { throw IdentityError.invalidAudience }
+    origin.scheme = origin.scheme?.lowercased()
+    origin.host = host.lowercased()
+    if (origin.scheme == "https" && origin.port == 443) || (origin.scheme == "http" && origin.port == 80) { origin.port = nil }
+    origin.path = ""
+    origin.query = nil
+    origin.fragment = nil
+    guard let audience = origin.string else { throw IdentityError.invalidAudience }
+    return audience
+  }
+
+  func proof(audience: String, jwks: JSONValue, now: Date, id: UUID) throws -> String {
+    let issued = Int(now.timeIntervalSince1970)
+    let header: JSONValue = .object(["alg": .string("ES256"), "typ": .string("JWT"), "kid": .string(kid)])
+    let payload: JSONValue = .object([
+      "aud": .string(audience), "iat": .integer(issued), "exp": .integer(issued + 300),
+      "jti": .string(id.uuidString.replacingOccurrences(of: "-", with: "")), "jwks": jwks,
+    ])
+    let input = Data(header.jsonString().utf8).base64URL + "." + Data(payload.jsonString().utf8).base64URL
+    return try input + "." + key.signature(for: Data(input.utf8)).rawRepresentation.base64URL
+  }
+
   static func issuer(_ origin: String?) throws -> String {
     guard let origin, let url = URLComponents(string: origin), url.scheme == "https",
           let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
@@ -101,10 +121,23 @@ struct ServerIdentity: Sendable {
 }
 
 enum IdentityError: Error, Equatable, CustomStringConvertible {
-  case invalidIssuer, invalidAudience, keyUnavailable, signingFailed
+  case invalidIssuer, invalidAudience, keyUnavailable, signingFailed, directoryUnavailable, unknownId, unlistedKey, mutationInProgress, directoryNotSelected
+
+  var directoryCode: String? {
+    switch self {
+    case .directoryUnavailable: "directoryUnavailable"
+    case .unknownId: "unknownId"
+    case .unlistedKey: "unlistedKey"
+    default: nil
+    }
+  }
 
   var inferenceError: InferenceError {
     let hint: String = switch self {
+    case .unknownId: "OIDC unknownId: the directory no longer knows this issuer; an admin can use wuhu identity register-new, then migrate verifiers to the new issuer."
+    case .unlistedKey: "OIDC unlistedKey: the directory does not list this server key; restore the server state backup or have an admin use wuhu identity register-new and migrate verifiers."
+    case .directoryUnavailable: "OIDC directoryUnavailable: the key directory has not confirmed this server key; retry publication with wuhu identity set."
+    case .mutationInProgress, .directoryNotSelected: preconditionFailure("identity mutations are not part of token minting")
     case .invalidAudience: "OIDC token audience is invalid; check the provider baseURL."
     case .invalidIssuer: "OIDC token issuer is invalid; check HTTPS --origin."
     case .keyUnavailable: "OIDC identity key is unavailable; check the server identity key configuration."
@@ -115,6 +148,11 @@ enum IdentityError: Error, Equatable, CustomStringConvertible {
 
   var description: String {
     switch self {
+    case .unknownId: "The directory no longer knows this id. An admin can run wuhu identity register-new; verifiers must migrate to the new issuer."
+    case .unlistedKey: "The directory does not list this key. Restore server state, or run wuhu identity register-new as an admin and migrate verifiers to the new issuer."
+    case .directoryUnavailable: "The key directory has not confirmed this server key; no directory token can be minted."
+    case .mutationInProgress: "An identity mutation is already in progress."
+    case .directoryNotSelected: "Select a directory issuer before registering a new id."
     case .invalidIssuer: "OIDC requires a configured HTTPS --origin."
     case .invalidAudience: "OIDC provider baseURL must have a scheme and host, without user information."
     case .keyUnavailable: "The server identity key is unavailable."

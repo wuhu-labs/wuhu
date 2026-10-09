@@ -211,10 +211,9 @@ import Testing
       #expect(keyless.status == .forbidden)
       #expect(try await code(keyless) == "personaRequiresDevice")
 
-      let theirs = try await session(p, in: p.bob)
       let dm = try await p.harness.store.post(
-        .dm(with: second.name), messageID: MessageID("m1"), sender: Sender(id: theirs.rawValue, timeZone: .gmt),
-        senderSession: theirs, content: .init(text: "hi"),
+        .dm(with: second.name), messageID: MessageID("m1"), sender: Sender(id: foreign.name, timeZone: .gmt),
+        content: .init(text: "hi"), acting: Principal(actor: .anonymous, group: p.bob),
       )
       func listed(_ query: String) async throws -> [String] {
         let response = try await send(p, .get, "/v1/conversations\(query)", group: p.alice)

@@ -286,6 +286,11 @@ enum Command: Equatable {
   case toolRoster(executor: SessionToolExecutor?, json: Bool)
   case authSet(provider: String)
   case authList
+  case identity
+  case identityRegisterNew
+  case identityRotate
+  case identityIssuerFor(String)
+  case identitySet(defaultIssuer: String?, audience: String?, issuer: String?)
   case authRemove(provider: String)
   case authLogin(provider: String)
   case authLogout(provider: String)
