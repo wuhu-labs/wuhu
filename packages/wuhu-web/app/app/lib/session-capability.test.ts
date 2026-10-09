@@ -39,18 +39,29 @@ Deno.test('only a known live agent box or authorized conversation takes input', 
 Deno.test('conversation access waits for membership and roster, and excludes tasks', () => {
   const agent = { id: 'a', kind: 'agent' as const, lifecycle: 'live' }
   const task = { id: 't', kind: 'task' as const, lifecycle: 'live' }
-  const roster = [agent, task] as Parameters<typeof conversationCapability>[1]
-  const members = [{ member: 'owner', kind: 'user' }, {
+  const roster = [agent, { ...agent, id: 'b' }, task] as Parameters<
+    typeof conversationCapability
+  >[1]
+  const members = [{ member: 'b', kind: 'session' }, {
     member: 'a',
     kind: 'session',
   }]
   equal(canCompose(conversationCapability(null, roster)), false)
-  equal(canCompose(conversationCapability(members, null)), false)
-  equal(canCompose(conversationCapability(members, roster)), true)
+  equal(
+    canCompose(conversationCapability({ kind: 'dm_session', members }, null)),
+    false,
+  )
+  equal(
+    canCompose(conversationCapability({ kind: 'dm_session', members }, roster)),
+    true,
+  )
   equal(
     canCompose(
       conversationCapability(
-        [...members, { member: 't', kind: 'session' }],
+        {
+          kind: 'dm_session',
+          members: [...members, { member: 't', kind: 'session' }],
+        },
         roster,
       ),
     ),
@@ -58,10 +69,13 @@ Deno.test('conversation access waits for membership and roster, and excludes tas
   )
   equal(
     canCompose(
-      conversationCapability([...members, {
-        member: 'missing',
-        kind: 'session',
-      }], roster),
+      conversationCapability({
+        kind: 'dm_session',
+        members: [...members, {
+          member: 'missing',
+          kind: 'session',
+        }],
+      }, roster),
     ),
     false,
   )

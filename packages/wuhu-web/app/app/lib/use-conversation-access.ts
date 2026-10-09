@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type {
-  ConversationMemberPayload,
+  ConversationPayload,
   ConversationsOutput,
 } from './contract.gen.ts'
 import type { SessionSummary } from '~/lib/session-model'
@@ -10,18 +10,25 @@ import { errorMessage } from '~/sdk/errors'
 
 type Access = {
   id: string
-  members: ConversationMemberPayload[] | null
+  conversation: ConversationPayload | null
   error: string | null
 }
 
 export function conversationCapability(
-  members: ConversationMemberPayload[] | null,
+  conversation: Pick<ConversationPayload, 'kind' | 'members'> | null,
   sessions: SessionSummary[] | null,
 ): SessionCapability {
-  if (members === null || sessions === null) return { kind: 'unknown' }
+  if (conversation === null) return { kind: 'unknown' }
+  if (
+    conversation.kind === 'dm_user' &&
+    conversation.members.some((member) => member.kind === 'session')
+  ) {
+    return { kind: 'conversation', allowed: false }
+  }
+  if (sessions === null) return { kind: 'unknown' }
   return {
     kind: 'conversation',
-    allowed: members.every((member) =>
+    allowed: conversation.members.every((member) =>
       member.kind !== 'session' ||
       sessions.some((session) =>
         session.id === member.member && session.kind === 'agent' &&
@@ -45,11 +52,11 @@ export function useConversationAccess(
         const conversation = output.conversations.find((found) =>
           found.id === id
         )
-        setAccess({ id, members: conversation?.members ?? null, error: null })
+        setAccess({ id, conversation: conversation ?? null, error: null })
       },
       (failure: unknown) => {
         if (!cancelled) {
-          setAccess({ id, members: null, error: errorMessage(failure) })
+          setAccess({ id, conversation: null, error: errorMessage(failure) })
         }
       },
     )
@@ -57,10 +64,10 @@ export function useConversationAccess(
       cancelled = true
     }
   }, [id])
-  const members = access?.id === id ? access.members : null
+  const conversation = access?.id === id ? access.conversation : null
   return {
-    capability: conversationCapability(members, sessions),
-    members: members ?? [],
+    capability: conversationCapability(conversation, sessions),
+    members: conversation?.members ?? [],
     error: access?.id === id ? access.error : null,
   }
 }
