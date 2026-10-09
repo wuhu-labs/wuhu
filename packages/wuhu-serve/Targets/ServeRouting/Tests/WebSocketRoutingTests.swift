@@ -97,6 +97,29 @@ import Testing
     #expect(notFound.status == .notFound)
   }
 
+  @Test func mostSpecificWebSocketRouteWinsOverEarlierCatchAll() async throws {
+    var router = Router()
+    router.webSocket("/*") { _, _ in .response(Response(status: .forbidden)) }
+    router.webSocket("/v1/exec/:id") { _, parameters in
+      .response(Response(status: .ok, body: .string("exec \(parameters["id"] ?? "")")))
+    }
+
+    let specific = try await router.upgradingHandler(upgradeRequest(path: "/v1/exec/abc"))
+    guard case let .response(accepted) = specific else {
+      Issue.record("expected the specific route's response")
+      return
+    }
+    #expect(accepted.status == .ok)
+    #expect(try await accepted.text() == "exec abc")
+
+    let other = try await router.upgradingHandler(upgradeRequest(path: "/v1/other"))
+    guard case let .response(refused) = other else {
+      Issue.record("expected the catch-all's response")
+      return
+    }
+    #expect(refused.status == .forbidden)
+  }
+
   @Test func mountPrefixesWebSocketRoutes() async throws {
     var inner = Router()
     inner.webSocket("/connect") { _, _ in .webSocket { $0.close() } }

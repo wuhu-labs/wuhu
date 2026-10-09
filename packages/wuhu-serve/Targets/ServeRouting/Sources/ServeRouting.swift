@@ -148,9 +148,15 @@ public struct Router: Sendable {
         preconditionFailure("URLComponents cannot parse a URL that URL already represents: \(request.url)")
       }
       let pathSegments = PathPattern.segments(for: rawPath)
-      let match = webSocketRoutes.lazy
-        .compactMap { route in route.path.match(pathSegments).map { (route, $0) } }
-        .first
+      // The most specific matching pattern wins, by the same rule as HTTP
+      // dispatch, so a catch-all registered first never shadows a specific
+      // route.
+      var match: (route: WebSocketRoute, parameters: RouteParameters)?
+      for route in webSocketRoutes {
+        guard let parameters = route.path.match(pathSegments) else { continue }
+        if let current = match, !route.path.isMoreSpecific(than: current.route.path) { continue }
+        match = (route, parameters)
+      }
       guard let (route, parameters) = match else {
         return .response(try await httpHandler(request))
       }

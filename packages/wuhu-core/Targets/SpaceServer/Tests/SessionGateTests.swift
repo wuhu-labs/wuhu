@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import JSONValue
 import MachineContract
+import ServeTesting
 import SessionDomain
 import SpaceContract
 import SpaceCore
@@ -265,6 +266,35 @@ import Testing
       #expect(try await t.harness.get("/v1/exec/\(others.id.rawValue)", bearer: t.token).status == .notFound)
       #expect(try await t.harness.post("/v1/exec/\(others.id.rawValue)/kill", .null, bearer: t.token).status == .notFound)
       #expect(try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token).status == .ok)
+    }
+  }
+
+  // The gate's webSocket catch-all is registered before the exec route; the
+  // exec route must still win for the session's own exec.
+  @Test func itsOwnExecDialsOverWebSocketAndNothingElseDoes() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.machine(named: "box"))
+      let others = try await t.harness.space.mintExec(machine: machine.id)
+
+      func dial(_ path: String) async throws -> Status? {
+        var headers = RequestHeaders()
+        headers.set("connection", "Upgrade")
+        headers.set("upgrade", "websocket")
+        headers.set("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        headers.set("sec-websocket-version", "13")
+        headers.set("authorization", "Bearer " + t.token)
+        let request = Request(url: URL(string: "http://space\(path)")!, headers: headers)
+        switch try await ServeTesting.upgrade(t.harness.handler, request) {
+        case let .response(response): return response.status
+        case .webSocket: return nil
+        }
+      }
+
+      #expect(try await dial("/v1/exec/\(t.exec.rawValue)") == nil)
+      #expect(try await dial("/v1/exec/\(others.id.rawValue)") == .notFound)
+      #expect(try await dial("/v1/sessions/\(t.parent.rawValue)/stream") == .forbidden)
+      #expect(try await dial("/v1/anything") == .forbidden)
     }
   }
 

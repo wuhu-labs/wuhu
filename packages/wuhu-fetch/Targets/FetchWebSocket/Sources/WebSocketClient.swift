@@ -20,7 +20,9 @@ public enum ClientTLS: Sendable {
 
 public enum WebSocketClientError: Error, Equatable, Sendable {
   case invalidURL(String)
-  case refused
+  /// The server answered the upgrade with a plain HTTP response: its status
+  /// and the start of its body.
+  case refused(status: Int, body: [UInt8])
 }
 
 public struct WebSocketDuplex: Sendable {
@@ -66,7 +68,7 @@ public enum WebSocketClient {
           outboundMessageBytes: Int.max,
         ), tls: tls,
       ), additionalHeaders: headers))
-    } catch WebSocketError.refused { throw WebSocketClientError.refused }
+    } catch let WebSocketError.refused(status, _, body) { throw WebSocketClientError.refused(status: status, body: body) }
     catch WebSocketError.invalidURL(let reason) { throw WebSocketClientError.invalidURL(reason) }
   }
 

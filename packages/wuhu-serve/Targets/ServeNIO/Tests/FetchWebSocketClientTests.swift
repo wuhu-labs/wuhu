@@ -130,7 +130,7 @@ struct FetchWebSocketClientTests {
     do {
       let port = try #require(server.boundAddress.port)
       let url = URL(string: "ws://127.0.0.1:\(port)/ws")!
-      await #expect(throws: WebSocketClientError.refused) {
+      await #expect(throws: WebSocketClientError.refused(status: 401, body: Array("denied\n".utf8))) {
         _ = try await WebSocketClient.connect(url: url, headers: [("x-token", "bad")])
       }
       let socket = try await WebSocketClient.connect(url: url, headers: [("x-token", "good")])

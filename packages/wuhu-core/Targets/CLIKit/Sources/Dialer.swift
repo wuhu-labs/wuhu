@@ -6,8 +6,10 @@
 
 import enum FetchWebSocket.ClientTLS
 import enum FetchWebSocket.WebSocketClient
+import enum FetchWebSocket.WebSocketClientError
 import struct FetchWebSocket.WebSocketDuplex
 import protocol MachineChannel.FrameTransport
+import struct SpaceClient.SpaceClient
 
 extension SpaceTransport {
   public static func webSocketTransport(
@@ -24,6 +26,9 @@ extension SpaceTransport {
           maxFrameBytes: maxFrameBytes,
           tls: tls,
         ))
+      } catch let WebSocketClientError.refused(status, body) {
+        // An HTTP answer means the connection and its trust were fine.
+        throw SpaceClient.DialRefusal(status: status, body: body)
       } catch {
         throw await self.diagnosed(error, url: url, trust: trust)
       }

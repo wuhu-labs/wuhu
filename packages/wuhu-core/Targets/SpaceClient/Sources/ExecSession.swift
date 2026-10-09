@@ -131,6 +131,10 @@ public struct ExecSession: Sendable {
         await endpoint.run(transport)
       } catch is CancellationError {
         return nil
+      } catch let refusal as SpaceClient.DialRefusal where refusal.isFinal {
+        // The server answered and said no: redialing gets the same answer,
+        // so this is not an unreachable server.
+        return .streamFailed(refusal.description)
       } catch {
         unreachable += 1
       }

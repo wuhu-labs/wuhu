@@ -58,6 +58,34 @@ public struct SpaceClient: Sendable {
     }
   }
 
+  /// A WebSocket dial the server answered with a plain HTTP response instead
+  /// of an upgrade. The message is the server's `{code, message}` error body
+  /// when it sent one, else the body's text.
+  public struct DialRefusal: Error, Equatable, CustomStringConvertible {
+    public let status: Int
+    public let code: String?
+    public let message: String
+
+    public init(status: Int, body: [UInt8]) {
+      self.status = status
+      let text = String(decoding: body, as: UTF8.self)
+      let object = JSONValue.parse(text)?.object
+      self.code = object?["code"]?.stringValue
+      self.message = object?["message"]?.stringValue ?? String(text.drop(while: \.isWhitespace).reversed().drop(while: \.isWhitespace).reversed())
+    }
+
+    /// A client error is the server's answer, and dialing again gets the
+    /// same one; only a timeout or rate limit is worth another try.
+    public var isFinal: Bool {
+      (400 ..< 500).contains(self.status) && self.status != 408 && self.status != 429
+    }
+
+    public var description: String {
+      let head = [String(self.status), self.code].compactMap(\.self).joined(separator: " ")
+      return self.message.isEmpty ? head : "\(head): \(self.message)"
+    }
+  }
+
   public struct InvalidSpace: Error {
     public let space: String
   }
