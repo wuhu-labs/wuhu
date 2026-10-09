@@ -81,6 +81,23 @@ private let onePixelPNG = Data([
     #expect(try await historical.data() == Data([0x01]))
   }
 
+  @Test func revisionAddressedWritesCannotChangeTheLiveFile() async throws {
+    let harness = try Harness()
+    let version = try await json(try await harness.put("/doc.md", Data("original".utf8)))
+    let token = try #require(version.field("token")?.text)
+    for path in ["/doc.md@1", "wuhu://shared.localspace/doc.md@1"] {
+      let write = try await harness.post("write", ["path": .string(path), "content": "bad", "ifMatch": .string(token)])
+      #expect(write.status == .unprocessableContent)
+      #expect((try await json(write)).field("code") == "invalidPath")
+    }
+    let put = try await harness.put("/doc.md@1", Data("bad bytes".utf8), ifMatch: token)
+    #expect(put.status == .badRequest)
+    #expect((try await json(put)).field("code") == "invalidPath")
+    let live = try await harness.get(harness.api, "/v1/f/doc.md")
+    #expect(try await live.data() == Data("original".utf8))
+    #expect(live.headers[.eTag] == "\"\(token)\"")
+  }
+
   @Test func byteRoutesShareTheAPIWallWithTheJSONTools() async throws {
     let walled = try Harness(dev: false)
     for response in [

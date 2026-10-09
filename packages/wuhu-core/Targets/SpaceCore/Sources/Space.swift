@@ -90,19 +90,21 @@ public actor Space {
   /// another group it reads.
   /// `attribution` is recorded with each revision a live write mints.
   public func fs(
-    _ group: GroupID, at rev: Rev? = nil, acting: GroupID? = nil, attribution: RevisionAttribution? = nil,
+    _ group: GroupID, at rev: Rev? = nil, acting: GroupID? = nil, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil,
   ) -> any SpaceVFS {
+    precondition(listingLimit == nil || listingLimit! > 0)
+    precondition(listingByteLimit == nil || listingByteLimit! > 0)
     let base: any SpaceVFS = if let rev {
-      HistoricalFS(group: group, writer: writer, blobs: blobs, ceiling: Int64(rev.value))
+      HistoricalFS(group: group, writer: writer, blobs: blobs, ceiling: Int64(rev.value), listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     } else {
-      live(group, acting: acting ?? group, attribution: attribution)
+      live(group, acting: acting ?? group, attribution: attribution, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
     }
-    return MachineFolders(base: base, writer: writer, group: group)
+    return MachineFolders(base: base, writer: writer, group: group, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
   }
 
-  func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil) -> LiveFS {
+  func live(_ group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) -> LiveFS {
     LiveFS(
-      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, attribution: attribution,
+      group: group, acting: acting, writer: writer, blobs: blobs, broadcast: broadcast, dateGen: dateGen, listingLimit: listingLimit, listingByteLimit: listingByteLimit, attribution: attribution,
     )
   }
 }

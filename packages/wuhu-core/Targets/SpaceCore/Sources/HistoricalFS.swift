@@ -8,6 +8,8 @@ struct HistoricalFS: SpaceVFS {
   let writer: any DatabaseWriter
   let blobs: BlobStore
   let ceiling: Int64
+  var listingLimit: Int?
+  var listingByteLimit: Int?
 
   struct ResolvedNode {
     let path: String
@@ -53,9 +55,10 @@ struct HistoricalFS: SpaceVFS {
         }
         guard node.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
       }
-      let live = try Self.children(of: p, group: group, ceiling: ceiling, in: db)
       var entries: [Entry] = []
-      for node in live where (try? SpacePath(validating: node.path))?.parent == p {
+      var budget = ListingBudget(limit: listingByteLimit)
+      try Self.forEachChild(of: p, group: group, ceiling: ceiling, limit: listingLimit, in: db) { node in
+        try budget.consume(SpacePath.lastComponent(of: node.path))
         entries.append(try Self.entry(from: node, in: db))
       }
       return (VersionToken(rev: Int(ceiling)), entries.sorted { $0.name < $1.name })
@@ -97,9 +100,15 @@ struct HistoricalFS: SpaceVFS {
   // The nodes directly under `parent` as of `ceiling`. The path range keeps
   // the scan to `parent`'s subtree on the (path, rev) key: every path under
   // `/a/` sorts between `/a/` and `/a0`, `0` being the byte after `/`.
-  static func children(of parent: SpacePath, group: GroupID, ceiling: Int64, in db: Database) throws -> [ResolvedNode] {
+  static func children(of parent: SpacePath, group: GroupID, ceiling: Int64, limit: Int? = nil, in db: Database) throws -> [ResolvedNode] {
+    var nodes: [ResolvedNode] = []
+    try forEachChild(of: parent, group: group, ceiling: ceiling, limit: limit, in: db) { nodes.append($0) }
+    return nodes
+  }
+
+  private static func forEachChild(of parent: SpacePath, group: GroupID, ceiling: Int64, limit: Int?, in db: Database, body: (ResolvedNode) throws -> Void) throws {
     let prefix = parent.isRoot ? "/" : parent.rawValue + "/"
-    let rows = try Row.fetchAll(
+    let rows = try Row.fetchCursor(
       db,
       sql: """
       SELECT v.path AS path, v.kind AS kind, v.blob_hash AS blob_hash, v.rev AS rev, r.mtime AS mtime
@@ -107,10 +116,13 @@ struct HistoricalFS: SpaceVFS {
       WHERE v.grp = ? AND v.path > ? AND v.path < ? AND instr(substr(v.path, length(?) + 1), '/') = 0
         AND v.rev = (SELECT MAX(rev) FROM fs_versions v2 WHERE v2.grp = v.grp AND v2.path = v.path AND v2.rev <= ?)
         AND v.kind IS NOT NULL
+      ORDER BY v.path LIMIT ?
       """,
-      arguments: [group.rawValue, prefix, String(prefix.dropLast()) + "0", prefix, ceiling],
+      arguments: [group.rawValue, prefix, String(prefix.dropLast()) + "0", prefix, ceiling, limit ?? Int.max],
     )
-    return rows.map { ResolvedNode(path: $0["path"], kind: $0["kind"], blobHash: $0["blob_hash"], rev: $0["rev"], mtime: $0["mtime"]) }
+    while let row = try rows.next() {
+      try body(ResolvedNode(path: row["path"], kind: row["kind"], blobHash: row["blob_hash"], rev: row["rev"], mtime: row["mtime"]))
+    }
   }
 
   static func entry(from node: ResolvedNode, in db: Database) throws -> Entry {

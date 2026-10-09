@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 import QuickJSKit
@@ -161,10 +165,18 @@ private func scripted(_ body: () async throws -> JSONValue) async throws -> JSON
 }
 
 private let sessionModule = #"""
+import { failure } from "wuhu:space-core"
+const discover = __wuhu_discovery
 const create = __wuhu_session_create
 const ask = __wuhu_session_request
 const retag = __wuhu_session_tags
 const act = __wuhu_session_control
+
+export async function toolRoster() {
+  const reply = await discover("toolRoster")
+  if (reply.error) throw failure(reply.error)
+  return reply.ok
+}
 
 export async function createSession(options) {
   if (options === null || typeof options !== "object") {

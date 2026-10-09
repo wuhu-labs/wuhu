@@ -24,7 +24,7 @@ struct ScriptSpace: Sendable {
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_space_verb", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         let name = string(arguments, 0)
         guard ["table.create", "table.schema", "table.alter", "new", "rm"].contains(name) else {
           throw ToolRunError.failed(code: .invalidArgument, message: "unknown space operation", hint: nil)
@@ -53,7 +53,7 @@ struct ScriptSpace: Sendable {
       }
     })
     engine.define("__wuhu_space_query", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         let room = execution.buffers.withLock(\.room)
         let rows: Rows
         do {
@@ -67,7 +67,7 @@ struct ScriptSpace: Sendable {
       }
     })
     engine.define("__wuhu_space_open", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         switch string(arguments, 0) {
         case "observe": try await openObserve(string(arguments, 1), parameters: array(arguments, 2))
         case "watch": try await openWatch(string(arguments, 1), from: arguments[safe: 2])
@@ -76,14 +76,14 @@ struct ScriptSpace: Sendable {
       }
     })
     engine.define("__wuhu_space_next", promising: { arguments in
-      await answer { try await streams.next(id(arguments)) ?? .null }
+      await spaceAnswer { try await streams.next(id(arguments)) ?? .null }
     })
     engine.define("__wuhu_space_close", keepsAlive: false, promising: { arguments in
       await streams.close(id(arguments))
       return .null
     })
     engine.define("__wuhu_space_rows", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         let principal = try await principal()
         let path = try scriptWritable(string(arguments, 0), by: session, as: principal)
         let edits = try RowEdit.parse(arguments[safe: 1] ?? .null)
@@ -92,12 +92,12 @@ struct ScriptSpace: Sendable {
       }
     })
     engine.define("__wuhu_space_attributes", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         try await run("attributes.read", ["path": .string(string(arguments, 0))], as: try await principal())
       }
     })
     engine.define("__wuhu_space_patch", promising: { arguments in
-      await answer {
+      await spaceAnswer {
         let principal = try await principal()
         let path = try scriptWritable(string(arguments, 0), by: session, as: principal)
         guard case var .object(input)? = arguments[safe: 1] else { throw ScriptError("malformed patch") }
@@ -138,7 +138,7 @@ struct ScriptSpace: Sendable {
 
 /// A budget or protocol failure stays a plain error; a space failure becomes
 /// the payload the core turns into a SpaceError.
-private func answer(_ body: () async throws -> JSONValue) async -> JSONValue {
+func spaceAnswer(_ body: () async throws -> JSONValue) async -> JSONValue {
   do {
     return .object(["ok": try await body()])
   } catch let error as ScriptError {

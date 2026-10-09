@@ -37,17 +37,21 @@ func addToolRosterRoutes(_ router: inout Router) {
       }
       rosters = [executor]
     }
-    let output = ToolRostersOutput(rosters: rosters.map { executor in
-      ToolRosterDescriptor(
-        executor: executor,
-        tools: executor.tools.map {
-          guard case let .function(name, description, parameters) = $0 else {
-            preconditionFailure("session rosters cannot expose provider-hosted tools")
-          }
-          return ToolDescriptor(name: name, description: description, parameters: parameters)
-        },
-      )
-    })
+    let output = sessionToolRosters(executors: rosters)
     return try Response.json(output)
   }
+}
+
+func sessionToolRosters(executors: [SessionToolExecutor] = SessionToolExecutor.allCases) -> ToolRostersOutput {
+  return ToolRostersOutput(rosters: executors.map { executor in
+    ToolRosterDescriptor(
+      executor: executor,
+      tools: executor.tools.map {
+        guard case let .function(name, description, parameters) = $0 else {
+          preconditionFailure("session rosters cannot expose provider-hosted tools")
+        }
+        return ToolDescriptor(name: name, description: description, parameters: parameters)
+      },
+    )
+  })
 }

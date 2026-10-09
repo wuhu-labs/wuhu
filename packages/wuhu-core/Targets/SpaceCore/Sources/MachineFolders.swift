@@ -13,6 +13,8 @@ struct MachineFolders: SpaceVFS {
   let base: any SpaceVFS
   let writer: any DatabaseWriter
   let group: GroupID
+  var listingLimit: Int?
+  var listingByteLimit: Int?
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
     try await base.read(stored(path))
@@ -36,7 +38,17 @@ struct MachineFolders: SpaceVFS {
     }
     if p.components == Self.root {
       let group = group.rawValue
-      let machines = try await writer.read { db in try MachineRow.where { $0.grp.eq(group) }.fetchAll(db) }
+      let machines = try await writer.read { db in
+        let query = MachineRow.where { $0.grp.eq(group) }.order { $0.name }.limit(listingLimit ?? Int.max)
+        let cursor = try QueryValueCursor<MachineRow>(db: db, query: query.query)
+        var budget = ListingBudget(limit: listingByteLimit)
+        var machines: [MachineRow] = []
+        while let machine = try cursor.next() {
+          try budget.consume(machine.name ?? machine.id)
+          machines.append(machine)
+        }
+        return machines
+      }
       var entries: [Entry] = []
       for machine in machines {
         entries.append(try await folder(machine.id, named: machine.name ?? machine.id))

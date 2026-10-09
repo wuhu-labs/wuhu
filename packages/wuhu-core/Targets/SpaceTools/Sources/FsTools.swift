@@ -16,13 +16,13 @@ extension SpaceToolbox {
   }
 
   static let write = SpaceTool("write", schema: WriteInput.jsonSchema) { (context, input: WriteInput) in
-    let target = try context.resolve(input.path)
-    let token = try await target.backend.write(target.path, Data(input.content.utf8), ifMatch: input.ifMatch.map(Wire.token))
-    return Wire.object([("rev", try revField(token, target)), ("token", .string(Wire.string(token)))])
+    let written = try await context.writeBytes(input.path, Data(input.content.utf8), ifMatch: input.ifMatch)
+    return Wire.object([("rev", written.rev.map(JSONValue.integer)), ("token", .string(written.token))])
   }
 
   static let edit = SpaceTool("edit", schema: EditInput.jsonSchema) { (context, input: EditInput) in
     let target = try context.resolve(input.path)
+    if let group = target.group { try await context.refuseWrite(context.spacePath(target.path), in: group) }
     let (backend, path) = (target.backend, target.path)
     let (token, data) = try await backend.read(path)
     if let ifMatch = input.ifMatch, ifMatch != Wire.string(token) {
@@ -105,8 +105,8 @@ extension SpaceToolbox {
     let acting = context.principal.group
     try await SpaceView.requireReadable(sourceGroup, by: acting, actor: context.principal.actor, path: source.path, in: context.space)
     try await SpaceView.requireReadable(destinationGroup, by: acting, actor: context.principal.actor, path: destination.path, in: context.space)
-    try await context.space.refuseLayerWrite(try context.spacePath(source.path), in: sourceGroup, by: context.principal.actor)
-    try await context.space.refuseLayerWrite(try context.spacePath(destination.path), in: destinationGroup, by: context.principal.actor)
+    try await context.refuseWrite(context.spacePath(source.path), in: sourceGroup)
+    try await context.refuseWrite(context.spacePath(destination.path), in: destinationGroup)
     try await context.space.move(
       source.path, in: sourceGroup, to: destination.path, in: destinationGroup, replacing: input.replace == true, acting: acting,
     )
@@ -120,15 +120,7 @@ extension SpaceToolbox {
   }
 
   static let ls = SpaceTool("ls", schema: ListInput.jsonSchema) { (context, input: ListInput) in
-    let target = try context.resolve(input.path, rev: input.rev)
-    let (token, listed) = try await target.backend.list(target.path)
-    // The system folder and per-user files are the substrate's, not the
-    // navigator's: they leave the root listing unless the caller asks for
-    // hidden entries.
-    let entries = target.isSpace && target.path == "/" && input.hidden != true
-      ? listed.filter { !SessionHome.hiddenRootEntries.contains($0.name) }
-      : listed
-    return Wire.object([("rev", try revField(token, target)), ("entries", .array(entries.map(Wire.entry)))])
+    try await context.list(input.path, rev: input.rev, hidden: input.hidden ?? false)
   }
 
   static let stat = SpaceTool("stat", schema: StatInput.jsonSchema) { (context, input: StatInput) in
@@ -196,4 +188,24 @@ private func trimLineEnds(_ text: String) -> String {
       return String(line)
     }
     .joined(separator: "\n")
+}
+
+public extension SpaceToolContext {
+  func list(_ address: String, rev: Int? = nil, hidden: Bool = false, limit: Int? = nil, byteLimit: Int? = nil) async throws(ToolRunError) -> JSONValue {
+    do {
+      let resolved = try resolve(address, rev: rev)
+      let hiddenCount = resolved.isSpace && resolved.path == "/" && !hidden ? SessionHome.hiddenRootEntries.count : 0
+      let target = try resolve(address, rev: rev, listingLimit: limit.map { $0 + 1 + hiddenCount }, listingByteLimit: byteLimit)
+      let (token, listed) = try await target.backend.list(target.path)
+      let entries = target.isSpace && target.path == "/" && !hidden
+        ? listed.filter { !SessionHome.hiddenRootEntries.contains($0.name) }
+        : listed
+      if let limit, entries.count > limit {
+        throw ToolRunError.failed(code: .invalidArgument, message: "list exceeds \(limit) entries", hint: "List a narrower directory.")
+      }
+      return Wire.object([("rev", try revField(token, target)), ("entries", .array(entries.map(Wire.entry)))])
+    } catch {
+      throw Wire.failure(error)
+    }
+  }
 }

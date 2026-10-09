@@ -45,6 +45,7 @@ public struct SessionRuntime: Sendable {
     budget = budgetResolver(space: space)
     firing = SubscriptionFiring(space: space)
     scripts = Scripts(space: space)
+    scripts.configureDiscovery(toolRosters: sessionToolRosters())
   }
 
   init(
@@ -142,6 +143,7 @@ extension SessionRuntime {
         files: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
       ),
     )
+    scripts.configureDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(space: space)
     let serviceSlot = SessionServiceSlot()
     let executor = sessionToolExecutor(

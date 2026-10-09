@@ -324,3 +324,7 @@ materializes the session actor.
 ## Checked table wire contract
 
 `TableCreateInput` is path/header; `TableAlterInput` adds required ifMatch and optional allowDropColumns. Both return `TableWriteOutput` (rev/token). `TableSchemaInput` is path/optional rev and returns `TableSchemaOutput` (header/token). These closed inputs reject unknown fields, including unsupported header/column fields. Table headers have ordered string/integer/number/boolean/json columns, never an explicit id. `new` keeps its existing template/in -> path shape. All wire errors retain the existing code/message/hint and optional conflict token vocabulary.
+
+## History paging and checkout preconditions
+
+HistoryInput adds optional after (exclusive revision cursor) and limit; HistoryOutput adds optional next. Entries remain ascending and retain their existing provenance fields. CheckoutInput adds optional ifMatch, which the HTTP verb compares against the current head inside the restore transaction. Existing callers that omit it retain their prior behavior; the script module requires it. All optional fields remain additive on the wire.

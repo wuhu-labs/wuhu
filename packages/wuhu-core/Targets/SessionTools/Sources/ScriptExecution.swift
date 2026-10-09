@@ -262,8 +262,9 @@ final class ScriptExecution: Sendable {
   private func evaluate(space: Space) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
     ScriptBindings(execution: self, space: space, secrets: secrets).install(in: engine)
-    ScriptFiles(space: space, session: session).install(in: engine)
+    ScriptFiles(space: space, execution: self).install(in: engine)
     ScriptSpace(execution: self, space: space).install(in: engine)
+    ScriptDiscovery(execution: self, space: space).install(in: engine)
     ScriptMachineBindings(execution: self, space: space, access: machines).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)

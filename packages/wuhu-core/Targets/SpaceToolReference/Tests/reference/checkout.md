@@ -10,6 +10,7 @@ Restore a path's content from revision `rev` as a new revision. History never re
 | --- | --- | --- |
 | `path` | string | yes |
 | `rev` | integer | yes |
+| `ifMatch` | string or null | no |
 
 ## Output
 

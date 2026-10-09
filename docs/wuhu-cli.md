@@ -305,3 +305,9 @@ Without `WUHU_EXEC` — a person's terminal — none of this applies and `WUHU_I
 - `machines://<id>/<path>` passes through to the pinned space, which routes the
   fs tools to that machine (raw fs: no revisions — a `@rev` suffix on a machine
   address fails `unsupported`).
+
+## Code-mode files and discovery
+
+Sessions can use `wuhu:space` directly for versioned byte/text reads and guarded writes, file metadata, paged history and checkout, in addition to tables/templates and existing data operations. `writeBytes/writeText` require `{ifMatch:null}` for atomic creation or the current token for replacement; reads return the bytes/text and token. `checkout` requires `{ifMatch:token}` to replace an existing path or `{ifMatch:null}` to restore a missing path atomically. Files are capped at 16 MiB, directory listings at 500 entries, and history is paged with `{after,limit}` (maximum 500). System files are read-only. There is no generic call-any-CLI-verb escape hatch.
+
+`wuhu:machine` exposes `execs/execStatus/killExec` only for the calling session's execs. Discovery is available through `wuhu:space` context/groups, `wuhu:session` toolRoster and `wuhu:ai` capability; the capability probe checks configuration without using credentials or making paid/provider requests, and does not certify login or account availability. The generated namespace inventory is `wuhu://system/module-exports.json`.

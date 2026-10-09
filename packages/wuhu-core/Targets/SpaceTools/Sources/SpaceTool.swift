@@ -89,14 +89,14 @@ public struct SpaceToolContext: Sendable {
     }
   }
 
-  func resolve(_ address: String, rev: Int? = nil) throws -> Target {
+  func resolve(_ address: String, rev: Int? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) throws -> Target {
     let space = space
     let seam = machines
     let acting = principal.group
     let actor = principal.actor
     let resolver = FSResolver(
-      space: SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: nil),
-      spaceAt: { SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: $0) },
+      space: SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: nil, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
+      spaceAt: { SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: $0, listingLimit: listingLimit, listingByteLimit: listingByteLimit) },
       machine: { raw in
         guard MachineID.isValid(raw) else {
           throw ToolRunError.failed(code: .invalidPath, message: "invalid machine id: \(raw)", hint: nil)
@@ -107,7 +107,7 @@ public struct SpaceToolContext: Sendable {
         return MachineBackend(machine: MachineID(rawValue: raw), seam: seam)
       },
       system: SystemFiles.vfs,
-      group: { id, rev in SpaceView(space: space, group: GroupID(rawValue: id), acting: acting, actor: actor, rev: rev) },
+      group: { id, rev in SpaceView(space: space, group: GroupID(rawValue: id), acting: acting, actor: actor, rev: rev, listingLimit: listingLimit, listingByteLimit: listingByteLimit) },
     )
     let resolution = try resolver.resolve(address)
     let machine = resolution.machine.map(MachineID.init(rawValue:))
@@ -120,7 +120,7 @@ public struct SpaceToolContext: Sendable {
         throw ToolRunError.failed(code: .unsupported, message: "wuhu://system/ has no revisions: \(address)", hint: nil)
       }
       return Target(
-        backend: SpaceView(space: space, group: group!, acting: acting, actor: actor, rev: rev), path: resolution.path, machine: nil,
+        backend: SpaceView(space: space, group: group!, acting: acting, actor: actor, rev: rev, listingLimit: listingLimit, listingByteLimit: listingByteLimit), path: resolution.path, machine: nil,
         group: group, qualified: resolution.group != nil,
       )
     }
@@ -181,7 +181,7 @@ public struct SpaceTool: Sendable {
   public let inputSchema: JSONValue
   private let execute: @Sendable (SpaceToolContext, JSONValue) async throws(ToolRunError) -> JSONValue
 
-  init<Input: Decodable>(
+  init<Input: Decodable & Sendable>(
     _ name: String,
     schema: JSONValue,
     _ body: @escaping @Sendable (SpaceToolContext, Input) async throws -> JSONValue,
@@ -226,6 +226,8 @@ struct SpaceView: SpaceVFS {
   let acting: GroupID
   let actor: Actor
   let rev: Int?
+  var listingLimit: Int?
+  var listingByteLimit: Int?
 
   // A conversation's member reads its attachments in whatever group homes it.
   static func requireReadable(_ group: GroupID, by acting: GroupID, actor: Actor, path: String, in space: Space) async throws {
@@ -238,7 +240,7 @@ struct SpaceView: SpaceVFS {
 
   private func view(_ path: String) async throws -> any SpaceVFS {
     try await Self.requireReadable(group, by: acting, actor: actor, path: path, in: space)
-    return await space.fs(group, at: rev.map(Rev.init), acting: acting)
+    return await space.fs(group, at: rev.map(Rev.init), acting: acting, listingLimit: listingLimit, listingByteLimit: listingByteLimit)
   }
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
@@ -266,6 +268,9 @@ struct SpaceView: SpaceVFS {
 
   private func refuseLayer(_ path: String) async throws {
     guard let p = try? SpacePath(validating: path) else { return }
+    if case let .session(session) = actor {
+      try SessionHome.refuseForeignWrite(to: p, in: group, by: session, home: acting)
+    }
     try await space.refuseLayerWrite(p, in: group, by: actor)
   }
 

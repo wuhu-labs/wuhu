@@ -17,6 +17,7 @@ const hostRows = __wuhu_space_rows
 const hostAttributes = __wuhu_space_attributes
 const hostPatch = __wuhu_space_patch
 const hostVerb = __wuhu_space_verb
+const discover = __wuhu_discovery
 const read = __wuhu_conversation
 const between = __wuhu_dm
 
@@ -64,6 +65,9 @@ export const { query, observe, watch, mutateRows, readAttributes, patchAttribute
   readAttributes: (path) => call(() => hostAttributes(path)),
   patchAttributes: (path, patch) => call(() => hostPatch(path, patch)),
 })
+
+export const context = () => call(() => discover("context"))
+export const groups = () => call(() => discover("groups"))
 
 export function createTable(path, header) {
   return call(() => hostVerb("table.create", { path, header }, {}))
@@ -127,6 +131,7 @@ export async function remove(name, options) {
 """#
 
 let machineModule = #"""
+import { failure } from "wuhu:space-core"
 const { host, guarded, signal: running, bytesOf, base64Of } = globalThis.__wuhu_kernel
 delete globalThis.__wuhu_kernel
 
@@ -205,6 +210,14 @@ class Process {
 
 const date = (entry) => ({ ...entry, mtime: new Date(entry.mtime * 1000) })
 
+const ownExec = async (operation, id) => {
+  const value = await call(() => host.machine_own_exec(operation, id))
+  if (value.error) throw failure(value.error)
+  return value.ok
+}
+export const execs = () => ownExec("list")
+export const execStatus = (id) => ownExec("status", id)
+export const killExec = (id) => ownExec("kill", id)
 export const machines = () => call(() => host.machine_list())
 
 export function machine(reference) {

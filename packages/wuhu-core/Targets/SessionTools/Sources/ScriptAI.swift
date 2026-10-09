@@ -13,6 +13,15 @@ struct ScriptAI {
 
   func install(in engine: JSEngine) throws {
     let claims = MachineWriteClaims()
+    engine.define("__wuhu_capability", promising: { [session, tools] arguments in
+      try await capabilityAnswer {
+        try await tools.refuseUnlessLive(session)
+        guard case let .string(kind)? = arguments.first else {
+          throw CapabilityError(.invalidArgument, "capability needs a capability kind.")
+        }
+        return try await tools.capabilities().capability(kind)
+      }
+    })
     engine.define("__wuhu_generate_image", promising: { [session, tools] arguments in
       try await capabilityAnswer {
         guard case let .string(prompt)? = arguments.first,
@@ -86,6 +95,7 @@ const answer = (value) => {
 """#
 
 private let aiModule = capabilityModule + "\n" + #"""
+const probe = __wuhu_capability
 const generate = __wuhu_generate_image
 const recognize = __wuhu_transcribe
 let signal
@@ -102,6 +112,7 @@ async function image(prompt, options, images) {
   try { return answer(await guarded(signal, () => generate(String(prompt), options, images))) }
   finally { done() }
 }
+export const capability = async (kind) => answer(await guarded(signal, () => probe(kind)))
 export const generateImage = (prompt, options) => image(prompt, options)
 export const editImage = (images, prompt, options) => {
   if (!Array.isArray(images) || images.length === 0) throw new CapabilityError({ code: "invalid_argument", message: "editImage needs reference image paths", hint: "Pass an array of one to five private PNG paths." })

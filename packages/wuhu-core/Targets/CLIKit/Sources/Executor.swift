@@ -193,9 +193,14 @@ struct Executor {
       await self.runner.stdout(text)
     case let .history(path):
       let route = try self.route(path)
-      let input: JSONValue = ["path": .string(route.path)]
-      let output: HistoryOutput = try await self.tool("history", input, space: route.space)
-      await self.runner.stdout(formatHistory(output))
+      var after: Int?
+      repeat {
+        let input: JSONValue = if let after { ["path": .string(route.path), "after": .integer(after)] }
+        else { ["path": .string(route.path)] }
+        let output: HistoryOutput = try await self.tool("history", input, space: route.space)
+        await self.runner.stdout(formatHistory(output))
+        after = output.next
+      } while after != nil
     case let .checkout(path, rev):
       let route = try self.route(path)
       let input: JSONValue = ["path": .string(route.path), "rev": .integer(rev)]

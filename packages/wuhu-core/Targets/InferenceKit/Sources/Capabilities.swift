@@ -120,7 +120,61 @@ public struct CapabilityClient: Sendable {
     let headers: RequestHeaders
   }
 
+  struct Configuration {
+    let provider: String
+    let dialect: String
+    let baseURL: URL
+    let model: String
+    let facts: CapabilitiesDocument.Facts
+    let credentialID: String
+  }
+
+  public func capability(_ kind: String) throws -> JSONValue {
+    let selected: Kind = switch kind {
+    case "web_search": .search
+    case "image": .image
+    case "transcription": .transcription
+    default: throw CapabilityError(.invalidArgument, "Capability kind is image, transcription or web_search.")
+    }
+    let config = try configuration(selected, options: .init())
+    return .object([
+      "kind": .string(kind),
+      "provider": .string(config.provider),
+      "dialect": .string(config.dialect),
+      "model": .string(config.model),
+      "authentication": .string("not_checked"),
+      "features": .object([
+        "edit": config.facts.edit.map(JSONValue.bool) ?? .bool(false),
+        "timestamps": .array((config.facts.timestamps ?? []).map(JSONValue.string)),
+        "diarize": .bool(config.facts.diarize ?? false),
+      ]),
+    ])
+  }
+
   func resolve(_ kind: Kind, options: CapabilityOptions) async throws -> Resolved {
+    let config = try configuration(kind, options: options)
+    let credential: ProviderCredential?
+    do { credential = try await credentials.resolve(config.credentialID) }
+    catch { throw CapabilityError(.providerAuth, "Cannot resolve credentials for '\(config.credentialID)'.", hint: "Refresh the provider login on the server host.") }
+    var headers = RequestHeaders()
+    headers.set("user-agent", kind == .transcription ? TranscriberTransport.userAgent : "wuhu-capabilities/1")
+    if config.dialect == "codex" {
+      guard case let .chatGPT(token, account)? = credential else {
+        throw CapabilityError(.providerNotConfigured, "Provider '\(config.credentialID)' needs a ChatGPT login.", hint: "Run wuhu auth login \(config.credentialID) on the server host.")
+      }
+      headers.setSensitive("authorization", "Bearer \(token)")
+      headers.setSensitive("chatgpt-account-id", account)
+      headers.set("originator", models.providers[config.credentialID]?.originator ?? "wuhu")
+    } else {
+      guard case let .apiKey(key)? = credential, !key.isEmpty else {
+        throw CapabilityError(.providerNotConfigured, "Provider '\(config.credentialID)' needs an API key.", hint: "Run wuhu auth set \(config.credentialID) on the server host, supplying the key on stdin.")
+      }
+      headers.setSensitive(config.dialect == "brave" ? "x-subscription-token" : config.dialect == "exa" ? "x-api-key" : "authorization", config.dialect == "brave" || config.dialect == "exa" ? key : "Bearer \(key)")
+    }
+    return .init(provider: config.provider, dialect: config.dialect, baseURL: config.baseURL, model: config.model, facts: config.facts, headers: headers)
+  }
+
+  private func configuration(_ kind: Kind, options: CapabilityOptions) throws -> Configuration {
     let selection = switch kind {
     case .search: document?.webSearch
     case .image: document?.image
@@ -146,24 +200,6 @@ public struct CapabilityClient: Sendable {
       throw CapabilityError(.providerNotConfigured, "Dialect '\(variant.dialect)' does not implement this capability.")
     }
     let credentialID = variant.credential ?? (variant.dialect == "codex" ? models.providers.sorted(by: { $0.key < $1.key }).first(where: { $0.value.dialect == .codex })?.key ?? "codex" : id)
-    let credential: ProviderCredential?
-    do { credential = try await credentials.resolve(credentialID) }
-    catch { throw CapabilityError(.providerAuth, "Cannot resolve credentials for '\(credentialID)'.", hint: "Refresh the provider login on the server host.") }
-    var headers = RequestHeaders()
-    headers.set("user-agent", kind == .transcription ? TranscriberTransport.userAgent : "wuhu-capabilities/1")
-    if variant.dialect == "codex" {
-      guard case let .chatGPT(token, account)? = credential else {
-        throw CapabilityError(.providerNotConfigured, "Provider '\(credentialID)' needs a ChatGPT login.", hint: "Run wuhu auth login \(credentialID) on the server host.")
-      }
-      headers.setSensitive("authorization", "Bearer \(token)")
-      headers.setSensitive("chatgpt-account-id", account)
-      headers.set("originator", models.providers[credentialID]?.originator ?? "wuhu")
-    } else {
-      guard case let .apiKey(key)? = credential, !key.isEmpty else {
-        throw CapabilityError(.providerNotConfigured, "Provider '\(credentialID)' needs an API key.", hint: "Run wuhu auth set \(credentialID) on the server host, supplying the key on stdin.")
-      }
-      headers.setSensitive(variant.dialect == "brave" ? "x-subscription-token" : variant.dialect == "exa" ? "x-api-key" : "authorization", variant.dialect == "brave" || variant.dialect == "exa" ? key : "Bearer \(key)")
-    }
     let defaultURL = switch variant.dialect {
     case "codex": models.providers[credentialID]?.baseURL ?? URL(string: "https://chatgpt.com/backend-api/codex")!
     case "brave": URL(string: "https://api.search.brave.com/res/v1")!
@@ -186,7 +222,7 @@ public struct CapabilityClient: Sendable {
     let known = modelFacts(model, dialect: variant.dialect, kind: kind)
     let configured = variant.models?[model]
     let facts = CapabilitiesDocument.Facts(edit: configured?.edit ?? known.edit, timestamps: configured?.timestamps ?? known.timestamps, diarize: configured?.diarize ?? known.diarize)
-    return .init(provider: id, dialect: variant.dialect, baseURL: baseURL, model: model, facts: facts, headers: headers)
+    return .init(provider: id, dialect: variant.dialect, baseURL: baseURL, model: model, facts: facts, credentialID: credentialID)
   }
 
   func defaultModel(_ kind: Kind, dialect: String) -> String {

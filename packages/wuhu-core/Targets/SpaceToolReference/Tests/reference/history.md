@@ -1,6 +1,6 @@
 # `history`
 
-A path's revisions, oldest first: what each changed and, where recorded, who made it.
+A page of a path's revisions, oldest first: what each changed and, where recorded, who made it. Pass next as after to continue (default limit 100, maximum 500).
 
 `POST /v1/tools/history` takes a [`HistoryInput`](../../../SpaceContract/Tests/contract/history-input.schema.json) body and answers `200` with a [`HistoryOutput`](../../../SpaceContract/Tests/contract/history-output.schema.json).
 
@@ -9,6 +9,8 @@ A path's revisions, oldest first: what each changed and, where recorded, who mad
 | Field | Type | Required |
 | --- | --- | --- |
 | `path` | string | yes |
+| `after` | integer or null | no |
+| `limit` | integer or null | no |
 
 ## Output
 
@@ -22,6 +24,7 @@ A path's revisions, oldest first: what each changed and, where recorded, who mad
 | `entries[].fromRev` | integer or null | no |
 | `entries[].by` | string or null | no |
 | `entries[].via` | string or null | no |
+| `next` | integer or null | no |
 
 ## Errors
 

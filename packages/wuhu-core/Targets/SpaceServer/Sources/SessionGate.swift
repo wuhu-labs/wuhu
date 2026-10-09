@@ -158,6 +158,9 @@ private func sessionRouter(
   router.webSocket("/*") { _, _ in .response(notForSessions()) }
 
   router.get("/v1/server", use: forward)
+  router.get("/v1/context", use: forward)
+  router.get("/v1/session-tools", use: forward)
+  router.get("/v1/capabilities/:kind", use: forward)
   router.get("/v1/transcribe", use: forward)
   router.post("/v1/transcribe", use: forward)
   router.post("/v1/web-search", use: forward)
@@ -217,8 +220,8 @@ private func sessionRouter(
     }
   }
   router.get("/v1/exec") { _, _ in
-    let own = principal().session.rawValue
-    return try Response.json(try await space.liveExecs().filter { $0.caller == own }.map(execStatus(of:)))
+    let context = SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group))
+    return try Response.json(try await context.ownExecs())
   }
   router.get("/v1/exec/:id") { request, parameters in
     guard await ownsExec(parameters, space: space) else { return unknownExec(parameters) }
@@ -390,9 +393,9 @@ private func foreignHomeRefusal(_ addresses: [String], space: Space) async -> Re
 
 private func ownsExec(_ parameters: RouteParameters, space: Space) async -> Bool {
   guard let raw = parameters["id"], ExecID.isValid(raw),
-        let record = try? await space.execRecord(ExecID(rawValue: raw))
+        let _ = try? await SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group)).ownExecStatus(raw)
   else { return false }
-  return record.caller == principal().session.rawValue
+  return true
 }
 
 private func toolRefusal(_ payload: ToolResultPayload) -> Response {

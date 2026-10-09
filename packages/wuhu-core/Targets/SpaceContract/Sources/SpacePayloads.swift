@@ -25,17 +25,21 @@ public struct HistoryEntry: Codable, Equatable, Sendable {
 @Contract
 public struct HistoryInput: Codable, Equatable, Sendable {
   public let path: String
+  public let after: Int?
+  public let limit: Int?
 }
 
 @Contract
 public struct HistoryOutput: Codable, Equatable, Sendable {
   public let entries: [HistoryEntry]
+  public let next: Int?
 }
 
 @Contract
 public struct CheckoutInput: Codable, Equatable, Sendable {
   public let path: String
   public let rev: Int
+  public let ifMatch: String?
 }
 
 @Contract

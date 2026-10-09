@@ -177,6 +177,8 @@ public enum Wire {
       .failed(code: .internal, message: "allocation vocabulary diverges from frozen digest \(digest)", hint: nil)
     case let .queryForbiddenTable(table):
       .failed(code: .invalidArgument, message: "table not queryable: \(table)", hint: nil)
+    case let .listingResultTooLarge(byteLimit):
+      .failed(code: .invalidArgument, message: "listing exceeds \(byteLimit) byte allowance", hint: "List a narrower directory.")
     case let .queryResultTooLarge(byteLimit):
       .failed(
         code: .invalidArgument,

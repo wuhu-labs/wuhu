@@ -167,6 +167,7 @@ public enum SpaceError: Error, Equatable, Sendable {
   case queryNotReadOnly
   case queryForbiddenTable(String)
   case queryResultTooLarge(byteLimit: Int)
+  case listingResultTooLarge(byteLimit: Int)
   case unknownRelation(String)
   case templateInvalid(String)
   case importInvalid(String)

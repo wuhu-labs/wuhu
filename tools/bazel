@@ -9,7 +9,7 @@ if [[ -z "$real" ]]; then
   exit 2
 fi
 
-if [[ "${WUHU_POOL:-}" != "0" && ( "${WUHU_POOL:-}" == "1" || -n "${WUHU_POOL_URL:-}" ) ]]; then
+if [[ "${WUHU_POOL:-}" != "0" && ( "${WUHU_POOL:-}" == "1" || "${WUHU_LINUX_POOL:-}" == "1" || -n "${WUHU_POOL_URL:-}" ) ]]; then
   if deno run --allow-read="$repo" --allow-env=WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" --probe "$@"; then
     exec deno run --allow-read="$repo" --allow-env=WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" "$@"
   fi
@@ -36,8 +36,7 @@ release_lock() {
 
 acquire_lock() {
   while ! mkdir "$lock" 2>/dev/null; do
-    if [[ -f "$lock/pid" ]]; then
-      owner="$(<"$lock/pid")"
+    if owner="$(cat "$lock/pid" 2>/dev/null)"; then
       if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
         stale="$lock.stale.$$"
         if mv "$lock" "$stale" 2>/dev/null; then

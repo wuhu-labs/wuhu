@@ -62,7 +62,7 @@ public enum ToolReference {
     ),
     Entry(
       tool: "history", input: "HistoryInput", output: "HistoryOutput",
-      summary: "A path's revisions, oldest first: what each changed and, where recorded, who made it.",
+      summary: "A page of a path's revisions, oldest first: what each changed and, where recorded, who made it. Pass next as after to continue (default limit 100, maximum 500).",
     ),
     Entry(
       tool: "checkout", input: "CheckoutInput", output: "CheckoutOutput",

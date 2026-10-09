@@ -1,10 +1,10 @@
 === run_script
-onto an existing file: conflict: already exists: /_/sessions/<self>/avatar.png
+onto an existing file: already exists: /_/sessions/<self>/avatar.png
 replacing it: {"rev":6,"dangling":[]}
-replacing a folder: conflict: already exists: /folder
+replacing a folder: already exists: /folder
 to a free path: {"rev":7,"dangling":[]}
-into another home: unauthorized: /_/sessions/other/b.md is in the home of session other; only other itself and humans write there (propose the change to other by message instead)
-out of another home: unauthorized: /_/sessions/other/note.md is in the home of session other; only other itself and humans write there (propose the change to other by message instead)
+into another home: /_/sessions/other/b.md is in the home of session other; only other itself and humans write there
+out of another home: /_/sessions/other/note.md is in the home of session other; only other itself and humans write there
 remove: {"rev":8}
 remove again: not found: /notes/b.md
 remove in another home: /_/sessions/other/note.md is in the home of session other; only other itself and humans write there

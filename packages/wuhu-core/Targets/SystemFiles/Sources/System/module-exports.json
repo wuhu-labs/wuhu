@@ -1,11 +1,15 @@
 {
   "wuhu:ai": [
     "CapabilityError",
+    "capability",
     "editImage",
     "generateImage",
     "transcribe"
   ],
   "wuhu:machine": [
+    "execStatus",
+    "execs",
+    "killExec",
     "machine",
     "machines"
   ],
@@ -22,23 +26,34 @@
     "request",
     "resume",
     "setTags",
+    "toolRoster",
     "unarchive"
   ],
   "wuhu:space": [
     "alterTable",
+    "checkout",
+    "context",
     "conversation",
     "createTable",
     "dm",
+    "groups",
+    "history",
     "instantiateTemplate",
+    "list",
     "move",
     "mutateRows",
     "observe",
     "patchAttributes",
     "query",
     "readAttributes",
+    "readBytes",
+    "readText",
     "remove",
+    "stat",
     "tableSchema",
-    "watch"
+    "watch",
+    "writeBytes",
+    "writeText"
   ],
   "wuhu:web_search": [
     "CapabilityError",

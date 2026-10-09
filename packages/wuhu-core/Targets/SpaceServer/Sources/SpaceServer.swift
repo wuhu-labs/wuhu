@@ -175,6 +175,9 @@ public enum SpaceServer {
       }
       return jsonResponse(.object(info))
     }
+    let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
+    sessions?.scripts.configureDiscovery(contentHost: discoveryContentHost)
+    addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addGroupRoutes(&router, space: space, dev: dev)
     addMachineRoutes(
       &router, space: space, hub: hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,

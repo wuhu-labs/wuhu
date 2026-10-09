@@ -47,6 +47,21 @@ final class ScriptMachineBindings: Sendable {
   }
 
   func install(in engine: JSEngine) {
+    engine.define("__wuhu_machine_own_exec", promising: { [self] arguments in
+      await spaceAnswer {
+        let context = SpaceToolContext(space: space, principal: try await space.principal(of: execution.session))
+        switch string(arguments, 0) {
+        case "list": return try JSONValueEncoder().encode(try await context.ownExecs())
+        case "status": return try JSONValueEncoder().encode(try await context.ownExecStatus(string(arguments, 1)))
+        case "kill":
+          try await context.killOwnExec(string(arguments, 1)) { id in
+            try await available().exec.kill(id)
+          }
+          return .null
+        default: throw ToolRunError.failed(code: .invalidArgument, message: "unknown exec operation", hint: nil)
+        }
+      }
+    })
     engine.define("__wuhu_machine_list", promising: { [self] _ in try await machines() })
     engine.define("__wuhu_machine_fs", promising: { [self] in try await files($0) })
     engine.define("__wuhu_machine_exec", promising: { [self] in try await exec($0) })

@@ -7,6 +7,7 @@ import struct SpaceContract.GroupSettings
 import struct SpaceContract.GroupSummary
 import struct SpaceContract.GroupUpdateInput
 import SpaceCore
+import SpaceTools
 
 func addGroupRoutes(_ router: inout Router, space: Space, dev: Bool) {
   @Dependency(\.date) var clock
@@ -14,12 +15,17 @@ func addGroupRoutes(_ router: inout Router, space: Space, dev: Bool) {
   // Public discovery: an anonymous caller gets the ids alone, a credential
   // where it stands, and the group the request names changes neither.
   router.get("/v1/groups") { request, _ in
-    let standing: GroupStanding
+    let principal: Principal
     switch try await requestCredential(request, space: space, date: clock) {
-    case let .credential(credential): standing = try await groupStanding(of: credential, space: space, dev: dev)
+    case let .credential(credential):
+      principal = switch credential {
+      case let .session(id, group): Principal(actor: .session(id), group: group)
+      case let .person(acting): Principal(actor: .person(persona: "", account: acting.key.account), group: .shared)
+      case .anonymous: .shared(.anonymous)
+      }
     case let .refused(response): return response
     }
-    return try Response.json(try await space.groups().filter { $0.removedAt == nil }.map { standing.summary(of: $0.id) })
+    return try Response.json(try await SpaceToolContext(space: space, principal: principal).discoveryGroups(dev: dev))
   }
 
   router.put("/v1/groups/:id") { request, parameters in
@@ -45,31 +51,5 @@ func addGroupRoutes(_ router: inout Router, space: Space, dev: Bool) {
     }
     if let on = input.spaceLayer { try await space.setSpaceLayer(group, on: on) }
     return try Response.json(GroupSettings(id: group.rawValue, spaceLayer: try await space.spaceLayer(of: group)))
-  }
-}
-
-enum GroupStanding {
-  /// The --dev seat, which acts in every group.
-  case everywhere
-  case within(member: Set<GroupID>, readable: Set<GroupID>)
-
-  func summary(of group: GroupID) -> GroupSummary {
-    switch self {
-    case .everywhere: GroupSummary(id: group.rawValue, member: true, readable: true)
-    case let .within(member, readable):
-      GroupSummary(id: group.rawValue, member: member.contains(group), readable: readable.contains(group))
-    }
-  }
-}
-
-func groupStanding(of credential: RequestCredential, space: Space, dev: Bool) async throws -> GroupStanding {
-  switch credential {
-  case let .session(_, group):
-    return .within(member: [group], readable: try await space.reads(group))
-  case let .person(acting):
-    let member = try await space.memberGroups(of: acting.key.account)
-    return .within(member: member, readable: try await space.reads(member))
-  case .anonymous:
-    return dev ? .everywhere : .within(member: [], readable: [])
   }
 }

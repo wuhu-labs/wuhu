@@ -11,6 +11,7 @@ import JSONValue
 import enum PinnedTLS.PinnedTLS
 import Scratch
 import SpaceContract
+import Synchronization
 import Testing
 
 @Suite
@@ -120,6 +121,34 @@ struct RequestMappingTests {
       let input = try await requestBodyJSON(request)
       #expect(input == ["template": "/templates/day.md", "in": "/days"])
     }
+  }
+
+  @Test func historyFollowsEveryPageCursorAndPrintsEachRevisionOnceInOrder() async throws {
+    let inputs = Mutex<[JSONValue]>([])
+    let harness = try Harness { request in
+      #expect(request.method == .post)
+      #expect(request.url.path == "/v1/tools/history")
+      let input = try await requestBodyJSON(request)
+      inputs.withLock { $0.append(input) }
+      let output: JSONValue
+      switch input {
+      case ["path": "/a"]:
+        output = ["entries": [["rev": 2, "mtime": 102, "change": "write"], ["rev": 6, "mtime": 106, "change": "delete"]], "next": 6]
+      case ["path": "/a", "after": 6]:
+        output = ["entries": [["rev": 7, "mtime": 107, "change": "checkout", "fromRev": 3], ["rev": 9, "mtime": 109, "change": "move", "to": "/renamed"]], "next": 9]
+      case ["path": "/a", "after": 9]:
+        output = ["entries": [["rev": 11, "mtime": 111, "change": "write"]], "next": .null]
+      default:
+        Issue.record("Unexpected history request: \(input)")
+        output = ["entries": []]
+      }
+      return try Response.json(output)
+    }
+    #expect(await harness.runner.run(arguments: ["history", "/a"]) == 0)
+    #expect(inputs.withLock { $0 } == [["path": "/a"], ["path": "/a", "after": 6], ["path": "/a", "after": 9]])
+    #expect(await harness.recorder.requests.count == 3)
+    #expect(await harness.stdout.text == "2 write 102\n6 delete 106\n7 checkout 107 fromRev=3\n9 move 109 to=/renamed\n11 write 111\n")
+    #expect(await harness.stderr.text.isEmpty)
   }
 
   @Test func mapsObserveToGet() async throws {

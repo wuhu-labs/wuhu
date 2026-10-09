@@ -19,6 +19,8 @@ struct LiveFS: SpaceVFS {
   let blobs: BlobStore
   let broadcast: FSBroadcast
   let dateGen: DateGenerator
+  var listingLimit: Int?
+  var listingByteLimit: Int?
   var attribution: RevisionAttribution?
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
@@ -32,12 +34,17 @@ struct LiveFS: SpaceVFS {
   }
 
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {
+    try await write(path, data, ifMatch: ifMatch, createOnly: false)
+  }
+
+  func write(_ path: String, _ data: Data, ifMatch: VersionToken?, createOnly: Bool) async throws -> VersionToken {
     let p = try Self.validatedFileTarget(path)
     let blob = try await blobs.stage(Array(data))
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let (group, acting, attribution) = (group, acting, attribution)
     let outcome: FSWriteOutcome = try await writer.write { db in
       let head = try Substrate.head(p, group: group, in: db)
+      if createOnly, head != nil { throw SpaceError.alreadyExists(p.rawValue) }
       try Self.checkIfMatch(ifMatch, head: head, path: p)
       return try Self.commitFile(
         p, group: group, acting: acting, attribution: attribution, blob: blob, head: head, mtime: mtime, in: db,
@@ -174,9 +181,18 @@ struct LiveFS: SpaceVFS {
         guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
         guard head.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
       }
-      let children = try FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.parentPath.eq(p.rawValue) }.fetchAll(db)
+      let query = FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.parentPath.eq(p.rawValue) }
+        .order { $0.path }.limit(listingLimit ?? Int.max)
+      let cursor = try QueryValueCursor<FSHeadRow>(db: db, query: query.query)
+      var budget = ListingBudget(limit: listingByteLimit)
+      var entries: [Entry] = []
+      while let child = try cursor.next() {
+        let name = SpacePath.lastComponent(of: child.path)
+        try budget.consume(name)
+        entries.append(Substrate.entry(from: child))
+      }
       let token = VersionToken(rev: Int(try Substrate.maxRevision(in: db)))
-      return (token, children.map(Substrate.entry(from:)).sorted { $0.name < $1.name })
+      return (token, entries.sorted { $0.name < $1.name })
     }
   }
 

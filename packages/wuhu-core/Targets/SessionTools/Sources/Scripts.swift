@@ -10,6 +10,7 @@ import Synchronization
 // tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
   let space: Space
+  let discovery = Mutex(ScriptDiscoveryConfiguration())
   let secrets: SpaceSecretStores?
   let machines: ScriptMachineAccess?
   private let launches: AsyncStream<ScriptExecution>

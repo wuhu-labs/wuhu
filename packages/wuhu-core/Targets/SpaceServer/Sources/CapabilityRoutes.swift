@@ -13,6 +13,11 @@ import ServeRouting
 import SpaceCore
 
 func addCapabilityRoutes(_ router: inout Router, space: Space, credentials: CredentialResolver) {
+  router.get("/v1/capabilities/:kind") { _, parameters in
+    do {
+      return try .json(try await spaceCapabilities(space: space, credentials: credentials).capability(parameters["kind"] ?? ""))
+    } catch let error as CapabilityError { return capabilityFailure(error) }
+  }
   router.post("/v1/web-search") { request, _ in
     do {
       let input = try await request.body?.json(SearchInput.self, upTo: 64 << 10)

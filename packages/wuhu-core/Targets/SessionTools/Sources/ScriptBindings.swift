@@ -66,6 +66,7 @@ struct ScriptBuffers {
 }
 
 enum ScriptBuffer {
+  case fileResult
   case queryResult
   case responseBody
   case processOutput
@@ -74,6 +75,8 @@ enum ScriptBuffer {
 
 func overBudget(_ buffer: ScriptBuffer) -> ScriptError {
   let (what, advice) = switch buffer {
+  case .fileResult:
+    ("file result", "read a smaller file or directory, or read earlier response bodies first")
   case .queryResult:
     ("query result", "narrow the query (fewer columns, a filter, a LIMIT), or read earlier response bodies first")
   case .responseBody:
