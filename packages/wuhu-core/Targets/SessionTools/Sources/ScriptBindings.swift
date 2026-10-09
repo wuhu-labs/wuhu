@@ -158,6 +158,10 @@ final class ScriptBindings: Sendable {
           case let .string(address)? = fields["url"],
           case let .string(method)? = fields["method"]
     else { throw ScriptError("malformed request") }
+    if let identity = fields["identity"] {
+      guard case .bool = identity else { return fetchFailure("invalidArgument", "identity must be a boolean") }
+    }
+    let identity = fields["identity"] == .bool(true)
     guard let url = URL(string: try await secrets.reveal(address)), url.scheme == "http" || url.scheme == "https" else {
       throw ScriptError("unsupported URL: \(address)")
     }
@@ -182,7 +186,32 @@ final class ScriptBindings: Sendable {
     default: nil
     }
     @Dependency(\.fetch) var client
-    let response = try await client(Request(url: url, method: method, headers: headers, body: body))
+    let request = Request(url: url, method: method, headers: headers, body: body)
+    let response: Response
+    if identity {
+      guard headers[.authorization] == nil else {
+        return fetchFailure("invalidArgument", "identity: true cannot be combined with Authorization")
+      }
+      guard let identityFetch = execution.tools.scripts?.identityFetch else {
+        return fetchFailure("fetchIdentityUnavailable", "the server fetch identity is unavailable")
+      }
+      do {
+        response = try await identityFetch(request, execution.session) { [secrets] token in
+          secrets.protect(token)
+          secrets.protect(token.lowercased())
+        }
+      } catch let error as ScriptIdentityUnavailable {
+        return fetchFailure("fetchIdentityUnavailable", secrets.mask(error.message))
+      } catch {
+        throw masked(error)
+      }
+    } else {
+      do {
+        response = try await client(request)
+      } catch {
+        throw masked(error)
+      }
+    }
     let room = execution.buffers.withLock(\.room)
     let data: Data
     do {
@@ -190,17 +219,24 @@ final class ScriptBindings: Sendable {
     } catch FetchError.bodyLimitExceeded {
       throw overBudget(.responseBody)
     } catch {
-      throw ScriptError("reading the response body failed: \(error)")
+      let message = "reading the response body failed: \(error)"
+      throw ScriptError(secrets.mask(message))
     }
     let masked = Data(secrets.mask(Array(data)))
     let handle = try execution.buffers.withLock { try $0.hold(masked) }
     return .object([
       "status": .integer(response.status.code),
       "statusText": .string(secrets.mask(response.status.reasonPhrase)),
-      "headers": .array(response.headers.map { .array([.string($0.name.canonicalName), .string(secrets.mask($0.value))]) }),
+      "headers": .array(response.headers.map { .array([.string(secrets.mask($0.name.canonicalName)), .string(secrets.mask($0.value))]) }),
       "url": .string(address),
       "body": .integer(handle),
     ])
+  }
+
+  private func masked(_ error: any Error) -> any Error {
+    let message = String(describing: error)
+    let protected = secrets.mask(message)
+    return message == protected ? error : ScriptError(protected)
   }
 
   private func body(_ arguments: [JSONValue]) throws -> JSONValue {
@@ -246,4 +282,8 @@ extension Optional {
     guard let self else { throw error }
     return self
   }
+}
+
+private func fetchFailure(_ code: String, _ message: String) -> JSONValue {
+  .object(["error": .object(["code": .string(code), "message": .string(message)])])
 }

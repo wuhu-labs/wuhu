@@ -7,6 +7,7 @@ import Dependencies
 #else
   import Foundation
 #endif
+import Fetch
 import InferenceKit
 import JSONValue
 import Logging
@@ -116,6 +117,7 @@ extension SessionRuntime {
     usage: UsageBoard,
     probeClaude: (@Sendable (String) async -> ClaudeUsageProbe)?,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
+    identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let sockets = ResponsesSocketRegistry()
@@ -142,6 +144,7 @@ extension SessionRuntime {
       machines: ScriptMachineAccess(
         files: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
       ),
+      identityFetch: identityFetch,
     )
     scripts.configureDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(space: space)

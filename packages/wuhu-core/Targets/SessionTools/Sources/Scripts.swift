@@ -1,5 +1,6 @@
 import struct Credentials.SpaceSecretStores
 import Dependencies
+import Fetch
 import Logging
 import SessionDomain
 import SpaceCore
@@ -13,14 +14,16 @@ public final class Scripts: Sendable {
   let discovery = Mutex(ScriptDiscoveryConfiguration())
   let secrets: SpaceSecretStores?
   let machines: ScriptMachineAccess?
+  let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
 
-  public init(space: Space, secrets: SpaceSecretStores? = nil, machines: ScriptMachineAccess? = nil) {
+  public init(space: Space, secrets: SpaceSecretStores? = nil, machines: ScriptMachineAccess? = nil, identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil) {
     self.space = space
     self.secrets = secrets
     self.machines = machines
+    self.identityFetch = identityFetch
     (launches, launch) = AsyncStream.makeStream()
   }
 
@@ -130,5 +133,13 @@ extension ToolExecutor {
     case .released, .failed: "script \(execution.id) stopped"
     }
     return .script(.init(output: output))
+  }
+}
+
+public struct ScriptIdentityUnavailable: Error, Sendable {
+  public let message: String
+
+  public init(message: String) {
+    self.message = message
   }
 }

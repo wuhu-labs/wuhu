@@ -166,20 +166,21 @@ func fetchOrigin(_ url: URL) -> String? {
   return parts.string
 }
 
-private func fetchWithinDeadline<T: Sendable>(_ deadline: NIODeadline, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+func fetchWithinDeadline<T: Sendable>(_ deadline: NIODeadline, timeoutError: any Error = PageFetchError.timeout, remaining: (@Sendable () -> Duration)? = nil, operation: @escaping @Sendable () async throws -> T) async throws -> T {
   @Dependency(\.continuousClock) var clock
   return try await withThrowingTaskGroup(of: T.self) { tasks in
     tasks.addTask { try await operation() }
     tasks.addTask { [clock] in
-      try await clock.sleep(for: .nanoseconds(max(0, (deadline - .now()).nanoseconds)))
-      throw PageFetchError.timeout
+      let transportRemaining = Duration.nanoseconds(max(0, (deadline - .now()).nanoseconds))
+      try await clock.sleep(for: min(remaining?() ?? transportRemaining, transportRemaining))
+      throw timeoutError
     }
     defer { tasks.cancelAll() }
     return try await tasks.next()!
   }
 }
 
-func pinnedPageFetch(_ request: Request, deadline: NIODeadline, resolve: @Sendable (String, Int) async throws -> SocketAddress = resolveFetchHost) async throws -> Response {
+func pinnedPageFetch(_ request: Request, deadline: NIODeadline, stripCookies: Bool = true, timeoutError: any Error = PageFetchError.timeout, resolve: @Sendable (String, Int) async throws -> SocketAddress = resolveFetchHost) async throws -> Response {
   let rawHost = request.url.host!
   let host = rawHost.hasPrefix("[") ? String(rawHost.dropFirst().dropLast()) : rawHost
   let address = try await resolve(host, request.url.port ?? (request.url.scheme == "https" ? 443 : 80))
@@ -192,15 +193,15 @@ func pinnedPageFetch(_ request: Request, deadline: NIODeadline, resolve: @Sendab
   if let body = request.body { upstream.body = .bytes(ByteBuffer(bytes: try await body.bytes())) }
   let response: HTTPClientResponse
   do { response = try await lease.client.execute(upstream, deadline: deadline) } catch {
-    if .now() >= deadline || (error as? HTTPClientError) == .deadlineExceeded { throw PageFetchError.timeout }
+    if .now() >= deadline || (error as? HTTPClientError) == .deadlineExceeded { throw timeoutError }
     throw error
   }
   var headers = Headers()
   let nominated = Set((response.headers.first(name: "connection") ?? "").lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
-  for (name, value) in response.headers where !hopHeaders.contains(name.lowercased()) && !nominated.contains(name.lowercased()) && name.lowercased() != "set-cookie" {
+  for (name, value) in response.headers where !hopHeaders.contains(name.lowercased()) && !nominated.contains(name.lowercased()) && (!stripCookies || name.lowercased() != "set-cookie") {
     if let field = HTTPField.Name(name) { headers.append(HTTPField(name: field, value: value)) }
   }
-  return Response(status: Status(code: Int(response.status.code)), headers: headers, body: .stream(FetchResponseStream(body: response.body, lease: lease, deadline: deadline)))
+  return Response(status: Status(code: Int(response.status.code)), headers: headers, body: .stream(FetchResponseStream(body: response.body, lease: lease, deadline: deadline, timeoutError: timeoutError)))
 }
 
 private final class FetchConnection: Sendable {
@@ -223,13 +224,15 @@ private struct FetchResponseStream: AsyncSequence, Sendable {
   let body: HTTPClientResponse.Body
   let lease: FetchConnection
   let deadline: NIODeadline
-  func makeAsyncIterator() -> Iterator { Iterator(base: body.makeAsyncIterator(), lease: lease, deadline: deadline) }
+  let timeoutError: any Error
+  func makeAsyncIterator() -> Iterator { Iterator(base: body.makeAsyncIterator(), lease: lease, deadline: deadline, timeoutError: timeoutError) }
   struct Iterator: AsyncIteratorProtocol {
     var base: HTTPClientResponse.Body.AsyncIterator
     let lease: FetchConnection
     let deadline: NIODeadline
+    let timeoutError: any Error
     mutating func next() async throws -> Bytes? {
-      guard .now() < deadline else { throw PageFetchError.timeout }
+      guard .now() < deadline else { throw timeoutError }
       guard let buffer = try await base.next() else { lease.timeout.cancel(); lease.client.shutdown { _ in }; return nil }
       return Data(buffer.readableBytesView)
     }

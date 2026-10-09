@@ -3054,3 +3054,38 @@ Deno.test('host linker arguments reach the native test without entering simulato
   )
   assertEquals(simulator.includes('linkopts ='), false)
 })
+
+Deno.test('Wuhu mobile plists declare only scheduled push refresh in every signing variant', async () => {
+  const app = parse(
+    await Deno.readTextFile(
+      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
+    ),
+  ) as AppManifest
+  for (const name of ['WuhuAppIOS', 'WuhuAppVision']) {
+    const target = app.targets.find((target) => target.name === name)!
+    for (const variant of ['dev', 'adhoc', 'store'] as const) {
+      const info = appBundleInfo(
+        app,
+        variantBundle(target, variant),
+        'application',
+      )
+      assertEquals(info.UIBackgroundModes, ['fetch'])
+      assertEquals(info.BGTaskSchedulerPermittedIdentifiers, [
+        'ai.wuhu.app.push-refresh',
+      ])
+      assertEquals(
+        info.NSMicrophoneUsageDescription,
+        name === 'WuhuAppIOS'
+          ? 'Wuhu records what you dictate into the composer and sends it to your space to transcribe.'
+          : 'Wuhu records what you dictate into the composer and sends it to your space to transcribe. In voice mode it listens for “wuhu wuhu” and records what you say next.',
+      )
+    }
+  }
+  for (
+    const target of app.targets.filter((target) => target.platform === 'macOS')
+  ) {
+    const info = appBundleInfo(app, target, 'application')
+    assertEquals(info.UIBackgroundModes, undefined)
+    assertEquals(info.BGTaskSchedulerPermittedIdentifiers, undefined)
+  }
+})

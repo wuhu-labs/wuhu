@@ -411,6 +411,7 @@ public enum SpaceServer {
     if preinstallClaude(flatHosts: contentHostPattern != nil, models: await modelsDocument(space: space)) {
       claudeCode.installInBackground()
     }
+    let scriptFetch = ScriptFetch(identity: serverIdentity, issuer: advertisedOrigin)
     let sessions = await SessionRuntime.assemble(
       space: space,
       hub: hub,
@@ -426,6 +427,9 @@ public enum SpaceServer {
         @Dependency(\.uuid) var uuid
         let record = try await space.sessions.record(session)
         return try await serverIdentity.tokenForInference(issuer: advertisedOrigin, audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
+      },
+      identityFetch: { request, session, protect in
+        try await scriptFetch.response(request, session: session, space: space, protect: protect)
       },
     )
     let webPushRuntime = WebPushRuntime(

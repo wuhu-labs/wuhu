@@ -98,10 +98,7 @@ final class ScriptSecrets: Sendable {
       if values[key] == nil {
         let value = Array(try await store(in: group).value(of: name).utf8)
         values[key] = value
-        sent.withLock { sent in
-          if !sent.contains(value) { sent.append(value) }
-          sent.sort { $0.count > $1.count }
-        }
+        protect(String(decoding: value, as: UTF8.self))
       }
       output += values[key]!
       rest = bytes[end...]
@@ -118,6 +115,15 @@ final class ScriptSecrets: Sendable {
       rest = bytes[found.upperBound...]
     }
     return false
+  }
+
+  func protect(_ text: String) {
+    let value = Array(text.utf8)
+    guard !value.isEmpty else { return }
+    sent.withLock { sent in
+      if !sent.contains(value) { sent.append(value) }
+      sent.sort { $0.count > $1.count }
+    }
   }
 
   func mask(_ text: String) -> String {

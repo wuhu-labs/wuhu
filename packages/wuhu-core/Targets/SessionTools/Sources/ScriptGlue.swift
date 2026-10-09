@@ -685,15 +685,34 @@ let scriptPrelude = #"""
   }
 
   const fetch = async (input, init) => {
+    const hasIdentity = init != null && "identity" in Object(init)
+    const identity = init?.identity
+    if (hasIdentity && typeof identity !== "boolean") {
+      const error = new TypeError("identity must be a boolean")
+      error.code = "invalidArgument"
+      throw error
+    }
     const request = new Request(input, init)
+    if (identity === true && request.headers.has("authorization")) {
+      const error = new TypeError("identity: true cannot be combined with Authorization")
+      error.code = "invalidArgument"
+      throw error
+    }
     const signal = AbortSignal.any([execution.signal, request.signal])
     const source = takeBody(request)
     const body = source === null ? null : "text" in source ? { text: source.text } : { base64: base64Of(source.bytes) }
-    const call = () => host.fetch({ url: request.url, method: request.method, headers: [...request.headers], body })
+    const call = () => host.fetch({ url: request.url, method: request.method, headers: [...request.headers], body, ...(hasIdentity ? { identity } : {}) })
     try {
-      return fetched(await guarded(signal, call))
+      const reply = await guarded(signal, call)
+      if (reply.error) {
+        const error = new TypeError(reply.error.message)
+        error.code = reply.error.code
+        throw error
+      }
+      return fetched(reply)
     } catch (error) {
       if (signal.aborted) throw signal.reason
+      if (error.code) throw error
       throw new TypeError(`fetch failed: ${error.message}`)
     }
   }
