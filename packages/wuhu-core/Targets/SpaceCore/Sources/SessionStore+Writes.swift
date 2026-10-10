@@ -48,16 +48,8 @@ extension SessionStore {
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
     let tagsJSON = try Sessions.encode(tags)
-    let head: GenerationHead?
-    let claudeSessionID: String?
-    switch executor {
-    case .kernel, .contractor:
-      head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0) }
-      claudeSessionID = nil
-    case .claudeCode:
-      head = nil
-      claudeSessionID = uuid().uuidString.lowercased()
-    }
+    try executor.requireSupported()
+    let head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0) }
     let minted = Allocations.mintSecretCandidate(rng)
     return try await writer.write { db in
       if let receipt,
@@ -109,11 +101,6 @@ extension SessionStore {
       try Sessions.openGeneration(name, generation: 0, keptCount: head == nil ? 0 : 1, in: db)
       if let head {
         try Sessions.append(name, generation: 0, items: [TranscriptItem.generationHead(head)], in: db)
-      }
-      if let claudeSessionID {
-        try ClaudeCodeSessionRow.insert {
-          ClaudeCodeSessionRow(sessionID: name, claudeSessionID: claudeSessionID, pendingNote: nil, environment: nil)
-        }.execute(db)
       }
       let id = SessionID(name)
       if let receipt {
@@ -297,6 +284,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     let reminderQueued = try await writer.write { db -> Bool in
       let record = try Sessions.record(key, in: db)
+      try record.executor.requireSupported()
       try db.execute(
         sql: "UPDATE sessions SET hold = 'normal', error_message = NULL, last_activity_at = ? WHERE id = ?",
         arguments: [now, key],

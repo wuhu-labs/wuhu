@@ -97,7 +97,6 @@ public struct LoopConfig: Sendable {
   // reaches this seam, so crash-retry rejoin stays possible).
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
   public var invalidateInference: @Sendable (SessionID) async -> Void
-  var claudeCode: ClaudeCodeSeam
   public var thresholds: CompactionThresholds
   public var archiveGrace: Duration
   public var eviction: EvictionPolicy
@@ -109,7 +108,6 @@ public struct LoopConfig: Sendable {
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
-    claudeCode: ClaudeCodeSeam = .unavailable,
     thresholds: CompactionThresholds = .init(),
     archiveGrace: Duration = .seconds(24 * 3600),
     eviction: EvictionPolicy = .init(),
@@ -119,7 +117,6 @@ public struct LoopConfig: Sendable {
     self.compact = compact
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
-    self.claudeCode = claudeCode
     self.invalidateInference = invalidateInference
     self.thresholds = thresholds
     self.archiveGrace = archiveGrace

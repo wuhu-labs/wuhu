@@ -26,7 +26,6 @@ extension SessionActor {
   private func parkWakeFired(at due: Date) {
     guard liveState?.parkWake?.at == due else { return }
     live.parkWake = nil
-    if case .claudeCode = live.engine { live.claude.evaluate = true }
     nudge()
   }
 }

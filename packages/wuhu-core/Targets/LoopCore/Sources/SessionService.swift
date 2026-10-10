@@ -1,4 +1,3 @@
-import ClaudeStream
 import Dependencies
 import GRDB
 #if canImport(FoundationEssentials)
@@ -142,7 +141,7 @@ public struct SessionService: Sendable {
     log.error("\(phase) failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     await registry.discard(id)
     do {
-      try await sessions.markErrored(id, message: "\(phase) failed: \(error)")
+      try await sessions.markErrored(id, message: error is ExecutorUnavailableError ? "executor no longer supported" : "\(phase) failed: \(error)")
     } catch {
       log.error("could not mark session errored", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     }
@@ -164,20 +163,19 @@ public struct SessionService: Sendable {
     }
   }
 
-  // The executor gate: a session left over from the contractor executor is
-  // never materialized, so every verb that can lazily create a SessionActor
-  // checks the discriminator first and acts on the store directly instead.
-  // Input still lands in its queue; nothing consumes it. Restarting it onto a
-  // live executor is the way back.
-  private func contractorRecord(_ sessionID: SessionID) async throws -> SessionRecord? {
+  private func inactiveExecutorRecord(_ sessionID: SessionID) async throws -> SessionRecord? {
     let record = try await sessions.record(sessionID)
-    guard case .contractor = record.executor else { return nil }
+    guard record.executor.isRemoved else { return nil }
     return record
   }
 
   public func wake(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { return }
     let record = try await sessions.record(sessionID)
+    if case .claudeCode = record.executor {
+      if record.work != .errored { try await sessions.markErrored(sessionID, message: ExecutorUnavailableError().description) }
+      return
+    }
     if case .contractor = record.executor { return }
     guard record.work != .errored else { return }
     try await retryingEviction {
@@ -191,7 +189,7 @@ public struct SessionService: Sendable {
     if sessions.isReservedForArchive(sessionID) {
       return try await sessions.enqueue(sessionID, input: item)
     }
-    if try await contractorRecord(sessionID) != nil {
+    if try await inactiveExecutorRecord(sessionID) != nil {
       return try await sessions.enqueue(sessionID, input: item)
     }
     return try await retryingEviction {
@@ -203,7 +201,8 @@ public struct SessionService: Sendable {
 
   public func interrupt(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await contractorRecord(sessionID) != nil {
+    if try await inactiveExecutorRecord(sessionID) != nil {
+      if case .claudeCode = try await sessions.record(sessionID).executor { return }
       try await sessions.markInterrupted(sessionID)
       return
     }
@@ -217,7 +216,7 @@ public struct SessionService: Sendable {
   public func resume(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     do {
-      if try await contractorRecord(sessionID) != nil {
+      if try await inactiveExecutorRecord(sessionID) != nil {
         try await sessions.markResumed(sessionID)
         return
       }
@@ -267,7 +266,7 @@ public struct SessionService: Sendable {
       }
       for member in subtree {
         let record = try await sessions.record(member.id)
-        if case .contractor = record.executor {
+        if record.executor.isRemoved {
           if case .live = record.lifecycle { _ = try await sessions.archive(record.id, grace: archiveGrace) }
         } else {
           try await retryingEviction {
@@ -283,7 +282,7 @@ public struct SessionService: Sendable {
   }
 
   private func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
-    if try await contractorRecord(id) != nil { return true }
+    if try await inactiveExecutorRecord(id) != nil { return true }
     return try await retryingEviction {
       try await withCallback(of: Bool.self) { send(action: .prepareArchive(reservation, $0), to: id) }
     }
@@ -292,7 +291,7 @@ public struct SessionService: Sendable {
   private func releaseArchive(_ ids: [SessionID], reservation: UUID) async {
     for id in ids {
       sessions.releaseArchiveReservation(id, token: reservation)
-      guard (try? await contractorRecord(id)) == nil else { continue }
+      guard (try? await inactiveExecutorRecord(id)) == nil else { continue }
       _ = try? await withCallback(of: Void.self) { send(action: .releaseArchive(reservation, $0), to: id) }
     }
   }
@@ -303,7 +302,7 @@ public struct SessionService: Sendable {
     note: String?,
   ) async throws -> SessionRestart {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await contractorRecord(sessionID) != nil {
+    if try await inactiveExecutorRecord(sessionID) != nil {
       return try await sessions.restart(sessionID, executor: executor, note: note)
     }
     return try await retryingEviction {
@@ -313,22 +312,13 @@ public struct SessionService: Sendable {
     }
   }
 
-  // A hook reaches only a loaded session and only its current activation: a
-  // late request from a process already ended hands nothing over.
-  public func claudeCodeHook(_ sessionID: SessionID, activation: UUID, body: JSONValue) async -> JSONValue {
-    guard let hook = ClaudeCodeHook(body: body) else { return [:] }
-    guard let session = await registry.existing(sessionID) else { return hook.reply(handingOver: nil) }
-    return await session.claudeCodeHook(hook, activation: activation)
-  }
-
-  public func claudeCodeContextTokens(_ sessionID: SessionID) async -> Int? {
-    await registry.existing(sessionID)?.claudeCodeContextTokens
-  }
-
   public func unarchive(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await contractorRecord(sessionID) != nil {
+    if try await inactiveExecutorRecord(sessionID) != nil {
       try await sessions.unarchive(sessionID)
+      if case .claudeCode = try await sessions.record(sessionID).executor {
+        try await sessions.markErrored(sessionID, message: ExecutorUnavailableError().description)
+      }
       return
     }
     try await retryingEviction {

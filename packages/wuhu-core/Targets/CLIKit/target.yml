@@ -11,7 +11,7 @@ checks:
   test: [linux, mac]
 dependencies:
   - Assertion
-  - ClaudeInstall
+
   - Credentials
   - InferenceKit
   - SpaceClient

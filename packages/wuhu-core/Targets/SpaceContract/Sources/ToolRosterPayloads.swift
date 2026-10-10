@@ -4,7 +4,6 @@ import JSONValue
 @Contract
 public enum SessionToolExecutor: String, Codable, Equatable, Sendable, CaseIterable {
   case kernel
-  case claudeCode = "claude-code"
 }
 
 @Contract

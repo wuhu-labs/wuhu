@@ -1,5 +1,8 @@
-import struct ClaudeStream.ClaudeCodeLog
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 import SessionDomain
@@ -77,41 +80,5 @@ struct SessionRepo: Sendable {
 
   func restart(executor: SessionExecutor?, note: String?) async throws -> SessionRestart {
     try await sessions.restart(id, executor: executor, note: note)
-  }
-
-  func claudeCodeLog() async throws -> ClaudeCodeLog {
-    try await sessions.claudeCodeLog(id)
-  }
-
-  func undrainedInputs() async throws -> [SessionQueueEntry] {
-    try await sessions.undrainedInputs(id)
-  }
-
-  func claudeCodePendingNote() async throws -> String? {
-    try await sessions.claudeCodePendingNote(id)
-  }
-
-  func beginClaudeCodeTurn() async throws {
-    try await sessions.beginClaudeCodeTurn(id)
-  }
-
-  func appendClaudeCodeMirror(_ entries: [OrderedDictionary<String, JSONValue>], confirming handover: ClaudeCodeHandover?) async throws -> String? {
-    try await sessions.appendClaudeCodeMirror(id, entries: entries, confirming: handover)
-  }
-
-  func claudeCodeOwedCompactionNotice() async throws -> CompactionTrigger? {
-    try await sessions.claudeCodeOwedCompactionNotice(id)
-  }
-
-  func claudeCodeEnvironment(pendingSince: Date?) async throws -> SessionEnvironment {
-    try await sessions.claudeCodeEnvironment(id, pendingSince: pendingSince)
-  }
-
-  func armedSubscriptions() async throws -> [ArmedSubscription] {
-    try await sessions.armedSubscriptions(id)
-  }
-
-  func settleClaudeCodeTurn() async throws {
-    try await sessions.settleClaudeCodeTurn(id)
   }
 }

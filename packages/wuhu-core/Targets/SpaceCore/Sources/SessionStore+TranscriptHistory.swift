@@ -57,9 +57,7 @@ extension SessionStore {
         throw TranscriptHistoryError.generationChanged(expected: expected, actual: Int(generation))
       }
       if case .claudeCode = try Sessions.record(key, in: db).executor {
-        let page = try Sessions.claudeCodeHistory(key, generation: generation, limit: limit, before: before, expectedEpoch: epoch, in: db)
-        if before != nil, epoch != page.historyEpoch { throw TranscriptHistoryError.historyChanged }
-        return page
+        return TranscriptHistoryPage(generation: Int(generation), entries: [], origins: [], before: nil, hasEarlier: false, headPosition: nil)
       }
       let headValue: Int64? = try SessionPointerRow
         .where { $0.sessionID.eq(key) && $0.generation.eq(generation) }
@@ -93,4 +91,19 @@ extension SessionStore {
       )
     }
   }
+}
+
+@Table("session_contents")
+struct SessionContentRow {
+  @Column("session_id") var sessionID: String
+  @Column("id") var id: String
+  @Column("payload") var payload: String
+}
+
+@Table("session_pointers")
+struct SessionPointerRow {
+  @Column("session_id") var sessionID: String
+  @Column("generation") var generation: Int64
+  @Column("position") var position: Int64
+  @Column("content_id") var contentID: String
 }

@@ -1,4 +1,3 @@
-import ClaudeStream
 import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecretStores
 import Dependencies
@@ -102,7 +101,7 @@ extension SessionRuntime {
   ) async -> SessionRuntime {
     await assemble(
       space: space, hub: hub, attemptLog: attemptLog, metrics: metrics, credentials: credentials,
-      secrets: secrets, claudeCode: .unavailable, usage: UsageBoard(), probeClaude: nil,
+      secrets: secrets, usage: UsageBoard(),
     )
   }
 
@@ -113,9 +112,7 @@ extension SessionRuntime {
     metrics: InferenceMetricsSink,
     credentials: CredentialResolver,
     secrets: SpaceSecretStores?,
-    claudeCode: ClaudeCodeSeam,
     usage: UsageBoard,
-    probeClaude: (@Sendable (String) async -> ClaudeUsageProbe)?,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
@@ -223,7 +220,6 @@ extension SessionRuntime {
         )
       },
       invalidateInference: { await sockets.invalidate($0) },
-      claudeCode: claudeCode,
       thresholds: thresholds,
     )
 
@@ -235,17 +231,14 @@ extension SessionRuntime {
       attempts: attempts,
       usage: usage,
       sockets: sockets,
-      refresher: probeClaude.map { probe in
-        UsageRefresher(board: usage, space: space, credentials: credentials, probeClaude: probe)
-      },
+      refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
       scripts: scripts,
     )
   }
 }
 
 // A cancelled exec call leaves its process running on purpose (a crash retry
-// rejoins it); one cut off by an interrupt, or by the end of the Claude Code
-// process that made it, is never retried, so its process is killed.
+// rejoins it); one cut off by an interrupt, or by shutdown that made it, is never retried, so its process is killed.
 func killAbandonedExec(space: Space, hub: MachineHub, session: SessionID, call name: String, id: ToolCallID) async {
   guard name == "exec" else { return }
   guard let record = try? await space.execRecord(caller: session.rawValue, toolCallID: id), record.terminal == nil
@@ -381,7 +374,7 @@ func modelExecutorResolver(space: Space) -> @Sendable (String, String, String?) 
     } else {
       specifier = try catalog.defaultSpecifier(provider: provider, model: model)
     }
-    return catalog.document.providers[provider]?.dialect == .claude ? .claudeCode(specifier) : .kernel(specifier)
+    return .kernel(specifier)
   }
 }
 
@@ -471,7 +464,6 @@ extension ToolResultPayload {
     case .setTitle: "set_title"
     case .manipulateUI: "manipulate_ui"
     case .compact: "compact"
-    case .claudeCode: "claude_code"
     case .script: "script"
     case .failure: "failure"
     }

@@ -1,4 +1,3 @@
-import ClaudeStream
 import struct Credentials.CredentialResolver
 import Dependencies
 import Fetch
@@ -67,27 +66,8 @@ final class UsageBoard: Sendable {
       return true
     }
   }
-
-  // Gives back a claim whose refresh could not run, so the next tick tries again.
-  func releaseClaim(_ provider: String, claimedAt: Date) {
-    entries.withLock { entries in
-      guard entries[provider]?.attemptedAt == claimedAt else { return }
-      entries[provider]?.attemptedAt = nil
-    }
-  }
 }
 
-// A probe needs the installed binary; until it is there, nothing was tried.
-enum ClaudeUsageProbe: Sendable {
-  case notInstalled
-  case probed(ClaudeStreamFrame.RateLimit?)
-}
-
-// The cheapest model Claude Code accepts; a probe turn is one word long.
-let claudeUsageProbeModel = "claude-haiku-4-5"
-
-// A window is named for its length, so Codex and Claude windows of the same
-// length read alike.
 func usageWindowName(minutes: Int) -> String {
   switch minutes {
   case 300: "five_hour"
@@ -122,17 +102,6 @@ func codexUsage(payload: JSONValue) -> (plan: String?, windows: [UsageWindow]) {
   return (payload.object?["plan_type"]?.stringValue, windows)
 }
 
-// Claude Code reports utilization as a fraction; the wire speaks percent.
-func claudeUsage(_ rateLimit: ClaudeStreamFrame.RateLimit) -> [UsageWindow] {
-  if !rateLimit.windows.isEmpty {
-    return rateLimit.windows.map {
-      UsageWindow(name: $0.name, usedPercent: $0.utilization * 100, resetsAt: $0.resetsAt)
-    }
-  }
-  guard let name = rateLimit.type, rateLimit.utilization != nil || rateLimit.resetsAt != nil else { return [] }
-  return [UsageWindow(name: name, usedPercent: rateLimit.utilization.map { $0 * 100 }, resetsAt: rateLimit.resetsAt)]
-}
-
 struct UsageRefresher: Sendable {
   static let interval: TimeInterval = 15 * 60
   static let tick: Duration = .seconds(60)
@@ -140,7 +109,6 @@ struct UsageRefresher: Sendable {
   let board: UsageBoard
   let space: Space
   let credentials: CredentialResolver
-  let probeClaude: @Sendable (String) async -> ClaudeUsageProbe
 
   func run() async {
     @Dependency(\.continuousClock) var clock
@@ -158,18 +126,7 @@ struct UsageRefresher: Sendable {
       case .codex:
         guard board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
         await refreshCodex(id, provider: provider)
-      case .claude:
-        let claimedAt = date.now
-        guard board.claimRefresh(id, now: claimedAt, interval: Self.interval) else { continue }
-        switch await probeClaude(id) {
-        case .notInstalled:
-          board.releaseClaim(id, claimedAt: claimedAt)
-        case let .probed(rateLimit?):
-          board.record(id, plan: nil, windows: claudeUsage(rateLimit), at: date.now)
-        case .probed(nil):
-          break
-        }
-      case .anthropic, .responses:
+      case .claude, .anthropic, .responses:
         continue
       }
     }

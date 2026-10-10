@@ -103,38 +103,6 @@ private func toolHeavyKernelSession(_ harness: SessionHarness, rounds: Int) asyn
     }
   }
 
-  @Test func claudeCodeLogAndEntriesServeTheTranslatedTranscript() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let id = try await harness.store.createSession(
-        group: .shared,
-        title: "claude", kind: .agent, createdBy: "owner",
-        executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")),
-        snapshot: .init(),
-      )
-      try await harness.store.appendClaudeCodeMirror(id, entries: [
-        ["type": "assistant", "uuid": "a1", "message": ["role": "assistant", "content": [
-          ["type": "tool_use", "id": "toolu_1", "name": "Read", "input": ["file_path": "big.txt"]],
-        ]]],
-        ["type": "user", "uuid": "r1", "message": ["role": "user", "content": [
-          ["type": "tool_result", "tool_use_id": "toolu_1", "content": "1\tline"],
-        ]]],
-        ["type": "assistant", "uuid": "a2", "message": ["role": "assistant", "content": [["type": "text", "text": "done"]]]],
-      ])
-      let path = "/v1/session/\(id.rawValue)/log"
-
-      #expect(try await decodeLog(harness.get(path)).items.count == 1, "level 1 is the text reply")
-      let everything = try await decodeLog(harness.get(path, query: ["level": "3"]))
-      #expect(everything.items.count == 3)
-      let result = try transcriptItem(everything.items[1].item)
-      guard case let .toolResult(result) = result else { Issue.record("a tool result"); return }
-      #expect(result.payload == .claudeCode(ClaudeCodeToolResult(text: "1\tline", isError: false)))
-
-      let entry = try await decodeEntry(harness.get("/v1/session/\(id.rawValue)/entry/\(everything.items[1].ref)"))
-      #expect(entry.item.item == everything.items[1].item)
-    }
-  }
-
   @Test func kernelBeforePagesOlderItemsLevelIndependently() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

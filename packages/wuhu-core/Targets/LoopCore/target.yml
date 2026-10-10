@@ -2,7 +2,7 @@ name: LoopCore
 kind: library
 sources: Sources
 dependencies:
-  - ClaudeStream
+
   - SessionDomain
   - SpaceCore
   - WuhuAI
@@ -15,13 +15,8 @@ dependencies:
 swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
-  exclude:
-    - Fixtures/**
-  resources:
-    - path: Fixtures
-      mode: copy
   dependencies:
-    - ClaudeStream
+
     - OrderedCollections
     - SessionDomain
     - SpaceCore

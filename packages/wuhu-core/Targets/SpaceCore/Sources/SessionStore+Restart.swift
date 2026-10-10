@@ -41,9 +41,9 @@ extension SessionStore {
     let head = GenerationHead(
       id: uuid(), timestamp: nowDate, summary: "", snapshot: StateSnapshot(), note: note,
     )
-    let claudeSessionID = uuid().uuidString.lowercased()
     let (restart, hasQueuedInput) = try await writer.write { db in
       let record = try Sessions.record(key, in: db)
+      try (executor ?? record.executor).requireSupported()
       guard record.lifecycle == .live else { throw SessionStoreError.restartOfArchivedSession(key) }
       let stopped = record.hold == .interrupted || record.work == .errored
       guard stopped || record.work != .hasWork else { throw SessionStoreError.busyForRestart(key) }
@@ -73,8 +73,7 @@ extension SessionStore {
         }
       }
       var head = head
-      switch executor ?? record.executor {
-      case .kernel, .contractor:
+      do {
         var settle: SettleState
         do {
           settle = try Sessions.settleState(key, through: nowDate, in: db)
@@ -88,7 +87,6 @@ extension SessionStore {
           return request
         }
         head.settle = settle
-      case .claudeCode: break
       }
       let queue = try Sessions.recoverRestartQueue(key, tail: runtime.queueTail, in: db)
       if queue.dropped > 0 {
@@ -96,19 +94,13 @@ extension SessionStore {
         head.note = [note, dropped].compactMap(\.self).joined(separator: "\n")
       }
       let generation = runtime.generation + 1
-      switch executor ?? record.executor {
-      case .kernel, .contractor:
+      do {
         head.snapshot = .init(subscriptions: subscriptions)
         head.settleBoundary = .init(
           queueTail: queue.tail,
           messageTail: try Int64.fetchOne(db, sql: "SELECT COALESCE(MAX(n), 0) FROM messages WHERE sender_session_id = ?", arguments: [key])!,
         )
         try Sessions.writeGeneration(key, generation: generation, transcript: Transcript().compacted(head: head, kept: nil), in: db)
-      case .claudeCode:
-        // Claude Code's log has no head row: the note waits beside the fresh
-        // conversation id and goes in with the first delivery.
-        try Sessions.openGeneration(key, generation: generation, keptCount: 0, in: db)
-        try Sessions.beginClaudeCodeGeneration(key, claudeSessionID: claudeSessionID, note: head.note, in: db)
       }
       try db.execute(
         sql: """

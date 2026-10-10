@@ -21,6 +21,7 @@ struct ScriptSessions {
   let tools: ToolExecutor
 
   private struct CreateOptions: Decodable {
+    var executor: String?
     var title: String
     var kind: String?
     var topLevel: Bool?
@@ -51,6 +52,7 @@ struct ScriptSessions {
         let spawned: Spawned
         do {
           spawned = try await tools.spawn(session, callID, SpawnOrder(
+            executor: options.executor,
             title: options.title,
             kind: options.kind,
             topLevel: options.topLevel ?? false,
@@ -63,6 +65,8 @@ struct ScriptSessions {
             expectsReply: options.expectsReply ?? false,
             message: options.message,
           ))
+        } catch let error as ExecutorUnavailableError {
+          return .object(["error": .string(error.description), "code": "executorNoLongerSupported"])
         } catch let problem as ToolProblem {
           throw ToolProblem("createSession: \(problem.message)")
         }
@@ -185,7 +189,8 @@ export async function createSession(options) {
   const made = await create(options)
   if (made.error !== undefined) {
     const error = new Error(made.error)
-    error.id = made.id
+    if (made.id !== undefined) error.id = made.id
+    if (made.code !== undefined) error.code = made.code
     throw error
   }
   return made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }

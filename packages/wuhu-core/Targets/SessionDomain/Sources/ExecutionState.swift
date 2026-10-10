@@ -50,7 +50,7 @@ public struct ToolExecutionState: Hashable, Sendable {
     case let .edit(result):
       fileAccessLog[result.path] = result.revision
     case .grep, .find, .exec, .mount, .machines, .templates, .query, .createSession, .setTitle, .compact,
-         .manipulateUI, .claudeCode, .script, .failure, .sendMessage, .report:
+         .manipulateUI, .script, .failure, .sendMessage, .report:
       break
     case let .request(result):
       if let deadline = result.deadline {

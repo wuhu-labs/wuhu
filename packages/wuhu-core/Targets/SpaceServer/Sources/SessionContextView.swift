@@ -7,19 +7,9 @@ func sessionContext(
   _ record: SessionRecord,
   store: SessionStore,
   budget: @Sendable (SessionID) async -> ContextBudget,
-  claudeCodeTokens: @Sendable (SessionID) async -> Int?,
 ) async -> SessionContext? {
   switch record.executor {
-  case .claudeCode:
-    guard let used = await claudeCodeTokens(record.id) else { return nil }
-    let maxTokens = await budget(record.id).usableTokens
-    return SessionContext(
-      usedTokens: used,
-      maxTokens: maxTokens,
-      percentage: percentage(used: used, maxTokens: maxTokens),
-      updatedAt: nil,
-      source: .reported,
-    )
+  case .claudeCode: return nil
   case .kernel:
     guard let transcript = try? await store.transcript(record.id) else { return nil }
     let budget = await budget(record.id)

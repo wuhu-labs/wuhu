@@ -6,7 +6,6 @@ import type {
 
 export const executors: { executor: SessionToolExecutor; label: string }[] = [
   { executor: 'kernel', label: 'Kernel' },
-  { executor: 'claude-code', label: 'Claude Code' },
 ]
 
 export function rosterTools(

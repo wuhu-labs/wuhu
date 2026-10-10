@@ -35,3 +35,7 @@ Start over dismounts the live actor state and invalidates inference continuation
 
 
 The kernel `compact` tool refuses an empty or whitespace-only summary with the typed `CompactArgumentsError.emptySummary`, rendered as an ordinary model-readable tool failure; no generation is opened and the turn continues. Pre-reads do not waive the summary requirement. Start over resets retained requests' park-reminder pacing as well as live retry state, drops unreadable pending queue inputs with an explicit count in its note, and continues with readable pending input in its original order.
+
+## Removed executor
+
+The loop runs only kernel sessions. Boot errors every live stored `claude-code` session with "executor no longer supported", including idle agents; enqueue stores input without materializing an actor. Resume cannot clear that error. Start over onto a kernel provider uses the store path and preserves identity and retained queue/subscriptions. The retired discriminator remains decodable but is never executed.

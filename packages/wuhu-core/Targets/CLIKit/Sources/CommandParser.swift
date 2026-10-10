@@ -861,9 +861,9 @@ extension Command {
     kill      kill an exec by id
     skill     install the bundled agent skills into coding agent homes
     models    sync the space models document from the published basis
-    usage     print each provider's plan usage windows (codex, claude)
+    usage     print each provider's plan usage windows (codex)
     identity     inspect issuer URLs or set default/audience issuer choices (admin)
-    tool-roster  print the tools a kernel or Claude Code session is given
+    tool-roster  print the tools a kernel session is given
     auth      manage the space's provider credentials (api keys, chatgpt login)
     send      post a message to a session (an agent's box; a task takes no messages from people)
     inbox     print notifications above your wallet cursor and advance it
@@ -1545,14 +1545,13 @@ extension Command {
     configure the verifier to trust both URLs before switching.
     """,
     "tool-roster": """
-    usage: wuhu tool-roster [--executor kernel|claude-code] [--json]
+    usage: wuhu tool-roster [--executor kernel] [--json]
 
     prints the tool roster the pinned space hands its sessions, straight from
     the server's own declaration: kernel sessions get the base roster plus the
-    transcript tools the loop executes itself (bookmark, compact); Claude Code
-    sessions get the base roster over MCP and compact on their own.
+    transcript tools the loop executes itself (bookmark, compact).
 
-    without --executor both rosters are printed. --json prints the raw
+    without --executor the kernel roster is printed. --json prints the raw
     GET /v1/session-tools payload, parameter JSON Schemas included.
     \(exitCodes)
     """,
@@ -1560,7 +1559,7 @@ extension Command {
     usage: wuhu usage [--json]
 
     prints the plan usage the pinned space's server last observed per
-    provider: every codex and claude provider, window by window, with its
+    provider: every codex provider, window by window, with its
     reset time. inference refreshes it as a side effect; the server reads it
     itself when a provider has gone fifteen minutes unobserved.
     \(exitCodes)
@@ -1584,8 +1583,8 @@ extension Command {
       set <provider>     store an api key (read from stdin)
       list               show stored credentials (values redacted)
       remove <provider>  drop a stored credential
-      login <provider>   ChatGPT device login (codex) or Claude Code setup token (claude dialect)
-      logout <provider>  revoke ChatGPT login or drop Claude Code token
+      login <provider>   ChatGPT device login (codex)
+      logout <provider>  revoke ChatGPT login or remove stored credentials
     \(exitCodes)
     """,
     "auth set": """
@@ -1599,8 +1598,8 @@ extension Command {
     usage: wuhu auth login <provider>
 
     chooses the login flow from <provider> in /models.json: codex uses the
-    ChatGPT device-code flow; claude installs pinned Claude Code and stores the
-    setup token read from stdin, or prompted for at a terminal.
+    ChatGPT device-code flow; anthropic, claude and responses use API keys
+    set with auth set.
     \(exitCodes)
     """,
     "send": """
@@ -1670,8 +1669,7 @@ extension Command {
 
     creates a session (and its owning channel), inert until something is
     posted to it. --provider and --model are required, validated against the
-    space's /models.json; the provider's dialect picks who runs the session
-    (a claude provider runs Claude Code, every other one the kernel loop).
+    space's /models.json; every provider runs in the kernel.
     --effort defaults to the model's declared default. a person creates
     agents only: --kind task, or a task template, is refused.
 
@@ -1742,9 +1740,8 @@ extension Command {
     in full. both views serve the tail (last 50 by default); --limit N caps
     the page and --before pages older items — the [n] cursor in the channel
     view, a [ref] in the direct view. refs are short-lived — compaction
-    invalidates them. a Claude Code session's direct view is translated
-    from its stored log: wuhu tools under their own names, Claude Code's as
-    ClaudeRead, ClaudeWrite, ClaudeEdit and WebSearch.
+    invalidates them. old Claude Code turns are no longer shown; their raw
+    stored rows and external logs remain.
     \(exitCodes)
     """,
     "session entry": """

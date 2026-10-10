@@ -1,4 +1,3 @@
-import ClaudeStream
 import Foundation
 import JSONValue
 @testable import LoopCore
@@ -51,48 +50,6 @@ import struct WuhuAI.ToolCall
       #expect(shape == ["result \(ids[0])", "context repo manual", "result \(ids[1])"])
       let expected: [String: String?] = [repo: repo]
       #expect(transcript.environment.tools.folderRoots == expected)
-    }
-  }
-
-  @Test func `the after-tool hook returns the context recorded for its tool call, ahead of pending messages`() async throws {
-    try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
-      let sid = try await sessions.claudeCodeSession()
-      let parked = Box(false)
-      let never = Latch()
-      let fake = FakeClaudeCode(cue: { cue in
-        if cue.line.contains(#""subtype":"hook_started""#), cue.line.contains(#""hook_event":"Stop""#) {
-          parked.withLock { $0 = true }
-          await never.wait(unless: cue.killed)
-        }
-        return .proceed
-      })
-      try await runService(sessions, makeClaudeCodeConfig(fake)) { service in
-        fake.service.withLock { $0 = service }
-        _ = try await service.enqueue(item: Fix.message("go"), to: sid)
-        try await until("the turn is running") { parked.value }
-        try await until("its flush is recorded") { try await service.flushRecorded(sessions, sid) }
-        try await sessions.recordScopeContext(
-          sid,
-          toolCallID: ToolCallID("toolu_ctx"),
-          context: ScopeContext(folders: ["machines://m1/repo": "machines://m1/repo"], text: "repo manual"),
-        )
-        let activation = fake.launches.value[0].activation
-        let other = await service.claudeCodeHook(sid, activation: activation, body: ["hook_event_name": "PostToolUse", "tool_use_id": "toolu_other"])
-        #expect(other == [:])
-
-        let hook: JSONValue = ["hook_event_name": "PostToolUse", "tool_use_id": "toolu_ctx"]
-        let alone = try #require(await service.claudeCodeHook(sid, activation: activation, body: hook).additionalContext)
-        #expect(alone.contains("<type>system notice</type>"))
-        #expect(alone.hasSuffix("\n\nrepo manual"))
-
-        _ = try await service.enqueue(item: Fix.message("meanwhile", message: "m2"), to: sid)
-        let both = try #require(await service.claudeCodeHook(sid, activation: activation, body: hook).additionalContext)
-        let manual = try #require(both.range(of: "repo manual"))
-        let message = try #require(both.range(of: "meanwhile"))
-        #expect(manual.upperBound < message.lowerBound)
-        try await service.interrupt(sid)
-      }
     }
   }
 }

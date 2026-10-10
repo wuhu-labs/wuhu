@@ -42,19 +42,8 @@ public enum ToolResultPayload: Hashable, Sendable, Codable {
   case setTitle(SetTitleResult)
   case manipulateUI(ManipulateUIResult)
   case compact(CompactResult)
-  case claudeCode(ClaudeCodeToolResult)
   case script(ScriptResult)
   case failure(ToolFailure)
-}
-
-public struct ClaudeCodeToolResult: Hashable, Sendable, Codable {
-  public var text: String
-  public var isError: Bool
-
-  public init(text: String, isError: Bool) {
-    self.text = text
-    self.isError = isError
-  }
 }
 
 // The compact tool's own closing result; it lives in the old generation only
@@ -445,8 +434,10 @@ public struct ManipulateUIResult: Hashable, Sendable, Codable {
 
 public struct ToolFailure: Hashable, Sendable, Codable {
   public var message: String
+  public var code: String?
 
-  public init(message: String) {
+  public init(message: String, code: String? = nil) {
+    self.code = code
     self.message = message
   }
 }

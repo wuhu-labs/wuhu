@@ -31,13 +31,8 @@ extension SessionStore {
     let key = id.rawValue
     return try await writer.read { db in
       let runtime = try Sessions.runtime(key, in: db)
-      switch try Sessions.record(key, in: db).executor {
-      case .kernel, .contractor:
-        return (Int(runtime.generation), try Sessions.transcript(key, in: db).items)
-      case .claudeCode:
-        var transcript = ClaudeCodeTranscript(generation: runtime.generation)
-        return (Int(runtime.generation), try Sessions.claudeCodeTranscript(key, advancing: &transcript, in: db))
-      }
+      if case .claudeCode = try Sessions.record(key, in: db).executor { return (Int(runtime.generation), []) }
+      return (Int(runtime.generation), try Sessions.transcript(key, in: db).items)
     }
   }
 
@@ -51,21 +46,22 @@ extension SessionStore {
     let writer = writer
     return observation(
       writer: writer,
-      tables: ["session_pointers", "session_runtime", "claude_history_progress", "claude_history_items"],
+      tables: ["session_pointers", "session_runtime"],
       state: TranscriptObservation(cursor: cursor),
     ) { db, state in
       let runtime = try Sessions.runtime(key, in: db)
       let generation = Int(runtime.generation)
+      if case .claudeCode = try Sessions.record(key, in: db).executor {
+        var next = state
+        next.cursor = TranscriptCursor(generation: generation, position: -1)
+        let reset = state.cursor?.generation != generation || state.cursor?.position != -1
+        return (reset ? TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true) : nil, next)
+      }
       let reset = state.cursor?.generation != generation
       let start = reset ? 0 : state.cursor!.position + 1
       var next = state
       if bounded {
         if reset { return (TranscriptPage(generation: generation, startPosition: 0, items: [], reset: true), next) }
-        if case .claudeCode = try Sessions.record(key, in: db).executor {
-          let page = try Sessions.claudeCodeHistoryAfter(key, generation: runtime.generation, after: start - 1, epoch: historyEpoch, in: db)
-          if !page.reset, !page.items.isEmpty { next.cursor = TranscriptCursor(generation: generation, position: page.startPosition + page.items.count - 1) }
-          return (page.reset || !page.items.isEmpty ? page : nil, next)
-        }
         let boundary = Int64(start)
         let rows = try SessionPointerRow
           .where { $0.sessionID.eq(key) && $0.generation.eq(runtime.generation) && $0.position >= boundary }
@@ -81,26 +77,16 @@ extension SessionStore {
         return (TranscriptPage(generation: generation, startPosition: start, items: items, reset: false), next)
       }
       let items: [TranscriptItem]
-      switch try Sessions.record(key, in: db).executor {
-      case .kernel, .contractor:
-        items = try Row.fetchAll(
-          db,
-          sql: """
-          SELECT c.payload FROM session_pointers p
-          JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
-          WHERE p.session_id = ? AND p.generation = ? AND p.position >= ?
-          ORDER BY p.position
-          """,
-          arguments: [key, runtime.generation, start],
-        ).map { try Sessions.decode(TranscriptItem.self, from: $0["payload"]) }
-      case .claudeCode:
-        // A reconnect retranslates the generation and skips what the client holds.
-        var transcript = state.claudeCode.flatMap { $0.generation == runtime.generation ? $0 : nil }
-          ?? ClaudeCodeTranscript(generation: runtime.generation)
-        let fresh = try Sessions.claudeCodeTranscript(key, advancing: &transcript, in: db)
-        next.claudeCode = transcript
-        items = Array(fresh.dropFirst(max(0, start - (transcript.count - fresh.count))))
-      }
+      items = try Row.fetchAll(
+        db,
+        sql: """
+        SELECT c.payload FROM session_pointers p
+        JOIN session_contents c ON c.session_id = p.session_id AND c.id = p.content_id
+        WHERE p.session_id = ? AND p.generation = ? AND p.position >= ?
+        ORDER BY p.position
+        """,
+        arguments: [key, runtime.generation, start],
+      ).map { try Sessions.decode(TranscriptItem.self, from: $0["payload"]) }
       guard reset || !items.isEmpty else { return (nil, next) }
       next.cursor = TranscriptCursor(generation: generation, position: start + items.count - 1)
       return (TranscriptPage(generation: generation, startPosition: start, items: items, reset: reset), next)
@@ -130,7 +116,6 @@ extension SessionStore {
 
 private struct TranscriptObservation: Sendable {
   var cursor: TranscriptCursor?
-  var claudeCode: ClaudeCodeTranscript?
 }
 
 // Cursor-native observation: each wakeup reads past the cursor in one snapshot

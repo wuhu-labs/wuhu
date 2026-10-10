@@ -69,7 +69,7 @@ import Testing
       try SessionCreationParams(templateFields: ["tags": "a"])
     }
     #expect(throws: ExecutorSpecError.self) {
-      try SessionCreationParams(templateFields: ["executor": "kernel"])
+      try SessionCreationParams(templateFields: ["executor": "unknown"])
     }
   }
 
@@ -83,9 +83,11 @@ import Testing
       SessionCreationParams(provider: "a", model: "m"), resolveModelExecutor: resolveModelExecutor,
     )
     #expect(kernel == .kernel(ModelSpecifier(provider: "a", model: "m", effort: "default")))
-    #expect(try await SessionExecutor.resolve(
-      SessionCreationParams(provider: "claude", model: "opus"), resolveModelExecutor: resolveModelExecutor,
-    ) == .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "default")))
+    await #expect(throws: ExecutorUnavailableError()) {
+      try await SessionExecutor.resolve(
+        SessionCreationParams(provider: "claude", model: "opus"), resolveModelExecutor: resolveModelExecutor,
+      )
+    }
     await #expect(throws: ExecutorSpecError.self) {
       try await SessionExecutor.resolve(SessionCreationParams(model: "m"), resolveModelExecutor: resolveModelExecutor)
     }

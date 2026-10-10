@@ -1,4 +1,3 @@
-import struct ClaudeStream.ClaudeCodeLog
 import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -69,7 +68,6 @@ public struct QueueDrain: Hashable, Sendable {
 
 public enum SessionTranscript: Hashable, Sendable {
   case kernel(Transcript)
-  case claudeCode(ClaudeCodeLog)
 }
 
 public struct SessionHydration: Hashable, Sendable {
@@ -154,7 +152,7 @@ extension SessionStore {
       let transcript: SessionTranscript = switch record.executor {
       case .kernel: .kernel(try Sessions.kernelTranscript(key, in: db))
       case .contractor: .kernel(try Sessions.transcript(key, in: db))
-      case .claudeCode: .claudeCode(try Sessions.claudeCodeLog(key, in: db))
+      case .claudeCode: throw ExecutorUnavailableError()
       }
       return SessionHydration(
         record: record,
@@ -164,10 +162,7 @@ extension SessionStore {
         queueTail: Int(runtime.queueTail),
       )
     }
-    guard case let .claudeCode(log) = hydration.transcript else { return hydration }
-    var restored = hydration
-    restored.transcript = .claudeCode(try await restoringImages(log))
-    return restored
+    return hydration
   }
 
   /// Failure handling runs in the read snapshot: collect errors here and handle them after the scan, without reentering the store. Returning skips the failed session; throwing aborts the scan.
@@ -184,14 +179,14 @@ extension SessionStore {
         SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)) AS parked
         FROM sessions
         WHERE lifecycle = 'live' AND executor IN ('kernel', 'claude-code')
-          AND (work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR (kind = 'task' AND work = 'no_work'))
+          AND (executor = 'claude-code' OR work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR (kind = 'task' AND work = 'no_work'))
         ORDER BY allocation
         """,
       ).compactMap { row -> SessionID? in
         let key: String = row["id"]
         let id = SessionID(key)
         do {
-          _ = try Sessions.record(key, in: db)
+          try Sessions.record(key, in: db).executor.requireSupported()
           guard row["parked"] as Bool else { return id }
           return try Sessions.settleState(key, in: db).openRequests.isEmpty ? nil : id
         } catch {
@@ -199,6 +194,13 @@ extension SessionStore {
           return nil
         }
       }
+    }
+  }
+
+  public func undrainedInputs(_ id: SessionID) async throws -> [SessionQueueEntry] {
+    let key = id.rawValue
+    return try await writer.read { db in
+      try Sessions.undrained(key, tail: try Sessions.runtime(key, in: db).queueTail, in: db)
     }
   }
 

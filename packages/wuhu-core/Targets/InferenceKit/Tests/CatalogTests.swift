@@ -74,32 +74,29 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect(document.providers["codex"]?.originator == "wuhu")
   }
 
-  @Test func claudeDialectCannotReachKernelInference() async throws {
+  @Test func claudeCodeCredentialsCannotReachKernelInference() async throws {
     let document = try ModelsDocument(json: Data("""
     {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
       "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
         "efforts": ["high"], "defaultEffort": "high"}}}}
     """.utf8))
     let catalog = ProviderCatalog(document: document, credentials: CredentialResolver { _ in
-      Issue.record("kernel must refuse Claude Code before credential resolution")
       return .claudeCodeOAuth("fixture")
     })
-    await #expect(throws: InferenceError.invalidInput(status: 422, body: "provider claude is run by the Claude Code executor, never by kernel inference")) {
+    await #expect(throws: InferenceError.invalidInput(status: 401, body: CatalogError.claudeAPIKeyRequired(provider: "claude").description)) {
       try await catalog.resolve(.init(provider: "claude", model: "opus", effort: "high"), session: SessionID("s"))
     }
   }
 
-  @Test func anAutocompactWindowIsClaudeCodesAloneAndLeavesTheBudgetAlone() throws {
+  @Test func claudeDialectWithAPIKeyUsesAnthropicMessages() async throws {
     let document = try ModelsDocument(json: Data("""
     {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
       "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
-        "efforts": ["high"], "defaultEffort": "high", "autocompactWindow": 233000}}}}
+        "efforts": ["high"], "defaultEffort": "high"}}}}
     """.utf8))
-    let model = try #require(document.providers["claude"]?.models["opus"])
-    #expect(model.autocompactWindow == 233_000)
-    #expect(model.budget(.claude) == ContextBudget(maxInput: 1_000_000, maxOutput: 32000))
-    #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
-    #expect(try ModelsDocument(json: fixtureJSON).providers["anthropic"]?.models["claude-sonnet-5"]?.autocompactWindow == nil)
+    let catalog = ProviderCatalog(document: document, credentials: CredentialResolver { _ in .apiKey("test-key") })
+    let resolved = try await catalog.resolve(.init(provider: "claude", model: "opus", effort: "high"), session: SessionID("s"))
+    #expect(resolved.endpoint is AnthropicEndpoint)
   }
 
   @Test func validationRejectsUnknownMembers() throws {

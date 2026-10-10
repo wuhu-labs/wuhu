@@ -37,13 +37,20 @@ export function SessionTranscript({
   id: string
   record: SessionRecord
 }) {
-  if (record.executorLabel.startsWith('contractor:')) {
+  if (
+    record.executorLabel === 'claude-code' ||
+    record.executorLabel.startsWith('contractor:')
+  ) {
     return (
       <div className='wuhu-content wuhu-page'>
         <SessionHeader id={id} record={record} liveness='live' />
         <p className='wuhu-muted'>
-          This session ran on the removed contractor executor; its transcript is
-          no longer shown. Start it over on a model to use it again.
+          This session ran on the removed{' '}
+          {record.executorLabel === 'claude-code'
+            ? 'Claude Code'
+            : 'contractor'}{' '}
+          executor; its transcript is no longer shown. Start it over on a model
+          to use it again.
         </p>
       </div>
     )

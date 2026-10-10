@@ -56,7 +56,7 @@ func addSessionLogRoutes(
           .filter { kernelLevel(items[$0]) <= level }
           .suffix(limit)
         return try Response.json(SessionLogOutput(
-          context: await sessionContext(record, store: store, budget: runtime.budget, claudeCodeTokens: runtime.service.claudeCodeContextTokens),
+          context: await sessionContext(record, store: store, budget: runtime.budget),
           items: page.map {
             SessionLogItem(ref: "\(tag):\(generation):\($0)", receivedAt: nil, emittedAt: nil, item: itemJSON(items[$0]))
           },

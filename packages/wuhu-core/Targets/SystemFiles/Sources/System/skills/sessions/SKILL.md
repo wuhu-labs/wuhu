@@ -40,7 +40,7 @@ const { id } = await createSession({
   kind: "agent",
   topLevel: true,
   provider: "claude",
-  model: "claude-opus-5-5[1m]",
+  model: "claude-opus-5-5",
   key: "ops",
   message: [
     "You are Ops. You own the build server and the nightly backups.",

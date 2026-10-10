@@ -15,3 +15,7 @@ Both model/bookmark and mechanical compaction use `Transcript.compacted` to buil
 
 
 An empty-summary head with no pre-reads is inert even when it carries subscriptions or a restart note. A nonempty summary or pre-read list makes the head work. Start over snapshots armed subscriptions as context, not an instruction to take a turn.
+
+## Retired executors
+
+`SessionExecutor.claudeCode` is a decode-only legacy discriminator. `ExecutorUnavailableError` is the typed refusal for using it, with description "executor no longer supported". `requireSupported` rejects it; `isRemoved` identifies retired Claude Code and contractor records for store-only lifecycle handling. `SessionCreationParams.executor` accepts nil or `kernel`; `claude-code` throws that error, and other strings are invalid executor specifications. Template manifests validate the compatibility field before merging, so an explicit override does not conceal a template naming the removed executor. Model resolution refuses a removed result rather than routing it to the kernel. `ToolFailure.code` optionally carries a machine-readable rejection code; unsupported creation uses `executorNoLongerSupported` with the same description as its message.

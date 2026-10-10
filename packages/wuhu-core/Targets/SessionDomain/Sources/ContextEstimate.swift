@@ -138,7 +138,6 @@ extension ToolResultPayload {
   var isFailure: Bool {
     switch self {
     case .failure: true
-    case let .claudeCode(result): result.isError
     default: false
     }
   }
@@ -190,8 +189,6 @@ extension ToolResultPayload {
       "sent command \(result.n) to device \(result.device)"
     case let .compact(result):
       result.summary
-    case let .claudeCode(result):
-      result.text
     case let .failure(failure):
       failure.message
     }

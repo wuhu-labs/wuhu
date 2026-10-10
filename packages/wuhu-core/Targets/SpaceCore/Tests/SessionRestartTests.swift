@@ -254,21 +254,4 @@ import Testing
       }
     }
   }
-
-  @Test func restartSwitchesTheExecutor() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
-      let store = space.sessions
-      let id = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let claude = ModelSpecifier(provider: "claude", model: "opus", effort: "high")
-
-      let switched = try await store.restart(id, executor: .claudeCode(claude))
-      #expect(switched.executor == .claudeCode(claude))
-      #expect(try await store.record(id).executor == switched.executor)
-
-      let back = try await store.restart(id, executor: .kernel(.test))
-      #expect(back.executor == .kernel(.test))
-      #expect(back.generation == 2)
-    }
-  }
 }

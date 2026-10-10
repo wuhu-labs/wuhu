@@ -147,6 +147,7 @@ struct ReportArguments: Decodable {
 }
 
 struct CreateSessionArguments: Decodable {
+  var executor: String? = nil
   var title: String
   var kind: String?
   var topLevel: Bool?
@@ -162,6 +163,7 @@ struct CreateSessionArguments: Decodable {
   enum CodingKeys: String, CodingKey {
     case title
     case kind
+    case executor
     case topLevel = "top_level"
     case group
     case provider

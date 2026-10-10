@@ -29,9 +29,6 @@ extension SessionActor {
     // a settled session is evictable.
     live.lastUpdatedByLoopAt = nil
     defer { liveState?.lastUpdatedByLoopAt = date() }
-    if case .claudeCode = live.engine {
-      return try await claudeCodeLoop()
-    }
 
     while true {
       try Task.checkCancellation()

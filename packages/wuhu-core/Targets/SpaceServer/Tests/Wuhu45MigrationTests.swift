@@ -77,7 +77,7 @@ import Testing
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space.open(file: file) }
   }
 
-  @Test func theMigratedSchemaIsTheFreshSchema() throws {
+  @Test func theMigratedSchemaMatchesFreshWithRetiredTablesRetained() throws {
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = try copy(to: folder)
@@ -88,15 +88,20 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["revision_actors", "space_deployment_certificate", "inferences", "claude_history_progress", "claude_history_items", "claude_history_seen", "claude_history_calls"]
-    #expect(migrated.keys.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
+    let later: Set = ["revision_actors", "space_deployment_certificate", "inferences"]
+    let retired: Set = ["claude_code_sessions", "claude_code_handovers"]
+    #expect(migrated.keys.filter { !retired.contains($0) }.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
     for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
       }, "\(table)")
     }
     _ = try Space.open(file: file)
-    #expect(try Self.shape(file) == expected)
+    let reopened = try Self.shape(file)
+    #expect(reopened.filter { !retired.contains($0.key) } == expected)
+    for table in retired {
+      #expect(reopened[table] == migrated[table])
+    }
   }
 
   // A read session binds the web host it was minted on: a nullable grp, NULL

@@ -41,6 +41,7 @@ public struct SessionControlRefusal: Error {
 }
 
 struct SpawnOrder {
+  var executor: String? = nil
   var title: String
   var kind: String?
   var topLevel = false
@@ -85,6 +86,7 @@ extension ToolExecutor {
       throw problem(error)
     }
     var params = SessionCreationParams(
+      executor: order.executor,
       provider: order.provider,
       model: order.model,
       effort: order.effort,
@@ -118,6 +120,8 @@ extension ToolExecutor {
       executor = try await SessionExecutor.resolve(params, resolveModelExecutor: resolveModelExecutor)
     } catch let problem as ToolProblem {
       throw problem
+    } catch let error as ExecutorUnavailableError {
+      throw error
     } catch let error as ExecutorSpecError {
       throw ToolProblem(error.message)
     } catch {

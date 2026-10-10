@@ -49,7 +49,9 @@ func addSessionRoutes(
       )
     }
     do {
+      if input.executor == "claude-code" { throw ExecutorUnavailableError() }
       var params = SessionCreationParams(
+        executor: input.executor,
         provider: input.provider,
         model: input.model,
         effort: input.effort,
@@ -204,9 +206,6 @@ func addSessionRoutes(
     }
   }
 
-  // One verb, every executor: Claude Code gets `/compact` on standard input,
-  // the kernel loop takes the same row and pins its next turn to the compact
-  // tool.
   router.post("/v1/session/:id/compact") { request, parameters in
     guard let id = sessionID(parameters) else { return unknownSession(parameters) }
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
@@ -262,9 +261,10 @@ func addSessionRoutes(
       if record.kind == .task, input.message?.isEmpty == false {
         throw SessionStoreError.taskTakesNoHumanInput(id.rawValue)
       }
-      var params = SessionCreationParams(provider: input.provider, model: input.model, effort: input.effort)
+      var params = SessionCreationParams(executor: input.executor, provider: input.provider, model: input.model, effort: input.effort)
       // A restart on the same provider keeps what it does not name; another
       // provider's model and effort never carry over.
+      if case .claudeCode = record.executor, input.provider == nil { throw ExecutorUnavailableError() }
       let current = record.executor.creationParams
       if params.provider == nil || params.provider == current.provider {
         params = params.merged(over: current)
@@ -305,7 +305,7 @@ func addSessionRoutes(
       let record = try await store.record(id)
       return try Response.json(SessionContextOutput(
         context: await sessionContext(
-          record, store: store, budget: runtime.budget, claudeCodeTokens: runtime.service.claudeCodeContextTokens,
+          record, store: store, budget: runtime.budget,
         ),
       ))
     } catch {
@@ -539,15 +539,7 @@ func addSessionRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "invalid transcript page cursor or limit")
     }
     do {
-      let page: TranscriptHistoryPage
-      do {
-        page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
-      } catch let TranscriptHistoryError.preparing(generation) {
-        guard try await store.prepareClaudeCodeHistory(id, generation: generation) else {
-          return errorResponse(.serviceUnavailable, code: "transcriptPreparing", message: "Preparing history; retry this page")
-        }
-        page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
-      }
+      let page = try await store.transcriptHistory(id, limit: limit, generation: query["generation"].flatMap(Int.init), before: query["before"].flatMap(Int.init), epoch: query["epoch"])
       return try Response.json(TranscriptHistoryOutput(
         historyEpoch: page.historyEpoch,
         generation: page.generation,
@@ -764,6 +756,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
     return errorResponse(.conflict, code: "archiveGraceExpired", message: "the archive grace has expired")
   case let error as CatalogError:
     return errorResponse(.unprocessableContent, code: "invalidArgument", message: error.description)
+  case let error as ExecutorUnavailableError:
+    return errorResponse(.unprocessableContent, code: "executorNoLongerSupported", message: error.description)
   case let error as ExecutorSpecError:
     return errorResponse(.unprocessableContent, code: "invalidArgument", message: error.message)
   case let error as SpaceError:

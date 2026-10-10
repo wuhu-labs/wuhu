@@ -54,6 +54,8 @@ struct SessionHarness {
   let store: SessionStore
   let hub: MachineHub
   let handler: UpgradingHandler
+  let credentials: CredentialResolver
+  let toolStates = SessionTestToolStates()
 
   init(
     models: Bool = true,
@@ -68,6 +70,7 @@ struct SessionHarness {
     },
   ) async throws {
     let space = try Space.inMemory()
+    self.credentials = credentials
     self.space = space
     store = space.sessions
     if models {
@@ -145,6 +148,7 @@ struct SessionHarness {
   }
 
   init(assembledModels models: String) async throws {
+    credentials = .environmentOnly
     let space = try Space.inMemory()
     self.space = space
     store = space.sessions
@@ -259,4 +263,8 @@ extension SessionStreamEvent {
     if case .materialized = self { return true }
     return false
   }
+}
+
+final class SessionTestToolStates: Sendable {
+  let values = Mutex<[SessionID: ToolExecutionState]>([:])
 }

@@ -273,8 +273,8 @@ A device is an app install signed into the space; it registers itself on every c
 
 ```bash
 wuhu models update                  # seed/merge /models.json (additive; your edits win)
-wuhu tool-roster [--executor kernel|claude-code] [--json]  # the tools sessions of that kind are given
-wuhu usage [--json]                 # plan usage per codex/claude provider, window by window
+wuhu tool-roster [--executor kernel] [--json]  # the tools sessions of that kind are given
+wuhu usage [--json]                 # plan usage per codex provider, window by window
 wuhu auth set <provider> < key.txt  # store an api key for the pinned space (stdin)
 wuhu auth login codex               # chatgpt device-code login (codex subscription models)
 wuhu auth list                      # stored credentials, values redacted
@@ -298,9 +298,7 @@ wuhu inbox
   id, and they **reject** anything not shaped like ≥3 lowercase hyphenated
   words with `not a session id`. Never fabricate or validate ids as UUIDs.
 - `--provider`/`--model` are required, validated against `/models.json` —
-  run `wuhu models update` first on a fresh space. The provider's dialect
-  picks who runs the session: a `claude` provider runs Claude Code, every
-  other one the kernel loop. `--effort` must be one of the model's declared
+  run `wuhu models update` first on a fresh space. Every provider runs in the kernel. `--effort` must be one of the model's declared
   effort strings (omitted means the model's default). The
   session is inert until something is posted; the title is a positional
   argument, after the flags.
@@ -318,10 +316,7 @@ wuhu inbox
   exits nonzero **immediately** if the session is already errored, and
   nonzero on error or `--timeout SECS` expiry; `--timeout` requires `--wait`.
 - `session log` default = the session's channel (threads, senders, replies;
-  every executor). `--direct` is the deep per-session log of a kernel or
-  Claude Code session — a Claude Code session's is translated from its
-  stored log, so Wuhu tools show under their own names and Claude Code's as
-  `ClaudeRead`, `ClaudeWrite`, `ClaudeEdit`, `WebSearch` — and levels
+  every executor). `--direct` is the deep per-session log of a kernel session; old Claude Code turns are no longer translated. Levels
   select kinds: `--direct` = narrative (inputs,
   reminders, assistant text, replies, compaction markers); `-v` adds tool
   calls, reasoning summaries, and cumulative context usage; `-vv` adds tool

@@ -67,7 +67,7 @@ extension SessionStore {
     return try await writer.read { db in try PromptRevisions.spaceLayer(key, in: db) }
   }
 
-  /// Activation (a kernel call, a Claude Code launch): the stored revision,
+  /// Returns the stored prompt revision,
   /// or the current one, stored, when there is none yet.
   public func activatePromptRevision(_ id: SessionID) async throws -> Int {
     // Every kernel inference lands here: a stored row is a plain read, and a
@@ -79,9 +79,6 @@ extension SessionStore {
     }
   }
 
-  /// Moves the prompt to the current revision after a template clone.
-  /// Creation, kernel compaction, Claude Code's mirrored compact boundary and
-  /// Start over do it in their own commits.
   func advancePromptRevision(_ id: SessionID) async throws {
     let key = id.rawValue
     try await writer.write { db in

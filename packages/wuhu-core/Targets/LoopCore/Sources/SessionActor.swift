@@ -30,12 +30,7 @@ actor SessionActor {
   }
 
   struct LiveState {
-    enum Engine {
-      case kernel(Transcript)
-      case claudeCode(ClaudeCodeLive)
-    }
-
-    var engine: Engine
+    var transcript: Transcript
     var queueHead: Int
     var queueTail: Int
     var sessionStatus: RunStatus
@@ -53,39 +48,7 @@ actor SessionActor {
         return true
       }
       guard !claimingCompactRequest, queueHead == queueTail else { return false }
-      return switch engine {
-      case let .kernel(transcript): !transcript.hasWork
-      case let .claudeCode(claude): claude.isQuiet
-      }
-    }
-
-    // Retirement would drop what the next idle pass owes: a nag or a park wake.
-    var owesIdleCheck: Bool {
-      guard !sessionStatus.stopped, case let .claudeCode(claude) = engine else { return false }
-      return claude.evaluate
-    }
-
-    // In-place: the enum lets go of its copy first, so appending to a large
-    // transcript never copies it.
-    var transcript: Transcript {
-      get {
-        guard case let .kernel(transcript) = engine else { preconditionFailure("the kernel loop read a Claude Code session") }
-        return transcript
-      }
-      _modify {
-        guard case var .kernel(transcript) = engine else { preconditionFailure("the kernel loop read a Claude Code session") }
-        engine = .kernel(Transcript())
-        defer { engine = .kernel(transcript) }
-        yield &transcript
-      }
-    }
-
-    var claude: ClaudeCodeLive {
-      get {
-        guard case let .claudeCode(claude) = engine else { preconditionFailure("the Claude Code loop read a kernel session") }
-        return claude
-      }
-      set { engine = .claudeCode(newValue) }
+      return !transcript.hasWork
     }
   }
 
@@ -158,8 +121,7 @@ actor SessionActor {
     guard let liveState else { return lastCommandProcessedAt }
     guard let lhs = lastCommandProcessedAt,
           let rhs = liveState.lastUpdatedByLoopAt,
-          liveState.hasSettled,
-          !liveState.owesIdleCheck
+          liveState.hasSettled
     else { return nil }
     return max(lhs, rhs)
   }
@@ -167,12 +129,6 @@ actor SessionActor {
   func tryRetire(ttl: Duration, now: Date) async -> Bool {
     guard let idleSince, now.timeIntervalSince(idleSince) >= ttl.timeInterval
     else { return false }
-    // An idle Claude Code process is ended first, so its last mirror frames
-    // are stored; the next sweep retires the session.
-    if case let .claudeCode(claude)? = liveState?.engine, claude.activation != nil {
-      endIdleActivation()
-      return false
-    }
     // The park wake lives here; the process may end, the actor may not.
     if liveState?.parkWake != nil { return false }
     await shutdown()
@@ -188,11 +144,6 @@ actor SessionActor {
   }
 
   private func dismountLive() {
-    if case let .claudeCode(claude)? = liveState?.engine {
-      claude.activation?.process.kill()
-      claude.activation?.pump?.cancel()
-      claude.backstop?.cancel()
-    }
     liveState?.parkWake?.task.cancel()
     looperTask?.cancel()
     looperTask = nil
@@ -366,7 +317,6 @@ actor SessionActor {
     // An owed idle check is no work, but no pass may start a turn while the
     // archive is written: the turn would land in the archived session.
     live.archiving = true
-    await stopClaudeCodeActivation(continuing: nil)
     let deadline = try await repo.archive(grace: loopConfig.archiveGrace)
     try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
@@ -378,7 +328,6 @@ actor SessionActor {
   // materializing here would run a loop pass on a session about to be wiped.
   private func handleRestart(executor: SessionExecutor?, note: String?) async throws -> SessionRestart {
     // Its frames would land in the fresh generation.
-    await stopClaudeCodeActivation(continuing: nil)
     let restart = try await repo.restart(executor: executor, note: note)
     try Task.checkCancellation()
     lifecycle = nil
@@ -431,14 +380,8 @@ actor SessionActor {
     case .healthy:
       return
     case .interrupted, .errored(_):
-      let status = live.sessionStatus
       try await repo.markResumed()
       try modify {
-        if case let .errored(message) = status, case var .claudeCode(claude) = $0.engine {
-          claude.continuation = claude.continuation ?? .errored(message)
-          claude.cutOffs = 0
-          $0.engine = .claudeCode(claude)
-        }
         $0.sessionStatus = .healthy
       }
       nudge()
@@ -455,12 +398,8 @@ extension SessionActor.LiveState {
     } else {
       .healthy
     }
-    let engine: Engine = switch hydration.transcript {
-    case let .kernel(transcript): .kernel(transcript)
-    case .claudeCode: .claudeCode(ClaudeCodeLive(hydration: hydration))
-    }
     self.init(
-      engine: engine,
+      transcript: { switch hydration.transcript { case let .kernel(transcript): transcript } }(),
       queueHead: hydration.queueHead,
       queueTail: hydration.queueTail,
       sessionStatus: status,

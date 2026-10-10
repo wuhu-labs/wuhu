@@ -1,8 +1,5 @@
 import Foundation
 
-// What a nag reminds a session of. The kernel appends it to its transcript as
-// the notification below; Claude Code is handed its rendering and records the
-// handover. Either way the fold learns it was shown from stored data.
 public enum Nag: Hashable, Sendable, Codable {
   case owedReply(conversations: [ConversationID])
   case park(request: RequestID)

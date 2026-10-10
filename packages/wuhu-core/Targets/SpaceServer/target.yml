@@ -19,8 +19,8 @@ checks:
   test: [linux, mac]
 dependencies:
   - Assertion
-  - ClaudeInstall
-  - ClaudeStream
+
+
   - Credentials
   - MachineContract
   - MachineChannel
@@ -56,8 +56,8 @@ tests:
   size: large
   dependencies:
     - Assertion
-    - ClaudeInstall
-    - ClaudeStream
+
+
     - Credentials
     - Crypto
     - MachineContract

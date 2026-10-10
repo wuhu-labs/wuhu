@@ -52,30 +52,6 @@ import Testing
     }
   }
 
-  @Test func claudeCodesCompactBoundaryAdvancesTheRevision() async throws {
-    try await withSessionDeps {
-      let space = try makeSpace()
-      let store = space.sessions
-      let id = try await store.createSession(
-        group: .shared,
-        title: "claude", kind: .agent, createdBy: "morgan",
-        executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")),
-        snapshot: .init(),
-      )
-      let created = try #require(try await store.promptRevision(id))
-      try await edit(space, id, "one")
-      try await store.appendClaudeCodeMirror(id, entries: [["type": "assistant", "uuid": "x0"]])
-      #expect(try await store.promptRevision(id) == created, "an ordinary entry leaves the prompt alone")
-
-      try await store.appendClaudeCodeMirror(id, entries: [[
-        "type": "system", "subtype": "compact_boundary", "uuid": "b",
-        "compactMetadata": ["trigger": "auto", "preservedMessages": ["allUuids": []]],
-      ]])
-      #expect(try #require(try await store.promptRevision(id)) > created)
-      #expect(try await prompt(space, id).contains("home one"))
-    }
-  }
-
   @Test func aSessionWithoutARowRendersLatestAndStoresItAtActivation() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

@@ -389,16 +389,13 @@ import Testing
     }
   }
 
-  @Test func actingAsASessionOverMcpNeedsAHumanAdminOfItsGroup() async throws {
+  @Test func theRetiredMcpEndpointIsAbsent() async throws {
     try await withSessionDeps {
       try await world { w in
-        let list = rpc("tools/list")
-        #expect(try await send(w, .post, "/v1/session/\(w.p.rawValue)/mcp", list, bearer: w.alice).status == .ok)
-        let admin = try await send(w, .post, "/v1/session/\(w.p.rawValue)/mcp", list, bearer: w.admin)
-        #expect(admin.status == .forbidden)
-        let alice = try await send(w, .post, "/v1/session/\(w.s.rawValue)/mcp", list, bearer: w.alice)
-        #expect(alice.status == .forbidden)
-        #expect(try await send(w, .post, "/v1/session/\(w.s.rawValue)/mcp", list, bearer: w.admin).status == .ok)
+        for bearer in [w.alice, w.admin] {
+          let response = try await send(w, .post, "/v1/session/\(w.p.rawValue)/mcp", .object([:]), bearer: bearer)
+          #expect(response.status == .notFound)
+        }
       }
     }
   }

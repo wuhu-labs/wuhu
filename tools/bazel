@@ -10,8 +10,8 @@ if [[ -z "$real" ]]; then
 fi
 
 if [[ "${WUHU_POOL:-}" != "0" && ( "${WUHU_POOL:-}" == "1" || "${WUHU_LINUX_POOL:-}" == "1" || -n "${WUHU_POOL_URL:-}" ) ]]; then
-  if deno run --allow-read="$repo" --allow-env=WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" --probe "$@"; then
-    exec deno run --allow-read="$repo" --allow-env=WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" "$@"
+  if deno run --allow-read="$repo" --allow-env=CI,WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" --probe "$@"; then
+    exec deno run --allow-read="$repo" --allow-env=CI,WUHU_POOL,WUHU_LINUX_POOL,WUHU_POOL_URL,WUHU_POOL_TOKEN_FILE --allow-sys=systemMemoryInfo --allow-run "$repo/tools/check/pool-route.ts" "$@"
   fi
 fi
 args=()

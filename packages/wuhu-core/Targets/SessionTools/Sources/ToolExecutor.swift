@@ -107,6 +107,8 @@ public struct ToolExecutor: Sendable {
     }
     do {
       return try await run(tool, session: session, call: call, state: state)
+    } catch let error as ExecutorUnavailableError {
+      return .failure(.init(message: error.description, code: "executorNoLongerSupported"))
     } catch let error as CapabilityError {
       return .failure(.init(message: error.description))
     } catch let problem as ToolProblem {

@@ -49,7 +49,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
       #expect(script == .object(["context": context, "groups": groups, "roster": roster, "capability": capability]))
       #expect(context.object?["session"] == .string(session.rawValue))
       #expect(context.object?["group"] == "shared")
-      #expect(roster.object?["rosters"]?.array?.map { $0.object?["executor"] } == ["kernel", "claude-code"])
+      #expect(roster.object?["rosters"]?.array?.map { $0.object?["executor"] } == ["kernel"])
       #expect(roster.object?["rosters"]?.array?.first?.object?["tools"]?.array?.contains { $0.object?["name"] == "bookmark" } == true)
     }
   }

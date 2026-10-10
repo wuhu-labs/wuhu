@@ -26,11 +26,8 @@ export function toolState(tool: ToolActivity): ToolState {
   return tool.result.failed ? 'failed' : 'done'
 }
 
-// Claude Code sessions name the space's tools with their server prefix.
 export function baseName(tool: { name: string }): string {
-  return tool.name.startsWith('mcp__wuhu__')
-    ? tool.name.slice('mcp__wuhu__'.length)
-    : tool.name
+  return tool.name
 }
 
 const subjectKeys = [

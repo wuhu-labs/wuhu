@@ -19,11 +19,14 @@ public enum CatalogError: Error, Equatable, Sendable, CustomStringConvertible {
   case credentialMismatch(provider: String)
   case invalidTransport(provider: String)
   case invalidOIDCDialect(provider: String)
+  case claudeAPIKeyRequired(provider: String)
 
   public var description: String {
     switch self {
+    case let .claudeAPIKeyRequired(provider):
+      "claude provider needs an API key; Claude Code tokens are only usable through the gateway: \(provider)"
     case let .invalidOIDCDialect(provider):
-      "OIDC authentication is unsupported for Codex and Claude Code providers: \(provider)"
+      "OIDC authentication is unsupported for Codex providers: \(provider)"
     case let .invalidTransport(provider):
       "websocket transport requires a Responses or Codex provider: \(provider)"
     case let .unknownProvider(provider):
@@ -78,7 +81,7 @@ public struct ProviderCatalog: Sendable {
     guard let provider = document.providers[specifier.provider] else {
       throw CatalogError.unknownProvider(specifier.provider)
     }
-    guard provider.auth != .oidc || (provider.dialect != .codex && provider.dialect != .claude) else {
+    guard provider.auth != .oidc || provider.dialect != .codex else {
       throw CatalogError.invalidOIDCDialect(provider: specifier.provider)
     }
     guard provider.transport != .websocket || provider.dialect == .responses || provider.dialect == .codex else {
@@ -124,9 +127,6 @@ public struct ProviderCatalog: Sendable {
       throw InferenceError.normalize(error)
     }
     let provider = document.providers[specifier.provider]!
-    guard provider.dialect != .claude else {
-      throw .invalidInput(status: 422, body: "provider \(specifier.provider) is run by the Claude Code executor, never by kernel inference")
-    }
     if provider.auth == .oidc {
       guard let oidcToken else {
         throw .invalidInput(status: 422, body: "OIDC authentication is not configured on this server.")
@@ -143,9 +143,9 @@ public struct ProviderCatalog: Sendable {
       switch provider.dialect {
       case .responses:
         endpoint = OpenAIGPTEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: token, promptCacheKey: session.rawValue)
-      case .anthropic:
+      case .anthropic, .claude:
         endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek")
-      case .codex, .claude:
+      case .codex:
         throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
       }
       var resolved = ResolvedModel(specifier: specifier, endpoint: endpoint, budget: model.budget(provider.dialect), transport: provider.transport ?? .sse)
@@ -168,8 +168,10 @@ public struct ProviderCatalog: Sendable {
     }
     let endpoint: any ModelEndpoint
     switch (provider.dialect, credential) {
-    case (.claude, _):
-      throw .invalidInput(status: 422, body: "provider \(specifier.provider) is run by the Claude Code executor, never by kernel inference")
+    case (.claude, .claudeCodeOAuth), (.claude, .chatGPT):
+      throw .invalidInput(status: 401, body: CatalogError.claudeAPIKeyRequired(provider: specifier.provider).description)
+    case let (.claude, .apiKey(key)):
+      endpoint = AnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
     case let (.anthropic, .apiKey(key)) where specifier.provider == "deepseek":
       endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, apiKey: key)
     case let (.anthropic, .apiKey(key)):

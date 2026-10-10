@@ -29,6 +29,26 @@ private func directMessages(_ space: Space, to session: SessionID) async throws 
 }
 
 struct SessionTreeToolTests {
+  @Test func createSessionRejectsRemovedExecutorAsTypedFailure() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let parent = try await makeSession(space, name: "parent")
+      var world = ToolWorld(executor: creating(space), session: parent)
+      for arguments: JSONValue in [
+        .object(["title": "removed", "executor": "claude-code"]),
+        .object(["title": "removed", "template": "legacy"]),
+      ] {
+        _ = try await space.fs(.shared).write("/templates/legacy/template.json", Data(#"{"executor":"claude-code","provider":"p","model":"m"}"#.utf8), ifMatch: nil)
+        guard case let .failure(error) = try await world.run("create_session", ToolArguments(arguments)) else {
+          Issue.record("unsupported executor created a session")
+          continue
+        }
+        #expect(error.code == "executorNoLongerSupported")
+        #expect(error.message == "executor no longer supported")
+      }
+    }
+  }
+
   @Test func anAgentChildHasABoxAndAnswersItsParentsRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

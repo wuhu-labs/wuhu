@@ -1,4 +1,3 @@
-import enum ClaudeStream.ClaudeCode
 import struct Credentials.CredentialResolver
 import Dependencies
 import Fetch
@@ -72,63 +71,6 @@ import Testing
           #expect(try await turn(second) == secondPrompt, "another session's compaction leaves it alone")
         }
       }
-    }
-  }
-
-  @Test func aClaudeCodeLaunchCarriesTheFrozenPromptUntilACompactBoundary() async throws {
-    try await withSessionDeps {
-      let config = try scratchURL("frozen")
-      defer { try? FileManager.default.removeItem(at: config) }
-      let binary = config.appendingPathComponent("vendors/claude/\(ClaudeCode.version)/claude")
-      try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try Data("#!/bin/sh\n".utf8).write(to: binary)
-      try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
-
-      let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/models.json", Data("""
-      {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
-        "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000, "efforts": ["high"], "defaultEffort": "high"}}}}
-      """.utf8), ifMatch: nil)
-      try await seed(space)
-      let host = ClaudeCodeHost(
-        space: space, credentials: CredentialResolver { _ in .claudeCodeOAuth("sk-ant-oat") }, usage: UsageBoard(),
-        configDirectory: config, origin: "https://space", spaceID: "spc_test",
-      )
-      host.serveLoopback(on: "http://127.0.0.1:4100")
-      func create(_ title: String) async throws -> SessionID {
-        try await space.sessions.createSession(
-          group: .shared,
-          title: title, kind: .agent, createdBy: "morgan",
-          executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")), snapshot: .init(),
-        )
-      }
-      func launched(_ id: SessionID) async throws -> String {
-        try await host.launchSpec(session: id, claudeSessionID: UUID(), resume: false).spec("/tmp/a", "cct_t").systemPrompt
-      }
-      let first = try await create("first")
-      let second = try await create("second")
-
-      let firstPrompt = try await launched(first)
-      #expect(firstPrompt.contains("People talk to you by posting into your box; other sessions can post into conversations or DM you. There is no DM between a person and a session."))
-      #expect(firstPrompt.contains("Reach a person only by posting into a box, optionally naming `reply_target`"))
-      #expect(!firstPrompt.contains("`user` addresses"))
-      #expect(!firstPrompt.contains("`session` or `user`"))
-      let identity = "You are `"
-      let shared = try sharedPart(firstPrompt, before: identity)
-      #expect(shared == (try sharedPart(try await launched(second), before: identity)))
-      #expect(shared.contains("root manual") && shared.hasSuffix("- review — Review things (/.agents/skills/review/SKILL.md)"))
-      #expect(!shared.contains(first.rawValue) && !shared.contains(second.rawValue))
-
-      try await edit(space, first, "edited")
-      #expect(try await launched(first) == firstPrompt, "an edit after creation waits for a compact boundary")
-
-      _ = try await space.sessions.appendClaudeCodeMirror(first, entries: [[
-        "type": "system", "subtype": "compact_boundary", "uuid": "b",
-        "compactMetadata": ["trigger": "auto", "preservedMessages": ["allUuids": []]],
-      ]])
-      let compacted = try await launched(first)
-      #expect(compacted != firstPrompt)
-      #expect(compacted.contains("root edited") && compacted.contains("home edited"))
     }
   }
 }

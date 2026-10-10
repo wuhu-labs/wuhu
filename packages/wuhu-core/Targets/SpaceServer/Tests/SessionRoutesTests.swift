@@ -38,7 +38,7 @@ import Testing
     }
   }
 
-  @Test func claudeDialectCreatesAClaudeCodeSession() async throws {
+  @Test func claudeDialectCreatesAKernelSession() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       _ = try await harness.space.fs(.shared).write("/models.json", Data("""
@@ -51,7 +51,7 @@ import Testing
       )
       #expect(response.status == .ok)
       let id = try #require(JSONValue.parse(try await response.text())?.object?["id"]?.stringValue)
-      #expect(try await harness.store.record(SessionID(id)).executor == .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")))
+      #expect(try await harness.store.record(SessionID(id)).executor == .kernel(ModelSpecifier(provider: "claude", model: "opus", effort: "high")))
     }
   }
 
@@ -548,40 +548,7 @@ extension SessionHarness {
   }
 }
 
-@Suite struct ClaudeHistoryRoutesTests {
-  @Test func preparingAdvancesOneChunkAndOlderPagesPinTheEpoch() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness()
-      let id = try await harness.store.createSession(group: .shared, title: "cc", kind: .agent, createdBy: "owner", executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")), snapshot: .init())
-      for index in 0 ..< 260 {
-        try await harness.store.appendClaudeCodeMirror(id, entries: [[
-          "type": "assistant", "uuid": .string("a\(index)"),
-          "message": ["content": [["type": "text", "text": .string("entry \(index)")]]],
-        ]])
-      }
-      let path = "/v1/session/\(id.rawValue)/transcript/page"
-      let preparing = try await harness.get(path)
-      #expect(preparing.status == .serviceUnavailable)
-      #expect((try await json(preparing)).object?["code"] == "transcriptPreparing")
-      var tail: TranscriptHistoryOutput?
-      for _ in 0 ..< 20 {
-        let response = try await harness.get(path)
-        if response.status == .ok { tail = try await response.json(TranscriptHistoryOutput.self); break }
-        #expect(response.status == .serviceUnavailable)
-      }
-      let page = try #require(tail)
-      #expect(page.entries.map(\.position) == Array(60 ..< 260))
-      let epoch = try #require(page.historyEpoch)
-      let older = try await harness.get(path, query: ["generation": "0", "before": "60", "epoch": epoch])
-      #expect(older.status == .ok)
-      #expect(try await older.json(TranscriptHistoryOutput.self).entries.map(\.position) == Array(0 ..< 60))
-      let missingEpoch = try await harness.get(path, query: ["generation": "0", "before": "60"])
-      #expect(missingEpoch.status == .conflict)
-      let staleEpoch = try await harness.get(path, query: ["generation": "0", "before": "60", "epoch": "stale"])
-      #expect(staleEpoch.status == .conflict)
-    }
-  }
-}
+@Suite struct ClaudeHistoryRoutesTests {}
 
 @Suite struct ConversationHistoryRoutesTests {
   @Test func sparseOrdinalsUseExtraRowExhaustionAndExclusiveBoundaries() async throws {

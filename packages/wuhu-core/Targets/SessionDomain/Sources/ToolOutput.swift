@@ -149,10 +149,6 @@ extension ToolResultPayload {
       var result = result
       result.output = backstopped(result.output, limit)
       return .script(result)
-    case let .claudeCode(result):
-      var result = result
-      result.text = backstopped(result.text, limit)
-      return .claudeCode(result)
     case let .failure(failure):
       var failure = failure
       failure.message = backstopped(failure.message, limit)

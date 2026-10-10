@@ -59,7 +59,7 @@ agent 的脚本和命令也能用密钥，比如某个 web 服务的 token。这
 
 ## 无密钥提供商与服务器身份
 
-兼容的提供商可在 `/models.json` 条目中设置 `"auth": "oidc"`。Wuhu 为每次内核推理调用签发一个有效期为 5 分钟的 ES256 令牌，通过 `Authorization: Bearer <jwt>` 发送，不读取存储的凭据。Anthropic Messages 和 OpenAI Responses 支持此方式；ChatGPT Codex 和 Claude Code 不支持。提供商必须能够验证 Wuhu 的令牌，普通厂商 API 不会因此接受它们。能力调用的认证配置保持独立。
+兼容的提供商可在 `/models.json` 条目中设置 `"auth": "oidc"`。Wuhu 为每次内核推理调用签发一个有效期为 5 分钟的 ES256 令牌，通过 `Authorization: Bearer <jwt>` 发送，不读取存储的凭据。Anthropic Messages 和 OpenAI Responses 支持此方式；ChatGPT Codex 不支持。提供商必须能够验证 Wuhu 的令牌，普通厂商 API 不会因此接受它们。能力调用的认证配置保持独立。
 
 令牌的 audience 是提供商 `baseURL` 的 origin，也可使用内部 HTTP 地址；issuer 是服务器配置的 HTTPS `--origin`，托管租户使用自己的主机地址。无需额外配置 issuer 或 audience 字段。配置缺失或签名失败会返回有类型的错误，绝不回退到已存储的密钥或其他提供商。
 

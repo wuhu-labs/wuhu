@@ -180,10 +180,8 @@ fields are IANA identifiers supplied by the client seat (the CLI sends the
 local timezone, the SPA the browser's); absent means UTC — never
 server-local.
 
-- **`ToolRostersOutput`** (`GET /v1/session-tools?executor=kernel|claude-code`): the tool roster a session of that executor kind is given, from the one declaration the runtime reads. `ToolDescriptor.parameters` is the tool's parameter JSON Schema verbatim. Omitting `executor` returns both rosters, kernel first. The kernel roster is the Claude Code roster plus the transcript tools the loop executes itself (`bookmark`, `compact`); Claude Code compacts on its own, so MCP `tools/list` serves the Claude Code roster exactly. The route is deliberately not under `/v1/tools`, which is the space toolbox a person drives.
-- **`SessionCreateInput`**: the provider's dialect picks the executor — a
-  `claude` provider runs Claude Code, every other one the kernel loop — so
-  there is no executor field. `effort` absent means the model's declared default
+- **`ToolRostersOutput`** (`GET /v1/session-tools?executor=kernel`): the kernel tool roster. Omitting `executor` returns this one roster. `ToolDescriptor.parameters` is each tool's parameter JSON Schema. The route is distinct from `/v1/tools`, the space toolbox.
+- **`SessionCreateInput`**: all provider dialects run in the kernel. Optional `executor` accepts `kernel`; `claude-code` returns HTTP 422 `executorNoLongerSupported`, as do templates and restart inputs naming that executor. `effort` absent means the model's declared default
   effort; `SessionCreateOutput.effort` reports the resolved value. The model
   specifier is validated against the space's `/models.json` — unknown
   provider/model/effort is rejected before the session row exists, and so is a
@@ -217,8 +215,8 @@ server-local.
 - **`ProvidersOutput`** (`GET /v1/providers`): every provider in the space's
   `/models.json`, sorted by id, with its dialect and models. `usage` is the plan
   usage the server last observed and is absent until it has one; only the
-  `codex` and `claude` dialects report it. Inference refreshes it for free
-  (Codex response headers, Claude Code's rate-limit events), and the server
+  `codex` dialect reports it. Inference refreshes it for free
+  (Codex response headers), and the server
   reads it itself once a provider has gone fifteen minutes unobserved. Windows
   are named by length (`five_hour`, `seven_day`) and merge by name, so a report
   naming one window leaves the others standing. `usedPercent` is 0-100 and may

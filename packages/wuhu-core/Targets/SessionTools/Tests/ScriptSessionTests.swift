@@ -1,10 +1,31 @@
 import Foundation
+import JSONValue
 import SessionDomain
 @testable import SessionTools
 @_spi(Testing) import SpaceCore
 import Testing
 
 struct ScriptSessionTests {
+  @Test func scriptsRejectRemovedExecutorWithoutCallingModelResolver() async throws {
+    try await withRig(resolveModelExecutor: { _, _, _ in
+      Issue.record("removed executor must not resolve a kernel model")
+      throw ExecutorUnavailableError()
+    }) { rig in
+      let outcome = try await rig.evaluate("""
+      import { createSession } from "wuhu:session"
+      try {
+        await createSession({title:"removed", executor:"claude-code"})
+        result({created:true})
+      } catch (error) {
+        result({created:false, message:error.message, code:error.code})
+      }
+      """)
+      #expect(outcome.object?["created"] == false)
+      #expect(outcome.object?["message"] == "executor no longer supported")
+      #expect(outcome.object?["code"] == "executorNoLongerSupported")
+    }
+  }
+
   @Test func scriptsCreateSessionsAndActOnlyOnTheirOwnTree() async throws {
     let space = try Space.inMemory()
     let verbs = Box<[String]>([])

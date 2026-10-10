@@ -3,7 +3,6 @@ owner: wuhu
 swiftToolsVersion: "6.3"
 packageName: WuhuCoreKit
 products:
-  - ClaudeStream
   - LoopCore
   - SpaceFS
   - DocIndex

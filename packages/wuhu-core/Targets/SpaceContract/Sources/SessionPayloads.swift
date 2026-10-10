@@ -4,7 +4,7 @@ import JSONValue
 // The wire meaning of an absent identity field: the space owner principal.
 public let ownerIdentity: String = "owner"
 
-// The provider's dialect picks the executor. kind may come from the
+// Every provider runs in the kernel. kind may come from the
 // template; without either a human's request is refused. From a session's
 // exec it creates that session's child the way create_session does: kind
 // defaults to task, and topLevel (agents only) creates it with no parent.
@@ -15,6 +15,7 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let title: String
   public let kind: SessionKindPayload?
   public let tags: [String]?
+  public let executor: String?
   public let provider: String?
   public let model: String?
   public let effort: String?
@@ -146,6 +147,7 @@ public struct SessionTagsInput: Codable, Equatable, Sendable {
 // field-by-field over the live executor, not a replacement.
 @Contract
 public struct SessionRestartInput: Codable, Equatable, Sendable {
+  public let executor: String?
   public let provider: String?
   public let model: String?
   public let effort: String?

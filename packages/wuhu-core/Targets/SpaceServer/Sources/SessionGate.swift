@@ -249,6 +249,7 @@ private func sessionRouter(
     arguments["kind"] = input.kind.map { .string($0.rawValue) }
     arguments["top_level"] = input.topLevel.map(JSONValue.bool)
     arguments["group"] = input.group.map(JSONValue.string)
+    arguments["executor"] = input.executor.map(JSONValue.string)
     arguments["provider"] = input.provider.map(JSONValue.string)
     arguments["model"] = input.model.map(JSONValue.string)
     arguments["effort"] = input.effort.map(JSONValue.string)
@@ -406,5 +407,6 @@ private func ownsExec(_ parameters: RouteParameters, space: Space) async -> Bool
 
 private func toolRefusal(_ payload: ToolResultPayload) -> Response {
   let message = if case let .failure(failure) = payload { failure.message } else { "unexpected tool result" }
-  return errorResponse(.unprocessableContent, code: "refused", message: message)
+  let code = if case let .failure(failure) = payload { failure.code ?? "refused" } else { "refused" }
+  return errorResponse(.unprocessableContent, code: code, message: message)
 }

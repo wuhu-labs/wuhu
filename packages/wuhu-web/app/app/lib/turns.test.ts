@@ -65,7 +65,7 @@ Deno.test('send and report destinations preserve existing naming and content', (
     [{ message: 'text', user: 'u' }, { kind: 'user', id: 'u' }],
     [{ message: 'text', conversation: 'c' }, { kind: 'conversation', id: 'c' }],
   ]
-  for (const name of ['send_message', 'mcp__wuhu__send_message']) {
+  for (const name of ['send_message']) {
     for (const [args, target] of targetCases) {
       assertEquals(
         outgoing({

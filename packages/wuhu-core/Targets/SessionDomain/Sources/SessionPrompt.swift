@@ -62,10 +62,6 @@ public enum SessionPrompt {
   from earlier in the work.
   """
 
-  // The shared prompt core: what the kernel renders and what the Claude Code
-  // prompt builds on, identical for every session. The identity line and the
-  // executor mechanics differ per executor; the kind paragraph and the model
-  // are the session's own and go in its part of the prompt (sessionCore).
   public static let sharedCore: String = [replyDisciplineCore, workScopingCore, groupRulesCore].joined(separator: "\n\n")
 
   public static func sessionCore(task: Bool, model: String?) -> String {
@@ -111,10 +107,6 @@ public enum SessionPrompt {
 
   public static func compactionNudge(session: SessionID) -> String {
     "Context was compacted; your home is \(session.homePath)/, re-read AGENTS.md and any notes you keep there."
-  }
-
-  public static func continuation(reason: String) -> String {
-    "Wuhu restarted Claude Code: your previous turn ended before it finished (\(reason)). Continue from where you left off."
   }
 
   public static let parkReminderTemplate: String =

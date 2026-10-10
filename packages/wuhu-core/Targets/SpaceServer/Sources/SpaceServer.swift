@@ -211,10 +211,6 @@ public enum SpaceServer {
       addSessionLogRoutes(&router, space: space, runtime: sessions) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
-      addMcpRoutes(
-        &router, space: space, hub: hub, credentials: credentials, version: version, dev: dev, scripts: sessions.scripts,
-        control: sessionControl { sessions.service },
-      )
     }
     if let webApp {
       router.get("/*") { request, _ in
@@ -409,17 +405,6 @@ public enum SpaceServer {
     let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
     let credentials = try await credentialResolver(space: space, logger: logger)
     let usage = UsageBoard()
-    let claudeCode = ClaudeCodeHost(
-      space: space,
-      credentials: credentials,
-      usage: usage,
-      configDirectory: try? UserConfig.directory(environment: ProcessInfo.processInfo.environment),
-      origin: advertisedOrigin ?? "https://\(host):\(port)",
-      spaceID: try await space.identity().rawValue,
-    )
-    if preinstallClaude(flatHosts: contentHostPattern != nil, models: await modelsDocument(space: space)) {
-      claudeCode.installInBackground()
-    }
     let scriptFetch = ScriptFetch(controller: serverIdentity)
     let sessions = await SessionRuntime.assemble(
       space: space,
@@ -428,9 +413,7 @@ public enum SpaceServer {
       metrics: inferenceMetricsSink(space: space, writer: metricsWriter, logger: logger),
       credentials: credentials,
       secrets: secrets,
-      claudeCode: claudeCode.seam,
       usage: usage,
-      probeClaude: { await claudeCode.probeUsage(provider: $0) },
       oidcToken: { audience, session in
         @Dependency(\.date) var date
         @Dependency(\.uuid) var uuid
@@ -481,23 +464,6 @@ public enum SpaceServer {
         pageFetch: PageFetch(controller: serverIdentity).response,
       ),
     )
-    let loopback: ServeNIOServer
-    do {
-      loopback = try await ServeNIOServer.bind(
-        host: "127.0.0.1",
-        port: 0,
-        options: options,
-        handler: claudeCodeLoopbackHandler(
-          space: space, hub: hub, credentials: credentials, version: version,
-          host: claudeCode, service: sessions.service, scripts: sessions.scripts,
-        ),
-      )
-    } catch {
-      await api.shutdown()
-      throw error
-    }
-    guard let loopbackPort = loopback.boundAddress.port else { preconditionFailure("a TCP listener has a port") }
-    claudeCode.serveLoopback(on: "http://127.0.0.1:\(loopbackPort)")
     @Dependency(\.continuousClock) var clock
     @Dependency(\.date) var dateGen
     await withTaskGroup(of: Void.self) { group in
@@ -515,7 +481,6 @@ public enum SpaceServer {
         }
       }
       group.addTask { await api.runUntilCancelled() }
-      group.addTask { await loopback.runUntilCancelled() }
       await group.waitForAll()
     }
     await metricsWriter.close()
@@ -658,8 +623,4 @@ func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
   case .machineUnattached, .execNotFound, .severed:
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
   }
-}
-
-func preinstallClaude(flatHosts: Bool, models: InferenceKit.ModelsDocument?) -> Bool {
-  !flatHosts || models?.providers.values.contains(where: { $0.dialect == .claude }) == true
 }

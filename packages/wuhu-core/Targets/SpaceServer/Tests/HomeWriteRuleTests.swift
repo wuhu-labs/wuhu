@@ -25,7 +25,7 @@ import Testing
         kind: .task,
         parent: SessionID(parent),
         createdBy: "morgan",
-        executor: .claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high")),
+        executor: .kernel(ModelSpecifier(provider: "claude", model: "opus", effort: "high")),
       ).rawValue
       let note = "/_/sessions/\(owner)/note.md"
 
@@ -96,15 +96,15 @@ import Testing
       let harness = try await SessionHarness(credentials: CredentialResolver { providerID in
         providerID == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : nil
       })
-      _ = try await harness.space.fs(.shared).write("/models.json", Data(mcpImageModels.utf8), ifMatch: nil)
-      let executor = SessionExecutor.claudeCode(ModelSpecifier(provider: "claude", model: "opus", effort: "high"))
+      _ = try await harness.space.fs(.shared).write("/models.json", Data(testImageModels.utf8), ifMatch: nil)
+      let executor = SessionExecutor.kernel(ModelSpecifier(provider: "claude", model: "opus", effort: "high"))
       let owner = try await harness.store.createSession(group: .shared, title: "owner", kind: .agent, createdBy: "morgan", executor: executor).rawValue
       let other = try await harness.store.createSession(group: .shared, title: "image", kind: .agent, createdBy: "morgan", executor: executor).rawValue
 
       let refused = try await withDependencies {
         $0.fetch = FetchClient { _ in
           requests.withLock { $0 += 1 }
-          return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"\#(mcpImagePNG.base64EncodedString())"}]}"#))
+          return Response(status: .ok, body: .string(#"{"data":[{"b64_json":"\#(testImagePNG.base64EncodedString())"}]}"#))
         }
       } operation: {
         try await callResult(

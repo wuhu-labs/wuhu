@@ -9,14 +9,10 @@ import struct SpaceContract.ToolRosterDescriptor
 import struct SpaceContract.ToolRostersOutput
 import enum WuhuAI.Tool
 
-// The one declaration of who gets which tools. Kernel sessions also get the
-// transcript-mutating tools the loop executes itself; Claude Code compacts on
-// its own, so those are not offered over MCP.
 extension SessionToolExecutor {
   public var tools: [Tool] {
     switch self {
     case .kernel: ToolExecutor.tools + KernelToolset.tools
-    case .claudeCode: ToolExecutor.tools
     }
   }
 }

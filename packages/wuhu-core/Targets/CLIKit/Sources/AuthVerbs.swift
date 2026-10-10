@@ -4,8 +4,6 @@
   import Foundation
 #endif
 
-import struct ClaudeInstall.ClaudeInstallEnvironment
-import struct ClaudeInstall.ClaudeInstaller
 import enum Credentials.ChatGPTAuth
 import struct Credentials.ChatGPTTokens
 import struct Credentials.CredentialsStore
@@ -87,20 +85,6 @@ extension Executor {
     }
     let store = try credentialsStore()
     switch definition.dialect {
-    case .claude:
-      @Dependency(ClaudeInstallEnvironment.self) var environment
-      let installer = ClaudeInstaller(
-        configDirectory: try ServerTrust.userConfigDirectory(environment: runner.environment),
-        environment: environment,
-      )
-      let path = try await installer.install()
-      if runner.stdinIsTerminal {
-        await runner.stdout("paste the token from `claude setup-token` and press return: ")
-      }
-      let token = (try await runner.stdin()).trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !token.isEmpty else { throw UsageError(message: "auth login \(provider): setup token is empty") }
-      try await store.update { $0.providers[provider] = .claudeCodeOAuth(token) }
-      await runner.stdout("stored Claude Code setup token for \(provider) in \(store.file.path); binary: \(path.path)\n")
     case .codex:
       let authorization = try await ChatGPTAuth.startDeviceAuthorization()
       await runner.stdout("""
@@ -111,7 +95,7 @@ extension Executor {
       let tokens = try await ChatGPTAuth.awaitDeviceGrant(authorization)
       try await store.update { $0.providers[provider] = .chatGPTOAuth(tokens) }
       await runner.stdout("logged in: chatgpt account \(tokens.accountID), stored for \(provider) in \(store.file.path)\n")
-    case .anthropic, .responses:
+    case .claude, .anthropic, .responses:
       throw CLIError(message: "provider \(provider) uses API keys; run `wuhu auth set \(provider)`")
     }
   }

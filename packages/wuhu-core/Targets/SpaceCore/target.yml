@@ -14,7 +14,7 @@ dependencies:
   - SessionDomain
   - SpaceContract
   - SpaceSQL
-  - ClaudeStream
+
   - WuhuAI
   - JSONValue
   - OrderedCollections
@@ -40,7 +40,7 @@ tests:
   dependencies:
     - name: CImageCodec
       platforms: [linux]
-    - ClaudeStream
+
     - OrderedCollections
     - SpaceFS
     - KeelObjectStore

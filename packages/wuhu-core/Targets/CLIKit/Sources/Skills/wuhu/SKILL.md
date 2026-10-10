@@ -87,7 +87,7 @@ e.g. `template: {"strategy":"incr","prefix":"TASK","pad":3}` (sequential
 A session is an LLM agent living in the space: one transcript, one work
 queue, one owning channel, persisted in the space SQLite. Every session has
 an executor, picked by its provider's dialect: a `claude` provider runs
-Claude Code on the server's host, every other one the built-in kernel loop.
+the built-in kernel loop; all provider dialects use it.
 Created inert (`wuhu session create --provider P --model M [--effort E]
 <title>`); it starts working when something is posted to it. The
 `(provider, model, effort)` spec is validated against `/models.json` — a plain space file keyed
@@ -120,7 +120,7 @@ The induced `sessions` table (id, title, tags, hold, work, lifecycle,
 executor, executor_config, created_by, timestamps) IS the status surface: `wuhu session list`,
 `query`/`observe --sql` over it, or a `.view` file for a live dashboard.
 
-The induced `inferences` table is per-call usage, with the same group visibility as `sessions`: configured provider/model/effort, API `served_model`, UTC `at`, uncached `input`, `cache_read`, `cache_write`, billed `output` including reasoning, optional `reasoning`, outcome/error and optional timings. Query or observe it, joining `sessions` for tags. Rows survive archive, compaction and Start over; no backfill or prices. Claude Code uses the first assistant frame timestamp and last frame usage per message id, with null reasoning and timings.
+The induced `inferences` table is per-call usage, with the same group visibility as `sessions`: configured provider/model/effort, API `served_model`, UTC `at`, uncached `input`, `cache_read`, `cache_write`, billed `output` including reasoning, optional `reasoning`, outcome/error and optional timings. Query or observe it, joining `sessions` for tags. Rows survive archive, compaction and Start over; no backfill or prices. Historical Claude Code inference rows remain queryable; the removed executor produces no new ones.
 
 ## Machines
 

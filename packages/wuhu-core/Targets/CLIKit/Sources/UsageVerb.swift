@@ -15,7 +15,7 @@ extension Executor {
     @Dependency(\.date) var date
     let reported = output.providers.compactMap { renderedUsage($0, now: date.now) }
     guard !reported.isEmpty else {
-      await self.runner.stdout("no plan usage observed yet; only codex and claude providers report it\n")
+      await self.runner.stdout("no plan usage observed yet; only codex providers report it\n")
       return
     }
     await self.runner.stdout(reported.joined(separator: "\n") + "\n")

@@ -259,6 +259,7 @@ extension ToolExecutor {
     let spawned: Spawned
     do {
       spawned = try await spawn(session, callID, SpawnOrder(
+        executor: arguments.executor,
         title: arguments.title,
         kind: arguments.kind,
         topLevel: arguments.topLevel ?? false,

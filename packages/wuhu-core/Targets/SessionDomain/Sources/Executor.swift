@@ -3,6 +3,7 @@ import OrderedCollections
 
 public enum SessionExecutor: Hashable, Sendable {
   case kernel(ModelSpecifier)
+  // Decode-only: Start over on a kernel provider is the only way back.
   case claudeCode(ModelSpecifier)
   // Decode-only: sessions archived before contractors were removed still list,
   // but nothing creates, runs, or rewrites one.
@@ -79,17 +80,20 @@ extension ModelSpecifier {
 }
 
 public struct SessionCreationParams: Hashable, Sendable {
+  public var executor: String?
   public var provider: String?
   public var model: String?
   public var effort: String?
   public var tags: [String]?
 
   public init(
+    executor: String? = nil,
     provider: String? = nil,
     model: String? = nil,
     effort: String? = nil,
     tags: [String]? = nil,
   ) {
+    self.executor = executor
     self.provider = provider
     self.model = model
     self.effort = effort
@@ -98,6 +102,7 @@ public struct SessionCreationParams: Hashable, Sendable {
 
   public func merged(over template: SessionCreationParams) -> SessionCreationParams {
     SessionCreationParams(
+      executor: executor ?? template.executor,
       provider: provider ?? template.provider,
       model: model ?? template.model,
       effort: effort ?? template.effort,
@@ -114,6 +119,8 @@ public struct SessionCreationParams: Hashable, Sendable {
       }
       return string
     }
+    let executor = try string("executor")
+    try Self.validateExecutor(executor)
     let provider = try string("provider")
     let model = try string("model")
     let effort = try string("effort")
@@ -127,21 +134,22 @@ public struct SessionCreationParams: Hashable, Sendable {
     guard fields.isEmpty else {
       throw ExecutorSpecError("unknown template field(s): \(fields.keys.sorted().joined(separator: ", "))")
     }
-    self.init(provider: provider, model: model, effort: effort, tags: tags)
+    self.init(executor: executor, provider: provider, model: model, effort: effort, tags: tags)
   }
 }
 
 extension SessionExecutor {
-  // The provider's dialect picks the executor; the caller's resolver owns that
-  // mapping and the effort default.
   public static func resolve(
     _ params: SessionCreationParams,
     resolveModelExecutor: (String, String, String?) async throws -> SessionExecutor,
   ) async throws -> SessionExecutor {
+    try SessionCreationParams.validateExecutor(params.executor)
     guard let provider = params.provider, let model = params.model else {
       throw ExecutorSpecError("a session wants provider and model")
     }
-    return try await resolveModelExecutor(provider, model, params.effort)
+    let executor = try await resolveModelExecutor(provider, model, params.effort)
+    try executor.requireSupported()
+    return executor
   }
 }
 
@@ -154,5 +162,32 @@ extension [JSONValue] {
       result.append(value)
     }
     return result
+  }
+}
+
+public struct ExecutorUnavailableError: Error, Equatable, Sendable, CustomStringConvertible {
+  public init() {}
+  public var description: String { "executor no longer supported" }
+}
+
+extension SessionExecutor {
+  public var isRemoved: Bool {
+    switch self {
+    case .claudeCode, .contractor: true
+    case .kernel: false
+    }
+  }
+
+  public func requireSupported() throws {
+    if case .claudeCode = self { throw ExecutorUnavailableError() }
+  }
+}
+
+extension SessionCreationParams {
+  static func validateExecutor(_ executor: String?) throws {
+    if executor == "claude-code" { throw ExecutorUnavailableError() }
+    guard executor == nil || executor == "kernel" else {
+      throw ExecutorSpecError("unknown executor: \(executor!)")
+    }
   }
 }

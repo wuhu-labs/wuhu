@@ -25,7 +25,7 @@ const sonnet: ProviderModel = {
 }
 
 const opus: ProviderModel = {
-  id: 'claude-opus-5-5[1m]',
+  id: 'claude-opus-5-5',
   effortLevels: ['high', 'max'],
   defaultEffort: 'high',
 }
@@ -125,8 +125,8 @@ Deno.test('only providers with models are offered', () => {
 Deno.test('model and effort defaults follow the provider and model declarations', () => {
   assertEquals(defaultModelOf(anthropic)?.id, 'claude-sonnet-5')
   assertEquals(
-    modelOf(claude, 'claude-opus-5-5[1m]')?.id,
-    'claude-opus-5-5[1m]',
+    modelOf(claude, 'claude-opus-5-5')?.id,
+    'claude-opus-5-5',
   )
   assertEquals(modelOf(claude, 'nope'), null)
   assertEquals(defaultEffortOf(sonnet), 'medium')
@@ -141,13 +141,13 @@ Deno.test('a template picks its provider, model, and an offered effort', () => {
       name: 'night',
       kind: 'task',
       provider: 'claude',
-      model: 'claude-opus-5-5[1m]',
+      model: 'claude-opus-5-5',
       effort: 'max',
     },
     [anthropic, claude],
   )
   assertEquals(picked.provider, 'claude')
-  assertEquals(picked.model?.id, 'claude-opus-5-5[1m]')
+  assertEquals(picked.model?.id, 'claude-opus-5-5')
   assertEquals(picked.effort, 'max')
   assertEquals(picked.template, 'night')
 
@@ -156,7 +156,7 @@ Deno.test('a template picks its provider, model, and an offered effort', () => {
     { name: 'odd', provider: 'claude', effort: 'low' },
     [claude],
   )
-  assertEquals(unoffered.model?.id, 'claude-opus-5-5[1m]')
+  assertEquals(unoffered.model?.id, 'claude-opus-5-5')
   // An effort the model does not offer falls back to its default.
   assertEquals(unoffered.effort, 'high')
 

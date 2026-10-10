@@ -97,7 +97,6 @@ private let held = Mutex<[ScratchFolder]>([])
   // Files allowed a bare temporary path, each with the reason it is not a test leak.
   static let allowed: [String: String] = [
     "CLIKit/Sources/Identity.swift": "a session exec's state, the fallback when its environment has no TMPDIR",
-    "ClaudeInstall/Sources/ClaudeInstallLive.swift": "the Claude Code installer's extraction folder, removed by its own defer",
   ]
 
   @Test func codeMakesNoBareTemporaryPaths() throws {
