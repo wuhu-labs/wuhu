@@ -231,11 +231,9 @@ struct SpaceView: SpaceVFS {
 
   // A conversation's member reads its attachments in whatever group homes it.
   static func requireReadable(_ group: GroupID, by acting: GroupID, actor: Actor, path: String, in space: Space) async throws {
-    guard group != acting, try await !space.reads(acting).contains(group) else { return }
-    if let member = Principal(actor: actor, group: acting).member,
-       try await space.sessions.readsAttachment(path, in: group, member: member)
-    { return }
-    throw SpaceError.notFound(path)
+    guard try await space.sessions.readsFile(path, in: group, as: Principal(actor: actor, group: acting)) else {
+      throw SpaceError.notFound(path)
+    }
   }
 
   private func view(_ path: String) async throws -> any SpaceVFS {
@@ -275,7 +273,16 @@ struct SpaceView: SpaceVFS {
   }
 
   func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {
-    try await view(path).list(path)
+    let (token, entries) = try await view(path).list(path)
+    var readable: [SpaceFS.Entry] = []
+    for entry in entries {
+      let child = (path.hasSuffix("/") ? path : path + "/") + entry.name
+      do {
+        try await Self.requireReadable(group, by: acting, actor: actor, path: child, in: space)
+        readable.append(entry)
+      } catch SpaceError.notFound {}
+    }
+    return (token, readable)
   }
 
   func stat(_ path: String) async throws -> SpaceFS.Entry {

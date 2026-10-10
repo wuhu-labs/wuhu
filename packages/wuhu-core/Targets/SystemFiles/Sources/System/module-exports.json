@@ -30,10 +30,12 @@
     "unarchive"
   ],
   "wuhu:space": [
+    "addChannelMembers",
     "alterTable",
     "checkout",
     "context",
     "conversation",
+    "createChannel",
     "createTable",
     "dm",
     "groups",
@@ -50,6 +52,8 @@
     "readBytes",
     "readText",
     "remove",
+    "removeChannelMembers",
+    "renameChannel",
     "stat",
     "tableSchema",
     "watch",

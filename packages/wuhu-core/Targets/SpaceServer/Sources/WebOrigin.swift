@@ -255,9 +255,14 @@ private func routedWebResponse(
   let trailingSlash = rawPath.count > 1 && rawPath.hasSuffix("/")
   let attachment = attachmentConversation(path) != nil
   let download = queryValues(of: request.url)["download"] == "1"
+  if let id = attachmentConversation(path), let conversation = try? await space.sessions.conversation(id), conversation.kind == .users {
+    let principal = try await webPrincipal(viewer, group: caller.group, space: space)
+    guard try await space.sessions.reads(conversation, reader: principal.member, group: caller.group) else { return plainStatus(.notFound) }
+  }
   var response = await contentResponse(
     space: space,
     group: caller.group,
+    principal: try await webPrincipal(viewer, group: caller.group, space: space),
     files: try await attachmentHome(path, host: caller.group, viewer: viewer, space: space),
     shell: attachment || download ? nil : shell,
     path: path,
@@ -335,10 +340,10 @@ private func attachmentHome(_ path: String, host: GroupID, viewer: AccountID?, s
   return conversation.group
 }
 
-/// The conversation whose attachment folder `path` is in, if it is in one.
+/// The conversation folder that contains `path`.
 private func attachmentConversation(_ path: String) -> ConversationID? {
   let parts = path.split(separator: "/", omittingEmptySubsequences: true)
-  guard parts.count >= 4, parts[0] == "_", parts[1] == "conversations", parts[3] == "attachments" else { return nil }
+  guard parts.count >= 3, parts[0] == "_", parts[1] == "conversations" else { return nil }
   return ConversationID(String(parts[2]))
 }
 
@@ -581,6 +586,7 @@ private func providerResponse(_ views: ViewProviders?, shell: ShellSDK?, group: 
 private func contentResponse(
   space: Space,
   group: GroupID,
+  principal: Principal,
   files: GroupID? = nil,
   shell: ShellSDK?,
   path: String,
@@ -641,7 +647,14 @@ private func contentResponse(
     let prefix = directory == "/" ? "/" : directory + "/"
     if let response = await file(prefix + "index.html") { return response }
     if let response = await file(prefix + "index.md") { return response }
-    guard let (_, entries) = try? await fs.list(directory) else { return plainStatus(.notFound) }
+    guard let (_, candidates) = try? await fs.list(directory) else { return plainStatus(.notFound) }
+    var entries: [SpaceFS.Entry] = []
+    for entry in candidates {
+      if let conversation = try? await space.sessions.attachmentConversation(prefix + entry.name, in: files ?? group), conversation.kind == .users {
+        guard (try? await space.sessions.reads(conversation, reader: principal.member, group: principal.group)) == true else { continue }
+      }
+      entries.append(entry)
+    }
     return served(directoryListing(path: directory, entries: entries), contentType: mimeType(for: "index.html"))
   }
 

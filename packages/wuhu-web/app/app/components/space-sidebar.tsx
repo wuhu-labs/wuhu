@@ -33,6 +33,7 @@ import { spaceDestination } from '~/lib/space-url'
 import { buildTree } from '~/lib/tree'
 import { useDirectory, useOwnPrincipal } from '~/lib/use-directory'
 import { Avatar } from './avatar'
+import { ChannelSection } from './channel-section'
 import { CustomSidebar } from './custom-sidebar'
 import { SessionRow } from './session-row'
 import { SpaceTree } from './space-tree'
@@ -104,7 +105,7 @@ export function SpaceSidebar({
   // A chosen view whose group or file left shows Everything without losing
   // the choice, so either coming back brings the view back.
   const group = memberOr(view.group, feeds.groups == null ? null : members)
-  const { error, files, loaded, sessions, sidebars } = feeds.feed(
+  const { error, files, loaded, sessions, channels, sidebars } = feeds.feed(
     group,
   )
   const shown: SidebarView = {
@@ -243,6 +244,12 @@ export function SpaceSidebar({
                 onClick={() => onNavigate(screens.sessions)}
               />
             </SidebarSection>
+            <ChannelSection
+              channels={channels}
+              group={group}
+              here={here}
+              onNavigate={onNavigate}
+            />
             <SidebarSection title='Documents'>
               {error && <SidebarNote tone='alert'>{error}</SidebarNote>}
               {!error && !loaded && <SidebarNote>Loading…</SidebarNote>}

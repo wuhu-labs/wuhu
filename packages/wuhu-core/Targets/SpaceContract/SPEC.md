@@ -326,3 +326,7 @@ materializes the session actor.
 ## History paging and checkout preconditions
 
 HistoryInput adds optional after (exclusive revision cursor) and limit; HistoryOutput adds optional next. Entries remain ascending and retain their existing provenance fields. CheckoutInput adds optional ifMatch, which the HTTP verb compares against the current head inside the restore transaction. Existing callers that omit it retain their prior behavior; the script module requires it. All optional fields remain additive on the wire.
+
+## Human-only conversations
+
+`ConversationCreateInput` creates a `users` channel with `members: [String]`, optional `title: String?` and optional `identity: String?`. Members name people, never sessions. A person creator joins automatically; a session creator does not. `ConversationPayload.title` is nullable and absent on older servers; null displays members' names. `ChannelMembersInput` carries `people: [String]` for `POST /v1/channel/:id/add` and `remove`; `ChannelRenameInput` carries nullable `title` for `POST /v1/channel/:id/rename`. Each mutation returns `{}`. Blank titles and session membership are `invalidArgument`; unread channels are `notFound`. Channels reuse the existing message, history and watermark contracts. `users` retains mention/reply-target/attention-window wake behavior but does not enroll a session that posts. Person members and sessions in groups reading the home group read and post; non-member people cannot.

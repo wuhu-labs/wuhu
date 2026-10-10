@@ -170,12 +170,12 @@ private func spaceFile(
   if let qualified = named {
     group = qualified.group
     path = qualified.path
-    guard await readable(path, in: group, by: principal, space: space) else { return .failure(missing) }
   } else {
     group = principal.group
     path = reference
   }
   guard path.hasPrefix("/") else { return .failure(invalid) }
+  guard (try? await space.sessions.readsFile(path, in: group, as: principal)) == true else { return .failure(missing) }
   let fs = await space.fs(group)
   guard let entry = try? await fs.stat(path), entry.kind == .file else { return .failure(missing) }
   do {
@@ -185,11 +185,4 @@ private func spaceFile(
   }
   guard let (_, data) = try? await fs.read(path) else { return .failure(missing) }
   return .success(AttachmentUpload(name: path, bytes: [UInt8](data)))
-}
-
-private func readable(_ path: String, in group: GroupID, by principal: Principal, space: Space) async -> Bool {
-  if group == principal.group { return true }
-  if (try? await space.reads(principal.group).contains(group)) == true { return true }
-  guard let member = principal.member else { return false }
-  return (try? await space.sessions.readsAttachment(path, in: group, member: member)) == true
 }

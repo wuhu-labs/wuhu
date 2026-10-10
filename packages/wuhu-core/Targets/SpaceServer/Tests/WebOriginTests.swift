@@ -281,44 +281,44 @@ import Testing
   }
 
   @Test func sessionHomesAndAttachmentsServeAsFilesWhileTheRestOfUnderscoreStaysReserved() async throws {
-    let harness = try Harness()
+    let (harness, web, owner) = try await channelAttachmentReader()
     _ = try await harness.direct("write", .object(["path": "/_/sessions/s1/notes.css", "content": "body {}"]))
-    let conversation = try await harness.space.sessions.createConversation(members: ["owner"], in: .shared)
+    let conversation = try await harness.space.sessions.createConversation(members: [owner], in: .shared)
     let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     let delivery = try await harness.space.sessions.post(
       .conversation(conversation),
       messageID: MessageID("m1"),
-      sender: Sender(id: "owner", timeZone: .gmt),
+      sender: Sender(id: owner, timeZone: .gmt),
       content: MessageContent(text: "look"),
       uploads: [AttachmentUpload(name: "shot.png", bytes: [UInt8](png))],
     )
     let path = try #require(delivery.message.content.attachments.first?.path)
 
-    let home = try await harness.get(harness.web, "/_/sessions/s1/notes.css")
+    let home = try await harness.get(web, "/_/sessions/s1/notes.css")
     #expect(home.status == .ok)
     #expect(try await home.text() == "body {}")
 
-    let attachment = try await harness.get(harness.web, path)
+    let attachment = try await harness.get(web, path)
     #expect(attachment.status == .ok)
     #expect(attachment.headers[.contentType] == "image/png")
     #expect(attachment.headers[HTTPField.Name("Content-Disposition")!] == nil)
 
-    let reserved = try await harness.get(harness.web, "/_/blobs/\(String(repeating: "0", count: 64))")
+    let reserved = try await harness.get(web, "/_/blobs/\(String(repeating: "0", count: 64))")
     #expect(reserved.status == .notFound)
   }
 
   @Test(arguments: [false, true])
   func attachmentDirectoriesDoNotResolveHTMLIndexes(trailingSlash: Bool) async throws {
-    let harness = try Harness()
-    let conversation = try await harness.space.sessions.createConversation(members: ["owner"], in: .shared)
+    let (harness, web, owner) = try await channelAttachmentReader()
+    let conversation = try await harness.space.sessions.createConversation(members: [owner], in: .shared)
     let posted = try await harness.space.sessions.post(
       .conversation(conversation), messageID: MessageID("m1"),
-      sender: Sender(id: "owner", timeZone: .gmt), content: MessageContent(text: "look"),
+      sender: Sender(id: owner, timeZone: .gmt), content: MessageContent(text: "look"),
       uploads: [AttachmentUpload(name: "index.html", bytes: Array("<html>proof</html>".utf8))],
     )
     let path = try #require(posted.message.content.attachments.first?.path)
     let folder = String(path[..<path.lastIndex(of: "/")!]) + (trailingSlash ? "/" : "")
-    let response = try await harness.get(harness.web, folder)
+    let response = try await harness.get(web, folder)
     #expect(response.status == .notFound)
     #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == "sandbox allow-scripts")
     #expect(try await response.text() != "<html>proof</html>")
@@ -326,16 +326,16 @@ import Testing
 
   @Test(arguments: ["html", "htm", "xhtml", "xht", "svg", "xml", "HTML"])
   func activeConversationAttachmentsAreDownloads(extension suffix: String) async throws {
-    let harness = try Harness()
-    let conversation = try await harness.space.sessions.createConversation(members: ["owner"], in: .shared)
+    let (harness, web, owner) = try await channelAttachmentReader()
+    let conversation = try await harness.space.sessions.createConversation(members: [owner], in: .shared)
     let posted = try await harness.space.sessions.post(
       .conversation(conversation), messageID: MessageID("m1"),
-      sender: Sender(id: "owner", timeZone: .gmt),
+      sender: Sender(id: owner, timeZone: .gmt),
       content: MessageContent(text: "look"),
       uploads: [AttachmentUpload(name: "proof.\(suffix)", bytes: Array("<html>proof</html>".utf8))],
     )
     let path = try #require(posted.message.content.attachments.first?.path)
-    let response = try await harness.get(harness.web, path)
+    let response = try await harness.get(web, path)
     #expect(response.status == .ok)
     #expect(response.headers[HTTPField.Name("Content-Disposition")!] == "attachment; filename*=UTF-8''proof.\(suffix)")
     #expect(response.headers[HTTPField.Name("Content-Security-Policy")!] == "sandbox allow-scripts")
@@ -848,3 +848,36 @@ import Testing
 }
 
 private let clearSiteData = HTTPField.Name("Clear-Site-Data")!
+
+extension WebOriginTests {
+  @Test func publicReadDoesNotAdmitAnonymousChannelReaders() async throws {
+    try await withSessionDeps {
+      let harness = try Harness(dev: false, publicRead: true)
+      let id = try await harness.space.sessions.createConversation(members: ["alice"], in: .shared)
+      let delivery = try await harness.space.sessions.post(.conversation(id), messageID: MessageID("private"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "private"), uploads: [AttachmentUpload(name: "private.txt", bytes: Array("private".utf8))])
+      let path = try #require(delivery.message.content.attachments.first?.path)
+      #expect(try await harness.get(harness.web, path).status == .notFound)
+      let listing = try await harness.get(harness.web, "/_/conversations")
+      #expect(try await !listing.text().contains(id.rawValue))
+      for relation in ["conversations", "messages", "notifications", "wuhu://shared.localspace/notifications", "wuhu://*.localspace/notifications"] {
+        let response = try await harness.get(harness.web, "/_/query", query: ["sql": "SELECT * FROM \"\(relation)\""])
+        #expect(response.status == .ok)
+        #expect(try await json(response).object?["rows"] == .array([]))
+      }
+    }
+  }
+}
+
+private func channelAttachmentReader() async throws -> (Harness, FetchClient, String) {
+  let harness = try Harness(dev: false)
+  let account = try await harness.space.addAccount(kind: .human, name: nil)
+  let key = try await harness.space.addKey(testPubkey("attachment-owner"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+  let owner = try await harness.space.mintPersona(key: key).name
+  let token = try await harness.space.createReadSession(account: account.id, group: .shared, expiresAt: fixedDate.addingTimeInterval(3600))
+  let web = FetchClient { request in
+    var request = request
+    request.headers[.cookie] = "wuhu_read=" + token.rawValue
+    return try await harness.web(request)
+  }
+  return (harness, web, owner)
+}

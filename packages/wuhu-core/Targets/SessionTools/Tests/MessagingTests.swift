@@ -216,6 +216,31 @@ struct MessagingTests {
     }
   }
 
+  @Test func sendMessageCopiesChannelAttachmentsOnlyWhileItsGroupReadsTheSource() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let foreign = try await space.ensurePersonalGroup(account: space.addAccount(kind: .human, name: nil).id)
+      let session = try await makeSession(space)
+      let source = try await space.sessions.createConversation(members: ["alice"], in: foreign)
+      let delivery = try await space.sessions.post(.conversation(source), messageID: MessageID("source"), sender: Sender(id: "alice", timeZone: .gmt), content: .init(text: "secret"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
+      let path = try #require(delivery.message.content.attachments.first?.path)
+      let reference = "wuhu://\(foreign.rawValue).localspace" + path
+      var world = ToolWorld(executor: ToolExecutor(space: space), session: session)
+      let arguments: ToolArguments = .object(["message": "copy", "attachments": .array([.string(reference)])])
+      let denied = try await world.run("send_message", arguments)
+      #expect(try failureMessage(denied).contains("not found"))
+      try await space.addEdge(src: .shared, dst: foreign, kind: .read, by: nil)
+      let sent = try await world.run("send_message", arguments)
+      guard case let .sendMessage(outcome) = sent else { throw Mismatch("expected copied attachment, got \(sent)") }
+      let copied = try #require(try await space.sessions.messages(conversation: outcome.conversationID).last?.content.attachments.first?.path)
+      #expect(try await space.fs(.shared).read(copied).1 == Data("secret".utf8))
+      try await space.removeEdge(src: .shared, dst: foreign, kind: .read)
+      let revoked = try await world.run("send_message", arguments)
+      #expect(try failureMessage(revoked).contains("not found"))
+      #expect(try await space.sessions.messages(conversation: outcome.conversationID).count == 1)
+    }
+  }
+
   @Test func sendMessageRefusesAttachmentsItCannotTakeBeforeReadingThem() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

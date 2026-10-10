@@ -63,9 +63,10 @@ struct HumanAgentDMToolTests {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space, name: "a")
-      let dm = try await space.sessions.createConversation(members: [session.rawValue, "carol"], in: .shared)
+      let dm = try await space.sessions.createConversation(members: ["carol"], in: .shared)
       try await space.writer.write { db in
         try db.execute(sql: "UPDATE conversations SET kind = 'dm_user' WHERE id = ?", arguments: [dm.rawValue])
+        try db.execute(sql: "INSERT INTO conversation_members (conversation_id, member, member_kind, joined_at) VALUES (?, ?, 'session', '2026-01-01T00:00:00.000Z')", arguments: [dm.rawValue, session.rawValue])
       }
       var world = ToolWorld(executor: ToolExecutor(space: space), session: session)
       let result = try await world.run("send_message", .object(["message": "lost", "conversation": .string(dm.rawValue)]))

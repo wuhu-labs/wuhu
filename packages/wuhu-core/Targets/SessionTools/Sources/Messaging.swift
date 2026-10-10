@@ -4,6 +4,7 @@ import struct MachineContract.MachineEntry
 import SessionDomain
 import struct SpaceContract.AttachmentTally
 import SpaceCore
+import SpaceTools
 import SystemFiles
 
 extension ToolExecutor {
@@ -161,6 +162,7 @@ extension ToolExecutor {
   // Sizes are checked before any bytes are read, so an over-limit list fails
   // without pulling a file off a machine.
   private func attachmentUploads(_ references: [String], by session: SessionID) async throws -> [AttachmentUpload] {
+    let context = SpaceToolContext(space: space, principal: try await space.principal(of: session))
     var tally = AttachmentTally()
     var located: [(reference: String, address: Address, entry: MachineEntry?)] = []
     for reference in references {
@@ -194,7 +196,9 @@ extension ToolExecutor {
     }
     var uploads: [AttachmentUpload] = []
     for (reference, address, entry) in located {
-      let bytes = if case let .machine(machine, path) = address, let entry {
+      let bytes = if case .space = address {
+        try await [UInt8](context.readBytes(reference).data)
+      } else if case let .machine(machine, path) = address, let entry {
         try await machineFile(machine, path: path, entry: entry, reference: reference)
       } else {
         try await [UInt8](readRaw(address).1)

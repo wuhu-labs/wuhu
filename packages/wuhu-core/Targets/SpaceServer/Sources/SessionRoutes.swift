@@ -340,21 +340,57 @@ func addSessionRoutes(
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a conversation-create body: \(error)")
     }
-    let group: GroupID
+    let principal: Principal
     switch try await principalOf(request) {
-    case let .principal(principal): group = principal.group
+    case let .principal(resolved): principal = resolved
     case let .refused(response): return response
+    }
+    if case .anonymous = principal.actor {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "creating a channel needs an identified person or session")
+    }
+    var members = input.members
+    if case .session = principal.actor {
+      guard input.identity == nil else { return errorResponse(.badRequest, code: "invalidArgument", message: "a session channel creator takes no human identity") }
+      do {
+        let id = try await store.createConversation(members: members, title: input.title, in: principal.group)
+        return try Response.json(ConversationPostOutput(messageId: "", conversationId: id.rawValue, n: 0, delivered: []))
+      } catch { return sessionErrorResponse(error) }
     }
     switch try await identityVerdict(input.identity, request: request, space: space, dev: dev, now: dateGen.now) {
     case let .identity(resolved):
-      var members = input.members
       if !members.contains(resolved) { members.append(resolved) }
-      let id = try await store.createConversation(members: members, in: group)
-      return try Response.json(ConversationPostOutput(
-        messageId: "", conversationId: id.rawValue, n: 0, delivered: [],
-      ))
-    case let .refused(response):
-      return response
+      do {
+        let id = try await store.createConversation(members: members, title: input.title, in: principal.group)
+        return try Response.json(ConversationPostOutput(messageId: "", conversationId: id.rawValue, n: 0, delivered: []))
+      } catch { return sessionErrorResponse(error) }
+    case let .refused(response): return response
+    }
+  }
+
+  for operation in ["add", "remove", "rename"] {
+    router.post("/v1/channel/:id/\(operation)") { request, parameters in
+      guard let raw = parameters["id"] else { return unknownConversation(parameters) }
+      let principal: Principal
+      switch try await principalOf(request) {
+      case let .principal(resolved): principal = resolved
+      case let .refused(response): return response
+      }
+      do {
+        let id = ConversationID(raw)
+        if operation == "rename" {
+          let input: ChannelRenameInput
+          do { input = try await request.json(ChannelRenameInput.self) }
+          catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected a channel rename body: \(error)") }
+          try await store.renameChannel(id, title: input.title, as: principal)
+        } else {
+          let input: ChannelMembersInput
+          do { input = try await request.json(ChannelMembersInput.self) }
+          catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected a channel members body: \(error)") }
+          if operation == "add" { try await store.addChannelMembers(id, people: input.people, as: principal) }
+          else { try await store.removeChannelMembers(id, people: input.people, as: principal) }
+        }
+        return try Response.json(JSONValue.object([:]))
+      } catch { return sessionErrorResponse(error) }
     }
   }
 
@@ -421,36 +457,56 @@ func addSessionRoutes(
 
   // A conversation the caller does not read answers as a missing one.
   // The group the reader acts in, which names the attachments it is handed.
-  @Sendable func readingGroup(_ id: ConversationID, _ request: Request) async throws -> Result<GroupID, RouteRefusal> {
+  @Sendable func readingSeat(_ id: ConversationID, _ request: Request) async throws -> Result<(group: GroupID, reader: String?), RouteRefusal> {
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
     case let .refused(response): return .failure(RouteRefusal(response: response))
     }
+    let reader: String?
+    if case .session = principal.actor { reader = principal.member }
+    else {
+      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: dateGen.now) {
+      case let .identity(resolved): reader = resolved
+      case let .refused(response): return .failure(RouteRefusal(response: response))
+      }
+    }
     do {
-      guard try await store.reads(store.conversation(id), reader: principal.member, group: principal.group) else {
+      let conversation = try await store.conversation(id)
+      let anonymous: Bool
+      if case .anonymous = principal.actor { anonymous = true } else { anonymous = false }
+      let channelReader = conversation.kind == .users && anonymous ? nil : reader
+      guard try await store.reads(conversation, reader: channelReader, group: principal.group) else {
         throw SessionStoreError.unknownConversation(id.rawValue)
       }
-      return .success(principal.group)
+      return .success((principal.group, channelReader))
     } catch {
       return .failure(RouteRefusal(response: sessionErrorResponse(error)))
     }
   }
 
   @Sendable func refusingUnread(_ id: ConversationID, _ request: Request) async throws -> Response? {
-    if case let .failure(refusal) = try await readingGroup(id, request) { return refusal.response }
+    if case let .failure(refusal) = try await readingSeat(id, request) { return refusal.response }
     return nil
   }
 
   router.get("/v1/conversations") { request, _ in
-    let identity: String
-    switch try await identityVerdict(
-      queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: dateGen.now,
-    ) {
-    case let .identity(resolved): identity = resolved
+    let principal: Principal
+    switch try await principalOf(request) {
+    case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    let records = try await store.conversations(member: identity)
+    let reader: String?
+    if case .session = principal.actor { reader = principal.member }
+    else {
+      switch try await identityVerdict(queryValues(of: request.url)["identity"], request: request, space: space, dev: dev, now: dateGen.now) {
+      case let .identity(resolved): reader = resolved
+      case let .refused(response): return response
+      }
+    }
+    let anonymous: Bool
+    if case .anonymous = principal.actor { anonymous = true } else { anonymous = false }
+    let records = try await store.conversations(reader: reader, group: principal.group).filter { !anonymous || $0.kind != .users }
     return try Response.json(ConversationsOutput(conversations: try await conversationPayloads(records, space: space)))
   }
 
@@ -474,8 +530,8 @@ func addSessionRoutes(
     let id = ConversationID(raw)
     let query = queryValues(of: request.url)
     let viewer: GroupID
-    switch try await readingGroup(id, request) {
-    case let .success(group): viewer = group
+    switch try await readingSeat(id, request) {
+    case let .success(group): viewer = group.group
     case let .failure(refusal): return refusal.response
     }
     do {
@@ -520,9 +576,9 @@ func addSessionRoutes(
     guard let after = cursor(queryValues(of: request.url)["after"]) else {
       return errorResponse(.badRequest, code: "invalidArgument", message: "after must be a non-negative integer")
     }
-    switch try await readingGroup(id, request) {
+    switch try await readingSeat(id, request) {
     case let .success(viewer):
-      return conversationStreamResponse(space: space, store: store, conversation: id, after: after, viewer: viewer, clock: clock)
+      return conversationStreamResponse(space: space, store: store, conversation: id, after: after, viewer: viewer.group, reader: viewer.reader, clock: clock)
     case let .failure(refusal):
       return refusal.response
     }
@@ -674,6 +730,13 @@ func unknownSession(_ parameters: RouteParameters) -> Response {
 
 func sessionErrorResponse(_ error: any Error) -> Response {
   switch error {
+  case let error as ChannelError:
+    switch error {
+    case let .sessionMember(id): return errorResponse(.unprocessableContent, code: "invalidArgument", message: "channel members are people only; \(id) is a session")
+    case let .unknownPerson(id): return errorResponse(.unprocessableContent, code: "invalidArgument", message: "unknown person: \(id)")
+    case let .notChannel(id): return errorResponse(.unprocessableContent, code: "invalidArgument", message: "conversation \(id) is not a channel")
+    case .invalidTitle: return errorResponse(.unprocessableContent, code: "invalidArgument", message: "a channel title must not be blank; use null for members' names")
+    }
   case let error as SessionStoreError:
     switch error {
     case let .unknownSession(key):
@@ -835,6 +898,7 @@ func conversationPayloads(_ records: [ConversationRecord], space: Space) async t
 
 private func conversationPayload(_ record: ConversationRecord, handles: [String: String]) -> ConversationPayload {
   ConversationPayload(
+    title: record.title,
     id: record.id.rawValue,
     kind: ConversationKindPayload(rawValue: record.kind.rawValue)!,
     ownerSession: record.ownerSession?.rawValue,

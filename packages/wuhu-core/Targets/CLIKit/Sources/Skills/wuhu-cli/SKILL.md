@@ -370,3 +370,7 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 `wuhu identity` prints resolved default and per-audience issuer URLs. `wuhu identity issuer-for <origin>` prints one issuer. A human space admin chooses `wuhu identity set default self|directory` or `wuhu identity set <origin> self|directory`; `wuhu identity set <origin> inherit` removes an override. Origins are exact canonical HTTP(S) origins. Configure a verifier to trust both issuer URLs before changing its setting; there is no automatic fallback when the directory is unavailable.
 
 `wuhu identity rotate` starts the issuer-preserving key overlap immediately. `wuhu identity register-new` recovers a stale/lost directory registration by creating a new issuer; verifiers must migrate. Both are human space-admin-only and unavailable to session execs.
+
+## Human-only channels
+
+`wuhu channel create [--title T] [person...]` creates a channel in the acting group and prints its id. A person creator is a member; a session creator is not. `wuhu channel add <id> <person...>` and `wuhu channel remove <id> <person...>` manage people. `wuhu channel rename <id> <title>` sets the title; `wuhu channel rename <id> --clear` returns to members' names. Session membership and blank titles are typed errors. People must be members to read, post or manage the channel. Sessions in groups reading its home group may read, post and manage it without joining. Plain person messages wake no session; mention, reply-target and the attention window still apply.

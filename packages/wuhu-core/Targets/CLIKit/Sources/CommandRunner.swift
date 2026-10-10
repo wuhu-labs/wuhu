@@ -225,7 +225,14 @@ private func rendered(_ error: ToolError) -> String {
   return text
 }
 
+enum ChannelCommand: Equatable {
+  case create(title: String?, people: [String])
+  case members(id: String, people: [String], add: Bool)
+  case rename(id: String, title: String?)
+}
+
 enum Command: Equatable {
+  case channel(ChannelCommand)
   case help(String)
   case use(String, pin: Bool, group: String?)
   case trust(String)

@@ -21,6 +21,7 @@ const discover = __wuhu_discovery
 const identityOrigin = __wuhu_identity_origin
 const read = __wuhu_conversation
 const between = __wuhu_dm
+const channel = __wuhu_channel
 
 let signal
 let guarded
@@ -99,6 +100,11 @@ const anchor = (value) => (value instanceof Date ? value.toISOString() : value)
 export function conversation(id, { after, before, limit } = {}) {
   return read(id, { after: anchor(after), before: anchor(before), limit })
 }
+
+export const createChannel = (options) => call(() => channel("create", options))
+export const addChannelMembers = (id, people) => call(() => channel("add", { id, people }))
+export const removeChannelMembers = (id, people) => call(() => channel("remove", { id, people }))
+export const renameChannel = (id, title) => call(() => channel("rename", { id, title }))
 
 export function dm(a, b) {
   return between(a, b)

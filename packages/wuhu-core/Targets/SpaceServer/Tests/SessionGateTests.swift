@@ -378,3 +378,48 @@ import Testing
     }
   }
 }
+
+extension SessionGateTests {
+  @Test func aSessionExecCreatesAndManagesAHumanOnlyChannel() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let alice = try await t.harness.mintPersona()
+      let bob = try await t.harness.mintPersona()
+      let carol = try await t.harness.mintPersona()
+      let output = try await t.harness.call("/v1/conversation", ["members": .array([.string(alice), .string(bob)]), "title": "People"], as: ConversationPostOutput.self, bearer: t.token)
+      let id = output.conversationId
+      let channel = try await t.harness.store.conversation(ConversationID(id))
+      #expect(channel.kind == .users)
+      #expect(channel.title == "People")
+      #expect(Set(channel.members.map(\.member)) == [alice, bob])
+      let add = try await t.harness.post("/v1/channel/\(id)/add", ["people": .array([.string(carol)])], bearer: t.token)
+      #expect(add.status == .ok)
+      let remove = try await t.harness.post("/v1/channel/\(id)/remove", ["people": .array([.string(carol)])], bearer: t.token)
+      #expect(remove.status == .ok)
+      let rename = try await t.harness.post("/v1/channel/\(id)/rename", ["title": "Team"], bearer: t.token)
+      #expect(rename.status == .ok)
+      let refused = try await t.harness.post("/v1/channel/\(id)/add", ["people": .array([.string(t.parent.rawValue)])], bearer: t.token)
+      #expect(refused.status == .unprocessableContent)
+      #expect(try await refused.text().contains("invalidArgument"))
+      let plain = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(alice), "message": "hello people"], as: ConversationPostOutput.self)
+      #expect(plain.delivered.isEmpty)
+      let mention = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(alice), "message": .string("@\(t.parent.rawValue) help")], as: ConversationPostOutput.self)
+      #expect(mention.delivered == [t.parent.rawValue])
+      _ = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "replyTarget": .string(mention.messageId), "message": "answer"], as: ConversationPostOutput.self, bearer: t.token)
+      let next = try await t.harness.call("/v1/conversation/message", ["conversation": .string(id), "identity": .string(bob), "message": "next without mention"], as: ConversationPostOutput.self)
+      #expect(next.delivered == [t.parent.rawValue])
+      #expect(try await t.harness.store.conversation(ConversationID(id)).members.allSatisfy { $0.kind == .user })
+      let strangerPost = try await t.harness.post("/v1/conversation/message", ["conversation": .string(id), "identity": .string(carol), "message": "refused"])
+      #expect(strangerPost.status == .notFound)
+      #expect(try await t.harness.get("/v1/conversation/\(id)/messages", query: ["identity": carol]).status == .notFound)
+      let aliceAccount = try #require(try await t.harness.space.persona(named: alice)?.account)
+      let (aliceBearer, _) = try await t.harness.enrolledBearer(account: aliceAccount)
+      #expect(try await t.harness.get("/v1/conversation/\(id)/messages", bearer: aliceBearer).status == .ok)
+      let read = try await t.harness.get("/v1/conversation/\(id)/messages", bearer: t.token)
+      #expect(read.status == .ok)
+      let list = try await t.harness.get("/v1/conversations", bearer: t.token)
+      #expect(list.status == .ok)
+      #expect(try await list.text().contains("Team"))
+    }
+  }
+}

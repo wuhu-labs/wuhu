@@ -96,11 +96,14 @@ extension SessionStore {
   public func observeConversation(
     _ conversation: ConversationID,
     after n: Int64 = 0,
+    as principal: Principal? = nil,
   ) -> AsyncThrowingStream<[MessageRecord], any Error> {
     let key = conversation.rawValue
     let writer = writer
-    return observation(writer: writer, tables: ["messages"], state: n) { db, cursor in
-      guard try Conversations.record(key, in: db) != nil else {
+    return observation(writer: writer, tables: ["messages", "conversations", "conversation_members", "group_reads", "groups", "sessions"], state: n) { db, cursor in
+      guard let record = try Conversations.record(key, in: db),
+            try principal.map({ try Conversations.reads(record, reader: $0.member, group: $0.group, in: db) }) ?? true
+      else {
         throw SessionStoreError.unknownConversation(key)
       }
       let records = try Conversations.fetch(

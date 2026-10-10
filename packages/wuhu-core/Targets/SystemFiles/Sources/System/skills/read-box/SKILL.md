@@ -22,7 +22,7 @@ const { messages, next } = await conversation(id, { after, before, limit })
   - `before`: the last `limit` messages before the cursor. `next` is the oldest id, to pass as `before` again.
   - `next` is `null` when nothing more lies in that direction.
 - Reading marks nothing. Keep your own last-seen message id, for example in a note in your home. A time is only a starting point for a first read.
-- A box is readable when your group reads its group. A DM is readable when you are a member or it is homed in your group. A group conversation is readable only by its members; other conversations answer as missing. The `query` tool is also scoped: unqualified `messages` includes conversations homed in the acting group or ones you are a member of, not unrestricted cross-group messages. That SQL scope is not identical to `conversation()`’s group-conversation membership check.
+- A box is readable when your group reads its group. A DM is readable when you are a member or it is homed in your group. A human-only channel is readable by every session whose group reads its home group; other conversations answer as missing. The `query` tool is also scoped: unqualified `messages` includes conversations homed in the acting group or ones you are a member of, not unrestricted cross-group messages. That SQL scope is not identical to `conversation()`’s group-conversation membership check.
 
 ## Catch up on my box since a time
 
@@ -76,3 +76,9 @@ result({
 ```
 
 `original.replyTarget` walks one step further up the thread: feed it back in as the next `target`.
+
+## Human-only channels
+
+A channel is a `users` conversation with a title and people-only membership. Every session whose group reads its home group can read it with `conversation(id)` and post to its id with `send_message`, without joining. People must be members. A plain person's message wakes no session; @mentions, reply targets and the attention window keep their existing wake behavior.
+
+Manage channels in `run_script` with `import { createChannel, addChannelMembers, removeChannelMembers, renameChannel } from "wuhu:space"`: `const id = await createChannel({ title: "Team", people: ["person-a", "person-b"] })`, then `await addChannelMembers(id, ["person-c"])`, `await removeChannelMembers(id, ["person-c"])`, or `await renameChannel(id, "Planning")`. `renameChannel(id, null)` shows members' names instead. These manage only people; adding a session throws a typed `SpaceError` with `code: "invalidArgument"`. The CLI equivalents are `wuhu channel create --title Team person-a person-b`, `channel add`, `channel remove`, and `channel rename` (`--clear` resets the title).

@@ -167,6 +167,13 @@ private func sessionRouter(
   router.post("/v1/transcribe", use: forward)
   router.post("/v1/web-search", use: forward)
   router.post("/v1/image", use: forward)
+  router.post("/v1/conversation", use: forward)
+  router.get("/v1/conversation/:id/messages", use: forward)
+  router.get("/v1/conversation/:id/observe", use: forward)
+  router.get("/v1/conversations", use: forward)
+  for operation in ["add", "remove", "rename"] {
+    router.post("/v1/channel/:id/\(operation)", use: forward)
+  }
   router.get("/v1/groups", use: forward)
   router.get("/v1/machine", use: forward)
   router.get("/v1/f/*", use: forward)

@@ -110,7 +110,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     )
     #expect(delivery.enqueued == [owner])
 
-    let group = try await rig.store.createConversation(members: ["carol", "dave", task.rawValue], in: .shared)
+    let group = try await rig.store.createConversation(members: ["carol", "dave"], in: .shared)
     let grouped = try await rig.store.post(
       .conversation(group), messageID: MessageID("m2"), sender: human("carol"),
       content: .init(text: "@\(task.rawValue) status?"),
@@ -123,7 +123,7 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     let rig = try MovingClockSpace()
     let parent = try await agent(rig.store)
     let task = try await task(rig.store, parent: parent)
-    let group = try await rig.store.createConversation(members: ["carol", task.rawValue], in: .shared)
+    let group = try await rig.store.createConversation(members: ["carol"], in: .shared)
     _ = try await rig.store.post(
       .conversation(group), messageID: MessageID("t1"), sender: human(task.rawValue),
       senderSession: task, content: .init(text: "done"),

@@ -2649,6 +2649,7 @@ interface DenoPackageManifest {
   tasks?: Record<string, string>
   generated?: Record<string, string>
   exportedDirs?: Record<string, string>
+  links?: string[]
 }
 
 // Two levels, because a deno workspace root is itself a directory under
@@ -2824,6 +2825,16 @@ export function generateDenoBuildBazel(
   workspace?: DenoWorkspaceRoot,
 ): string {
   assertOwner(manifest.owner, `${packageDir}/deno.json`)
+  // A package outside any workspace that links another package is its own
+  // one-member cluster, so its tasks run with the linked trees beside it.
+  if (!workspace && manifest.links?.length) {
+    workspace = {
+      dir: packageDir,
+      members: [packageDir],
+      links: manifest.links.map((link) => normalize(join(packageDir, link)))
+        .sort(),
+    }
+  }
   const tasks = manifest.tasks ?? {}
   const generated = manifest.generated ?? {}
   const isMember = workspace !== undefined

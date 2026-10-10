@@ -16,12 +16,13 @@ func conversationStreamResponse(
   conversation: ConversationID,
   after: Int64,
   viewer: GroupID,
+  reader: String? = nil,
   clock: any Clock<Duration>,
 ) -> Response {
   let events = AsyncStream<SSEEvent> { continuation in
     let task = Task {
       do {
-        for try await batch in store.observeConversation(conversation, after: after) {
+        for try await batch in store.observeConversation(conversation, after: after, as: Principal(actor: reader.map { .person(persona: $0, account: AccountID(rawValue: $0)) } ?? .anonymous, group: viewer)) {
           for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: viewer) {
             continuation.yield(try .json(payload))
           }

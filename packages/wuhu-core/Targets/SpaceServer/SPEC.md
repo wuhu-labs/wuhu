@@ -43,7 +43,7 @@ Without `--origin` the content host is `localhost`, so a browser on the serving 
 
 ## The acting group
 
-Every request on the API plane acts in one group. Hostless paths, `/v1/f/*`, tool calls and observe globs are that group's; `wuhu://<group>.localspace/<path>` names another group's, and a group the acting group does not read answers as a missing path. There is no fallback from a hostless path to another group. The space paths a conversation post attaches are hostless, read in the acting group, or `wuhu://<group>.localspace/<path>` in a group the acting group reads; an unread group is 404 `notFound`, any other form 400. A conversation's attachments live in its group and a member reads them from any group.
+Every request on the API plane acts in one group. Hostless paths, `/v1/f/*`, tool calls and observe globs are that group's; `wuhu://<group>.localspace/<path>` names another group's, and a group the acting group does not read answers as a missing path. There is no fallback from a hostless path to another group. The space paths a conversation post attaches are hostless, read in the acting group, or `wuhu://<group>.localspace/<path>` in a group the acting group reads; an unread group is 404 `notFound`, any other form 400. A conversation's attachments live in its group and a member reads them from any group. Attachment paths supplied to a conversation post obey the same file readership as direct reads, including channel membership before group readability for hostless and qualified paths. An unreadable source returns `notFound` without posting or copying its bytes.
 
 - A person (an assertion, or anonymous in dev) acts in the group the `wuhu-group` header names, else `shared`. The Host never names it. `shared` needs no check. A group that does not exist or was removed is 404 `unknownGroup`; a group the person's account is not a member of is 403 `groupForbidden` (anonymous in dev skips membership). The person speaks as the persona the identity routes give them: the one `?identity=` names, else the account's first. A persona of another account is 403 `identityNotYours`, a claim from a key that is not a device or seat key 403 `personaRequiresDevice`. That persona is the member for watermarks, DMs and notifications.
 - An exec token acts in its session's group (see *The gate*).
@@ -166,40 +166,14 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   message a surface returns: `ConversationMessagePayload` (HTTP, `observe`,
   the CLI log), a script's `conversation()`, `message_senders` and the push
   relay's data.
-- Reading a conversation (`GET /v1/conversation/:id/messages` and `observe`,
-  `GET /v1/session/:id/conversation`, a script's `conversation()` and `dm()`):
-  a box when the reader's group reads its group; a DM when the reader is in it
-  or it is homed in the reader's group; a group conversation only by its
-  members. Anything else reads as an unknown conversation (404 `notFound`;
-  `dm()` answers null). `GET /v1/conversations` lists every conversation the
-  person's persona is a member of, whatever the acting group.
+- Reading a conversation (`GET /v1/conversation/:id/messages` and `observe`, `GET /v1/session/:id/conversation`, a script's `conversation()` and `dm()`): a box when the reader's group reads its group; a DM when the reader is in it or it is homed in the reader's group; a human-only channel (`kind: users`) when the person is a member, or the reader is a session whose group reads the channel's home group. A group read edge alone never admits a nonmember person. Anonymous dev-seat and public-read callers cannot read channels. Anything else reads as an unknown conversation (404 `notFound`; `dm()` answers null). Channel attachment bytes, file tools and directory listings, including content-origin reads, enforce this same contract. An open conversation observation revalidates readership on membership/group changes and stops when access is revoked. `GET /v1/conversations` lists the person's memberships and readable channels, or a session's memberships and channels in readable groups, ordered most-recent-active first (last message position descending; channels with no messages last).
 - A session route (`/v1/session/:id/…`: `transcript`, `direct`, `context`,
   `home`, `log`, `entry/:ref`, `compact`, `restart`, `tags`, `title`,
   `interrupt`, `resume`, `archive`, `unarchive`) answers a session whose group
   the acting group does not read as an unknown session (404 `notFound`),
   before any effect.
-- In SQL, `conversations` shows the acting group's plus those the reader is a
-  member of; `messages` and `conversation_members` follow it;
-  `message_senders` (`n`, `sender_session_id`, `sender_grp`, `sender_title`)
-  gives each visible message's poster group; `watermarks` shows only the
-  reader's own rows (a session's id or a person's persona); `notifications`
-  shows the acting group's plus the reader's own, so a member always sees
-  a DM they are in and its notifications.
-- A person has one inbox across all their groups, with one read position:
-  `GET /v1/notifications` returns the identity's rows of every group whatever
-  the acting group, each naming its `group`, and a conversation message from
-  a poster outside the conversation's group carries the poster's
-  `senderGroup`. The CLI keeps one inbox cursor per space, so switching
-  `--group` or the Host replays nothing.
-- In SQL, an unqualified name reads the acting group;
-  `"wuhu://<g>.localspace/<name>"` reads a group `g` the acting group reads,
-  and `"wuhu://*.localspace/<name>"` is the union over every readable group,
-  with `grp` as a column. This release that union covers the built-in tables
-  only; user tables, whose schemas can differ between groups, are combined
-  with an explicit `UNION ALL` over their qualified names. An unqualified
-  `links` stays same-group only (source and destination both in the acting
-  group, as before groups); naming the group (`"wuhu://<g>.localspace/links"`)
-  also shows that group's links into other groups, with their `dst_grp`.
+- In SQL, `conversations` shows the acting group's non-channel conversations plus memberships and readable channels under the read contract above; `messages` and `conversation_members` follow it. `message_senders` (`n`, `sender_session_id`, `sender_grp`, `sender_title`) gives each visible message's poster group; `watermarks` shows only the reader's own rows (a session's id or a person's persona). `notifications` shows the acting group's plus the reader's own, but channel message notifications require channel readership regardless of recipient. Qualified group and wildcard views enforce the same channel gate; removing a member also hides historical notifications from queries and observations.
+
 
 ## Certificate pinning
 
@@ -701,7 +675,7 @@ Authenticated `POST /v1/web-search` accepts `{ query, provider?, count? }` and r
 Capability error bodies preserve code/message/hint. HTTP mapping: invalid_argument/unsupported_feature → 400 (streaming upload byte overflow → 413); provider_auth → 401; provider_region/provider_entitlement → 403; provider_rate_limited → 429; provider_not_configured/provider_unavailable → 503. No upstream diagnostic bodies, credentials or signed result URLs are logged/returned. The existing authentication wall remains; session exec tokens may call these four capability routes, preserving group scoping and without access to credential-management routes.
 ## Partial-loading routes
 
-`GET /v1/conversation/:id/messages?tail=100&paged=true` returns `ConversationHistoryOutput`: ascending messages, exclusive `before`, `hasEarlier` and `headPosition`. An older request adds `before`; the maximum paged tail is 100. Existing unpaged message responses are unchanged. Conversation read authorization is unchanged.
+`GET /v1/conversation/:id/messages?tail=100&paged=true` returns `ConversationHistoryOutput`: ascending messages, exclusive `before`, `hasEarlier` and `headPosition`. An older request adds `before`; the maximum paged tail is 100. Existing unpaged message responses retain their shapes. The channel/box/DM read contract above applies to each page.
 
 `GET /v1/session/:id/transcript/page?limit=200` returns `TranscriptHistoryOutput`. Older reads supply `generation`, exclusive `before`. The response carries generation, optional `historyEpoch`, positioned entries, boundary origins, before, hasEarlier and snapshot head. Origins are attribution, not loaded transcript rows. An invalid cursor is 400; stale generation is 409 `generationChanged`. Session read authorization applies to each page.
 
@@ -772,3 +746,9 @@ Session Start over reports the number of unreadable queued inputs dropped in its
 All model providers run in the kernel. `POST /v1/session`, session templates and `POST /v1/session/:id/restart` reject an explicit `executor: "claude-code"` with HTTP 422 `{ "code": "executorNoLongerSupported", "message": "executor no longer supported" }`. A session-tool call returns a failure with the same code and message; code-mode creation throws an error naming the code. No rejection creates a session or changes its generation. Existing live Claude Code sessions become errored at server start, including idle agents, and stay errored across enqueue and resume. Start over must explicitly name a supported provider to hand one over; a bare restart cannot switch its executor. The session id, box, home, tags, children, subscriptions and readable queue input are retained.
 
 The Claude Code installer, process loop, stream parser, mirror/history translation, image transport, MCP routes and loopback listener, usage probes and inference accounting hooks are removed. Old turns no longer appear in transcript/history routes; raw stored rows and external logs are not deleted. `/v1/session-tools` exposes only the kernel roster.
+
+## Human-only channels
+
+`POST /v1/conversation` accepts `{members: [persona], title?: string|null}` and returns `ConversationPostOutput` with the new conversation id. It creates a `users` channel homed in the acting group; every initial member must be a person, not a session. `POST /v1/channel/:id/add` and `/remove` accept `{people: [persona]}`; `/rename` accepts `{title: string|null}`. Creation and each mutation validate atomically. Anonymous creation receives `invalidArgument` with "creating a channel needs an identified person or session". Person members and sessions whose group reads the channel's home group may manage it; anonymous dev-seat and public-read callers cannot manage channels and receive the same typed unknown-conversation refusal as nonmember people. Session ids, empty identities and blank non-null titles are invalid arguments; unread/non-channel ids answer as unknown conversations. Adding a member is idempotent, removing an absent member is harmless, and `null` clears the title. `ConversationPayload` has nullable `title`; the UI falls back to members' names. The nullable title side table is additive and needs no ALTER, data reset or backfill.
+
+Sessions read, post and manage without joining the channel; legacy session membership rows grant no person access. Plain messages notify people but do not wake a session unless addressed. Mentions, reply targets and the existing attention window still deliver to sessions. CLI `channel create|add|remove|rename` and `wuhu:space` `createChannel`, `addChannelMembers`, `removeChannelMembers`, `renameChannel` expose the same management services.

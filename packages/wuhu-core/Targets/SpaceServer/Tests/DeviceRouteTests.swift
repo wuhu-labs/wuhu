@@ -174,7 +174,7 @@ import Testing
       let phone = Curve25519.Signing.PrivateKey()
       let seat = Curve25519.Signing.PrivateKey()
       let phonePersona = try await enrolled(harness.space, phone, capabilities: [.device, .seat])
-      try await enrolled(harness.space, seat, capabilities: [.seat])
+      let seatPersona = try await enrolled(harness.space, seat, capabilities: [.seat])
 
       let registered = try await harness.put(
         "/v1/device",
@@ -184,7 +184,7 @@ import Testing
       #expect(registered.status == .ok)
       let device = try JSONValueDecoder().decode(DevicePayload.self, from: try await json(registered))
 
-      let conversation = try await harness.space.sessions.createConversation(members: [phonePersona, "alice"], in: .shared)
+      let conversation = try await harness.space.sessions.createConversation(members: [phonePersona, seatPersona], in: .shared)
       for (key, text) in [(phone, "from the phone"), (seat, "from a terminal")] {
         let posted = try await harness.post(
           "/v1/conversation/message",

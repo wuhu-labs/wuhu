@@ -1,9 +1,15 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
+import StructuredQueries
+import StructuredQueriesSQLite
 
 extension SessionStore {
   public func conversation(_ id: ConversationID) async throws -> ConversationRecord {
@@ -15,16 +21,11 @@ extension SessionStore {
     }
   }
 
-  /// Whether `reader` (a session id or a persona; nil for the --dev seat),
-  /// acting in `group`, reads `conversation`: a box in a group `group` reads,
-  /// a conversation it is a member of, or a DM homed in `group` itself.
+  /// Applies box, DM and channel readership for a session id, persona, or nil (--dev seat).
   public func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID) async throws -> Bool {
-    if conversation.ownerSession != nil {
-      return try await writer.read { db in try Groups.reads(group, in: db) }.contains(conversation.group)
+    try await writer.read { db in
+      try Conversations.reads(conversation, reader: reader, group: group, in: db)
     }
-    guard let reader else { return conversation.group == group }
-    if conversation.members.contains(where: { $0.member == reader }) { return true }
-    return conversation.kind != .users && conversation.group == group
   }
 
   /// Whether `member` reads `path` in `group` because it is a member of the
@@ -36,6 +37,24 @@ extension SessionStore {
     return try await writer.read { db in
       guard let record = try Conversations.record(String(parts[2]), in: db) else { return false }
       return record.group == group && record.members.contains { $0.member == member }
+    }
+  }
+
+  public func attachmentConversation(_ path: String, in group: GroupID) async throws -> ConversationRecord? {
+    try await writer.read { db in try fileConversation(path, in: group, db: db) }
+  }
+
+  public func readsFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
+    try await writer.read { db in
+      let conversation = try fileConversation(path, in: group, db: db)
+      if let conversation, conversation.kind == .users {
+        return try Conversations.reads(conversation, reader: principal.member, group: principal.group, in: db)
+      }
+      if group == principal.group { return true }
+      if try Groups.reads(principal.group, in: db).contains(group) { return true }
+      let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+      guard parts.count >= 4, parts[3] == "attachments", let member = principal.member else { return false }
+      return conversation?.members.contains { $0.member == member } == true
     }
   }
 
@@ -54,13 +73,30 @@ extension SessionStore {
     }
   }
 
+  public func conversations(reader: String?, group: GroupID) async throws -> [ConversationRecord] {
+    let records = try await writer.read { db in
+      try ConversationRow.order {
+        #sql("COALESCE((SELECT MAX(n) FROM messages WHERE conversation_id = \($0.id)), 0)", as: Int64.self).desc()
+      }.fetchAll(db).compactMap { try Conversations.record($0.id, in: db) }
+    }
+    var readable: [ConversationRecord] = []
+    for record in records {
+      if record.kind == .users {
+        if try await reads(record, reader: reader, group: group) { readable.append(record) }
+      } else if record.members.contains(where: { $0.member == reader }) { readable.append(record) }
+    }
+    return readable
+  }
+
   /// `group` homes it: the group its opener acts in.
   @discardableResult
-  public func createConversation(members: [String], in group: GroupID) async throws -> ConversationID {
+  public func createConversation(members: [String], title: String? = nil, in group: GroupID) async throws -> ConversationID {
     @Dependency(\.uuid) var uuid
     let now = SQLiteDateFormat.string(from: dateGen.now)
     let id = ConversationID(uuid().uuidString.lowercased())
     try await writer.write { db in
+      try Channels.validate(members, in: db)
+      try Channels.validate(title: title)
       try Conversations.create(
         id: id.rawValue,
         kind: .users,
@@ -70,6 +106,7 @@ extension SessionStore {
         now: now,
         in: db,
       )
+      try ConversationTitleRow.upsert { ConversationTitleRow(conversationID: id.rawValue, title: title) }.execute(db)
     }
     return id
   }
@@ -116,7 +153,7 @@ extension SessionStore {
           throw SessionStoreError.replyTargetInAnotherConversation(replyTarget.rawValue)
         }
       }
-      if conversation.kind.isOpen {
+      if conversation.kind == .box {
         try Conversations.join(
           conversation.id.rawValue,
           member: .init(
@@ -254,6 +291,9 @@ extension SessionStore {
       guard let record = try Conversations.record(id.rawValue, in: db),
             readable.contains(record.group) || record.members.contains(where: { $0.member == me })
       else {
+        throw SessionStoreError.unknownConversation(id.rawValue)
+      }
+      if record.kind == .users && senderSession == nil && !record.members.contains(where: { $0.member == me && $0.kind == .user }) {
         throw SessionStoreError.unknownConversation(id.rawValue)
       }
       if record.kind == .dmUser || record.kind == .dmSession {
@@ -498,4 +538,23 @@ enum MentionScanner {
   private static func isNameByte(_ character: Character) -> Bool {
     character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "_")
   }
+}
+
+extension Conversations {
+  static func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID, in db: Database) throws -> Bool {
+    let session = try reader.map { try Sessions.exists($0, in: db) } ?? false
+    if conversation.ownerSession != nil || (conversation.kind == .users && session) {
+      return try Groups.reads(group, in: db).contains(conversation.group)
+    }
+    guard let reader else { return conversation.kind != .users && conversation.group == group }
+    if conversation.members.contains(where: { $0.member == reader && (conversation.kind != .users || $0.kind == .user) }) { return true }
+    return conversation.kind != .users && conversation.group == group
+  }
+}
+
+private func fileConversation(_ path: String, in group: GroupID, db: Database) throws -> ConversationRecord? {
+  let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+  guard parts.count >= 3, parts[0] == "_", parts[1] == "conversations",
+        let record = try Conversations.record(String(parts[2]), in: db), record.group == group else { return nil }
+  return record
 }

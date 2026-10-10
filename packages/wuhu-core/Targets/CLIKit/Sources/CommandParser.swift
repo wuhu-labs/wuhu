@@ -28,6 +28,36 @@ extension Command {
     }
 
     switch verb {
+    case "channel":
+      let operation = try parser.required("create|add|remove|rename", verb: verb)
+      switch operation {
+      case "create":
+        let title = try parser.option("--title", verb: verb)
+        var people: [String] = []
+        while let person = parser.pop() {
+          guard !person.hasPrefix("-") else { throw UsageError(message: "channel: unknown option \(person)") }
+          people.append(person)
+        }
+        try parser.finish(verb: verb)
+        return .channel(.create(title: title, people: people))
+      case "add", "remove":
+        let id = try parser.required("id", verb: verb)
+        var people: [String] = []
+        while let person = parser.pop() {
+          guard !person.hasPrefix("-") else { throw UsageError(message: "channel: unknown option \(person)") }
+          people.append(person)
+        }
+        guard !people.isEmpty else { throw UsageError(message: "channel \(operation): name at least one person") }
+        try parser.finish(verb: verb)
+        return .channel(.members(id: id, people: people, add: operation == "add"))
+      case "rename":
+        let clear = parser.flag("--clear")
+        let id = try parser.required("id", verb: verb)
+        let title = clear ? nil : try parser.required("title", verb: verb)
+        try parser.finish(verb: verb)
+        return .channel(.rename(id: id, title: title))
+      default: throw UsageError(message: "channel: use create, add, remove, or rename")
+      }
     case "identity":
       switch parser.pop() {
       case nil: return .identity
@@ -862,6 +892,7 @@ extension Command {
     skill     install the bundled agent skills into coding agent homes
     models    sync the space models document from the published basis
     usage     print each provider's plan usage windows (codex)
+    channel      create or manage a human-only channel
     identity     inspect issuer URLs or set default/audience issuer choices (admin)
     tool-roster  print the tools a kernel session is given
     auth      manage the space's provider credentials (api keys, chatgpt login)
@@ -1632,6 +1663,19 @@ extension Command {
     line names its group, and a sender from outside the conversation's group
     is shown with theirs.
     \(exitCodes)
+    """,
+    "channel": """
+    usage: wuhu channel <create|add|remove|rename>
+
+      create [--title T] [person...]   create in the acting group; a person creator joins
+      add <id> <person...>            add people (sessions are refused)
+      remove <id> <person...>         remove people
+      rename <id> <title>             rename
+      rename <id> --clear             show members' names instead
+
+    Sessions in groups reading the channel can read, post and manage it without joining.
+    People must be members to read, post or manage it. Plain posts wake no session;
+    mentions, reply targets and the existing attention window still apply.
     """,
     "session": """
     usage: wuhu session <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|list> ...

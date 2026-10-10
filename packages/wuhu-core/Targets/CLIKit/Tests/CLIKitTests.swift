@@ -1047,3 +1047,31 @@ struct TrustVerbTests {
     #expect(await harness.stderr.text.contains("never overwrites"))
   }
 }
+
+extension RequestMappingTests {
+  @Test func channelVerbsEmitTheMatchingManagementRequests() async throws {
+    try await assertRequest(["channel", "create", "--title", "Team", "alice", "bob"], response: ["messageId": "", "conversationId": "team", "n": 0, "delivered": []]) { request in
+      #expect(request.method == .post)
+      #expect(request.url.path == "/v1/conversation")
+      let body = try await request.json(JSONValue.self)
+      #expect(body == ["title": "Team", "members": ["alice", "bob"]])
+    }
+    for operation in ["add", "remove"] {
+      try await assertRequest(["channel", operation, "team", "carol"], response: [:]) { request in
+        #expect(request.method == .post)
+        #expect(request.url.path == "/v1/channel/team/\(operation)")
+        let body = try await request.json(JSONValue.self)
+        #expect(body == ["people": ["carol"]])
+      }
+    }
+    try await assertRequest(["channel", "rename", "team", "Planning"], response: [:]) { request in
+      #expect(request.url.path == "/v1/channel/team/rename")
+      let body = try await request.json(JSONValue.self)
+      #expect(body == ["title": "Planning"])
+    }
+    try await assertRequest(["channel", "rename", "team", "--clear"], response: [:]) { request in
+      let body = try await request.json(JSONValue.self)
+      #expect(body == ["title": .null])
+    }
+  }
+}

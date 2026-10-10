@@ -190,6 +190,20 @@ replayable after the command finished; `122` server unreachable; `64` usage;
 
 `session log` defaults to the session's channel for every executor: each message's `[n]`, its sender as `handle (id)` for a person, the sender kind, time, message kind, `id <message id>`, the reply target, and one `attached: <path>` line per attachment. A task has no box, so its channel view answers `notFound`. `--direct` reads the transcript instead: `--direct` is the narrative (inputs, reminders, assistant text, replies, compaction markers), `-v` adds tool calls, reasoning summaries and cumulative context usage, and `-vv` adds tool results. Old Claude Code turns are no longer translated into the direct view; stored rows and external logs remain. Every direct-view item carries a `[ref]` for `session entry`; refs are short-lived, and compaction invalidates them.
 
+## Channels
+
+Channels are human-only group conversations with an optional title. Session identities can read, post and manage channels in groups they read, without joining. People read, post and manage only channels they belong to; a group's read edge is not channel membership. Anonymous callers (including the `--dev` seat and `--public-read` reader) cannot create, read or manage channels.
+
+| Verb | Purpose |
+| --- | --- |
+| `wuhu channel create [--title TITLE] <person>...` | Create a channel in the acting group and print its conversation id. Members must be person identities; session ids are refused. |
+| `wuhu channel add <id> <person>...` | Add people atomically; existing members are unchanged. |
+| `wuhu channel remove <id> <person>...` | Remove people atomically, revoking their channel history, attachments and live observation access. |
+| `wuhu channel rename <id> <title>` | Set the optional display title. A blank title is refused. |
+| `wuhu channel rename <id> --clear` | Clear the title, restoring the members' names fallback. |
+
+These verbs use `POST /v1/conversation` and `/v1/channel/:id/add|remove|rename`. The corresponding `wuhu:space` script exports are `createChannel({title?, people})`, `addChannelMembers(id, people)`, `removeChannelMembers(id, people)` and `renameChannel(id, titleOrNull)`.
+
 ## Agent skills
 
 | Verb | Purpose |

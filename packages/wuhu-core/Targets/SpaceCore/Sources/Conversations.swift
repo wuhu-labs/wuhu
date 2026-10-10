@@ -1,8 +1,14 @@
 import Crypto
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
+import StructuredQueries
+import StructuredQueriesSQLite
 
 let conversationSchemaSQL = """
 CREATE TABLE IF NOT EXISTS "conversations" (
@@ -17,6 +23,10 @@ CREATE TABLE IF NOT EXISTS "conversations" (
 CREATE TRIGGER IF NOT EXISTS "conversations_grp_required" BEFORE INSERT ON "conversations" WHEN NEW."grp" = ''
   BEGIN SELECT RAISE(ABORT, 'grp required: conversations'); END;
 CREATE INDEX IF NOT EXISTS "conversations_by_grp" ON "conversations" ("grp");
+CREATE TABLE IF NOT EXISTS "conversation_titles" (
+  "conversation_id" TEXT NOT NULL PRIMARY KEY,
+  "title" TEXT
+);
 CREATE TABLE IF NOT EXISTS "conversation_members" (
   "conversation_id" TEXT NOT NULL,
   "member" TEXT NOT NULL,
@@ -87,6 +97,7 @@ public struct ConversationRecord: Hashable, Sendable {
   public var id: ConversationID
   public var kind: ConversationKind
   public var ownerSession: SessionID?
+  public var title: String?
   public var group: GroupID
   public var windowMessages: Int
   public var windowSeconds: Int
@@ -135,27 +146,23 @@ enum Conversations {
   }
 
   static func record(_ id: String, in db: Database) throws -> ConversationRecord? {
-    guard let row = try Row.fetchOne(
-      db, sql: "SELECT * FROM conversations WHERE id = ?", arguments: [id],
-    ) else { return nil }
+    guard let row = try ConversationRow.where({ $0.id.eq(id) }).fetchOne(db) else { return nil }
     return ConversationRecord(
-      id: ConversationID(row["id"] as String),
-      kind: ConversationKind(rawValue: row["kind"])!,
-      ownerSession: (row["owner_session"] as String?).map { SessionID($0) },
-      group: GroupID(rawValue: row["grp"]),
-      windowMessages: Int(row["window_messages"] as Int64),
-      windowSeconds: Int(row["window_seconds"] as Int64),
-      members: try members(id, in: db),
-      createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
+      id: ConversationID(row.id),
+      kind: ConversationKind(rawValue: row.kind)!,
+      ownerSession: row.ownerSession.map { SessionID($0) },
+      title: try ConversationTitleRow.where { $0.conversationID.eq(id) }.fetchOne(db)?.title,
+      group: GroupID(rawValue: row.group),
+      windowMessages: row.windowMessages,
+      windowSeconds: row.windowSeconds,
+      members: try members(id, in: db).filter { row.kind != ConversationKind.users.rawValue || $0.kind == .user },
+      createdAt: try SQLiteDateFormat.date(from: row.createdAt),
     )
   }
 
   static func members(_ id: String, in db: Database) throws -> [ConversationMember] {
-    try Row.fetchAll(
-      db,
-      sql: "SELECT member, member_kind FROM conversation_members WHERE conversation_id = ? ORDER BY member",
-      arguments: [id],
-    ).map { ConversationMember(member: $0["member"], kind: MemberKind(rawValue: $0["member_kind"])!) }
+    try ConversationMemberRow.where { $0.conversationID.eq(id) }.order { $0.member }.fetchAll(db)
+      .map { ConversationMember(member: $0.member, kind: MemberKind(rawValue: $0.kind)!) }
   }
 
   static func create(
@@ -167,34 +174,36 @@ enum Conversations {
     now: String,
     in db: Database,
   ) throws {
-    try db.execute(
-      sql: """
-      INSERT OR IGNORE INTO conversations
-        (id, kind, owner_session, window_messages, window_seconds, created_at, grp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      """,
-      arguments: [
-        id, kind.rawValue, ownerSession,
-        ConversationDefaults.windowMessages, ConversationDefaults.windowSeconds, now, group.rawValue,
-      ],
-    )
-    for member in members {
-      try join(id, member: member, now: now, in: db)
+    if kind == .users, let session = members.first(where: { $0.kind == .session }) {
+      throw ChannelError.sessionMember(session.member)
     }
+    try ConversationRow.insert {
+      ConversationRow(
+        id: id,
+        kind: kind.rawValue,
+        ownerSession: ownerSession,
+        windowMessages: ConversationDefaults.windowMessages,
+        windowSeconds: ConversationDefaults.windowSeconds,
+        createdAt: now,
+        group: group.rawValue,
+      )
+    } onConflict: { $0.id }
+      .execute(db)
+    for member in members { try join(id, member: member, now: now, in: db) }
   }
 
   static func group(of id: String, in db: Database) throws -> GroupID {
-    GroupID(rawValue: try String.fetchOne(db, sql: "SELECT grp FROM conversations WHERE id = ?", arguments: [id]) ?? GroupID.shared.rawValue)
+    GroupID(rawValue: try ConversationRow.where { $0.id.eq(id) }.fetchOne(db)?.group ?? GroupID.shared.rawValue)
   }
 
   static func join(_ id: String, member: ConversationMember, now: String, in db: Database) throws {
-    try db.execute(
-      sql: """
-      INSERT OR IGNORE INTO conversation_members (conversation_id, member, member_kind, joined_at)
-      VALUES (?, ?, ?, ?)
-      """,
-      arguments: [id, member.member, member.kind.rawValue, now],
-    )
+    if member.kind == .session, try ConversationRow.where({ $0.id.eq(id) }).fetchOne(db)?.kind == ConversationKind.users.rawValue {
+      throw ChannelError.sessionMember(member.member)
+    }
+    try ConversationMemberRow.insert {
+      ConversationMemberRow(conversationID: id, member: member.member, kind: member.kind.rawValue, joinedAt: now)
+    } onConflict: { ($0.conversationID, $0.member) }
+      .execute(db)
   }
 
   static func memberKind(of principal: String, in db: Database) throws -> MemberKind {
@@ -275,4 +284,29 @@ enum Conversations {
     if let limit { sql += " LIMIT \(limit)" }
     return try Row.fetchAll(db, sql: sql, arguments: arguments).map(decode)
   }
+}
+
+@Table("conversations")
+struct ConversationRow {
+  @Column(primaryKey: true) var id: String
+  var kind: String
+  @Column("owner_session") var ownerSession: String?
+  @Column("window_messages") var windowMessages: Int
+  @Column("window_seconds") var windowSeconds: Int
+  @Column("created_at") var createdAt: String
+  @Column("grp") var group: String
+}
+
+@Table("conversation_members")
+struct ConversationMemberRow {
+  @Column("conversation_id") var conversationID: String
+  var member: String
+  @Column("member_kind") var kind: String
+  @Column("joined_at") var joinedAt: String
+}
+
+@Table("conversation_titles")
+struct ConversationTitleRow {
+  @Column("conversation_id", primaryKey: true) var conversationID: String
+  var title: String?
 }

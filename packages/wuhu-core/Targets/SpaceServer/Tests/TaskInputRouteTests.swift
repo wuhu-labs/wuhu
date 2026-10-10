@@ -48,7 +48,7 @@ import Testing
         #expect(try await code(refused) == (route == "user" ? "humanAgentDM" : "taskInput"), "\(route)")
       }
 
-      let group = try await t.harness.store.createConversation(members: [t.person, task], in: .shared)
+      let group = try await t.harness.store.createConversation(members: [t.person], in: .shared)
       let mentionedAlone = try await t.harness.post(
         "/v1/conversation/message",
         .object([

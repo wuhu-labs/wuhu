@@ -111,11 +111,10 @@ extension ToolExecutor {
   /// A group the session does not read has no files for it: the address
   /// fails exactly as a missing path does.
   func resolve(_ raw: String, as session: SessionID) async throws -> Address {
-    let acting = try await space.principal(of: session).group
+    let principal = try await space.principal(of: session)
+    let acting = principal.group
     let address = try Addressing.parse(await naming(raw), acting: acting)
-    if case let .space(path, group, _) = address, group != acting, try await !space.reads(acting).contains(group),
-       try await !space.sessions.readsAttachment(path, in: group, member: session.rawValue)
-    {
+    if case let .space(path, group, _) = address, try await !space.sessions.readsFile(path, in: group, as: principal) {
       throw SpaceError.notFound(path)
     }
     // A machine of a group the session's group doesn't read is no machine.

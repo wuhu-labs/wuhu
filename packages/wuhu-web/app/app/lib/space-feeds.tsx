@@ -20,6 +20,7 @@ import {
   type SessionRecord,
 } from './session-model.ts'
 import type { EnrolledDevice } from '~/sdk/auth'
+import { channelRows, channelsSQL, type ChannelSummary } from './channels.ts'
 import { useObserve } from './use-observe.ts'
 import { applyEvent, loadPaths, type PathMap } from './tree.ts'
 import { type SidebarFile, sidebarPaths, touchesSidebars } from './sidebars.ts'
@@ -121,6 +122,7 @@ export interface GroupFeed {
   sidebars: SidebarFile[] | null
   liveness: Liveness
   sessions: SessionRecord[] | null
+  channels: ChannelSummary[] | null
   contentOrigin: ContentOrigin
 }
 
@@ -138,6 +140,7 @@ const emptyFeed: GroupFeed = {
   sidebars: null,
   liveness: 'reconnecting',
   sessions: null,
+  channels: null,
   contentOrigin: undefined,
 }
 
@@ -305,6 +308,11 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     sidebarPaths(paths),
     files.data.sidebarRev,
   )
+  const channels = useObserve<ChannelSummary[] | null, QueryOutput>(
+    sqlSubscription(channelsSQL, client.group),
+    (_, output) => channelRows(output),
+    null,
+  ).data
   const sessions = useObserve<SessionRecord[] | null, QueryOutput>(
     sqlSubscription(sessionsSQL, client.group),
     (_, output) => sessionRows(output, client.group),
@@ -318,6 +326,7 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     sidebars,
     liveness: files.liveness,
     sessions,
+    channels,
     contentOrigin,
-  }), [loaded, error, files, sidebars, sessions, contentOrigin])
+  }), [loaded, error, files, sidebars, sessions, channels, contentOrigin])
 }

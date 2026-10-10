@@ -2294,6 +2294,28 @@ Deno.test('generateDenoBuildBazel leaves a non-member package byte-identical', (
   }
 })
 
+Deno.test('generateDenoBuildBazel makes a linking standalone package its own cluster', () => {
+  const build = generateDenoBuildBazel('packages/build-pool', {
+    owner: 'internal',
+    tasks: { test: 't' },
+    links: ['../space-oidc'],
+  })
+  assertIncludes(
+    build,
+    `    workspace_root_files = [
+        "//packages/build-pool:deno.json",
+        "//packages/build-pool:deno.lock",
+    ],
+    link_srcs = [
+        "//packages/space-oidc:srcs",
+    ],
+`,
+  )
+  if (build.includes('workspace_member_srcs')) {
+    throw new Error('a one-member cluster has no sibling members')
+  }
+})
+
 Deno.test('generateDenoBuildBazel wires a workspace member to the cluster', () => {
   const build = generateDenoBuildBazel(
     'packages/wuhu-web/ui',

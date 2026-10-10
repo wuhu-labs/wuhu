@@ -122,6 +122,9 @@ final class ScriptBindings: Sendable {
     engine.define("__wuhu_sleep", promising: sleep)
     engine.define("__wuhu_timer", keepsAlive: false, promising: sleep)
     engine.defineCancel("__wuhu_cancel")
+    engine.define("__wuhu_channel", promising: { [space, execution] in
+      await scriptChannel($0, space: space, session: execution.session)
+    })
     engine.define("__wuhu_conversation", promising: { [space, execution] in
       try await conversationPage($0, in: space, reader: execution.session)
     })

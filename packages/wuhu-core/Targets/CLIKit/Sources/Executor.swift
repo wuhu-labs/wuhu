@@ -39,6 +39,7 @@ struct Executor {
 
   mutating func run(_ command: Command) async throws -> Int32 {
     switch command {
+    case let .channel(operation): try await self.channel(operation)
     case .help:
       preconditionFailure("help is routed before the executor")
     case .login:

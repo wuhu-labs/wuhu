@@ -263,6 +263,7 @@ public struct ConversationMemberPayload: Codable, Equatable, Sendable {
 
 @Contract
 public struct ConversationPayload: Codable, Equatable, Sendable {
+  public let title: String?
   public let id: String
   public let kind: ConversationKindPayload
   public let ownerSession: String?
@@ -286,6 +287,7 @@ public enum SenderKind: String, Codable, Equatable, Sendable {
 
 @Contract
 public struct ConversationCreateInput: Codable, Equatable, Sendable {
+  public let title: String?
   public let members: [String]
   public let identity: String?
 }
@@ -429,4 +431,14 @@ public enum SessionStreamEvent: Codable, Equatable, Sendable {
   case delta(attemptId: String, text: String)
   case cancelled(attemptId: String, reason: String)
   case materialized(attemptId: String, entryId: String)
+}
+
+@Contract
+public struct ChannelMembersInput: Codable, Equatable, Sendable {
+  public let people: [String]
+}
+
+@Contract
+public struct ChannelRenameInput: Codable, Equatable, Sendable {
+  public let title: String?
 }

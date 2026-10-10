@@ -135,6 +135,8 @@ public enum ContractSchemas {
     ("ConversationPayload", ConversationPayload.jsonSchema),
     ("ConversationsOutput", ConversationsOutput.jsonSchema),
     ("ConversationCreateInput", ConversationCreateInput.jsonSchema),
+    ("ChannelMembersInput", ChannelMembersInput.jsonSchema),
+    ("ChannelRenameInput", ChannelRenameInput.jsonSchema),
     ("ConversationMemberPayload", ConversationMemberPayload.jsonSchema),
     ("SessionKindPayload", SessionKindPayload.jsonSchema),
     ("MessageKindPayload", MessageKindPayload.jsonSchema),

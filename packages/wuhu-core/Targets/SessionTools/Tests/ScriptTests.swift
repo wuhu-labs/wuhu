@@ -366,11 +366,11 @@ import struct WuhuAI.ToolCall
         .dm(with: helper.rawValue), messageID: MessageID("d1"), sender: me, senderSession: rig.session,
         content: .init(text: "psst"),
       )
-      let theirs = try await store.createConversation(members: [helper.rawValue, "u_morgan"], in: .shared)
-      let ours = try await store.createConversation(members: [rig.session.rawValue, helper.rawValue], in: .shared)
       try await rig.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
       }
+      let theirs = try await store.createConversation(members: ["u_morgan"], in: GroupID(rawValue: "alice"))
+      let ours = try await store.createConversation(members: ["u_morgan"], in: .shared)
       let foreign = try await makeSession(rig.space, name: "P", group: GroupID(rawValue: "alice"))
       try await rig.write("/fixture/ids.js", """
       export const helper = "\(helper.rawValue)"

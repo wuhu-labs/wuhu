@@ -81,12 +81,26 @@ public struct ViewCatalog: Sendable {
     let readable = scope.readable.map(\.rawValue).reduce(into: Set([acting])) { $0.insert($1) }
     let literal = { (text: String) in "'" + text.replacing("'", with: "''") + "'" }
     let s = schemaPlaceholder
-    // The acting group's conversations and the ones the reader is in.
-    let visible = "grp = \(literal(acting))" + (scope.member.map {
-      " OR id IN (SELECT conversation_id FROM \(s).\"conversation_members\" WHERE member = \(literal($0)))"
-    } ?? "")
-    let inVisible = "conversation_id IN (SELECT id FROM \(s).\"conversations\" WHERE \(visible))"
+    let member = (scope.member ?? scope.viewer).map(literal)
     let everyReadable = "grp IN (" + readable.sorted().map(literal).joined(separator: ", ") + ")"
+    let membership = member.map { "id IN (SELECT conversation_id FROM \(s).\"conversation_members\" WHERE member = \($0) AND member_kind = 'user')" } ?? "0"
+    let session = member.map { "EXISTS (SELECT 1 FROM \(s).\"sessions\" WHERE id = \($0))" } ?? "0"
+    let joined = scope.member.map { "id IN (SELECT conversation_id FROM \(s).\"conversation_members\" WHERE member = \(literal($0)))" } ?? "0"
+    let channelAccess = "(kind != 'users' OR \(membership) OR (\(session) AND \(everyReadable)))"
+    let visible = "(grp = \(literal(acting)) OR \(joined) OR (kind = 'users' AND (\(membership) OR (\(session) AND \(everyReadable))))) AND \(channelAccess)"
+    let notificationAccess = "(kind != 'conversation_message' OR source NOT IN (SELECT id FROM \(s).\"conversations\" WHERE kind = 'users') OR source IN (SELECT id FROM \(s).\"conversations\" WHERE \(visible)))"
+    let notificationJoins = ["conversations", "conversation_members", "sessions"]
+    let inVisible = "conversation_id IN (SELECT id FROM \(s).\"conversations\" WHERE \(visible))"
+    func conversationView(_ name: String, columns: [String], filter: String) -> View {
+      View(
+        name: name,
+        table: "conversations",
+        select:
+        "SELECT " + columns.map { "c.\"\($0)\"" }.joined(separator: ", ") +
+          ", (SELECT title FROM \(s).\"conversation_titles\" WHERE conversation_id = c.id) AS title FROM \(s).\"conversations\" c WHERE \(filter)",
+        joins: ["conversation_members", "conversation_titles", "sessions"],
+      )
+    }
     var views: [View] = []
     for (table, columns) in tables.sorted(by: { $0.key < $1.key }) {
       if let colon = table.firstIndex(of: ":"), table[table.index(after: colon)...].hasPrefix("/") {
@@ -100,22 +114,38 @@ public struct ViewCatalog: Sendable {
         case "links":
           View(name: table, table: table, columns: own.filter { $0 != "dst_grp" }, filter: "grp = \(literal(acting)) AND dst_grp = \(literal(acting))")
         case "conversations":
-          View(name: table, table: table, columns: own, filter: visible, joins: ["conversation_members"])
+          conversationView(table, columns: own, filter: visible)
         case "notifications":
           View(
             name: table, table: table, columns: own,
-            filter: "grp = \(literal(acting))" + (scope.member.map { " OR recipient = \(literal($0))" } ?? ""),
+            filter: "(grp = \(literal(acting))" + (scope.member.map { " OR recipient = \(literal($0))" } ?? "") + ") AND \(notificationAccess)",
+            joins: notificationJoins,
           )
         default:
           View(name: table, table: table, columns: own, filter: "grp = \(literal(acting))")
         }
         views.append(unqualified)
         for group in readable.sorted() {
-          views.append(View(name: "wuhu://\(group).localspace/\(table)", table: table, columns: own, filter: "grp = \(literal(group))"))
+          if table == "conversations" {
+            views.append(conversationView("wuhu://\(group).localspace/\(table)", columns: own, filter: "grp = \(literal(group)) AND \(channelAccess)"))
+          } else {
+            views.append(View(name: "wuhu://\(group).localspace/\(table)", table: table, columns: own, filter: "grp = \(literal(group))" + (table == "notifications" ? " AND \(notificationAccess)" : ""), joins: table == "notifications" ? notificationJoins : []))
+          }
         }
-        views.append(View(name: "wuhu://*.localspace/\(table)", table: table, columns: ["grp"] + own, filter: everyReadable))
+        if table == "conversations" {
+          views.append(conversationView("wuhu://*.localspace/\(table)", columns: ["grp"] + own, filter: "\(everyReadable) AND \(channelAccess)"))
+        } else {
+          views.append(View(name: "wuhu://*.localspace/\(table)", table: table, columns: ["grp"] + own, filter: everyReadable + (table == "notifications" ? " AND \(notificationAccess)" : ""), joins: table == "notifications" ? notificationJoins : []))
+        }
       } else if table == "messages" || table == "conversation_members" {
-        views.append(View(name: table, table: table, filter: inVisible, joins: ["conversations", "conversation_members"]))
+        views.append(View(
+          name: table,
+          table: table,
+          filter: table == "conversation_members"
+            ? "\(inVisible) AND (member_kind = 'user' OR conversation_id IN (SELECT id FROM \(s).\"conversations\" WHERE kind != 'users'))"
+            : inVisible,
+          joins: ["conversations", "conversation_members", "sessions"],
+        ))
         if table == "messages" {
           views.append(View(
             name: "message_senders", table: table,
