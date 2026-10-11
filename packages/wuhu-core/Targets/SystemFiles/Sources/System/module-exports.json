@@ -1,7 +1,9 @@
 {
   "wuhu:ai": [
     "CapabilityError",
+    "CompletionError",
     "capability",
+    "complete",
     "editImage",
     "generateImage",
     "transcribe"
@@ -25,6 +27,7 @@
     "interrupt",
     "request",
     "resume",
+    "sendMessage",
     "setTags",
     "toolRoster",
     "unarchive"

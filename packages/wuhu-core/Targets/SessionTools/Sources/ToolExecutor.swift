@@ -1,6 +1,8 @@
 import struct Credentials.CredentialResolver
 import Foundation
 import struct InferenceKit.CapabilityError
+import struct InferenceKit.InferenceMetricsSink
+import struct InferenceKit.ProviderCatalog
 import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
@@ -73,6 +75,8 @@ public struct ToolExecutor: Sendable {
   let machines: MachineSeam?
   let execBackend: ExecBackend?
   let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
+  let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
+  let completionMetrics: InferenceMetricsSink?
   let credentials: CredentialResolver
   let scripts: Scripts?
   let control: SessionControl?
@@ -83,6 +87,8 @@ public struct ToolExecutor: Sendable {
     exec: ExecBackend? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     credentials: CredentialResolver = .unavailable,
+    completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    completionMetrics: InferenceMetricsSink? = nil,
     scripts: Scripts? = nil,
     control: SessionControl? = nil,
   ) {
@@ -91,6 +97,8 @@ public struct ToolExecutor: Sendable {
     execBackend = exec
     self.resolveModelExecutor = resolveModelExecutor
     self.credentials = credentials
+    self.completionCatalog = completionCatalog
+    self.completionMetrics = completionMetrics
     self.scripts = scripts
     self.control = control
   }

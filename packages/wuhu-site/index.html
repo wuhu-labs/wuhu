@@ -96,6 +96,11 @@
   }
   .lede b { color: var(--ink); font-weight: 600; }
   .cta-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  @media (max-width: 560px) {
+    header .cta-row { flex-direction: column; align-items: flex-start; }
+    header .cta-row .cmd { width: 100%; }
+    header .cta-row .btn.ghost { padding-left: 0; padding-right: 0; }
+  }
 
   /* copyable command */
   .cmd {
@@ -157,6 +162,8 @@
     margin-top: 38px; background: var(--card); border: 1px solid var(--line);
     border-radius: 20px; padding: 34px;
   }
+  #install .panel h3 { margin-bottom: 18px; }
+  #install .panel .sub { margin: 0 0 18px; }
   .install-cmd {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
     background: var(--ink); color: #dfe4ee; border-radius: 13px;
@@ -228,7 +235,8 @@
         <span><span class="p">$</span> curl -fsSL https://wuhu.ai/install.sh | sh</span>
         <span class="copy-hint">copy</span>
       </button>
-      <a class="btn ghost" href="#install">or download ↓</a>
+      <a class="btn solid" href="https://wuhu.ai/releases/app/mac/latest/Wuhu.zip">Download for Mac</a>
+      <a class="btn ghost" href="https://apps.apple.com/app/id6807771419">Download on the App Store</a>
     </div>
 
     <div class="term rv d3" aria-hidden="true">
@@ -254,9 +262,20 @@
 
   <section id="install">
     <h2 class="rv">Install</h2>
-    <p class="sub rv d1">macOS (Apple silicon, signed &amp; notarized) and Linux (x86-64). The script verifies checksums and installs to <code style="font-family:var(--mono);font-size:13px">~/.wuhu/bin</code>.</p>
+    <p class="sub rv d1">Get the app, or install the CLI.</p>
 
     <div class="panel rv d2">
+      <h3>Apps</h3>
+      <div class="cta-row">
+        <a class="btn solid" href="https://wuhu.ai/releases/app/mac/latest/Wuhu.zip">Download for Mac</a>
+        <a class="btn ghost" href="https://apps.apple.com/app/id6807771419">Download on the App Store</a>
+      </div>
+      <p class="fine">Mac download: signed, notarized, and updates automatically. App Store: Mac, iPhone and iPad.</p>
+    </div>
+
+    <div class="panel rv d2">
+      <h3>CLI</h3>
+      <p class="sub">macOS (Apple silicon, signed &amp; notarized) and Linux (x86-64). The script verifies checksums and installs to <code style="font-family:var(--mono);font-size:13px">~/.wuhu/bin</code>.</p>
       <button class="install-cmd" data-copy="curl -fsSL https://wuhu.ai/install.sh | sh">
         <span><span style="color:var(--mint-bright)">$</span> curl -fsSL https://wuhu.ai/install.sh | sh</span>
         <span class="copy-hint" style="font-size:11px;color:#7b8394;border:1px solid rgba(255,255,255,.16);padding:4px 8px;border-radius:6px;">copy</span>

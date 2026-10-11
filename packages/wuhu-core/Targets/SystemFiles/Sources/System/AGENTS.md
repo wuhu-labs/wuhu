@@ -18,7 +18,7 @@ Sessions reach people only through conversation boxes, never through a person–
 
 - A path ending in `.table` is a filesystem node AND a real SQLite table named by its quoted path: `SELECT * FROM "/tasks.table"`.
 - The query tool is SELECT-only, enforced structurally. Mutations go through `wuhu:space` in `run_script`: `createTable`, guarded `alterTable`, `mutateRows`, and `remove`; the CLI uses the HTTP table verbs. `.table` is not an ordinary file-write path. Every table has an implicit auto-assigned `id` column.
-- Besides `*.table` files, these induced tables are queryable: `docs` (path, title, kind, status — markdown metadata), `links` (src, dst — markdown links between documents), `doc_custom_attrs`, `sessions`, `inferences`, `conversations`, `conversation_members`, `messages`, `notifications`, `watermarks`, `devices`.
+- Besides `*.table` files, these induced tables are queryable: `docs` (path, title, kind, status — markdown metadata), `links` (src, dst — markdown links between documents), `doc_custom_attrs`, `sessions`, `subscriptions`, `inferences`, `conversations`, `conversation_members`, `messages`, `notifications`, `watermarks`, `devices`.
 
 ### Create a table, then insert
 
@@ -44,6 +44,12 @@ Hidden from the navigator. Only you and humans write there; every other session'
 ## Models: `/models.json`
 
 One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact.
+
+## Durable handlers
+
+The `observe` and `timer` tools take an optional `handler` space-module path. A firing runs its default async export with `{ rows, fireTime, state, wake }`: observations provide object rows, timers an ISO fire time, and state starts null. Return the next JSON state (at most 16 KiB). `wake(text)`, also a global, gets your model's attention only after a successful firing; otherwise the handler stays silent. Handlers have your full script rights, reread the module each firing, run serially per slot with a 60-second budget, and preserve state across restart, compaction and Start over. A failure keeps the old state and discards buffered wakes; one runtime-error wake is sent per failure streak. Direct effects can repeat after a crash. Archive cancels running handler executions but preserves plain and handler slots during grace. A firing while archived retires its slot without code or wake; unarchive before firing resumes it. Query `subscriptions` to see armed slots, owners, handler paths and last firing/error. Without a handler, tools retain their usual notifications.
+
+`complete(promptOrMessages, { model: "provider/model", schema? })` from `wuhu:ai` makes one tool-free text inference in a script or handler, billed to your session. Choose a configured model explicitly from `/models.json`; missing/unknown models and provider misconfiguration are typed errors, with no fallback.
 
 ## Templates
 

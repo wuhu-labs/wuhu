@@ -43,8 +43,8 @@ public struct SessionRuntime: Sendable {
     refresher = nil
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(space: space)
-    firing = SubscriptionFiring(space: space)
     scripts = Scripts(space: space)
+    firing = SubscriptionFiring(space: space, scripts: scripts, tools: ToolExecutor(space: space, resolveModelExecutor: resolveModelExecutor, scripts: scripts))
     scripts.configureDiscovery(toolRosters: sessionToolRosters())
   }
 
@@ -56,6 +56,7 @@ public struct SessionRuntime: Sendable {
     sockets: ResponsesSocketRegistry,
     refresher: UsageRefresher?,
     scripts: Scripts,
+    handlerTools: ToolExecutor,
   ) {
     self.service = service
     self.attempts = attempts
@@ -65,7 +66,7 @@ public struct SessionRuntime: Sendable {
     self.refresher = refresher
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(space: space)
-    firing = SubscriptionFiring(space: space)
+    firing = SubscriptionFiring(space: space, scripts: scripts, tools: handlerTools)
     self.scripts = scripts
   }
 
@@ -149,6 +150,7 @@ extension SessionRuntime {
     let executor = sessionToolExecutor(
       space: space, hub: hub, credentials: credentials, scripts: scripts,
       control: sessionControl { serviceSlot.service },
+      completionCatalog: catalog, completionMetrics: metrics,
     )
 
     let config = LoopConfig(
@@ -233,6 +235,7 @@ extension SessionRuntime {
       sockets: sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
       scripts: scripts,
+      handlerTools: executor,
     )
   }
 }
@@ -252,6 +255,8 @@ func sessionToolExecutor(
   credentials: CredentialResolver,
   scripts: Scripts?,
   control: SessionControl?,
+  completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+  completionMetrics: InferenceMetricsSink? = nil,
 ) -> ToolExecutor {
   ToolExecutor(
     space: space,
@@ -259,6 +264,8 @@ func sessionToolExecutor(
     exec: execBackend(space: space, hub: hub),
     resolveModelExecutor: modelExecutorResolver(space: space),
     credentials: credentials,
+    completionCatalog: completionCatalog,
+    completionMetrics: completionMetrics,
     scripts: scripts,
     control: control,
   )

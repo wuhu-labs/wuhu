@@ -41,6 +41,12 @@ func buildAnthropicRequest(
     "max_tokens": .integer(options.maxTokens ?? 16384),
   ]
 
+  if let schema = options.outputSchema {
+    body["output_config"] = .object(["format": .object([
+      "type": .string("json_schema"), "schema": schema,
+    ])])
+  }
+
   if let temperature = options.temperature {
     body["temperature"] = .number(temperature)
   }

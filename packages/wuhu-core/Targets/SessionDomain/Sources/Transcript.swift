@@ -7,10 +7,22 @@ public struct Transcript: Hashable, Sendable, Codable {
   // Items below keptCount were carried from the parent generation; their
   // usage was inferred against the pre-compaction context.
   public var keptCount: Int
+  public var registeredSubscriptions: Set<SubscriptionID>? = nil
+  public var handlerSubscriptions: Set<SubscriptionID> = []
 
-  public init(items: [TranscriptItem] = [], keptCount: Int = 0) {
+  enum CodingKeys: String, CodingKey {
+    case items
+    case keptCount
+  }
+
+  public init(
+    items: [TranscriptItem] = [], keptCount: Int = 0,
+    registeredSubscriptions: Set<SubscriptionID>? = nil, handlerSubscriptions: Set<SubscriptionID> = [],
+  ) {
     self.items = items
     self.keptCount = keptCount
+    self.registeredSubscriptions = registeredSubscriptions
+    self.handlerSubscriptions = handlerSubscriptions
   }
 
   public var environment: SessionEnvironment {
@@ -56,12 +68,19 @@ public struct Transcript: Hashable, Sendable, Codable {
   }
 
   public func compacted(head: GenerationHead, kept: Range<Int>?) -> Transcript {
+    var head = head
+    if let registeredSubscriptions {
+      head.snapshot.subscriptions = registeredSubscriptionState(head.snapshot.subscriptions, registered: registeredSubscriptions)
+    }
     let keptItems = kept.map { items[$0].filter { item in
       guard case let .notification(notification) = item else { return true }
       return notification.kind != .context || notification.subscriptionID != SubscriptionID("context-pressure")
     } } ?? []
     let carried = [TranscriptItem.generationHead(head)] + keptItems
-    return Transcript(items: carried, keptCount: carried.count)
+    return Transcript(
+      items: carried, keptCount: carried.count,
+      registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions,
+    )
   }
 
   // Everything before the returned index gets summarized; nil = nothing fits,

@@ -1752,9 +1752,9 @@ extension Command {
 
     starts the session over: the id, its box, its DMs and its home folder
     /_/sessions/<id>/ are kept; the transcript is wiped to a fresh, empty
-    generation and the old one is archived unread. undrained queue rows are
-    dropped, subscriptions and timers are cancelled, and an errored or
-    interrupted session comes back normal.
+    generation and the old one is archived unread. readable undrained queue
+    rows, subscriptions and timers are kept, and an errored or interrupted
+    session comes back normal.
 
     refused while the session has unfinished work or an open run — interrupt
     it or let it settle first.

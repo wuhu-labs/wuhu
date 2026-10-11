@@ -30,6 +30,13 @@ func buildResponsesRequest(
     "store": .bool(false),
   ]
 
+  if let schema = options.outputSchema {
+    body["text"] = .object(["format": .object([
+      "type": .string("json_schema"), "name": .string("completion"),
+      "strict": .bool(true), "schema": schema,
+    ])])
+  }
+
   switch options.reasoning {
   case .none:
     break

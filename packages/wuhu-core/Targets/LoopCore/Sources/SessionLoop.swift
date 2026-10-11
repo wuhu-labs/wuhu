@@ -47,6 +47,7 @@ extension SessionActor {
         break
       }
 
+      guard try await refreshRegisteredSubscriptions() else { return }
       if let toolCall = live.transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
@@ -105,6 +106,17 @@ extension SessionActor {
   private func idleNag() -> Nag? {
     guard case .assistant? = live.transcript.items.last else { return nil }
     return nagOrScheduleWake(live.transcript.environment)
+  }
+
+  private func refreshRegisteredSubscriptions() async throws -> Bool {
+    let registered = try await repo.sessions.registeredSubscriptions(id)
+    try Task.checkCancellation()
+    guard !live.archiving else { return false }
+    try modify {
+      $0.transcript.registeredSubscriptions = registered.ids
+      $0.transcript.handlerSubscriptions = registered.handlers
+    }
+    return true
   }
 
   func drainQueue() async throws {
@@ -294,6 +306,7 @@ extension SessionActor {
     var boundedFailures = 0
     while true {
       if case .interrupting = live.sessionStatus { return }
+      guard try await refreshRegisteredSubscriptions() else { return }
 
       let attemptID = uuid()
       let request = InferenceRequest(
@@ -456,6 +469,7 @@ extension SessionActor {
 
   @discardableResult
   func fallbackCompact() async throws -> Bool {
+    guard try await refreshRegisteredSubscriptions() else { return false }
     let transcript = live.transcript
     let sessionID = id
     let result = await runLongRunningTask { [loopConfig] in

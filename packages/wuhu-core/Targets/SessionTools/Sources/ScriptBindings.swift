@@ -105,11 +105,11 @@ final class ScriptBindings: Sendable {
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_result") { [execution, secrets] in
-      execution.recordResult(secrets.mask(string($0, 0)))
+      try execution.recordResult(secrets.mask(string($0, 0)))
       return .null
     }
     engine.define("__wuhu_update") { [execution, secrets] in
-      execution.recordUpdate(secrets.mask(string($0, 0)))
+      try execution.recordUpdate(secrets.mask(string($0, 0)))
       return .null
     }
     engine.define("__wuhu_console") { [execution, secrets] in

@@ -258,3 +258,42 @@ Deno.test('the homepage Docs link uses the canonical extensionless landing', asy
     throw new Error('Canonical Docs link missing')
   }
 })
+
+Deno.test('the hero and install section offer apps alongside the unchanged CLI command', async () => {
+  const html = await Deno.readTextFile(`${siteDir}/index.html`)
+  const sections = [
+    html.match(/<header>([\s\S]*?)<\/header>/)?.[1],
+    html.match(/<section id="install">([\s\S]*?)<\/section>/)?.[1],
+  ]
+  const apps = [
+    ['https://wuhu.ai/releases/app/mac/latest/Wuhu.zip', 'Download for Mac'],
+    ['https://apps.apple.com/app/id6807771419', 'Download on the App Store'],
+  ]
+  for (const section of sections) {
+    if (!section) throw new Error('Homepage section missing')
+    const links = [
+      ...section.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g),
+    ]
+    for (const [href, label] of apps) {
+      const matches = links.filter((link) => link[1] === href)
+      assertEquals(matches.length, 1, `App link ${href}`)
+      assertEquals(matches[0][2], label)
+    }
+    assertEquals(
+      section.includes(
+        'data-copy="curl -fsSL https://wuhu.ai/install.sh | sh"',
+      ),
+      true,
+      'CLI install command unchanged',
+    )
+  }
+  const heroCTA = sections[0]!.match(
+    /<div class="cta-row[^"]*">([\s\S]*?)<\/div>/,
+  )?.[1]
+  if (!heroCTA) throw new Error('Hero CTA row missing')
+  assertEquals(
+    [...heroCTA.matchAll(/<a\b/g)].length,
+    2,
+    'Only the two app links accompany the hero CLI command',
+  )
+})

@@ -10,15 +10,18 @@ public struct ToolExecutionState: Hashable, Sendable {
   public var fileAccessLog: [String: FileRevision]
   public var folderRoots: [String: String?]
   public var subscriptions: [SubscriptionID: Subscription]
+  public var handlerSubscriptions: Set<SubscriptionID> = []
 
   public init(
     fileAccessLog: [String: FileRevision] = [:],
     folderRoots: [String: String?] = [:],
     subscriptions: [SubscriptionID: Subscription] = [:],
+    handlerSubscriptions: Set<SubscriptionID> = [],
   ) {
     self.fileAccessLog = fileAccessLog
     self.folderRoots = folderRoots
     self.subscriptions = subscriptions
+    self.handlerSubscriptions = handlerSubscriptions
   }
 
   public init(resuming snapshot: StateSnapshot) {
@@ -122,5 +125,16 @@ public struct StateSnapshot: Hashable, Sendable, Codable {
 
   public init(carrying state: ToolExecutionState, preReads: [String]) {
     self.init(subscriptions: state.subscriptions, preReads: preReads)
+  }
+}
+
+func registeredSubscriptionState(
+  _ subscriptions: [SubscriptionID: Subscription], registered: Set<SubscriptionID>,
+) -> [SubscriptionID: Subscription] {
+  subscriptions.filter { id, subscription in
+    switch subscription {
+    case .observe, .timer: registered.contains(id)
+    case .requestDeadline: true
+    }
   }
 }

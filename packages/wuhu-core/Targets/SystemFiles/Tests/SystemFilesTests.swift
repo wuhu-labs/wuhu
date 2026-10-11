@@ -5,16 +5,17 @@ import SpaceFS
 import Testing
 
 @Suite struct SystemFilesTests {
-  @Test func theBinaryCarriesTheSystemAgentsAndTenSkills() {
+  @Test func theBinaryCarriesTheSystemAgentsAndElevenSkills() {
     #expect(SystemFiles.files["/AGENTS.md"] != nil)
     #expect(SystemFiles.instructions.skills.map(\.name) == [
-      "avatar", "data-views", "image", "monitor", "read-box", "sessions", "space-html-pages", "transcription", "web-search", "widgets",
+      "avatar", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "space-html-pages", "transcription", "web-search", "widgets",
     ])
     #expect(SystemFiles.instructions.skills.allSatisfy { !$0.description.isEmpty })
     #expect(SystemFiles.instructions.skills.first?.path == "wuhu://system/skills/avatar/SKILL.md")
     #expect(SystemFiles.instructions.sections.map(\.path) == ["wuhu://system/AGENTS.md"])
     #expect(SystemFiles.rendered.hasPrefix("from wuhu://system/AGENTS.md:\n\n# Working in a Wuhu space"))
     #expect(SystemFiles.rendered.contains("- monitor — "))
+    #expect(SystemFiles.rendered.contains("- observe-group-channel — "))
   }
 
   @Test func theSystemAgentsTeachesNoRetiredVerbs() throws {
@@ -35,6 +36,7 @@ import Testing
       ],
       "/skills/space-html-pages/SKILL.md": ["wuhu.context", "wuhu:navigate", "--wuhu-inset-top", "safe-area-inset-top"],
       "/skills/sessions/SKILL.md": ["wuhu:session", "topLevel: true", "expectsReply: true", "Promise.all"],
+      "/skills/observe-group-channel/SKILL.md": ["conversation_id", "handler", "state", "wake", "complete", "every-message", "topic", "name-mention"],
     ]
     for (path, expected) in anchors {
       let body = try text(path)

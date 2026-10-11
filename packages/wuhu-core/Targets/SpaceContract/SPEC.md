@@ -317,7 +317,7 @@ materializes the session actor.
 
 ## AI disclosure in server discovery
 
-`ServerInfo.aiDisclosure` is optional and omitted when unconfigured. It is `AIDisclosure {version: String, providers: [AIProviderDisclosure]}`, where each provider has required `name`, `location`, `via`, `policy` strings. Example: `{"aiDisclosure":{"version":"trial-2026-10","providers":[{"name":"DeepSeek","location":"China","via":"Wuhu metering proxy","policy":"https://wuhu.ai/privacy"}]}}`. The operator changes `version` whenever the provider set changes, so clients can bind AI-sharing consent to that version and re-ask on change. Older server payloads decode with `aiDisclosure == nil`; older clients ignore the added field. This fact comes from operator configuration, not the tenant-editable models document.
+`ServerInfo.aiDisclosure` is optional and omitted when unconfigured. It is `AIDisclosure {version: String, providers: [AIProviderDisclosure]}`, where each provider has required `name`, `location`, `via`, `policy` strings. Example: `{"aiDisclosure":{"version":"trial-2026-10","providers":[{"name":"DeepSeek","location":"China","via":"Wuhu metering proxy","policy":"https://wuhu.ai/privacy"}]}}`. The operator changes `version` whenever the provider set changes. Native clients retain the space’s stored AI-sharing choice when the version changes. Older server payloads decode with `aiDisclosure == nil`; older clients ignore the added field. This fact comes from operator configuration, not the tenant-editable models document.
 
 ## Checked table wire contract
 

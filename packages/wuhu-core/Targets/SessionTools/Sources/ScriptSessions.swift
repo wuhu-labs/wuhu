@@ -80,6 +80,19 @@ struct ScriptSessions {
         return .object(made)
       }
     })
+    engine.define("__wuhu_session_send", promising: { [session, tools] arguments in
+      try await scripted {
+        guard case let .object(options)? = arguments.first else { throw ToolProblem("sendMessage wants an options object") }
+        let allowed: Set<String> = ["message", "conversation", "session", "reply_target", "attachments"]
+        guard Set(options.keys).isSubset(of: allowed) else { throw ToolProblem("sendMessage: unsupported options") }
+        let input = try JSONDecoder().decode(SendMessageArguments.self, from: Data(JSONValue.object(options).jsonString().utf8))
+        try await tools.refuseUnlessLive(session)
+        @Dependency(\.uuid) var uuid
+        let reply = try await tools.sendMessage(session, ToolCallID("script:\(uuid().uuidString.lowercased())"), input)
+        guard case let .sendMessage(sent) = reply else { preconditionFailure("send_message returned \(reply)") }
+        return .object(["messageId": .string(sent.messageID.rawValue), "conversationId": .string(sent.conversationID.rawValue)])
+      }
+    })
     engine.define("__wuhu_session_request", promising: { [session, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
@@ -173,6 +186,7 @@ import { failure } from "wuhu:space-core"
 const discover = __wuhu_discovery
 const create = __wuhu_session_create
 const ask = __wuhu_session_request
+const send = __wuhu_session_send
 const retag = __wuhu_session_tags
 const act = __wuhu_session_control
 
@@ -194,6 +208,10 @@ export async function createSession(options) {
     throw error
   }
   return made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
+}
+
+export function sendMessage(options) {
+  return send(options)
 }
 
 export function request(id, message, { deadlineSeconds } = {}) {

@@ -28,6 +28,7 @@ dependencies:
   - HTTPTypes
   - Crypto
   - Dependencies
+  - Clocks
   - Logging
   - GRDB
 tests:

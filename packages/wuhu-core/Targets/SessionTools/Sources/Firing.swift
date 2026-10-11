@@ -21,8 +21,13 @@ public struct SubscriptionFiring: Sendable {
     try? CronSchedule.parse(expression).next(after: after)
   }
 
-  public init(space: Space) {
+  let handlerScripts: Scripts?
+  let handlerTools: ToolExecutor?
+
+  public init(space: Space, scripts: Scripts? = nil, tools: ToolExecutor? = nil) {
     self.space = space
+    handlerScripts = scripts
+    handlerTools = tools
   }
 
   public func run() async {
@@ -81,7 +86,7 @@ public struct SubscriptionFiring: Sendable {
             throw error
           }
           let registrations = try await space.sessions.subscriptionRegistrations()
-          let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID), $0.subscription) }
+          let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID, archived: $0.archived), $0.subscription) }
           let keys = Set(current.map(\.0))
           stopped.formIntersection(keys)
           retries = retries.filter { keys.contains($0.key) }
@@ -152,6 +157,7 @@ public struct SubscriptionFiring: Sendable {
     }
     try await sleep(until: subscription.nextFireAt)
     @Dependency(\.date) var date
+    guard try await retireIfArchived(subscription) == false else { return }
     let now = date.now
     let due = subscription.nextFireAt ?? now
     switch subscription.slot.kind {
@@ -195,6 +201,27 @@ public struct SubscriptionFiring: Sendable {
       guard let rows else { throw FiringFailure.observationStreamEnded }
       let marker = rowsMarker(rows)
       guard marker != delivered else { continue }
+      guard try await retireIfArchived(subscription) == false else { return }
+      if subscription.slot.handler != nil {
+        var succeeded = false
+        var pendingRows = rows
+        var pendingMarker = marker
+        while !succeeded {
+          try Task.checkCancellation()
+          guard let current = try await space.sessions.armedSubscriptions(subscription.session).first(where: { $0.slot.id == subscription.slot.id }),
+                current.slot.handlerIncarnation == subscription.slot.handlerIncarnation
+          else { throw CancellationError() }
+          succeeded = try await fireHandler(current, rows: pendingRows, fireTime: nil, advance: .observed(marker: pendingMarker), marker: pendingMarker)
+          if !succeeded {
+            try await clock.sleep(for: .seconds(max(1, throttleSeconds)))
+            pendingRows = try await space.query(sql, as: try await space.principal(of: subscription.session))
+            pendingMarker = rowsMarker(pendingRows)
+          }
+        }
+        delivered = pendingMarker
+        try await clock.sleep(for: .seconds(throttleSeconds))
+        continue
+      }
       try await notifyObservation(
         subscription,
         callbackID: callbackID,
@@ -273,6 +300,10 @@ public struct SubscriptionFiring: Sendable {
       advance = .reschedule(next)
       endsSubscription = false
     }
+    if subscription.slot.handler != nil {
+      _ = try await fireHandler(subscription, rows: nil, fireTime: due, advance: advance)
+      return
+    }
     let notification = SystemNotification(
       id: UUID.deterministic(
         "timer",
@@ -287,6 +318,63 @@ public struct SubscriptionFiring: Sendable {
       content: .init(text: message),
     )
     try await deliver(subscription, notification: notification, advance: advance)
+  }
+
+  private func fireHandler(
+    _ subscription: ArmedSubscription,
+    rows: Rows?,
+    fireTime: Date?,
+    advance: SessionStore.SubscriptionAdvance,
+    marker: String? = nil,
+  ) async throws -> Bool {
+    if try await retireIfArchived(subscription) { return true }
+    guard let path = subscription.slot.handler, let incarnation = subscription.slot.handlerIncarnation,
+          let attempt = try await space.sessions.beginSubscriptionHandler(
+            subscription.session, subscriptionID: subscription.slot.id, incarnation: incarnation, marker: marker,
+          )
+    else { throw CancellationError() }
+    @Dependency(\.date) var date
+    @Dependency(\.uuid) var uuid
+    func notification(_ text: String) -> SystemNotification {
+      SystemNotification(
+        id: uuid(), timestamp: date.now, kind: rows == nil ? .timer : .spaceObservation,
+        subscriptionID: subscription.slot.id, content: .init(text: text),
+      )
+    }
+    do {
+      guard let handlerScripts, let handlerTools else {
+        throw ScriptError("subscription handlers are not configured in this runtime")
+      }
+      let result = try await handlerScripts.runHandler(
+        path: path, session: subscription.session, rows: rows, fireTime: fireTime,
+        stateJSON: attempt.stateJSON, tools: handlerTools,
+      )
+      try Task.checkCancellation()
+      var wakes = result.wakes.map(notification)
+      if advance == .retire {
+        for index in wakes.indices { wakes[index].endsSubscription = true }
+      }
+      guard try await space.sessions.finishSubscriptionHandler(
+        attempt, result: .success(stateJSON: result.stateJSON, advance: advance, wakes: wakes),
+      ) else { throw CancellationError() }
+      return true
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      let retry: SessionStore.SubscriptionAdvance?
+      switch subscription.slot.kind {
+      case .timer(.oneShot, _): retry = .reschedule(date.now.addingTimeInterval(30))
+      case let .timer(.cron(expression), _):
+        retry = nextCronFire(expression, max(date.now, fireTime ?? date.now)).map(SessionStore.SubscriptionAdvance.reschedule)
+      default: retry = nil
+      }
+      guard try await space.sessions.finishSubscriptionHandler(
+        attempt, result: .failure(
+          error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"), advance: retry,
+        ),
+      ) else { throw CancellationError() }
+      return false
+    }
   }
 
   private func sleep(until due: Date?) async throws {
@@ -322,6 +410,10 @@ public struct SubscriptionFiring: Sendable {
         throw error
       }
     }
+  }
+
+  private func retireIfArchived(_ subscription: ArmedSubscription) async throws -> Bool {
+    try await space.sessions.retireArchivedSubscription(subscription.session, subscriptionID: subscription.slot.id)
   }
 
   private func retire(_ subscription: ArmedSubscription) async throws {
@@ -364,12 +456,16 @@ private struct Arming: Hashable, Sendable {
   var kind: SubscriptionSlot.Kind
   var nextFireAt: Date?
   var callbackID: UUID?
+  var handlerIncarnation: UUID?
+  var archived: Bool
 
-  init(_ armed: ArmedSubscription, callbackID: UUID?) {
+  init(_ armed: ArmedSubscription, callbackID: UUID?, archived: Bool) {
     session = armed.session
     subscription = armed.slot.id
     kind = armed.slot.kind
     nextFireAt = armed.nextFireAt
     self.callbackID = callbackID
+    handlerIncarnation = armed.slot.handlerIncarnation
+    self.archived = archived
   }
 }

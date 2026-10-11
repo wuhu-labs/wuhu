@@ -447,6 +447,7 @@ public struct RequestOptions: Hashable, Sendable {
   public var reasoning: ReasoningOptions
   public var toolChoice: ToolChoice
   public var idleTimeout: Duration?
+  public var outputSchema: JSONValue?
 
   public init(
     temperature: Double? = nil,
@@ -454,12 +455,14 @@ public struct RequestOptions: Hashable, Sendable {
     reasoning: ReasoningOptions = .automatic,
     toolChoice: ToolChoice = .none,
     idleTimeout: Duration? = nil,
+    outputSchema: JSONValue? = nil,
   ) {
     self.temperature = temperature
     self.maxTokens = maxTokens
     self.reasoning = reasoning
     self.toolChoice = toolChoice
     self.idleTimeout = idleTimeout
+    self.outputSchema = outputSchema
   }
 }
 

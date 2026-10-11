@@ -1,6 +1,10 @@
 import Crypto
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import SessionDomain
 import SpaceCore
 import SpaceTools
@@ -37,7 +41,7 @@ extension ToolExecutor {
     let subscriptionID = SubscriptionID.observation(callID)
     try await store.armSubscription(
       session,
-      slot: .init(id: subscriptionID, kind: .observe(sql: arguments.sql, throttleSeconds: throttle)),
+      slot: .init(id: subscriptionID, kind: .observe(sql: arguments.sql, throttleSeconds: throttle), handler: try handlerPath(arguments.handler)),
       marker: rowsMarker(baseline),
     )
     return .observe(.init(subscriptionID: subscriptionID, sql: arguments.sql))
@@ -61,7 +65,7 @@ extension ToolExecutor {
     let subscriptionID = SubscriptionID.timer(callID)
     try await store.armSubscription(
       session,
-      slot: .init(id: subscriptionID, kind: .timer(schedule, message: arguments.message)),
+      slot: .init(id: subscriptionID, kind: .timer(schedule, message: arguments.message), handler: try handlerPath(arguments.handler)),
       nextFireAt: nextFireAt,
     )
     return .timer(.init(subscriptionID: subscriptionID, schedule: schedule, message: arguments.message))
@@ -122,4 +126,10 @@ extension ArmedSubscription {
 func rowsMarker(_ rows: Rows) -> String {
   let canonical = Wire.queryOutput(rows).jsonString()
   return SHA256.hash(data: Data(canonical.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+private func handlerPath(_ path: String?) throws -> String? {
+  guard let path else { return nil }
+  let resolved = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
+  return path.hasPrefix("/") ? String(resolved.dropFirst("wuhu:".count)) : resolved
 }

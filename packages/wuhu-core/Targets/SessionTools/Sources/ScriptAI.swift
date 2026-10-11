@@ -12,6 +12,7 @@ struct ScriptAI {
   let tools: ToolExecutor
 
   func install(in engine: JSEngine) throws {
+    installCompletion(in: engine)
     let claims = MachineWriteClaims()
     engine.define("__wuhu_capability", promising: { [session, tools] arguments in
       try await capabilityAnswer {
@@ -95,6 +96,19 @@ const answer = (value) => {
 """#
 
 private let aiModule = capabilityModule + "\n" + #"""
+export class CompletionError extends Error {
+  constructor(payload) {
+    super(payload.message)
+    this.name = "CompletionError"
+    this.code = payload.code
+  }
+}
+const finish = __wuhu_complete
+export const complete = async (input, options) => {
+  const value = await guarded(signal, () => finish(input, options))
+  if (value.error) throw new CompletionError(value.error)
+  return value.ok
+}
 const probe = __wuhu_capability
 const generate = __wuhu_generate_image
 const recognize = __wuhu_transcribe

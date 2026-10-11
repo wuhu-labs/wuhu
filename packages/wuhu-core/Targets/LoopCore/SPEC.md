@@ -39,3 +39,5 @@ The kernel `compact` tool refuses an empty or whitespace-only summary with the t
 ## Removed executor
 
 The loop runs only kernel sessions. Boot errors every live stored `claude-code` session with "executor no longer supported", including idle agents; enqueue stores input without materializing an actor. Resume cannot clear that error. Start over onto a kernel provider uses the store path and preserves identity and retained queue/subscriptions. The retired discriminator remains decodable but is never executed.
+
+Before tool dispatch, inference (including retries), idle decisions and mechanical compaction, the loaded transcript reconciles observation/timer state against the current durable registration IDs. A handler one-shot that retires without a wake stays silent: no delivery or inference is triggered, and its next unrelated turn no longer advertises the retired timer. Compaction filters carried subscription snapshots against the registrations in its write transaction, so retained tool results cannot resurrect a retired observation or timer. Request deadlines keep their existing delivery-driven semantics.

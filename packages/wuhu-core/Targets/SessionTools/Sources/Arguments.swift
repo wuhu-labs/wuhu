@@ -73,22 +73,26 @@ struct ExecArguments: Decodable {
 }
 
 struct ObserveArguments: Decodable {
+  var handler: String?
   var sql: String
   var throttleSeconds: Double?
 
   enum CodingKeys: String, CodingKey {
     case sql
+    case handler
     case throttleSeconds = "throttle_seconds"
   }
 }
 
 struct TimerArguments: Decodable {
+  var handler: String?
   var message: String
   var inSeconds: Double?
   var cron: String?
 
   enum CodingKeys: String, CodingKey {
     case message
+    case handler
     case inSeconds = "in_seconds"
     case cron
   }

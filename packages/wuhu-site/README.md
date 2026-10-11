@@ -4,7 +4,7 @@ The page at `https://wuhu.ai`: `index.html`, `install.sh`, the privacy, terms an
 
 A `main` push that touches this package deploys it to the R2 bucket behind wuhu.ai; the key list, caching and the rules the deploy keeps are in `docs/release.md` ("The wuhu.ai page"). `deno task ci:deploy-site --dry-run` from the repo root prints what a deploy would write.
 
-The page names no version: it reads `/releases/beta/latest.json` at load. `install.sh` follows the same pointer; `WUHU_LANE` and `WUHU_VERSION` pick another lane or version. `deno task test` here runs `install.sh` against a local stand-in for the bucket.
+The page names no version: it reads `/releases/beta/latest.json` at load. `install.sh` follows the same pointer; `WUHU_LANE` and `WUHU_VERSION` pick another lane or version. `deno task test` here runs `install.sh` against a local stand-in for the bucket and checks the homepage app links and CLI command. The hero and Install section link the native Mac download and App Store app independently of the CLI release pointer.
 
 ## Operator guide
 

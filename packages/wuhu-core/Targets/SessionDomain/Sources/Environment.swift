@@ -74,6 +74,10 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
       apply(item)
       settle = settled
     }
+    tools.handlerSubscriptions = transcript.handlerSubscriptions
+    if let registered = transcript.registeredSubscriptions {
+      tools.subscriptions = registeredSubscriptionState(tools.subscriptions, registered: registered)
+    }
   }
 
   public mutating func apply(_ event: Event) {
@@ -123,12 +127,12 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
     }
   }
 
-  // Only a timer or a deadline on a request to a child is certain to fire; an
-  // observation is not, and a running exec holds the turn open instead.
+  // A handler timer can stay silent; only plain timers and outgoing deadlines guarantee a model wake.
   var hasArmedWake: Bool {
-    tools.subscriptions.values.contains {
-      switch $0 {
-      case .timer, .requestDeadline: true
+    tools.subscriptions.contains { id, subscription in
+      switch subscription {
+      case .timer: !tools.handlerSubscriptions.contains(id)
+      case .requestDeadline: true
       case .observe: false
       }
     }

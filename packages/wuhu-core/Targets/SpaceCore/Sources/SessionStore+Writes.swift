@@ -7,6 +7,7 @@ import Dependencies
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
+import StructuredQueries
 import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
 
@@ -349,6 +350,9 @@ extension SessionStore {
     let deadline = nowDate.addingTimeInterval(grace.timeInterval)
     try await writer.write { db in
       _ = try Sessions.record(key, in: db)
+      try SubscriptionRow.update {
+        $0.payload = #sql("json_remove(\($0.payload), '$.handlerAttemptID')", as: String.self)
+      }.where { $0.sessionID.eq(key) }.execute(db)
       try db.execute(
         sql: "UPDATE sessions SET lifecycle = 'archived', grace_expires_at = ?, last_activity_at = ? WHERE id = ?",
         arguments: [SQLiteDateFormat.string(from: deadline), SQLiteDateFormat.string(from: nowDate), key],

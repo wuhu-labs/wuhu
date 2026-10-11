@@ -108,6 +108,30 @@ public struct ViewCatalog: Sendable {
         let path = String(table[table.index(after: colon)...])
         if group == acting { views.append(View(name: path, table: table)) }
         if readable.contains(group) { views.append(View(name: "wuhu://\(group).localspace\(path)", table: table)) }
+      } else if table == "session_subscriptions" {
+        func subscriptions(_ name: String, groupFilter: String, includeGroup: Bool = false) -> View {
+          View(
+            name: name, table: table,
+            select: """
+            SELECT \(includeGroup ? "se.grp AS grp," : "") su.subscription_id AS id, su.session_id AS session_id,
+              CASE WHEN json_type(su.payload, '$.kind.observe') IS NOT NULL THEN 'observe' ELSE 'timer' END AS kind,
+              json_extract(su.payload, '$.kind.observe.sql') AS sql,
+              COALESCE(json_extract(su.payload, '$.kind.timer._0.cron._0'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(su.payload, '$.kind.timer._0.oneShot._0') + 978307200, 'unixepoch')) AS schedule,
+              json_extract(su.payload, '$.handler') AS handler,
+              su.armed_at AS armed_at, su.last_fired_at AS last_fired_at,
+              json_extract(su.payload, '$.lastError') AS last_error
+            FROM \(s)."session_subscriptions" su JOIN \(s)."sessions" se ON se.id = su.session_id
+            WHERE \(groupFilter) AND (json_type(su.payload, '$.kind.observe') IS NOT NULL OR json_type(su.payload, '$.kind.timer') IS NOT NULL)
+            """,
+            joins: ["sessions"],
+          )
+        }
+        views.append(subscriptions("subscriptions", groupFilter: "se.grp = \(literal(acting))"))
+        for group in readable.sorted() {
+          views.append(subscriptions("wuhu://\(group).localspace/subscriptions", groupFilter: "se.grp = \(literal(group))"))
+        }
+        views.append(subscriptions("wuhu://*.localspace/subscriptions", groupFilter: "se.\(everyReadable)", includeGroup: true))
       } else if groupedTables.contains(table) {
         let own = columns.filter { $0 != "grp" }
         let unqualified = switch table {

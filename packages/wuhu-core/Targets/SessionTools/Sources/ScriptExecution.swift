@@ -90,6 +90,7 @@ final class ScriptExecution: Sendable {
   let secrets: ScriptSecrets
   let tools: ToolExecutor
   let machines: ScriptMachineAccess?
+  let handler: ScriptHandlerContext?
   let buffers = Mutex(ScriptBuffers())
   let processes = ScriptProcesses()
   private let interrupter = JSEngine.Interrupter()
@@ -109,6 +110,7 @@ final class ScriptExecution: Sendable {
     secrets: ScriptSecrets,
     tools: ToolExecutor,
     machines: ScriptMachineAccess? = nil,
+    handler: ScriptHandlerContext? = nil,
   ) {
     self.id = id
     self.session = session
@@ -117,6 +119,7 @@ final class ScriptExecution: Sendable {
     self.secrets = secrets
     self.tools = tools
     self.machines = machines
+    self.handler = handler
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     (outbox, post) = AsyncStream.makeStream()
@@ -214,6 +217,12 @@ final class ScriptExecution: Sendable {
     return .killed(.cancelled)
   }
 
+  func cancelHandler() {
+    kill(.cancelled)
+    state.withLock { $0.killed = .cancelled }
+    interrupter.interrupt()
+  }
+
   private func kill(_ stop: ScriptStop) {
     state.withLock {
       if $0.stop == nil { $0.stop = stop }
@@ -273,10 +282,11 @@ final class ScriptExecution: Sendable {
       try ScriptAI(session: session, tools: tools).install(in: engine)
       try ScriptSessions(session: session, tools: tools).install(in: engine)
       try engine.execute(scriptPrelude, name: "<prelude>")
+      if let handler { try handler.install(in: engine) }
       try engine.defineModule("wuhu:machine", source: machineModule)
       let acting = try await space.principal(of: session).group
       let modules = scriptModules(
-        in: space, at: Rev(try await space.currentRevision()), acting: acting, readable: try await space.reads(acting),
+        in: space, at: Rev(try await space.currentRevision()), acting: acting, readable: try await space.reads(acting), typedErrors: handler != nil,
       )
       try await engine.run(module: source, name: "script", meta: ["session": .string(session.rawValue)], loader: modules)
       return .released
@@ -297,7 +307,7 @@ final class ScriptExecution: Sendable {
       timers.addTask { [lifetime] in
         guard (try? await clock.sleep(for: lifetime)) != nil else { return }
         self.state.withLock { if $0.stop == nil { $0.stop = .lifetime(lifetime) } }
-        control.yield(.abort(.lifetime(lifetime)))
+        control.yield(self.handler == nil ? .abort(.lifetime(lifetime)) : .kill(.lifetime(lifetime)))
       }
       var aborted = false
       for await event in controls {
@@ -328,6 +338,17 @@ final class ScriptExecution: Sendable {
 
   // MARK: Host functions
 
+  func handlerResult() throws -> ScriptHandlerResult {
+    try Task.checkCancellation()
+    let ending = state.withLock { $0.ending }
+    guard ending == .released, let handler else {
+      throw ScriptError(ending?.afterResult ?? "handler did not finish")
+    }
+    var result = try handler.result()
+    result.wakes = result.wakes.map(secrets.mask)
+    return result
+  }
+
   func nextAbort() async throws -> String {
     for await reason in aborts {
       return reason
@@ -335,14 +356,16 @@ final class ScriptExecution: Sendable {
     throw CancellationError()
   }
 
-  func recordResult(_ text: String) {
+  func recordResult(_ text: String) throws {
+    guard handler == nil else { throw ScriptError("handlers return state; result() is only for run_script") }
     state.withLock { state in
       state.resulted = true
       produce(.result(text), in: &state)
     }
   }
 
-  func recordUpdate(_ text: String) {
+  func recordUpdate(_ text: String) throws {
+    guard handler == nil else { throw ScriptError("handlers use wake(text); update() is only for run_script") }
     post.yield(text)
   }
 
@@ -375,7 +398,9 @@ final class ScriptExecution: Sendable {
       state.ending = ending
       let tail = state.console.rendered
       let stopped = state.stop == .requested
-      if !state.resulted {
+      if handler != nil {
+        // Handler failures belong to the durable slot, not run_script delivery.
+      } else if !state.resulted {
         let awaited = if case .pending = state.waiter { true } else { false }
         if awaited || !stopped {
           produce(.failure("script \(id) " + ending.withoutResult + tail), in: &state)

@@ -153,7 +153,12 @@ private final class WorkFlips: TransactionObserver, Sendable {
           Fix.replying("arming", calls: [Self.call("wake", "c-1")]),
           Fix.replying("waiting"),
         ])
-        let config = makeConfig(executeTool: { _ in wake }, inference: { try await script($0) })
+        let config = makeConfig(executeTool: { _ in
+          if case let .timer(timer) = wake {
+            _ = try await sessions.armSubscription(sid, slot: .init(id: timer.subscriptionID, kind: .timer(timer.schedule, message: timer.message)), nextFireAt: anchor.addingTimeInterval(3600))
+          }
+          return wake
+        }, inference: { try await script($0) })
         try await runService(sessions, config) { service in
           _ = try await service.enqueue(item: Self.request, to: sid)
           try await until("it parks") { try await sessions.settledWork(sid) && script.count == 2 }
@@ -162,6 +167,37 @@ private final class WorkFlips: TransactionObserver, Sendable {
           try await holds("no reminder while \(wake) is armed") { script.count == 2 }
         }
         #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 0)
+      }
+    }
+  }
+
+  @Test func `a handler timer cannot suppress an open request park reminder`() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.createSession(group: .shared, title: "quiet timer", kind: .task, createdBy: "morgan", model: .test)
+      let timerID = SubscriptionID("timer.quiet")
+      let schedule = TimerSchedule.oneShot(anchor.addingTimeInterval(3600))
+      let script = InferenceScript([
+        Fix.replying("arming", calls: [Self.call("wake", "quiet")]),
+        Fix.replying("waiting"),
+        { request in
+          #expect(Self.parkNotices(request.transcript) == 1)
+          #expect(request.transcript.environment.tools.subscriptions[timerID] == .timer(schedule))
+          return Fix.reply("park reminder received")
+        },
+      ])
+      let config = makeConfig(executeTool: { _ in
+        _ = try await sessions.armSubscription(sid, slot: .init(id: timerID, kind: .timer(schedule, message: "unused"), handler: "/quiet.js"), nextFireAt: anchor.addingTimeInterval(3600))
+        return .timer(.init(subscriptionID: timerID, schedule: schedule, message: "unused"))
+      }, inference: { try await script($0) })
+      try await runService(sessions, config) { service in
+        _ = try await service.enqueue(item: Self.request, to: sid)
+        try await until("handler timer does not suppress park reminder") {
+          guard script.count == 3 else { return false }
+          return try await sessions.settledWork(sid)
+        }
+        #expect(try await sessions.armedSubscriptions(sid).count == 1)
+        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
       }
     }
   }

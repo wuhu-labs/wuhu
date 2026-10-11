@@ -39,6 +39,10 @@ func buildGeminiRequest(
 
   // Generation config
   var generationConfig: OrderedDictionary<String, JSONValue> = [:]
+  if let schema = options.outputSchema {
+    generationConfig["responseMimeType"] = .string("application/json")
+    generationConfig["responseJsonSchema"] = schema
+  }
   if let temperature = options.temperature {
     generationConfig["temperature"] = .number(temperature)
   }

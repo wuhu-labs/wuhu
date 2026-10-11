@@ -27,6 +27,14 @@ func buildChatCompletionsRequest(
     "stream": .bool(true),
   ]
 
+  if let schema = options.outputSchema {
+    body["response_format"] = .object([
+      "type": .string("json_schema"), "json_schema": .object([
+        "name": .string("completion"), "strict": .bool(true), "schema": schema,
+      ]),
+    ])
+  }
+
   if let temperature = options.temperature {
     body["temperature"] = .number(temperature)
   }

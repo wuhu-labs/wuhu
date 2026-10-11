@@ -138,7 +138,10 @@ extension Transcript {
         notices = []
       }
       switch item {
-      case let .generationHead(head):
+      case var .generationHead(head):
+        if let registeredSubscriptions {
+          head.snapshot.subscriptions = registeredSubscriptionState(head.snapshot.subscriptions, registered: registeredSubscriptions)
+        }
         messages.append(contentsOf: head.renderMessages(session: session))
       case let .direct(message):
         messages.append(.user(.init(content: message.content.blocks(header: message.header.attributing(handles, devices: devices)))))

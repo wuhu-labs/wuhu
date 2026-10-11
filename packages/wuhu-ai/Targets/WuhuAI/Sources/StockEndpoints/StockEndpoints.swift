@@ -176,9 +176,9 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
         "type": .string("adaptive"),
         "display": .string("summarized"),
       ])
-      body["output_config"] = .object([
-        "effort": .string(effort),
-      ])
+      var output = body["output_config"]?.object ?? [:]
+      output["effort"] = .string(effort)
+      body["output_config"] = .object(output)
     case .budget(let tokens):
       body["thinking"] = .object([
         "type": .string("enabled"),
@@ -278,7 +278,9 @@ public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
       body["thinking"] = .object(["type": .string("enabled")])
     case .effort(let effort):
       body["thinking"] = .object(["type": .string("enabled")])
-      body["output_config"] = .object(["effort": .string(effort)])
+      var output = body["output_config"]?.object ?? [:]
+      output["effort"] = .string(effort)
+      body["output_config"] = .object(output)
     case .budget(let tokens):
       body["thinking"] = .object([
         "type": .string("enabled"),
@@ -290,7 +292,11 @@ public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
     // with thinking. Disable thinking for named-force turns only.
     if case .tool = options.toolChoice {
       body["thinking"] = .object(["type": .string("disabled")])
-      body["output_config"] = nil
+      if let schema = options.outputSchema {
+        body["output_config"] = .object(["format": .object(["type": .string("json_schema"), "schema": schema])])
+      } else {
+        body["output_config"] = nil
+      }
     }
     // Under thinking, DeepSeek rejects a tool_use turn that carries no thinking
     // block ("content[].thinking ... must be passed back"). The block's text is

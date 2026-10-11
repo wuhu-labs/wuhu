@@ -16,7 +16,7 @@ private let scheme = "wuhu:"
 
 /// `wuhu:/<path>` reads the acting group's files and `wuhu://<group>.localspace/<path>`
 /// another group's, which it must read; every space module is as of `rev`.
-func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<GroupID>) -> JSEngine.ModuleLoader {
+func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<GroupID>, typedErrors: Bool = false) -> JSEngine.ModuleLoader {
   JSEngine.ModuleLoader(
     maxModules: scriptModuleLimit,
     resolve: resolveScriptModule,
@@ -27,7 +27,7 @@ func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<
       if let system = systemModulePath(name) {
         (fs, path, shown) = (SystemFiles.vfs, system, name)
       } else if let (group, inGroup) = groupModulePath(name) {
-        guard readable.contains(group) else { throw ScriptError(message(of: SpaceError.notFound(name))) }
+        guard readable.contains(group) else { throw ScriptError(message(of: SpaceError.notFound(name), typed: typedErrors)) }
         (fs, path, shown) = (await space.fs(group, at: rev), inGroup, name)
       } else {
         let plain = String(name.dropFirst(scheme.count))
@@ -35,6 +35,7 @@ func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<
       }
       let data: Data
       do {
+        if rev == Rev(0), systemModulePath(name) == nil { throw SpaceError.notFound(path) }
         guard try await fs.stat(path).size <= scriptModuleBytes else {
           throw ScriptError("\(shown) is larger than \(scriptModuleBytes >> 20) MiB")
         }
@@ -42,7 +43,7 @@ func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<
       } catch let error as ScriptError {
         throw error
       } catch {
-        throw ScriptError(message(of: error))
+        throw ScriptError(message(of: error, typed: typedErrors))
       }
       guard let text = String(validating: data, as: UTF8.self) else {
         throw ScriptError("\(shown) is not UTF-8 text")
@@ -123,7 +124,7 @@ private let moduleForms = "wuhu:/<path> (this group), wuhu://<group>.localspace/
   }
 }
 
-private func message(of error: any Error) -> String {
-  guard case let .failed(_, message, _, _) = Wire.failure(error) else { return "\(error)" }
-  return message
+private func message(of error: any Error, typed: Bool = false) -> String {
+  guard case let .failed(code, message, _, _) = Wire.failure(error) else { return "\(error)" }
+  return typed ? "\(code.rawValue): \(message)" : message
 }

@@ -8,6 +8,7 @@ import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceFS
+import StructuredQueries
 
 public struct RecordedWrite: Sendable {
   public let payload: ToolResultPayload
@@ -90,11 +91,18 @@ public struct SubscriptionSlot: Hashable, Sendable, Codable {
 
   public var id: SubscriptionID
   public var kind: Kind
+  public var handler: String?
+  public var handlerIncarnation: UUID?
+  public var handlerStateJSON: String?
+  public var lastError: String?
+  var handlerFailed: Bool?
+  var handlerAttemptID: UUID?
   var observationProgress: ObservationProgress?
 
-  public init(id: SubscriptionID, kind: Kind) {
+  public init(id: SubscriptionID, kind: Kind, handler: String? = nil) {
     self.id = id
     self.kind = kind
+    self.handler = handler
   }
 }
 
@@ -104,6 +112,7 @@ public struct ArmedSubscription: Hashable, Sendable {
   public var nextFireAt: Date?
   public var marker: String?
   public var lastFiredAt: Date?
+  var armedAt: Date
 }
 
 extension SessionStore {
@@ -124,22 +133,24 @@ extension SessionStore {
     if case .observe = inserted.kind, inserted.observationProgress == nil {
       inserted.observationProgress = ObservationProgress(incarnation: uuid(), deliverySequence: 0)
     }
+    if inserted.handler != nil {
+      inserted.handlerIncarnation = uuid()
+      inserted.handlerStateJSON = nil
+      inserted.lastError = nil
+      inserted.handlerFailed = nil
+      inserted.handlerAttemptID = nil
+    }
     let payload = try Sessions.encode(inserted)
     return try await writer.write { db in
       _ = try Sessions.record(key, in: db)
-      try db.execute(
-        sql: """
-        INSERT OR IGNORE INTO session_subscriptions
-          (session_id, subscription_id, payload, next_fire_at, marker, armed_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        arguments: [key, slot.id.rawValue, payload, nextFireAt.map(SQLiteDateFormat.string(from:)), marker, now],
-      )
-      let row = try Row.fetchOne(
-        db,
-        sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-        arguments: [key, slot.id.rawValue],
-      )
+      try SubscriptionRow.insert {
+        SubscriptionRow(
+          sessionID: key, subscriptionID: slot.id.rawValue, payload: payload,
+          nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker,
+          lastFiredAt: nil, armedAt: now,
+        )
+      } onConflict: { ($0.sessionID, $0.subscriptionID) }.execute(db)
+      let row = try SubscriptionRow.find(key, slot.id.rawValue, in: db)
       guard let row else { preconditionFailure("an armed slot must exist after its insert") }
       return try self.armedSubscription(row)
     }
@@ -148,65 +159,76 @@ extension SessionStore {
   public func cancelSubscription(_ id: SessionID, subscriptionID: SubscriptionID) async throws {
     let key = id.rawValue
     try await writer.write { db in
-      try db.execute(
-        sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-        arguments: [key, subscriptionID.rawValue],
-      )
+      try SubscriptionRow.where {
+        $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
+      }.delete().execute(db)
+    }
+  }
+
+  @discardableResult
+  public func retireArchivedSubscription(_ id: SessionID, subscriptionID: SubscriptionID) async throws -> Bool {
+    try await writer.write { db in
+      guard try Sessions.record(id.rawValue, in: db).lifecycle != .live,
+            try SubscriptionRow.find(id.rawValue, subscriptionID.rawValue, in: db) != nil
+      else { return false }
+      try SubscriptionRow.where {
+        $0.sessionID.eq(id.rawValue) && $0.subscriptionID.eq(subscriptionID.rawValue)
+      }.delete().execute(db)
+      return true
     }
   }
 
   public func armedSubscriptions() async throws -> [ArmedSubscription] {
     try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM session_subscriptions ORDER BY session_id, subscription_id",
-      ).map(armedSubscription)
+      try SubscriptionRow.order { ($0.sessionID, $0.subscriptionID) }.fetchAll(db).map(armedSubscription)
     }
   }
 
   @_spi(SessionObservation)
-  public func subscriptionRegistrations() async throws -> [(subscription: ArmedSubscription, callbackID: UUID?)] {
+  public func subscriptionRegistrations() async throws -> [(subscription: ArmedSubscription, callbackID: UUID?, archived: Bool)] {
     try await writer.read { db in try subscriptionRegistrations(in: db) }
   }
 
   @_spi(SessionObservation)
   public func observeArmedSubscriptions()
-    -> some AsyncSequence<[(subscription: ArmedSubscription, callbackID: UUID?)], any Error> & Sendable
+    -> some AsyncSequence<[(subscription: ArmedSubscription, callbackID: UUID?, archived: Bool)], any Error> & Sendable
   {
     ValueObservation
       .tracking { db in try subscriptionRegistrations(in: db) }
       .values(in: writer, bufferingPolicy: .bufferingNewest(1))
   }
 
-  private func subscriptionRegistrations(in db: Database) throws -> [(subscription: ArmedSubscription, callbackID: UUID?)] {
-    try Row.fetchAll(
-      db,
-      sql: "SELECT * FROM session_subscriptions ORDER BY session_id, subscription_id",
-    ).map { row in
+  private func subscriptionRegistrations(in db: Database) throws -> [(subscription: ArmedSubscription, callbackID: UUID?, archived: Bool)] {
+    try SubscriptionRow.order { ($0.sessionID, $0.subscriptionID) }.fetchAll(db).map { row in
       let subscription = try armedSubscription(row)
-      guard case .observe = subscription.slot.kind else { return (subscription, nil) }
-      return (subscription, observationToken(subscription))
+      let archived = try Sessions.record(subscription.session.rawValue, in: db).lifecycle != .live
+      guard case .observe = subscription.slot.kind else { return (subscription, nil, archived) }
+      return (subscription, observationToken(subscription), archived)
     }
   }
 
   public func armedSubscriptions(_ id: SessionID) async throws -> [ArmedSubscription] {
     let key = id.rawValue
     return try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT * FROM session_subscriptions WHERE session_id = ? ORDER BY subscription_id",
-        arguments: [key],
-      ).map(armedSubscription)
+      try SubscriptionRow.where { $0.sessionID.eq(key) }.order { $0.subscriptionID }.fetchAll(db).map(armedSubscription)
     }
   }
 
   func armedSubscription(_ row: Row) throws -> ArmedSubscription {
+    try armedSubscription(SubscriptionRow(
+      sessionID: row["session_id"], subscriptionID: row["subscription_id"], payload: row["payload"],
+      nextFireAt: row["next_fire_at"], marker: row["marker"], lastFiredAt: row["last_fired_at"], armedAt: row["armed_at"],
+    ))
+  }
+
+  func armedSubscription(_ row: SubscriptionRow) throws -> ArmedSubscription {
     ArmedSubscription(
-      session: SessionID(row["session_id"] as String),
-      slot: try Sessions.decode(SubscriptionSlot.self, from: row["payload"]),
-      nextFireAt: try (row["next_fire_at"] as String?).map(SQLiteDateFormat.date(from:)),
-      marker: row["marker"],
-      lastFiredAt: try (row["last_fired_at"] as String?).map(SQLiteDateFormat.date(from:)),
+      session: SessionID(row.sessionID),
+      slot: try Sessions.decode(SubscriptionSlot.self, from: row.payload),
+      nextFireAt: try row.nextFireAt.map(SQLiteDateFormat.date(from:)),
+      marker: row.marker,
+      lastFiredAt: try row.lastFiredAt.map(SQLiteDateFormat.date(from:)),
+      armedAt: try SQLiteDateFormat.date(from: row.armedAt),
     )
   }
 
@@ -228,11 +250,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: nowDate)
     let row = try await writer.write { db in
       if case let .reschedule(next) = advance {
-        guard let row = try Row.fetchOne(
-          db,
-          sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-          arguments: [key, subscriptionID.rawValue],
-        ) else { throw StaleSubscriptionCallback() }
+        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
         let due = try armedSubscription(row).nextFireAt
         guard let due, SQLiteDateFormat.string(from: next) > SQLiteDateFormat.string(from: due)
         else { throw NonAdvancingSubscription(due: due, next: next) }
@@ -240,11 +258,7 @@ extension SessionStore {
       var delivered = notification
       var advancedObservation: SubscriptionSlot?
       if notification.kind == .spaceObservation {
-        guard let row = try Row.fetchOne(
-          db,
-          sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-          arguments: [key, subscriptionID.rawValue],
-        ) else { throw StaleSubscriptionCallback() }
+        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
         let current = try armedSubscription(row)
         guard case .observe = current.slot.kind, notification.id == observationToken(current)
         else { throw StaleSubscriptionCallback() }
@@ -270,11 +284,7 @@ extension SessionStore {
 
       let enqueued = try Sessions.enqueue(key, input: .notification(delivered), nowDate: nowDate, in: db)
       if notification.kind == .requestDeadline {
-        guard let row = try Row.fetchOne(
-          db,
-          sql: "SELECT * FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-          arguments: [key, subscriptionID.rawValue],
-        ) else { throw StaleSubscriptionCallback() }
+        guard let row = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db) else { throw StaleSubscriptionCallback() }
         let current = try armedSubscription(row)
         guard case let .requestDeadline(request, task) = current.slot.kind,
               request == notification.requestID, let deadline = current.nextFireAt,
@@ -286,28 +296,25 @@ extension SessionStore {
       }
       switch advance {
       case .retire:
-        try db.execute(
-          sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-          arguments: [key, subscriptionID.rawValue],
-        )
+        try SubscriptionRow.where {
+          $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
+        }.delete().execute(db)
       case let .reschedule(next):
-        try db.execute(
-          sql: """
-          UPDATE session_subscriptions SET next_fire_at = ?, last_fired_at = ?
-          WHERE session_id = ? AND subscription_id = ?
-          """,
-          arguments: [SQLiteDateFormat.string(from: next), now, key, subscriptionID.rawValue],
-        )
+        try SubscriptionRow.update {
+          $0.nextFireAt = #bind(SQLiteDateFormat.string(from: next))
+          $0.lastFiredAt = #bind(now)
+        }.where {
+          $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
+        }.execute(db)
       case let .observed(marker):
-        try db.execute(
-          sql: """
-          UPDATE session_subscriptions SET payload = COALESCE(?, payload), marker = ?, last_fired_at = ?
-          WHERE session_id = ? AND subscription_id = ?
-          """,
-          arguments: [
-            try advancedObservation.map { try Sessions.encode($0) }, marker, now, key, subscriptionID.rawValue,
-          ],
-        )
+        let payload = try advancedObservation.map { try Sessions.encode($0) }
+        try SubscriptionRow.update {
+          if let payload { $0.payload = #bind(payload) }
+          $0.marker = #bind(marker)
+          $0.lastFiredAt = #bind(now)
+        }.where {
+          $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
+        }.execute(db)
       }
       return enqueued
     }
