@@ -73,7 +73,7 @@ import Testing
   @Test func aStreamCarriesOnlyItsGroup() async throws {
     let space = try await seeded()
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared)
+    let stream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
     _ = try await space.fs(Self.alice).write("/late.md", bytes("alice"), ifMatch: nil)
@@ -87,8 +87,8 @@ import Testing
   @Test func aCrossGroupMoveIsOneRevisionLeavingOneGroupForTheOther() async throws {
     let space = try await seeded()
     let (left, arrived) = (Collector<MutationEvent>(), Collector<MutationEvent>())
-    let fromShared = await space.observeFS(glob: "**", group: .shared)
-    let intoAlice = await space.observeFS(glob: "**", group: Self.alice)
+    let fromShared = await space.observeFS(glob: "**", group: .shared).mutations
+    let intoAlice = await space.observeFS(glob: "**", group: Self.alice).mutations
     let consumers = [
       Task { for await event in fromShared { await left.append(event) } },
       Task { for await event in intoAlice { await arrived.append(event) } },

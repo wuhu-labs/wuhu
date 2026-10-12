@@ -1,8 +1,8 @@
 import type { SpaceClient } from './client'
 import type {
   ConversationMessagePayload,
-  MutationEvent,
   QueryOutput,
+  RevisionEvents,
   SessionStreamEvent,
 } from '~/lib/contract.gen'
 import type { Subscription } from './observe'
@@ -23,11 +23,11 @@ export function globSubscription(
   client: SpaceClient,
   glob: string,
   from: number,
-): GroupSubscription<MutationEvent> {
+): GroupSubscription<RevisionEvents> {
   return {
     group: client.group,
     from,
-    url: (cursor) => client.observeURL(glob, cursor ?? from),
+    url: (cursor) => client.observeURL(glob, cursor ?? from, true),
     cursorOf: (event) => event.rev,
   }
 }

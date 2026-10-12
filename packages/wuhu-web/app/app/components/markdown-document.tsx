@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MutationEvent, ReadOutput } from '~/lib/contract.gen'
+import type { ReadOutput, RevisionEvents } from '~/lib/contract.gen'
 import {
   applySync,
   type DocumentState,
@@ -17,7 +17,7 @@ import { DocumentEditor } from './document-editor'
 
 const saveDelayMs = 800
 
-function latestRevision(current: number, event: MutationEvent): number {
+function latestRevision(current: number, event: RevisionEvents): number {
   return Math.max(current, event.rev)
 }
 

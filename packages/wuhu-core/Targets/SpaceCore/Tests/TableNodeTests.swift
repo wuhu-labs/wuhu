@@ -240,7 +240,7 @@ import Testing
     #expect(try await space.history(table, in: .shared).count == 4)
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/data/**", group: .shared)
+    let stream = await space.observeFS(glob: "/data/**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 

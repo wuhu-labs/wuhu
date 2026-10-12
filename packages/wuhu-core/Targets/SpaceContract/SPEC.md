@@ -37,13 +37,7 @@ changes here are contract changes.
   epoch, not milliseconds. A consumer converts with
   `Date(timeIntervalSince1970: mtime)` / `new Date(mtime * 1000)`.
 
-- **Version tokens** (`Entry.token`, `ReadOutput.token`, `WriteOutput.token`,
-  `EditOutput.token`, `SyncOutput.token`, `CheckoutOutput.token`): an **opaque** string. Clients must
-  not parse or compare it structurally; they record it from a read/write and pass
-  it back verbatim as `ifMatch` on the next write/edit/remove. Space backend:
-  revision-backed and content-stable (a no-change write mints no revision and
-  returns the same token). Machine backend: mtime-derived. The opacity is what
-  lets the two backends share one contract.
+- **Version tokens** (`Entry.token`, `ReadOutput.token`, `WriteOutput.token`, `EditOutput.token`, `SyncOutput.token`, `CheckoutOutput.token`): an **opaque** string. Clients must not parse or compare it structurally; they record it from a read/write and pass it back verbatim as `ifMatch` on the next write/edit/remove. Space backend: revision-backed and content-stable. A no-change file write returns the current token without minting a revision. A checkout to a file's identical bytes mints no revision, journals no history and emits nothing, and returns the current token; table checkouts always mint a revision. Machine backend: mtime-derived. The opacity is what lets the two backends share one contract.
 
 - **`sync`** is the revisioned-space document reconciliation verb. A client sends
   the full UTF-8 `content` it edited and the opaque `baseToken` returned by the
@@ -156,11 +150,9 @@ because the stream framing has no `@Contract` return type of its own:
   tool, session observes) it returns `NULL`. A statement joining `notifications` and
   `watermarks` on `viewer()` is how a client observes its own unread state.
 
-`checkout` restores old content, and a `glob` observer of the affected path
-receives a `MutationEvent` of kind **`write`** — observers care that content
-changed, not how. The provenance that the change was a checkout lives in
-`HistoryEntry.change == .checkout` (with `fromRev`), not in the mutation stream.
-This is why `MutationEvent` has no `checkout` case even though `ChangeKind` does.
+With `glob(pattern:from:batch: true)`, `GET /v1/observe?glob=…&from=N&batch=1` delivers one `event: revision` SSE frame per matching revision, carrying `RevisionEvents { rev, events }`. The nonempty `events` array contains only matching paths in that group, in mutation order; every event names the envelope's revision. Revisions arrive whole and in commit order. Clients fold the array in order, publish once and checkpoint the envelope's `rev` only after folding. Replay is strictly after `from`, grouped by revision, with any live copy of a replayed revision dropped whole. A revision matching no paths emits nothing. `ServerInfo.features` advertises `observe-batch`. Without `batch=1`, frames remain plain `MutationEvent` values with the existing framing and payload bytes; CLI and script `watch` still yield individual events.
+
+`checkout` to a file's identical bytes returns the live revision and current token without minting a revision, journaling history or emitting a mutation; `ifMatch` and create-only checks still run first. Other successful checkouts mint a revision and a `glob` observer receives a `MutationEvent` of kind **`write`**, or **`delete`** when restoring the path's absence. Restoring a table always mints a revision and emits a write, even when the restored rows are identical. Checkout provenance lives in `HistoryEntry.change == .checkout` (with `fromRev`), not in the mutation stream. This is why `MutationEvent` has no `checkout` case even though `ChangeKind` does.
 
 `write` and `move` events carry `entry` — the node's `EntryKind` (for a move,
 the node at the destination). `delete` events carry no `entry`: the journal

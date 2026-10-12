@@ -7,3 +7,9 @@ public enum MutationEvent: Codable, Equatable, Sendable {
   case delete(path: String, rev: Int)
   case move(path: String, to: String, rev: Int, entry: EntryKind)
 }
+
+@Contract
+public struct RevisionEvents: Codable, Equatable, Sendable {
+  public let rev: Int
+  public let events: [MutationEvent]
+}

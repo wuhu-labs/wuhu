@@ -66,7 +66,7 @@ public enum ToolReference {
     ),
     Entry(
       tool: "checkout", input: "CheckoutInput", output: "CheckoutOutput",
-      summary: "Restore a path's content from revision `rev` as a new revision. History never rewinds.",
+      summary: "Restore a path's content from revision `rev`. Identical file bytes return the current revision and token without history or events; other successful checkouts, including table restores, mint a new revision. History never rewinds.",
     ),
     Entry(
       tool: "query", input: "QueryInput", output: "QueryOutput",

@@ -168,7 +168,7 @@ public enum SpaceServer {
       } else {
         info["contentBase"] = .string(contentHost.base)
       }
-      info["features"] = .array([.string(GroupHeader.feature)])
+      info["features"] = .array([.string(GroupHeader.feature), .string("observe-batch")])
       // Public discovery names the group asked for and checks nothing; the
       // routes that act in it do.
       info["group"] = .string(namedGroup(request).rawValue)

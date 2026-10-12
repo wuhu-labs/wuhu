@@ -36,9 +36,10 @@ extension SessionStore {
     try SessionHome.refuseForeignWrite(to: p, in: group, by: id, home: home)
     try await writer.read { db in try GroupLayer.refuseWrite(p, in: group, by: .session(id), in: db) }
     let blob = try await blobs.stage(Array(content))
-    let (result, broadcastRev): (RecordedWrite, Int64?) = try await writer.write { db in
+    let broadcast = broadcast
+    let result: RecordedWrite = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       if let toolCallID, let recorded = try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db) {
-        return (RecordedWrite(payload: recorded, replayed: true), nil)
+        return RecordedWrite(payload: recorded, replayed: true)
       }
       let head = try Substrate.head(p, group: group, in: db)
       // ifMatchRev nil is the creation case: the guard admitted the write only
@@ -53,13 +54,12 @@ extension SessionStore {
       }
       let outcome = try LiveFS.commitFile(p, group: group, acting: home, blob: blob, head: head, mtime: mtime, in: db)
       let rev: Int64
-      var wrote: Int64?
       switch outcome {
       case let .unchanged(current):
         rev = current
       case let .wrote(minted):
         rev = minted
-        wrote = minted
+        pending += [MutationEvent(group: group, path: p.rawValue, rev: Int(minted), kind: .write, entry: .file)]
       }
       let built = payload(rev)
       if let toolCallID {
@@ -67,10 +67,7 @@ extension SessionStore {
           key, toolCallID: toolCallID.rawValue, payload: try Sessions.encode(built), now: mtime, in: db,
         )
       }
-      return (RecordedWrite(payload: built, replayed: false), wrote)
-    }
-    if let rev = broadcastRev {
-      broadcast.emit(MutationEvent(group: group, path: p.rawValue, rev: Int(rev), kind: .write, entry: .file))
+      return RecordedWrite(payload: built, replayed: false)
     }
     return result
   }

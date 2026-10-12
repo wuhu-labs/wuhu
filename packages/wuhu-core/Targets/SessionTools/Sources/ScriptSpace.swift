@@ -128,7 +128,7 @@ struct ScriptSpace: Sendable {
     }
     let watched = try await WatchedGlob(glob, as: try await principal(), in: space)
     let events = await space.observeFS(glob: watched.pattern, from: start, group: watched.group)
-    return .integer(await streams.open(events, newestOnly: false) { Wire.mutationJSON($0, prefix: watched.prefix) })
+    return .integer(await streams.open(events.mutations, newestOnly: false) { Wire.mutationJSON($0, prefix: watched.prefix) })
   }
 
   private func run(_ name: String, _ input: JSONValue, as principal: Principal) async throws -> JSONValue {

@@ -4,3 +4,7 @@
 ## Transport failures
 
 Unknown server error codes remain transport failures rather than decoding as a known `ToolError`. `TransportFailure` exposes the HTTP status and raw error code when available, alongside its existing message. Domain adapters can classify retryable preparation and stale cursors without parsing the diagnostic sentence. Missing transport capabilities and invalid JSON do not invent a server error code.
+
+## Filesystem observation
+
+`ObserveRequest(mode: .glob(pattern), from: cursor, batch: true)` opts into whole-revision SSE frames by sending `batch=1`. A nil or false batch preserves the existing single-mutation stream; SQL requests do not send the batch flag. Consumers decode `RevisionEvents` and advance their cursor only after folding its event array.

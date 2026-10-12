@@ -1,5 +1,10 @@
 import type { SpaceClient } from '~/sdk/client'
-import type { EntryKind, ListOutput, MutationEvent } from './contract.gen'
+import type {
+  EntryKind,
+  ListOutput,
+  MutationEvent,
+  RevisionEvents,
+} from './contract.gen'
 
 export type PathMap = Map<string, EntryKind>
 
@@ -34,8 +39,22 @@ export function ancestorPaths(path: string): string[] {
   )
 }
 
+export function applyRevision(
+  paths: PathMap,
+  revision: RevisionEvents,
+): PathMap {
+  const next = new Map(paths)
+  for (const event of revision.events) foldEvent(next, event)
+  return next
+}
+
 export function applyEvent(paths: PathMap, event: MutationEvent): PathMap {
   const next = new Map(paths)
+  foldEvent(next, event)
+  return next
+}
+
+function foldEvent(next: PathMap, event: MutationEvent): void {
   switch (event.kind) {
     case 'write':
       next.set(event.path, event.entry)
@@ -52,7 +71,6 @@ export function applyEvent(paths: PathMap, event: MutationEvent): PathMap {
       break
     }
   }
-  return next
 }
 
 export function buildTree(paths: PathMap): TreeNode[] {

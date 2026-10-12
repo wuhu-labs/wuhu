@@ -161,6 +161,7 @@ public enum ContractSchemas {
     ("SessionStreamEvent", SessionStreamEvent.jsonSchema),
 
     ("MutationEvent", MutationEvent.jsonSchema),
+    ("RevisionEvents", RevisionEvents.jsonSchema),
     ("ErrorCode", ErrorCode.jsonSchema),
     ("ToolError", ToolError.jsonSchema),
   ]

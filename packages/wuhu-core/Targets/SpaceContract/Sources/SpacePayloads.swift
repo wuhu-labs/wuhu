@@ -213,6 +213,6 @@ public enum GroupHeader {
 
 @Contract
 public enum ObserveInput: Codable, Equatable, Sendable {
-  case glob(pattern: String, from: Int?)
+  case glob(pattern: String, from: Int?, batch: Bool? = nil)
   case sql(query: String, throttleMs: Int?)
 }

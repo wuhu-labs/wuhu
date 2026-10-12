@@ -27,7 +27,7 @@ func observeResponse(
   let query = queryValues(of: url)
   switch (query["glob"], query["sql"]) {
   case let (glob?, nil):
-    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal)
+    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, batch: query["batch"] == "1")
   case let (nil, sql?):
     return await snapshotsResponse(
       space: space, sql: sql, parameters: [], throttleMs: query["throttleMs"], principal: principal, viewer: viewer,
@@ -41,7 +41,7 @@ func observeResponse(
 /// File events under `glob` as SSE, resumed after `from` when given. Without
 /// `from`, `head` opens the stream with an `event: head` frame naming the
 /// revision the subscription starts after, so a client resumes from there.
-func watchResponse(space: Space, glob: String, from rawFrom: String?, principal: Principal, head: Bool = false) async -> Response {
+func watchResponse(space: Space, glob: String, from rawFrom: String?, principal: Principal, head: Bool = false, batch: Bool = false) async -> Response {
   guard !glob.isEmpty else {
     return errorResponse(.badRequest, code: "invalidArgument", message: "glob must not be empty")
   }
@@ -69,7 +69,15 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
       return jsonResponse(Wire.failure(error).payload, status: .internalServerError)
     }
   }
-  return .sse(initial: initial, forwarding: events) { event in
+  if batch {
+    return .sse(initial: initial, forwarding: events) { commit in
+      .message(JSONValue.object([
+        "rev": .integer(commit.rev),
+        "events": .array(commit.events.map { Wire.mutationJSON($0, prefix: watched.prefix) }),
+      ]).jsonString(), event: "revision")
+    }
+  }
+  return .sse(initial: initial, forwarding: events.mutations) { event in
     .message(Wire.mutationJSON(event, prefix: watched.prefix).jsonString())
   }
 }

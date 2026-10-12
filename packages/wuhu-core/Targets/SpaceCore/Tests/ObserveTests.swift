@@ -9,7 +9,7 @@ import Testing
   @Test func oneEventPerFilesystemMutation() async throws {
     let space = try makeSpace()
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "**", group: .shared)
+    let stream = await space.observeFS(glob: "**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -27,7 +27,7 @@ import Testing
   @Test func globFiltersFilesystemEvents() async throws {
     let space = try makeSpace()
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/notes/**", group: .shared)
+    let stream = await space.observeFS(glob: "/notes/**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -43,7 +43,7 @@ import Testing
     let space = try makeSpace()
     let header = TableHeader(columns: [TableColumn(name: "n", type: .integer)])
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/data/**", group: .shared)
+    let stream = await space.observeFS(glob: "/data/**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -67,7 +67,7 @@ import Testing
     ]), in: .shared, acting: .shared)
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/dir/**", group: .shared)
+    let stream = await space.observeFS(glob: "/dir/**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
@@ -89,7 +89,7 @@ import Testing
     ]), in: .shared, acting: .shared)
 
     let events = Collector<MutationEvent>()
-    let stream = await space.observeFS(glob: "/src/**", group: .shared)
+    let stream = await space.observeFS(glob: "/src/**", group: .shared).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 

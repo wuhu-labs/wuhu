@@ -1,3 +1,5 @@
+import { SpaceClient, SpaceServer } from './client.ts'
+import { applyRevision, type PathMap } from '~/lib/tree.ts'
 import {
   bounded,
   type EventStream,
@@ -11,6 +13,7 @@ import {
   conversationBytes,
   conversationSubscription,
   directSubscription,
+  globSubscription,
   transcriptBytes,
 } from './subscriptions.ts'
 import type {
@@ -487,4 +490,45 @@ Deno.test('a conversation keeps its latest messages within its byte cap', () => 
     'the entry fits its cap',
   )
   assertEquals(stored.map((entry) => entry.n), [3, 4, 5])
+})
+
+Deno.test('glob revision folds once, checkpoints only complete batches, and resumes the previous cursor on a dropped frame', () => {
+  const net = new FakeNet()
+  const timer = new FakeTimer()
+  const subscription = globSubscription(
+    new SpaceClient('shared', new SpaceServer(), null),
+    '**',
+    4,
+  )
+  const store = observeStore<PathMap, Parameters<typeof applyRevision>[1]>({
+    subscription,
+    fold: applyRevision,
+    initial: new Map([['/a', 'file'], ['/b', 'file'], ['/c', 'file']]),
+    open: net.open,
+    timer,
+  })
+  let publishes = 0
+  store.subscribe(() => publishes++)
+  assertEquals(net.urls, ['/v1/observe?glob=**&from=4&batch=1'])
+  net.last.fireOpen()
+  publishes = 0
+  net.last.send({
+    rev: 5,
+    events: [
+      { kind: 'delete', path: '/a', rev: 5 },
+      { kind: 'delete', path: '/b', rev: 5 },
+      { kind: 'delete', path: '/c', rev: 5 },
+    ],
+  })
+  assertEquals([...store.getSnapshot().data], [])
+  assertEquals(publishes, 1)
+  net.last.fail()
+  timer.fire()
+  assertEquals(net.urls.at(-1), '/v1/observe?glob=**&from=5&batch=1')
+  net.last.fireOpen()
+  // A revision whose SSE frame never completes emits no message.
+  net.last.fail()
+  timer.fire()
+  assertEquals(net.urls.at(-1), '/v1/observe?glob=**&from=5&batch=1')
+  store.close()
 })

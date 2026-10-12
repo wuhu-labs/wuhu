@@ -115,7 +115,7 @@ import Testing
   @Test func anAttachmentLivesInItsConversationsGroupAndEveryRecipientCanNameIt() async throws {
     let rig = try await makeRig()
     let events = Collector<MutationEvent>()
-    let stream = await rig.space.observeFS(glob: "/_/conversations/**", group: Self.alice)
+    let stream = await rig.space.observeFS(glob: "/_/conversations/**", group: Self.alice).mutations
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 

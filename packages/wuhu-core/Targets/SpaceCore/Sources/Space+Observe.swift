@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 import Logging
@@ -6,7 +10,7 @@ import struct SpaceContract.GroupID
 import SpaceSQL
 
 extension Space {
-  public func observeFS(glob: String, from: Rev? = nil, group: GroupID) -> AsyncStream<MutationEvent> {
+  public func observeFS(glob: String, from: Rev? = nil, group: GroupID) -> AsyncStream<FSCommit> {
     // Live subscription is registered before the journal snapshot is read, so
     // every committed rev lands in at least one of the two; the live copy of a
     // replayed rev (from < rev <= ceiling, and nothing else) is dropped.
@@ -19,8 +23,11 @@ extension Space {
         do {
           let journal = try await Self.journalEvents(after: from.value, group: group, writer: writer)
           ceiling = journal.ceiling
-          for event in journal.events where FSBroadcast.matches(glob, event) {
-            continuation.yield(event)
+          for commit in journal.commits {
+            let events = commit.events.filter { FSBroadcast.matches(glob, $0) }
+            if !events.isEmpty {
+              continuation.yield(FSCommit(group: group, rev: commit.rev, events: events))
+            }
           }
         } catch {
           continuation.finish()
@@ -39,7 +46,7 @@ extension Space {
     after from: Int,
     group: GroupID,
     writer: any DatabaseWriter,
-  ) async throws -> (ceiling: Int, events: [MutationEvent]) {
+  ) async throws -> (ceiling: Int, commits: [FSCommit]) {
     try await writer.read { db in
       let ceiling = Int(try Substrate.maxRevision(in: db))
       struct JournalRow {
@@ -59,9 +66,10 @@ extension Space {
           op: JournalOp(rawValue: row["op"])!, aux: row["aux"],
         )
       }
-      var events: [MutationEvent] = []
+      var commits: [FSCommit] = []
       var index = rows.startIndex
       while index < rows.endIndex {
+        var events: [MutationEvent] = []
         let rev = rows[index].rev
         let batch = rows[index...].prefix { $0.rev == rev }
         index += batch.count
@@ -89,8 +97,9 @@ extension Space {
             }
           }
         }
+        commits.append(FSCommit(group: group, rev: rev, events: events))
       }
-      return (ceiling, events)
+      return (ceiling, commits)
     }
   }
 

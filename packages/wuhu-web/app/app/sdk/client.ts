@@ -187,8 +187,9 @@ export class SpaceClient {
     return this.tool('write', { path, content })
   }
 
-  observeURL(glob: string, from: number): string {
+  observeURL(glob: string, from: number, batch = false): string {
     const params = new URLSearchParams({ glob, from: String(from) })
+    if (batch) params.set('batch', '1')
     return `/v1/observe?${params}`
   }
 

@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import JSONValue
 import struct SpaceContract.GroupID
@@ -28,7 +32,8 @@ extension Space {
     }
     let spec = try Templates.parse(text, path: templatePath)
     let blob = try await blobs.stage(Array(spec.instanceContent.utf8))
-    let (created, rev): (SpacePath, Int64) = try await writer.write { db in
+    let broadcast = broadcast
+    let created: SpacePath = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let directory = try MachineFolders.stored(destination ?? templatePath.parent, mutating: true, in: db)
       let name = try Templates.allocateName(spec, in: directory, group: group, now: now, in: db)
       let target = try SpacePath(validating: directory.isRoot ? "/\(name)" : "\(directory.rawValue)/\(name)")
@@ -39,9 +44,9 @@ extension Space {
       }
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
       try Substrate.writeFile(target, group: group, blob: blob, rev: rev, mtime: mtime, in: db)
-      return (target, rev)
+      pending += [MutationEvent(group: group, path: target.rawValue, rev: Int(rev), kind: .write, entry: .file)]
+      return target
     }
-    broadcast.emit(MutationEvent(group: group, path: created.rawValue, rev: Int(rev), kind: .write, entry: .file))
     return created
   }
 

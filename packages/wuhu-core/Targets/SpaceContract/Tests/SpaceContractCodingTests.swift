@@ -16,6 +16,19 @@ struct SpaceContractCodingTests {
     ]))
   }
 
+  @Test func revisionEventsAndObserveBatchRoundTrip() throws {
+    let revision = RevisionEvents(rev: 7, events: [.delete(path: "/a", rev: 7), .delete(path: "/b", rev: 7)])
+    let value = try encoder.encode(revision)
+    #expect(value == .object(["rev": 7, "events": .array([
+      .object(["kind": "delete", "path": "/a", "rev": 7]),
+      .object(["kind": "delete", "path": "/b", "rev": 7]),
+    ])]))
+    #expect(try decoder.decode(RevisionEvents.self, from: value) == revision)
+    let input = ObserveInput.glob(pattern: "**", from: 7, batch: true)
+    #expect(try encoder.encode(input) == .object(["kind": "glob", "pattern": "**", "from": 7, "batch": true]))
+    #expect(try decoder.decode(ObserveInput.self, from: encoder.encode(input)) == input)
+  }
+
   @Test func rowOpCarriesTypedJSONCellValues() throws {
     #expect(try encoder.encode(RowOp.insert(values: [.string("Buy milk"), .integer(5), .null])) == .object([
       "kind": "insert", "values": .array([.string("Buy milk"), .integer(5), .null]),

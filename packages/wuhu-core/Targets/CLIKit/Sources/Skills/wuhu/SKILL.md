@@ -23,8 +23,7 @@ commits to **one global revision journal** — a single monotonically increasing
 
 - `wuhu history /path` lists the revisions that touched a path.
 - `wuhu read /path --rev N` and `wuhu ls /dir --rev N` read historical views.
-- `wuhu checkout /path N` restores old content by minting a **new** revision;
-  history never rewinds.
+- `wuhu checkout /path N` restores old content. Identical file bytes keep the live revision and current token without history or events; other successful checkouts, including tables with identical rows, mint a **new** revision. History never rewinds.
 - Paths must not contain `@`, `%`, `#`, `?`, control characters, or `.`/`..`
   components. `path@rev` addresses a historical view. `/_/` is reserved.
 

@@ -90,6 +90,7 @@ deno_generate(
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/read-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/read-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/remove-input.schema.json",
+        "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/revision-events.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/revision-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/row-op.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/sender-kind.schema.json",

@@ -97,8 +97,10 @@ Sharp edges:
 
 ```bash
 wuhu history /notes/plan.md      # lines: <rev> <op> <unix-mtime>
-wuhu checkout /notes/plan.md 3   # restores rev 3 content by minting a NEW rev
+wuhu checkout /notes/plan.md 3   # restores rev 3 content; identical file bytes are a no-op
 ```
+
+A checkout to identical file bytes returns the live revision and current token without minting a revision, journaling history or emitting a mutation. Other successful checkouts mint a new revision; table checkouts always mint, even when their rows are identical. History never rewinds.
 
 ## Tables and queries
 

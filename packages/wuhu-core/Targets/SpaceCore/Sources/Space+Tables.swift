@@ -13,19 +13,21 @@ extension Space {
     guard path.lastComponent?.hasSuffix(".table") == true else { throw SpaceError.notATable(path.rawValue) }
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let rev = try await writer.write { db in
+    let broadcast = broadcast
+    let rev = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       try MachineFolders.requireStored(path, in: db)
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
       try Tables.create(path, group: group, header: header, rev: rev, mtime: mtime, in: db)
+      pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .write, entry: .table)]
       return Rev(Int(rev))
     }
-    broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: rev.value, kind: .write, entry: .table))
     return rev
   }
 
   public func alterTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, ifMatch: VersionToken? = nil, allowDropColumns: Bool = true) async throws -> Rev {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let rev = try await writer.write { db in
+    let broadcast = broadcast
+    let rev = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let old = try Tables.currentHeader(path, group: group, in: db)
       try LiveFS.checkIfMatch(ifMatch, head: Substrate.head(path, group: group, in: db), path: path)
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
@@ -33,9 +35,9 @@ extension Space {
         throw SpaceError.invalidTableHeader("omitting a column requires allowDropColumns: true")
       }
       try Tables.alter(path, group: group, header: header, rev: rev, mtime: mtime, in: db)
+      pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .write, entry: .table)]
       return Rev(Int(rev))
     }
-    broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: rev.value, kind: .write, entry: .table))
     return rev
   }
 
@@ -89,7 +91,8 @@ extension Space {
     ops: @escaping @Sendable (TableHeader, Database) throws -> [RowOp],
   ) async throws -> RowCommit {
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let commit = try await writer.write { db in
+    let broadcast = broadcast
+    let commit = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let header = try Tables.currentHeader(path, group: group, in: db)
       let resolved = try ops(header, db)
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
@@ -105,9 +108,9 @@ extension Space {
         }
       }
       try Substrate.touchTableNode(path, group: group, rev: rev, mtime: mtime, in: db)
+      pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .write, entry: .table)]
       return RowCommit(rev: Rev(Int(rev)), ids: ids)
     }
-    broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: commit.rev.value, kind: .write, entry: .table))
     return commit
   }
 }

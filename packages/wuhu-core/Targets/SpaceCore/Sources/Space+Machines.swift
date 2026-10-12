@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
@@ -199,14 +203,15 @@ extension Space {
   public func moveMachine(_ id: MachineID, to group: GroupID) async throws -> MachineRecord {
     let notes = try SpacePath(validating: "/_/machines/\(id.rawValue)")
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (record, from, rev, moved): (MachineRecord, GroupID, Int64?, [(path: String, entry: Entry.Kind)]) = try await blobs.write(
-      writer,
+    let broadcast = broadcast
+    let record = try await blobs.write(
+      writer, emittingTo: broadcast,
       prefetching: { db in
         guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else { return [] }
         return try Substrate.descendantHeads(of: notes, group: GroupID(rawValue: row.grp), in: db)
           .compactMap { $0.kind == "file" ? $0.blobHash : nil }
       },
-    ) { db, cache in
+    ) { db, cache, pending in
       guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
         throw SpaceError.notFound(id.rawValue)
       }
@@ -214,7 +219,7 @@ extension Space {
       let movedRow = MachineRow(id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue)
       try MachineRow.update(movedRow).execute(db)
       let record = Self.machineRecord(from: movedRow)
-      guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return (record, from, nil, []) }
+      guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
       let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
       try Substrate.ensureAncestorDirectories(notes, group: group, rev: rev, mtime: mtime, in: db)
       var moved: [(path: String, entry: Entry.Kind)] = []
@@ -247,13 +252,13 @@ extension Space {
         }
         moved.append((node.path, Substrate.entryKind(node.kind)))
       }
-      return (record, from, rev, moved)
-    }
-    if let rev {
-      for note in moved {
-        broadcast.emit(MutationEvent(group: from, path: note.path, rev: Int(rev), kind: .delete, entry: nil))
-        broadcast.emit(MutationEvent(group: group, path: note.path, rev: Int(rev), kind: .write, entry: note.entry))
+      pending += moved.flatMap { note in
+        [
+          MutationEvent(group: from, path: note.path, rev: Int(rev), kind: .delete, entry: nil),
+          MutationEvent(group: group, path: note.path, rev: Int(rev), kind: .write, entry: note.entry),
+        ]
       }
+      return record
     }
     return record
   }

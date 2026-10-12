@@ -22,7 +22,7 @@
 | `wuhu grep <pattern> [path] [--match-limit N] [--entry-limit N] [--step cursor]` | Search file contents; paged by an opaque continuation cursor. |
 | `wuhu find <glob> [path] [--match-limit N] [--entry-limit N] [--step cursor]` | Find paths by glob, same paging contract as grep. |
 | `wuhu history <path>` | Print revision history. |
-| `wuhu checkout <path> <rev>` | Restore content from a prior revision (mints a new revision; history never rewinds). |
+| `wuhu checkout <path> <rev>` | Restore content from a prior revision. Identical file bytes keep the current revision/token without history or events; other successful checkouts, including tables, mint a new revision. History never rewinds. |
 
 ### Text and bytes
 

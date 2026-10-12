@@ -6,6 +6,7 @@
 
 import GRDB
 import KeelObjectStore
+import SpaceFS
 import StructuredQueries
 
 // A blob is inline when it has no `blob_objects` row: the absence of a row is
@@ -103,6 +104,31 @@ struct BlobStore: Sendable {
     _ body: @Sendable @escaping (Database, BlobCache) throws -> T,
   ) async throws -> T {
     try await resolving(writer, prefetching: prefetching, body) { try await writer.write($0) }
+  }
+
+  func write<Value: Sendable>(
+    _ writer: any DatabaseWriter,
+    emittingTo broadcast: FSBroadcast,
+    prefetching: (@Sendable (Database) throws -> [String])? = nil,
+    _ body: @Sendable @escaping (Database, BlobCache, inout [MutationEvent]) throws -> Value,
+  ) async throws -> Value {
+    let result = try await resolving(writer, prefetching: prefetching, { db, cache in
+      var pending: [MutationEvent] = []
+      let value = try body(db, cache, &pending)
+      return Emitting(value: value, events: pending)
+    }) { operation in
+      try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+        let result = try operation(db)
+        pending += result.events
+        return result
+      }
+    }
+    return result.value
+  }
+
+  private struct Emitting<Value: Sendable>: Sendable {
+    let value: Value
+    let events: [MutationEvent]
   }
 
   // External content cannot be fetched inside a database transaction, so the

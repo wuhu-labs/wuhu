@@ -1,5 +1,5 @@
 import type { EntryKind, MutationEvent } from './contract.gen.ts'
-import { applyEvent, buildTree, type PathMap } from './tree.ts'
+import { applyEvent, applyRevision, buildTree, type PathMap } from './tree.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
   const a = JSON.stringify(actual)
@@ -88,4 +88,20 @@ Deno.test('applyEvent is idempotent for a repeated write and move', () => {
   const moved = applyEvent(once, move)
   const movedAgain = applyEvent(moved, move)
   assertEquals([...movedAgain.entries()], [...moved.entries()])
+})
+
+Deno.test('applyRevision folds sibling events in order without mutating the held tree', () => {
+  const held = paths([['/a', 'file'], ['/b', 'file'], ['/c', 'file']])
+  const next = applyRevision(held, {
+    rev: 6,
+    events: [
+      { kind: 'delete', path: '/a', rev: 6 },
+      { kind: 'delete', path: '/b', rev: 6 },
+      { kind: 'delete', path: '/c', rev: 6 },
+      { kind: 'write', path: '/new', rev: 6, entry: 'file' },
+      { kind: 'move', path: '/new', to: '/moved', rev: 6, entry: 'file' },
+    ],
+  })
+  assertEquals([...held.keys()], ['/a', '/b', '/c'])
+  assertEquals([...next], [['/moved', 'file']])
 })

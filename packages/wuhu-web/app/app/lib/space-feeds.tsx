@@ -10,8 +10,8 @@ import {
 import type {
   EntryKind,
   GroupSummary,
-  MutationEvent,
   QueryOutput,
+  RevisionEvents,
 } from './contract.gen.ts'
 import {
   executorLabel,
@@ -22,7 +22,7 @@ import {
 import type { EnrolledDevice } from '~/sdk/auth'
 import { channelRows, channelsSQL, type ChannelSummary } from './channels.ts'
 import { useObserve } from './use-observe.ts'
-import { applyEvent, loadPaths, type PathMap } from './tree.ts'
+import { applyRevision, loadPaths, type PathMap } from './tree.ts'
 import { type SidebarFile, sidebarPaths, touchesSidebars } from './sidebars.ts'
 import { useSidebarFiles } from './use-sidebar-files.ts'
 import { memberGroups, sharedGroup } from './groups.ts'
@@ -56,8 +56,10 @@ interface FileState {
   avatarRevs: Record<string, number>
 }
 
-function foldFiles(state: FileState, event: MutationEvent): FileState {
-  const touched = [event.path, event.kind === 'move' ? event.to : null]
+function foldFiles(state: FileState, event: RevisionEvents): FileState {
+  const touched = event.events.flatMap(
+    (event) => [event.path, event.kind === 'move' ? event.to : null],
+  )
     .filter((path): path is string => path !== null)
   const views = touched.filter((path) => path.endsWith('.view'))
   const avatars = touched.map(sessionOfAvatarPath)
@@ -67,7 +69,7 @@ function foldFiles(state: FileState, event: MutationEvent): FileState {
   for (const path of views) viewRevs[path] = event.rev
   for (const session of avatars) avatarRevs[session] = event.rev
   return {
-    paths: applyEvent(state.paths, event),
+    paths: applyRevision(state.paths, event),
     rev: event.rev,
     themeRev: touched.includes('/theme.css')
       ? state.themeRev + 1
@@ -282,7 +284,7 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     }
   }, [client, cache])
 
-  const files = useObserve<FileState, MutationEvent>(
+  const files = useObserve<FileState, RevisionEvents>(
     loaded ? globSubscription(client, '**', loaded.rev) : null,
     foldFiles,
     {

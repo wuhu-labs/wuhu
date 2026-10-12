@@ -1,5 +1,9 @@
 import Crypto
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import KeelObjectStore
 import struct SpaceContract.GroupID
@@ -21,6 +25,27 @@ enum JournalOp: String {
 }
 
 enum Substrate {
+  static func writeEmitting<Value: Sendable>(
+    _ writer: any DatabaseWriter,
+    to broadcast: FSBroadcast,
+    _ body: @escaping @Sendable (Database, inout [MutationEvent]) throws -> Value,
+  ) async throws -> Value {
+    try await writer.writeWithoutTransaction { db in
+      var value: Value?
+      var pending: [MutationEvent] = []
+      try db.inTransaction {
+        value = try body(db, &pending)
+        return .commit
+      }
+      let commits = Dictionary(grouping: pending, by: \.group).map { group, events in
+        FSCommit(group: group, rev: events[0].rev, events: events)
+      }
+      // The transaction succeeded, and the writer is still held. No rollback notification owns this buffer's lifetime.
+      broadcast.emit(commits)
+      return value!
+    }
+  }
+
   static func mintRevision(
     mtime: String, group: GroupID, attribution: RevisionAttribution? = nil, in db: Database,
   ) throws -> Int64 {

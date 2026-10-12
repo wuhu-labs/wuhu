@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import struct SpaceContract.GroupID
 import SpaceFS
@@ -41,20 +45,23 @@ struct LiveFS: SpaceVFS {
     let p = try Self.validatedFileTarget(path)
     let blob = try await blobs.stage(Array(data))
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, acting, attribution) = (group, acting, attribution)
-    let outcome: FSWriteOutcome = try await writer.write { db in
+    let (group, acting, attribution, broadcast) = (group, acting, attribution, broadcast)
+    let outcome: FSWriteOutcome = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       let head = try Substrate.head(p, group: group, in: db)
       if createOnly, head != nil { throw SpaceError.alreadyExists(p.rawValue) }
       try Self.checkIfMatch(ifMatch, head: head, path: p)
-      return try Self.commitFile(
+      let outcome = try Self.commitFile(
         p, group: group, acting: acting, attribution: attribution, blob: blob, head: head, mtime: mtime, in: db,
       )
+      if case let .wrote(rev) = outcome {
+        pending += [MutationEvent(group: group, path: p.rawValue, rev: Int(rev), kind: .write, entry: .file)]
+      }
+      return outcome
     }
     switch outcome {
     case let .unchanged(rev):
       return VersionToken(rev: Int(rev))
     case let .wrote(rev):
-      broadcast.emit(MutationEvent(group: group, path: p.rawValue, rev: Int(rev), kind: .write, entry: .file))
       return VersionToken(rev: Int(rev))
     }
   }
@@ -79,8 +86,8 @@ struct LiveFS: SpaceVFS {
   func delete(_ path: String, ifMatch: VersionToken?) async throws {
     let p = try Self.validated(path, mutating: true)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, acting, attribution) = (group, acting, attribution)
-    let (rev, removed): (Int64, [String]) = try await writer.write { db in
+    let (group, acting, attribution, broadcast) = (group, acting, attribution, broadcast)
+    try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
       try Self.checkIfMatch(ifMatch, head: head, path: p)
       let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
@@ -88,10 +95,9 @@ struct LiveFS: SpaceVFS {
       for node in targets {
         try Self.remove(node, group: group, rev: rev, op: .delete, in: db)
       }
-      return (rev, targets.map(\.path))
-    }
-    for removedPath in removed {
-      broadcast.emit(MutationEvent(group: group, path: removedPath, rev: Int(rev), kind: .delete, entry: nil))
+      pending += targets.map {
+        MutationEvent(group: group, path: $0.path, rev: Int(rev), kind: .delete, entry: nil)
+      }
     }
   }
 
@@ -109,16 +115,16 @@ struct LiveFS: SpaceVFS {
     let src = try Self.validated(path, mutating: true)
     let dst = try Self.validated(destination, mutating: true)
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    let (group, acting, attribution) = (group, acting, attribution)
+    let (group, acting, attribution, broadcast) = (group, acting, attribution, broadcast)
     let across = destinationGroup != group
-    let (rev, moved): (Int64, [(from: String, to: String, entry: Entry.Kind)]) = try await blobs.write(
-      writer,
+    try await blobs.write(
+      writer, emittingTo: broadcast,
       prefetching: { db in
         guard let head = try Substrate.head(src, group: group, in: db) else { return [] }
         let nodes = head.kind == "directory" ? try Substrate.descendantHeads(of: src, group: group, in: db) : [head]
         return nodes.compactMap { $0.kind == "file" ? $0.blobHash : nil }
       },
-    ) { db, cache in
+    ) { db, cache, pending in
       guard let head = try Substrate.head(src, group: group, in: db) else { throw SpaceError.notFound(src.rawValue) }
       if let existing = try Substrate.head(dst, group: destinationGroup, in: db) {
         guard replacing, existing.kind == "file", across || dst != src else { throw SpaceError.alreadyExists(dst.rawValue) }
@@ -161,15 +167,16 @@ struct LiveFS: SpaceVFS {
         }
         pairs.append((node.path, newPath.rawValue, Substrate.entryKind(node.kind)))
       }
-      return (rev, pairs)
-    }
-    for pair in moved {
-      if across {
-        broadcast.emit(MutationEvent(group: group, path: pair.from, rev: Int(rev), kind: .delete, entry: nil))
-        broadcast.emit(MutationEvent(group: destinationGroup, path: pair.to, rev: Int(rev), kind: .write, entry: pair.entry))
-      } else {
-        broadcast.emit(MutationEvent(group: group, path: pair.to, from: pair.from, rev: Int(rev), kind: .move, entry: pair.entry))
+      let events = pairs.flatMap { pair -> [MutationEvent] in
+        if across {
+          return [
+            MutationEvent(group: group, path: pair.from, rev: Int(rev), kind: .delete, entry: nil),
+            MutationEvent(group: destinationGroup, path: pair.to, rev: Int(rev), kind: .write, entry: pair.entry),
+          ]
+        }
+        return [MutationEvent(group: group, path: pair.to, from: pair.from, rev: Int(rev), kind: .move, entry: pair.entry)]
       }
+      pending += events
     }
   }
 

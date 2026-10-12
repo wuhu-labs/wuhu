@@ -7,6 +7,49 @@ import SpaceContract
 import Testing
 
 @Suite struct ObserveTests {
+  @Test func batchRevisionFramesAreWholeLiveAndReplayed() async throws {
+    let harness = try Harness()
+    for name in ["a", "b", "c"] {
+      _ = try await harness.direct("write", .object(["path": .string("/notes/\(name).md"), "content": .string(name)]))
+    }
+    let response = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/notes/**", "batch": "1"])
+    _ = try await harness.direct("rm", .object(["path": "/notes"]))
+    var first: JSONValue?
+    for try await frame in response.sse() {
+      #expect(frame.event == "revision")
+      let value = try #require(JSONValue.parse(frame.data))
+      let revision = try JSONValueDecoder().decode(RevisionEvents.self, from: value)
+      #expect(revision.rev == 4)
+      #expect(revision.events.count == 3)
+      #expect(revision.events.allSatisfy {
+        if case let .delete(path, rev) = $0 { return path.hasPrefix("/notes/") && rev == revision.rev }
+        return false
+      })
+      #expect(value.object?["rev"] == .integer(4))
+      #expect(value.object?["events"]?.array?.count == 3)
+      first = value
+      break
+    }
+    let replay = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/notes/**", "from": "3", "batch": "1"])
+    for try await frame in replay.sse() {
+      #expect(frame.event == "revision")
+      let value = try #require(JSONValue.parse(frame.data))
+      #expect(value.object?["rev"] == first?.object?["rev"])
+      let paths = value.object?["events"]?.array?.compactMap { $0.object?["path"]?.stringValue } ?? []
+      let firstPaths = first?.object?["events"]?.array?.compactMap { $0.object?["path"]?.stringValue } ?? []
+      #expect(Set(paths) == Set(firstPaths))
+      #expect(value.object?["events"]?.array?.count == 3)
+      break
+    }
+  }
+
+  @Test func discoveryAdvertisesBatchObservation() async throws {
+    let harness = try Harness()
+    let response = try await harness.get(harness.api, "/v1/server")
+    let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
+    #expect(info.features?.contains("observe-batch") == true)
+  }
+
   @Test func globObserveStreamsMutationEvents() async throws {
     let harness = try Harness()
     let response = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/notes/**"])

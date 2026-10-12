@@ -16,11 +16,13 @@ public struct ObserveRequest: Equatable, Sendable {
   public var mode: Mode
   public var from: Int?
   public var throttleMs: Int?
+  public var batch: Bool?
 
-  public init(mode: Mode, from: Int? = nil, throttleMs: Int? = nil) {
+  public init(mode: Mode, from: Int? = nil, throttleMs: Int? = nil, batch: Bool? = nil) {
     self.mode = mode
     self.from = from
     self.throttleMs = throttleMs
+    self.batch = batch
   }
 }
 
@@ -49,6 +51,9 @@ extension SpaceClient {
     switch request.mode {
     case let .glob(pattern):
       items = [URLQueryItem(name: "glob", value: pattern)]
+      if request.batch == true {
+        items.append(URLQueryItem(name: "batch", value: "1"))
+      }
       if let from = request.from {
         items.append(URLQueryItem(name: "from", value: String(from)))
       }

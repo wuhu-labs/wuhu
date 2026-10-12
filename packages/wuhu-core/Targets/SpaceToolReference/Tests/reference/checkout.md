@@ -1,6 +1,6 @@
 # `checkout`
 
-Restore a path's content from revision `rev` as a new revision. History never rewinds.
+Restore a path's content from revision `rev`. Identical file bytes return the current revision and token without history or events; other successful checkouts, including table restores, mint a new revision. History never rewinds.
 
 `POST /v1/tools/checkout` takes a [`CheckoutInput`](../../../SpaceContract/Tests/contract/checkout-input.schema.json) body and answers `200` with a [`CheckoutOutput`](../../../SpaceContract/Tests/contract/checkout-output.schema.json).
 

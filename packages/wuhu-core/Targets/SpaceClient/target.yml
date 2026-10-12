@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 checks:
   build: [linux, mac, ios, visionos]
+  test: [linux, mac]
 dependencies:
   - SpaceContract
   - MachineContract
@@ -11,3 +12,6 @@ dependencies:
   - Fetch
   - FetchSSE
   - Dependencies
+tests:
+  dependencies:
+    - Fetch

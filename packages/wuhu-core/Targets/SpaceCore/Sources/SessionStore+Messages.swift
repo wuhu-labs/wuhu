@@ -130,7 +130,8 @@ extension SessionStore {
     for upload in uploads {
       try await staged.append((upload, blobs.stage(upload.bytes)))
     }
-    let (delivery, written) = try await writer.write { [staged] db in
+    let broadcast = broadcast
+    let delivery = try await Substrate.writeEmitting(writer, to: broadcast) { [staged] db, pending in
       let existing = try Conversations.message(id: messageID.rawValue, in: db)
       // A session posts from its own group, a person from the one it acts in.
       let poster = Poster(
@@ -143,7 +144,7 @@ extension SessionStore {
         throw SessionStoreError.humanAgentDirectMessage
       }
       if let existing {
-        return (MessageDelivery(message: existing, enqueued: [], replayed: true), nil as (group: GroupID, rev: Int64, attachments: [Attachment])?)
+        return MessageDelivery(message: existing, enqueued: [], replayed: true)
       }
       if let replyTarget {
         guard let parent = try Conversations.message(id: replyTarget.rawValue, in: db) else {
@@ -194,12 +195,12 @@ extension SessionStore {
       )
       let record = try Conversations.message(id: messageID.rawValue, in: db)!
       let enqueued = try deliver(record, conversation: conversation, poster: poster, nowDate: nowDate, now: now, in: db)
-      return (MessageDelivery(message: record, enqueued: enqueued, replayed: false), written.map { (conversation.group, $0.rev, $0.attachments) })
-    }
-    if let written {
-      for attachment in written.attachments {
-        broadcast.emit(MutationEvent(group: written.group, path: attachment.path, rev: Int(written.rev), kind: .write, entry: .file))
+      if let written {
+        pending += written.attachments.map {
+          MutationEvent(group: conversation.group, path: $0.path, rev: Int(written.rev), kind: .write, entry: .file)
+        }
       }
+      return MessageDelivery(message: record, enqueued: enqueued, replayed: false)
     }
     for recipient in delivery.enqueued {
       signals.post(recipient)

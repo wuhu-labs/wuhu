@@ -81,8 +81,8 @@ extension Space {
     let path = try await MachineFolders.stored(path, mutating: true, in: writer)
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
-    enum Effect { case wrote(Entry.Kind), deleted }
-    let (rev, token, effect): (Rev, VersionToken, Effect) = try await blobs.write(writer) { db, cache in
+    let broadcast = broadcast
+    let (rev, token): (Rev, VersionToken) = try await blobs.write(writer, emittingTo: broadcast) { db, cache, pending in
       let ceiling = Int64(target.value)
       guard try Substrate.revisionExists(ceiling, in: db) else { throw SpaceError.invalidRevision(target.value) }
       let resolved = try HistoricalFS.resolve(path.rawValue, group: group, ceiling: ceiling, in: db)
@@ -91,6 +91,9 @@ extension Space {
       if createOnly, liveHead != nil { throw SpaceError.alreadyExists(path.rawValue) }
       try LiveFS.checkIfMatch(ifMatch, head: liveHead, path: path)
       guard resolved != nil || liveHead != nil else { throw SpaceError.notFound(path.rawValue) }
+      if let resolved, resolved.kind == "file", let liveHead, liveHead.kind == "file", resolved.blobHash == liveHead.blobHash {
+        return (Rev(Int(liveHead.rev)), VersionToken(rev: Int(liveHead.rev)))
+      }
       let newRev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
       let token = VersionToken(rev: Int(newRev))
       let fromRev = String(target.value)
@@ -102,19 +105,18 @@ extension Space {
           path, group: group, blob: try cache.blob(of: hash, in: db),
           rev: newRev, mtime: mtime, op: .checkout, aux: fromRev, in: db,
         )
-        return (Rev(Int(newRev)), token, .wrote(.file))
+        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .write, entry: .file)]
+        return (Rev(Int(newRev)), token)
       case "table":
         if liveHead?.kind == "file" { try Induction.remove(path: path, group: group, in: db) }
         try Tables.restore(path, group: group, ceiling: ceiling, rev: newRev, mtime: mtime, in: db)
-        return (Rev(Int(newRev)), token, .wrote(.table))
+        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .write, entry: .table)]
+        return (Rev(Int(newRev)), token)
       default:
         try LiveFS.remove(liveHead!, group: group, rev: newRev, op: .checkout, aux: fromRev, in: db)
-        return (Rev(Int(newRev)), token, .deleted)
+        pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(newRev), kind: .delete, entry: nil)]
+        return (Rev(Int(newRev)), token)
       }
-    }
-    switch effect {
-    case let .wrote(entry): broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: rev.value, kind: .write, entry: entry))
-    case .deleted: broadcast.emit(MutationEvent(group: group, path: path.rawValue, rev: rev.value, kind: .delete, entry: nil))
     }
     return (rev, token)
   }
