@@ -66,10 +66,10 @@ func spaceDataResponse(
     case let .admitted(account): viewer = account
     }
     guard let glob = query["glob"] else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "watch takes ?glob=[&from=]")
+      return errorResponse(.badRequest, code: "invalidArgument", message: "watch takes ?glob=[&from=][&batch=1]")
     }
     let principal = try await webPrincipal(viewer, group: caller.group, space: space)
-    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, head: true)
+    return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, head: true, batch: query["batch"] == "1")
       .viewed(by: viewer)
   case ("attributes", .get), ("attributes", .head):
     let viewer: AccountID?

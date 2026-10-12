@@ -324,6 +324,33 @@ import Testing
 
   // Without `from`, the stream opens on the head revision, so a client that
   // drops before any event resumes from there; file events follow unchanged.
+  @Test func watchBatchOptInKeepsWholeRevisionsAndReplaysAfterTheCursor() async throws {
+    let r = try await rig()
+    for name in ["a", "b", "c"] {
+      try await run(r, .shared, "write", ["path": .string("/notes/\(name).md"), "content": .string(name)])
+    }
+    let alices = try await cookie(r, r.alice, .shared)
+    let watch = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": "/notes/**", "batch": "1"], cookie: alices)
+    var frames = watch.sse().makeAsyncIterator()
+    let opening = try #require(try await frames.next())
+    #expect(opening.event == "head")
+    let head = try #require(JSONValue.parse(opening.data)?.object?["rev"]?.intValue)
+    try await run(r, .shared, "rm", ["path": "/notes"])
+    let frame = try #require(try await frames.next())
+    try #require(frame.event == "revision")
+    let revision = try JSONValueDecoder().decode(RevisionEvents.self, from: #require(JSONValue.parse(frame.data)))
+    #expect(revision.rev > head)
+    #expect(revision.events.count == 3)
+    #expect(Set(revision.events.compactMap { event -> String? in
+      guard case let .delete(path, rev) = event, rev == revision.rev else { return nil }
+      return path
+    }) == Set(["/notes/a.md", "/notes/b.md", "/notes/c.md"]))
+    let replay = try await get(r, Self.sharedHost, "/_/space/watch", ["glob": "/notes/**", "from": String(head), "batch": "1"], cookie: alices)
+    var replayFrames = replay.sse().makeAsyncIterator()
+    let replayed = try #require(try await replayFrames.next())
+    #expect(replayed == frame)
+  }
+
   @Test func watchOpensOnTheHeadRevisionAndSeesAnAttributePatchAsAWrite() async throws {
     let r = try await rig()
     let written = try await run(r, .shared, "write", ["path": "/notes/a.md", "content": "---\nk: 1\n---\n"])

@@ -50,6 +50,13 @@ import Testing
     #expect(info.features?.contains("observe-batch") == true)
   }
 
+  @Test func discoveryAdvertisesBatchPageWatch() async throws {
+    let harness = try Harness()
+    let response = try await harness.get(harness.api, "/v1/server")
+    let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
+    #expect(info.features?.contains("watch-batch") == true)
+  }
+
   @Test func globObserveStreamsMutationEvents() async throws {
     let harness = try Harness()
     let response = try await harness.get(harness.api, "/v1/observe", query: ["glob": "/notes/**"])

@@ -157,7 +157,7 @@ Deno.test('observe yields each snapshot as rows, and an error status ends it', a
   assertEquals(sent[0]!.url.searchParams.get('params'), '[1]')
 })
 
-Deno.test('watch reconnects after a dropped stream, resuming after the last event', async () => {
+Deno.test('legacy watch reconnects before its unproven boundary revision', async () => {
   const write = (rev: number) => ({
     kind: 'write',
     path: '/notes/plan.md',
@@ -175,8 +175,50 @@ Deno.test('watch reconnects after a dropped stream, resuming after the last even
   assertEquals(seen, [5, 6, 9])
   assertEquals(
     sent.map(({ url }) => url.search),
-    ['?glob=%2Fnotes%2F**&from=4', '?glob=%2Fnotes%2F**&from=6'],
+    [
+      '?glob=%2Fnotes%2F**&from=4&batch=1',
+      '?glob=%2Fnotes%2F**&from=5&batch=1',
+    ],
   )
+})
+
+Deno.test('legacy watch reconnects mid-revision without repeating or skipping siblings', async () => {
+  const a = { kind: 'write', path: '/notes/a.md', rev: 5 }
+  const b = { kind: 'delete', path: '/notes/a.md', rev: 5 }
+  const c = { kind: 'move', path: '/notes/a.md', to: '/notes/b.md', rev: 5 }
+  const d = { kind: 'move', path: '/notes/a.md', to: '/notes/c.md', rev: 5 }
+  const later = { kind: 'write', path: '/notes/a.md', rev: 6 }
+  let first!: ReadableStreamDefaultController<Uint8Array>
+  const sent = page([
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            first = controller
+            controller.enqueue(new TextEncoder().encode(
+              [a, c].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(
+                '',
+              ),
+            ))
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      ),
+    () =>
+      sent.at(-1)!.url.searchParams.get('from') === '4'
+        ? events(a, b, c, d, later)
+        : events(later),
+  ])
+  const seen = []
+  for await (const event of watch('/notes/**', { from: 4 })) {
+    seen.push(event)
+    if (event.kind === 'move' && event.to === c.to) {
+      first.error(new TypeError('connection dropped inside revision 5'))
+    }
+    if (event.rev === 6) break
+  }
+  assertEquals(seen, [a, c, b, d, later])
+  assertEquals(sent[1]!.url.searchParams.get('from'), '4')
 })
 
 Deno.test('a watch opened without from resumes after its head frame when it drops before any event', async () => {
@@ -193,8 +235,171 @@ Deno.test('a watch opened without from resumes after its head frame when it drop
   }
   assertEquals(
     sent.map(({ url }) => url.search),
-    ['?glob=%2Fnotes%2F**', '?glob=%2Fnotes%2F**&from=7'],
+    ['?glob=%2Fnotes%2F**&batch=1', '?glob=%2Fnotes%2F**&from=7&batch=1'],
   )
+})
+
+for (const batch of [false, true]) {
+  for (const disconnect of [false, true]) {
+    Deno.test(`queued head revision is delivered (${batch ? 'batch' : 'legacy'}, ${disconnect ? 'drop' : 'live'})`, async () => {
+      const a = { kind: 'write', path: '/notes/a.md', rev: 7 }
+      const b = { kind: 'delete', path: '/notes/b.md', rev: 7 }
+      const later = { kind: 'write', path: '/notes/a.md', rev: 8 }
+      const encode = (values: typeof a[]) =>
+        batch
+          ? `event: revision\ndata: ${
+            JSON.stringify({ rev: 7, events: values })
+          }\n\n`
+          : values.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')
+      let first!: ReadableStreamDefaultController<Uint8Array>
+      const sent = page([
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                first = controller
+                controller.enqueue(new TextEncoder().encode(
+                  'event: head\ndata: {"rev":7}\n\n' +
+                    encode(disconnect && !batch ? [a] : [a, b]),
+                ))
+                if (!disconnect) controller.close()
+              },
+            }),
+          ),
+        () => {
+          const from = Number(sent.at(-1)!.url.searchParams.get('from'))
+          return new Response(
+            (from < 7 ? encode([a, b]) : '') +
+              `data: ${JSON.stringify(later)}\n\n`,
+          )
+        },
+      ])
+      const seen = []
+      // A refusal gives the broken implementation a terminal outcome instead of a hung probe.
+      let dropped = false
+      const drop = () => {
+        dropped = true
+        first.error(new TypeError('queued revision dropped'))
+      }
+      const fallback = disconnect ? setTimeout(drop, 50) : null
+      for await (const event of watch('/notes/**')) {
+        seen.push(event)
+        if (disconnect && !dropped && event.rev === 7) {
+          clearTimeout(fallback!)
+          drop()
+        }
+        if (event.rev === 8) break
+      }
+      assertEquals(seen, [a, b, later])
+      assertEquals(
+        sent[1]!.url.searchParams.get('from'),
+        batch ? '7' : '6',
+      )
+    })
+  }
+}
+
+Deno.test('a completed queued batch replaces a newer head baseline on reconnect', async () => {
+  const queued = { kind: 'write', path: '/notes/queued.md', rev: 7 }
+  const missed = { kind: 'delete', path: '/notes/missed.md', rev: 8 }
+  const later = { kind: 'write', path: '/notes/later.md', rev: 9 }
+  const batch = (event: typeof queued) =>
+    `event: revision\ndata: ${
+      JSON.stringify({ rev: event.rev, events: [event] })
+    }\n\n`
+  let first!: ReadableStreamDefaultController<Uint8Array>
+  const sent = page([
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            first = controller
+            controller.enqueue(
+              new TextEncoder().encode(
+                'event: head\ndata: {"rev":8}\n\n' + batch(queued),
+              ),
+            )
+          },
+        }),
+      ),
+    () =>
+      new Response(
+        (Number(sent.at(-1)!.url.searchParams.get('from')) < 8
+          ? batch(missed)
+          : '') + batch(later),
+      ),
+  ])
+  const seen = []
+  for await (const event of watch('/notes/**')) {
+    seen.push(event)
+    if (event.rev === 7) {
+      first.error(new TypeError('paused before the queued revision 8'))
+    }
+    if (event.rev === 9) break
+  }
+  assertEquals(seen, [queued, missed, later])
+  assertEquals(sent[1]!.url.searchParams.get('from'), '7')
+})
+
+Deno.test('whole watch revisions checkpoint once all siblings are delivered', async () => {
+  const a = { kind: 'write', path: '/notes/a.md', rev: 5 }
+  const b = { kind: 'delete', path: '/notes/b.md', rev: 5 }
+  const next = { kind: 'write', path: '/notes/a.md', rev: 6 }
+  const sent = page([
+    () =>
+      new Response(
+        `event: revision\ndata: ${
+          JSON.stringify({ rev: 5, events: [a, a, b] })
+        }\n\n`,
+        {
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    () => events(next),
+  ])
+  const seen = []
+  for await (const event of watch('/notes/**', { from: 4 })) {
+    seen.push(event)
+    if (seen.length === 4) break
+  }
+  assertEquals(seen, [a, a, b, next])
+  assertEquals(sent[1]!.url.searchParams.get('from'), '5')
+})
+
+Deno.test('an incomplete batch never checkpoints and a later batch completes a legacy boundary', async () => {
+  const a = { kind: 'write', path: '/notes/a.md', rev: 5 }
+  const b = { kind: 'delete', path: '/notes/b.md', rev: 5 }
+  const c = { kind: 'write', path: '/notes/a.md', rev: 6 }
+  const sent = page([
+    () =>
+      new Response(
+        `data: ${JSON.stringify(a)}\n\nevent: revision\ndata: {"rev":5,`,
+        {
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    () =>
+      new Response(
+        `event: revision\ndata: ${
+          JSON.stringify({ rev: 5, events: [a, b] })
+        }\n\n`,
+        {
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      ),
+    () => events(c),
+  ])
+  const seen = []
+  for await (const event of watch('/notes/**', { from: 4 })) {
+    seen.push(event)
+    if (seen.length === 3) break
+  }
+  assertEquals(seen, [a, b, c])
+  assertEquals(sent.map(({ url }) => url.searchParams.get('from')), [
+    '4',
+    '4',
+    '5',
+  ])
 })
 
 Deno.test('proxied fetch preserves body, target headers, upstream errors and streaming Response', async () => {

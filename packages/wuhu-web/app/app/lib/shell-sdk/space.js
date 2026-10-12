@@ -117,17 +117,60 @@ const httpTransport = {
   // the stream starts after, so a drop before the first event resumes there.
   watch(glob, from) {
     let after = from
-    const reached = (rev) => after = Math.max(after ?? rev, rev)
-    const events = stream(() => address('watch', { glob, from: after }), {
-      head: ({ rev }) => reached(rev),
-    })
+    let boundary = null
+    const delivered = new Set()
+    const abort = new AbortController()
+    const records = connections(() =>
+      address('watch', {
+        glob,
+        from: boundary === null ? after : boundary - 1,
+        batch: 1,
+      }), abort.signal)
+    const keyOf = (event) =>
+      JSON.stringify([event.kind, event.path, event.to ?? null])
+    const admit = (event) => {
+      if (boundary !== null && event.rev < boundary) return false
+      if (event.rev !== boundary) {
+        boundary = event.rev
+        delivered.clear()
+      }
+      const key = keyOf(event)
+      if (delivered.has(key)) return false
+      delivered.add(key)
+      return true
+    }
+    const events = (async function* () {
+      for await (const frame of records) {
+        if (frame.event === 'head') {
+          after ??= frame.data.rev
+        } else if (frame.event === 'revision') {
+          const revision = frame.data
+          if (
+            !Number.isSafeInteger(revision.rev) || revision.rev < 0 ||
+            !Array.isArray(revision.events) ||
+            !revision.events.every((event) => event.rev === revision.rev)
+          ) {
+            throw new SpaceError('internal', 'Invalid watch revision')
+          }
+          if (boundary !== null && revision.rev < boundary) continue
+          const replayed = boundary === revision.rev ? delivered : new Set()
+          for (const event of revision.events) {
+            if (!replayed.has(keyOf(event))) yield event
+          }
+          after = revision.rev
+          boundary = null
+          delivered.clear()
+        } else if (frame.event === 'message' && admit(frame.data)) {
+          yield frame.data
+        }
+      }
+    })()
     return {
       async next() {
-        const event = await events.next()
-        if (event !== null) reached(event.rev)
-        return event
+        const { value, done } = await events.next()
+        return done ? null : value
       },
-      close: events.close,
+      close: () => abort.abort(),
     }
   },
   mutateRows: (path, ops) => send('rows', { path, ops }),
