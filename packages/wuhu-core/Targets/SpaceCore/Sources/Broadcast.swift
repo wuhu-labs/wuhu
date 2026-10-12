@@ -28,6 +28,16 @@ final class FSBroadcast: Sendable {
   }
 
   private let state = Mutex(State())
+  private let beforeDelivery: @Sendable () -> Void
+  private let beforeRemoval: @Sendable () -> Void
+
+  init(
+    beforeDelivery: @escaping @Sendable () -> Void = {},
+    beforeRemoval: @escaping @Sendable () -> Void = {},
+  ) {
+    self.beforeDelivery = beforeDelivery
+    self.beforeRemoval = beforeRemoval
+  }
 
   func subscribe(glob: String, group: GroupID) -> AsyncStream<FSCommit> {
     let (stream, continuation) = AsyncStream<FSCommit>.makeStream()
@@ -41,19 +51,25 @@ final class FSBroadcast: Sendable {
   }
 
   func emit(_ commits: [FSCommit]) {
-    state.withLock { current in
-      for commit in commits {
-        for subscriber in current.subscribers.values where subscriber.group == commit.group {
+    // Substrate.writeEmitting holds the serialized database writer through delivery.
+    let deliveries = state.withLock { current in
+      commits.flatMap { commit in
+        current.subscribers.values.compactMap { subscriber -> (AsyncStream<FSCommit>.Continuation, FSCommit)? in
+          guard subscriber.group == commit.group else { return nil }
           let events = commit.events.filter { Self.matches(subscriber.glob, $0) }
-          if !events.isEmpty {
-            subscriber.continuation.yield(FSCommit(group: commit.group, rev: commit.rev, events: events))
-          }
+          guard !events.isEmpty else { return nil }
+          return (subscriber.continuation, FSCommit(group: commit.group, rev: commit.rev, events: events))
         }
       }
+    }
+    beforeDelivery()
+    for (continuation, commit) in deliveries {
+      continuation.yield(commit)
     }
   }
 
   private func remove(_ id: UInt64) {
+    beforeRemoval()
     state.withLock { $0.subscribers[id] = nil }
   }
 

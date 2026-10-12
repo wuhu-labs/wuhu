@@ -69,6 +69,13 @@ final class ScriptExecution: Sendable {
     case taken
   }
 
+  private enum Delivery {
+    case answer(AsyncStream<ScriptAnswer?>.Continuation, ScriptAnswer)
+    case post(String)
+    case ended([AsyncStream<ScriptEnding>.Continuation], ScriptEnding)
+    case finishPost
+  }
+
   private struct State {
     var waiter = Waiter.pending(nil)
     var answer: ScriptAnswer?
@@ -81,6 +88,8 @@ final class ScriptExecution: Sendable {
     var killRequested: ScriptStop?
     var windDowns: [WindDown] = []
     var console = ScriptConsole()
+    var deliveries: [Delivery] = []
+    var delivering = false
   }
 
   let id: String
@@ -133,8 +142,9 @@ final class ScriptExecution: Sendable {
     let (events, sink) = AsyncStream<ScriptAnswer?>.makeStream()
     state.withLock {
       $0.waiter = .pending(sink)
-      if let answer = $0.answer { sink.yield(answer) }
+      if let answer = $0.answer { $0.deliveries.append(.answer(sink, answer)) }
     }
+    drain()
     return try await withThrowingTaskGroup(of: Void.self) { group in
       defer { group.cancelAll() }
       group.addTask {
@@ -362,11 +372,13 @@ final class ScriptExecution: Sendable {
       state.resulted = true
       produce(.result(text), in: &state)
     }
+    drain()
   }
 
   func recordUpdate(_ text: String) throws {
     guard handler == nil else { throw ScriptError("handlers use wake(text); update() is only for run_script") }
-    post.yield(text)
+    state.withLock { $0.deliveries.append(.post(text)) }
+    drain()
   }
 
   func log(_ level: String, _ text: String) {
@@ -377,14 +389,14 @@ final class ScriptExecution: Sendable {
     switch state.waiter {
     case let .pending(sink):
       state.answer = answer
-      sink?.yield(answer)
+      if let sink { state.deliveries.append(.answer(sink, answer)) }
     case .detached:
       state.waiter = .taken
       switch answer {
       case let .result(text):
-        post.yield("result of script \(id):\n" + text)
+        state.deliveries.append(.post("result of script \(id):\n" + text))
       case let .failure(message):
-        post.yield(message)
+        state.deliveries.append(.post(message))
       case .detached:
         break
       }
@@ -406,21 +418,55 @@ final class ScriptExecution: Sendable {
           produce(.failure("script \(id) " + ending.withoutResult + tail), in: &state)
         }
       } else if ending != .released, !stopped {
-        post.yield("script \(id) failed after its result: " + ending.afterResult + tail)
+        state.deliveries.append(.post("script \(id) failed after its result: " + ending.afterResult + tail))
       }
-      for waiter in state.endWaiters {
-        waiter.yield(ending)
-        waiter.finish()
-      }
+      state.deliveries.append(.ended(state.endWaiters, ending))
       state.endWaiters = []
+      state.deliveries.append(.finishPost)
       let windDowns = state.windDowns
       state.windDowns = []
       return windDowns
     }
+    drain()
     for windDown in windDowns {
       windDown.resume(ended: true)
     }
-    post.finish()
+  }
+
+  // Claim one drainer so concurrent state transitions cannot overtake a result or finish.
+  private func drain() {
+    let claimed = state.withLock { state in
+      guard !state.delivering else { return false }
+      state.delivering = true
+      return true
+    }
+    guard claimed else { return }
+    while true {
+      let deliveries = state.withLock { state -> [Delivery] in
+        guard !state.deliveries.isEmpty else {
+          state.delivering = false
+          return []
+        }
+        defer { state.deliveries.removeAll(keepingCapacity: true) }
+        return state.deliveries
+      }
+      guard !deliveries.isEmpty else { return }
+      for delivery in deliveries {
+        switch delivery {
+        case let .answer(sink, answer):
+          sink.yield(answer)
+        case let .post(text):
+          post.yield(text)
+        case let .ended(waiters, ending):
+          for waiter in waiters {
+            waiter.yield(ending)
+            waiter.finish()
+          }
+        case .finishPost:
+          post.finish()
+        }
+      }
+    }
   }
 }
 

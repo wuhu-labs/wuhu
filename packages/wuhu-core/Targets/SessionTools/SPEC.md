@@ -4,6 +4,10 @@
 
 `send_message` accepts `conversation` or `session`, never `user`. No target posts into the caller's own box; `session` opens or uses a session–session DM. A legacy `user` argument is a typed tool failure, not an ignored field or a fallback to the box. Posting by any person DM's conversation id, whether person–person or an old person–session DM, is refused by `SessionStore.post`. Both refusals say exactly: "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID." Existing DM history stays readable with `conversation()` and `dm()` in `wuhu:space`; that module has no independent message-post export. Script HTTP posts use the same server/tool post path. Space attachment-copy sources use the direct file-read policy, including channel readership before group readability, and recheck readership when reading the bytes. A session copies a channel attachment only while its group reads the source group; losing that read edge prevents later copies.
 
+## Script stream delivery
+
+Script answers, detached notifications and ending-waiter completion are queued with their state transition and drained in that order by one sender outside the execution mutex. Stream termination and cancellation callbacks never run while that mutex is held; an execution's final notification cannot overtake an earlier queued result or update.
+
 ## Script archive
 
 `archive(id, { force: false })` in `wuhu:session` defaults to non-force. Its control bridge forwards the force flag to the runtime after checking the caller's rights on the root. `force` must be a boolean. A busy refusal rejects with the full id/title list. A descendant-only busy refusal does not claim that the caller itself is mid-turn. Force self-archive is always refused, including from a detached script. Non-force self-archive is refused mid-turn because the call keeps the session busy. A detached script that outlives the turn can archive it once it has settled; this archives its whole subtree, subject to the same non-force busy check.
