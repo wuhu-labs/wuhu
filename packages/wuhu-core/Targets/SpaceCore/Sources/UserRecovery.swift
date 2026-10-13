@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import enum SpaceContract.EnrollLink
 
 public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
@@ -12,6 +16,11 @@ public struct UserRecoveryError: Error, Equatable, CustomStringConvertible {
 public enum UserRecovery {
   public static func add(folder: URL, name: String?, admin: Bool = false) async throws -> String {
     let space = try open(folder: folder)
+    let record = try await add(space: space, name: name, admin: admin)
+    return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(record.isAdmin ? " admin" : "")\n"
+  }
+
+  public static func add(space: Space, name: String?, admin: Bool = false) async throws -> AccountRecord {
     // The first admin needs no admin to appoint it: a space without one makes
     // the next offline add the admin, which also recovers an adminless space.
     let isAdmin = admin ? true : !(try await space.hasAdminAccount())
@@ -21,7 +30,7 @@ public enum UserRecovery {
     } catch let SpaceError.reservedAccountName(name) {
       throw UserRecoveryError(message: "\(name) is reserved: unenrolled --dev seats act as the owner principal")
     }
-    return "account \(record.id.rawValue)\(name.map { " (\($0))" } ?? "")\(record.isAdmin ? " admin" : "")\n"
+    return record
   }
 
   public static func reset(folder: URL, account: String) async throws -> String {
@@ -42,14 +51,25 @@ public enum UserRecovery {
       throw UserRecoveryError(message: "malformed account id: \(account)")
     }
     let space = try open(folder: folder)
+    return try await makeInvite(space: space, account: account, server: server, ttl: ttl, location: folder.path)
+  }
+
+  public static func invite(space: Space, account: String, server: String?, ttl: TimeInterval?) async throws -> (output: String, note: String?) {
+    try await makeInvite(space: space, account: account, server: server, ttl: ttl, location: nil)
+  }
+
+  private static func makeInvite(space: Space, account: String, server: String?, ttl: TimeInterval?, location: String?) async throws -> (output: String, note: String?) {
+    guard AccountID.isValid(account) else {
+      throw UserRecoveryError(message: "malformed account id: \(account)")
+    }
     let id = AccountID(rawValue: account)
     guard try await space.account(id) != nil else {
-      throw UserRecoveryError(message: "no account \(account) in \(folder.path)")
+      throw UserRecoveryError(message: "no account \(account)\(location.map { " in \($0)" } ?? "")")
     }
     let deployment = try await space.deployment()
     guard let server = server ?? deployment?.origin else {
       throw UserRecoveryError(message: """
-      no server origin recorded in \(folder.path); pass --server <url>, or boot the server once with --origin
+      no server origin recorded\(location.map { " in \($0)" } ?? ""); pass --server <url>, or boot the server once with --origin
       """)
     }
     let lifetime = ttl ?? 3600
@@ -75,8 +95,7 @@ public enum UserRecovery {
   """
 
   private static func open(folder: URL) throws -> Space {
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+    guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
       throw UserRecoveryError(message: "no space folder at \(folder.path)")
     }
     return try Space.open(file: folder.appendingPathComponent("space.sqlite"))

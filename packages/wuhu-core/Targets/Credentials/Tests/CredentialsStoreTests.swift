@@ -137,3 +137,30 @@ import Testing
     #expect(ChatGPTAuth.deviceGrantState(status: .badRequest, body: #"{"error": "expired"}"#) == .failed)
   }
 }
+
+#if os(Linux)
+  import Glibc
+#else
+  import Darwin
+#endif
+
+@Suite(.serialized) struct CredentialEnvironmentPolicyTests {
+  @Test func disabledEnvironmentUsesOnlyItsOwnStore() async throws {
+    let previous = ProcessInfo.processInfo.environment["TEST_PROVIDER_API_KEY"]
+    setenv("TEST_PROVIDER_API_KEY", "process-key", 1)
+    defer {
+      if let previous { setenv("TEST_PROVIDER_API_KEY", previous, 1) }
+      else { unsetenv("TEST_PROVIDER_API_KEY") }
+    }
+    let folder = try scratchURL("credential-policy")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = CredentialsStore(configDirectory: folder, spaceID: "spc_policy")
+    let resolver = CredentialResolver.live(store: store, allowEnvironment: false)
+    try await store.save(CredentialsFile(providers: ["test-provider": .apiKey("space-one")]))
+    #expect(try await resolver.resolve("test-provider") == .apiKey("space-one"))
+    #expect(try await CredentialResolver.live(store: store, allowEnvironment: true).resolve("test-provider") == .apiKey("process-key"))
+    let other = CredentialResolver.live(store: CredentialsStore(configDirectory: folder, spaceID: "spc_other"), allowEnvironment: false)
+    #expect(try await other.resolve("test-provider") == nil)
+    #expect(try await resolver.resolve("missing-provider") == nil)
+  }
+}

@@ -748,3 +748,13 @@ Sessions read, post and manage without joining the channel; legacy session membe
 ### Whole-revision observe frames
 
 `GET /v1/observe?glob=…[&from=N]&batch=1` opts into `event: revision` frames carrying `RevisionEvents` (`rev` and a nonempty array of matching `MutationEvent` values). A revision arrives whole in commit order, replay is grouped strictly after `from`, and qualified globs retain the same group prefix on every event path and move destination. Without `batch=1`, the existing unnamed single-mutation SSE frames and bytes are unchanged. SQL observation is unchanged. The server advertises `observe-batch` through discovery; the web file feed requests it and publishes/checkpoints once per revision.
+
+## Space host composition
+
+`SpaceHost.open` assembles one space's routes and background runtimes independently of its listener. Its explicit `configDirectory` owns credentials and group secrets; `allowEnvironmentCredentials: false` prevents provider-key lookup in the process environment. `run()` owns a single cancellation-scoped background task; cancelling its caller cancels that task. `shutdown()` is self-contained and idempotent: it prevents later runs, cancels background and in-flight handler work, aborts WebSocket sessions, awaits all owned tasks, then flushes metrics and performs any configured development export. The host exposes its open `Space` for trusted in-process administration. `SpaceHost.loadDisclosure(from:)` applies the same file parser and validation as single-space serve, which passes the loaded AIDisclosure to open rather than rereading it.
+
+`SpaceDirectory.host(for:)` is the listener's dispatch seam. Its handler returns 421 for an unknown host. `SingleSpaceDirectory` returns its one host for every request hostname, retaining the existing single-space Host behavior. `SpaceServer.serve` still binds exactly one listener with its unchanged TLS, flag, import and export policies.
+
+`SpaceLogContext` carries the space id in a task-local during assembly, request dispatch, deferred WebSocket sessions and background work. Executables install its swift-log metadata provider so all logs emitted in those scopes include `space`. Listener/process diagnostics outside a space scope have no tenant id.
+
+Host shutdown owns and cancels response-body forwarding through completion, with demand-driven bounded buffering; SSE from an old host closes before stop/delete returns. Host assembly owns the web-push HTTP transport and asynchronously shuts it down even before run or after listener bind failure. Session registry disposal also occurs on the never-run path.

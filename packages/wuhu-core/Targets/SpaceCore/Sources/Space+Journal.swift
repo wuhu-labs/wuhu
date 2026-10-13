@@ -33,6 +33,22 @@ extension Space {
     try await live(group, acting: acting).write(MachineFolders.stored(path, mutating: true, in: writer).rawValue, data, ifMatch: ifMatch, createOnly: createOnly)
   }
 
+  public func removeEmptyDirectory(_ path: SpacePath, in group: GroupID, acting: GroupID) async throws -> Bool {
+    guard !path.isRoot, !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
+    let mtime = SQLiteDateFormat.string(from: dateGen.now)
+    let broadcast = broadcast
+    return try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
+      try MachineFolders.requireStored(path, in: db)
+      guard let head = try Substrate.head(path, group: group, in: db) else { throw SpaceError.notFound(path.rawValue) }
+      guard head.kind == "directory" else { throw SpaceError.notADirectory(path.rawValue) }
+      guard try FSHeadRow.where({ $0.grp.eq(group.rawValue) && $0.parentPath.eq(path.rawValue) }).fetchCount(db) == 0 else { return false }
+      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      try LiveFS.tombstone(path: path.rawValue, group: group, rev: rev, op: .delete, in: db)
+      pending.append(MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .delete, entry: nil))
+      return true
+    }
+  }
+
   public func currentRevision() async throws -> Int {
     try await writer.read { db in Int(try Substrate.maxRevision(in: db)) }
   }

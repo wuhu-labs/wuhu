@@ -27,6 +27,30 @@ struct SpaceIdentityTests {
     #expect(try await a.identity() != (try await b.identity()))
   }
 
+  @Test func explicitIdentitySeedsOnceAndRefusesMismatch() async throws {
+    let scratch = try ScratchFolder("explicit-space")
+    defer { scratch.remove() }
+    let file = scratch.url.appendingPathComponent("space.sqlite")
+    let identity = SpaceIdentity(rawValue: "spc_" + String(repeating: "a", count: 32))
+    #expect(try await Space.open(file: file, identity: identity).identity() == identity)
+    #expect(try await Space.open(file: file).identity() == identity)
+    let other = SpaceIdentity(rawValue: "spc_" + String(repeating: "b", count: 32))
+    #expect(throws: SpaceIdentityError.mismatch(expected: other.rawValue, actual: identity.rawValue)) {
+      try Space.open(file: file, identity: other)
+    }
+    #expect(try await Space.open(file: file).identity() == identity)
+  }
+
+  @Test func invalidExplicitIdentityDoesNotCreateFile() throws {
+    let scratch = try ScratchFolder("explicit-space-invalid")
+    defer { scratch.remove() }
+    let file = scratch.url.appendingPathComponent("space.sqlite")
+    #expect(throws: SpaceIdentityError.invalid("invalid")) {
+      try Space.open(file: file, identity: SpaceIdentity(rawValue: "invalid"))
+    }
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+  }
+
   @Test func onDiskSpaceOpensInWALJournalMode() async throws {
     let scratch = try ScratchFolder("space-file")
     defer { scratch.remove() }

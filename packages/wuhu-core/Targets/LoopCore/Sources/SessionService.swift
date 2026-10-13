@@ -35,6 +35,8 @@ public struct SessionService: Sendable {
     await registry.activate()
   }
 
+  public func shutdown() async { await registry.stop() }
+
   public func start() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { [livenessTracker] in

@@ -7,7 +7,7 @@ import Testing
 @Suite struct TemporaryFolderLeakTests {
   @Test(.enabled(if: !LeakGuard.isChild)) func aRepresentativeRunLeavesNoTemporaryFolders() async throws {
     let run = try await LeakGuard.run(
-      filter: "FrozenPromptTests|SecretRoutesTests|ServeSmokeTests|WebAppTests|WebAppDirectoryLoadTests|WebPushRuntimeTests|Wuhu45MigrationTests",
+      filter: "SpaceHostTests|FrozenPromptTests|SecretRoutesTests|ServeSmokeTests|WebAppTests|WebAppDirectoryLoadTests|WebPushRuntimeTests|Wuhu45MigrationTests",
     )
     #expect(run.status == 0, "\(run.output)")
     #expect(run.ran > 0, "\(run.output)")

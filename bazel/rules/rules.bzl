@@ -452,7 +452,7 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
         copts = _swift_6_copts(kwargs),
         data = data + copy_resources + (extra_data or []),
         deps = deps,
-        module_name = name,
+        module_name = name.replace("-", "_"),
         package_name = package_name,
         **kwargs
     )

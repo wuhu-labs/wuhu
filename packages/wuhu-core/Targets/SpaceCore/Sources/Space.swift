@@ -1,5 +1,9 @@
 import Dependencies
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 import KeelObjectStore
 import Logging
@@ -42,10 +46,13 @@ public actor Space {
   }
 
   public static func open(
-    file: URL, objects: (any ObjectStore)? = nil, log: Logger = Logger(label: "wuhu.space"),
+    file: URL, identity: SpaceIdentity? = nil, objects: (any ObjectStore)? = nil, log: Logger = Logger(label: "wuhu.space"),
   ) throws -> Space {
+    if let identity, !SpaceIdentity.isValid(identity.rawValue) {
+      throw SpaceIdentityError.invalid(identity.rawValue)
+    }
     let queue = try DatabaseQueue(path: file.path, configuration: makeConfiguration())
-    try queue.write { db in try SpaceMeta.prepare(db) }
+    try queue.write { db in try SpaceMeta.prepare(db, identity: identity) }
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
     return Space(writer: queue, blobs: BlobStore(objects: store), log: log)
   }

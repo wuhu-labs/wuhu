@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import GRDB
 
 let spaceMetaSchemaSQL = """
@@ -36,12 +40,17 @@ public struct SpaceIdentity: Hashable, Sendable {
 enum SpaceMeta {
   /// Brings a file to this binary's schema. A file from before a required compaction is refused, never
   /// patched; a fresh one is born compacted.
-  static func prepare(_ db: Database) throws {
+  static func prepare(_ db: Database, identity: SpaceIdentity? = nil) throws {
+    if let identity, try db.tableExists("space_meta"),
+       let actual = try String.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
+    {
+      throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
+    }
     let fresh = try !db.tableExists("fs_heads")
     if !fresh { try requireCompaction("wuhu-45", in: db) }
     try db.execute(sql: spaceSchemaSQL)
     if fresh { try recordCompaction(Space.linksCompaction, in: db) }
-    try seedIfAbsent(in: db)
+    try seedIfAbsent(in: db, identity: identity)
   }
 
   static func requireCompaction(_ name: String, in db: Database) throws {
@@ -61,16 +70,12 @@ enum SpaceMeta {
     )
   }
 
-  // The id is a durable read-back value, never predicted, so it draws from
-  // system entropy — NOT the injected \.withRandomNumberGenerator, whose
-  // deterministic-in-test stream belongs to account/machine/token ids and
-  // must not be shifted by constructing a Space.
-  //
-  // Idempotent: a re-open must never overwrite the id an earlier open minted.
-  static func seedIfAbsent(in db: Database) throws {
+  // Default ids use system entropy, never the injected RNG stream that belongs
+  // to account/machine/token ids. Provisioners may supply their persisted id.
+  static func seedIfAbsent(in db: Database, identity: SpaceIdentity?) throws {
     guard try Row.fetchOne(db, sql: "SELECT 1 FROM space_meta WHERE id = 1") == nil else { return }
     var generator = SystemRandomNumberGenerator()
-    let id = SpaceIdentity.prefix + randomAlphanumericSuffix(SpaceIdentity.suffixLength, using: &generator)
+    let id = identity?.rawValue ?? (SpaceIdentity.prefix + randomAlphanumericSuffix(SpaceIdentity.suffixLength, using: &generator))
     try db.execute(sql: "INSERT INTO space_meta (id, space_id) VALUES (1, ?)", arguments: [id])
   }
 }
@@ -156,4 +161,9 @@ extension Space {
     identityCache = identity
     return identity
   }
+}
+
+public enum SpaceIdentityError: Error, Equatable, Sendable {
+  case invalid(String)
+  case mismatch(expected: String, actual: String)
 }

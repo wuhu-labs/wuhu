@@ -39,9 +39,9 @@ enum Main {
     }
     // Diagnostics belong on stderr: exec stdout must stay pipe-clean, and the
     // machine agent's foreground logs must not mix into piped output.
-    LoggingSystem.bootstrap { label in
-      StreamLogHandler.standardError(label: label)
-    }
+    LoggingSystem.bootstrap({ label, metadataProvider in
+      StreamLogHandler.standardError(label: label, metadataProvider: metadataProvider)
+    }, metadataProvider: SpaceLogContext.metadataProvider)
     let client = HTTPClient(eventLoopGroupProvider: .singleton)
     var inferenceConfiguration = HTTPClient.Configuration()
     inferenceConfiguration.enableHTTP2HealthChecks()

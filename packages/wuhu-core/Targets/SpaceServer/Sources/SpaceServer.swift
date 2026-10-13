@@ -324,12 +324,9 @@ public enum SpaceServer {
     if let aiDisclosureFile {
       aiDisclosure = try await loadAIDisclosure(
         from: NodeTreeVFS(root: DiskVFSNode(path: aiDisclosureFile.deletingLastPathComponent().path, isMutable: false)),
-        path: "/" + aiDisclosureFile.lastPathComponent,
-        file: aiDisclosureFile.path,
+        path: "/" + aiDisclosureFile.lastPathComponent, file: aiDisclosureFile.path,
       )
-    } else {
-      aiDisclosure = nil
-    }
+    } else { aiDisclosure = nil }
     if let contentHostPattern {
       guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }
       guard let origin, ContentHost(origin: origin.absoluteString, pattern: contentHostPattern) != nil else {
@@ -369,127 +366,42 @@ public enum SpaceServer {
     let logger = Logger(label: "wuhu.serve")
     logger.notice("TLS certificate fingerprint: \(fingerprint)")
     let advertisedOrigin = origin.map(normalizedOrigin)
-    let identityDirectory = folder.appendingPathComponent("identity")
-    let serverKey = try await ServerIdentity.loadOrCreate(directory: identityDirectory)
-    @Dependency(\.fetch) var identityFetch
-    let serverIdentity = try await IdentityController.load(identity: serverKey, origin: advertisedOrigin, store: .disk(identityDirectory), fetch: identityFetch)
-    // Apple's push service rejects VAPID subjects that are not public https/mailto
-    // contacts, so the contact must never derive from --origin (LAN or localhost hosts).
-    let vapid = try await WebPushKeyStore.loadOrCreate(
-      directory: folder.appendingPathComponent("web-push"),
-      contact: URL(string: "https://wuhu.ai")!,
-    )
-    let webPushManager = WebPushManager(
-      vapidConfiguration: vapid,
-      networkConfiguration: .init(retryIntervals: []),
-      backgroundActivityLogger: logger,
-    )
+    let deployment = DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint, certificate: certificateKind)
+    let configDirectory: URL?
+    do { configDirectory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment) }
+    catch {
+      logger.warning("credential and secret stores unavailable (\(error)); using environment credentials only")
+      configDirectory = nil
+    }
     let webApp: WebApp?
     if let webAppDirectory {
-      let loaded = try WebApp.load(directory: webAppDirectory)
-      logger.notice("web app override: \(webAppDirectory.path) (\(loaded.files.count) files)")
-      webApp = loaded
-    } else {
-      webApp = .embedded
-    }
-    let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
-    try await space.reindexLinks()
-    let deployment = DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint, certificate: certificateKind)
-    try await space.recordDeployment(deployment)
-    if let devImport {
-      try await space.importFolder(devImport)
-    }
-    let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? "https://\(host):\(port)")
-    let secrets = try await secretStore(space: space, logger: logger)
-    let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
-    let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
-    let credentials = try await credentialResolver(space: space, logger: logger)
-    let usage = UsageBoard()
-    let scriptFetch = ScriptFetch(controller: serverIdentity)
-    let sessions = await SessionRuntime.assemble(
-      space: space,
-      hub: hub,
-      attemptLog: attemptLogConfig(),
-      metrics: inferenceMetricsSink(space: space, writer: metricsWriter, logger: logger),
-      credentials: credentials,
-      secrets: secrets,
-      usage: usage,
-      oidcToken: { audience, session in
-        @Dependency(\.date) var date
-        @Dependency(\.uuid) var uuid
-        let record = try await space.sessions.record(session)
-        return try await serverIdentity.tokenForInference(audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
-      },
-      identityFetch: { request, session, protect in
-        try await scriptFetch.response(request, session: session, space: space, protect: protect)
-      },
+      webApp = try WebApp.load(directory: webAppDirectory)
+      logger.notice("web app override: \(webAppDirectory.path) (\(webApp!.files.count) files)")
+    } else { webApp = .embedded }
+    let spaceHost = try await SpaceHost.open(
+      folder: folder, deployment: deployment, configDirectory: configDirectory,
+      fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
+      aiDisclosure: aiDisclosure, version: version, webApp: webApp,
+      devImport: devImport, devExport: devExport,
     )
-    let webPushRuntime = WebPushRuntime(
-      space: space,
-      logger: logger,
-      client: .live(manager: webPushManager, logger: logger),
-    )
-    @Dependency(\.fetch) var fetch
-    let pushRelayRuntime = PushRelayRuntime(
-      space: space,
-      logger: logger,
-      client: .live(fetch: fetch),
-    )
-    // Machine frames carry up to a full flow-control window (4 MiB raw) or a
-    // whole VFS read as base64 JSON; the 1 MiB wuhu-serve default would sever
-    // real-socket machine channels. See SPEC.md "Frame size bound".
+    let directory = SingleSpaceDirectory(host: spaceHost)
     var options = ServeOptions()
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
     options.maximumBodyBytes = maximumPostBodyBytes
-    let api = try await ServeNIOServer.bind(
-      host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks,
-      upgrading: configuredHandler(
-        space: space,
-        hub: hub,
-        sessions: sessions,
-        origin: advertisedOrigin,
-        contentHostPattern: contentHostPattern,
-        aiDisclosure: aiDisclosure,
-        port: port,
-        fingerprint: deployment.pin,
-        dev: dev,
-        publicRead: publicRead,
-        version: version,
-        webApp: webApp,
-        webPushApplicationServerKey: webPushManager.nextVAPIDKeyID.description,
-        credentials: credentials,
-        secrets: secrets,
-        execTokens: execTokens,
-        identityController: serverIdentity,
-        pageFetch: PageFetch(controller: serverIdentity).response,
-      ),
-    )
-    @Dependency(\.continuousClock) var clock
-    @Dependency(\.date) var dateGen
+    let api: ServeNIOServer
+    do {
+      api = try await ServeNIOServer.bind(
+        host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks,
+        upgrading: directory.handler,
+      )
+    } catch { try? await spaceHost.shutdown(); throw error }
     await withTaskGroup(of: Void.self) { group in
-      group.addTask { await serverIdentity.run() }
-      group.addTask { await hub.run() }
-      group.addTask { await sessions.run() }
-      group.addTask { await webPushRuntime.run() }
-      group.addTask { await pushRelayRuntime.run() }
-      group.addTask {
-        do {
-          try await webPushManager.run()
-        } catch is CancellationError {
-        } catch {
-          logger.error("web push transport stopped", metadata: ["error": "\(error)"])
-        }
-      }
-      group.addTask { await api.runUntilCancelled() }
-      await group.waitForAll()
+      group.addTask { await spaceHost.run() }
+      await api.runUntilCancelled()
+      try? await spaceHost.shutdown()
+      group.cancelAll()
     }
-    await metricsWriter.close()
-    if let devExport {
-      // Graceful shutdown reaches here with serve()'s task already cancelled;
-      // an unstructured task shields the export from GRDB's cancellation check.
-      let export = Task { try await space.exportFolder(devExport) }
-      try await export.value
-    }
+    try await spaceHost.shutdown()
   }
 }
 
@@ -556,30 +468,6 @@ public enum GroupTLSError: Error, Equatable, CustomStringConvertible {
   }
 }
 
-// Environment keys stay authoritative (CredentialResolver.live checks them
-// first); the store only adds the per-space file under ~/.wuhu/credentials.
-private func credentialResolver(space: Space, logger: Logger) async throws -> CredentialResolver {
-  let identity = try await space.identity()
-  do {
-    let directory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment)
-    return .live(store: CredentialsStore(configDirectory: directory, spaceID: identity.rawValue))
-  } catch {
-    logger.warning("credential store unavailable (\(error)); provider keys resolve from environment only")
-    return .environmentOnly
-  }
-}
-
-private func secretStore(space: Space, logger: Logger) async throws -> SpaceSecretStores? {
-  let directory: URL
-  do {
-    directory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment)
-  } catch {
-    logger.warning("secret store unavailable (\(error)); scripts, execs and wuhu secret refuse secrets")
-    return nil
-  }
-  return try secretStores(configDirectory: directory, spaceID: try await space.identity().rawValue)
-}
-
 /// The per-group secret stores, refused while the single file from before
 /// groups is still in place: serving then would show every group no secrets.
 /// A store folder looser than owner-only is tightened to 0700.
@@ -607,7 +495,7 @@ enum SecretsLayoutError: Error, Equatable, CustomStringConvertible {
 
 // The one attempt-logging toggle: set WUHU_ATTEMPT_LOG_DIR to a directory to
 // capture one raw request/SSE file per inference attempt.
-private func attemptLogConfig() -> AttemptLogConfig? {
+func attemptLogConfig() -> AttemptLogConfig? {
   guard let directory = ProcessInfo.processInfo.environment["WUHU_ATTEMPT_LOG_DIR"], !directory.isEmpty else {
     return nil
   }

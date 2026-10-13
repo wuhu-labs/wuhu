@@ -9,14 +9,14 @@ import struct SpaceContract.GroupID
 import SpaceFS
 
 extension Space {
-  public func createTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID) async throws -> Rev {
+  public func createTable(_ path: SpacePath, header: TableHeader, in group: GroupID, acting: GroupID, attribution: RevisionAttribution? = nil) async throws -> Rev {
     guard path.lastComponent?.hasSuffix(".table") == true else { throw SpaceError.notATable(path.rawValue) }
     guard !path.isReserved else { throw SpaceError.alreadyExists(path.rawValue) }
     let mtime = SQLiteDateFormat.string(from: dateGen.now)
     let broadcast = broadcast
     let rev = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in
       try MachineFolders.requireStored(path, in: db)
-      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, in: db)
+      let rev = try Substrate.mintRevision(mtime: mtime, group: acting, attribution: attribution, in: db)
       try Tables.create(path, group: group, header: header, rev: rev, mtime: mtime, in: db)
       pending += [MutationEvent(group: group, path: path.rawValue, rev: Int(rev), kind: .write, entry: .table)]
       return Rev(Int(rev))

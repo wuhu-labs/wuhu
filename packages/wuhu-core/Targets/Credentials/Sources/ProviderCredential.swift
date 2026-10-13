@@ -28,9 +28,9 @@ public struct CredentialResolver: Sendable {
 
   public static let unavailable: CredentialResolver = CredentialResolver { _ in nil }
 
-  public static func live(store: CredentialsStore) -> CredentialResolver {
+  public static func live(store: CredentialsStore, allowEnvironment: Bool = true) -> CredentialResolver {
     CredentialResolver { providerID in
-      if let key = environmentAPIKey(providerID) {
+      if allowEnvironment, let key = environmentAPIKey(providerID) {
         return .apiKey(key)
       }
       switch try await store.load().providers[providerID] {
