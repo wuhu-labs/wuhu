@@ -10,6 +10,7 @@ import SpaceCore
 #else
   import Darwin
 #endif
+import Synchronization
 import Testing
 
 @Suite(.serialized) struct SpaceHostTests {
@@ -104,6 +105,82 @@ import Testing
     await second.shutdown()
     await secondRun.value
     start.finish()
+  }
+
+  @Test func stoppedHostRefusesDeferredBoundedSession() async throws {
+    let requests = HostRequests()
+    let sockets = HostSockets()
+    let invoked = Mutex(false)
+    let aborted = Mutex(false)
+    let handler = spaceOwnedHandler(handler: { _ in
+      .boundedWebSocket(limits: .init(), subprotocol: "bounded.test") { _ in
+        invoked.withLock { $0 = true }
+      }
+    }, requests: requests, sockets: sockets)
+    let result = try await handler(Request(url: URL(string: "https://bounded.test/")!))
+    guard case let .boundedWebSocket(_, subprotocol, session) = result else {
+      Issue.record("expected bounded upgrade"); return
+    }
+    #expect(subprotocol == "bounded.test")
+    await requests.shutdown(sockets: sockets)
+    await session(.init(receive: { nil }, send: { _ in }, abort: { aborted.withLock { $0 = true } }))
+    #expect(!invoked.withLock { $0 })
+    #expect(aborted.withLock { $0 })
+  }
+
+  @Test func shutdownAbortsCancelsAndAwaitsBoundedSession() async throws {
+    let requests = HostRequests()
+    let sockets = HostSockets()
+    let (started, start) = AsyncStream<Void>.makeStream()
+    let (blocked, releaseRead) = AsyncStream<Void>.makeStream()
+    let (cleaning, cleanupStarted) = AsyncStream<Void>.makeStream()
+    let (cleanup, releaseCleanup) = AsyncStream<Void>.makeStream()
+    let (events, event) = AsyncStream<String>.makeStream()
+    let returned = Mutex(false)
+    let cancelled = Mutex(false)
+    let handler = spaceOwnedHandler(handler: { _ in
+      .boundedWebSocket(limits: .init(), subprotocol: "bounded.test") { transport in
+        _ = try? await transport.receive()
+        cleanupStarted.yield(())
+        await Task.detached { for await _ in cleanup {} }.value
+        cancelled.withLock { $0 = Task.isCancelled }
+      }
+    }, requests: requests, sockets: sockets)
+    let result = try await handler(Request(url: URL(string: "https://bounded.test/")!))
+    guard case let .boundedWebSocket(_, _, session) = result else {
+      Issue.record("expected bounded upgrade"); return
+    }
+    let running = Task {
+      await session(.init(receive: {
+        start.yield(())
+        await Task.detached { for await _ in blocked {} }.value
+        return nil
+      }, send: { _ in }, abort: {
+        event.yield("aborted")
+        releaseRead.finish()
+      }))
+    }
+    var ready = started.makeAsyncIterator()
+    _ = await ready.next()
+    let stopping = Task {
+      await requests.shutdown(sockets: sockets)
+      returned.withLock { $0 = true }
+      event.yield("returned")
+    }
+    var lifecycle = events.makeAsyncIterator()
+    #expect(await lifecycle.next() == "aborted")
+    releaseRead.finish()
+    var cleanupReady = cleaning.makeAsyncIterator()
+    _ = await cleanupReady.next()
+    #expect(!returned.withLock { $0 })
+    releaseCleanup.finish()
+    await stopping.value
+    await running.value
+    #expect(cancelled.withLock { $0 })
+    #expect(returned.withLock { $0 })
+    start.finish()
+    cleanupStarted.finish()
+    event.finish()
   }
 
   @Test func shutdownCancelsAndAwaitsAdmittedRequests() async throws {

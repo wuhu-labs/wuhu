@@ -1,4 +1,5 @@
 import Fetch
+import FetchTunnel
 import Serve
 
 public struct WebSocketUpgradeRefused: Error, Sendable {
@@ -19,7 +20,7 @@ public enum ServeTesting {
     self.client { request in
       switch try await handler(request) {
       case let .response(response): return response
-      case .webSocket: throw WebSocketUpgradeRefused(request: request)
+      case .webSocket, .boundedWebSocket: throw WebSocketUpgradeRefused(request: request)
       }
     }
   }
@@ -29,6 +30,8 @@ public enum ServeTesting {
       switch try await handler(onTheWire(request)) {
       case let .response(response):
         return .response(response)
+      case .boundedWebSocket:
+        throw TunnelError.unsupportedTransport
       case let .webSocket(session):
         let (server, client) = WebSocket.pair()
         return .webSocket(client, serve: { await session(server) })

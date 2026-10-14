@@ -1,0 +1,3 @@
+# CExecSupervisor
+
+Minimal POSIX effects for ExecSupervisor on Linux/macOS: posix_spawn with cwd, separate process group and three close-on-exec pipes; nonblocking parent pipe IO; waitid(WNOWAIT) for direct-child evidence; finite pipe-byte boundary; process-group signalling and explicit reap. No credentials, protocol, lease, ring or Swift runtime logic lives here. The supervisor launch redirects standard descriptors to /dev/null and starts a distinct group using the same executable. Agent ownership uses an owner-private close-on-exec advisory file lock. Errors preserve errno for typed Swift failures. The owner must never signal a reaped leader by numeric identity and must close descriptors/reap children on teardown.

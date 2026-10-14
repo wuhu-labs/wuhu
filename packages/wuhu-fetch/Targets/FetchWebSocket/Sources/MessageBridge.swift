@@ -9,19 +9,21 @@ final class MessageBridge: ChannelInboundHandler {
   private let limits: WebSocketLimits
   private let continuation: AsyncThrowingStream<WebSocketEvent, any Error>.Continuation
   private let inbound: WebSocketInbound
-  private let budget = ReceiveBudget()
+  private let budget: ReceiveBudget
   private var accumulated: [UInt8] = []
   private var opcode: WebSocketOpcode?
   private var closed = false
   private var closing = false
+  private var pendingControlWrites = 0
 
   init(limits: WebSocketLimits) {
     self.limits = limits
+    budget = ReceiveBudget(minimumMessageCost: limits.bufferedReceiveBytes == Int.max ? 1 : 1024)
     let (stream, continuation) = AsyncThrowingStream<WebSocketEvent, any Error>.makeStream()
     self.continuation = continuation
     let budget = self.budget
     inbound = WebSocketInbound(stream, consumed: { event in
-      if case .message(let message) = event { budget.bytes.withLock { $0 -= max(1, message.byteCount) } }
+      if case .message(let message) = event { budget.bytes.withLock { $0 -= budget.cost(message.byteCount) } }
     })
   }
 
@@ -67,7 +69,7 @@ final class MessageBridge: ChannelInboundHandler {
           var buffer = channel.allocator.buffer(capacity: 125)
           buffer.writeInteger(close.code)
           buffer.writeString(close.reason)
-          channel.writeAndFlush(WebSocketFrame(fin: true, opcode: .connectionClose, maskKey: .random(), data: buffer), promise: nil)
+          try bridge.value.writeControl(.connectionClose, data: buffer, channel: channel)
           let timeout = channel.eventLoop.scheduleTask(in: closeTimeout.nioAmount) { channel.close(promise: nil) }
           channel.closeFuture.whenComplete { _ in timeout.cancel() }
         }.get()
@@ -108,19 +110,19 @@ final class MessageBridge: ChannelInboundHandler {
       case .ping, .pong, .connectionClose:
         guard frame.fin && bytes.count <= 125 else { throw WebSocketError.protocolViolation("invalid control frame") }
         if frame.opcode == .ping {
-          context.writeAndFlush(wrapOutboundOut(WebSocketFrame(fin: true, opcode: .pong, maskKey: .random(), data: frame.unmaskedData)), promise: nil)
+          try writeControl(.pong, data: frame.unmaskedData, channel: context.channel)
         } else if frame.opcode == .connectionClose {
           guard bytes.count != 1 else { throw WebSocketError.protocolViolation("invalid close payload") }
           let code = bytes.isEmpty ? 1005 : UInt16(bytes[0]) << 8 | UInt16(bytes[1])
           guard bytes.isEmpty || validCloseCode(code), let reason = String(validating: bytes.dropFirst(2), as: UTF8.self) else {
             throw WebSocketError.protocolViolation("invalid close code or UTF-8")
           }
+          if !closing {
+            try writeControl(.connectionClose, data: frame.unmaskedData, channel: context.channel)
+          }
           closed = true
           continuation.yield(.closed(.init(code: code, reason: reason)))
           continuation.finish()
-          if !closing {
-            context.writeAndFlush(wrapOutboundOut(WebSocketFrame(fin: true, opcode: .connectionClose, maskKey: .random(), data: frame.unmaskedData)), promise: nil)
-          }
           context.close(promise: nil)
         }
       default: throw WebSocketError.protocolViolation("unknown opcode")
@@ -145,6 +147,30 @@ final class MessageBridge: ChannelInboundHandler {
     context.close(promise: nil)
   }
 
+  private func writeControl(_ opcode: WebSocketOpcode, data: ByteBuffer, channel: any Channel) throws {
+    if limits.messageBytes == Int.max, limits.bufferedReceiveBytes == Int.max, limits.outboundMessageBytes == Int.max {
+      channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: nil)
+      return
+    }
+    guard channel.isWritable, pendingControlWrites < 16 else {
+      let error = WebSocketError.limitExceeded(.outboundMessage)
+      fail(error)
+      channel.close(promise: nil)
+      throw error
+    }
+    pendingControlWrites += 1
+    let bridge = NIOLoopBound(self, eventLoop: channel.eventLoop)
+    let promise = channel.eventLoop.makePromise(of: Void.self)
+    promise.futureResult.whenComplete { result in
+      bridge.value.pendingControlWrites -= 1
+      if case .failure(let error) = result, !bridge.value.closed {
+        bridge.value.fail(WebSocketError.io(String(describing: error)))
+        channel.close(promise: nil)
+      }
+    }
+    channel.writeAndFlush(WebSocketFrame(fin: true, opcode: opcode, maskKey: .random(), data: data), promise: promise)
+  }
+
   private func append(_ bytes: [UInt8]) throws {
     guard bytes.count <= limits.messageBytes - accumulated.count else { throw WebSocketError.limitExceeded(.message) }
     accumulated += bytes
@@ -156,7 +182,7 @@ final class MessageBridge: ChannelInboundHandler {
       guard let text = String(validating: accumulated, as: UTF8.self) else { throw WebSocketError.protocolViolation("invalid text UTF-8") }
       message = .text(text)
     } else { message = .binary(accumulated) }
-    let cost = max(1, accumulated.count)
+    let cost = budget.cost(accumulated.count)
     guard budget.bytes.withLock({ used in
       guard cost <= limits.bufferedReceiveBytes - used else { return false }
       used += cost
@@ -175,7 +201,12 @@ final class MessageBridge: ChannelInboundHandler {
   }
 }
 
-private final class ReceiveBudget: Sendable { let bytes = Mutex(0) }
+private final class ReceiveBudget: Sendable {
+  let bytes = Mutex(0)
+  let minimumMessageCost: Int
+  init(minimumMessageCost: Int) { self.minimumMessageCost = minimumMessageCost }
+  func cost(_ count: Int) -> Int { max(minimumMessageCost, count) }
+}
 
 private func validCloseCode(_ code: UInt16) -> Bool {
   (1000 ... 1014).contains(code) && ![1004, 1005, 1006].contains(code) || (3000 ... 4999).contains(code)

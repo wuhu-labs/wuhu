@@ -1,4 +1,5 @@
 import Fetch
+import FetchTunnel
 import NIOCore
 import NIOHTTP1
 import NIOWebSocket
@@ -7,6 +8,7 @@ import Synchronization
 
 enum WebSocketNegotiationOutcome: Sendable {
   case http
+  case boundedWebSocket(@Sendable (TunnelTransport) async -> Void, TunnelTransport)
   case webSocket(WebSocketSession, WebSocket)
 }
 
@@ -20,6 +22,7 @@ final class WebSocketNegotiation: Sendable {
   private struct State {
     var response: Response?
     var session: WebSocketSession?
+    var bounded: (BoundedWebSocketLimits, @Sendable (TunnelTransport) async -> Void)?
   }
 
   private let state = Mutex(State())
@@ -45,6 +48,14 @@ final class WebSocketNegotiation: Sendable {
 
   func accept(_ session: @escaping WebSocketSession) {
     state.withLock { $0.session = session }
+  }
+
+  func acceptBounded(_ limits: BoundedWebSocketLimits, _ session: @escaping @Sendable (TunnelTransport) async -> Void) {
+    state.withLock { $0.bounded = (limits, session) }
+  }
+
+  func takeBounded() -> (BoundedWebSocketLimits, @Sendable (TunnelTransport) async -> Void)? {
+    state.withLock { state in defer { state.bounded = nil }; return state.bounded }
   }
 
   func takeSession() -> WebSocketSession {
@@ -96,6 +107,15 @@ extension ServeNIOServer {
             case let .response(response):
               negotiation.stash(response)
               return nil
+            case let .boundedWebSocket(limits, subprotocol, session):
+              try limits.validate()
+              guard !subprotocol.isEmpty, head.headers["sec-websocket-protocol"].flatMap({ $0.split(separator: ",").map { String($0.drop(while: { $0 == " " || $0 == "\t" }).reversed().drop(while: { $0 == " " || $0 == "\t" }).reversed()) } }).contains(subprotocol)
+              else {
+                negotiation.stash(.text("400 Bad Request\n", status: .badRequest))
+                return nil
+              }
+              negotiation.acceptBounded(limits, session)
+              return HTTPHeaders([("sec-websocket-protocol", subprotocol)])
             case let .webSocket(session):
               negotiation.accept(session)
               return HTTPHeaders()
@@ -121,6 +141,11 @@ extension ServeNIOServer {
           if hasTimeoutHandlers {
             channel.pipeline.removeHandler(name: idleStateHandlerName, promise: nil)
             channel.pipeline.removeHandler(name: idleTimeoutHandlerName, promise: nil)
+          }
+          if let (limits, session) = negotiation.takeBounded() {
+            let bridge = BoundedWebSocketBridge(limits: limits)
+            try channel.pipeline.syncOperations.addHandler(bridge)
+            return .boundedWebSocket(session, bridge.transport(channel: channel, maximumFrameBytes: options.maximumWebSocketFrameBytes))
           }
           let bridge = WebSocketFrameBridge()
           try channel.pipeline.syncOperations.addHandler(bridge)

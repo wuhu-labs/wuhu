@@ -157,7 +157,7 @@ import WuhuAI
         #expect(record.errorMessage?.contains("terminal") == true)
         #expect(try await sessions.notifications(recipient: "owner").contains { $0.kind == .sessionErrored && $0.source == task.rawValue })
         let actor = try #require(await service.registry.existing(task))
-        #expect(await actor.live.sessionStatus.stopped)
+        #expect(try await actor.live.sessionStatus.stopped)
       }
     }
   }

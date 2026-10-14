@@ -1,0 +1,19 @@
+name: OperationRuntime
+kind: library
+sources: Sources
+checks:
+  build:
+    - linux
+    - mac
+    - ios
+    - visionos
+  test:
+    - linux
+    - mac
+    - ios
+dependencies:
+  - OperationProtocol
+  - JSONValue
+  - Fetch
+  - Serve
+tests: false

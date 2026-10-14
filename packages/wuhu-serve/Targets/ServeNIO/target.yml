@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 dependencies:
   - Serve
+  - FetchTunnel
   - ServeTLS
   - NIOCore
   - NIOHTTP1
@@ -15,6 +16,10 @@ checks:
   test: [linux, mac]
 tests:
   dependencies:
+    - FetchTunnel
+    - FetchTunnelWebSocket
+    - ServeTunnel
+    - NIOEmbedded
     - Fetch
     - FetchAsyncHTTPClient
     - FetchWebSocket

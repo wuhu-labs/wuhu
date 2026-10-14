@@ -156,7 +156,7 @@ extension SessionStore {
   // `transcript` is the caller's state with `items` already appended: the work
   // flag is derived from the whole generation, and reading it back here would
   // decode every payload in the session under the space's one write lock.
-  public func append(_ id: SessionID, items: [TranscriptItem], transcript: Transcript) async throws {
+  public func append(_ id: SessionID, items: [TranscriptItem], transcript: Transcript, completingCompactRequest: CompactRequestClaim? = nil) async throws {
     guard !items.isEmpty else { return }
     precondition(
       transcript.items.suffix(items.count).map(\.id) == items.map(\.id),
@@ -166,6 +166,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
       let runtime = try Sessions.runtime(key, in: db)
+      try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
       try Sessions.append(key, generation: runtime.generation, items: items, in: db)
       try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
     }
@@ -176,12 +177,14 @@ extension SessionStore {
     closing: ToolResultItem? = nil,
     head: GenerationHead,
     kept: Range<Int>?,
+    completingCompactRequest: CompactRequestClaim? = nil,
   ) async throws -> Transcript {
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db -> Transcript in
       let runtime = try Sessions.runtime(key, in: db)
       let transcript = try Sessions.transcript(key, in: db)
+      try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
       // The closing result joins the OLD generation in the same commit; the
       // kept range never includes it (it was computed before the close).
       if let closing {

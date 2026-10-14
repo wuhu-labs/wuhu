@@ -10,6 +10,9 @@ products:
   - FetchOpenAPI
   - FetchTesting
   - FetchWebSocket
+  - FetchTunnel
+  - FetchTunnelWebSocket
+  - FetchTunnelURLSession
   - PinnedTLS
 platforms:
   iOS: "26.0"

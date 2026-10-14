@@ -351,6 +351,12 @@ public final class ServeNIOServer: @unchecked Sendable {
       if state.storeTask(task, id: connectionID) {
         task.cancel()
       }
+    case let .success(.boundedWebSocket(session, transport)):
+      let task = Task {
+        defer { state.taskDidComplete(id: connectionID); transport.abort() }
+        await withTaskCancellationHandler { await session(transport) } onCancel: { transport.abort() }
+      }
+      if state.storeTask(task, id: connectionID) { task.cancel() }
     case let .success(.webSocket(session, socket)):
       let task = Task {
         defer {
@@ -666,7 +672,7 @@ func httpOnly(_ handler: @escaping UpgradingHandler) -> Handler {
     switch try await handler(request) {
     case let .response(response):
       return response
-    case .webSocket:
+    case .webSocket, .boundedWebSocket:
       throw WebSocketUpgradeMisuse()
     }
   }

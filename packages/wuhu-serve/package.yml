@@ -9,6 +9,7 @@ products:
   - ServeNIO
   - ServeTLS
   - ServeTesting
+  - ServeTunnel
 platforms:
   iOS: "26.0"
   macOS: "26.0"
@@ -19,7 +20,7 @@ checks:
 externalPackages:
   wuhu-fetch:
     path: ../wuhu-fetch
-    products: [Fetch, FetchAsyncHTTPClient, FetchWebSocket, PinnedTLS]
+    products: [Fetch, FetchAsyncHTTPClient, FetchWebSocket, FetchTunnel, FetchTunnelWebSocket, FetchTunnelURLSession, PinnedTLS]
   swift-http-types:
     url: https://github.com/apple/swift-http-types.git
     from: "1.5.1"
@@ -31,7 +32,7 @@ externalPackages:
   swift-nio:
     url: https://github.com/apple/swift-nio.git
     exact: "2.101.3"
-    products: [NIOCore, NIOHTTP1, NIOPosix, NIOWebSocket]
+    products: [NIOCore, NIOEmbedded, NIOHTTP1, NIOPosix, NIOWebSocket]
   swift-nio-ssl:
     url: https://github.com/apple/swift-nio-ssl.git
     from: "2.29.0"

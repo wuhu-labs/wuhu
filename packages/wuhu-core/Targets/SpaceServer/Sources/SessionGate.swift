@@ -140,7 +140,7 @@ private func sessionRouter(
   let forward: RouteHandler = { request, _ in
     switch try await routed(request) {
     case let .response(response): response
-    case .webSocket: notForSessions()
+    case .webSocket, .boundedWebSocket: notForSessions()
     }
   }
   let tool: @Sendable (_ name: String, _ arguments: JSONValue) async throws -> ToolResultPayload = { name, arguments in

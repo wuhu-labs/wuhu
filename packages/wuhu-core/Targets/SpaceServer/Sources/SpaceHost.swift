@@ -137,13 +137,7 @@ public actor SpaceHost {
       let sockets = HostSockets()
       let requests = HostRequests()
       let scoped = spaceScopedHandler(id: id, handler: handler)
-      let owned: UpgradingHandler = { request in
-        switch try await requests.run(scoped, request: request) {
-        case let .response(response): return .response(response)
-        case let .webSocket(session):
-          return .webSocket { socket in await sockets.run(session, socket: socket) }
-        }
-      }
+      let owned = spaceOwnedHandler(handler: scoped, requests: requests, sockets: sockets)
       return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {
         await withTaskGroup(of: Void.self) { group in
           group.addTask { await serverIdentity.run() }
@@ -209,10 +203,28 @@ func spaceScopedHandler(id: String, handler: @escaping UpgradingHandler) -> Upgr
     let result = try await SpaceLogContext.$spaceID.withValue(id) { try await handler(request) }
     switch result {
     case .response: return result
+    case let .boundedWebSocket(limits, subprotocol, session):
+      return .boundedWebSocket(limits: limits, subprotocol: subprotocol) { transport in
+        await SpaceLogContext.$spaceID.withValue(id) { await session(transport) }
+      }
     case let .webSocket(session):
       return .webSocket { socket in
         await SpaceLogContext.$spaceID.withValue(id) { await session(socket) }
       }
+    }
+  }
+}
+
+func spaceOwnedHandler(handler: @escaping UpgradingHandler, requests: HostRequests, sockets: HostSockets) -> UpgradingHandler {
+  { request in
+    switch try await requests.run(handler, request: request) {
+    case let .response(response): return .response(response)
+    case let .boundedWebSocket(limits, subprotocol, session):
+      return .boundedWebSocket(limits: limits, subprotocol: subprotocol) { transport in
+        await sockets.run({ await session(transport) }, abort: transport.abort)
+      }
+    case let .webSocket(session):
+      return .webSocket { socket in await sockets.run(session, socket: socket) }
     }
   }
 }

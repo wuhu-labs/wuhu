@@ -1,0 +1,8 @@
+name: FetchTunnelURLSession
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - FetchTunnel
+checks:
+  build: [mac, ios, visionos]

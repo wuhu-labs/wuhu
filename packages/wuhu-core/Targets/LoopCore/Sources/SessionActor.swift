@@ -30,6 +30,9 @@ actor SessionActor {
   }
 
   struct LiveState {
+    let mountID = UUID()
+    var generation: Int
+    var compactRequestClaim: CompactRequestClaim?
     var transcript: Transcript
     var queueHead: Int
     var queueTail: Int
@@ -47,7 +50,7 @@ actor SessionActor {
       if sessionStatus.stopped {
         return true
       }
-      guard !claimingCompactRequest, queueHead == queueTail else { return false }
+      guard !claimingCompactRequest, compactRequestClaim == nil, queueHead == queueTail else { return false }
       return !transcript.hasWork
     }
   }
@@ -68,6 +71,8 @@ actor SessionActor {
   let repo: SessionRepo
   let loopConfig: LoopConfig
   let liveness: LivenessTracker
+  let beforeCompactRequest: @Sendable () async -> Void
+  let afterLoop: @Sendable () async -> Void
 
   private nonisolated let inbox = Inbox<ExternalAction>()
 
@@ -76,8 +81,8 @@ actor SessionActor {
   private var lastCommandProcessedAt: Date?
   private var nudges: Inbox<Void>?
   private var handlerTask: Task<Void, Never>?
-  private var looperTask: Task<Void, Never>?
-  var longRunningTask: Task<Void, Never>?
+  private(set) var looperTask: Task<Void, Never>?
+  var longRunningTask: (id: UUID, task: Task<Void, Never>)?
   private var retired = false
   private var archiveReservation: UUID?
 
@@ -86,11 +91,13 @@ actor SessionActor {
   @Dependency(\.continuousClock) var clock
   @Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
-  init(id: SessionID, repo: SessionRepo, loopConfig: LoopConfig, liveness: LivenessTracker) {
+  init(id: SessionID, repo: SessionRepo, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
     self.id = id
     self.repo = repo
     self.loopConfig = loopConfig
     self.liveness = liveness
+    self.beforeCompactRequest = beforeCompactRequest
+    self.afterLoop = afterLoop
   }
 
   func activate() {
@@ -100,16 +107,17 @@ actor SessionActor {
   }
 
   var live: LiveState {
-    get { liveState! }
-    set { liveState = newValue }
+    get throws {
+      try Task.checkCancellation()
+      guard let liveState else { throw CancellationError() }
+      return liveState
+    }
   }
 
-  // Retirement while a repo call is in flight would drop the mutation that
-  // follows it: every post-await write goes through this cancellation gate,
-  // the moral successor of the dismounted store.modify throw.
   func modify(_ body: (inout LiveState) -> Void) throws {
     try Task.checkCancellation()
-    body(&live)
+    guard liveState != nil else { throw CancellationError() }
+    body(&liveState!)
   }
 
   nonisolated func post(_ action: ExternalAction) {
@@ -147,7 +155,8 @@ actor SessionActor {
     liveState?.parkWake?.task.cancel()
     looperTask?.cancel()
     looperTask = nil
-    longRunningTask?.cancel()
+    longRunningTask?.task.cancel()
+    longRunningTask = nil
     nudges = nil
     liveState = nil
   }
@@ -197,8 +206,8 @@ actor SessionActor {
         }
         let head = try await repo.queueHead()
         try modify { $0.queueHead = max($0.queueHead, head) }
-        guard live.hasSettled else { return false }
-        live.archiving = true
+        guard try live.hasSettled else { return false }
+        try modify { $0.archiving = true }
         archiveReservation = reservation
         return true
       }
@@ -275,10 +284,11 @@ actor SessionActor {
       defer { liveness.end(token) }
       do {
         try await loop()
+        await afterLoop()
       } catch is CancellationError {
-        // Teardown, not session failure: rematerialization retries.
+        return
       } catch {
-        guard !Task.isCancelled else { continue }
+        guard !Task.isCancelled else { return }
         await markErrored(error: error)
       }
     }
@@ -316,7 +326,7 @@ actor SessionActor {
 
     // An owed idle check is no work, but no pass may start a turn while the
     // archive is written: the turn would land in the archived session.
-    live.archiving = true
+    try modify { $0.archiving = true }
     let deadline = try await repo.archive(grace: loopConfig.archiveGrace)
     try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
@@ -350,7 +360,7 @@ actor SessionActor {
 
   private func handleInterrupt() async throws {
     guard try await ensureLifecycle() == .live else { return }
-    switch live.sessionStatus {
+    switch try live.sessionStatus {
     case .interrupting:
       fatalError("Impossible: two concurrent interruption request!")
     case .interrupted, .errored:
@@ -359,11 +369,11 @@ actor SessionActor {
       break
     }
 
-    longRunningTask?.cancel()
+    longRunningTask?.task.cancel()
     // If an error is occurring at the same time for inference, the callback
     // will be lost, leading to an UnfulfilledError, and propagate back.
     try await withCallback(of: Void.self) { callback in
-      live.sessionStatus = .interrupting(callback)
+      try modify { $0.sessionStatus = .interrupting(callback) }
       // If the loop is currently idle, we use this nudge to fulfill the callback.
       nudge()
     }
@@ -374,7 +384,7 @@ actor SessionActor {
 
   private func handleResume() async throws {
     guard try await ensureLifecycle() == .live else { return }
-    switch live.sessionStatus {
+    switch try live.sessionStatus {
     case .interrupting:
       fatalError("Impossible: interruption request inflight!")
     case .healthy:
@@ -399,6 +409,7 @@ extension SessionActor.LiveState {
       .healthy
     }
     self.init(
+      generation: hydration.generation,
       transcript: { switch hydration.transcript { case let .kernel(transcript): transcript } }(),
       queueHead: hydration.queueHead,
       queueTail: hydration.queueTail,

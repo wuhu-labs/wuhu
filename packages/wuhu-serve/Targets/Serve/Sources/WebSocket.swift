@@ -1,4 +1,5 @@
 import Fetch
+import FetchTunnel
 import Synchronization
 
 public enum WebSocketMessage: Sendable, Equatable {
@@ -11,6 +12,7 @@ public typealias WebSocketSession = @Sendable (WebSocket) async -> Void
 public enum UpgradeResult: Sendable {
   case response(Response)
   case webSocket(WebSocketSession)
+  case boundedWebSocket(limits: BoundedWebSocketLimits, subprotocol: String, session: @Sendable (TunnelTransport) async -> Void)
 }
 
 public typealias UpgradingHandler = @Sendable (Request) async throws -> UpgradeResult

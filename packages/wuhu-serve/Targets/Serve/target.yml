@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 dependencies:
   - Fetch
+  - FetchTunnel
   - HTTPTypes
 tests:
   dependencies:

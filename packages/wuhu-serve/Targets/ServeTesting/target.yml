@@ -6,8 +6,10 @@ checks:
   test: [linux, mac]
 dependencies:
   - Fetch
+  - FetchTunnel
   - Serve
 tests:
   dependencies:
+    - FetchTunnel
     - Fetch
     - Serve

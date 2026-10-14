@@ -54,7 +54,7 @@ extension SessionStore {
         )
       }
       let runtime = try Sessions.runtime(key, in: db)
-      try db.execute(sql: "DELETE FROM session_commands WHERE session_id = ?", arguments: [key])
+      try Sessions.discardCommand(key, in: db)
       var subscriptions: [SubscriptionID: Subscription] = [:]
       for armed in try Row.fetchAll(
         db, sql: "SELECT * FROM session_subscriptions WHERE session_id = ?", arguments: [key],

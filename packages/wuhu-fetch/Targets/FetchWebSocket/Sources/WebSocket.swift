@@ -117,8 +117,12 @@ public struct WebSocketInbound: AsyncSequence, Sendable {
     let allowed: Bool
 
     public mutating func next() async throws -> WebSocketEvent? {
+      try await next(isolation: nil)
+    }
+
+    public mutating func next(isolation actor: isolated (any Actor)?) async throws -> WebSocketEvent? {
       guard allowed else { throw WebSocketError.multipleConsumers }
-      guard let event = try await iterator.next() else { return nil }
+      guard let event = try await iterator.next(isolation: actor) else { return nil }
       consumed(event)
       return event
     }

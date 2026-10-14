@@ -5,6 +5,7 @@
 #endif
 
 import Fetch
+import FetchTunnel
 import Serve
 import ServeTesting
 import Testing
@@ -118,5 +119,13 @@ struct ServeTestingTests {
       return
     }
     #expect(response.status == .accepted)
+  }
+}
+
+@Test func boundedUpgradeHasNoLegacyPairFallback() async {
+  await #expect(throws: TunnelError.unsupportedTransport) {
+    try await ServeTesting.upgrade({ _ in
+      .boundedWebSocket(limits: .init(), subprotocol: TunnelTransport.webSocketSubprotocol) { $0.abort() }
+    }, Request(url: URL(string: "https://example.test/")!))
   }
 }

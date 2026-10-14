@@ -1,0 +1,9 @@
+name: FetchTunnelWebSocket
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - FetchTunnel
+  - FetchWebSocket
+checks:
+  build: [linux, mac]

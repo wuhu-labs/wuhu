@@ -4,6 +4,10 @@ swiftToolsVersion: "6.3"
 packageName: WuhuCoreKit
 products:
   - LoopCore
+  - OperationProtocol
+  - OperationRuntime
+  - OperationClient
+  - OperationClientTestSupport
   - SpaceFS
   - DocIndex
   - SpaceClient
@@ -41,7 +45,7 @@ externalPackages:
     products: [OrderedCollections]
   wuhu-test-support:
     path: ../wuhu-test-support
-    products: [ControlledTime, WuhuRecordReplay]
+    products: [ControlledTime, WuhuRecordReplay, FetchExchangeRecording]
   wuhu-json:
     path: ../wuhu-json
     products: [JSONValue]

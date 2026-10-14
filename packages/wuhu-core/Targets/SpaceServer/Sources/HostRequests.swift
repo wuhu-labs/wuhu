@@ -25,7 +25,7 @@ actor HostRequests {
       guard !stopped else { return .response(Response(status: .serviceUnavailable)) }
       if request.method != .head, response.body.contentLength != 0 { response.body = own(response.body) }
       return .response(response)
-    case .webSocket: return result
+    case .webSocket, .boundedWebSocket: return result
     }
   }
 

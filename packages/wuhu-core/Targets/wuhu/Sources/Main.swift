@@ -16,6 +16,7 @@ import AsyncHTTPClient
 import CLIKit
 import Dependencies
 import Dispatch
+import enum ExecSupervisor.ExecSupervisor
 import struct Fetch.FetchClient
 import FetchAsyncHTTPClient
 import FetchWebSocket
@@ -33,6 +34,16 @@ struct StandardInputEncodingError: Error, CustomStringConvertible {
 @main
 enum Main {
   static func main() async {
+    if CommandLine.arguments.count == 6, Array(CommandLine.arguments[1 ... 2]) == ["machine-v2", "local-agent"] {
+      do {
+        try await ExecSupervisor.runLocalAgent(machine: CommandLine.arguments[3], operationsDirectory: CommandLine.arguments[4], socket: CommandLine.arguments[5], executable: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path)
+        exit(0)
+      } catch { FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); exit(1) }
+    }
+    if CommandLine.arguments.count == 4, Array(CommandLine.arguments[1 ... 2]) == ["machine-v2", "supervise"] {
+      do { try await ExecSupervisor.run(directory: CommandLine.arguments[3]); exit(0) }
+      catch { FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); exit(1) }
+    }
     if CommandLine.arguments.dropFirst() == ["--version"] {
       print("wuhu \(BuildStamp.version) (\(BuildStamp.commit), \(BuildStamp.date))")
       exit(0)

@@ -7,7 +7,7 @@ import Serve
 
 actor HostSockets {
   private struct Session: Sendable {
-    let socket: WebSocket
+    let abort: @Sendable () -> Void
     let task: Task<Void, Never>
   }
 
@@ -15,14 +15,18 @@ actor HostSockets {
   private var stopped = false
 
   func run(_ body: @escaping WebSocketSession, socket: WebSocket) async {
-    guard !stopped else { socket.abort(); return }
+    await run({ await body(socket) }, abort: socket.abort)
+  }
+
+  func run(_ body: @escaping @Sendable () async -> Void, abort: @escaping @Sendable () -> Void) async {
+    guard !stopped else { abort(); return }
     let id = UUID()
-    let task = Task { await body(socket) }
-    sessions[id] = Session(socket: socket, task: task)
+    let task = Task { await body() }
+    sessions[id] = Session(abort: abort, task: task)
     await withTaskCancellationHandler {
       await task.value
     } onCancel: {
-      socket.abort()
+      abort()
       task.cancel()
     }
     sessions[id] = nil
@@ -30,8 +34,8 @@ actor HostSockets {
 
   func shutdown() async {
     stopped = true
-    let current = sessions.values
-    for session in current { session.socket.abort(); session.task.cancel() }
+    let current = Array(sessions.values)
+    for session in current { session.abort(); session.task.cancel() }
     for session in current { await session.task.value }
   }
 }

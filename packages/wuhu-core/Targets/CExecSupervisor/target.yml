@@ -1,0 +1,5 @@
+name: CExecSupervisor
+kind: cLibrary
+sources: Sources
+checks:
+  build: [linux, mac]

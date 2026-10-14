@@ -1,0 +1,37 @@
+name: ExecSupervisor
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - CExecSupervisor
+  - OperationProtocol
+  - OperationRuntime
+  - JSONValue
+  - Fetch
+  - Serve
+  - ServeNIO
+  - FetchAsyncHTTPClient
+  - AsyncHTTPClient
+  - NIOCore
+tests:
+  size: large
+  resources:
+    - path: Recordings
+      mode: copy
+  exclude:
+    - Recordings/**
+  dependencies:
+    - OperationClient
+    - CExecSupervisor
+    - FetchExchangeRecording
+    - OperationProtocol
+    - OperationRuntime
+    - JSONValue
+    - Fetch
+    - Serve
+    - ServeNIO
+    - FetchAsyncHTTPClient
+    - AsyncHTTPClient
+    - Clocks

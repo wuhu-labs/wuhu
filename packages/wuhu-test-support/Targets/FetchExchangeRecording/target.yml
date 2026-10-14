@@ -1,0 +1,9 @@
+name: FetchExchangeRecording
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - HTTPTypes
+tests:
+  dependencies:
+    - Fetch

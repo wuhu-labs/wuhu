@@ -1,0 +1,16 @@
+name: ServeTunnel
+kind: library
+sources: Sources
+dependencies:
+  - Serve
+  - FetchTunnel
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [mac]
+tests:
+  dependencies:
+    - Fetch
+    - FetchTunnel
+    - FetchTunnelURLSession
+    - Serve
+    - ServeNIO

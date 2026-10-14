@@ -1,0 +1,3 @@
+# OperationClientTestSupport
+
+`verifyOperationStoreContract` accepts any injected `OperationStore` and throws a typed `StoreContractFailure` when owner lookup/dispatch uniqueness/conflict, output payload and cursor, pending input offset/payload/EOF and accepted offset, or transaction rollback fails. It uses a unique owner key and is importable by concrete store tests in other targets. It does not need Swift Testing, a live transport or a filesystem. Concrete durable stores also need their own crash/restart and capacity/retention tests; this reusable suite is a behavioral minimum, not a durability claim.

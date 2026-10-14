@@ -16,6 +16,7 @@ struct SessionRepo: Sendable {
   var hydrationRead: @Sendable (SessionStore, SessionID) async throws -> SessionHydration = { try await $0.hydrate($1) }
   var queueHeadRead: @Sendable (SessionStore, SessionID) async throws -> Int = { try await $0.queueHead($1) }
   var pendingCommandRead: @Sendable (SessionStore, SessionID) async throws -> SessionCommand? = { try await $0.pendingCommand($1) }
+  var compactClaimWrite: @Sendable (SessionStore, SessionID, Int) async throws -> CompactRequestClaim? = { try await $0.claimCompactRequest($1, generation: $2) }
   var archiveWrite: @Sendable (SessionStore, SessionID, Duration) async throws -> Date = { try await $0.archive($1, grace: $2) }
 
   func hydrate() async throws -> SessionHydration {
@@ -30,8 +31,8 @@ struct SessionRepo: Sendable {
     try await sessions.drainQueue(id)
   }
 
-  func append(_ items: [TranscriptItem], transcript: Transcript) async throws {
-    try await sessions.append(id, items: items, transcript: transcript)
+  func append(_ items: [TranscriptItem], transcript: Transcript, completingCompactRequest: CompactRequestClaim? = nil) async throws {
+    try await sessions.append(id, items: items, transcript: transcript, completingCompactRequest: completingCompactRequest)
   }
 
   func scopeContext(_ callID: ToolCallID) async throws -> ScopeContext? {
@@ -46,16 +47,17 @@ struct SessionRepo: Sendable {
     try await pendingCommandRead(sessions, id)
   }
 
-  func takeCommand() async throws -> SessionCommand? {
-    try await sessions.takeCommand(id)
+  func claimCompactRequest(generation: Int) async throws -> CompactRequestClaim? {
+    try await compactClaimWrite(sessions, id, generation)
   }
 
   func writeCompaction(
     closing: ToolResultItem?,
     head: GenerationHead,
     kept: Range<Int>?,
+    completingCompactRequest: CompactRequestClaim? = nil,
   ) async throws -> Transcript {
-    try await sessions.writeCompaction(id, closing: closing, head: head, kept: kept)
+    try await sessions.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest)
   }
 
   func markInterrupted() async throws {

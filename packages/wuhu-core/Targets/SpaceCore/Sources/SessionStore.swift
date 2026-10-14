@@ -71,6 +71,7 @@ public enum SessionTranscript: Hashable, Sendable {
 }
 
 public struct SessionHydration: Hashable, Sendable {
+  public var generation: Int
   public var record: SessionRecord
   public var transcript: SessionTranscript
   public var undrained: [SessionQueueEntry]
@@ -155,6 +156,7 @@ extension SessionStore {
       case .claudeCode: throw ExecutorUnavailableError()
       }
       return SessionHydration(
+        generation: Int(runtime.generation),
         record: record,
         transcript: transcript,
         undrained: try Sessions.undrained(key, tail: runtime.queueTail, in: db),

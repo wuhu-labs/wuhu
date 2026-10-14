@@ -3,6 +3,7 @@ kind: library
 sources: Sources
 checks:
   build: [linux, mac]
+  test: [linux, mac]
 dependencies:
   - Fetch
   - HTTPTypes
@@ -13,3 +14,9 @@ dependencies:
   - NIOSSL
   - NIOWebSocket
   - PinnedTLS
+tests:
+  dependencies:
+    - Fetch
+    - NIOCore
+    - NIOEmbedded
+    - NIOWebSocket

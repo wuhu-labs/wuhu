@@ -27,48 +27,53 @@ extension SessionActor {
 
     // nil = pass in flight (idleSince suppressed); restored on every exit so
     // a settled session is evictable.
-    live.lastUpdatedByLoopAt = nil
-    defer { liveState?.lastUpdatedByLoopAt = date() }
+    let mountID = try live.mountID
+    try modify { $0.lastUpdatedByLoopAt = nil }
+    defer {
+      if liveState?.mountID == mountID { liveState?.lastUpdatedByLoopAt = date() }
+    }
 
     while true {
       try Task.checkCancellation()
 
-      guard !live.archiving else { return }
-      switch live.sessionStatus {
+      guard !(try live).archiving else { return }
+      switch (try live).sessionStatus {
       case .interrupted, .errored:
         return
       case .interrupting(let callback):
         callback.resume(with: .success(()))
         // A buffered nudge can re-enter before handleInterrupt persists;
         // flipping here keeps the callback single-shot.
-        live.sessionStatus = .interrupted
+        try modify { $0.sessionStatus = .interrupted }
         return
       case .healthy:
         break
       }
 
       guard try await refreshRegisteredSubscriptions() else { return }
-      if let toolCall = live.transcript.nextPendingToolCall {
+      if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
       }
-      let fullness = await live.transcript.contextFullness(budget: loopConfig.budget(id))
+      let budget = await loopConfig.budget(id)
+      let fullness = try live.transcript.contextFullness(budget: budget)
       try Task.checkCancellation()
-      guard !live.archiving else { return }
+      guard !(try live).archiving else { return }
       if fullness >= loopConfig.thresholds.hard {
         try await runInference(mode: .forcedCompact)
-      } else if live.queueHead > live.queueTail {
+      } else if (try live).queueHead > (try live).queueTail {
         try await drainQueue()
       } else {
-        guard !live.archiving else { return }
+        guard !(try live).archiving else { return }
+        await beforeCompactRequest()
         let forced = try await takeCompactRequest()
         try Task.checkCancellation()
-        guard !live.archiving else { return }
+        guard !(try live).archiving else { return }
         if forced {
           try await runInference(mode: .forcedCompact)
-        } else if live.transcript.hasWork {
+        } else if (try live).transcript.hasWork {
           try await runInference(mode: .normal)
-        } else if let nag = idleNag() {
+        } else if let nag = try idleNag() {
           try await appended([.notification(nag.notification(id: uuid(), at: date()))])
         } else {
           return
@@ -81,37 +86,34 @@ extension SessionActor {
   // Code's `/compact` command: instructions land as one system
   // notification, and the turn that follows is tool-choice-pinned to compact.
   func takeCompactRequest() async throws -> Bool {
-    guard !live.archiving else { return false }
+    guard !(try live).archiving else { return false }
     guard try await repo.pendingCommand() != nil else { return false }
     try Task.checkCancellation()
-    guard !live.archiving else { return false }
-    live.claimingCompactRequest = true
-    defer { liveState?.claimingCompactRequest = false }
-    guard case let .compact(instructions)? = try await repo.takeCommand() else { return false }
-    guard let instructions, !instructions.isEmpty else { return true }
-    let notification = SystemNotification(
-      id: uuid(),
-      timestamp: date(),
-      kind: .compactRequest,
-      subscriptionID: .compactRequest,
-      content: MessageContent(text: instructions),
-    )
-    _ = try await repo.enqueue(input: .notification(notification))
-    try await drainQueue()
+    guard !(try live).archiving else { return false }
+    let mountID = try live.mountID
+    try modify { $0.claimingCompactRequest = true }
+    defer {
+      if liveState?.mountID == mountID { liveState?.claimingCompactRequest = false }
+    }
+    guard let claim = try await repo.claimCompactRequest(generation: (try live).generation) else { return false }
+    try modify {
+      $0.transcript = claim.transcript
+      $0.compactRequestClaim = claim
+    }
     return true
   }
 
   // Only a model that stopped is asked whether it may; a generation that never
   // ran (created, restarted) is inert. What is left is a park wake.
-  private func idleNag() -> Nag? {
-    guard case .assistant? = live.transcript.items.last else { return nil }
-    return nagOrScheduleWake(live.transcript.environment)
+  private func idleNag() throws -> Nag? {
+    guard case .assistant? = (try live).transcript.items.last else { return nil }
+    return try nagOrScheduleWake((try live).transcript.environment)
   }
 
   private func refreshRegisteredSubscriptions() async throws -> Bool {
     let registered = try await repo.sessions.registeredSubscriptions(id)
     try Task.checkCancellation()
-    guard !live.archiving else { return false }
+    guard !(try live).archiving else { return false }
     try modify {
       $0.transcript.registeredSubscriptions = registered.ids
       $0.transcript.handlerSubscriptions = registered.handlers
@@ -131,8 +133,12 @@ extension SessionActor {
   // Cancelling the looper (retirement, shutdown) must cancel the work and must
   // never surface a late success: a cancelled pass may not touch actor state.
   func runLongRunningTask<T: Sendable>(body: @Sendable @escaping () async throws -> T) async -> Result<T, any Error> {
+    guard !Task.isCancelled else { return .failure(CancellationError()) }
     assert(longRunningTask == nil)
-    defer { longRunningTask = nil }
+    let workID = UUID()
+    defer {
+      if longRunningTask?.id == workID { longRunningTask = nil }
+    }
     let work = Task<Result<T, any Error>, Never> {
       do {
         return .success(try await body())
@@ -147,7 +153,7 @@ extension SessionActor {
         work.cancel()
       }
     }
-    longRunningTask = handle
+    longRunningTask = (workID, handle)
     let result = await withTaskCancellationHandler {
       await work.value
     } onCancel: {
@@ -188,7 +194,7 @@ extension SessionActor {
     let invocation = ToolInvocation(
       sessionID: id,
       call: toolCall,
-      state: live.transcript.environment.tools,
+      state: (try live).transcript.environment.tools,
     )
     let result = await runLongRunningTask { [loopConfig] in
       try await loopConfig.executeTool(invocation)
@@ -204,7 +210,7 @@ extension SessionActor {
       // Interrupt marks the tool so resume never retries it; a crash-shaped
       // cancellation (retirement, teardown) marks nothing and restart retries.
       guard !Task.isCancelled else { return }
-      if case .interrupting = live.sessionStatus {
+      if case .interrupting = (try live).sessionStatus {
         await loopConfig.killInterruptedTool(invocation)
         try await writeToolResult(.toolCall(callID), .failure(.init(message: interruptedToolMessage)))
       }
@@ -246,7 +252,7 @@ extension SessionActor {
       return
     }
 
-    let transcript = live.transcript
+    let transcript = (try live).transcript
     let kept: Range<Int>?
     do {
       kept = try transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
@@ -273,18 +279,24 @@ extension SessionActor {
       payload: .compact(.init(summary: arguments.summary)),
     )
     let compacted = try await repo.writeCompaction(closing: closing, head: head, kept: kept)
-    try modify { $0.transcript = compacted }
+    try modify {
+      $0.transcript = compacted
+      $0.generation += 1
+      $0.compactRequestClaim = nil
+    }
     await loopConfig.invalidateInference(id)
   }
 
   func runInference(mode: InferenceMode) async throws {
-    if live.transcript.needsReestablishment {
+    if (try live).transcript.needsReestablishment {
       guard try await reestablish() else { return }
     }
 
-    let fullness = await live.transcript.contextFullness(budget: loopConfig.budget(id))
+    let budget = await loopConfig.budget(id)
+    let fullness = try live.transcript.contextFullness(budget: budget)
     try Task.checkCancellation()
-    guard let state = liveState, !state.archiving else { return }
+    let state = try live
+    guard !state.archiving else { return }
     if fullness >= loopConfig.thresholds.soft, !state.transcript.hasPendingPressureNotice {
       let percent = Int((fullness * 100).rounded())
       try await appended([.notification(.init(
@@ -305,35 +317,37 @@ extension SessionActor {
     var idleTimeouts = 0
     var boundedFailures = 0
     while true {
-      if case .interrupting = live.sessionStatus { return }
+      if case .interrupting = (try live).sessionStatus { return }
       guard try await refreshRegisteredSubscriptions() else { return }
 
       let attemptID = uuid()
       let request = InferenceRequest(
         sessionID: id,
         attemptID: attemptID,
-        transcript: live.transcript,
+        transcript: (try live).transcript,
         mode: mode,
         idleTimeout: idleTimeoutSchedule[idleTimeouts],
       )
+      let compactClaim = mode == .forcedCompact ? (try live).compactRequestClaim : nil
       let result = await runLongRunningTask { [loopConfig] in
         try await loopConfig.inference(request)
       }
 
       switch result {
       case .success(let reply):
-        var appended = live.transcript
+        var appended = (try live).transcript
         let before = appended.items.count
         let entry = appended.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata)
         // The model tried to finish. A nag due now is written with its message,
         // so the session never reads settled while it owes one.
         let now = date()
-        if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: live.isTask, now: now) {
+        if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: (try live).isTask, now: now) {
           appended.append(.notification(nag.notification(id: uuid(), at: now)))
         }
-        try await repo.append(Array(appended.items[before...]), transcript: appended)
+        try await repo.append(Array(appended.items[before...]), transcript: appended, completingCompactRequest: compactClaim)
         try modify {
           $0.transcript = appended
+          if compactClaim != nil { $0.compactRequestClaim = nil }
           $0.malformedMessages = 0
           $0.capacityFailures = 0
           $0.compactedForPayload = false
@@ -351,7 +365,7 @@ extension SessionActor {
           return
         case .capacity:
           try modify { $0.capacityFailures += 1 }
-          if live.capacityFailures >= 3 {
+          if (try live).capacityFailures >= 3 {
             await markErrored(error: InferenceError.normalize(error))
             return
           }
@@ -359,7 +373,7 @@ extension SessionActor {
           guard await backoff(attempt: attempt) else { return }
         case .malformedModelMessage:
           try modify { $0.malformedMessages += 1 }
-          if live.malformedMessages >= 3 {
+          if (try live).malformedMessages >= 3 {
             await markErrored(error: InferenceError.normalize(error))
             return
           }
@@ -405,7 +419,7 @@ extension SessionActor {
           } else {
             compactedError = normalized
           }
-          if live.compactedForPayload {
+          if (try live).compactedForPayload {
             await markErrored(error: compactedError)
             return
           }
@@ -443,14 +457,14 @@ extension SessionActor {
   // Reads are idempotent, so the list reruns wholesale
   // on any doubt; false = cancelled mid-way, redone on the next pass.
   private func reestablish() async throws -> Bool {
-    guard case let .generationHead(head) = live.transcript.items.first else {
+    guard case let .generationHead(head) = (try live).transcript.items.first else {
       preconditionFailure("re-establishment requested without a generation head")
     }
     for call in head.reestablishmentCalls {
       let invocation = ToolInvocation(
         sessionID: id,
         call: call,
-        state: live.transcript.environment.tools,
+        state: (try live).transcript.environment.tools,
       )
       let result = await runLongRunningTask { [loopConfig] in
         try await loopConfig.executeTool(invocation)
@@ -470,8 +484,9 @@ extension SessionActor {
   @discardableResult
   func fallbackCompact() async throws -> Bool {
     guard try await refreshRegisteredSubscriptions() else { return false }
-    let transcript = live.transcript
+    let transcript = (try live).transcript
     let sessionID = id
+    let compactClaim = try live.compactRequestClaim
     let result = await runLongRunningTask { [loopConfig] in
       try await loopConfig.compact(sessionID, transcript)
     }
@@ -485,8 +500,12 @@ extension SessionActor {
         snapshot: .init(subscriptions: environment.tools.subscriptions, preReads: outcome.preReads),
         settle: environment.settle,
       )
-      let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept)
-      try modify { $0.transcript = compacted }
+      let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept, completingCompactRequest: compactClaim)
+      try modify {
+        $0.transcript = compacted
+        $0.generation += 1
+        $0.compactRequestClaim = nil
+      }
       await loopConfig.invalidateInference(id)
       return true
     case .failure(is CancellationError):
@@ -533,7 +552,7 @@ extension SessionActor {
   // The in-memory transcript is the truth the loop renders from; the store is
   // told what to persist and what the result is, never asked to read it back.
   private func appended(_ items: [TranscriptItem]) async throws {
-    var appended = live.transcript
+    var appended = (try live).transcript
     for item in items { appended.append(item) }
     try await repo.append(items, transcript: appended)
     try modify { $0.transcript = appended }

@@ -3,6 +3,7 @@ owner: shared
 swiftToolsVersion: "6.2"
 packageName: WuhuTestSupport
 products:
+  - FetchExchangeRecording
   - ControlledTime
   - WuhuRecordReplay
 platforms:

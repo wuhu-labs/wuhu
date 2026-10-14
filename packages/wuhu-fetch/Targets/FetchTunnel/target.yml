@@ -1,0 +1,13 @@
+name: FetchTunnel
+kind: library
+sources: Sources
+dependencies:
+  - Fetch
+  - HTTPTypes
+checks:
+  build: [linux, mac, ios, visionos]
+  test: [linux, mac]
+tests:
+  dependencies:
+    - Fetch
+    - HTTPTypes
