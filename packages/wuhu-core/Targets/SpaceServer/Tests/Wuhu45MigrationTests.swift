@@ -88,7 +88,7 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "session_command_tokens"]
+    let later: Set = ["revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "session_command_tokens"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers"]
     #expect(migrated.keys.filter { !retired.contains($0) }.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
     for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) {

@@ -9,7 +9,6 @@ import { senderName } from '~/lib/directory'
 import { useDirectory, useSessionTitles } from '~/lib/use-directory'
 import { QuoteStrip } from '~/components/message-row'
 import { PendingFiles } from '~/components/pending-files'
-import { admitFiles } from '~/lib/attachments'
 import { isComposerSendKey } from '~/lib/composer'
 import {
   type Draft,
@@ -73,31 +72,21 @@ export function ShellComposer({
   }, [])
 
   const attach = (incoming: File[]) => {
-    const { admitted, refusal } = admitFiles(
-      draft.files.map((held) => held.file),
-      incoming,
-    )
-    setError(refusal)
-    if (admitted.length === 0) return
-    drafts.update(draftKey, (held) => ({
-      ...held,
-      files: [
-        ...held.files,
-        ...admitted.map((file) => ({ id: crypto.randomUUID(), file })),
-      ],
-    }))
+    setError(null)
+    drafts.attach(draftKey, incoming)
   }
 
-  const canSend = !sending &&
+  const canSend = !sending && !draft.preparing &&
     (draft.text.trim() !== '' || draft.files.length > 0)
+
   // The draft leaves the composer when it is sent, so whatever is written
   // during the upload is kept, and a failure puts the draft back in front.
   const send = () => {
     if (!canSend) return
-    const outgoing = draft
+    const outgoing = drafts.take(draftKey)
+    if (outgoing === null) return
     setError(null)
     setSending(true)
-    drafts.clear(draftKey)
     onSend({ ...outgoing, text: outgoing.text.trim() })
       .then(() => field.current?.focus())
       .catch((failure: unknown) => {
@@ -113,7 +102,7 @@ export function ShellComposer({
   return (
     <ComposerZone
       session={pill}
-      error={error}
+      error={error ?? draft.refusal}
       above={draft.reply && (
         <QuoteStrip
           sender={senderName(directory, draft.reply, sessions)}
@@ -130,6 +119,7 @@ export function ShellComposer({
             drafts.update(draftKey, (held) => ({
               ...held,
               files: held.files.filter((file) => file.id !== id),
+              refusal: null,
             }))
           }}
         />
@@ -161,7 +151,7 @@ export function ShellComposer({
         onChange={(event) => {
           const text = event.target.value
           setError(null)
-          drafts.update(draftKey, (held) => ({ ...held, text }))
+          drafts.update(draftKey, (held) => ({ ...held, text, refusal: null }))
         }}
         onPaste={(event) => {
           const pasted = [...event.clipboardData.files]

@@ -37,9 +37,11 @@ public struct AnyOperationKind: Sendable {
 
 public struct OperationCancellation: Sendable {
   let checkImpl: @Sendable () async throws -> Void
+  let stopImpl: @Sendable (String) async throws -> Void
   let reasonImpl: @Sendable () async -> String?
   public func reason() async -> String? { await reasonImpl() }
   public func check() async throws { try Task.checkCancellation(); try await checkImpl() }
+  public func stop(reason: String) async throws { try await stopImpl(reason) }
 }
 
 public struct OperationChannels: Sendable {

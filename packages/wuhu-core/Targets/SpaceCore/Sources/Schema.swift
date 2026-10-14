@@ -3,6 +3,7 @@ import StructuredQueries
 import StructuredQueriesSQLite
 
 let spaceSchemaSQL = [
+  machineV2SchemaSQL,
   substrateSchemaSQL, blobObjectSchemaSQL, sessionSchemaSQL, sessionCommandSchemaSQL, sessionContextSchemaSQL,
   sessionScopeContextSchemaSQL, conversationSchemaSQL, notificationSchemaSQL,
   allocationSchemaSQL, authSchemaSQL, groupSchemaSQL, deviceSchemaSQL, enrollmentSchemaSQL, personaSchemaSQL,

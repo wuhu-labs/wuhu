@@ -29,7 +29,7 @@ private actor DroppingStore: OperationStore {
   func lookup(_ owner: OperationOwner) async throws -> ClientRecord? { await base.lookup(owner) }
   func claim(_ owner: OperationOwner, record: ClientRecord) async throws -> OperationClaim { try await base.claim(owner, record: record) }
   func read(_ id: UUID) async throws -> ClientRecord { try await base.read(id) }
-  func transaction(_ id: UUID, _ update: @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord {
+  func transaction(_ id: UUID, _ update: @escaping @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord {
     let field = field
     do {
       return try await base.transaction(id) { value in

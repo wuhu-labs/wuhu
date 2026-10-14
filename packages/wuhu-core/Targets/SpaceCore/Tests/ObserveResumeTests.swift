@@ -15,7 +15,7 @@ import Testing
     defer { consumer.cancel() }
 
     _ = try await space.writeText("/c.md", "three")
-    let collected = await awaitItems(events, atLeast: 2)
+    let collected = try await awaitItems(events, atLeast: 2)
     await settle()
 
     #expect(collected == [
@@ -39,7 +39,7 @@ import Testing
     defer { consumer.cancel() }
 
     try await writes.value
-    let collected = await awaitItems(events, atLeast: total)
+    let collected = try await awaitItems(events, atLeast: total)
     await settle()
 
     #expect(collected.count == total)
@@ -57,7 +57,7 @@ import Testing
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
-    let collected = await awaitItems(events, atLeast: 1)
+    let collected = try await awaitItems(events, atLeast: 1)
     await settle()
 
     #expect(collected == [MutationEvent(group: .shared, path: "/notes/a.md", rev: 1, kind: .write, entry: .file)])
@@ -73,7 +73,7 @@ import Testing
     defer { consumer.cancel() }
 
     _ = try await space.writeText("/b.md", "two")
-    let collected = await awaitItems(events, atLeast: 1)
+    let collected = try await awaitItems(events, atLeast: 1)
     await settle()
 
     #expect(collected == [MutationEvent(group: .shared, path: "/b.md", rev: 2, kind: .write, entry: .file)])
@@ -95,14 +95,14 @@ import Testing
     _ = try await space.alterTable(table, header: TableHeader(columns: [
       TableColumn(name: "n", type: .integer), TableColumn(name: "s", type: .text),
     ]), in: .shared, acting: .shared)
-    let liveCollected = await awaitItems(live, atLeast: 3)
+    let liveCollected = try await awaitItems(live, atLeast: 3)
     await settle()
 
     let replayed = Collector<MutationEvent>()
     let replayStream = await space.observeFS(glob: "**", from: Rev(0), group: .shared).mutations
     let replayConsumer = Task { for await event in replayStream { await replayed.append(event) } }
     defer { replayConsumer.cancel() }
-    let replayCollected = await awaitItems(replayed, atLeast: 3)
+    let replayCollected = try await awaitItems(replayed, atLeast: 3)
     await settle()
 
     #expect(liveCollected == [
@@ -125,7 +125,7 @@ import Testing
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
-    let collected = await awaitItems(events, atLeast: 3)
+    let collected = try await awaitItems(events, atLeast: 3)
     await settle()
 
     #expect(collected == [
@@ -146,7 +146,7 @@ import Testing
     let consumer = Task { for await event in stream { await events.append(event) } }
     defer { consumer.cancel() }
 
-    let collected = await awaitItems(events, atLeast: 3)
+    let collected = try await awaitItems(events, atLeast: 3)
     await settle()
 
     #expect(collected == [

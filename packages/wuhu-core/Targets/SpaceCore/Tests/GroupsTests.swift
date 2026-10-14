@@ -78,7 +78,7 @@ import Testing
     defer { consumer.cancel() }
     _ = try await space.fs(Self.alice).write("/late.md", bytes("alice"), ifMatch: nil)
     _ = try await space.fs(.shared).write("/after.md", bytes("shared"), ifMatch: nil)
-    let collected = await awaitItems(events, atLeast: 2)
+    let collected = try await awaitItems(events, atLeast: 2)
     await settle()
     #expect(collected.map(\.path) == ["/readme.md", "/after.md"])
     #expect(collected.allSatisfy { $0.group == .shared })
@@ -95,8 +95,8 @@ import Testing
     ]
     defer { consumers.forEach { $0.cancel() } }
     try await space.move("/readme.md", in: .shared, to: "/docs/readme.md", in: Self.alice, replacing: false, acting: Self.alice)
-    let deleted = await awaitItems(left, atLeast: 1)
-    let written = await awaitItems(arrived, atLeast: 1)
+    let deleted = try await awaitItems(left, atLeast: 1)
+    let written = try await awaitItems(arrived, atLeast: 1)
     await settle()
     #expect(deleted.map(\.kind) == [.delete] && deleted.map(\.path) == ["/readme.md"])
     #expect(written.map(\.path).last == "/docs/readme.md" && written.last?.kind == .write)
@@ -145,7 +145,7 @@ import Testing
         return error
       }
     }
-    #expect(await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
+    #expect(try await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
     try await space.removeEdge(src: Self.alice, dst: .shared, kind: .read)
     let error = await ending.value
     #expect(error as? SpaceError == .unknownRelation("wuhu://shared.localspace/docs"))

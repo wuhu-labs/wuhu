@@ -145,6 +145,7 @@ import Testing
       }
       if snapshots.count == 2 { break }
     }
+    try #require(snapshots.count >= 2)
     #expect(snapshots[0].rows == [])
     #expect(snapshots[1].rows == [[.integer(1)]])
   }

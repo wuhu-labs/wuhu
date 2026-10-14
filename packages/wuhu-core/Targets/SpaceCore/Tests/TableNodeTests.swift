@@ -253,7 +253,7 @@ import Testing
         Rows(columns: ["id", "n"], decltypes: ["INTEGER", "INTEGER"], rows: [[.integer(1), .integer(1)]]),
     )
 
-    let collected = await awaitItems(events, atLeast: 1)
+    let collected = try await awaitItems(events, atLeast: 1)
     #expect(collected == [MutationEvent(group: .shared, path: "/data/log.table", rev: minted.value, kind: .write, entry: .table)])
     #expect(try await space.history(table, in: .shared).last?.2 == .checkout(fromRev: revOneRow.value))
 

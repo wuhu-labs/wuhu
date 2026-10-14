@@ -45,7 +45,7 @@ private actor PausedReadStore: OperationStore {
     return record
   }
 
-  func transaction(_ id: UUID, _ update: @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord {
+  func transaction(_ id: UUID, _ update: @escaping @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord {
     try await base.transaction(id, update)
   }
 }

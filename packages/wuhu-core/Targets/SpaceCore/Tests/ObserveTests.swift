@@ -16,9 +16,9 @@ import Testing
     _ = try await space.writeText("/a.md", "one")
     _ = try await space.writeText("/b.md", "two")
     try await space.fs(.shared).delete("/a.md", ifMatch: nil)
-    let collected = await awaitItems(events, atLeast: 3)
+    let collected = try await awaitItems(events, atLeast: 3)
 
-    #expect(collected.count == 3)
+    try #require(collected.count == 3)
     #expect(collected[0] == MutationEvent(group: .shared, path: "/a.md", rev: 1, kind: .write, entry: .file))
     #expect(collected[1] == MutationEvent(group: .shared, path: "/b.md", rev: 2, kind: .write, entry: .file))
     #expect(collected[2] == MutationEvent(group: .shared, path: "/a.md", rev: 3, kind: .delete, entry: nil))
@@ -33,9 +33,9 @@ import Testing
 
     _ = try await space.writeText("/other.md", "x")
     _ = try await space.writeText("/notes/todo.md", "y")
-    let collected = await awaitItems(events, atLeast: 1)
+    let collected = try await awaitItems(events, atLeast: 1)
 
-    #expect(collected.count == 1)
+    try #require(collected.count == 1)
     #expect(collected[0].path == "/notes/todo.md")
   }
 
@@ -51,7 +51,7 @@ import Testing
     _ = try await space.mutateRows(try path("/other.table"), [.insert([.integer(1)])], in: .shared, acting: .shared)
     _ = try await space.createTable(try path("/data/t.table"), header: header, in: .shared, acting: .shared)
     _ = try await space.mutateRows(try path("/data/t.table"), [.insert([.integer(2)])], in: .shared, acting: .shared)
-    let collected = await awaitItems(events, atLeast: 2)
+    let collected = try await awaitItems(events, atLeast: 2)
     await settle()
 
     #expect(collected.map(\.path) == ["/data/t.table", "/data/t.table"])
@@ -72,9 +72,9 @@ import Testing
     defer { consumer.cancel() }
 
     try await space.fs(.shared).delete("/dir", ifMatch: nil)
-    let collected = await awaitItems(events, atLeast: 4)
+    let collected = try await awaitItems(events, atLeast: 4)
 
-    #expect(collected.count == 4)
+    try #require(collected.count == 4)
     #expect(collected.allSatisfy { $0.kind == .delete })
     #expect(Set(collected.map(\.rev)).count == 1)
     #expect(Set(collected.map(\.path)) == ["/dir/a.md", "/dir/sub/b.md", "/dir/sub", "/dir/t.table"])
@@ -94,9 +94,9 @@ import Testing
     defer { consumer.cancel() }
 
     try await space.fs(.shared).move("/src", to: "/dst")
-    let collected = await awaitItems(events, atLeast: 4)
+    let collected = try await awaitItems(events, atLeast: 4)
 
-    #expect(collected.count == 4)
+    try #require(collected.count == 4)
     #expect(collected.allSatisfy { $0.kind == .move })
     let pairs = Set(collected.map { "\($0.from ?? "?") -> \($0.path)" })
     #expect(pairs == [
@@ -127,17 +127,17 @@ import Testing
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
 
-    _ = await awaitItems(results, atLeast: 1)
+    _ = try await awaitItems(results, atLeast: 1)
     _ = try await space.mutateRows(table, [.insert([.integer(1), .string("a")])], in: .shared, acting: .shared)
-    _ = await awaitItems(results, atLeast: 2)
+    _ = try await awaitItems(results, atLeast: 2)
     let ids = try await space.query("SELECT \"id\" FROM \"/t.table\"")
     guard case let .integer(id) = ids.rows[0][0] else { Issue.record("no id"); return }
     _ = try await space.mutateRows(table, [.update(id: id, [.integer(1), .string("changed")])], in: .shared, acting: .shared)
     _ = try await space.mutateRows(table, [.insert([.integer(2), .string("b")])], in: .shared, acting: .shared)
-    let collected = await awaitItems(results, atLeast: 3)
+    let collected = try await awaitItems(results, atLeast: 3)
     await settle()
 
-    #expect(collected.count == 3)
+    try #require(collected.count == 3)
     #expect(collected[0].rows.isEmpty)
     #expect(collected[1].rows == [[.integer(1)]])
     #expect(collected[2].rows == [[.integer(1)], [.integer(2)]])
@@ -154,7 +154,7 @@ import Testing
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
 
-    _ = await awaitItems(results, atLeast: 1)
+    _ = try await awaitItems(results, atLeast: 1)
     _ = try await space.mutateRows(table, [.insert([.integer(1)])], in: .shared, acting: .shared)
     await settle()
     #expect(await results.items.count == 1)
@@ -164,7 +164,7 @@ import Testing
       await settle(.milliseconds(5))
     }
     let collected = await results.items
-    #expect(collected.count == 2)
+    try #require(collected.count == 2)
     #expect(collected[1].rows == [[.integer(1)]])
   }
 
@@ -177,11 +177,11 @@ import Testing
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
 
-    _ = await awaitItems(results, atLeast: 1)
+    _ = try await awaitItems(results, atLeast: 1)
     _ = try await space.writeText("/note.md", "---\nkind: note\n---\nhi")
-    let collected = await awaitItems(results, atLeast: 2)
+    let collected = try await awaitItems(results, atLeast: 2)
 
-    #expect(collected.count == 2)
+    try #require(collected.count == 2)
     #expect(collected[0].rows.isEmpty)
     #expect(collected[1].rows == [[.text("/note.md")]])
   }
@@ -205,7 +205,7 @@ import Testing
     let stream = await space.observeQuery("SELECT n FROM \"/t.table\" UNION ALL SELECT 0 FROM docs", throttle: .zero)
     let outcome = Task { for try await rows in stream { await results.append(rows) } }
 
-    _ = await awaitItems(results, atLeast: 1)
+    _ = try await awaitItems(results, atLeast: 1)
     try await space.fs(.shared).delete("/t.table", ifMatch: nil)
     _ = try await space.writeText("/note.md", "---\nkind: note\n---\nhi")
 

@@ -9,10 +9,12 @@
     "transcribe"
   ],
   "wuhu:machine": [
+    "MachineOperationError",
     "execStatus",
     "execs",
     "killExec",
     "machine",
+    "machineV2",
     "machines"
   ],
   "wuhu:secret": [

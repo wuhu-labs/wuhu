@@ -73,7 +73,7 @@ import Testing
       }
       try await tasks.waitForAll()
     }
-    let received = await awaitItems(commits, atLeast: 200)
+    let received = try await awaitItems(commits, atLeast: 200)
     #expect(received.count == 200)
     #expect(received.map(\.rev) == Array((start + 1) ... (start + 200)))
     #expect(received.filter { $0.events.first?.kind == .delete }.count == 100)
@@ -97,7 +97,7 @@ import Testing
     let consumer = Task { for await commit in stream { await commits.append(commit) } }
     defer { consumer.cancel() }
     try await writes.value
-    let received = await awaitItems(commits, atLeast: 100)
+    let received = try await awaitItems(commits, atLeast: 100)
     await settle()
     #expect(await commits.items.count == 100)
     #expect(received.map(\.rev) == Array((start + 1) ... (start + 100)))

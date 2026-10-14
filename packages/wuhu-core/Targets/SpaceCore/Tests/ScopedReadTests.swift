@@ -44,7 +44,7 @@ import Testing
     let stream = await space.observeQuery(Self.count, throttle: .zero)
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
-    #expect(await awaitItems(results, atLeast: 1).map(\.rows) == [[[.integer(1)]]])
+    #expect(try await awaitItems(results, atLeast: 1).map(\.rows) == [[[.integer(1)]]])
 
     let before = runs.withLock { $0 }
     _ = try await space.mutateRows(table, [.update(id: hidden, [.integer(99), .string("moved")])], in: .shared, acting: .shared)
@@ -56,7 +56,7 @@ import Testing
     #expect(await results.items.count == 1)
 
     _ = try await space.mutateRows(table, [.insert([.integer(2), .string("b")])], in: .shared, acting: .shared)
-    #expect(await awaitItems(results, atLeast: 2).map(\.rows) == [[[.integer(1)]], [[.integer(2)]]])
+    #expect(try await awaitItems(results, atLeast: 2).map(\.rows) == [[[.integer(1)]], [[.integer(2)]]])
   }
 
   // The pool draws its secrets at random; whatever they are, no refusal, row

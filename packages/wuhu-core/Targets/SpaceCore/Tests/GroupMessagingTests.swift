@@ -129,7 +129,7 @@ import Testing
     #expect(try await rig.space.fs(Self.alice).read(path).1 == Data("mine".utf8))
     await #expect(throws: (any Error).self) { _ = try await rig.space.fs(.shared).read(path) }
     #expect(try await queued(rig, rig.p).last?.content.attachments.first?.path == path)
-    let written = await awaitItems(events, atLeast: 1)
+    let written = try await awaitItems(events, atLeast: 1)
     #expect(written.map(\.path) == [path])
     #expect(written.map(\.group) == [Self.alice])
 

@@ -17,7 +17,7 @@ public enum StoreContractFailure: Error, Equatable, Sendable { case violation(St
 
 public func verifyOperationStoreContract(_ store: any OperationStore) async throws {
   let owner = OperationOwner(scope: "store-contract", key: UUID().uuidString)
-  let descriptor = KindDescriptor("query.v1", inputSchema: [:], resultSchema: [:])
+  let descriptor = KindDescriptor("query.v1", inputSchema: [:], resultSchema: [:], inputChannels: [.init("stdin")], outputChannels: [.init("data")])
   let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [descriptor])
   let first = ClientRecord(id: UUID(), correlation: UUID(), machine: "phone", start: .init(kind: descriptor.name, input: .null), description: description)
   guard try await store.lookup(owner) == nil else { throw StoreContractFailure.violation("ownerLookup") }

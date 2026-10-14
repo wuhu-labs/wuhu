@@ -26,19 +26,21 @@ export function PendingFiles({
       {files.map(({ id, file }) => (
         <li
           key={id}
-          className={file.type.startsWith('image/')
+          className={['image/png', 'image/jpeg'].includes(file.type)
             ? 'wuhu-pending-image'
             : 'wuhu-pending-file'}
         >
-          {file.type.startsWith('image/') ? <Thumbnail file={file} /> : (
-            <>
-              <Icon name='note' />
-              <span>
-                <strong>{file.name}</strong>
-                <span>{formatSize(file.size)}</span>
-              </span>
-            </>
-          )}
+          {['image/png', 'image/jpeg'].includes(file.type)
+            ? <Thumbnail file={file} />
+            : (
+              <>
+                <Icon name='note' />
+                <span>
+                  <strong>{file.name}</strong>
+                  <span>{formatSize(file.size)}</span>
+                </span>
+              </>
+            )}
           <button
             type='button'
             className='wuhu-pending-remove'

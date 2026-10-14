@@ -50,7 +50,7 @@ actor ExchangeLedger {
           throw OperationError(.invalidResponse)
         }
         if response.status.code >= 400 {
-          result = .failure(try JSONDecoder().decode(ErrorEnvelope.self, from: bytes).error)
+          do { result = .failure(try JSONDecoder().decode(ErrorEnvelope.self, from: bytes).error) } catch { throw OperationError(.invalidResponse) }
         } else { result = .success(bytes) }
       } catch { result = .failure(error as? OperationError ?? .init(.transport, message: String(describing: error))) }
       complete(id, result: result)
@@ -72,7 +72,7 @@ actor ExchangeLedger {
     guard entry.waiter != nil else { return }
     do {
       switch result {
-      case .success: try record(entry.request, id: id, began: entry.began, event: .complete)
+      case .success: break
       case let .failure(error): try record(entry.request, id: id, began: entry.began, event: error.code == .requestCancelled ? .cancelled : .failure, error: error.code)
       }
       entry.waiter?.yield(result)

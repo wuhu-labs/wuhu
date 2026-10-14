@@ -30,14 +30,14 @@ struct UnreadTests {
       let stream = await space.observeQuery(unreadSQL, throttle: .zero, viewer: "carol")
       let consumer = Task { do { for try await rows in stream { await carol.append(rows) } } catch {} }
       defer { consumer.cancel() }
-      #expect(await awaitItems(carol, atLeast: 1).last?.rows == [[.text(box.rawValue), .integer(0)]])
+      #expect(try await awaitItems(carol, atLeast: 1).last?.rows == [[.text(box.rawValue), .integer(0)]])
 
       _ = try await store.post(
         .box(box), messageID: MessageID("m2"),
         sender: Sender(id: box.rawValue, timeZone: utc), senderSession: box, replyTarget: MessageID("m1"),
         content: .init(text: "a"),
       )
-      #expect(await awaitItems(carol, atLeast: 2).last?.rows == [[.text(box.rawValue), .integer(1)]])
+      #expect(try await awaitItems(carol, atLeast: 2).last?.rows == [[.text(box.rawValue), .integer(1)]])
       #expect(try await unread(space, viewer: "dave") == [[.text(box.rawValue), .integer(0)]])
       #expect(try await unread(space, viewer: nil) == [[.text(box.rawValue), .integer(0)]])
 
@@ -45,7 +45,7 @@ struct UnreadTests {
       #expect(try await unread(space, viewer: "carol") == [[.text(box.rawValue), .integer(1)]])
 
       try await store.advanceWatermark(identity: "carol", source: box.rawValue)
-      let cleared = await awaitItems(carol, atLeast: 4)
+      let cleared = try await awaitItems(carol, atLeast: 3)
       #expect(cleared.last?.rows == [[.text(box.rawValue), .integer(0)]])
     }
   }

@@ -128,6 +128,14 @@ public actor OperationAgent {
     if op.stopReason != nil { throw CancellationError() }
   }
 
+  func kindStop(_ id: UUID, reason: String) throws {
+    guard !reason.isEmpty else { throw OperationError(.invalidInput) }
+    guard operations[id] != nil else { throw OperationError(.unknownOperation) }
+    let chosen = operations[id]?.stopReason ?? reason
+    operations[id]?.stopReason = chosen
+    throw CancellationError()
+  }
+
   func execute(_ id: UUID) async {
     guard let run = executions.removeValue(forKey: id) else { return }
     let channels = OperationChannels(
@@ -138,9 +146,7 @@ public actor OperationAgent {
       availableInputImpl: { try await self.availableInput($0, bytes: $1, id: id) },
       publishImpl: { try await self.publish($0, id: id) },
     )
-    let cancellation = OperationCancellation(checkImpl: { try await self.check(id) }, reasonImpl: {
-      await self.stopReason(id)
-    })
+    let cancellation = OperationCancellation(checkImpl: { try await self.check(id) }, stopImpl: { try await self.kindStop(id, reason: $0) }, reasonImpl: { await self.stopReason(id) })
     let verdict: Verdict
     do {
       try await cancellation.check()
@@ -260,7 +266,7 @@ public actor OperationAgent {
       catch FetchError.bodyLimitExceeded { throw OperationError(.inputTooLarge) }
       guard let kind = kinds[start.kind] else { throw OperationError(.unknownKind) }
       let run: @Sendable (OperationChannels, OperationCancellation) async throws -> JSONValue
-      do { run = try kind.prepare(start.input) } catch { throw OperationError(.invalidInput) }
+      do { run = try kind.prepare(start.input) } catch let error as OperationError { throw error } catch { throw OperationError(.invalidInput) }
       guard !leaving && !closed else { throw OperationError(.leaving) }
       guard operations[id] == nil else { throw OperationError(.operationExists) }
       let d = kind.descriptor

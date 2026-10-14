@@ -5,6 +5,7 @@ packageName: WuhuCoreKit
 products:
   - LoopCore
   - OperationProtocol
+  - ComputerFiles
   - OperationRuntime
   - OperationClient
   - OperationClientTestSupport

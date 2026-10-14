@@ -43,7 +43,7 @@ public enum ComputerKindSchemas {
       [
         "root": ["type": "string", "pattern": "^/"],
         "pattern": string,
-        "dialect": string,
+        "dialect": ["enum": ["literal"]],
         "maxLineBytes": ["type": "integer", "minimum": 1, "maximum": 65536],
         "entryLimit": positive,
       ],
@@ -56,7 +56,7 @@ public enum ComputerKindSchemas {
   private static let strings: JSONValue = ["type": "object", "additionalProperties": ["type": "string"]]
   private static let offset: JSONValue = ["type": "string", "pattern": "^[0-9]+$"]
   private static let positive: JSONValue = ["type": "integer", "minimum": 1]
-  private static let counts = object(["scanned": offset, "matched": offset], required: ["scanned", "matched"])
+  private static let counts = object(["scanned": offset, "matched": offset, "skipped": ["type": "object", "additionalProperties": ["type": "integer", "minimum": 0]]], required: ["scanned", "matched", "skipped"])
   private static func object(_ properties: [String: JSONValue], required: [String]) -> JSONValue {
     [
       "type": "object",

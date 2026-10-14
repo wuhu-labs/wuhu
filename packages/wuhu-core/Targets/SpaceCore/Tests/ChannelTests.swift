@@ -139,9 +139,9 @@ import Testing
           let stream = await space.observeQuery(sql, throttle: .zero, as: bob)
           let consumer = Task { do { for try await frame in stream { await frames.append(frame) } } catch { Issue.record(error) } }
           defer { consumer.cancel() }
-          #expect(await awaitItems(frames, atLeast: 1).count == 1)
+          #expect(try await awaitItems(frames, atLeast: 1).count == 1)
           try await space.sessions.removeChannelMembers(id, people: ["bob"], as: Principal(actor: .person(persona: "alice", account: AccountID(rawValue: "alice")), group: group))
-          #expect(await awaitItems(frames, atLeast: 2).last?.rows.isEmpty == true)
+          #expect(try await awaitItems(frames, atLeast: 2).last?.rows.isEmpty == true)
           try await space.sessions.addChannelMembers(id, people: ["bob"], as: Principal(actor: .person(persona: "alice", account: AccountID(rawValue: "alice")), group: group))
         }
       }

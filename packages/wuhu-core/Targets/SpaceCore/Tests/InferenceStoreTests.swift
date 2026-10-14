@@ -42,9 +42,9 @@ import Testing
     let stream = await space.observeQuery("SELECT count(*) FROM inferences", throttle: .zero)
     let consumer = Task { for try await value in stream { await rows.append(value) } }
     defer { consumer.cancel() }
-    #expect(await awaitItems(rows, atLeast: 1).map(\.rows) == [[[.integer(0)]]])
+    #expect(try await awaitItems(rows, atLeast: 1).map(\.rows) == [[[.integer(0)]]])
     try await space.recordInference(record(session, id: "call"))
-    #expect(await awaitItems(rows, atLeast: 2).map(\.rows) == [[[.integer(0)]], [[.integer(1)]]])
+    #expect(try await awaitItems(rows, atLeast: 2).map(\.rows) == [[[.integer(0)]], [[.integer(1)]]])
   }
 
   @Test func sameVisibilityAsSessionsIncludingQualifiedReadableGroups() async throws {

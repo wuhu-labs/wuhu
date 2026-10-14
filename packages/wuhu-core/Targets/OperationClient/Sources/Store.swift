@@ -36,6 +36,15 @@ public struct ClientRecord: Codable, Sendable {
     self.id = id; self.correlation = correlation; self.machine = machine; self.start = start; self.description = description
   }
 
+  public var outputCapacity: Int { capacity(input: false) }
+  public var inputCapacity: Int { capacity(input: true) }
+  private func capacity(input: Bool) -> Int {
+    guard let kind = description.kinds.first(where: { $0.name == start.kind }) else { return 0 }
+    return (input ? kind.inputChannels : kind.outputChannels).reduce(0) { total, channel in
+      total + min(max(0, channel.windowBytes), max(0, description.limits.bufferBytes - total))
+    }
+  }
+
   mutating func markEvidence() throws {
     let (next, overflow) = (evidenceGeneration ?? 0).addingReportingOverflow(1)
     guard !overflow else { throw OperationError(.capacityExceeded) }
@@ -53,7 +62,7 @@ public protocol OperationStore: Sendable {
   func lookup(_ owner: OperationOwner) async throws -> ClientRecord?
   func claim(_ owner: OperationOwner, record: ClientRecord) async throws -> OperationClaim
   func read(_ id: UUID) async throws -> ClientRecord
-  func transaction(_ id: UUID, _ update: @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord
+  func transaction(_ id: UUID, _ update: @escaping @Sendable (inout ClientRecord) throws -> Void) async throws -> ClientRecord
 }
 
 public actor MemoryOperationStore: OperationStore {
@@ -64,7 +73,7 @@ public actor MemoryOperationStore: OperationStore {
   public func lookup(_ owner: OperationOwner) -> ClientRecord? { owners[owner].flatMap { records[$0] } }
   public func claim(_ owner: OperationOwner, record: ClientRecord) throws -> OperationClaim {
     if let id = owners[owner], let prior = records[id] {
-      guard prior.machine == record.machine && prior.start == record.start else { throw OperationError(.invocationConflict, operation: id) }
+      guard try prior.machine == record.machine && prior.start.canonicalData() == record.start.canonicalData() else { throw OperationError(.invocationConflict, operation: id) }
       return .init(record: prior, dispatch: false)
     }
     guard records.count < capacity, records[record.id] == nil else { throw OperationError(.capacityExceeded) }
@@ -76,7 +85,7 @@ public actor MemoryOperationStore: OperationStore {
     guard let record = records[id] else { throw OperationError(.unknownOperation) }; return record
   }
 
-  public func transaction(_ id: UUID, _ update: @Sendable (inout ClientRecord) throws -> Void) throws -> ClientRecord {
+  public func transaction(_ id: UUID, _ update: @escaping @Sendable (inout ClientRecord) throws -> Void) throws -> ClientRecord {
     var record = try read(id); try update(&record); records[id] = record; return record
   }
 }

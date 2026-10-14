@@ -71,7 +71,11 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 const reply = { messageId: 'm1', sender: 'Joke teller', text: 'why?' }
 const held = (id: string, name: string) => ({
   id,
-  file: new File(['png'], name, { type: 'image/png' }),
+  file: new File(
+    [Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)],
+    name,
+    { type: 'image/png' },
+  ),
 })
 const photo = held('f1', 'photo.png')
 const later = held('f2', 'later.png')
@@ -246,19 +250,38 @@ Deno.test('a vault that fails is counted, and the draft stays in memory', async 
 })
 
 Deno.test('a failed send goes back in front of what was written meanwhile', () => {
-  const outgoing = { text: 'first', reply, files: [photo] }
+  const outgoing = { ...emptyDraft, text: 'first', reply, files: [photo] }
   equal(restoreDraft(outgoing, emptyDraft), outgoing)
   equal(
     shape(
-      restoreDraft(outgoing, { text: 'second', reply: null, files: [later] }),
+      restoreDraft(outgoing, { ...emptyDraft, text: 'second', files: [later] }),
     ),
     { text: 'first\nsecond', reply, files: ['photo.png', 'later.png'] },
   )
 })
 
 Deno.test('dictation appends to the draft with one space', () => {
-  const draft = { text: 'ship it ', reply: null, files: [] }
+  const draft = { ...emptyDraft, text: 'ship it ' }
   equal(withDictation(draft, ' after review ').text, 'ship it after review')
   equal(withDictation({ ...draft, text: '' }, 'hello').text, 'hello')
   equal(withDictation(draft, '  '), draft)
+})
+
+Deno.test('opening without editing keeps the original seven-day expiry', async () => {
+  const shelf = new MemoryShelf()
+  const vault = new MemoryVault()
+  let now = 0
+  new Drafts('s', shelf, vault, () => now).update(
+    'session:a',
+    (draft) => ({ ...draft, text: 'day zero' }),
+  )
+  now = 6 * day
+  const opened = new Drafts('s', shelf, vault, () => now)
+  equal(opened.get('session:a').text, 'day zero')
+  await settle()
+  equal(JSON.parse(shelf.getItem(draftKey('s', 'session:a'))!).savedAt, 0)
+  now = 8 * day
+  equal(new Drafts('s', shelf, vault, () => now).get('session:a').text, '')
+  await opened.sweep()
+  equal(shelf.getItem(draftKey('s', 'session:a')), null)
 })

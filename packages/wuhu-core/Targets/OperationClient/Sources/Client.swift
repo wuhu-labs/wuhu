@@ -37,6 +37,7 @@ public actor OperationClient {
   var callerDeadline: [UUID: Duration] = [:]
   var dispatching: Set<UUID> = []
   var busy: Set<String> = []
+  var outputReservations: [UUID: Int] = [:]
   public init(
     origin: URL,
     fetch: FetchClient,
@@ -72,6 +73,7 @@ public actor OperationClient {
     record: ClientRecord? = nil,
     poll: Bool = false,
     silenceBound: Bool = true,
+    validate: (T) async throws -> T = { $0 },
   ) async throws -> T {
     let requestID = ids()
     var req = Request(url: url, method: method, body: body)
@@ -82,13 +84,22 @@ public actor OperationClient {
     if silenceBound, let record, record.snapshot?.verdict == nil, let seen = lastAnswer[record.id] {
       timeout = min(timeout, max(.zero, seen + .milliseconds(record.description.limits.leaseMs) - clock.now()))
     }
-    let deadline = clock.now() + timeout
+    let began = clock.now()
+    let deadline = began + timeout
     do {
       let data = try await ledger.exchange(req, id: requestID, timeout: timeout, limit: record == nil ? 1024 * 1024 : OperationLimits.responseBytes)
-      let value: T
-      do { value = try JSONDecoder().decode(type, from: data) } catch { throw OperationError(.invalidResponse) }
-      guard clock.now() < deadline else { throw OperationError(.requestDeadline) }
-      return value
+      do {
+        let value: T
+        do { value = try JSONDecoder().decode(type, from: data) } catch { throw OperationError(.invalidResponse) }
+        guard clock.now() < deadline else { throw OperationError(.requestDeadline) }
+        let validated = try await validate(value)
+        try await ledger.record(req, id: requestID, began: began, event: .complete)
+        return validated
+      } catch {
+        let code = (error as? OperationError)?.code ?? .storeUnavailable
+        try await ledger.record(req, id: requestID, began: began, event: .failure, error: code)
+        throw error
+      }
     } catch {
       if let record, let deadline = callerDeadline[record.id], clock.now() >= deadline {
         try await abandon(record, reason: "callerDeadline")
@@ -115,10 +126,12 @@ public actor OperationClient {
     request start: StartRequest,
     owner: OperationOwner,
     timeout: Duration? = nil,
+    onClaim: @Sendable (UUID) -> Void = { _ in },
   ) async throws -> UUID {
     if let timeout, timeout <= .zero { throw OperationError(.invalidInput) }
     if let prior = try await store.lookup(owner) {
-      guard prior.machine == machine && prior.start == start else { throw OperationError(.invocationConflict, operation: prior.id) }
+      guard try prior.machine == machine && prior.start.canonicalData() == start.canonicalData() else { throw OperationError(.invocationConflict, operation: prior.id) }
+      onClaim(prior.id)
       _ = try await reconcile(prior.id); return prior.id
     }
     if let prior = descriptions[machine], let seen = presence[machine], !detached.contains(machine),
@@ -145,14 +158,16 @@ public actor OperationClient {
     }
     let claim = try await store.claim(owner, record: proposed)
     let r = claim.record
+    onClaim(r.id)
     if lastAnswer[r.id] == nil { lastAnswer[r.id] = clock.now() }
     if let timeout, claim.dispatch { callerDeadline[r.id] = clock.now() + timeout }
     if claim.dispatch {
       dispatching.insert(r.id); defer { dispatching.remove(r.id) }
       do {
-        let snapshot = try await request(OperationSnapshot.self, url: address(machine, operation: r.id), method: .post, body: try await oneShotStart(body), record: r)
-        guard snapshot.channel == nil else { throw OperationError(.invalidResponse) }
-        _ = try await commit(snapshot, record: r)
+        _ = try await request(OperationSnapshot.self, url: address(machine, operation: r.id), method: .post, body: try await oneShotStart(body), record: r) { snapshot in
+          guard snapshot.channel == nil else { throw OperationError(.invalidResponse) }
+          return try await self.commit(snapshot, record: r)
+        }
       } catch let error as OperationError {
         dispatching.remove(r.id)
         if let deadline = callerDeadline[r.id], clock.now() >= deadline { try await abandon(r, reason: "callerDeadline"); throw OperationError(.callerDeadline, operation: r.id, details: ["outcome": "pending"]) }
@@ -199,16 +214,36 @@ public actor OperationClient {
     Task { _ = try? await self.stop(r.id, reason: reason) }
   }
 
-  public func reconcile(_ id: UUID) async throws -> OperationSnapshot {
+  public func reconcile(_ id: UUID, holdMs: Int = 0) async throws -> OperationSnapshot {
     let record = try await active(id, allowStopped: true)
     if let reason = record.stopReason { return try await stop(id, reason: reason) }
-    return try await poll(id)
+    do { return try await poll(id, holdMs: holdMs) }
+    catch let error as OperationError where error.code == .operationEnded {
+      let current = try await active(id, allowStopped: true)
+      if let reason = current.stopReason { return try await stop(id, reason: reason) }
+      throw error
+    }
   }
 
   public func poll(_ id: UUID, channel: String? = nil, holdMs: Int = 0, terminalAck: Bool = false) async throws -> OperationSnapshot {
     let key = "\(id)/output/\(channel ?? "state")"
     guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
     let r = try await active(id)
+    var reservation = 0
+    if let channel {
+      guard let descriptor = r.description.kinds.first(where: { $0.name == r.start.kind })?.outputChannels.first(where: { $0.name == channel }) else { throw OperationError(.unknownChannel) }
+      let final = r.snapshot?.verdict == nil ? nil : r.snapshot?.finalOffsets[channel]
+      reservation = final.map { $0 <= (r.committed[channel] ?? .zero) } == true ? 0 : min(r.description.limits.pollBytes, descriptor.windowBytes)
+      while true {
+        let current = try await active(id)
+        let retained = current.output.values.flatMap { $0 }.reduce(0) { $0 + $1.byteCount }
+        if retained + (outputReservations[id] ?? 0) + reservation <= current.outputCapacity { break }
+        try await clock.sleep(.milliseconds(10))
+        try Task.checkCancellation()
+      }
+      outputReservations[id, default: 0] += reservation
+    }
+    defer { if reservation > 0 { outputReservations[id, default: 0] -= reservation; if outputReservations[id] == 0 { outputReservations.removeValue(forKey: id) } } }
     guard holdMs >= 0 && holdMs <= r.description.limits.pollHoldMs else { throw OperationError(.invalidInput) }
     var items = [URLQueryItem(name: "holdMs", value: String(holdMs))]
     if let channel {
@@ -220,9 +255,10 @@ public actor OperationClient {
     components.queryItems = items
     let dispatchInFlight = dispatching.contains(id)
     do {
-      let s = try await request(OperationSnapshot.self, url: components.url!, record: r, poll: true)
-      guard s.channel == channel else { throw OperationError(.invalidResponse) }
-      return try await commit(s, record: r)
+      return try await request(OperationSnapshot.self, url: components.url!, record: r, poll: true) { s in
+        guard s.channel == channel else { throw OperationError(.invalidResponse) }
+        return try await self.commit(s, record: r)
+      }
     } catch let error as OperationError {
       if error.code == .unknownOperation { try await saveUnknown(error, record: r, dispatchInFlight: dispatchInFlight) }
       if error.code == .requestDeadline || error.code == .transport { _ = try await active(id) }
@@ -252,7 +288,7 @@ public actor OperationClient {
               payload.byteCount <= r.description.limits.pollBytes,
               payload.records?.allSatisfy({ $0.jsonString().utf8.count <= descriptor.maxRecordBytes }) ?? true else { throw OperationError(.invalidResponse) }
         let buffered = value.output.values.flatMap { $0 }.reduce(0) { $0 + $1.byteCount }
-        guard buffered + payload.byteCount <= r.description.limits.inputBytes else { throw OperationError(.capacityExceeded) }
+        guard buffered + payload.byteCount <= r.outputCapacity else { throw OperationError(.capacityExceeded) }
         if payload.count > 0 { value.output[channel, default: []].append(payload) }
         value.committed[channel] = through
       }
@@ -274,17 +310,18 @@ public actor OperationClient {
   }
 
   public func takeOutput(_ id: UUID, channel: String) async throws -> [ChannelPayload] {
-    let key = "\(id)/output/\(channel)"
+    let key = "\(id)/consume/\(channel)"
     guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
     let record = try await store.read(id); let output = record.output[channel] ?? []
-    _ = try await store.transaction(id) { $0.output[channel] = [] }; return output
+    _ = try await store.transaction(id) { $0.output[channel]?.removeFirst(output.count) }; return output
   }
 
   public func write(_ id: UUID, channel: String, payload: ChannelPayload, end: Bool = false) async throws -> WriteReceipt {
     let key = "\(id)/input/\(channel)"
     guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
     let r = try await active(id)
-    guard payload.byteCount <= 64 * 1024 else { throw OperationError(.inputTooLarge) }
+    guard let descriptor = r.description.kinds.first(where: { $0.name == r.start.kind })?.inputChannels.first(where: { $0.name == channel }) else { throw OperationError(.unknownChannel) }
+    guard payload.byteCount <= min(descriptor.windowBytes, 64 * 1024) else { throw OperationError(.inputTooLarge) }
     let pending = r.pendingInputs[channel] ?? .init(offset: r.accepted[channel] ?? .zero, payload: payload, end: end)
     if let existing = r.pendingInputs[channel], existing.payload != payload || existing.end != end { throw OperationError(.invocationConflict) }
     _ = try await store.transaction(id) { $0.pendingInputs[channel] = pending }
@@ -294,10 +331,13 @@ public actor OperationClient {
       method: .put,
       body: .json(pending),
       record: r,
-    )
+    ) { receipt in
+      let requestedEnd = try pending.offset.advanced(by: pending.payload.count)
+      guard receipt.acceptedThrough >= pending.offset, receipt.acceptedThrough <= requestedEnd,
+            !receipt.end || (pending.end && receipt.acceptedThrough == requestedEnd) else { throw OperationError(.invalidResponse) }
+      return receipt
+    }
     let requestedEnd = try pending.offset.advanced(by: pending.payload.count)
-    guard receipt.acceptedThrough >= pending.offset, receipt.acceptedThrough <= requestedEnd,
-          !receipt.end || (pending.end && receipt.acceptedThrough == requestedEnd) else { throw OperationError(.invalidResponse) }
     _ = try await store.transaction(id) { value in
       try value.markEvidence()
       if value.unknown?.details != ["outcome": "unknown", "reason": "leaseSilence"] { value.unknown = nil }
@@ -317,12 +357,13 @@ public actor OperationClient {
     callerDeadline.removeValue(forKey: id)
     let dispatchInFlight = dispatching.contains(id)
     do {
-      let s = try await request(
+      return try await request(
         OperationSnapshot.self, url: address(r.machine, operation: id, suffix: "stop"), method: .put,
         body: .json(StopRequest(reason: r.stopReason ?? reason)), record: r, silenceBound: !bestEffort,
-      )
-      guard s.channel == nil else { throw OperationError(.invalidResponse) }
-      return try await commit(s, record: r)
+      ) { s in
+        guard s.channel == nil else { throw OperationError(.invalidResponse) }
+        return try await self.commit(s, record: r)
+      }
     } catch let error as OperationError {
       if error.code == .unknownOperation { try await saveUnknown(error, record: r, dispatchInFlight: dispatchInFlight) }
       if !bestEffort && (error.code == .requestDeadline || error.code == .transport) { _ = try await active(id, allowStopped: true) }

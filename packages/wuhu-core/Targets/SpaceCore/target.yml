@@ -11,6 +11,8 @@ dependencies:
   - SpaceFS
   - DocIndex
   - MachineContract
+  - OperationClient
+  - OperationProtocol
   - SessionDomain
   - SpaceContract
   - SpaceSQL
@@ -46,6 +48,10 @@ tests:
     - KeelObjectStore
     - DocIndex
     - MachineContract
+    - OperationClient
+    - OperationProtocol
+    - OperationClientTestSupport
+    - Crypto
     - SessionDomain
     - SpaceContract
     - SpaceSQL

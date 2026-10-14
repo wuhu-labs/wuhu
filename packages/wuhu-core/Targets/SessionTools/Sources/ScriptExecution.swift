@@ -99,6 +99,8 @@ final class ScriptExecution: Sendable {
   let secrets: ScriptSecrets
   let tools: ToolExecutor
   let machines: ScriptMachineAccess?
+  let machinesV2: ScriptMachineV2Access?
+  let v2Operations = ScriptV2Operations()
   let handler: ScriptHandlerContext?
   let buffers = Mutex(ScriptBuffers())
   let processes = ScriptProcesses()
@@ -119,6 +121,7 @@ final class ScriptExecution: Sendable {
     secrets: ScriptSecrets,
     tools: ToolExecutor,
     machines: ScriptMachineAccess? = nil,
+    machinesV2: ScriptMachineV2Access? = nil,
     handler: ScriptHandlerContext? = nil,
   ) {
     self.id = id
@@ -128,6 +131,7 @@ final class ScriptExecution: Sendable {
     self.secrets = secrets
     self.tools = tools
     self.machines = machines
+    self.machinesV2 = machinesV2
     self.handler = handler
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -252,6 +256,7 @@ final class ScriptExecution: Sendable {
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await self.deliver(to: space) }
       group.addTask { await self.processes.run() }
+      group.addTask { await self.v2Operations.run() }
       let ending = await withTaskGroup(of: ScriptEnding?.self) { race in
         race.addTask { await self.evaluate(space: space) }
         race.addTask { await self.supervise() }
@@ -274,6 +279,7 @@ final class ScriptExecution: Sendable {
           Logger(label: "wuhu.run-script").warning("script \(id) could not release its machine processes: \(error)")
         }
       }
+      await v2Operations.shutdown()
       finish(ending)
     }
   }
@@ -285,6 +291,7 @@ final class ScriptExecution: Sendable {
     ScriptSpace(execution: self, space: space).install(in: engine)
     ScriptDiscovery(execution: self, space: space).install(in: engine)
     ScriptMachineBindings(execution: self, space: space, access: machines).install(in: engine)
+    ScriptMachineV2Bindings(execution: self, space: space, access: machinesV2).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)

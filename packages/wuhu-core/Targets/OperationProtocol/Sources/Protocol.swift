@@ -37,7 +37,8 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     case operationExists, invalidOffset, offsetExpired, operationEnded, leaving, invalidInput
     case inputTooLarge, recordTooLarge, resultTooLarge, capacityExceeded, invocationConflict
     case machineUnavailable, callerDeadline, requestDeadline, requestCancelled, transport, invalidResponse, kindFailed
-    case machineNotAuthorized, traceUnavailable, spawnFailed, supervisorUnavailable, supervisorIdentityMismatch, invalidConfiguration
+    case machineNotAuthorized, traceUnavailable, storeUnavailable, fileChanged, unsupportedDialect, fileUnavailable
+    case spawnFailed, supervisorUnavailable, supervisorIdentityMismatch, invalidConfiguration
   }
 
   public let code: Code
@@ -54,6 +55,7 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     case .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invocationConflict: 409
     case .inputTooLarge, .recordTooLarge, .resultTooLarge: 413
     case .capacityExceeded: 429
+    case .fileChanged: 412
     case .machineUnavailable: 503
     case .machineNotAuthorized: 403
     default: 400
@@ -155,6 +157,11 @@ public struct StartRequest: Codable, Equatable, Sendable {
   public let kind: String
   public let input: JSONValue
   public init(kind: String, input: JSONValue) { self.kind = kind; self.input = input }
+  public func canonicalData() throws -> Data {
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let normalized = try JSONDecoder().decode(Self.self, from: encoder.encode(self))
+    return try encoder.encode(normalized)
+  }
 }
 
 public struct ChannelPayload: Codable, Equatable, Sendable {

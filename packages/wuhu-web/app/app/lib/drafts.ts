@@ -1,4 +1,7 @@
 import type { ReplyDraft } from './conversation.ts'
+import { admitFiles } from './attachments.ts'
+import { prepareAttachment } from './image-intake.ts'
+import { errorMessage } from '../sdk/errors.ts'
 
 export interface DraftFile {
   id: string
@@ -9,9 +12,17 @@ export interface Draft {
   text: string
   reply: ReplyDraft | null
   files: readonly DraftFile[]
+  preparing: boolean
+  refusal: string | null
 }
 
-export const emptyDraft: Draft = { text: '', reply: null, files: [] }
+export const emptyDraft: Draft = {
+  text: '',
+  reply: null,
+  files: [],
+  preparing: false,
+  refusal: null,
+}
 
 export interface FileVault {
   read(key: string): Promise<DraftFile[] | undefined>
@@ -51,6 +62,7 @@ export function withDictation(draft: Draft, spoken: string): Draft {
 // Puts a failed send back in front of whatever was written while it was out.
 export function restoreDraft(outgoing: Draft, meanwhile: Draft): Draft {
   return {
+    ...meanwhile,
     text: meanwhile.text === ''
       ? outgoing.text
       : `${outgoing.text.trimEnd()}\n${meanwhile.text}`,
@@ -63,7 +75,9 @@ export function restoreDraft(outgoing: Draft, meanwhile: Draft): Draft {
 // the parts it touched whole, so with two tabs the last write wins.
 export class Drafts {
   private readonly drafts = new Map<string, Draft>()
+  private readonly savedAt = new Map<string, number>()
   private readonly loading = new Set<string>()
+  private readonly preparing = new Map<string, Set<string>>()
   private readonly listeners = new Set<() => void>()
   private lostFiles = 0
 
@@ -90,32 +104,126 @@ export class Drafts {
     if (known !== undefined) return known
     const key = draftKey(this.scope, target)
     const stored = this.fresh(key)
-    const draft: Draft = stored === null
-      ? emptyDraft
-      : { text: stored.text, reply: stored.reply, files: [] }
+    this.savedAt.set(target, stored?.savedAt ?? this.now())
+    const draft: Draft = stored === null ? emptyDraft : {
+      ...emptyDraft,
+      text: stored.text,
+      reply: stored.reply,
+      preparing: true,
+    }
     this.drafts.set(target, draft)
     if (stored !== null) {
       this.loading.add(target)
       this.vault.read(key).then((files) => {
-        if (!this.loading.delete(target) || files === undefined) return
-        const current = this.get(target)
-        if (current.files.length === 0) {
-          this.set(target, { ...current, files })
-        } else {
-          this.update(target, (edited) => ({
-            ...edited,
-            files: [...files, ...edited.files],
-          }))
-        }
-      }, () => this.vaultFailed())
+        if (!this.loading.delete(target)) return
+        this.change(target, (current) => ({
+          ...current,
+          files: [...(files ?? []), ...current.files],
+        }), false)
+      }, () => {
+        if (!this.loading.delete(target)) return
+        this.vaultFailed()
+        this.change(target, (current) => current, false)
+      })
     }
     return draft
   }
 
+  attach(target: string, incoming: readonly File[]): void {
+    this.update(target, (current) => {
+      const { admitted, refusal } = admitFiles(
+        current.files.map((held) => held.file),
+        incoming,
+      )
+      return {
+        ...current,
+        files: [
+          ...current.files,
+          ...admitted.map((file) => ({ id: crypto.randomUUID(), file })),
+        ],
+        refusal,
+      }
+    })
+  }
+
+  take(target: string): Draft | null {
+    const draft = this.get(target)
+    if (draft.preparing) return null
+    this.clear(target)
+    return draft
+  }
+
   update(target: string, change: (draft: Draft) => Draft): void {
+    this.change(target, change, true)
+  }
+
+  private change(
+    target: string,
+    change: (draft: Draft) => Draft,
+    userEdit: boolean,
+  ): void {
     const before = this.get(target)
     const after = change(before)
+    if (
+      userEdit &&
+      (after.text !== before.text || after.reply !== before.reply ||
+        after.files !== before.files)
+    ) {
+      this.savedAt.set(target, this.now())
+    }
+    const pending = this.preparing.get(target) ?? new Set<string>()
+    for (const id of pending) {
+      if (!after.files.some((held) => held.id === id)) pending.delete(id)
+    }
+    const added = after.files.filter((held) =>
+      !before.files.some((old) => old.id === held.id && old.file === held.file)
+    )
+    for (const held of added) pending.add(held.id)
+    this.preparing.set(target, pending)
+    this.store(target, {
+      ...after,
+      preparing: this.loading.has(target) || pending.size > 0,
+    })
+    for (const held of added) void this.prepare(target, held, pending)
+  }
+
+  private async prepare(
+    target: string,
+    held: DraftFile,
+    pending: Set<string>,
+  ): Promise<void> {
+    let file: File | null = null
+    let refusal: string | null = null
+    try {
+      file = await prepareAttachment(held.file)
+    } catch (error) {
+      refusal = errorMessage(error)
+    }
+    if (this.preparing.get(target) !== pending || !pending.delete(held.id)) {
+      return
+    }
+    const current = this.get(target)
+    this.store(target, {
+      ...current,
+      files: file === held.file
+        ? current.files
+        : file === null
+        ? current.files.filter((item) => item.id !== held.id)
+        : current.files.map((item) =>
+          item.id === held.id ? { ...item, file } : item
+        ),
+      refusal: [current.refusal, refusal].filter(Boolean).join(' ') || null,
+      preparing: this.loading.has(target) || pending.size > 0,
+    })
+  }
+
+  private store(target: string, after: Draft): void {
+    const before = this.get(target)
     this.set(target, after)
+    if (
+      after.text === before.text && after.reply === before.reply &&
+      after.files === before.files
+    ) return
     const key = draftKey(this.scope, target)
     if (isEmpty(after)) {
       this.shelf.removeItem(key)
@@ -126,7 +234,7 @@ export class Drafts {
           {
             text: after.text,
             reply: after.reply,
-            savedAt: this.now(),
+            savedAt: this.savedAt.get(target)!,
           } satisfies StoredDraft,
         ),
       )
@@ -144,6 +252,8 @@ export class Drafts {
   clear(target: string): void {
     const key = draftKey(this.scope, target)
     this.loading.delete(target)
+    this.preparing.delete(target)
+    this.savedAt.delete(target)
     this.set(target, emptyDraft)
     this.shelf.removeItem(key)
     this.vault.remove(key).catch(() => this.vaultFailed())

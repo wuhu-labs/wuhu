@@ -130,10 +130,10 @@ import Testing
     )
     let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
     defer { consumer.cancel() }
-    _ = await awaitItems(results, atLeast: 1)
+    _ = try await awaitItems(results, atLeast: 1)
     let edits: [RowEdit] = [.insert(["title": "one", "n": 1]), .insert(["title": "two", "n": 2])]
     _ = try await space.commitRows(table, edits: edits, in: .shared, acting: .shared)
-    let collected = await awaitItems(results, atLeast: 2)
+    let collected = try await awaitItems(results, atLeast: 2)
     let expected: [[[Cell]]] = [[], [[.text("two")]]]
     #expect(collected.map(\.rows) == expected)
 

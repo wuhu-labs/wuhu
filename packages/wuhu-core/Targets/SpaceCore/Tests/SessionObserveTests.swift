@@ -37,18 +37,18 @@ struct SessionObserveTests {
       let consumer = Task { do { for try await rows in stream { await results.append(rows) } } catch {} }
       defer { consumer.cancel() }
 
-      _ = await awaitItems(results, atLeast: 1)
+      _ = try await awaitItems(results, atLeast: 1)
       let sid = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      _ = await awaitItems(results, atLeast: 2)
+      _ = try await awaitItems(results, atLeast: 2)
       _ = try await store.enqueue(sid, input: SessionFix.message())
-      let collected = await awaitItems(results, atLeast: 3)
+      let collected = try await awaitItems(results, atLeast: 3)
 
       // Draining does not flip the axis, so the induced table stays silent:
       // per-item traffic never reaches observers.
       _ = try await store.drainQueue(sid)
       await settle()
 
-      #expect(collected.count == 3)
+      try #require(collected.count == 3)
       #expect(collected[0].rows.isEmpty)
       #expect(collected[1].rows == [[.text("no_work")]])
       #expect(collected[2].rows == [[.text("has_work")]])

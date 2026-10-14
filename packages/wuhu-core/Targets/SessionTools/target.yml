@@ -20,6 +20,8 @@ dependencies:
   - SpaceFS
   - SystemFiles
   - MachineContract
+  - OperationClient
+  - OperationProtocol
   - MachineChannel
   - WuhuAI
   - JSONValue
@@ -47,6 +49,11 @@ tests:
     - SpaceFS
     - SystemFiles
     - MachineContract
+    - Crypto
+    - OperationClient
+    - OperationProtocol
+    - OperationRuntime
+    - ComputerFiles
     - MachineChannel
     - WuhuAI
     - JSONValue

@@ -14,15 +14,17 @@ public final class Scripts: Sendable {
   let discovery = Mutex(ScriptDiscoveryConfiguration())
   let secrets: SpaceSecretStores?
   let machines: ScriptMachineAccess?
+  let machinesV2: ScriptMachineV2Access?
   let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
 
-  public init(space: Space, secrets: SpaceSecretStores? = nil, machines: ScriptMachineAccess? = nil, identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil) {
+  public init(space: Space, secrets: SpaceSecretStores? = nil, machines: ScriptMachineAccess? = nil, machinesV2: ScriptMachineV2Access? = nil, identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil) {
     self.space = space
     self.secrets = secrets
     self.machines = machines
+    self.machinesV2 = machinesV2
     self.identityFetch = identityFetch
     (launches, launch) = AsyncStream.makeStream()
   }
@@ -68,6 +70,7 @@ public final class Scripts: Sendable {
       secrets: ScriptSecrets(stores: secrets, space: space, session: session),
       tools: tools,
       machines: machines,
+      machinesV2: machinesV2,
     )
     running.withLock { $0[id] = execution }
     launch.yield(execution)

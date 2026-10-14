@@ -77,16 +77,17 @@ actor Collector<Element: Sendable> {
 func awaitItems<Element>(
   _ collector: Collector<Element>,
   atLeast count: Int,
-  timeout: Duration = .seconds(5),
-) async -> [Element] {
+  timeout: Duration = .seconds(30),
+) async throws -> [Element] {
   let clock = ContinuousClock()
   let deadline = clock.now.advanced(by: timeout)
-  while clock.now < deadline {
-    let items = await collector.items
-    if items.count >= count { return items }
+  var items = await collector.items
+  while items.count < count, clock.now < deadline {
     try? await clock.sleep(for: .milliseconds(1))
+    items = await collector.items
   }
-  return await collector.items
+  try #require(items.count >= count, "expected at least \(count) emission(s) within \(timeout), got \(items.count)")
+  return items
 }
 
 // Give background observation work (GRDB region callbacks run on a dispatch

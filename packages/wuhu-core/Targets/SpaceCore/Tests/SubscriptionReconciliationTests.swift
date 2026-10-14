@@ -127,11 +127,11 @@ import Testing
         } catch { Issue.record(error) }
       }
       defer { task.cancel() }
-      _ = await awaitItems(lifecycle, atLeast: 1)
+      _ = try await awaitItems(lifecycle, atLeast: 1)
       _ = try await store.archive(id, grace: .seconds(100))
-      _ = await awaitItems(lifecycle, atLeast: 2)
+      _ = try await awaitItems(lifecycle, atLeast: 2)
       try await store.unarchive(id)
-      let snapshots = await awaitItems(lifecycle, atLeast: 3)
+      let snapshots = try await awaitItems(lifecycle, atLeast: 3)
       #expect(snapshots == [false, true, false])
       #expect(try await store.subscriptionRegistrations().first?.archived == false)
       #expect(try await store.armedSubscriptions(id).count == 1)
