@@ -35,6 +35,7 @@ export function SessionRow({
   session,
   label = session.title,
   depth,
+  badge,
   expanded,
   active,
   menu,
@@ -44,6 +45,7 @@ export function SessionRow({
   session: SessionSummary
   label?: string
   depth: number
+  badge?: number | null
   expanded?: boolean
   active: boolean
   menu?: MenuAction[]
@@ -55,6 +57,7 @@ export function SessionRow({
   return (
     <SidebarRow
       label={label}
+      badge={badge}
       mark={<SessionMark session={session} size={26} label={label} />}
       unread={session.unread}
       status={status == null ? undefined : {

@@ -97,6 +97,7 @@ function CustomSection({
       )}
       {rows.map(({ item, depth, hasChildren, open, target }) => {
         const shared = {
+          badge: item.badge,
           depth,
           expanded: hasChildren ? open : undefined,
           active: here === target.href,

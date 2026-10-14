@@ -157,7 +157,9 @@ import Testing
     ] {
       let refused = try await send(method, path, body: body, key: alice.key)
       #expect(refused.status == .forbidden, "\(method) \(path)")
-      #expect((try await json(refused)).stringValue(at: "code") == "adminRequired", "\(method) \(path)")
+      let refusal = try await json(refused)
+      #expect(refusal.stringValue(at: "code") == "adminRequired", "\(method) \(path)")
+      #expect(refusal.stringValue(at: "message")?.contains("admin of shared") == true)
     }
 
     let created = try await send(.post, "/v1/accounts", body: .object(["name": .string("carol")]), key: root.key)
@@ -166,6 +168,13 @@ import Testing
     let carolID = try #require(carol.stringValue(at: "id"))
     #expect(AccountID.isValid(carolID))
     #expect(carol["admin"] == .bool(false))
+    let accountID = AccountID(rawValue: carolID)
+    let personal = try #require(try await harness.space.personalGroup(of: accountID))
+    #expect(try await harness.space.memberGroups(of: accountID) == [personal, .shared])
+    #expect(try await harness.space.reads(personal) == [personal, .shared])
+    #expect(try await harness.space.isHumanAdmin(accountID, of: personal))
+    #expect(try await !harness.space.isHumanAdmin(accountID, of: .shared))
+    #expect(try await harness.space.ensurePersonalGroup(account: accountID) == personal)
 
     let reserved = try await send(.post, "/v1/accounts", body: .object(["name": .string("Owner")]), key: root.key)
     #expect(reserved.status == .badRequest)

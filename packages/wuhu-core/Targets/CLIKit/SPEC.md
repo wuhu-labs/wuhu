@@ -38,3 +38,11 @@ Table create/alter responses carry rev/token, both printed and recorded. Table m
 ## Channels
 
 `wuhu channel create [--title T] [person...]`, `add <id> <person...>`, `remove <id> <person...>`, and `rename <id> <title>` manage human-only channels through the HTTP channel contract. `rename <id> --clear` removes a title. Creation prints the channel id; mutations emit no output on success. A person creator joins; a session creator does not. Typed refusals preserve server error codes.
+
+## Live people management
+
+Without `--space`, `user add --name <name> [--admin] [--ttl <seconds>]`, `user invite <account-id> [--ttl <seconds>]` and `user admin <account-id>` act as the enrolled person on the pinned HTTPS server. They refuse session identity locally and refuse an unenrolled wallet rather than using the anonymous dev owner. Each live operation resolves one authenticated client and retains its bearer across discovery and every mutation; losing the recorded host identity mid-operation cannot switch subsequent requests to anonymous. Bearer remint failure is an error, not a fallback. Add posts `{name, admin}` to `/v1/accounts`, prints the new account id, then posts `{account, capabilities:["device"], ttlSeconds?}` to `/v1/enroll` and prints its one-time enrollment link. If invite minting fails after creation, the printed id remains usable for a subsequent `user invite`; the command exits nonzero. Invite prints only the link; admin posts `{admin:true}` to `/v1/accounts/:id/admin` and prints the promoted id. Add/admin require an admin of `shared`; invite is self or an admin of `shared`. An admin of a different group is insufficient.
+
+Invites default to 3600 seconds, with positive `--ttl` seconds accepted; expiry notes go to stderr. Link minting first reads `/v1/server` without swallowing errors, uses its advertised origin (or the pinned address when no origin is configured), and uses the enrollment output's space id and optional generated-certificate fingerprint. Neither a discovery error nor an identity error switches to an offline or anonymous path. Live invite refuses `--server`.
+
+The existing `user add`, `user invite` and `user reset` commands with `--space` retain their offline dispatch, flags, output and recovery behavior. Offline add still prints only its account id and does not accept `--ttl`; admin is a new live-only verb.

@@ -211,13 +211,32 @@ struct UserVerbTests {
     #expect(await harness.stderr.text.contains("no space folder"))
   }
 
+  @Test func liveVerbsWithoutAPinnedWalletRefuseBeforeAnyRequest() async throws {
+    for args in [
+      ["user", "add", "--name", "bob"],
+      ["user", "invite", "ac_missing0"],
+      ["user", "admin", "ac_missing0"],
+    ] {
+      let harness = try RecoveryHarness()
+      let requests = RequestLog()
+      var runner = harness.runner
+      runner.fetch = FetchClient { request in
+        requests.record(request.url.path)
+        throw FetchError.unimplemented
+      }
+      #expect(await runner.run(arguments: args) == 64)
+      #expect(await harness.stderr.text == "no space pinned; run: wuhu use <host:port>\n")
+      #expect(await harness.stdout.text == "")
+      #expect(requests.recorded.isEmpty)
+    }
+  }
+
   @Test func usageErrors() async throws {
     let harness = try RecoveryHarness()
     #expect(await harness.run(["user", "add"]) == 64)
     #expect(await harness.run(["user", "reset", "--space", harness.folder.path]) == 64)
     #expect(await harness.run(["user", "revoke"]) == 64)
     #expect(await harness.run(["user"]) == 64)
-    #expect(await harness.run(["user", "invite", "ac_missing0"]) == 64)
     #expect(await harness.run(["user", "invite", "--space", harness.folder.path]) == 64)
     #expect(await harness.run(["user", "invite", "--space", harness.folder.path, "--ttl", "0", "ac_missing0"]) == 64)
     #expect(await harness.run(["user", "invite", "--space", harness.folder.path, "--server", "http://x", "ac_missing0"]) == 64)

@@ -34,7 +34,11 @@ import Testing
         "/_/observe", "/models.json", #""strategy":"incr""#, "notifications", "/_/shell.js", "/_/sessions/<your-id>/",
         "wuhu://system/",
       ],
-      "/skills/space-html-pages/SKILL.md": ["wuhu.context", "wuhu:navigate", "--wuhu-inset-top", "safe-area-inset-top"],
+      "/skills/space-html-pages/SKILL.md": [
+        "wuhu.context", "wuhu:navigate", "--wuhu-inset-top", "safe-area-inset-top",
+        "viewport-fit=cover", "user-scalable=no", "overflow-x: clip", "overscroll-behavior-x: none",
+        "touch-action: manipulation", "overflow-x: auto",
+      ],
       "/skills/sessions/SKILL.md": ["wuhu:session", "topLevel: true", "expectsReply: true", "Promise.all"],
       "/skills/observe-group-channel/SKILL.md": ["conversation_id", "handler", "state", "wake", "complete", "every-message", "topic", "name-mention"],
     ]

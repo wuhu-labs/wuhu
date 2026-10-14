@@ -73,7 +73,7 @@ extension Command {
     switch self {
     case let .upgrade(upgrade):
       !upgrade.check
-    case .use, .trust, .untrust, .userList, .userHandle, .userProfile, .userRemove,
+    case .use, .trust, .untrust, .userAdd, .userInvite, .userAdmin, .userList, .userHandle, .userProfile, .userRemove,
          .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineJoin, .machineRun, .machineRotate,
          .machineRevoke, .machineMove, .authSet, .authList, .authRemove, .authLogin,
          .authLogout, .modelsUpdate, .groupUse, .identitySet, .identityRotate, .identityRegisterNew:

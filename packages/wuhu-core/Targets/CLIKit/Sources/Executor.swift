@@ -248,6 +248,12 @@ struct Executor {
       preconditionFailure("serve is routed before the executor")
     case .user:
       preconditionFailure("user is routed before the executor")
+    case let .userAdd(name, admin, ttl):
+      try await self.userAdd(name: name, admin: admin, ttl: ttl)
+    case let .userInvite(account, ttl):
+      try await self.userInvite(account: account, ttl: ttl)
+    case let .userAdmin(account):
+      try await self.userAdmin(account: account)
     case .userList:
       try await self.userList()
     case let .userHandle(handle, displayName):

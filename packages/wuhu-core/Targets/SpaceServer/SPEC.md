@@ -758,3 +758,9 @@ Sessions read, post and manage without joining the channel; legacy session membe
 `SpaceLogContext` carries the space id in a task-local during assembly, request dispatch, deferred WebSocket sessions and background work. Executables install its swift-log metadata provider so all logs emitted in those scopes include `space`. Listener/process diagnostics outside a space scope have no tenant id.
 
 Host shutdown owns and cancels response-body forwarding through completion, with demand-driven bounded buffering; SSE from an old host closes before stop/delete returns. Host assembly owns the web-push HTTP transport and asynchronously shuts it down even before run or after listener bind failure. Session registry disposal also occurs on the never-run path.
+
+## Live account creation and admin
+
+`POST /v1/accounts` and `POST /v1/accounts/:id/admin` authorize through the account's admin reachability to `shared`, not its acting group or personal-group admin status. Refusals retain code `adminRequired` and say that an admin of `shared` is required. The existing anonymous `--dev` owner remains a development-only management actor; the live CLI requires an enrolled person instead. `POST /v1/enroll` remains self or admin of `shared`.
+
+Creating a human account calls `Space.addAccount`, which transactionally runs `Groups.ensurePersonalGroup`: the new person belongs to their personal group and `shared`, their personal group reads `shared` and administers itself, and `admin:true` grants admin of `shared`. Repeated personal-group assurance returns the same group. No server stop or schema change is required.

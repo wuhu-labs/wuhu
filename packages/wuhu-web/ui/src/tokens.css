@@ -826,6 +826,10 @@
     width: 14px;
   }
 
+  .wui-row > .wui-row-label {
+    flex: 1;
+  }
+
   .wui-row-label {
     min-width: 0;
     overflow: hidden;

@@ -37,6 +37,7 @@ export interface SidebarNode {
   title: string
   destination: string
   order: number | null
+  badge?: number | null
 }
 
 const directory = '/.sidebars/'
@@ -128,6 +129,7 @@ export function sidebarNodes(output: QueryOutput): SidebarNode[] {
   const order = column('sort_order') === -1
     ? column('order')
     : column('sort_order')
+  const badge = column('badge')
   const nodes = output.rows.map((row): SidebarNode => {
     const rowId = row[id]
     const rowTitle = row[title]
@@ -151,7 +153,15 @@ export function sidebarNodes(output: QueryOutput): SidebarNode[] {
     ) {
       throw new Error('Section ordering must be numeric or null.')
     }
+    const rowBadge = badge === -1 ? null : row[badge]
+    if (
+      rowBadge !== null &&
+      (typeof rowBadge !== 'number' || !Number.isInteger(rowBadge))
+    ) {
+      throw new Error('Section badges must be integers or null.')
+    }
     return {
+      ...(badge === -1 ? {} : { badge: rowBadge }),
       id: rowId,
       parent: rowParent,
       title: rowTitle,

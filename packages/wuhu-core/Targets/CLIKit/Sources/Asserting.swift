@@ -9,6 +9,8 @@ import Dependencies
 import Fetch
 import protocol MachineChannel.FrameTransport
 import SpaceClient
+import enum SpaceContract.GroupHeader
+import struct SpaceContract.ServerInfo
 import Synchronization
 
 private let assertionLifetime: TimeInterval = 3600
@@ -63,15 +65,19 @@ final class BearerSource: Sendable {
 }
 
 extension Executor {
-  mutating func authenticated(_ space: String, longRunning: Bool = false) async throws -> SpaceClient {
+  mutating func authenticated(_ space: String, longRunning: Bool = false, requiringPerson: Bool = false) async throws -> SpaceClient {
     if let session = self.session {
+      guard !requiringPerson else { throw CLIError(message: sessionRefusal) }
       return self.sessionClient(session, longRunning: longRunning)
     }
     let group = self.group.group
-    if let group {
+    if let group, !requiringPerson {
       try await self.requireGroups(space: space, selected: group)
     }
     guard let bearer = try await self.bearerSource(space: space) else {
+      guard !requiringPerson else {
+        throw CLIError(message: "this device holds no signed-in identity in the pinned space; enroll one with: wuhu login < invite-link")
+      }
       let client = self.client(space, group: group, longRunning: longRunning)
       try await self.announceWallet(space: space, client: client, hasBearer: false)
       return client
@@ -91,6 +97,13 @@ extension Executor {
       dial: dial,
       group: group,
     )
+    if requiringPerson, let group, !self.groupsConfirmed.contains(space) {
+      let info: ServerInfo = try await client.api(.get, "/v1/server")
+      guard info.features?.contains(GroupHeader.feature) == true else {
+        throw CLIError(message: "this server has no groups; \(group) comes from \(self.group.label)")
+      }
+      self.groupsConfirmed.insert(space)
+    }
     try await self.announceWallet(space: space, client: client, hasBearer: true)
     return client
   }

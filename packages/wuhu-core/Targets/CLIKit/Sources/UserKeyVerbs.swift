@@ -1,11 +1,53 @@
 import JSONValue
+import SpaceClient
 import struct SpaceContract.AccountListOutput
+import struct SpaceContract.AccountPayload
 import struct SpaceContract.AccountRemoveOutput
+import struct SpaceContract.EnrollMintOutput
 import struct SpaceContract.KeyListOutput
+import struct SpaceContract.ServerInfo
 import struct SpaceContract.UserPayload
 import struct SpaceContract.UsersOutput
 
 extension Executor {
+  mutating func userAdd(name: String, admin: Bool, ttl: Int?) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let client = try await self.authenticated(space, requiringPerson: true)
+    let info: ServerInfo = try await client.api(.get, "/v1/server")
+    let account: AccountPayload = try await client.api(.post, "/v1/accounts", body: .object([
+      "name": .string(name), "admin": .bool(admin),
+    ]))
+    await self.runner.stdout("account \(account.id) (\(name))\(account.admin ? " admin" : "")\n")
+    try await self.printUserInvite(account: account.id, ttl: ttl, client: client, server: info.origin ?? client.base)
+  }
+
+  mutating func userInvite(account: String, ttl: Int?) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let client = try await self.authenticated(space, requiringPerson: true)
+    let info: ServerInfo = try await client.api(.get, "/v1/server")
+    try await self.printUserInvite(account: account, ttl: ttl, client: client, server: info.origin ?? client.base)
+  }
+
+  mutating func userAdmin(account: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let client = try await self.authenticated(space, requiringPerson: true)
+    let output: AccountPayload = try await client.api(.post, "/v1/accounts/\(account)/admin", body: .object([
+      "admin": .bool(true),
+    ]))
+    await self.runner.stdout("account \(output.id) admin\n")
+  }
+
+  private mutating func printUserInvite(account: String, ttl: Int?, client: SpaceClient, server: String) async throws {
+    var body: JSONValue = .object([
+      "account": .string(account), "capabilities": .array([.string("device")]),
+    ])
+    body.set("ttlSeconds", ttl.map(JSONValue.integer))
+    let output: EnrollMintOutput = try await client.api(.post, "/v1/enroll", body: body)
+    let envelope = EnrollmentEnvelope(server: server, token: output.token, space: output.space, fingerprint: output.fingerprint)
+    await self.runner.stdout(envelope.url + "\n")
+    await self.runner.stderr("one-time link; it dies at first use or in \(ttl ?? 3600) seconds\n")
+  }
+
   mutating func userHandle(handle: String, displayName: String?) async throws {
     let space = try self.wallet.pinnedSpace()
     var body: JSONValue = .object(["handle": .string(handle)])

@@ -184,6 +184,7 @@ export function SidebarRow(
     mark,
     status,
     meta,
+    badge,
     unread,
     href,
     active,
@@ -200,6 +201,7 @@ export function SidebarRow(
     mark?: ReactNode
     status?: { tone: DotTone; label: string }
     meta?: string
+    badge?: number | null
     unread?: boolean
     href?: string
     active?: boolean
@@ -237,6 +239,9 @@ export function SidebarRow(
         />
       )}
       {meta && <span className='wui-row-meta'>{meta}</span>}
+      {badge != null && badge > 0 && (
+        <span className='wui-pill wui-row-badge'>{badge}</span>
+      )}
     </>
   )
   const element = href

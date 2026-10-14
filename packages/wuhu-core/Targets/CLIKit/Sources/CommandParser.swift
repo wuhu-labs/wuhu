@@ -650,17 +650,28 @@ extension Command {
 
   private static func parseUser(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "user: missing <add|reset|invite|list|remove|handle|profile>")
+      throw UsageError(message: "user: missing <add|admin|reset|invite|list|remove|handle|profile>")
     }
     switch subcommand {
     case "add":
       let admin = parser.flag("--admin")
-      guard let folder = try parser.option("--space", verb: "user add") else {
-        throw UsageError(message: "user add: --space <folder> is required")
-      }
+      let folder = try parser.option("--space", verb: "user add")
       let name = try parser.option("--name", verb: "user add")
+      if let folder {
+        try parser.finish(verb: "user add")
+        return .user(.add(folder: folder, name: name, admin: admin))
+      }
+      let ttl = try parser.intOption("--ttl", verb: "user add")
+      if let ttl, ttl <= 0 {
+        throw UsageError(message: "user add: --ttl must be a positive number of seconds")
+      }
+      guard let name else { throw UsageError(message: "user add: --name <name> is required without --space") }
       try parser.finish(verb: "user add")
-      return .user(.add(folder: folder, name: name, admin: admin))
+      return .userAdd(name: name, admin: admin, ttl: ttl)
+    case "admin":
+      let account = try parser.required("account-id", verb: "user admin")
+      try parser.finish(verb: "user admin")
+      return .userAdmin(account: account)
     case "list":
       try parser.finish(verb: "user list")
       return .userList
@@ -684,9 +695,7 @@ extension Command {
       try parser.finish(verb: "user reset")
       return .user(.reset(folder: folder, account: account))
     case "invite":
-      guard let folder = try parser.option("--space", verb: "user invite") else {
-        throw UsageError(message: "user invite: --space <folder> is required")
-      }
+      let folder = try parser.option("--space", verb: "user invite")
       var server = try parser.option("--server", verb: "user invite")
       if let raw = server {
         guard let url = URL(string: raw), url.scheme == "https", url.host != nil,
@@ -702,7 +711,11 @@ extension Command {
       }
       let account = try parser.required("account-id", verb: "user invite")
       try parser.finish(verb: "user invite")
-      return .user(.invite(folder: folder, account: account, server: server, ttl: ttl))
+      if let folder {
+        return .user(.invite(folder: folder, account: account, server: server, ttl: ttl))
+      }
+      guard server == nil else { throw UsageError(message: "user invite: --server requires --space; live invites use the pinned server") }
+      return .userInvite(account: account, ttl: ttl)
     default:
       throw UsageError(message: "user: unknown subcommand \(subcommand)")
     }
@@ -882,7 +895,7 @@ extension Command {
     serve <folder>  run the space server
     machine   add, join, run, list, name, rotate, revoke, or move machines
     device    list the phones, pads, macs and vision devices signed into this space, or annotate one
-    user      accounts: offline recovery (add/reset/invite), live list/remove, and your own handle/profile
+    user      live add/invite/admin/list/remove; offline add/reset/invite with --space; own handle/profile
     key       list or revoke enrolled device keys in the pinned space
     secret    manage your group's secrets for run_script and execs (write-only)
     group     list the space's groups, or choose the one this wallet acts in
@@ -1321,18 +1334,22 @@ extension Command {
     \(exitCodes)
     """,
     "user": """
-    usage: wuhu user <add|reset|invite> --space <folder> ... | wuhu user <list|remove|handle|profile> ...
+    usage: wuhu user <add|admin|reset|invite|list|remove|handle|profile> ...
 
-    add/reset/invite are offline recovery: they operate directly on
-    <folder>/space.sqlite with the server stopped. possession of the space
-    folder is root; there is no localhost side channel. list/remove run
-    against the pinned space server and require an admin account.
+    add/invite/admin run against the pinned server as the signed-in person.
+    add/admin require an admin of shared; invite is self or admin of shared.
+    add/reset/invite with --space are offline recovery: they operate directly
+    on <folder>/space.sqlite with the server stopped. possession of the space
+    folder is root. list/remove require an admin of shared.
 
     subcommands:
-      add [--name N] [--admin] --space <folder>  create a human account and print its id
+      add --name N [--admin] [--ttl <seconds>]  create an account and invite, live
+      add [--name N] [--admin] --space <folder>  create an account, offline
+      admin <account-id>                    grant admin of shared, live
       reset --space <folder> <account-id>  delete the account's keys and read sessions
-      invite [--server <url>] [--ttl <seconds>] --space <folder> <account-id>
-                                           mint a one-time device invite link for the account
+      invite <account-id> [--ttl <seconds>]  mint a one-time link, live
+      invite --space <folder> [--server <url>] [--ttl <seconds>] <account-id>
+                                           mint a one-time link, offline
       list                                 list the pinned space's accounts (admin)
       remove <account-id>                  remove an account; its keys and browser
                                            logins die, its history stays (admin)
@@ -1357,14 +1374,28 @@ extension Command {
     \(exitCodes)
     """,
     "user add": """
-    usage: wuhu user add --space <folder> [--name N] [--admin]
+    usage: wuhu user add --name <name> [--admin] [--ttl <seconds>]
+           wuhu user add --space <folder> [--name N] [--admin]
 
-    creates a human account directly in <folder>/space.sqlite (run with the
-    server stopped) and prints its account id. each run creates a new
+    without --space, creates a human account on the pinned running server as
+    the signed-in person (admin of shared only). prints its account id and a
+    one-time invite link. --admin grants admin of shared. the invite expires
+    after --ttl seconds (default 3600); no server stop is needed.
+
+    with --space, creates a human account directly in <folder>/space.sqlite
+    (run with the server stopped) and prints its account id. each run creates a new
     account; device keys are enrolled separately. --admin marks the account
     as a space admin; the first account of an adminless space becomes admin
     without the flag — offline add is also the recovery path when every
     admin is gone.
+    \(exitCodes)
+    """,
+    "user admin": """
+    usage: wuhu user admin <account-id>
+
+    grants admin of shared on the pinned running server as the signed-in
+    person (admin of shared only). this is a live-only verb; for offline
+    bootstrap or recovery, use user add --space <folder> --admin instead.
     \(exitCodes)
     """,
     "user list": """
@@ -1391,9 +1422,15 @@ extension Command {
     \(exitCodes)
     """,
     "user invite": """
-    usage: wuhu user invite --space <folder> [--server <url>] [--ttl <seconds>] <account-id>
+    usage: wuhu user invite <account-id> [--ttl <seconds>]
+           wuhu user invite --space <folder> [--server <url>] [--ttl <seconds>] <account-id>
 
-    mints a one-time device join token for the account directly in
+    without --space, mints a fresh one-time invite on the pinned running
+    server as the signed-in person: self or admin of shared. prints only the
+    link, for a lost invite or another device. expires after --ttl seconds
+    (default 3600); no server stop is needed.
+
+    with --space, mints a one-time device join token for the account directly in
     <folder>/space.sqlite (run with the server stopped) and prints the
     complete invite link (https://host:port/_/enroll#token=...&space=...[&fp=...])
     for wuhu login or the browser. this is the device-zero bootstrap: it

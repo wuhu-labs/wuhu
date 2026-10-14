@@ -114,13 +114,9 @@ wuhu use space.example.com:5530
 `wuhu login` records a delivered fingerprint as a pin (a link without one
 drops a pin left by an earlier enrollment once the server passes system trust), generates this device's key for
 the space and enrolls it; the link dies at first use. The browser takes the
-same link. From an enrolled device, `wuhu share-login` mints a one-time link
-(and a terminal QR code) for another device of your account. `user add` and
-`user invite` are the offline path; with the server running, an admin creates
-accounts and mints their invites over `POST /v1/accounts` and `POST /v1/enroll`,
-and lists or removes them with `wuhu user list|remove`. See
-[wuhu-cli.md](wuhu-cli.md#device-enrollment) and
-[http-api.md](http-api.md#enrollment).
+same link.
+
+From an enrolled device, `wuhu share-login` mints a one-time link (and a terminal QR code) for another device of your account. Mint a link live with `wuhu user invite <account-id>` (self or admin of `shared`). An admin of `shared` can add a person and print their first invite without stopping the server: `wuhu user add --name <name>`; `--admin` also grants admin of `shared`, or use `wuhu user admin <account-id>` later. `wuhu user list|remove` lists or removes accounts. With `--space <folder>`, `user add` and `user invite` remain the offline bootstrap and recovery path, with the server stopped. See [wuhu-cli.md](wuhu-cli.md#device-enrollment) and [http-api.md](http-api.md#enrollment).
 
 ## Sessions
 

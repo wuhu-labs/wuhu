@@ -263,6 +263,9 @@ enum Command: Equatable {
   case observe(ObserveCommand)
   case serve(ServeCommand)
   case user(UserCommand)
+  case userAdd(name: String, admin: Bool, ttl: Int?)
+  case userInvite(account: String, ttl: Int?)
+  case userAdmin(account: String)
   case userList
   case userHandle(handle: String, displayName: String?)
   case userProfile

@@ -106,6 +106,17 @@ Do not add `--wuhu-inset-left` or `--wuhu-inset-right` to a `max-width` column's
 
 Inside a shell, ordinary same-origin link clicks are sent to shell history as `{type:"wuhu:navigate", path}`, where `path` carries the query and fragment too. The shell decides whether the destination is markdown, a data view, or another embedded page. Standalone links remain raw. This contract covers link clicks only; do not expect History API calls inside a page to drive shell navigation.
 
+## Mobile defaults
+
+Every page starts from these four. Together they take double-tap away, keep the user from scrolling the root sideways, and give wide content its own scroller; pinch and the notch behave per host:
+
+- `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">` — the app's native web view and browsers that honor `user-scalable=no` and `maximum-scale` hold pinch zoom off, but iOS Safari tabs ignore both and a Chrome Android accessibility override does too; `viewport-fit=cover` is what lets content reach under the notch, where the inset guidance above handles the safe areas.
+- `html { touch-action: manipulation }` — no double-tap zoom, in every host.
+- `html, body { overflow-x: clip; overscroll-behavior-x: none }` — the user cannot scroll the root horizontally, and it never bounces sideways. On `html` the value propagates to the viewport and is read there as `hidden`, so the viewport stays programmatically scrollable: `scrollTo`, an anchor jump, focus or `scrollIntoView` on wide or off-screen content still can leave it offset sideways. On `body`, `clip` rather than `hidden` is what keeps that element from becoming a scroll container.
+- Wide content (tables, code, charts) scrolls inside its own `overflow-x: auto` box, never through the root.
+
+The user's root never scrolls horizontally, but a programmatic, anchor or focus scroll still can, and content too wide to fit is what that scroll displaces. With wide content in its own scroller, too-wide content shows up as visible clipping someone notices and reports instead of a vague sideways wobble. A page drops a default only with a stated reason, such as a map or image viewer that needs pinch zoom.
+
 ## Adopting the space theme
 
 Link the space theme and use its tokens with fallbacks so the page matches the rest of the space and stays legible without a theme:

@@ -192,7 +192,11 @@ One TLS port, `--port` (default 5530), bound on `--host` (default `127.0.0.1`, l
 ## Accounts and keys
 
 ```bash
-wuhu user add --space <folder> [--name N] [--admin]  # create a human account, prints its id
+wuhu user add --name <name> [--admin] [--ttl <seconds>] # live: account id + one-time invite (admin of shared)
+wuhu user invite <account-id> [--ttl <seconds>] # live: fresh invite (self or admin of shared)
+wuhu user admin <account-id>           # live: grant admin of shared (admin of shared)
+wuhu user add --space <folder> [--name N] [--admin]  # offline: create a human account, prints its id
+wuhu user invite --space <folder> [--server <url>] [--ttl <seconds>] <account-id> # offline: mint invite
 wuhu user reset --space <folder> <account-id> # wipe the account's keys and read sessions
 wuhu user list                        # roster of the pinned space (admin)
 wuhu user remove <account-id>         # kill its keys/logins, keep its history (admin)
@@ -204,17 +208,11 @@ wuhu key revoke <pubkey>              # kick a key; the device must re-enroll
 
 A handle is display only — never a login, never in auth. It is lowercased, unique per space, renameable by claiming another, and matches `[a-z0-9][a-z0-9-]{1,31}`. Rows keep storing the principal (a persona name such as `cedar-kite-lantern`); handles resolve at read time, so a rename re-attributes history everywhere.
 
-`add` and `reset` are offline recovery: they operate directly on
-`<folder>/space.sqlite` with the server stopped — possession of the space
-folder is root; there is no localhost side channel. Each `add` mints a new
-account; the first account of an adminless space becomes admin without
-`--admin`. `reset` keeps the account; re-enroll devices afterwards.
+Without `--space`, `add`, `invite` and `admin` act as the signed-in person on the pinned running server; an unenrolled device is refused, even under `--dev`. Only an admin of `shared` may add people or grant admin; any person may invite their own account. `add` creates the personal group and `shared` membership, prints the account id, then a one-time device invite. `invite` prints only the link, for a lost invite or another device; both default to a one-hour lifetime (`--ttl <seconds>`), with the expiry note on stderr. Links use the server's advertised origin (the pinned address when no origin is configured), space id and generated-certificate fingerprint; discovery errors are reported, never silently bypassed.
 
-`list`/`remove` and the `key` verbs run against the pinned space server.
-Admin is an account flag: admins manage every account and key, everyone else
-manages only their own invites and keys. The last admin can be neither
-demoted nor removed — recover an adminless space offline with
-`wuhu user add --space <folder> --admin`.
+`add`, `invite` and `reset` with `--space` are offline recovery: they operate directly on `<folder>/space.sqlite` with the server stopped — possession of the space folder is root. Each `add` mints a new account; the first account of an adminless space becomes admin without `--admin`. Offline `add` prints only the account id; mint its link separately with offline `invite`. `reset` keeps the account; re-enroll devices afterwards. Offline `invite --server <url>` overrides the recorded server address; live invites do not accept that override.
+
+`list`/`remove` and the `key` verbs run against the pinned space server. Admin means admin of `shared`: admins manage every account and key, everyone else manages only their own invites and keys. The last admin can be neither demoted nor removed — recover an adminless space offline with `wuhu user add --space <folder> --admin`.
 
 ## Device enrollment
 

@@ -115,8 +115,8 @@ func adminRequired(_ what: String) -> Response {
   errorResponse(
     .forbidden,
     code: "adminRequired",
-    message: "\(what) requires an admin account",
-    hint: "ask an admin, or recover offline with the space folder: wuhu user add --space <folder> --admin (server stopped)",
+    message: "\(what) requires an admin of shared",
+    hint: "ask an admin of shared, or recover offline with the space folder: wuhu user add --space <folder> --admin (server stopped)",
   )
 }
 

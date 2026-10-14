@@ -170,3 +170,31 @@ Deno.test('chat opens the first live agent and has no row without one', () => {
     href: '/_/sessions/scout?group=sail-clock-pepper',
   })
 })
+
+Deno.test('optional badges preserve integers and reject malformed values', () => {
+  const columns = ['badge', 'destination', 'title', 'parent_id', 'id']
+  for (const badge of [null, 0, -1, 3, 125]) {
+    equal(
+      sidebarNodes({
+        columns,
+        rows: [[badge, '/desk', 'Desk', null, 'desk']],
+      })[0].badge,
+      badge,
+    )
+  }
+  equal(
+    sidebarNodes(output([['desk', null, 'Desk', '/desk', null]]))[0].badge,
+    undefined,
+  )
+  for (const badge of ['3', true, 1.5]) {
+    equal(
+      refused(() =>
+        sidebarNodes({
+          columns,
+          rows: [[badge, '/desk', 'Desk', null, 'desk']],
+        })
+      ),
+      'Section badges must be integers or null.',
+    )
+  }
+})
