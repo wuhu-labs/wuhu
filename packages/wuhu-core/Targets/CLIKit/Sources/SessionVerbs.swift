@@ -177,6 +177,7 @@ extension Executor {
     body.set("identity", identity.map(JSONValue.string))
     body.set("provider", command.provider.map(JSONValue.string))
     body.set("model", command.model.map(JSONValue.string))
+    body.set("modelGroup", command.modelGroup.map(JSONValue.string))
     body.set("effort", command.effort.map(JSONValue.string))
     body.set("template", command.template.map(JSONValue.string))
     if !command.tags.isEmpty {
@@ -251,6 +252,7 @@ extension Executor {
     body.set("identity", identity.map(JSONValue.string))
     body.set("provider", command.provider.map(JSONValue.string))
     body.set("model", command.model.map(JSONValue.string))
+    body.set("modelGroup", command.modelGroup.map(JSONValue.string))
     body.set("effort", command.effort.map(JSONValue.string))
     body.set("message", command.message.map(JSONValue.string))
     let output: SessionRestartOutput = try await self.authenticated(space).api(
@@ -293,11 +295,22 @@ extension Executor {
     await self.runner.stdout(try renderSessionEntry(output))
   }
 
+  mutating func sessionInspect(id: String) async throws {
+    let session = try sessionKey(id)
+    let space = try self.wallet.pinnedSpace()
+    let output: JSONValue = try await self.authenticated(space).api(.get, "/v1/session/\(session)/model-route")
+    await self.runner.stdout(prettyJSON(output) + "\n")
+  }
+
   mutating func sessionList() async throws {
     let space = try self.wallet.pinnedSpace()
     let sql = """
-    SELECT id, title, hold, work, lifecycle, last_activity_at \
-    FROM sessions ORDER BY allocation
+    SELECT s.id, s.title, s.hold, s.work, s.lifecycle, s.last_activity_at, \
+    r.group_id AS requested_model_group, \
+    CASE WHEN r.group_id IS NOT NULL THEN r.provider ELSE json_extract(s.executor_config, '$.provider') END AS active_provider, \
+    CASE WHEN r.group_id IS NOT NULL THEN r.model ELSE json_extract(s.executor_config, '$.model') END AS active_model, \
+    r.phase AS model_route_phase \
+    FROM sessions s LEFT JOIN session_model_routes r ON r.session_id = s.id ORDER BY s.allocation
     """
     let output: QueryOutput = try await self.authenticated(space).tool("query", ["sql": .string(sql)])
     await self.runner.stdout(formatQuery(output))

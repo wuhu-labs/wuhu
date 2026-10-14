@@ -6,7 +6,6 @@
 import Dependencies
 import enum JSONValue.JSONValue
 import class JSONValue.JSONValueEncoder
-import OperationClient
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
 import QuickJSKit
@@ -15,12 +14,12 @@ import SpaceCore
 import Synchronization
 
 public struct ScriptMachineV2Access: Sendable {
-  public let client: @Sendable (GroupID) async throws -> OperationClient
-  public init(client: @escaping @Sendable (GroupID) async throws -> OperationClient) { self.client = client }
+  public let client: @Sendable (GroupID) async throws -> ScriptMachineV2Client
+  public init(client: @escaping @Sendable (GroupID) async throws -> ScriptMachineV2Client) { self.client = client }
 }
 
 final class ScriptV2Operations: Sendable {
-  struct Handle: Sendable { let client: OperationClient; let machine: String }
+  struct Handle: Sendable { let client: ScriptMachineV2Client; let machine: String }
   private struct State { var keys: [String: UUID] = [:]; var handles: [UUID: Handle] = [:]; var starting = 0; var closed = false; var finished: Set<UUID> = []; var terminal: Set<UUID> = [] }
   private let state = Mutex(State())
   private let ending: AsyncStream<Void>
@@ -76,8 +75,8 @@ final class ScriptV2Operations: Sendable {
 }
 
 final class ScriptMachineV2Bindings: Sendable {
-  let execution: ScriptExecution; let space: Space; let access: ScriptMachineV2Access?
-  init(execution: ScriptExecution, space: Space, access: ScriptMachineV2Access?) { self.execution = execution; self.space = space; self.access = access }
+  let execution: ScriptExecution; let owner: any ScriptOwnerClient; let access: ScriptMachineV2Access?
+  init(execution: ScriptExecution, owner: any ScriptOwnerClient, access: ScriptMachineV2Access?) { self.execution = execution; self.owner = owner; self.access = access }
   func install(in engine: JSEngine) {
     engine.define("__wuhu_machine_v2", promising: { [self] arguments in
       do { return .object(["ok": try await call(arguments)]) }
@@ -90,9 +89,9 @@ final class ScriptMachineV2Bindings: Sendable {
     let verb = string(args, 0); let reference = string(args, 1)
     let fields: [String: JSONValue] = if case let .object(values)? = args[safe: 2] { Dictionary(uniqueKeysWithValues: values.map { ($0.key, $0.value) }) } else { [:] }
     if verb == "describe" || verb == "start" {
-      let group = try await space.principal(of: execution.session).group
-      guard let machine = try await space.resolveMachine(reference, usableFrom: group) else { throw OperationError(.unknownMachine) }
-      guard let access, try await space.machineV2Members(group: machine.group).contains(machine.id.rawValue) else {
+      let group = try await owner.principal(of: execution.session).group
+      guard let machine = try await owner.resolveMachine(reference, session: execution.session) else { throw OperationError(.unknownMachine) }
+      guard let access, try await owner.machineV2Members(group: machine.group).contains(machine.id.rawValue) else {
         throw OperationError(.machineUnavailable, message: "Machine is not attached over v2", details: ["state": "detached", "started": false])
       }
       let client = try await access.client(group)

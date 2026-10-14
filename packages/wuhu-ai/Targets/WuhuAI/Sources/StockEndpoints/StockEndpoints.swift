@@ -1,5 +1,9 @@
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -13,6 +17,8 @@ import OrderedCollections
 public struct OpenAIGPTEndpoint: ResponsesEndpoint {
   public let providerID: String = "openai"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
@@ -22,6 +28,8 @@ public struct OpenAIGPTEndpoint: ResponsesEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.openai.com/v1")!,
     apiKey: String,
     promptCacheKey: String? = nil,
@@ -29,6 +37,8 @@ public struct OpenAIGPTEndpoint: ResponsesEndpoint {
     verbosity: ResponseVerbosity? = nil,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.promptCacheKey = promptCacheKey
@@ -38,7 +48,7 @@ public struct OpenAIGPTEndpoint: ResponsesEndpoint {
 
   public func modifyBody(_ body: inout OrderedDictionary<String, JSONValue>, options: RequestOptions) {
     if let key = promptCacheKey {
-      body["prompt_cache_key"] = .string(key)
+      body["prompt_cache_key"] = .string(scopedCacheKey(key, replayScope: replayScope, routeEpoch: routeEpoch))
     }
     if cacheRetention == .long {
       body["prompt_cache_retention"] = .string("24h")
@@ -64,6 +74,8 @@ public struct OpenAICodexEndpoint: ResponsesEndpoint {
 
   public let providerID: String = "openai-codex"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var jwt: String
@@ -82,6 +94,8 @@ public struct OpenAICodexEndpoint: ResponsesEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://chatgpt.com/backend-api")!,
     jwt: String,
     environment: String? = nil,
@@ -92,6 +106,8 @@ public struct OpenAICodexEndpoint: ResponsesEndpoint {
     receiveResponseHeaders: @escaping @Sendable ([String: String]) async -> Void = { _ in },
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.jwt = jwt
     self.environment = environment
@@ -107,7 +123,7 @@ public struct OpenAICodexEndpoint: ResponsesEndpoint {
       body["_codex_environment"] = .string(env)
     }
     if let sessionID {
-      body["prompt_cache_key"] = .string(sessionID)
+      body["prompt_cache_key"] = .string(scopedCacheKey(sessionID, replayScope: replayScope, routeEpoch: routeEpoch))
     }
     var text = body["text"]?.object ?? [:]
     if text["verbosity"] == nil {
@@ -123,8 +139,8 @@ public struct OpenAICodexEndpoint: ResponsesEndpoint {
       headers.set("originator", originator)
     }
     if let sessionID {
-      headers.set("session-id", sessionID)
-      headers.set("thread-id", sessionID)
+      headers.set("session-id", scopedCacheKey(sessionID, replayScope: replayScope, routeEpoch: routeEpoch))
+      headers.set("thread-id", scopedCacheKey(sessionID, replayScope: replayScope, routeEpoch: routeEpoch))
     }
   }
 }
@@ -144,6 +160,8 @@ public enum AnthropicPromptCache: Sendable, Hashable {
 public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
   public let providerID: String = "anthropic"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
   public let acceptsUnsignedThinking: Bool = false
 
@@ -152,11 +170,15 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.anthropic.com")!,
     apiKey: String,
     promptCache: AnthropicPromptCache = .disabled,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.promptCache = promptCache
@@ -209,6 +231,8 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
 public struct DeepSeekChatEndpoint: ChatCompletionsEndpoint {
   public let providerID: String = "deepseek"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
@@ -216,11 +240,15 @@ public struct DeepSeekChatEndpoint: ChatCompletionsEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.deepseek.com/v1")!,
     apiKey: String,
     thinkingEnabled: Bool = true,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.thinkingEnabled = thinkingEnabled
@@ -256,16 +284,22 @@ public struct DeepSeekChatEndpoint: ChatCompletionsEndpoint {
 public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
   public let providerID: String = "deepseek"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.deepseek.com/anthropic")!,
     apiKey: String,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
   }
@@ -335,16 +369,22 @@ private func placeholderThinkingForToolUse(_ message: JSONValue) -> JSONValue {
 public struct GeminiEndpoint: GeminiContentEndpoint {
   public let providerID: String = "gemini"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta")!,
     apiKey: String,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
   }
@@ -389,6 +429,8 @@ private func mapGeminiEffortToBudget(_ effort: String) -> Int {
 public struct KimiEndpoint: ChatCompletionsEndpoint {
   public let providerID: String = "kimi"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
@@ -396,11 +438,15 @@ public struct KimiEndpoint: ChatCompletionsEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.moonshot.cn/v1")!,
     apiKey: String,
     preserveThinking: Bool = false,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.preserveThinking = preserveThinking
@@ -440,6 +486,8 @@ private let kimiThinkingMaxTokensFloor = 16000
 public struct GLMEndpoint: ChatCompletionsEndpoint {
   public let providerID: String = "zhipu"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
@@ -447,11 +495,15 @@ public struct GLMEndpoint: ChatCompletionsEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://open.bigmodel.cn/api/paas/v4")!,
     apiKey: String,
     preserveThinking: Bool = false,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.preserveThinking = preserveThinking
@@ -484,6 +536,8 @@ public struct GLMEndpoint: ChatCompletionsEndpoint {
 public struct QwenEndpoint: ChatCompletionsEndpoint {
   public let providerID: String = "qwen"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
@@ -491,11 +545,15 @@ public struct QwenEndpoint: ChatCompletionsEndpoint {
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://dashscope.aliyuncs.com/compatible-mode/v1")!,
     apiKey: String,
     preserveThinking: Bool = false,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.preserveThinking = preserveThinking
@@ -527,16 +585,22 @@ public struct QwenEndpoint: ChatCompletionsEndpoint {
 public struct MiniMaxEndpoint: AnthropicMessagesEndpoint {
   public let providerID: String = "minimax"
   public let model: String
+  public var replayScope: String?
+  public var routeEpoch: String?
   public let baseURL: URL
 
   public var apiKey: String
 
   public init(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.minimaxi.com/anthropic")!,
     apiKey: String,
   ) {
     self.model = model
+    self.replayScope = replayScope
+    self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
   }
@@ -565,64 +629,74 @@ public struct MiniMaxEndpoint: AnthropicMessagesEndpoint {
 // MARK: - ModelEndpoint Convenience Factories
 
 extension ModelEndpoint {
-  public static func openAIResponses(model: String, apiKey: String) -> OpenAIGPTEndpoint {
-    OpenAIGPTEndpoint(model: model, apiKey: apiKey)
+  public static func openAIResponses(model: String, replayScope: String? = nil, routeEpoch: String? = nil, apiKey: String) -> OpenAIGPTEndpoint {
+    OpenAIGPTEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey)
   }
 
   public static func openAICodex(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     jwt: String,
     environment: String? = nil,
     originator: String? = nil,
   ) -> OpenAICodexEndpoint {
-    OpenAICodexEndpoint(model: model, jwt: jwt, environment: environment, originator: originator)
+    OpenAICodexEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, jwt: jwt, environment: environment, originator: originator)
   }
 
-  public static func anthropic(model: String, apiKey: String) -> AnthropicEndpoint {
-    AnthropicEndpoint(model: model, apiKey: apiKey)
+  public static func anthropic(model: String, replayScope: String? = nil, routeEpoch: String? = nil, apiKey: String) -> AnthropicEndpoint {
+    AnthropicEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey)
   }
 
   public static func deepSeekChat(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     apiKey: String,
     thinkingEnabled: Bool = true,
   ) -> DeepSeekChatEndpoint {
-    DeepSeekChatEndpoint(model: model, apiKey: apiKey, thinkingEnabled: thinkingEnabled)
+    DeepSeekChatEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey, thinkingEnabled: thinkingEnabled)
   }
 
-  public static func deepSeekAnthropic(model: String, apiKey: String) -> DeepSeekAnthropicEndpoint {
-    DeepSeekAnthropicEndpoint(model: model, apiKey: apiKey)
+  public static func deepSeekAnthropic(model: String, replayScope: String? = nil, routeEpoch: String? = nil, apiKey: String) -> DeepSeekAnthropicEndpoint {
+    DeepSeekAnthropicEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey)
   }
 
-  public static func gemini(model: String, apiKey: String) -> GeminiEndpoint {
-    GeminiEndpoint(model: model, apiKey: apiKey)
+  public static func gemini(model: String, replayScope: String? = nil, routeEpoch: String? = nil, apiKey: String) -> GeminiEndpoint {
+    GeminiEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey)
   }
 
   public static func kimi(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     apiKey: String,
     preserveThinking: Bool = false,
   ) -> KimiEndpoint {
-    KimiEndpoint(model: model, apiKey: apiKey, preserveThinking: preserveThinking)
+    KimiEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey, preserveThinking: preserveThinking)
   }
 
   public static func glm(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     apiKey: String,
     preserveThinking: Bool = false,
   ) -> GLMEndpoint {
-    GLMEndpoint(model: model, apiKey: apiKey, preserveThinking: preserveThinking)
+    GLMEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey, preserveThinking: preserveThinking)
   }
 
   public static func qwen(
     model: String,
+    replayScope: String? = nil,
+    routeEpoch: String? = nil,
     apiKey: String,
     preserveThinking: Bool = false,
   ) -> QwenEndpoint {
-    QwenEndpoint(model: model, apiKey: apiKey, preserveThinking: preserveThinking)
+    QwenEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey, preserveThinking: preserveThinking)
   }
 
-  public static func miniMax(model: String, apiKey: String) -> MiniMaxEndpoint {
-    MiniMaxEndpoint(model: model, apiKey: apiKey)
+  public static func miniMax(model: String, replayScope: String? = nil, routeEpoch: String? = nil, apiKey: String) -> MiniMaxEndpoint {
+    MiniMaxEndpoint(model: model, replayScope: replayScope, routeEpoch: routeEpoch, apiKey: apiKey)
   }
 }

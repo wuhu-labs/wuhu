@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -413,4 +417,35 @@ private func extractBase64(from dataURI: String) -> String? {
   guard let commaIndex = dataURI.firstIndex(of: ",") else { return nil }
   let index = dataURI.index(after: commaIndex)
   return String(dataURI[index...])
+}
+
+func validateAnthropicThinking(
+  _ body: OrderedDictionary<String, JSONValue>,
+  replayScope: String?,
+  acceptsUnsignedThinking: Bool,
+) throws {
+  guard !acceptsUnsignedThinking,
+        let thinking = body["thinking"]?.object?["type"]?.stringValue,
+        thinking == "enabled" || thinking == "adaptive"
+  else { return }
+  guard replayScope != nil else {
+    throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking requires a verified replay scope; explicitly request reasoning none for a no-opaque route")
+  }
+  let messages = body["messages"]?.array ?? []
+  let turnStart = messages.lastIndex { message in
+    message.object?["role"]?.stringValue == "user" &&
+      message.object?["content"]?.array?.contains(where: { $0.object?["type"]?.stringValue != "tool_result" }) == true
+  } ?? messages.startIndex
+  for message in messages.dropFirst(turnStart) {
+    guard message.object?["role"]?.stringValue == "assistant",
+          let content = message.object?["content"]?.array,
+          content.contains(where: { $0.object?["type"]?.stringValue == "tool_use" })
+    else { continue }
+    guard let first = content.first?.object,
+          first["type"]?.stringValue == "redacted_thinking" ||
+          (first["type"]?.stringValue == "thinking" && !(first["signature"]?.stringValue ?? "").isEmpty)
+    else {
+      throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires same-scope signed thinking; explicitly request reasoning none after a portable boundary")
+    }
+  }
 }

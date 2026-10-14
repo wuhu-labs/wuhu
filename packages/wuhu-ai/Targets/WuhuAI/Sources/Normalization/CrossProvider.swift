@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 // MARK: - Tool Call ID Normalization
 
@@ -103,24 +107,7 @@ private func stableToolIDHash(_ value: String) -> String {
 
 // MARK: - Reasoning Normalization
 
-/// Strip cross-provider reasoning to plain text on every outbound request.
-///
-/// An encrypted reasoning block carries the `providerID` that produced it, and
-/// its opaque blob is provider-specific — an OpenAI Fernet token, an Anthropic
-/// thinking signature, etc. Replayed to a *different* provider that blob is
-/// meaningless and gets rejected: Anthropic returns
-/// "Invalid `signature` in `thinking` block" when handed a foreign opaque.
-///
-/// Gated per block by the block's own `providerID` — the live transcript is
-/// mixed-origin (e.g. GPT web-search turns followed by Anthropic turns in one
-/// request), so a single conversation-level source provider would be wrong:
-/// - same provider  → keep the opaque (faithful replay, prompt-cache friendly);
-/// - other provider → fall back to the summary as plain text, drop the opaque;
-/// - unencrypted reasoning carries no signature and is left untouched.
-///
-/// Applied unconditionally at the request-build choke point, like
-/// ``normalizeToolCallIDs(in:)`` — same-provider replay is a no-op.
-func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID: String) {
+func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID: String, replayScope: String? = nil) {
   for i in messages.indices {
     guard case var .assistant(msg) = messages[i] else { continue }
 
@@ -131,8 +118,8 @@ func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID:
         newContent.append(block)
         continue
       }
-      if enc.providerID == targetProviderID {
-        newContent.append(block) // same provider → faithful replay
+      if let replayScope, enc.replayScope == replayScope, enc.providerID == targetProviderID {
+        newContent.append(block)
       } else {
         changed = true
         if let summary = enc.summary,
@@ -140,7 +127,6 @@ func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID:
         {
           newContent.append(.text(TextContent(text: summary)))
         }
-        // No summary → drop: the opaque is unusable by another provider.
       }
     }
 
@@ -151,15 +137,21 @@ func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID:
   }
 }
 
-func normalizeHostedToolsForTarget(in messages: inout [Message], targetProviderID: String) {
+func normalizeHostedToolsForTarget(in messages: inout [Message], targetProviderID: String, replayScope: String? = nil) {
   for i in messages.indices {
     guard case var .assistant(message) = messages[i] else { continue }
     var changed = false
     message.content = message.content.map { block in
-      guard case let .hostedTool(item) = block, item.providerID != targetProviderID else { return block }
+      guard case let .hostedTool(item) = block else { return block }
+      if let replayScope, item.replayScope == replayScope, item.providerID == targetProviderID { return block }
       changed = true
       return .text(TextContent(text: item.digest))
     }
     if changed { messages[i] = .assistant(message) }
   }
+}
+
+func scopedCacheKey(_ key: String, replayScope: String?, routeEpoch: String?) -> String {
+  guard replayScope != nil || routeEpoch != nil else { return key }
+  return "wuhu_" + stableToolIDHash([key, replayScope ?? "", routeEpoch ?? ""].map { "\($0.utf8.count):\($0)" }.joined())
 }

@@ -69,7 +69,7 @@ private final class DrainedPipe: Sendable {
   }
 }
 
-private func capturedProcessOutput(_ command: [String]) async throws -> String {
+func capturedProcessOutput(_ command: [String]) async throws -> String {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: command[0])
   process.arguments = Array(command.dropFirst())

@@ -3,6 +3,7 @@ import OrderedCollections
 
 public enum SessionExecutor: Hashable, Sendable {
   case kernel(ModelSpecifier)
+  case modelGroup(id: String, effort: String)
   // Decode-only: Start over on a kernel provider is the only way back.
   case claudeCode(ModelSpecifier)
   // Decode-only: sessions archived before contractors were removed still list,
@@ -21,7 +22,7 @@ public struct ExecutorSpecError: Error, Hashable, Sendable {
 extension SessionExecutor {
   public var kind: String {
     switch self {
-    case .kernel: Self.kernelKind
+    case .kernel, .modelGroup: Self.kernelKind
     case .claudeCode: Self.claudeCodeKind
     case .contractor(let name): Self.contractorPrefix + name
     }
@@ -39,6 +40,8 @@ extension SessionExecutor {
         "model": .string(model.model),
         "effort": .string(model.effort),
       ]).jsonString()
+    case let .modelGroup(id, effort):
+      JSONValue.object(["modelGroup": .string(id), "effort": .string(effort)]).jsonString()
     case .contractor:
       // Nothing reads a contractor row's config any more.
       "{}"
@@ -55,7 +58,16 @@ extension SessionExecutor {
     }
     switch kind {
     case Self.kernelKind:
-      self = .kernel(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
+      if let group = fields.removeValue(forKey: "modelGroup") {
+        guard let id = group.stringValue, !id.isEmpty,
+              let effort = fields.removeValue(forKey: "effort")?.stringValue, fields.isEmpty
+        else {
+          throw ExecutorSpecError("kernel group config wants only string modelGroup and effort")
+        }
+        self = .modelGroup(id: id, effort: effort)
+      } else {
+        self = .kernel(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
+      }
     case Self.claudeCodeKind:
       self = .claudeCode(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
     default:
@@ -81,6 +93,7 @@ extension ModelSpecifier {
 
 public struct SessionCreationParams: Hashable, Sendable {
   public var executor: String?
+  public var modelGroup: String?
   public var provider: String?
   public var model: String?
   public var effort: String?
@@ -88,12 +101,14 @@ public struct SessionCreationParams: Hashable, Sendable {
 
   public init(
     executor: String? = nil,
+    modelGroup: String? = nil,
     provider: String? = nil,
     model: String? = nil,
     effort: String? = nil,
     tags: [String]? = nil,
   ) {
     self.executor = executor
+    self.modelGroup = modelGroup
     self.provider = provider
     self.model = model
     self.effort = effort
@@ -101,11 +116,14 @@ public struct SessionCreationParams: Hashable, Sendable {
   }
 
   public func merged(over template: SessionCreationParams) -> SessionCreationParams {
-    SessionCreationParams(
+    let overridesTarget = modelGroup != nil || provider != nil || model != nil
+    let changesTarget = modelGroup != template.modelGroup && overridesTarget || provider != nil && provider != template.provider
+    return SessionCreationParams(
       executor: executor ?? template.executor,
-      provider: provider ?? template.provider,
-      model: model ?? template.model,
-      effort: effort ?? template.effort,
+      modelGroup: overridesTarget ? modelGroup : template.modelGroup,
+      provider: modelGroup != nil ? provider : provider ?? (template.modelGroup == nil ? template.provider : nil),
+      model: modelGroup != nil ? model : model ?? (changesTarget ? nil : template.model),
+      effort: effort ?? (changesTarget ? nil : template.effort),
       tags: tags ?? template.tags,
     )
   }
@@ -121,6 +139,7 @@ public struct SessionCreationParams: Hashable, Sendable {
     }
     let executor = try string("executor")
     try Self.validateExecutor(executor)
+    let modelGroup = try string("modelGroup")
     let provider = try string("provider")
     let model = try string("model")
     let effort = try string("effort")
@@ -134,7 +153,10 @@ public struct SessionCreationParams: Hashable, Sendable {
     guard fields.isEmpty else {
       throw ExecutorSpecError("unknown template field(s): \(fields.keys.sorted().joined(separator: ", "))")
     }
-    self.init(executor: executor, provider: provider, model: model, effort: effort, tags: tags)
+    guard modelGroup == nil || (provider == nil && model == nil) else {
+      throw ExecutorSpecError("modelGroup is mutually exclusive with provider/model")
+    }
+    self.init(executor: executor, modelGroup: modelGroup, provider: provider, model: model, effort: effort, tags: tags)
   }
 }
 
@@ -142,8 +164,18 @@ extension SessionExecutor {
   public static func resolve(
     _ params: SessionCreationParams,
     resolveModelExecutor: (String, String, String?) async throws -> SessionExecutor,
+    resolveModelGroup: ((String, String?) async throws -> SessionExecutor)? = nil,
   ) async throws -> SessionExecutor {
     try SessionCreationParams.validateExecutor(params.executor)
+    if let group = params.modelGroup {
+      guard params.provider == nil && params.model == nil else {
+        throw ExecutorSpecError("modelGroup is mutually exclusive with provider/model")
+      }
+      guard let resolveModelGroup else { throw ExecutorSpecError("model groups are not configured") }
+      let executor = try await resolveModelGroup(group, params.effort)
+      try executor.requireSupported()
+      return executor
+    }
     guard let provider = params.provider, let model = params.model else {
       throw ExecutorSpecError("a session wants provider and model")
     }
@@ -174,7 +206,7 @@ extension SessionExecutor {
   public var isRemoved: Bool {
     switch self {
     case .claudeCode, .contractor: true
-    case .kernel: false
+    case .kernel, .modelGroup: false
     }
   }
 

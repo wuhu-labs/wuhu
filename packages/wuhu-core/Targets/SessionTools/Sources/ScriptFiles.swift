@@ -12,7 +12,7 @@ import SpaceFS
 import SpaceTools
 
 struct ScriptFiles: Sendable {
-  let space: Space
+  let owner: any ScriptOwnerClient
   let execution: ScriptExecution
 
   func install(in engine: JSEngine) {
@@ -34,8 +34,6 @@ struct ScriptFiles: Sendable {
         guard Set(options.keys).isSubset(of: allowed) else {
           throw ToolRunError.failed(code: .invalidArgument, message: "unsupported options for \(name)", hint: nil)
         }
-        let principal = try await space.principal(of: execution.session)
-        let context = SpaceToolContext(space: space, principal: principal)
         for key in name == "move" ? ["from", "to"] : ["path"] {
           try scriptSpaceAddress(fields[key]?.stringValue ?? "")
         }
@@ -55,7 +53,7 @@ struct ScriptFiles: Sendable {
           }
           try claimFileBuffer(24 << 20, in: execution)
           defer { execution.buffers.withLock { $0.unclaim(24 << 20) } }
-          let read = try await context.readBytes(path, rev: revision, byteLimit: 16 << 20)
+          let read = try await owner.readBytes(path, rev: revision, byteLimit: 16 << 20, session: execution.session)
           let value: String
           if name == "readText" {
             guard let text = String(validating: read.data, as: UTF8.self) else {
@@ -78,7 +76,7 @@ struct ScriptFiles: Sendable {
           guard data.count <= 16 << 20 else { throw overBudget(.fileResult) }
           try execution.buffers.withLock { try $0.claim(data.count, for: .fileResult) }
           defer { execution.buffers.withLock { $0.unclaim(data.count) } }
-          let written = try await context.writeBytes(path, data, ifMatch: token, createOnly: token == nil)
+          let written = try await owner.writeBytes(path, data: data, ifMatch: token, session: execution.session)
           output = .object(["token": .string(written.token), "rev": written.rev.map(JSONValue.integer) ?? .null])
         case "checkout":
           let token: String?
@@ -90,7 +88,7 @@ struct ScriptFiles: Sendable {
           guard case let .integer(rev)? = fields["rev"], rev >= 0 else {
             throw ToolRunError.failed(code: .invalidArgument, message: "rev must be non-negative", hint: nil)
           }
-          output = try await context.checkout(path, rev: rev, ifMatch: token, createOnly: token == nil)
+          output = try await owner.checkout(path, rev: rev, ifMatch: token, session: execution.session)
         case "list":
           let rev: Int?
           switch options["rev"] {
@@ -106,10 +104,10 @@ struct ScriptFiles: Sendable {
           }
           try claimFileBuffer(24 << 20, in: execution)
           reserved = 24 << 20
-          output = try await context.list(path, rev: rev, hidden: hidden, limit: 500, byteLimit: reserved)
+          output = try await owner.list(path, rev: rev, hidden: hidden, byteLimit: reserved, session: execution.session)
         default:
           let verb = name == "move" ? "mv" : name
-          output = try await SpaceToolbox.all.first { $0.name == verb }!.run(context, input: .object(input))
+          output = try await owner.dataOperation(ScriptDataOperation(rawValue: verb)!, input: .object(input), session: execution.session)
         }
         let bytes = try fileResultSize(output, limit: 24 << 20)
         if reserved > 0 {

@@ -77,7 +77,7 @@ import Testing
       _ = try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
       let writes = Box<[SessionID]>([])
       let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: Fix.hanging)) { id in
-        SessionRepo(sessions: sessions, id: id, archiveWrite: { store, id, grace in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
           if id == child { #expect(try await store.record(leaf).lifecycle.isArchived) }
           if id == root {
             for descendant in [child, leaf, sibling] { #expect(try await store.record(descendant).lifecycle.isArchived) }

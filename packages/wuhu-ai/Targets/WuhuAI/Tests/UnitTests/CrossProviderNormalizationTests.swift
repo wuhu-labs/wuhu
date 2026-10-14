@@ -106,12 +106,12 @@ import Testing
       .assistant(AssistantMessage(content: [
         .reasoning(.encrypted(EncryptedReasoningContent(
           providerID: "anthropic", model: "claude",
-          summary: "thinking", opaque: "sig_abc",
+          summary: "thinking", opaque: "sig_abc", replayScope: "test-scope",
         ))),
       ])),
     ]
 
-    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic")
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
 
     // Same provider → opaque preserved (faithful replay, valid signature).
     if case let .assistant(msg) = messages[0],
@@ -135,7 +135,7 @@ import Testing
     ]
 
     // Target is a different provider — the OpenAI opaque is unverifiable there.
-    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic")
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
 
     guard case let .assistant(msg) = messages[0] else { Issue.record("expected assistant"); return }
     #expect(msg.content.count == 2)
@@ -160,7 +160,7 @@ import Testing
       ])),
     ]
 
-    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic")
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
 
     // No portable summary → the foreign block is dropped entirely.
     guard case let .assistant(msg) = messages[0] else { Issue.record("expected assistant"); return }
@@ -177,7 +177,7 @@ import Testing
       ])),
     ]
 
-    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic")
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
 
     if case let .assistant(msg) = messages[0],
        case .reasoning(.unencrypted) = msg.content[0]
@@ -201,12 +201,12 @@ import Testing
       .assistant(AssistantMessage(content: [
         .reasoning(.encrypted(EncryptedReasoningContent(
           providerID: "anthropic", model: "claude-opus-4-7",
-          summary: "claude thinking", opaque: "anthropic_sig",
+          summary: "claude thinking", opaque: "anthropic_sig", replayScope: "test-scope",
         ))),
       ])),
     ]
 
-    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic")
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
 
     // GPT block → converted to text; Anthropic block → kept with its signature.
     if case let .assistant(gpt) = messages[0], case .text = gpt.content[0] {
@@ -227,15 +227,15 @@ import Testing
 extension CrossProviderNormalizationTests {
   @Test func hostedItemsStayOpaqueForTheirProviderAndDegradeElsewhere() throws {
     let payload = try #require(JSONValue.parse(#"{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","queries":["swift"]}}"#))
-    let item = try #require(HostedToolContent(providerID: "codex", payload: payload))
+    let item = try #require(HostedToolContent(providerID: "codex", payload: payload, replayScope: "test-scope"))
     let original: [Message] = [.assistant(.init(content: [.hostedTool(item)]))]
 
     var sameProvider = original
-    normalizeHostedToolsForTarget(in: &sameProvider, targetProviderID: "codex")
+    normalizeHostedToolsForTarget(in: &sameProvider, targetProviderID: "codex", replayScope: "test-scope")
     #expect(sameProvider == original)
 
     var foreignProvider = original
-    normalizeHostedToolsForTarget(in: &foreignProvider, targetProviderID: "anthropic")
+    normalizeHostedToolsForTarget(in: &foreignProvider, targetProviderID: "anthropic", replayScope: "test-scope")
     #expect(foreignProvider == [.assistant(.init(content: [.text("web_search_call · search")]))])
   }
 }

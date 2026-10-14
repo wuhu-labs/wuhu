@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 
 // MARK: - ContentBlock
@@ -96,6 +100,7 @@ public enum ReasoningContent: Hashable, Sendable, Codable {
     case opaque
     case id
     case redacted
+    case replayScope = "replay_scope"
   }
 
   public init(from decoder: any Decoder) throws {
@@ -110,6 +115,7 @@ public enum ReasoningContent: Hashable, Sendable, Codable {
         opaque: try container.decode(String.self, forKey: .opaque),
         id: try container.decodeIfPresent(String.self, forKey: .id),
         redacted: try container.decodeIfPresent(Bool.self, forKey: .redacted) ?? false,
+        replayScope: try container.decodeIfPresent(String.self, forKey: .replayScope),
       )
       self = .encrypted(content)
     } else {
@@ -130,12 +136,14 @@ public enum ReasoningContent: Hashable, Sendable, Codable {
       try container.encode(content.opaque, forKey: .opaque)
       try container.encodeIfPresent(content.id, forKey: .id)
       try container.encode(content.redacted, forKey: .redacted)
+      try container.encodeIfPresent(content.replayScope, forKey: .replayScope)
     }
   }
 }
 
 /// Encrypted reasoning content — provider-specific opaque blob with metadata.
 public struct EncryptedReasoningContent: Hashable, Sendable, Codable {
+  public var replayScope: String?
   public var providerID: String
   public var model: String
   public var summary: String?
@@ -152,6 +160,7 @@ public struct EncryptedReasoningContent: Hashable, Sendable, Codable {
     opaque: String,
     id: String? = nil,
     redacted: Bool = false,
+    replayScope: String? = nil,
   ) {
     self.providerID = providerID
     self.model = model
@@ -159,6 +168,7 @@ public struct EncryptedReasoningContent: Hashable, Sendable, Codable {
     self.opaque = opaque
     self.id = id
     self.redacted = redacted
+    self.replayScope = replayScope
   }
 
   public enum CodingKeys: String, CodingKey {
@@ -168,6 +178,7 @@ public struct EncryptedReasoningContent: Hashable, Sendable, Codable {
     case opaque = "opaque"
     case id = "id"
     case redacted = "redacted"
+    case replayScope = "replay_scope"
   }
 }
 

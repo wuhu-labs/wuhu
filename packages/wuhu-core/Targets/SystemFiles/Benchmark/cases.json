@@ -1,0 +1,188 @@
+{
+  "subject": {
+    "provider": "deepseek",
+    "model": "deepseek-flash"
+  },
+  "judge": "codex/gpt-6.1-sol",
+  "cases": [
+    {
+      "id": "capabilities",
+      "issue": 117,
+      "title": "Knows and uses its own features",
+      "prompt": "I keep my reading list in {fx}/reading/books.md and it's getting unwieldy. I want to see what I'm currently reading at a glance on my phone (ideally without even opening anything), and be able to update it from my phone or just by telling you. What can you set up here for this? Go ahead and build it under {sb}/ \u2014 if you have to create something outside that folder, name it starting with bench-{tag}.",
+      "required": [
+        "table_created",
+        "phone_surface"
+      ],
+      "judge": "PASS only if the reply (a) names at least one real Wuhu surface for the phone \u2014 a widget (/.widgets/<name>.json, Home/Lock Screen), a .view board, or an HTML page \u2014 and explains in a few lines how the user sees/updates it; (b) moved the list into a table so it can be updated by rows; (c) does not invent features Wuhu lacks (push notifications, Notion sync, 'the Wuhu mobile dashboard', etc.) or claim to have done something the file list shows it did not do. Keep in mind the real surfaces: tables (.table), .view documents, HTML pages, widgets, sidebars, observe/timer handlers, machines, sub-sessions."
+    },
+    {
+      "id": "style",
+      "issue": 118,
+      "title": "Progressive disclosure, low cognitive load",
+      "prompt": "I keep getting write conflicts ('stale read' / 'read it first') when I edit files here with you. What's going on and how do I avoid it?",
+      "required": [
+        "reply_short",
+        "leads_with_answer",
+        "skill_reads"
+      ],
+      "skills": {
+        "writing-style": true,
+        "data-organization": false
+      },
+      "judge": "PASS only if the reply (a) opens with the one-sentence answer (writes are guarded by the revision you last read; something changed in between), before any background; (b) is layered: answer, then why, then details or options, each shorter than the last; (c) has no preamble ('Great question'), no restatement of the question, no closing offer; (d) is correct: re-read right before overwriting, keep edits small/atomic, two writers racing is the usual cause, the space's revision journal is why. Fail a wall of prose, a 10-heading essay, or an answer buried after background."
+    },
+    {
+      "id": "long-doc",
+      "issue": 119,
+      "title": "A long reply is written as a doc",
+      "prompt": "Write an onboarding guide for someone joining the Sundial project next week \u2014 everything is under {fx}/sundial. Cover what it is, how it's put together, the decisions we made and why, who to ask, and the vocabulary. Be thorough, they'll read it on their first day. My folder for this is {sb}.",
+      "required": [
+        "doc_written",
+        "reply_is_pointer",
+        "skill_reads"
+      ],
+      "skills": {
+        "writing-style": true,
+        "data-organization": false
+      },
+      "judge": "PASS only if (a) the guide exists as a markdown document in the user's folder (not only in the session's home, not only pasted into the reply) and is complete: what Sundial is, the four components, the data flow, decisions D1\u2013D6 with their reasons, owners (Mei/Tomas/Rob), and the glossary terms; (b) the reply is a short pointer \u2014 the path, maybe 2\u20135 lines of what's inside \u2014 not the guide repeated in chat; (c) the facts match the fixtures (no invented components or people)."
+    },
+    {
+      "id": "temp-files",
+      "issue": 120,
+      "title": "Scratch files go in the session's own folder",
+      "prompt": "Merge the three CSV exports in {fx}/exports into one file at {sb}/all-orders.csv \u2014 dedupe by order_id, sort by date. Keep a working log of what you did as you go (I'll want to check it if the numbers look off), and tell me how many rows came from each file and how many duplicates you dropped.",
+      "required": [
+        "deliverable_correct",
+        "log_in_home"
+      ],
+      "judge": "PASS only if (a) the merged file is right: 13 unique orders (6 from shop-a, 5 from shop-b, 6 from september-late; 4 duplicate rows dropped), sorted by date, header kept; (b) the working log and any other scratch live in the session's own folder (/_/sessions/<id>/...), and the reply links to it, while the user's folder holds only the deliverable; (c) the reply gives the per-file counts and the duplicate count plainly. A log written next to the deliverable in the user's folder is a fail for (b); a log nowhere is a fail."
+    },
+    {
+      "id": "html-page",
+      "issue": 121,
+      "title": "Immersive HTML authored properly (regression)",
+      "prompt": "Make me a page I can open on my iPhone showing my expenses from {fx}/expenses.table: total per category, biggest first, and it should update live when I add rows. Save it as {sb}/expenses.html.",
+      "required": [
+        "page_exists",
+        "uses_wuhu_space",
+        "uses_observe",
+        "viewport_meta",
+        "touch_action",
+        "overflow_clip",
+        "skill_reads"
+      ],
+      "skills": {
+        "writing-style": false,
+        "data-organization": false,
+        "space-html-pages": true
+      },
+      "judge": "PASS only if the page (a) imports wuhu:space and uses observe (not polling, not /_/query) with a SELECT that groups {fx}/expenses.table by category and orders totals descending; (b) carries the mobile defaults: viewport meta with maximum-scale=1 and viewport-fit=cover, html { touch-action: manipulation }, html, body { overflow-x: clip; overscroll-behavior-x: none }; (c) pads by the --wuhu-inset-* variables or links /theme.css (either counts); (d) has no made-up API (fetch to /v1, a nonexistent wuhu global, etc.)."
+    },
+    {
+      "id": "data-org",
+      "issue": 122,
+      "title": "Proposes data organization (tables, frontmatter)",
+      "prompt": "My job hunt notes in {fx}/jobs are a mess. I want to see at a glance where each application stands, what's due, and not lose contacts. How would you organize this in Wuhu? Propose first, don't change anything yet.",
+      "required": [
+        "fixtures_untouched",
+        "proposes_structure",
+        "skill_reads"
+      ],
+      "skills": {
+        "writing-style": true,
+        "data-organization": true
+      },
+      "judge": "PASS only if the reply (a) proposes a concrete structure using Wuhu's primitives: a table (named columns such as company, role, stage/status, next step, due, contact, source) and/or one doc per application with YAML frontmatter for the structured fields and prose below, and says which of the two it recommends and why; (b) proposes something to look at it with (a .view board, a widget, or a page) and how updates happen; (c) is grounded in the actual notes (Acme, Brightline, Corvid Labs, Northwind, Zephyr; the Acme take-home due Oct 16; the Corvid onsite Oct 20); (d) changed nothing and ends by asking for a go-ahead; (e) stays readable: a proposal someone can approve in a minute, not an essay."
+    },
+    {
+      "id": "avatar",
+      "issue": 51,
+      "title": "Avatar flow with a crop step",
+      "prompt": "Give yourself a profile picture \u2014 a small owl with reading glasses, something friendly.",
+      "followUp": "3, but the owl is too small in the circle \u2014 zoom in on it a bit.",
+      "required": [
+        "candidates_generated",
+        "asks_for_pick",
+        "avatar_promoted",
+        "avatar_transformed"
+      ],
+      "judge": "Two turns. PASS only if (a) turn 1 generated 4 candidates (3 if one failed) into the session's own folder and replied with just the numbered image links and a request for a number; (b) turn 2 took candidate 3, cropped/zoomed it (on a machine with PIL/ImageMagick, or by any means that transforms that image rather than generating a new one), and put the result at /_/sessions/<id>/avatar.png; (c) the turn-2 reply is one or two lines. Regenerating from scratch instead of cropping the chosen one is a fail for (b).",
+      "requires": [
+        "image"
+      ]
+    },
+    {
+      "id": "file-move",
+      "issue": 51,
+      "title": "Move a file space \u2192 machine \u2192 space",
+      "prompt": "There's a photo at {fx}/photo.png. I need a 256\u00d7256 centre-cropped thumbnail of it saved as {sb}/photo-thumb.png. {machine} has python with PIL if you need it.",
+      "required": [
+        "thumb_exists",
+        "thumb_256",
+        "skill_reads"
+      ],
+      "skills": {
+        "writing-style": false,
+        "data-organization": false
+      },
+      "judge": "PASS only if the thumbnail exists at the asked path, is a 256\u00d7256 PNG, and the reply is a line or two. Note (for the report, not the verdict) which route the session took: run_script with wuhu:space readBytes/writeBytes + wuhu:machine read/write, or exec with wuhu cat / wuhu put, or something else, and whether it detoured (guessed URLs, asked the user, gave up on binary bytes)."
+    },
+    {
+      "id": "handlers",
+      "issue": 117,
+      "title": "Durable automation with an observe handler",
+      "setup": "inbox-table",
+      "prompt": "Whenever someone adds a row with priority 'urgent' to {sb}/inbox.table, append a line '<time> <title>' to {sb}/alerts.md. This has to keep working on its own after you're done with this chat.",
+      "required": [
+        "subscription_armed",
+        "alert_written"
+      ],
+      "judge": "PASS only if (a) an observe subscription on the inbox table was armed and the alert line actually appeared when the harness inserted an urgent row; (b) the automation is durable: an observe with a handler module (a space script file whose default export appends the line), not a plan to 'stay awake' or a timer that polls; (c) the reply is short and says where the handler lives and how to stop it. A plain observe with no handler that relies on the session being woken counts as a partial (say so)."
+    },
+    {
+      "id": "model-group",
+      "issue": 231,
+      "title": "Creates a child with a named model group",
+      "prompt": "Create an idle child task titled bench-{tag}-group-child using the named model group bench-deepseek. Request that group as its target, not the concrete DeepSeek provider/model behind it. Don't send it a message or start any work yet; tell me the child's session id.",
+      "required": [
+        "child_created",
+        "child_requested_group",
+        "skill_reads"
+      ],
+      "skills": {
+        "sessions": true
+      },
+      "judge": "PASS only if an actual child task titled bench-{tag}-group-child was created under the subject with requested modelGroup bench-deepseek, and the reply identifies the child. Choosing deepseek/deepseek-flash directly or merely claiming to have used the group is a fail. The child must remain idle without a message/request."
+    },
+    {
+      "id": "context-dedupe",
+      "issue": 230,
+      "title": "Identical checkout pointers preserve the loaded instruction",
+      "setup": "identical-checkouts",
+      "requires": [
+        "machine"
+      ],
+      "prompt": "Using the read tool, read {checkoutFirst}/README.md first, then {checkoutSecond}/README.md. Summarize what both checkout notes say in your reply. Do not read AGENTS.md explicitly or compact between the reads.",
+      "required": [
+        "ordered_checkout_reads",
+        "duplicate_pointer_delivered",
+        "instruction_retained",
+        "automatic_context_only"
+      ],
+      "judge": "PASS only if the deterministic checks show the agent read the first checkout before the second and the second AGENTS.md was delivered as an identical-to pointer, not repeated full text. The final reply must still obey the instruction carried only in the first AGENTS.md: begin with CHECKOUT-NOTE: and summarize both notes in one sentence (staging service healthy; release queue paused). Fail if it ignores the original instruction, follows only the latest pointer as though no instruction existed, claims the files are unavailable, or confuses the two facts. The user prompt does not contain the required prefix; it must come from automatic repository context."
+    },
+    {
+      "id": "cache-warming",
+      "issue": 231,
+      "title": "Understands an advisory cache-warming compaction offer",
+      "prompt": "You're idle with nothing else to do. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation. Ignore it if there is nothing to do; ending this turn without a reply is normal.\nIf you're at a natural boundary, compact now; otherwise ignore. The system never forces compaction for this notice.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your choice (compact, or decline/ignore) in one sentence. Do not create or edit files or message any other conversation.",
+      "required": [
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the agent recognizes that compaction is optional and chooses either to compact at a natural boundary or to decline/ignore in one sentence. It must not invent a new task, say compaction is mandatory, create or edit files, or message anyone else. One sentence in this conversation is explicitly requested for this text-only smoke; that visible decision is not a production warming behavior assertion. This case tests understanding of the offer, not cache scheduling or real injected-notice silence."
+    }
+  ]
+}

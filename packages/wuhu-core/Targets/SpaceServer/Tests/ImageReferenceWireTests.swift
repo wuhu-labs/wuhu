@@ -1,3 +1,4 @@
+import ExecutionOwner
 import Fetch
 import Foundation
 import HTTPTypes
@@ -50,21 +51,21 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   // A row written before images moved to the blob store and a row written after
   // it must reach the provider as the same bytes: the reference is a storage
   // decision, and the prompt may not notice it.
-  @Test func `a stored reference and a legacy inline image render the same request`() async throws {
+  @Test(arguments: [false, true]) func `a stored reference and a legacy inline image render the same request`(viaOwner: Bool) async throws {
     let space = try Space.inMemory()
     let hash = try await space.storeImage(pngBytes)
 
     let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
     let referenced = try await requestBody(
       imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count)),
-      resolver: SpaceMediaResolver(space: space, limits: .claude, group: .shared),
+      resolver: mediaResolver(space, viaOwner: viaOwner),
     )
 
     #expect(legacy == referenced)
     #expect(legacy.contains("data:image/png;base64,\(pngBytes.base64EncodedString())"))
   }
 
-  @Test func `a reference we own that cannot be read fails the turn rather than dropping the image`() async throws {
+  @Test(arguments: [false, true]) func `a reference we own that cannot be read fails the turn rather than dropping the image`(viaOwner: Bool) async throws {
     let space = try Space.inMemory()
     let missing = ImageContent(mimeType: "image/png", source: .blob(String(repeating: "0", count: 64)), byteCount: 11)
     await #expect(throws: (any Error).self) {
@@ -73,17 +74,25 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
         systemPrompt: "sys",
       )
       _ = try await endpoint
-        .withMediaResolver(SpaceMediaResolver(space: space, limits: .claude, group: .shared))
+        .withMediaResolver(mediaResolver(space, viaOwner: viaOwner))
         .withFetch(FetchClient { _ in throw RequestInterrupted() })
         .inference(context: context)
         .collect()
     }
   }
 
-  @Test func `a reference nobody owns is left for another resolver`() async throws {
+  @Test(arguments: [false, true]) func `a reference nobody owns is left for another resolver`(viaOwner: Bool) async throws {
     let space = try Space.inMemory()
-    let resolved = try await SpaceMediaResolver(space: space, limits: .claude, group: .shared)
+    let resolved = try await mediaResolver(space, viaOwner: viaOwner)
       .resolve(MediaContent(url: URL(string: "https://example.com/a.png")!, mimeType: "image/png"))
     #expect(resolved == nil)
+  }
+}
+
+private func mediaResolver(_ space: Space, viaOwner: Bool) -> any MediaResolver {
+  if viaOwner {
+    OwnerMediaResolver(owner: InProcessExecutionOwnerClient(space: space), limits: .claude, group: .shared)
+  } else {
+    SpaceMediaResolver(space: space, limits: .claude, group: .shared)
   }
 }

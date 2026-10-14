@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import FetchURLSession
 import Foundation
@@ -39,7 +40,7 @@ private let liveCases: [(provider: String, model: String)] = [
       systemPrompt: "You are a Wuhu session agent. Answer in at most two sentences.",
       tools: [],
       hub: hub,
-      log: AttemptLogConfig(directory: logDirectory),
+      trace: AttemptLogConfig(directory: logDirectory).traceClient,
     )
     let sender = Sender(id: "morgan", timeZone: TimeZone(identifier: "Asia/Shanghai")!)
 

@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(":docc.bzl", "wuhu_host_tool")
 
 exports_files([
@@ -59,3 +60,10 @@ alias(
     }),
     visibility = ["//visibility:public"],
 )
+
+config_setting(
+    name = "hmr_enabled",
+    flag_values = {"//bazel/rules:hmr": "true", "//bazel/signing:variant": "dev"},
+)
+
+bool_flag(name = "hmr", build_setting_default = False)

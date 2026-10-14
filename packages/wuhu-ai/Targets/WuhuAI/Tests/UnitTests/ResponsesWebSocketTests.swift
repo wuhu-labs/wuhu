@@ -14,7 +14,7 @@ import WuhuAI
 
 @Suite(.timeLimit(.minutes(1))) struct ResponsesWebSocketTests {
   private func endpoint() -> OpenAIGPTEndpoint {
-    OpenAIGPTEndpoint(model: "test-model", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
+    OpenAIGPTEndpoint(model: "test-model", replayScope: "test-scope", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
   }
 
   private func initial() -> Context {
@@ -143,7 +143,7 @@ import WuhuAI
     let imageURL = "data:image/png;base64," + String(repeating: "A", count: 8 << 20)
     let context = Context(messages: [
       .user(.init(content: [.text("large"), .media(.init(url: URL(string: imageURL)!, mimeType: "image/png"))])),
-      .assistant(.init(content: [.reasoning(.encrypted(.init(providerID: "openai", model: "test-model", opaque: opaque)))])),
+      .assistant(.init(content: [.reasoning(.encrypted(.init(providerID: "openai", model: "test-model", opaque: opaque, replayScope: "test-scope")))])),
     ])
     try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
       _ = try await endpoint().withWebSocket(session: session, attemptID: "large").inference(context: context).collect()
@@ -742,7 +742,7 @@ private actor MutableSocketMedia: MediaResolver {
 
 @Suite(.timeLimit(.minutes(1))) struct ResponsesCompletionAndCallbackTests {
   private func endpoint() -> OpenAIGPTEndpoint {
-    OpenAIGPTEndpoint(model: "test-model", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
+    OpenAIGPTEndpoint(model: "test-model", replayScope: "test-scope", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "offline-token")
   }
 
   private func initial() -> Context {
@@ -856,5 +856,65 @@ private final class CallbackSuspension: Sendable {
     entered.continuation.yield(())
     for await _ in release.stream { break }
     finished.continuation.yield(())
+  }
+}
+
+@Suite(.timeLimit(.minutes(1))) struct ReplayScopeWebSocketContracts {
+  @Test(arguments: ["same", "scope", "epoch", "unknown", "reconnect"])
+  func acknowledgedContinuationIsBoundToScopeAndRouteEpoch(change: String) async throws {
+    let server = ScriptedResponsesSocket(scripts: [textResponse("resp_account_a"), textResponse("resp_next")])
+    let session = ResponsesWebSocketSession()
+    var first = OpenAIGPTEndpoint(model: "test-model", replayScope: "account-a", routeEpoch: "epoch-1", baseURL: URL(string: "https://offline.test/v1")!, apiKey: "same-token")
+    if change == "unknown" { first.replayScope = nil }
+    var context = Context(messages: [.user(.init(content: [.text("start")]))])
+    try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      let reply = try await first.withWebSocket(session: session, attemptID: "one").inference(context: context).collect()
+      context.messages.append(.assistant(reply))
+      await session.acknowledge(attemptID: "one", committedMessage: reply, toolCallIDs: [:], renderedContext: context)
+      var second = first
+      if change == "scope" { second.replayScope = "account-b" }
+      if change == "epoch" { second.routeEpoch = "epoch-2" }
+      if change == "reconnect" { await session.invalidate() }
+      context.messages.append(.assistant(.init(content: [
+        .reasoning(.encrypted(.init(providerID: "openai", model: "test-model", summary: "portable", opaque: "scope-secret", id: "rs_scope_secret", replayScope: "account-a"))),
+      ])))
+      context.messages.append(.user(.init(content: [.text("next")])))
+      _ = try await second.withWebSocket(session: session, attemptID: "two").inference(context: context).collect()
+    }
+    let sent = await server.sent
+    #expect(sent.count == 2)
+    #expect(sent[1].object?["previous_response_id"] == (change == "same" ? .string("resp_account_a") : nil))
+    let permitsOpaque = change != "scope" && change != "unknown"
+    #expect(sent[1].jsonString().contains("scope-secret") == permitsOpaque)
+    #expect(sent[1].jsonString().contains("rs_scope_secret") == permitsOpaque)
+    #expect(await server.handshakes.count == (["scope", "epoch", "reconnect"].contains(change) ? 2 : 1))
+    if change != "same" { #expect(sent[1].object?["input"]?.array?.count == 4) }
+    await session.invalidate()
+  }
+
+  @Test func websocketStampsReasoningAndHostedRecordsBeforeCommit() async throws {
+    let response = [
+      json(#"{"type":"response.created","response":{"id":"resp_scope"}}"#),
+      json(#"{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_scope","summary":[],"encrypted_content":"opaque"}}"#),
+      json(#"{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_scope","summary":[],"encrypted_content":"opaque"}}"#),
+      json(#"{"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws_scope","status":"in_progress"}}"#),
+      json(#"{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_scope","status":"completed","action":{"type":"search","query":"swift"}}}"#),
+      json(#"{"type":"response.completed","response":{"id":"resp_scope","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":2}}}"#),
+    ]
+    let server = ScriptedResponsesSocket(scripts: [response])
+    let session = ResponsesWebSocketSession()
+    let endpoint = OpenAICodexEndpoint(model: "test-model", replayScope: "account-a", routeEpoch: "1", jwt: "offline")
+    let message = try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
+      try await endpoint.withWebSocket(session: session, attemptID: "one").inference(context: Context(messages: [])).collect()
+    }
+    #expect(message.content.count == 2)
+    for block in message.content {
+      switch block {
+      case let .reasoning(.encrypted(item)): #expect(item.replayScope == "account-a")
+      case let .hostedTool(item): #expect(item.replayScope == "account-a")
+      default: Issue.record("Unexpected output")
+      }
+    }
+    await session.invalidate()
   }
 }

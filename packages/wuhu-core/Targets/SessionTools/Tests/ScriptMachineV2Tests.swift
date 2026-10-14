@@ -17,7 +17,7 @@ import Testing
       }
       """, session: session, lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await execution.run(space: space) }
+        group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("{\"typed\":true,\"code\":\"machineUnavailable\",\"started\":false}"))
       }
@@ -60,7 +60,7 @@ extension ScriptMachineV2Tests {
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await agent.run() }
-        group.addTask { await execution.run(space: space) }
+        group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("stopped"))
         await agent.shutdown(); group.cancelAll()
@@ -97,7 +97,7 @@ extension ScriptMachineV2Tests {
       result({ counts: [a,b], tag: verdict.tag })
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }; group.addTask { await execution.run(space: space) }
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("{\"counts\":[8,8],\"tag\":\"completed\"}"))
         await agent.shutdown(); group.cancelAll()
@@ -137,7 +137,7 @@ extension ScriptMachineV2Tests {
       result('all-completed')
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }; group.addTask { await execution.run(space: space) }
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("all-completed"))
         await agent.shutdown(); group.cancelAll()
@@ -164,7 +164,7 @@ extension ScriptMachineV2Tests {
       result(codes)
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }; group.addTask { await execution.run(space: space) }
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("[" + Array(repeating: "\"unsupportedDialect\"", count: 12).joined(separator: ",") + "]"))
         await agent.shutdown(); group.cancelAll()
@@ -229,7 +229,7 @@ extension ScriptMachineV2Tests {
     _ = try await client.describe("disk")
     let registry = ScriptV2Operations()
     try registry.reserve()
-    let id = try await client.start("disk", request: .init(kind: "dual.v1", input: [:]), owner: .init(scope: "deadline", key: "one"), timeout: .seconds(1), onClaim: { registry.adopt($0, handle: .init(client: client, machine: "disk"), key: "one") })
+    let id = try await client.start("disk", request: .init(kind: "dual.v1", input: [:]), owner: .init(scope: "deadline", key: "one"), timeout: .seconds(1), onClaim: { registry.adopt($0, handle: .init(client: ScriptMachineV2Client(client: client), machine: "disk"), key: "one") })
     try await registry.settle(nil, handle: nil)
     time.advance(.seconds(1))
     await registry.maintenancePass()
@@ -265,7 +265,7 @@ extension ScriptMachineV2Tests {
       await machineV2('cancel-v2').start('dual.v1', {}, { key: 'cancelled' })
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }; group.addTask { await execution.run(space: space) }
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         for await _ in entered {}
         execution.cancelHandler()
         _ = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
@@ -310,7 +310,7 @@ extension ScriptMachineV2Tests {
       result({ same: op.id === alias.id, rejected, count, tag: (await op.result()).tag })
       """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await agent.run() }; group.addTask { await execution.run(space: space) }
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
         let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
         #expect(answer == .result("{\"same\":true,\"rejected\":true,\"count\":8,\"tag\":\"completed\"}"))
         await agent.shutdown(); group.cancelAll()

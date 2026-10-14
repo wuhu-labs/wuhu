@@ -45,6 +45,8 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
   let receiveQuota: @Sendable (JSONValue) async -> Void
   var providerID: String { endpoint.providerID }
   var model: String { endpoint.model }
+  var replayScope: String? { endpoint.replayScope }
+  var routeEpoch: String? { endpoint.routeEpoch }
 
   func runInference(context: Context, options: RequestOptions, mediaResolver: (any MediaResolver)?) -> AsyncStream<Result<InferenceEvent, InferenceError>> {
     @Dependency(WebSocketConnector.self) var connector
@@ -55,7 +57,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
     let build: @Sendable (Context) async throws -> ResponsesSocketRequest = { context in
       let built = try await buildResponsesRequest(
         model: endpoint.model, baseURL: endpoint.baseURL,
-        context: normalizedRequestContext(context, targetProviderID: endpoint.providerID),
+        context: normalizedRequestContext(context, targetProviderID: endpoint.providerID, replayScope: endpoint.replayScope),
         options: options, isCodex: endpoint.isCodex, mediaResolver: mediaResolver,
       )
       var body = built.body
@@ -78,7 +80,7 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
       let size = responsesWebSocketByteLimit
       return ResponsesSocketRequest(
         handshake: WebSocketRequest(url: url, headers: headers, limits: .init(frameBytes: size, messageBytes: size, bufferedReceiveBytes: size, outboundMessageBytes: size)),
-        body: body,
+        body: body, replayScope: endpoint.replayScope, routeEpoch: endpoint.routeEpoch,
       )
     }
     return AsyncStream { continuation in
@@ -105,6 +107,8 @@ private struct ResponsesWebSocketEndpoint<Base: ResponsesEndpoint>: ModelEndpoin
 struct ResponsesSocketRequest: Sendable {
   var handshake: WebSocketRequest
   var body: OrderedDictionary<String, JSONValue>
+  var replayScope: String?
+  var routeEpoch: String?
 }
 
 let responsesWebSocketByteLimit = 128 << 20

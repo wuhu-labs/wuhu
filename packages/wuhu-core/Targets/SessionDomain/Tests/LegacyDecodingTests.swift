@@ -13,6 +13,7 @@ import Testing
     let stored = ToolExecutionState(fileAccessLog: ["/a.md": .journal(3)], folderRoots: ["machines://m1/repo": nil])
     let decoded = try reshaped(stored) {
       $0["folderRoots"] = nil
+      $0["deliveredContext"] = nil
       $0["mounts"] = ["stack": [["location": "/notes"]], "emittedVersions": ["/notes": 1]]
     }
     #expect(decoded == ToolExecutionState(fileAccessLog: ["/a.md": .journal(3)]))
@@ -23,12 +24,16 @@ import Testing
       id: UUID(), timestamp: Date(timeIntervalSince1970: 0), kind: .timer, subscriptionID: .init("tim-1"),
       folderRoots: ["machines://m1/repo": nil], content: .init(text: "tick"),
     )
-    let decoded = try reshaped(stored) { $0["folderRoots"] = nil }
+    let decoded = try reshaped(stored) {
+      $0["folderRoots"] = nil
+      $0["deliveredContext"] = nil
+    }
     #expect(decoded.folderRoots == nil)
     #expect(decoded.content == stored.content)
     var tools = ToolExecutionState()
     tools.apply(delivered: .notification(decoded))
     #expect(tools.folderRoots.isEmpty)
+    #expect(tools.deliveredContext.isEmpty)
   }
 
   @Test func `a generation head that still lists mounts to redeclare decodes`() throws {

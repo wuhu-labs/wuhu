@@ -29,13 +29,13 @@ externalPackages:
     products: [WuhuAI]
   wuhu-fetch:
     path: ../wuhu-fetch
-    products: [Fetch, FetchSSE, FetchAsyncHTTPClient, FetchWebSocket, FetchURLSession, PinnedTLS]
+    products: [Fetch, FetchSSE, FetchAsyncHTTPClient, FetchWebSocket, FetchURLSession, FetchTunnel, FetchTunnelWebSocket, PinnedTLS]
   keel:
     path: ../keel
     products: [KeelObjectStore]
   wuhu-serve:
     path: ../wuhu-serve
-    products: [Serve, ServeSSE, ServeRouting, ServeNIO, ServeTLS, ServeTesting]
+    products: [Serve, ServeSSE, ServeRouting, ServeNIO, ServeTLS, ServeTesting, ServeTunnel]
   swift-http-types:
     url: https://github.com/apple/swift-http-types.git
     from: "1.5.1"

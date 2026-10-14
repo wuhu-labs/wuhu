@@ -58,6 +58,11 @@ import Testing
     #expect(merged["deepseek"]?.object?["models"]?.object?["deepseek-v4-flash"] != nil)
   }
 
+  @Test func discoverySeparatesGroupsAndKeepsMemberOrderAndPolicy() throws {
+    let groups = try #require(JSONValue.parse(#"{"work":{"kind":"group","members":[{"id":"second","provider":"b","model":"m"},{"id":"first","provider":"a","model":"n"}],"policy":{"type":"quotaAware","holdDownSeconds":1800}}}"#))
+    #expect(renderedModels(providers: ["a": ["models": ["n": .object([:])]]], groups: groups) == "provider a\n  a/n\ngroup work {\"type\":\"quotaAware\",\"holdDownSeconds\":1800}\n  second: b/m\n  first: a/n\n")
+  }
+
   @Test func mergeFromNothingIsTheSeed() throws {
     let basis = try #require(JSONValue.parse(WellKnownModels.seed))
     let merge = ModelsMerge(basis: basis, user: nil)
@@ -74,7 +79,24 @@ import Testing
 
   @Test func parsesModelsUpdate() throws {
     #expect(try Command.parse(["models", "update"]) == .modelsUpdate)
-    #expect(throws: (any Error).self) { try Command.parse(["models"]) }
+    #expect(try Command.parse(["models"]) == .modelsList(json: false))
+    #expect(try Command.parse(["models", "--json"]) == .modelsList(json: true))
     #expect(throws: (any Error).self) { try Command.parse(["models", "sync"]) }
+  }
+}
+
+extension ModelsVerbTests {
+  @Test func modelSyncPreservesReplayPolicyAndGroupEntries() throws {
+    let basis = try #require(JSONValue.parse(WellKnownModels.seed))
+    let group: JSONValue = ["kind": "group", "members": []]
+    let user: JSONValue = [
+      "anthropic": group,
+      "openai": ["dialect": "responses", "baseURL": "https://proxy.test", "opaqueReplay": "none", "models": [:]],
+      "deepseek": ["dialect": "anthropic", "baseURL": "https://api.deepseek.com/anthropic", "opaqueReplay": "affine", "models": [:]],
+    ]
+    let merge = ModelsMerge(basis: basis, user: user)
+    #expect(merge.merged.object?["anthropic"] == group)
+    #expect(merge.merged.object?["openai"]?.object?["opaqueReplay"] == .string("none"))
+    #expect(merge.merged.object?["deepseek"]?.object?["opaqueReplay"] == .string("affine"))
   }
 }

@@ -1,4 +1,5 @@
 import Credentials
+import struct Credentials.CredentialBinding
 import Dependencies
 import FetchWebSocket
 #if canImport(FoundationEssentials)
@@ -72,8 +73,8 @@ import WuhuAI
       let sessions = try Space.inMemory().sessions
       let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
-      let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+      let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
+      let resolved = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
       let (client, server) = WebSocket.pair()
       let inbound = AsyncThrowingStream<WebSocketEvent, any Error>.makeStream()
       let bodies = Box<[JSONValue]>([])

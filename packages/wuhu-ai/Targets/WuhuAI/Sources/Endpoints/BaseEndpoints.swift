@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 // Each wire protocol is a refinement of `ModelEndpoint` that supplies a default
 // `runInference` over the shared SSE transport. A conforming endpoint provides
@@ -19,11 +23,11 @@ extension ChatCompletionsEndpoint {
   ) -> AsyncStream<Result<InferenceEvent, InferenceError>> {
     let (providerID, model, baseURL) = (providerID, model, baseURL)
     return runSSEInference(
-      buildRequest: { try await buildChatCompletionsRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID), options: options, mediaResolver: mediaResolver) },
+      buildRequest: { try await buildChatCompletionsRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, mediaResolver: mediaResolver) },
       modifyBody: { self.modifyBody(&$0, options: $1) },
       modifyHeaders: { self.modifyHeaders(&$0, options: $1) },
       options: options,
-      parse: { parseChatCompletionsStream($0, providerID: providerID, model: model) },
+      parse: { parseChatCompletionsStream($0, providerID: providerID, model: model, replayScope: replayScope) },
     )
   }
 }
@@ -55,12 +59,12 @@ extension ResponsesEndpoint {
       receiveResponseHeaders = { _ in }
     }
     return runSSEInference(
-      buildRequest: { try await buildResponsesRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID), options: options, isCodex: isCodex, mediaResolver: mediaResolver) },
+      buildRequest: { try await buildResponsesRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, isCodex: isCodex, mediaResolver: mediaResolver) },
       modifyBody: { self.modifyBody(&$0, options: $1) },
       modifyHeaders: { self.modifyHeaders(&$0, options: $1) },
       receiveResponseHeaders: receiveResponseHeaders,
       options: options,
-      parse: { parseResponsesStream($0, providerID: providerID, model: model) },
+      parse: { parseResponsesStream($0, providerID: providerID, model: model, replayScope: replayScope) },
     )
   }
 }
@@ -82,11 +86,14 @@ extension AnthropicMessagesEndpoint {
   ) -> AsyncStream<Result<InferenceEvent, InferenceError>> {
     let (providerID, model, baseURL, acceptsUnsignedThinking) = (providerID, model, baseURL, acceptsUnsignedThinking)
     return runSSEInference(
-      buildRequest: { try await buildAnthropicRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID), options: options, acceptsUnsignedThinking: acceptsUnsignedThinking, mediaResolver: mediaResolver) },
-      modifyBody: { self.modifyBody(&$0, options: $1) },
+      buildRequest: { try await buildAnthropicRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, acceptsUnsignedThinking: acceptsUnsignedThinking, mediaResolver: mediaResolver) },
+      modifyBody: { body, options in
+        self.modifyBody(&body, options: options)
+        try validateAnthropicThinking(body, replayScope: replayScope, acceptsUnsignedThinking: acceptsUnsignedThinking)
+      },
       modifyHeaders: { self.modifyHeaders(&$0, options: $1) },
       options: options,
-      parse: { parseAnthropicStream($0, providerID: providerID, model: model) },
+      parse: { parseAnthropicStream($0, providerID: providerID, model: model, replayScope: replayScope) },
     )
   }
 }
@@ -105,11 +112,11 @@ extension GeminiContentEndpoint {
   ) -> AsyncStream<Result<InferenceEvent, InferenceError>> {
     let (providerID, model, baseURL) = (providerID, model, baseURL)
     return runSSEInference(
-      buildRequest: { try await buildGeminiRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID), options: options, mediaResolver: mediaResolver) },
+      buildRequest: { try await buildGeminiRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, mediaResolver: mediaResolver) },
       modifyBody: { self.modifyBody(&$0, options: $1) },
       modifyHeaders: { self.modifyHeaders(&$0, options: $1) },
       options: options,
-      parse: { parseGeminiStream($0, providerID: providerID, model: model) },
+      parse: { parseGeminiStream($0, providerID: providerID, model: model, replayScope: replayScope) },
     )
   }
 }

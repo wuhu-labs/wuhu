@@ -1,0 +1,17 @@
+{
+  "bench-deepseek": {
+    "kind": "group",
+    "members": [
+      {
+        "id": "only",
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    ],
+    "defaultEffort": "medium",
+    "policy": {
+      "type": "select",
+      "member": "only"
+    }
+  }
+}

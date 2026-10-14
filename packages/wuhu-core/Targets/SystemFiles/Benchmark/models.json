@@ -1,0 +1,14 @@
+{
+  "deepseek": {
+    "dialect": "anthropic",
+    "baseURL": "https://api.deepseek.com/anthropic",
+    "models": {
+      "deepseek-flash": {
+        "maxInput": 1048576,
+        "maxOutput": 65536,
+        "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "defaultEffort": "medium"
+      }
+    }
+  }
+}

@@ -13,22 +13,11 @@ import SpaceTools
 struct ScriptDiscoveryConfiguration: Sendable {
   var contentHost: String?
   var toolRosters: ToolRostersOutput?
-  var identity: (@Sendable () async throws -> JSONValue)?
-}
-
-extension Scripts {
-  public func configureDiscovery(contentHost: String? = nil, toolRosters: ToolRostersOutput? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
-    discovery.withLock {
-      if let contentHost { $0.contentHost = contentHost }
-      if let toolRosters { $0.toolRosters = toolRosters }
-      if let identity { $0.identity = identity }
-    }
-  }
 }
 
 struct ScriptDiscovery: Sendable {
   let execution: ScriptExecution
-  let space: Space
+  let owner: any ScriptOwnerClient
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_identity_origin") { arguments in
@@ -48,20 +37,14 @@ struct ScriptDiscovery: Sendable {
     }
     engine.define("__wuhu_discovery", promising: { arguments in
       return await spaceAnswer {
-        let principal = try await space.principal(of: execution.session)
-        let context = SpaceToolContext(space: space, principal: principal)
         let result: JSONValue
         switch arguments.first {
         case .string("identity"):
-          guard let identity = execution.tools.scripts?.discovery.withLock(\.identity) else {
-            throw ToolRunError.failed(code: .unsupported, message: "The server identity is not configured on this script host.", hint: nil)
-          }
-          do { result = try await identity() }
-          catch { throw ToolRunError.failed(code: .unsupported, message: "The server issuer is unavailable; inspect wuhu identity for configuration or directory publication errors.", hint: nil) }
+          result = try await owner.identityConfiguration()
         case .string("context"):
-          result = try await context.discoveryContext(contentHost: execution.tools.scripts?.discovery.withLock(\.contentHost))
+          result = try await owner.discoveryContext(session: execution.session, contentHost: execution.tools.scripts?.discovery.withLock(\.contentHost))
         case .string("groups"):
-          result = try JSONValueEncoder().encode(try await context.discoveryGroups())
+          result = try await owner.discoveryGroups(session: execution.session)
         case .string("toolRoster"):
           guard let roster = execution.tools.scripts?.discovery.withLock(\.toolRosters) else {
             throw ToolRunError.failed(code: .unsupported, message: "The session roster is not configured on this script host.", hint: nil)

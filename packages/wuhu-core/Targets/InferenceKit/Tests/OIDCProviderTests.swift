@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import Foundation
 @testable import InferenceKit
@@ -85,7 +86,7 @@ import WuhuAI
     defer { try? FileManager.default.removeItem(at: directory) }
     let catalog = try catalog(provider: "anthropic", signer: { _, _ in "do-not-log-jwt" })
     let model = try await catalog.resolve(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "high"), session: .init("s"))
-    let executor = InferenceExecutor(session: .init("s"), model: model, systemPrompt: "offline", tools: [], log: .init(directory: directory))
+    let executor = InferenceExecutor(session: .init("s"), model: model, systemPrompt: "offline", tools: [], trace: AttemptLogConfig(directory: directory).traceClient)
     await withDependencies { $0.fetch = FetchClient { _ in Response(status: .unauthorized, body: .string("offline rejection")) } } operation: {
       do { _ = try await executor.run(attemptID: UUID(0), transcript: .init(), mode: .normal) }
       catch {}
@@ -106,7 +107,7 @@ private func catalog(provider: String, signer: (@Sendable (URL, SessionID) async
   return ProviderCatalog(document: document, credentials: .init { _ in
     Issue.record("OIDC must never resolve a stored credential")
     return provider == "claude" ? .claudeCodeOAuth("stored-legacy-token-do-not-use") : .apiKey("stored-key-do-not-use")
-  }, oidcToken: signer)
+  }, oidcToken: signer, oidcBindingIdentity: { _, _ in "fixture-issuer-space-group" })
 }
 
 private actor TokenCalls {

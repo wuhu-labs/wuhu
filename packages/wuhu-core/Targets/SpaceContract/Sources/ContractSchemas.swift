@@ -102,6 +102,9 @@ public enum ContractSchemas {
     ("UsageWindow", UsageWindow.jsonSchema),
     ("ProviderUsage", ProviderUsage.jsonSchema),
     ("ProviderDescriptor", ProviderDescriptor.jsonSchema),
+    ("ModelGroupMember", ModelGroupMember.jsonSchema),
+    ("ModelGroupDescriptor", ModelGroupDescriptor.jsonSchema),
+    ("SessionModelRouteOutput", SessionModelRouteOutput.jsonSchema),
     ("ProvidersOutput", ProvidersOutput.jsonSchema),
 
     ("SessionCreateInput", SessionCreateInput.jsonSchema),

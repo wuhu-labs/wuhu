@@ -15,6 +15,7 @@ public struct CapabilityError: Error, Sendable, Codable, Equatable, CustomString
     case providerRegion = "provider_region"
     case providerEntitlement = "provider_entitlement"
     case providerRateLimited = "provider_rate_limited"
+    case unsupportedTarget = "unsupported_target"
     case unsupportedFeature = "unsupported_feature"
     case invalidArgument = "invalid_argument"
     case providerUnavailable = "provider_unavailable"
@@ -181,6 +182,9 @@ public struct CapabilityClient: Sendable {
     case .transcription: document?.transcription
     }
     let id = options.provider ?? selection?.active ?? "codex"
+    if models.groups[id] != nil || options.model.flatMap({ models.groups[$0] }) != nil {
+      throw CapabilityError(.unsupportedTarget, "Model groups are session routing targets, not capability targets.")
+    }
     let variant: CapabilitiesDocument.Variant
     if let configured = selection?.providers[id] {
       variant = configured
@@ -200,6 +204,9 @@ public struct CapabilityClient: Sendable {
       throw CapabilityError(.providerNotConfigured, "Dialect '\(variant.dialect)' does not implement this capability.")
     }
     let credentialID = variant.credential ?? (variant.dialect == "codex" ? models.providers.sorted(by: { $0.key < $1.key }).first(where: { $0.value.dialect == .codex })?.key ?? "codex" : id)
+    if models.groups[credentialID] != nil {
+      throw CapabilityError(.unsupportedTarget, "A model group cannot supply capability credentials.")
+    }
     let defaultURL = switch variant.dialect {
     case "codex": models.providers[credentialID]?.baseURL ?? URL(string: "https://chatgpt.com/backend-api/codex")!
     case "brave": URL(string: "https://api.search.brave.com/res/v1")!
@@ -257,8 +264,12 @@ extension CapabilityClient {
     do { data = try await read(CapabilitiesDocument.spacePath) }
     catch { throw CapabilityError(.providerNotConfigured, "Cannot read /capabilities.json.") }
     let document = try data.map { try CapabilitiesDocument(json: $0) }
-    let modelsData = try await read(ModelsDocument.spacePath)
-    let models = modelsData.flatMap { try? ModelsDocument(json: $0) } ?? .init(providers: [:])
+    let models: ModelsDocument
+    do {
+      let providerData = try await read(ModelsDocument.spacePath)
+      let groupData = try await read(ModelsDocument.groupPath)
+      models = try ModelsDocument(json: providerData ?? Data("{}".utf8), groupsJSON: groupData)
+    } catch { throw CapabilityError(.providerNotConfigured, "Invalid or unreadable /models.json.") }
     return .init(document: document, models: models, credentials: credentials)
   }
 }

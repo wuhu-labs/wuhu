@@ -16,35 +16,28 @@ private let scheme = "wuhu:"
 
 /// `wuhu:/<path>` reads the acting group's files and `wuhu://<group>.localspace/<path>`
 /// another group's, which it must read; every space module is as of `rev`.
-func scriptModules(in space: Space, at rev: Rev, acting: GroupID, readable: Set<GroupID>, typedErrors: Bool = false) -> JSEngine.ModuleLoader {
+func scriptModules(owner: any ScriptOwnerClient, snapshot: ScriptModuleSnapshot, typedErrors: Bool = false) -> JSEngine.ModuleLoader {
   JSEngine.ModuleLoader(
     maxModules: scriptModuleLimit,
     resolve: resolveScriptModule,
     source: { name in
-      // A system module reads from the binary; a space module from the space
-      // as of the moment the script started.
-      let (fs, path, shown): (any SpaceVFS, String, String)
-      if let system = systemModulePath(name) {
-        (fs, path, shown) = (SystemFiles.vfs, system, name)
-      } else if let (group, inGroup) = groupModulePath(name) {
-        guard readable.contains(group) else { throw ScriptError(message(of: SpaceError.notFound(name), typed: typedErrors)) }
-        (fs, path, shown) = (await space.fs(group, at: rev), inGroup, name)
-      } else {
-        let plain = String(name.dropFirst(scheme.count))
-        (fs, path, shown) = (await space.fs(acting, at: rev), plain, plain)
-      }
       let data: Data
+      let shown: String
       do {
-        if rev == Rev(0), systemModulePath(name) == nil { throw SpaceError.notFound(path) }
-        guard try await fs.stat(path).size <= scriptModuleBytes else {
-          throw ScriptError("\(shown) is larger than \(scriptModuleBytes >> 20) MiB")
+        if let path = systemModulePath(name) {
+          shown = name
+          guard try await SystemFiles.vfs.stat(path).size <= scriptModuleBytes else { throw ScriptError("\(shown) is larger than \(scriptModuleBytes >> 20) MiB") }
+          data = try await SystemFiles.vfs.read(path).1
+        } else if let (group, path) = groupModulePath(name) {
+          shown = name
+          guard snapshot.readable.contains(group) else { throw ScriptError(message(of: SpaceError.notFound(name), typed: typedErrors)) }
+          data = try await owner.moduleBytes(path: path, shown: shown, group: group, snapshot: snapshot)
+        } else {
+          shown = String(name.dropFirst(scheme.count))
+          data = try await owner.moduleBytes(path: shown, shown: shown, group: snapshot.acting, snapshot: snapshot)
         }
-        data = try await fs.read(path).1
-      } catch let error as ScriptError {
-        throw error
-      } catch {
-        throw ScriptError(message(of: error, typed: typedErrors))
-      }
+      } catch let error as ScriptError { throw error }
+      catch { throw ScriptError(message(of: error, typed: typedErrors)) }
       guard let text = String(validating: data, as: UTF8.self) else {
         throw ScriptError("\(shown) is not UTF-8 text")
       }

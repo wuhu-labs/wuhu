@@ -22,6 +22,7 @@ func addMachineRoutes(
   _ router: inout Router,
   space: Space,
   hub: MachineHub,
+  machineV2Hub: MachineV2Hub? = nil,
   challenges: OneShotChallenges,
   fingerprint: String?,
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
@@ -136,6 +137,7 @@ func addMachineRoutes(
     }
     _ = try await space.resetCredentials(account: record.account)
     await hub.kickMachine(record.id)
+    await machineV2Hub?.kick(record.id)
     let minted = try await space.mintJoinToken(
       account: record.account,
       capabilities: [.execMachine],
@@ -158,6 +160,7 @@ func addMachineRoutes(
     }
     _ = try await space.resetCredentials(account: record.account)
     await hub.kickMachine(record.id)
+    await machineV2Hub?.kick(record.id)
     return jsonResponse(.object([:]))
   }
 

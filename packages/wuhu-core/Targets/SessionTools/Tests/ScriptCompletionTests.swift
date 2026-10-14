@@ -1,3 +1,4 @@
+import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import Fetch
 import Foundation
@@ -5,7 +6,7 @@ import JSONValue
 @testable import SessionTools
 import Testing
 
-private let completionModels = #"{"offline":{"dialect":"anthropic","baseURL":"https://offline.test","models":{"small":{"maxInput":8192,"maxOutput":512,"efforts":["low"],"defaultEffort":"low"}}}}"#
+private let completionModels = #"{"offline":{"dialect":"anthropic","baseURL":"https://offline.test", "opaqueReplay": "affine","models":{"small":{"maxInput":8192,"maxOutput":512,"efforts":["low"],"defaultEffort":"low"}}}}"#
 private let completionSSE = #"""
 event: message_start
 data: {"message":{"model":"served-small","usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}
@@ -28,6 +29,20 @@ data: {}
 """#
 
 @Suite struct ScriptCompletionTests {
+  @Test func modelGroupsAreTypedUnsupportedTargetsWithoutCredentialsOrProviderIO() async throws {
+    let fetch = FetchClient { _ in Issue.record("group completion must not call a provider"); return Response(status: .internalServerError) }
+    let credentials = CredentialResolver { _ in Issue.record("group completion must not resolve credentials"); return nil }
+    try await withRig(fetch: fetch, credentials: credentials) { rig in
+      let groups: JSONValue = [
+        "work": ["kind": "group", "defaultEffort": "low", "members": [["id": "first", "provider": "offline", "model": "small"]], "policy": ["type": "select", "member": "first"]],
+      ]
+      try await rig.write("/models.json", completionModels)
+      try await rig.write("/model-groups.json", groups.jsonString())
+      let codes = try await rig.evaluate(#"import {complete} from 'wuhu:ai'; const codes=[]; for(const model of ['work','work/small']) {try {await complete('hello',{model})}catch(e){codes.push(e.code)}} result(codes)"#)
+      #expect(codes == .array([.string("unsupportedTarget"), .string("unsupportedTarget")]))
+    }
+  }
+
   @Test func modelErrorsAreTypedAndNeverFallBack() async throws {
     let calls = Box<[String]>([])
     let credentials = CredentialResolver { id in calls.withLock { $0.append(id) }; return nil }
@@ -75,7 +90,7 @@ data: {}
       bodies.withLock { $0.append(JSONValue.parse(String(decoding: bytes, as: UTF8.self)) ?? .null) }
       return Response(status: .ok, body: .bytes(Data(completionSSE.utf8), contentType: "text/event-stream"))
     }
-    try await withRig(fetch: fetch, credentials: .init { _ in .apiKey("fixture") }, group: .init(rawValue: "completion-home")) { rig in
+    try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }, group: .init(rawValue: "completion-home")) { rig in
       try await rig.write("/models.json", completionModels)
       #expect(try await rig.evaluate(#"""
       import { complete } from 'wuhu:ai'
@@ -122,7 +137,7 @@ data: {}
       calls.withLock { $0 += 1 }
       return Response(status: .serviceUnavailable, body: .string("Provider failed"))
     }
-    try await withRig(fetch: fetch, credentials: .init { _ in .apiKey("fixture") }) { rig in
+    try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }) { rig in
       try await rig.write("/models.json", completionModels)
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello',{model:'offline/small'}) } catch(e) { result([e.name,e.code]) }"#) == .array([.string("CompletionError"), .string("inferenceFailed")]))
       #expect(calls.value == 1)
@@ -168,7 +183,7 @@ data: {}
         }, oidcToken: { _, caller in
           #expect(caller == rig.session)
           return "fixture-token"
-        })
+        }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" })
       }, completionMetrics: .init { metric in
         seen.withLock { $0.append(metric.session.rawValue) }
         #expect(metric.provider == "offline")
@@ -184,7 +199,7 @@ data: {}
 
   @Test func unsupportedSchemaAndInvalidProviderConfigurationNeverCallProviders() async throws {
     let fetch = FetchClient { _ in Issue.record("Invalid configuration must not reach a provider"); return Response(status: .internalServerError) }
-    try await withRig(fetch: fetch, credentials: .init { _ in .apiKey("fixture") }) { rig in
+    try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }) { rig in
       try await rig.write("/models.json", completionModels.replacingOccurrences(of: "offline", with: "deepseek"))
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello',{model:'deepseek/small',schema:{type:'object'}}) } catch(e) { result(e.code) }"#) == .string("unsupportedSchema"))
       let token = try await rig.space.fs(.shared).read("/models.json").0
@@ -197,7 +212,7 @@ data: {}
   @Test func malformedStructuredOutputIsRecordedAsFailure() async throws {
     let invalid = completionSSE.replacingOccurrences(of: #"{\"relevant\":true}"#, with: "not JSON")
     let fetch = FetchClient { _ in Response(status: .ok, body: .bytes(Data(invalid.utf8), contentType: "text/event-stream")) }
-    try await withRig(fetch: fetch, credentials: .init { _ in .apiKey("fixture") }) { rig in
+    try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }) { rig in
       try await rig.write("/models.json", completionModels)
       #expect(try await rig.evaluate(#"import {complete} from 'wuhu:ai'; try { await complete('hello',{model:'offline/small',schema:{type:'object'}}) } catch(e) { result(e.code) }"#) == .string("inferenceFailed"))
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
@@ -211,7 +226,7 @@ data: {}
     let fetch = FetchClient { _ in throw CancellationError() }
     try await withRig(fetch: fetch) { rig in
       try await rig.write("/models.json", completionModels)
-      let tools = ToolExecutor(space: rig.space, credentials: .init { _ in .apiKey("fixture") })
+      let tools = ToolExecutor(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       await #expect(throws: CancellationError.self) { try await tools.complete(rig.session, request) }
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
@@ -236,7 +251,7 @@ data: {}
         return {session:(await context()).session,text,cursor:(state?.cursor ?? 0)+1}
       }
       """#)
-      let tools = ToolExecutor(space: rig.space, credentials: .init { _ in .apiKey("fixture") })
+      let tools = ToolExecutor(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
       let result = try await rig.scripts.runHandler(path: "/complete-handler.js", session: rig.session, stateJSON: #"{"cursor":4}"#, tools: tools)
       let state = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(state["session"] == .string(rig.session.rawValue))
@@ -248,5 +263,26 @@ data: {}
       #expect(record.object?["model"] == .string("small"))
       #expect(record.object?["output"] == .integer(5))
     }
+  }
+}
+
+extension ScriptCompletionTests {
+  @Test func noneOnlyAnthropicCompletionEmitsNoThinkingWithoutReplayScope() async throws {
+    let requests = Box<[JSONValue]>([])
+    let fetch = FetchClient { request in
+      let data = try await request.body?.data() ?? Data()
+      requests.withLock { $0.append(JSONValue.parse(String(decoding: data, as: UTF8.self)) ?? .null) }
+      return Response(status: .ok, body: .bytes(Data(completionSSE.utf8), contentType: "text/event-stream"))
+    }
+    try await withRig(fetch: fetch, credentials: .init { _ in .apiKey("fixture") }) { rig in
+      let models = completionModels.replacingOccurrences(of: "\"affine\"", with: "\"none\"")
+        .replacingOccurrences(of: "\"low\"", with: "\"none\"")
+      try await rig.write("/models.json", models)
+      let output = try await rig.evaluate(#"import {complete} from 'wuhu:ai'; result([await complete('hello', {model:'offline/small'})])"#)
+      #expect(output == .array([.string(#"{"relevant":true}"#)]))
+    }
+    let body = try #require(requests.value.first?.object)
+    #expect(body["thinking"] == nil)
+    #expect(body["output_config"] == nil)
   }
 }

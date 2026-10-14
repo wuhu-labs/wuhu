@@ -14,7 +14,7 @@ if [ "${1:-}" = --release-tag ]; then
   fi
   version="${2#wuhu/v}"
 fi
-commit="$(git rev-parse --short=9 HEAD 2>/dev/null || echo unknown)"
+commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 
 echo "STABLE_WUHU_VERSION ${version}"
 echo "STABLE_WUHU_COMMIT ${commit}"

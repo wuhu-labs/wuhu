@@ -37,26 +37,25 @@ let scriptWriteBytes = (12 << 20) - (64 << 10)
 
 final class ScriptMachineBindings: Sendable {
   private let execution: ScriptExecution
-  private let space: Space
+  private let owner: any ScriptOwnerClient
   private let access: ScriptMachineAccess?
 
-  init(execution: ScriptExecution, space: Space, access: ScriptMachineAccess?) {
+  init(execution: ScriptExecution, owner: any ScriptOwnerClient, access: ScriptMachineAccess?) {
     self.execution = execution
-    self.space = space
+    self.owner = owner
     self.access = access
   }
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_machine_own_exec", promising: { [self] arguments in
       await spaceAnswer {
-        let context = SpaceToolContext(space: space, principal: try await space.principal(of: execution.session))
         switch string(arguments, 0) {
-        case "list": return try JSONValueEncoder().encode(try await context.ownExecs())
-        case "status": return try JSONValueEncoder().encode(try await context.ownExecStatus(string(arguments, 1)))
+        case "list": return try JSONValueEncoder().encode(try await owner.ownExecs(session: execution.session))
+        case "status": return try JSONValueEncoder().encode(try await owner.ownExecStatus(string(arguments, 1), session: execution.session))
         case "kill":
-          try await context.killOwnExec(string(arguments, 1)) { id in
-            try await available().exec.kill(id)
-          }
+          let id = try await owner.ownExecToKill(string(arguments, 1), session: execution.session)
+          do { try await available().exec.kill(id) }
+          catch { throw Wire.failure(error) }
           return .null
         default: throw ToolRunError.failed(code: .invalidArgument, message: "unknown exec operation", hint: nil)
         }
@@ -95,8 +94,7 @@ final class ScriptMachineBindings: Sendable {
   private func machines() async throws -> JSONValue {
     let access = try available()
     let attached = await access.files.attached()
-    let group = try await space.principal(of: execution.session).group
-    return .array(try await space.machines(usableFrom: group).map { record in
+    return .array(try await owner.usableMachines(session: execution.session).map { record in
       .object([
         "id": .string(record.id.rawValue),
         "name": record.name.map(JSONValue.string) ?? .null,
@@ -380,8 +378,7 @@ final class ScriptMachineBindings: Sendable {
   }
 
   private func usableMachine(_ reference: String) async throws -> MachineRecord {
-    let group = try await space.principal(of: execution.session).group
-    guard let record = try await space.resolveMachine(reference, usableFrom: group) else {
+    guard let record = try await owner.resolveMachine(reference, session: execution.session) else {
       throw ScriptError("no machine named \(reference)")
     }
     return record

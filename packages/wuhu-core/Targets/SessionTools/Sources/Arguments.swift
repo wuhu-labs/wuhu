@@ -110,12 +110,16 @@ struct QueryArguments: Decodable {
   var sql: String
 }
 
-struct SendMessageArguments: Decodable {
-  var message: String
-  var conversation: String?
-  var session: String?
-  var replyTarget: String?
-  var attachments: [String]?
+public struct SendMessageArguments: Decodable, Sendable {
+  public var message: String
+  public var conversation: String?
+  public var session: String?
+  public var replyTarget: String?
+  public var attachments: [String]?
+
+  public init(message: String, conversation: String? = nil, session: String? = nil, replyTarget: String? = nil, attachments: [String]? = nil) {
+    self.message = message; self.conversation = conversation; self.session = session; self.replyTarget = replyTarget; self.attachments = attachments
+  }
 
   enum CodingKeys: String, CodingKey {
     case message
@@ -126,10 +130,14 @@ struct SendMessageArguments: Decodable {
   }
 }
 
-struct RequestArguments: Decodable {
-  var task: String
-  var message: String
-  var deadlineSeconds: Double?
+public struct RequestArguments: Decodable, Sendable {
+  public var task: String
+  public var message: String
+  public var deadlineSeconds: Double?
+
+  public init(task: String, message: String, deadlineSeconds: Double? = nil) {
+    self.task = task; self.message = message; self.deadlineSeconds = deadlineSeconds
+  }
 
   enum CodingKeys: String, CodingKey {
     case task
@@ -158,6 +166,7 @@ struct CreateSessionArguments: Decodable {
   var group: String?
   var provider: String?
   var model: String?
+  var modelGroup: String? = nil
   var effort: String?
   var tags: [String]?
   var template: String?
@@ -172,6 +181,7 @@ struct CreateSessionArguments: Decodable {
     case group
     case provider
     case model
+    case modelGroup
     case effort
     case tags
     case template

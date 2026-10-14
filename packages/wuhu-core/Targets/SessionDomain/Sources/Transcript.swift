@@ -38,6 +38,7 @@ public struct Transcript: Hashable, Sendable, Codable {
     _ message: AssistantMessage,
     id: UUID,
     metadata: AssistantMessageMetadata,
+    replayBinding: ReplayBinding? = nil,
   ) -> AssistantEntry {
     guard let usage = metadata.usage else {
       preconditionFailure("assistant message committed without a usage block")
@@ -62,6 +63,7 @@ public struct Transcript: Hashable, Sendable, Codable {
       stopReason: metadata.stopReason,
       usage: usage,
       toolCallIDs: toolCallIDs,
+      replayBinding: replayBinding,
     )
     items.append(.assistant(entry))
     return entry
@@ -69,6 +71,7 @@ public struct Transcript: Hashable, Sendable, Codable {
 
   public func compacted(head: GenerationHead, kept: Range<Int>?) -> Transcript {
     var head = head
+    head.replayBinding = head.replayBinding ?? replayBinding
     if let registeredSubscriptions {
       head.snapshot.subscriptions = registeredSubscriptionState(head.snapshot.subscriptions, registered: registeredSubscriptions)
     }

@@ -180,8 +180,8 @@ import WuhuAI
       let sessions = try Space.inMemory().sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
-      let document = ModelsDocument(providers: ["offline": .init(dialect: .anthropic, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+      let document = ModelsDocument(providers: ["offline": .init(dialect: .anthropic, baseURL: URL(string: "https://example.test/v1")!, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
+      let resolved = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "retry-fixture") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
       let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline", tools: [])
 
       let calls = Box(0)

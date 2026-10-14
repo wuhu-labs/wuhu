@@ -164,3 +164,57 @@ import Testing
     #expect(try await resolver.resolve("missing-provider") == nil)
   }
 }
+
+extension CredentialEnvironmentPolicyTests {
+  @Test func environmentIdentityPersistsAndReplacementRotates() async throws {
+    let name = "REPLAY_TEST_API_KEY"
+    let previous = ProcessInfo.processInfo.environment[name]
+    defer {
+      if let previous { setenv(name, previous, 1) } else { unsetenv(name) }
+    }
+    let folder = try ScratchFolder("environment-replay")
+    defer { folder.remove() }
+    let store = CredentialsStore(configDirectory: folder.url, spaceID: "space")
+    let resolver = CredentialResolver.live(store: store)
+    setenv(name, "fixture-one", 1)
+    let first = try #require(try await resolver.resolveBinding("replay-test"))
+    #expect(first.permitsOpaqueReplay)
+    #expect(try await CredentialResolver.live(store: store).resolveBinding("replay-test")?.identityEpoch == first.identityEpoch)
+    setenv(name, "fixture-two", 1)
+    let second = try #require(try await resolver.resolveBinding("replay-test"))
+    #expect(second.identityEpoch != first.identityEpoch)
+    setenv(name, "fixture-one", 1)
+    #expect(try await resolver.resolveBinding("replay-test")?.identityEpoch != first.identityEpoch)
+    unsetenv(name)
+    #expect(try await resolver.resolveBinding("replay-test") == nil)
+    setenv(name, "fixture-one", 1)
+    #expect(try await resolver.resolveBinding("replay-test")?.identityEpoch != first.identityEpoch)
+  }
+}
+
+extension CredentialEnvironmentPolicyTests {
+  @Test func environmentOnlyVerifiesKeyAndRetiresTransientIdentityOnRemoval() async throws {
+    let name = "ENV_ONLY_REPLAY_TEST_API_KEY"
+    let previous = ProcessInfo.processInfo.environment[name]
+    defer {
+      if let previous { setenv(name, previous, 1) } else { unsetenv(name) }
+    }
+    let resolver = CredentialResolver.environmentOnly
+    setenv(name, "fixture-one", 1)
+    let first = try #require(try await resolver.resolveBinding("env-only-replay-test"))
+    #expect(first.permitsOpaqueReplay)
+    #expect(first.credential == .apiKey("fixture-one"))
+    #expect(try await resolver.resolveBinding("env-only-replay-test")?.identityEpoch == first.identityEpoch)
+    #expect(!first.identityEpoch.contains("fixture-one"))
+    setenv(name, "fixture-two", 1)
+    let replacement = try #require(try await resolver.resolveBinding("env-only-replay-test"))
+    #expect(replacement.identityEpoch != first.identityEpoch)
+    setenv(name, "fixture-one", 1)
+    let restored = try #require(try await resolver.resolveBinding("env-only-replay-test"))
+    #expect(restored.identityEpoch != first.identityEpoch)
+    unsetenv(name)
+    #expect(try await resolver.resolveBinding("env-only-replay-test") == nil)
+    setenv(name, "fixture-one", 1)
+    #expect(try await resolver.resolveBinding("env-only-replay-test")?.identityEpoch != restored.identityEpoch)
+  }
+}

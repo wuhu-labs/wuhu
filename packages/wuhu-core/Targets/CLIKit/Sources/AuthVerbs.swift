@@ -35,7 +35,7 @@ extension Executor {
     guard !key.isEmpty else {
       throw UsageError(message: "auth set: pass the API key on stdin")
     }
-    try await store.update { $0.providers[provider] = .apiKey(key) }
+    try await store.replace(providerID: provider, credential: .apiKey(key))
     await runner.stdout("stored api key for \(provider) in \(store.file.path)\n")
   }
 
@@ -70,7 +70,7 @@ extension Executor {
     guard try await store.load().providers[provider] != nil else {
       throw CLIError(message: "no credentials stored for \(provider)")
     }
-    try await store.update { $0.providers[provider] = nil }
+    try await store.replace(providerID: provider, credential: nil)
     await runner.stdout("removed credentials for \(provider)\n")
   }
 
@@ -93,7 +93,7 @@ extension Executor {
       waiting for approval (times out after 15 minutes)...
       """ + "\n")
       let tokens = try await ChatGPTAuth.awaitDeviceGrant(authorization)
-      try await store.update { $0.providers[provider] = .chatGPTOAuth(tokens) }
+      try await store.replace(providerID: provider, credential: .chatGPTOAuth(tokens))
       await runner.stdout("logged in: chatgpt account \(tokens.accountID), stored for \(provider) in \(store.file.path)\n")
     case .claude, .anthropic, .responses:
       throw CLIError(message: "provider \(provider) uses API keys; run `wuhu auth set \(provider)`")
@@ -114,7 +114,7 @@ extension Executor {
     case .apiKey, nil:
       throw CLIError(message: "no login stored for \(provider) (api keys are removed with `wuhu auth remove`)")
     }
-    try await store.update { $0.providers[provider] = nil }
+    try await store.replace(providerID: provider, credential: nil)
     await runner.stdout("logged out \(provider)\n")
   }
 }

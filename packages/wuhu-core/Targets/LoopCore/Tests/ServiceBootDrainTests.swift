@@ -43,7 +43,7 @@ import Testing
       })
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
       let service = await SessionService(sessions: sessions, loopConfig: config) { id in
-        SessionRepo(sessions: sessions, id: id, queueHeadRead: { store, id in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
           if id == second {
             for await _ in entered.stream { break }
             let parking = AsyncStream<Void>.makeStream()

@@ -26,8 +26,8 @@ actor HostSockets {
     await withTaskCancellationHandler {
       await task.value
     } onCancel: {
-      abort()
       task.cancel()
+      abort()
     }
     sessions[id] = nil
   }
@@ -35,7 +35,8 @@ actor HostSockets {
   func shutdown() async {
     stopped = true
     let current = Array(sessions.values)
-    for session in current { session.abort(); session.task.cancel() }
+    for session in current { session.task.cancel() }
+    for session in current { session.abort() }
     for session in current { await session.task.value }
   }
 }

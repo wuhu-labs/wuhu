@@ -23,11 +23,15 @@ dependencies:
 
   - Credentials
   - MachineContract
+  - FetchTunnel
+  - OperationClient
+  - OperationProtocol
   - MachineChannel
   - SessionDomain
   - SessionTools
   - LoopCore
   - InferenceKit
+  - ExecutionOwner
   - SpaceContract
   - SpaceTools
   - SpaceCore
@@ -61,12 +65,17 @@ tests:
     - Credentials
     - Crypto
     - MachineContract
+    - FetchTunnel
+    - OperationClient
+    - OperationProtocol
+    - OperationRuntime
     - MachineChannel
     - MachineAgent
     - SessionDomain
     - SessionTools
     - LoopCore
     - InferenceKit
+    - ExecutionOwner
     - WuhuAI
     - SpaceContract
     - SpaceTools
@@ -76,6 +85,7 @@ tests:
     - JSONValue
     - OrderedCollections
     - Fetch
+    - FetchExchangeRecording
     - FetchSSE
     - FetchWebSocket
     - FetchAsyncHTTPClient

@@ -16,7 +16,7 @@ private func throwingFetch(_ error: any Error) -> FetchClient {
 }
 
 private func anthropicEndpoint() -> AnthropicEndpoint {
-  AnthropicEndpoint(model: "claude-test", apiKey: "test-key")
+  AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
 }
 
 private func openAIEndpoint() -> OpenAIGPTEndpoint {

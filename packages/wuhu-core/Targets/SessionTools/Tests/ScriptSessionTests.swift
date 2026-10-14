@@ -1,4 +1,5 @@
 import Foundation
+import enum InferenceKit.CatalogError
 import JSONValue
 import SessionDomain
 @testable import SessionTools
@@ -6,6 +7,45 @@ import SessionDomain
 import Testing
 
 struct ScriptSessionTests {
+  @Test func scriptsCreateWithRequestedGroupInsteadOfAnInheritedConcreteModel() async throws {
+    let calls = Box<[String]>([])
+    try await withRig(
+      resolveModelExecutor: { _, _, _ in
+        Issue.record("group request must not resolve an inherited concrete model")
+        throw ExecutorSpecError("unexpected concrete target")
+      },
+      resolveModelGroup: { id, effort in
+        calls.withLock { $0.append(id) }
+        return .modelGroup(id: id, effort: effort ?? "high")
+      },
+      prepareModelRoute: { executor, reason in testModelGroupRoute(executor, reason: reason) },
+    ) { rig in
+      let result = try await rig.evaluate(#"import {createSession} from 'wuhu:session'; result(await createSession({title:'group child',modelGroup:'work'}))"#)
+      let id = try #require(result.object?["id"]?.stringValue)
+      #expect(try await rig.space.sessions.record(SessionID(id)).executor == .modelGroup(id: "work", effort: "high"))
+      #expect(calls.value == ["work"])
+      #expect(result.object?["modelGroup"] == "work")
+      #expect(result.object?["member"] == "initial")
+      #expect(result.object?["provider"] == "pinned-provider")
+      let rawConfig = try await rig.evaluate("""
+      import {query} from 'wuhu:space'
+      const id = \(JSONValue.string(id).jsonString())
+      result(JSON.parse((await query`SELECT executor_config FROM sessions WHERE id = ${id}`)[0].executor_config))
+      """)
+      #expect(rawConfig == .object(["provider": "pinned-provider", "model": "pinned-model", "effort": "high"]))
+    }
+  }
+
+  @Test func scriptCreationRetainsGroupCatalogErrorCode() async throws {
+    try await withRig(
+      resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") },
+      resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) },
+    ) { rig in
+      let result = try await rig.evaluate(#"import {createSession} from 'wuhu:session'; try {await createSession({title:'bad group',modelGroup:'absent'})}catch(e){result(e.code)}"#)
+      #expect(result == .string("modelGroupConfiguration"))
+    }
+  }
+
   @Test func scriptsRejectRemovedExecutorWithoutCallingModelResolver() async throws {
     try await withRig(resolveModelExecutor: { _, _, _ in
       Issue.record("removed executor must not resolve a kernel model")

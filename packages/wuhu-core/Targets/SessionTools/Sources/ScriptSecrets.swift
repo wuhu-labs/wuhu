@@ -1,5 +1,4 @@
 import struct Credentials.SpaceSecrets
-import struct Credentials.SpaceSecretStores
 import Dependencies
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -18,16 +17,14 @@ final class ScriptSecrets: Sendable {
   private static let prefix = Array("wuhu-secret.".utf8)
   private static let mask = Array("***".utf8)
 
-  private let stores: SpaceSecretStores?
-  private let space: Space
+  private let owner: any ScriptOwnerClient
   private let session: SessionID
   private let suffix: [UInt8]
   private let sent = Mutex<[[UInt8]]>([])
 
-  init(stores: SpaceSecretStores?, space: Space, session: SessionID) {
+  init(owner: any ScriptOwnerClient, session: SessionID) {
     @Dependency(\.uuid) var uuid
-    self.stores = stores
-    self.space = space
+    self.owner = owner
     self.session = session
     suffix = Array(".\(uuid().uuidString.lowercased().prefix(8))".utf8)
   }
@@ -42,40 +39,17 @@ final class ScriptSecrets: Sendable {
     return String(decoding: Self.prefix + token + suffix, as: UTF8.self)
   }
 
-  /// The session's own group's secrets.
-  func vault() async throws -> SpaceSecrets {
-    try await store(in: nil)
-  }
-
-  /// Secret names of the session's group, or of `group` when named: one its
-  /// group reads, never by fallback.
   func names(in group: String?) async throws -> [String] {
-    if let group { try SpaceSecrets.validate(group: group) }
-    return try await store(in: group).names()
+    try await owner.secretNames(in: group, session: session)
   }
 
   func set(_ name: String, to value: String) async throws {
-    let acting = try await space.principal(of: session).group
-    guard try await space.isAdmin(.session(session), of: acting) else {
-      throw ScriptError("setting a secret needs an admin of group \(acting.rawValue)" + (await notAdmin(session, of: acting, space: space)))
-    }
-    try await vault().set(name, to: value)
+    try await owner.setSecret(name, value: value, session: session)
   }
 
-  // Removal can't be undone, so it is a person's: `wuhu secret rm`.
   func remove(_ name: String) async throws {
-    let acting = try await space.principal(of: session).group
+    let acting = try await owner.principal(of: session).group
     throw ScriptError("removing secret \(name) can't be undone and needs a human admin of group \(acting.rawValue)")
-  }
-
-  private func store(in named: String?) async throws -> SpaceSecrets {
-    guard let stores else { throw ScriptError("this server has no secret store") }
-    let acting = try await space.principal(of: session).group
-    guard let named, named != acting.rawValue else { return try stores.group(acting.rawValue) }
-    guard try await space.reads(acting).contains(GroupID(rawValue: named)) else {
-      throw ScriptError("group \(acting.rawValue) does not read group \(named), so its secrets are out of reach")
-    }
-    return try stores.group(named)
   }
 
   func reveal(_ text: String) async throws -> String {
@@ -96,7 +70,7 @@ final class ScriptSecrets: Sendable {
       }
       let key = (group.map { $0 + ":" } ?? "") + name
       if values[key] == nil {
-        let value = Array(try await store(in: group).value(of: name).utf8)
+        let value = Array(try await owner.secretValue(name, in: group, session: session).utf8)
         values[key] = value
         protect(String(decoding: value, as: UTF8.self))
       }
@@ -161,14 +135,4 @@ private func isNameByte(_ byte: UInt8) -> Bool {
   byte == UInt8(ascii: "_")
     || (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains(byte)
     || (UInt8(ascii: "a") ... UInt8(ascii: "z")).contains(byte | 0x20)
-}
-
-/// Why `session` is no admin of `group`, worded for the caller: only a live
-/// top-level agent of a group administers it.
-func notAdmin(_ session: SessionID, of group: GroupID, space: Space) async -> String {
-  guard let caller = try? await space.sessions.record(session) else { return "" }
-  if caller.kind == .task { return "; a task never is one" }
-  if caller.parent != nil { return "; a child agent never is one" }
-  if caller.group != group { return "; you are a top-level agent of group \(caller.group.rawValue), not of \(group.rawValue)" }
-  return ""
 }

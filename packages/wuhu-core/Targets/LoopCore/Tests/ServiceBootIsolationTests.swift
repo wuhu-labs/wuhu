@@ -39,7 +39,7 @@ import Testing
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
       }), log: logs.logger) { id in
-        SessionRepo(sessions: sessions, id: id, queueHeadRead: { store, id in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
           if missing, id == first, removed.withLock({ value in
             guard !value else { return false }
             value = true

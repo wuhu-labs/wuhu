@@ -28,6 +28,20 @@ extension Command {
     }
 
     switch verb {
+    case "machine-v2":
+      let action = try parser.required("install|upgrade|rollback|uninstall", verb: verb)
+      let binary = try parser.option("--binary", verb: verb)
+      let machine = try parser.required("machine-id", verb: verb)
+      try parser.finish(verb: verb)
+      switch action {
+      case "install", "upgrade":
+        guard let binary else { throw UsageError(message: "machine-v2 \(action): --binary <signed-wuhu> is required") }
+        return .machineV2Install(.install(machine: machine, binary: binary))
+      case "rollback", "uninstall":
+        guard binary == nil else { throw UsageError(message: "machine-v2 \(action): --binary is not accepted") }
+        return .machineV2Install(action == "rollback" ? .rollback(machine: machine) : .uninstall(machine: machine))
+      default: throw UsageError(message: "machine-v2: use install, upgrade, rollback, or uninstall")
+      }
     case "channel":
       let operation = try parser.required("create|add|remove|rename", verb: verb)
       switch operation {
@@ -268,9 +282,11 @@ extension Command {
       try parser.finish(verb: "skill export")
       return .skillExport
     case "models":
+      let json = parser.flag("--json")
       guard let subcommand = parser.pop() else {
-        throw UsageError(message: "models: missing <update>")
+        return .modelsList(json: json)
       }
+      guard !json else { throw UsageError(message: "models update: --json is for model discovery") }
       guard subcommand == "update" else {
         throw UsageError(message: "models: unknown subcommand \(subcommand)")
       }
@@ -478,7 +494,7 @@ extension Command {
 
   private static func parseSession(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "session: missing <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|list>")
+      throw UsageError(message: "session: missing <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|inspect|list>")
     }
     switch subcommand {
     case "create":
@@ -486,6 +502,10 @@ extension Command {
       let kind = try parser.option("--kind", verb: "session create")
       let provider = try parser.option("--provider", verb: "session create")
       let model = try parser.option("--model", verb: "session create")
+      let modelGroup = try parser.option("--model-group", verb: "session create")
+      guard modelGroup == nil || (provider == nil && model == nil) else {
+        throw UsageError(message: "session create: --model-group is mutually exclusive with --provider/--model")
+      }
       let effort = try parser.option("--effort", verb: "session create")
       let template = try parser.option("--template", verb: "session create")
       let homeGroup = try parser.option("--home-group", verb: "session create")
@@ -499,7 +519,7 @@ extension Command {
         throw UsageError(message: "session create: --kind is agent or task")
       }
       return .sessionCreate(SessionCreateCommand(
-        kind: kind, title: title, provider: provider, model: model,
+        kind: kind, title: title, provider: provider, model: model, modelGroup: modelGroup,
         effort: effort, tags: tags, template: template, topLevel: topLevel, homeGroup: homeGroup,
       ))
     case "request":
@@ -511,12 +531,16 @@ extension Command {
     case "restart":
       let provider = try parser.option("--provider", verb: "session restart")
       let model = try parser.option("--model", verb: "session restart")
+      let modelGroup = try parser.option("--model-group", verb: "session restart")
+      guard modelGroup == nil || (provider == nil && model == nil) else {
+        throw UsageError(message: "session restart: --model-group is mutually exclusive with --provider/--model")
+      }
       let effort = try parser.option("--effort", verb: "session restart")
       let message = try parser.option("--message", verb: "session restart")
       let id = try parser.required("session-id", verb: "session restart")
       try parser.finish(verb: "session restart")
       return .sessionRestart(SessionRestartCommand(
-        id: id, provider: provider, model: model, effort: effort, message: message,
+        id: id, provider: provider, model: model, modelGroup: modelGroup, effort: effort, message: message,
       ))
     case "rename":
       let id = try parser.required("session-id", verb: "session rename")
@@ -565,6 +589,10 @@ extension Command {
       let ref = try parser.required("ref", verb: "session entry")
       try parser.finish(verb: "session entry")
       return .sessionEntry(session: session, ref: ref)
+    case "inspect":
+      let id = try parser.required("session-id", verb: "session inspect")
+      try parser.finish(verb: "session inspect")
+      return .sessionInspect(id: id)
     case "list":
       try parser.finish(verb: "session list")
       return .sessionList
@@ -1244,6 +1272,15 @@ extension Command {
       move <machine> --group G    move a machine to group G (admin of both groups)
     \(exitCodes)
     """,
+    "machine-v2": """
+    usage: wuhu machine-v2 install|upgrade <machine-id> --binary <signed-wuhu>
+           wuhu machine-v2 rollback|uninstall <machine-id>
+
+    install and upgrade change only this v2 machine's private binary/service.
+    rollback explicitly restores its previous binary; uninstall drains first.
+    enrollment/run/leave/preflight are local runtime modes; machine v1 is unchanged.
+    \(exitCodes)
+    """,
     "machine add": """
     usage: wuhu machine add [--name N]
 
@@ -1715,14 +1752,14 @@ extension Command {
     mentions, reply targets and the existing attention window still apply.
     """,
     "session": """
-    usage: wuhu session <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|list> ...
+    usage: wuhu session <create|request|restart|rename|tags|interrupt|resume|compact|archive|unarchive|log|entry|inspect|list> ...
 
     subcommands:
-      create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
+      create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
       request [--deadline SECONDS] <session-id> <message>
                                from a session's exec: open a request on a
                                child it created, which owes it a final report
-      restart [--executor E] [--provider P] [--model M] [--effort E] [--extra JSON] [--message TEXT] <session-id>
+      restart [--executor E] [--provider P] [--model M] [--model-group G] [--effort E] [--extra JSON] [--message TEXT] <session-id>
                                wipe the transcript to a fresh generation,
                                keeping the id; optionally switch executor
       rename <session-id> <title>
@@ -1741,15 +1778,16 @@ extension Command {
                                the subtree
       unarchive <session-id>   restore within the grace window
       log [--direct|-v|-vv] [--limit N] [--before REF] <session-id>  read the session log
+      inspect <session-id>            requested target and active route, with placement evidence (JSON)
       entry <session-id> <ref> fetch one log item in full
       list                     list sessions (sugar over query)
     \(exitCodes)
     """,
     "session create": """
-    usage: wuhu session create [--kind agent|task] [--top-level] [--home-group G] [--provider P --model M] [--effort E] [--template NAME] [--tag T]... <title>
+    usage: wuhu session create [--kind agent|task] [--top-level] [--home-group G] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--tag T]... <title>
 
     creates a session (and its owning channel), inert until something is
-    posted to it. --provider and --model are required, validated against the
+    posted to it. Either --provider/--model or --model-group is required, validated against the
     space's /models.json; every provider runs in the kernel.
     --effort defaults to the model's declared default. a person creates
     agents only: --kind task, or a task template, is refused.
@@ -1762,13 +1800,13 @@ extension Command {
 
     from a session's exec (WUHU_EXEC=1), without WUHU_IDENTITY=wallet, the new
     session is that session's child, in its group: a task unless --kind agent,
-    on the parent's own model unless --provider/--model name another.
+    on the parent's requested target unless --provider/--model or --model-group names another.
     --top-level creates a top-level agent that belongs to the humans instead;
     only an agent may.
 
     WUHU_IDENTITY=wallet takes the human path: it creates a human-owned root
     agent on the wallet's space and selected group, not a child inheriting the
-    session's model. --provider/--model or a template supplying them are
+    session's model. --provider/--model, --model-group or a template supplying a target are
     required; --kind task is refused.
 
     --home-group G places a top-level agent in group G instead of the acting
@@ -1785,7 +1823,7 @@ extension Command {
     \(exitCodes)
     """,
     "session restart": """
-    usage: wuhu session restart [--provider P] [--model M] [--effort E] [--message TEXT] <session-id>
+    usage: wuhu session restart [--provider P] [--model M] [--model-group G] [--effort E] [--message TEXT] <session-id>
 
     starts the session over: the id, its box, its DMs and its home folder
     /_/sessions/<id>/ are kept; the transcript is wiped to a fresh, empty
@@ -1834,7 +1872,7 @@ extension Command {
     \(exitCodes)
     """,
     "models update": """
-    usage: wuhu models update
+    usage: wuhu models [--json] | wuhu models update
 
     merges the published well-known models basis into /models.json in the
     pinned space: missing providers and models are added, existing entries

@@ -23,6 +23,7 @@ import StructuredQueriesSQLite
   var ownerScope: String
   var machineID: String
   var reservedBytes: Int
+  var grp: String
 }
 
 public struct StoredMachineV2Operation: Sendable {
@@ -78,8 +79,9 @@ extension Space {
         guard try prior.machine == record.machine && prior.start.canonicalData() == record.start.canonicalData() else { throw OperationError(.invocationConflict, operation: prior.id) }
         return .init(record: prior, dispatch: false)
       }
-      let rows = try MachineV2OperationRow.where { $0.grp.eq(group.rawValue) && ($0.active || $0.reservedBytes.gt(0)) }.select { V2Capacity.Columns(active: $0.active, ownerScope: $0.ownerScope, machineID: $0.machineID, reservedBytes: $0.reservedBytes) }.fetchAll(db)
-      let active = rows.filter(\.active)
+      let rows = try MachineV2OperationRow.where { ($0.grp.eq(group.rawValue) || $0.machineID.eq(record.machine)) && ($0.active || $0.reservedBytes.gt(0)) }.select { V2Capacity.Columns(active: $0.active, ownerScope: $0.ownerScope, machineID: $0.machineID, reservedBytes: $0.reservedBytes, grp: $0.grp) }.fetchAll(db)
+      let active = rows.filter { $0.active && $0.grp == group.rawValue }
+      let machineRows = rows.filter { $0.machineID == record.machine }
       let channels = record.description.kinds.first(where: { $0.name == record.start.kind }).map { $0.inputChannels + $0.outputChannels } ?? []
       var reservation = 0
       for channel in channels {
@@ -87,8 +89,8 @@ extension Space {
         reservation += channel.windowBytes
       }
       guard active.count < 4096, active.filter({ $0.ownerScope == owner.scope }).count < 8,
-            active.filter({ $0.machineID == record.machine }).count < record.description.limits.activeOperations,
-            rows.filter({ $0.machineID == record.machine }).reduce(0, { $0 + $1.reservedBytes }) + reservation <= record.description.limits.bufferBytes,
+            machineRows.filter(\.active).count < record.description.limits.activeOperations,
+            machineRows.reduce(0, { $0 + $1.reservedBytes }) + reservation <= record.description.limits.bufferBytes,
             try MachineV2OperationRow.where({ $0.id.eq(record.id.uuidString) }).fetchOne(db) == nil else { throw OperationError(.capacityExceeded) }
       let digest = try V2Records.digest(record, key: key)
       let row = MachineV2OperationRow(id: record.id.uuidString, grp: group.rawValue, ownerScope: owner.scope, invocationKey: owner.key, machineID: record.machine, correlationID: record.correlation.uuidString, inputDigest: digest, dispatchConsumed: true, record: "", active: true, reservedBytes: reservation, createdAt: stamp)
@@ -110,6 +112,33 @@ extension Space {
       }
       return record
     }
+  }
+
+  public func machineV2HasEncryptedState() async throws -> Bool {
+    try await writer.read { db in
+      try MachineV2KeyCheckRow.all.fetchOne(db) != nil || MachineV2OperationRow.all.fetchOne(db) != nil
+        || MachineV2ChannelRow.all.fetchOne(db) != nil || MachineV2OutputRow.all.fetchOne(db) != nil
+    }
+  }
+
+  public func validateMachineV2Key(_ key: SymmetricKey) async throws {
+    guard key.bitCount == 256 else { throw OperationError(.storeUnavailable) }
+    try await writer.write { db in
+      let context = "machine-v2-store-key"
+      if let check = try MachineV2KeyCheckRow.where({ $0.id.eq(context) }).fetchOne(db) {
+        let value: String = try V2Records.unseal(check.sealed, key: key, context: context)
+        guard value == context else { throw OperationError(.storeUnavailable) }
+      }
+      for row in try MachineV2OperationRow.all.fetchAll(db) { _ = try V2Records.load(row, key: key, in: db) }
+      if try MachineV2KeyCheckRow.where({ $0.id.eq(context) }).fetchOne(db) == nil {
+        let row = MachineV2KeyCheckRow(id: context, sealed: try V2Records.seal(context, key: key, context: context))
+        try MachineV2KeyCheckRow.insert { row }.execute(db)
+      }
+    }
+  }
+
+  public func machineV2RecoveryGroups() async throws -> Set<GroupID> {
+    try await writer.read { db in Set(try MachineV2OperationRow.all.select { $0.grp }.fetchAll(db).map { GroupID(rawValue: $0) }) }
   }
 
   public func machineV2Recovery(group: GroupID, key: SymmetricKey) async throws -> [StoredMachineV2Operation] {

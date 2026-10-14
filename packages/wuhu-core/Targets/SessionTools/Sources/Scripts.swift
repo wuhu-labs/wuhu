@@ -1,4 +1,3 @@
-import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
 import Logging
@@ -10,22 +9,16 @@ import Synchronization
 // machine processes a script started outlive it only by a crash; at boot `run`
 // tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
-  let space: Space
+  let owner: any ScriptOwnerClient
   let discovery = Mutex(ScriptDiscoveryConfiguration())
-  let secrets: SpaceSecretStores?
-  let machines: ScriptMachineAccess?
-  let machinesV2: ScriptMachineV2Access?
-  let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
+  var machines: ScriptMachineAccess? { owner.scriptMachines }
+  var machinesV2: ScriptMachineV2Access? { owner.scriptMachinesV2 }
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
 
-  public init(space: Space, secrets: SpaceSecretStores? = nil, machines: ScriptMachineAccess? = nil, machinesV2: ScriptMachineV2Access? = nil, identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil) {
-    self.space = space
-    self.secrets = secrets
-    self.machines = machines
-    self.machinesV2 = machinesV2
-    self.identityFetch = identityFetch
+  public init(owner: any ScriptOwnerClient) {
+    self.owner = owner
     (launches, launch) = AsyncStream.makeStream()
   }
 
@@ -34,7 +27,7 @@ public final class Scripts: Sendable {
     await withDiscardingTaskGroup { group in
       for await execution in launches {
         group.addTask {
-          await execution.run(space: self.space)
+          await execution.run(owner: self.owner)
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
@@ -44,7 +37,7 @@ public final class Scripts: Sendable {
   private func announceRestart() async {
     let owners: [ScriptExecOwner]
     do {
-      owners = try await space.takeScriptExecOwners()
+      owners = try await owner.takeScriptExecOwners()
     } catch {
       Logger(label: "wuhu.run-script").warning("could not read the scripts a restart killed: \(error)")
       return
@@ -55,7 +48,7 @@ public final class Scripts: Sendable {
         let ids = owner.live.map(\.rawValue).joined(separator: ", ")
         text += "; the machine processes it left running (\(ids)) get killed about a minute after the restart, or when their machine reconnects if it is away then"
       }
-      await notify(space, SessionID(rawValue: owner.session), script: owner.script, text)
+      await notify(self.owner, SessionID(rawValue: owner.session), script: owner.script, text)
     }
   }
 
@@ -67,7 +60,7 @@ public final class Scripts: Sendable {
       session: session,
       source: source,
       lifetime: lifetime,
-      secrets: ScriptSecrets(stores: secrets, space: space, session: session),
+      secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
       machines: machines,
       machinesV2: machinesV2,

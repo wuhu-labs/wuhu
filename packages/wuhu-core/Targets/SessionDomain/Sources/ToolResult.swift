@@ -63,17 +63,19 @@ public enum FileRevision: Hashable, Sendable, Codable {
 
 public struct ScopeContext: Hashable, Sendable, Codable {
   public var folders: [String: String?]
+  public var deliveredContext: [String: String]?
   public var text: String
 
-  public init(folders: [String: String?], text: String) {
+  public init(folders: [String: String?], deliveredContext: [String: String]? = nil, text: String) {
     self.folders = folders
+    self.deliveredContext = deliveredContext
     self.text = text
   }
 
   public func notice(id: UUID, at timestamp: Date) -> SystemNotification {
     SystemNotification(
       id: id, timestamp: timestamp, kind: .context, subscriptionID: .context, folderRoots: folders,
-      content: .init(text: text),
+      deliveredContext: deliveredContext, content: .init(text: text),
     )
   }
 
@@ -271,6 +273,7 @@ public struct MachinesResult: Hashable, Sendable, Codable {
 }
 
 public struct TemplateListing: Hashable, Sendable, Codable {
+  public var modelGroup: String?
   public var name: String
   public var kind: String?
   public var provider: String?
@@ -278,13 +281,14 @@ public struct TemplateListing: Hashable, Sendable, Codable {
   public var effort: String?
   public var description: String?
 
-  public init(name: String, kind: String?, provider: String?, model: String?, effort: String?, description: String?) {
+  public init(name: String, kind: String?, provider: String?, model: String?, effort: String?, description: String?, modelGroup: String? = nil) {
     self.name = name
     self.kind = kind
     self.provider = provider
     self.model = model
     self.effort = effort
     self.description = description
+    self.modelGroup = modelGroup
   }
 }
 
@@ -298,7 +302,7 @@ public struct TemplatesResult: Hashable, Sendable, Codable {
   public var rendered: String {
     guard !templates.isEmpty else { return "this space has no session templates (/templates/<name>/template.json)" }
     return templates.map { template in
-      let spec = [template.kind, template.provider, template.model, template.effort].compactMap(\.self)
+      let spec = [template.kind, template.modelGroup, template.provider, template.model, template.effort].compactMap(\.self)
       return "- \(template.name) [\(spec.joined(separator: " "))]" + (template.description.map { " — \($0)" } ?? "")
     }.joined(separator: "\n")
   }
@@ -398,6 +402,10 @@ public struct ReportResult: Hashable, Sendable, Codable {
 }
 
 public struct CreateSessionResult: Hashable, Sendable, Codable {
+  public var modelGroup: String?
+  public var member: String?
+  public var provider: String?
+  public var model: String?
   public var sessionID: SessionID
   public var title: String
   public var requestID: RequestID?
@@ -406,11 +414,15 @@ public struct CreateSessionResult: Hashable, Sendable, Codable {
   // clones them instead of answering with a half-made session.
   public var cloneOwed: Bool?
 
-  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, cloneOwed: Bool? = nil) {
+  public init(sessionID: SessionID, title: String, requestID: RequestID? = nil, cloneOwed: Bool? = nil, modelGroup: String? = nil, member: String? = nil, provider: String? = nil, model: String? = nil) {
     self.sessionID = sessionID
     self.title = title
     self.requestID = requestID
     self.cloneOwed = cloneOwed
+    self.modelGroup = modelGroup
+    self.member = member
+    self.provider = provider
+    self.model = model
   }
 }
 

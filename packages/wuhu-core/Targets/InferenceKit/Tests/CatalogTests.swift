@@ -1,4 +1,5 @@
 import enum Credentials.ChatGPTAuthError
+import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import enum Credentials.ProviderCredential
 import enum Fetch.FetchError
@@ -34,6 +35,7 @@ let fixtureJSON = Data("""
   "deepseek": {
     "dialect": "anthropic",
     "baseURL": "https://api.deepseek.com/anthropic",
+    "opaqueReplay": "affine",
     "models": {
       "deepseek-v4-pro": {
         "maxInput": 131072, "maxOutput": 32768,
@@ -56,7 +58,7 @@ let fixtureJSON = Data("""
 """.utf8)
 
 func fixtureCatalog(
-  credentials: CredentialResolver = CredentialResolver { _ in .apiKey("test-key") },
+  credentials: CredentialResolver = CredentialResolver.bound({ _ in CredentialBinding(credential: .apiKey("test-key"), identityEpoch: "fixture-epoch") }),
 ) throws -> ProviderCatalog {
   ProviderCatalog(document: try ModelsDocument(json: fixtureJSON), credentials: credentials)
 }
@@ -143,7 +145,7 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect((anthropic.endpoint as? AnthropicEndpoint)?.promptCache == .oneHour)
 
     let openai = try await catalog.resolve(.init(provider: "openai", model: "gpt-5.4", effort: "high"), session: SessionID("catalog-tests"))
-    #expect((openai.endpoint as? OpenAIGPTEndpoint)?.promptCacheKey == "catalog-tests")
+    #expect((openai.endpoint as? OpenAIGPTEndpoint)?.promptCacheKey == replayCacheKey(session: .init("catalog-tests"), bindingIdentity: openai.bindingIdentity, routeEpoch: "0"))
   }
 
   @Test func resolvesCodexEndpointFromChatGPTCredential() async throws {
@@ -164,7 +166,7 @@ private let chatGPTOnly = CredentialResolver { _ in
       session: SessionID("broom-happy-crane"),
     )
     let endpoint = try #require(codex.endpoint as? OpenAICodexEndpoint)
-    #expect(endpoint.sessionID == "broom-happy-crane")
+    #expect(endpoint.sessionID == replayCacheKey(session: .init("broom-happy-crane"), bindingIdentity: codex.bindingIdentity, routeEpoch: "0"))
   }
 
   @Test func resolveRequiresCredential() async throws {

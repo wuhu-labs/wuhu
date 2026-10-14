@@ -94,12 +94,12 @@ func overBudget(_ buffer: ScriptBuffer) -> ScriptError {
 
 final class ScriptBindings: Sendable {
   private let execution: ScriptExecution
-  private let space: Space
+  private let owner: any ScriptOwnerClient
   private let secrets: ScriptSecrets
 
-  init(execution: ScriptExecution, space: Space, secrets: ScriptSecrets) {
+  init(execution: ScriptExecution, owner: any ScriptOwnerClient, secrets: ScriptSecrets) {
     self.execution = execution
-    self.space = space
+    self.owner = owner
     self.secrets = secrets
   }
 
@@ -122,14 +122,14 @@ final class ScriptBindings: Sendable {
     engine.define("__wuhu_sleep", promising: sleep)
     engine.define("__wuhu_timer", keepsAlive: false, promising: sleep)
     engine.defineCancel("__wuhu_cancel")
-    engine.define("__wuhu_channel", promising: { [space, execution] in
-      await scriptChannel($0, space: space, session: execution.session)
+    engine.define("__wuhu_channel", promising: { [owner, execution] in
+      await owner.channel($0, session: execution.session)
     })
-    engine.define("__wuhu_conversation", promising: { [space, execution] in
-      try await conversationPage($0, in: space, reader: execution.session)
+    engine.define("__wuhu_conversation", promising: { [owner, execution] in
+      try await owner.conversation($0, reader: execution.session)
     })
-    engine.define("__wuhu_dm", promising: { [space, execution] in
-      try await directMessage($0, in: space, reader: execution.session)
+    engine.define("__wuhu_dm", promising: { [owner, execution] in
+      try await owner.directMessage($0, reader: execution.session)
     })
     engine.define("__wuhu_fetch", promising: fetch)
     engine.define("__wuhu_body", body)
@@ -195,14 +195,13 @@ final class ScriptBindings: Sendable {
       guard headers[.authorization] == nil else {
         return fetchFailure("invalidArgument", "identity: true cannot be combined with Authorization")
       }
-      guard let identityFetch = execution.tools.scripts?.identityFetch else {
-        return fetchFailure("fetchIdentityUnavailable", "the server fetch identity is unavailable")
+      let reply = await owner.identityRequest(request, session: execution.session)
+      for token in reply.protectedValues {
+        secrets.protect(token)
+        secrets.protect(token.lowercased())
       }
       do {
-        response = try await identityFetch(request, execution.session) { [secrets] token in
-          secrets.protect(token)
-          secrets.protect(token.lowercased())
-        }
+        response = try reply.response.get()
       } catch let error as ScriptIdentityUnavailable {
         return fetchFailure(error.code, secrets.mask(error.message))
       } catch {

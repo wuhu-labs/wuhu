@@ -40,6 +40,8 @@ struct Executor {
   mutating func run(_ command: Command) async throws -> Int32 {
     switch command {
     case let .channel(operation): try await self.channel(operation)
+    case .machineV2Install:
+      preconditionFailure("machine v2 install is routed before the executor")
     case .help:
       preconditionFailure("help is routed before the executor")
     case .login:
@@ -270,6 +272,8 @@ struct Executor {
       preconditionFailure("upgrade is routed before the executor")
     case .skillExport:
       try await self.skillExport()
+    case let .modelsList(json):
+      try await self.modelsList(json: json)
     case .modelsUpdate:
       try await self.modelsUpdate()
     case let .usage(json):
@@ -318,6 +322,8 @@ struct Executor {
       try await self.sessionLog(id: id, view: view)
     case let .sessionEntry(session, ref):
       try await self.sessionEntry(id: session, ref: ref)
+    case let .sessionInspect(id):
+      try await self.sessionInspect(id: id)
     case .sessionList:
       try await self.sessionList()
     case .groupList:

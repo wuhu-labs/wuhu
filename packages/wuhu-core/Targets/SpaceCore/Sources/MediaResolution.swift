@@ -26,6 +26,13 @@ extension Space {
     }
   }
 
+  public func mediaBytes(_ reference: MediaReference, group: GroupID) async throws -> Data {
+    switch reference {
+    case let .blob(hash): Data(try await blobBytes(hash))
+    case let .spaceFile(path): try await attachmentBytes(path, readingIn: group)
+    }
+  }
+
   func blobBytes(_ hash: String) async throws -> [UInt8] {
     try await blobs.read(writer, prefetching: { _ in [hash] }) { db, cache in
       try cache.blob(of: hash, in: db).content

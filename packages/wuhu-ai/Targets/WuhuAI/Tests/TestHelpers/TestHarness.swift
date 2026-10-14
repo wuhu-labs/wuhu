@@ -51,26 +51,26 @@ func makeEndpoint(providerID: String, model: String) -> any ModelEndpoint {
 
   switch providerID {
   case "openai":
-    return OpenAIGPTEndpoint(model: model, apiKey: apiKey("OPENAI_API_KEY"))
+    return OpenAIGPTEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("OPENAI_API_KEY"))
 
   case "anthropic":
-    return AnthropicEndpoint(model: model, apiKey: apiKey("ANTHROPIC_API_KEY"))
+    return AnthropicEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("ANTHROPIC_API_KEY"))
 
   case "deepseek":
-    return DeepSeekChatEndpoint(model: model, apiKey: apiKey("DEEPSEEK_API_KEY"))
+    return DeepSeekChatEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("DEEPSEEK_API_KEY"))
 
   case "deepseek-anthropic":
-    return DeepSeekAnthropicEndpoint(model: model, apiKey: apiKey("DEEPSEEK_API_KEY"))
+    return DeepSeekAnthropicEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("DEEPSEEK_API_KEY"))
 
   case "gemini":
-    return GeminiEndpoint(model: model, apiKey: apiKey("GEMINI_API_KEY"))
+    return GeminiEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("GEMINI_API_KEY"))
 
   case "kimi":
-    return KimiEndpoint(model: model, apiKey: apiKey("MOONSHOT_API_KEY"))
+    return KimiEndpoint(model: model, replayScope: "test-" + providerID, apiKey: apiKey("MOONSHOT_API_KEY"))
 
   default:
     // Unknown provider — return a stub that will fail with a clear error.
-    return OpenAIGPTEndpoint(model: model, apiKey: "")
+    return OpenAIGPTEndpoint(model: model, replayScope: "test-" + providerID, apiKey: "")
   }
 }
 

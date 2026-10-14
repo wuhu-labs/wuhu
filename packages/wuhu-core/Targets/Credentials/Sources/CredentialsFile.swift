@@ -7,6 +7,9 @@
 public struct CredentialsFile: Sendable, Hashable, Codable {
   public var version: Int
   public var providers: [String: StoredCredential]
+  var identityEpochs: [String: CredentialIdentity] = [:]
+  var environmentIdentityEpochs: [String: CredentialIdentity] = [:]
+  var identityKey: String?
 
   public init(version: Int = 1, providers: [String: StoredCredential] = [:]) {
     self.version = version
@@ -14,6 +17,26 @@ public struct CredentialsFile: Sendable, Hashable, Codable {
   }
 
   public static let empty: CredentialsFile = CredentialsFile()
+}
+
+extension CredentialsFile {
+  private enum CodingKeys: String, CodingKey {
+    case version, providers, identityEpochs, environmentIdentityEpochs, identityKey
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    version = try container.decode(Int.self, forKey: .version)
+    providers = try container.decode([String: StoredCredential].self, forKey: .providers)
+    identityEpochs = try container.decodeIfPresent([String: CredentialIdentity].self, forKey: .identityEpochs) ?? [:]
+    environmentIdentityEpochs = try container.decodeIfPresent([String: CredentialIdentity].self, forKey: .environmentIdentityEpochs) ?? [:]
+    identityKey = try container.decodeIfPresent(String.self, forKey: .identityKey)
+  }
+}
+
+struct CredentialIdentity: Hashable, Sendable, Codable {
+  var epoch: String
+  var fingerprint: String
 }
 
 public enum StoredCredential: Sendable, Hashable {

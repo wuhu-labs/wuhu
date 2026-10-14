@@ -93,3 +93,22 @@ import Testing
     }
   }
 }
+
+@Suite struct GroupExecutorTests {
+  @Test func groupIntentRoundTripsWithoutConcretePin() throws {
+    let executor = SessionExecutor.modelGroup(id: "work", effort: "high")
+    #expect(executor.kind == "kernel")
+    #expect(try SessionExecutor(kind: executor.kind, configJSON: executor.configJSON) == executor)
+    #expect(throws: ExecutorSpecError.self) { try SessionExecutor(kind: "kernel", configJSON: #"{"modelGroup":"work","provider":"a","model":"m","effort":"high"}"#) }
+  }
+
+  @Test func overridesReplaceTargetAndTemplatesKeepEffortOnlyOnSameTarget() throws {
+    let direct = SessionCreationParams(provider: "a", model: "m", effort: "low")
+    #expect(SessionCreationParams(modelGroup: "work").merged(over: direct) == .init(modelGroup: "work"))
+    let group = SessionCreationParams(modelGroup: "work", effort: "high")
+    #expect(SessionCreationParams(provider: "a", model: "m").merged(over: group) == .init(provider: "a", model: "m"))
+    #expect(SessionCreationParams(effort: "low").merged(over: group) == .init(modelGroup: "work", effort: "low"))
+    #expect(try SessionCreationParams(templateFields: ["modelGroup": "work", "effort": "high"]) == group)
+    #expect(throws: ExecutorSpecError.self) { try SessionCreationParams(templateFields: ["modelGroup": "work", "provider": "a"]) }
+  }
+}

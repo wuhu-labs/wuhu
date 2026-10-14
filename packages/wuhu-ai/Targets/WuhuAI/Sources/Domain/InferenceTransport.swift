@@ -1,21 +1,22 @@
 import Dependencies
 import Fetch
 import FetchSSE
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 import Synchronization
 
 // MARK: - Cross-provider context normalization
 
-/// Rewrite a request context into provider-safe wire form before building:
-/// normalize tool-call IDs and drop reasoning signatures foreign to the
-/// target provider. Applied by every dialect endpoint before serialization.
-func normalizedRequestContext(_ context: Context, targetProviderID: String) -> Context {
+func normalizedRequestContext(_ context: Context, targetProviderID: String, replayScope: String? = nil) -> Context {
   var context = context
   normalizeToolCallIDs(in: &context.messages)
-  normalizeReasoningForTarget(in: &context.messages, targetProviderID: targetProviderID)
-  normalizeHostedToolsForTarget(in: &context.messages, targetProviderID: targetProviderID)
+  normalizeReasoningForTarget(in: &context.messages, targetProviderID: targetProviderID, replayScope: replayScope)
+  normalizeHostedToolsForTarget(in: &context.messages, targetProviderID: targetProviderID, replayScope: replayScope)
   return context
 }
 
@@ -30,7 +31,7 @@ func normalizedRequestContext(_ context: Context, targetProviderID: String) -> C
 /// stream's `onTermination` and finishes without a terminal event.
 func runSSEInference(
   buildRequest: @escaping @Sendable () async throws -> (url: URL, headers: [String: String], body: OrderedDictionary<String, JSONValue>),
-  modifyBody: @escaping @Sendable (inout OrderedDictionary<String, JSONValue>, RequestOptions) -> Void,
+  modifyBody: @escaping @Sendable (inout OrderedDictionary<String, JSONValue>, RequestOptions) throws -> Void,
   modifyHeaders: @escaping @Sendable (inout RequestHeaders, RequestOptions) -> Void,
   receiveResponseHeaders: @escaping @Sendable ([String: String]) async -> Void = { _ in },
   options: RequestOptions,
@@ -63,7 +64,7 @@ func runSSEInference(
           group.addTask {
             let (url, rawHeaders, requestBody) = try await buildRequest()
             var body = requestBody
-            modifyBody(&body, options)
+            try modifyBody(&body, options)
             var headers = RequestHeaders(values: rawHeaders)
             modifyHeaders(&headers, options)
 

@@ -38,7 +38,7 @@ import Testing
       let passes = Box(0)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(sessions: sessions, id: id, pendingCommandRead: { store, id in
+        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, pendingCommandRead: { store, id in
           pendingReads.withLock { $0 += 1 }
           return try await store.pendingCommand(id)
         }),
@@ -69,7 +69,7 @@ import Testing
         case .shutdown:
           await actor.shutdown()
         case .restart:
-          _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, $0)) }
+          _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
         case .archive:
           let prepared = try await withCallback(of: Bool.self) { actor.post(.prepareArchive(reservation, $0)) }
           #expect(prepared)
@@ -126,7 +126,7 @@ import Testing
       let actorReference = Box<SessionActor?>(nil)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(sessions: sessions, id: id),
+        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         beforeCompactRequest: {
@@ -148,7 +148,7 @@ import Testing
       var iterator = entered.stream.makeAsyncIterator()
       #expect(await iterator.next() == 1)
       let oldLooper = try #require(await actor.looperTask)
-      _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, $0)) }
+      _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       #expect(await iterator.next() == 2)
       let newLooper = try #require(await actor.looperTask)

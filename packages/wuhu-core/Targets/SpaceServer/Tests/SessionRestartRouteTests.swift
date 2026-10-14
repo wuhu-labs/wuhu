@@ -115,9 +115,9 @@ import enum WuhuAI.InferenceError
     try await withSessionDeps {
       let harness = try await SessionHarness()
       _ = try await harness.space.fs(.shared).write("/models.json", Data("""
-      {"testing": {"dialect": "anthropic", "baseURL": "http://localhost:1",
+      {"testing": {"dialect": "anthropic", "baseURL": "http://localhost:1", "opaqueReplay": "affine",
         "models": {"test-model": {"maxInput": 100000, "maxOutput": 1000, "efforts": ["low", "high"], "defaultEffort": "high"}}},
-       "second": {"dialect": "anthropic", "baseURL": "http://localhost:2",
+       "second": {"dialect": "anthropic", "baseURL": "http://localhost:2", "opaqueReplay": "affine",
         "models": {"other-model": {"maxInput": 100000, "maxOutput": 1000, "efforts": ["low"], "defaultEffort": "low"}}}}
       """.utf8), ifMatch: nil)
       let id = try await harness.createSession()

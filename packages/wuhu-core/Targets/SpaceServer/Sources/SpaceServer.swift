@@ -1,3 +1,5 @@
+import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.OperationError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,8 +11,8 @@ import struct Credentials.CredentialsStore
 import struct Credentials.SpaceSecretStores
 import enum Credentials.UserConfig
 import Dependencies
+import struct ExecutionOwner.AttemptLogConfig
 import Fetch
-import struct InferenceKit.AttemptLogConfig
 import struct InferenceKit.ModelsDocument
 import JSONValue
 import Logging
@@ -86,6 +88,7 @@ public enum SpaceServer {
     execTokens: ExecTokens? = nil,
     identityJWKS: JSONValue? = nil,
     identityController: IdentityController? = nil,
+    machineV2Hub: MachineV2Hub? = nil,
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
@@ -186,9 +189,14 @@ public enum SpaceServer {
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
     addGroupRoutes(&router, space: space, dev: dev)
     addMachineRoutes(
-      &router, space: space, hub: hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
+      &router, space: space, hub: hub, machineV2Hub: machineV2Hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
     ) { request in
       try await requestPrincipal(request, space: space, date: clock)
+    }
+    if let machineV2Hub {
+      addMachineV2Routes(&router, space: space, hub: machineV2Hub, fingerprint: fingerprint) { request in
+        try await requestPrincipal(request, space: space, date: clock)
+      }
     }
     addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev)
     addAccountRoutes(&router, space: space, dev: dev)
@@ -217,7 +225,14 @@ public enum SpaceServer {
         webAppResponse(webApp, request: request, contentHostPattern: contentHost.pattern)
       }
     }
-    let routed = router.upgradingHandler
+    let routes = router.upgradingHandler
+    let routed: UpgradingHandler = { request in
+      if let machineV2Hub, request.url.path == "/v1/machine-v2" || request.url.path.hasPrefix("/v1/machine-v2/") {
+        do { try await machineV2Hub.checkAvailable() }
+        catch let error as OperationError { return .response(try Response.json(ErrorEnvelope(error), status: .serviceUnavailable)) }
+      }
+      return try await routes(request)
+    }
     // A session's exec token is its own credential, in dev as behind the wall:
     // the session gate takes every request carrying one and passes the rest on.
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
@@ -244,13 +259,15 @@ public enum SpaceServer {
     // never this one.
     let selfAuthenticating: Set<String> = [
       "/v1/machine/connect", "/v1/machine/challenge",
+      "/v1/machine-v2/connect", "/v1/machine-v2/challenge", "/v1/machine-v2/enroll",
       "/v1/enroll/consume",
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
       "/v1/server", "/v1/groups",
       "/.well-known/openid-configuration", "/.well-known/jwks.json",
     ]
     return hostRouted(contentHost, api: gated { request in
-      if selfAuthenticating.contains(request.url.path) {
+      let v2KeyStatus = request.method == .get && request.headers[MachineV2Connect.pubkeyHeader] != nil && request.url.path.hasPrefix("/v1/machine-v2/") && request.url.path.split(separator: "/").count == 3
+      if selfAuthenticating.contains(request.url.path) || v2KeyStatus {
         return try await routed(request)
       }
       if webApp != nil, request.method == .get, !isAPIPath(request.url) {

@@ -171,7 +171,7 @@ public actor ResponsesWebSocketSession {
       activity += 1
       var terminal: InferenceEvent?
       do {
-        for try await event in parseResponsesStream(events.stream, providerID: providerID, model: model, finiteResponse: true) {
+        for try await event in parseResponsesStream(events.stream, providerID: providerID, model: model, replayScope: request.replayScope, finiteResponse: true) {
           try Task.checkCancellation()
           guard generation == currentGeneration || events.completion != nil else {
             if let lastFailure, lastFailure.generation == currentGeneration { throw lastFailure.error }
@@ -182,7 +182,7 @@ public actor ResponsesWebSocketSession {
         guard let terminal, case let .done(completed, _) = terminal, let completion = events.completion else {
           throw ResponsesWebSocketEvents.invalid("Missing terminal response identity")
         }
-        let continuable = completion.continuable && generation == currentGeneration && socket != nil
+        let continuable = request.replayScope != nil && completion.continuable && generation == currentGeneration && socket != nil
         if active?.events === events { active = nil }
         candidate = continuable ? Candidate(
           attemptID: attemptID, token: token, generation: currentGeneration, responseID: completion.responseID,
@@ -359,10 +359,14 @@ private struct SocketIdentity: Equatable, Sendable {
   var url: URL
   var headers: [String: String]
   var credentials: [String: String]
+  var replayScope: String?
+  var routeEpoch: String?
 
   init(request: ResponsesSocketRequest, providerID: String, model: String) {
     self.providerID = providerID
     self.model = model
+    replayScope = request.replayScope
+    routeEpoch = request.routeEpoch
     url = request.handshake.url
     headers = request.handshake.headers.values
     credentials = request.handshake.headers.sensitiveValues

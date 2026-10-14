@@ -1,0 +1,4 @@
+- update resume with the migration project
+- ask Sam about the Zephyr opening (data infra?) — he said they're hiring, haven't applied
+- Corvid: prep system design, read their blog post on the scheduler
+- Acme take home due 16th!!

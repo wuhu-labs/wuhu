@@ -4,6 +4,7 @@ sources: Sources
 dependencies:
   - Clocks
   - Credentials
+  - Crypto
   - SessionDomain
   - WuhuAI
   - JSONValue
@@ -11,11 +12,11 @@ dependencies:
   - Dependencies
   - Fetch
   - Logging
-  - SystemPackage
 swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - ExecutionOwner
     - Credentials
     - SessionDomain
     - WuhuAI

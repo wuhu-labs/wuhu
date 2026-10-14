@@ -24,23 +24,22 @@ let context = Context(messages: [
   .user(UserMessage(content: [.text(TextContent(text: "Say hello"))])),
 ])
 
-let inference = try await withDependencies {
+let message = try await withDependencies {
   $0.fetch = .urlSession()
 } operation: {
-  try await endpoint.infer(context: context)
+  try await endpoint.inference(context: context).collect()
 }
 
-print(inference.message)
-print(inference.metadata)
+print(message)
 ```
 
-For streaming UIs, use `stream(context:options:mediaResolver:)` instead:
+For streaming UIs, consume the inference’s `stream()` instead:
 
 ```swift
 let events = withDependencies {
   $0.fetch = .urlSession()
 } operation: {
-  endpoint.stream(context: context)
+  endpoint.inference(context: context).stream()
 }
 
 for try await event in events {
@@ -54,6 +53,12 @@ for try await event in events {
   }
 }
 ```
+
+## Account-bound replay
+
+Raw endpoints default `replayScope` to nil: reasoning signatures/encrypted records and hosted-tool payloads cannot replay, even to the same provider name. To preserve faithful replay, supply a verified, nonsecret binding identifier via `replayScope`, stable across same-account token refresh and replaced on account/credential or endpoint binding changes. `routeEpoch` retires WebSocket continuation and rotates GPT/Codex cache/thread identity on routing changes. Never use bearer tokens or personal account identifiers for either field.
+
+Strict Anthropic thinking requires a verified replay scope. A no-opaque endpoint must explicitly use `RequestOptions(reasoning: .none)`; requesting thinking instead is a typed error, not silent degradation. Unknown or foreign-scoped stored reasoning becomes ordinary readable summary text, never decoded opaque data; hosted records become safe type/action digests. See [the replay contract](Targets/WuhuAI/SPEC.md#replay-scope-and-portable-requests) for tool-loop and cache-key requirements.
 
 ## Adding as a Dependency
 

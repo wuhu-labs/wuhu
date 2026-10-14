@@ -1,5 +1,4 @@
 import Fetch
-import SystemPackage
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,15 +8,19 @@ import JSONValue
 import Synchronization
 import WuhuAI
 
-public struct AttemptLogConfig: Sendable {
-  public var directory: URL
+public struct AttemptTraceSink: Sendable {
+  public var append: @Sendable (Data) async -> Void
 
-  public init(directory: URL) {
-    self.directory = directory
+  public init(append: @escaping @Sendable (Data) async -> Void) {
+    self.append = append
   }
+}
 
-  func fileURL(attemptID: UUID) -> URL {
-    directory.appendingPathComponent("\(attemptID.uuidString.lowercased()).log")
+public struct AttemptTraceClient: Sendable {
+  public var open: @Sendable (UUID) async throws -> AttemptTraceSink
+
+  public init(open: @escaping @Sendable (UUID) async throws -> AttemptTraceSink) {
+    self.open = open
   }
 }
 
@@ -31,33 +34,14 @@ final class TrafficSizes: Sendable {
   func addResponse(_ count: Int) { sizes.withLock { $0.response += count } }
 }
 
-// Appends the raw request body, then raw SSE bytes as they stream, so partial
-// evidence survives a kill mid-attempt.
-private actor AttemptLogFile {
-  private let handle: FileDescriptor
-
-  init(url: URL) throws {
-    try FileManager.default.createDirectory(
-      at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true,
-    )
-    handle = try FileDescriptor.open(FilePath(url.path), .writeOnly, options: [.create, .truncate], permissions: [.ownerRead, .ownerWrite])
-  }
-
-  deinit { try? handle.close() }
-
-  func append(_ data: Data) {
-    _ = try? data.withUnsafeBytes { try handle.writeAll($0) }
-  }
-}
-
 func attemptLoggingFetch(
   base: FetchClient,
-  file: URL,
+  trace: AttemptTraceClient,
+  attemptID: UUID,
   sizes: TrafficSizes,
 ) -> FetchClient {
   FetchClient { request in
-    let log = try AttemptLogFile(url: file)
+    let log = try await trace.open(attemptID)
 
     let bodyData: Data = if let body = request.body { try await body.data() } else { Data() }
     sizes.addRequest(bodyData.count)
@@ -96,8 +80,8 @@ func attemptLoggingFetch(
   }
 }
 
-func socketAttemptObserver(file: URL?, sizes: TrafficSizes) throws -> ResponsesWebSocketObserver {
-  let log = try file.map { try AttemptLogFile(url: $0) }
+func socketAttemptObserver(trace: AttemptTraceSink?, sizes: TrafficSizes) -> ResponsesWebSocketObserver {
+  let log = trace
   return ResponsesWebSocketObserver(request: { subattempt, _, body in
     let bytes = Data(body.jsonString().utf8)
     sizes.addRequest(bytes.count)

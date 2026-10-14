@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SessionModelRouteOutput","type":"object","properties":{"requestedTarget":{},"activeProvider":{"type":["string","null"]},"activeModel":{"type":["string","null"]},"route":{},"decisions":{}},"required":["requestedTarget"],"additionalProperties":false}

@@ -30,7 +30,7 @@ private let codexAndClaudeModels = """
   },
   "testing": {
     "dialect": "anthropic",
-    "baseURL": "http://localhost:1",
+    "baseURL": "http://localhost:1", "opaqueReplay": "affine",
     "models": {"test-model": {"maxInput": 1000, "maxOutput": 100, "efforts": ["low"], "defaultEffort": "low"}}
   }
 }

@@ -16,6 +16,7 @@ import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
+import struct OperationProtocol.StopRequest
 import typealias Serve.Handler
 
 actor ExecSupervisorRegistry {
@@ -31,6 +32,18 @@ actor ExecSupervisorRegistry {
   let instance = UUID()
   var manifests: [UUID: SupervisorManifest] = [:]
   var leaving = false
+  struct LegacyDeparture {
+    var leaseUntil: Duration
+    var snapshot: OperationSnapshot?
+    var lost = false
+  }
+
+  enum DepartureEvidence {
+    case pending, drained, leaseExpired([UUID])
+  }
+
+  var legacyDepartures: [UUID: LegacyDeparture] = [:]
+  var terminalAcknowledgements: [UUID: UUID] = [:]
   static let stagingReservation = 1024 * 1024
   static let fullReservation = 576 * 1024 + stagingReservation
   var reservations: [UUID: Int] = [:]
@@ -61,6 +74,110 @@ actor ExecSupervisorRegistry {
     guard !machine.isEmpty, !machine.contains("/"), operationsDirectory.hasPrefix("/"), executable.hasPrefix("/") else { throw OperationError(.invalidConfiguration) }
     self.machine = machine; root = operationsDirectory; self.executable = executable; self.fetch = fetch; self.authorize = authorize
     self.files = files; self.clock = clock; self.launch = launch; self.identityFetch = identityFetch ?? fetch
+  }
+
+  func admissionUsage() async throws -> (active: Int, receipts: Int, bufferBytes: Int) {
+    try await refreshReceipts()
+    return (active.count, manifests.count + tombstones.count + malformedDirectories.count, reservations.values.reduce(0, +))
+  }
+
+  func owns(_ id: UUID) -> Bool { manifests[id] != nil || tombstones[id] != nil }
+
+  func leave() async throws {
+    leaving = true
+    try await refreshReceipts()
+    guard creating.isEmpty, tombstones.isEmpty, malformedDirectories.isEmpty else { throw OperationError(.supervisorUnavailable) }
+    for manifest in manifests.values {
+      if legacyDepartures[manifest.operation] != nil { continue }
+      let request = Request(url: URL(string: "http://supervisor/leave")!, method: .put)
+      let response = try await identityFetch(localRequest(request, manifest: manifest))
+      if response.status.code == 404 {
+        let error = try await response.body.json(ErrorEnvelope.self, upTo: 8192).error
+        guard error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
+        try await leaveLegacy(manifest)
+      } else {
+        guard response.status.code == 200, try await departureLiteral(response.body) else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
+      }
+    }
+  }
+
+  func leaveLegacy(_ manifest: SupervisorManifest) async throws {
+    legacyDepartures[manifest.operation] = .init(leaseUntil: clock.now() + .milliseconds(OperationLimits().leaseMs))
+    let request = Request(url: URL(string: "http://supervisor/machine/v2/machines/" + machine + "/operations/" + manifest.operation.uuidString + "/stop")!, method: .put, body: try .json(StopRequest(reason: "leaving")))
+    let response = try await forward(request, manifest: manifest)
+    if response.status.code == 404 {
+      guard try await response.body.json(ErrorEnvelope.self, upTo: 8192).error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
+      legacyDepartures[manifest.operation]?.lost = true
+    } else {
+      guard response.status.code == 200 else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
+      try await response.body.discard()
+    }
+  }
+
+  func legacyEvidence(_ manifest: SupervisorManifest) async throws -> DepartureEvidence {
+    guard let state = legacyDepartures[manifest.operation] else { return .pending }
+    let retained = retainedLegacyEvidence(state, operation: manifest.operation)
+    switch retained {
+    case .drained: return .drained
+    case .leaseExpired:
+      legacyDepartures[manifest.operation]?.lost = true
+      return retained
+    case .pending: break
+    }
+    guard clock.now() >= state.leaseUntil else { return .pending }
+    // A lease duration permits an observation; it is not evidence of a process exit.
+    let request = Request(url: URL(string: "http://supervisor/machine/v2/machines/" + machine + "/operations/" + manifest.operation.uuidString)!)
+    let response = try await forward(request, manifest: manifest)
+    if response.status.code == 404 {
+      guard try await response.body.json(ErrorEnvelope.self, upTo: 8192).error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
+      legacyDepartures[manifest.operation]?.lost = true
+      return .leaseExpired([manifest.operation])
+    }
+    guard response.status.code == 200 else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
+    try await response.body.discard()
+    return try await legacyEvidence(manifest)
+  }
+
+  func retainedLegacyEvidence(_ state: LegacyDeparture, operation: UUID) -> DepartureEvidence {
+    if state.lost || (state.snapshot?.verdict?.tag == .stopped && state.snapshot?.verdict?.reason == "leaseExpired") { return .leaseExpired([operation]) }
+    if let snapshot = state.snapshot, snapshot.verdict != nil, snapshot.outputConsumed,
+       let token = snapshot.terminalToken, terminalAcknowledgements[operation] == token { return .drained }
+    return .pending
+  }
+
+  func departureSettled() async throws -> Bool {
+    if case .drained = try await departureEvidence() { return true }
+    return false
+  }
+
+  func departureEvidence() async throws -> DepartureEvidence {
+    guard leaving, creating.isEmpty else { return .pending }
+    try await refreshReceipts()
+    if let error = tombstones.values.first(where: { $0.message == "legacyReceiptDisappeared" }) { throw error }
+    guard tombstones.isEmpty, malformedDirectories.isEmpty else { return .pending }
+    var pending = false
+    var lost: [UUID] = []
+    for manifest in manifests.values {
+      if legacyDepartures[manifest.operation] == nil {
+        let request = Request(url: URL(string: "http://supervisor/departure")!)
+        let response = try await identityFetch(localRequest(request, manifest: manifest))
+        if response.status.code == 404 {
+          guard try await response.body.json(ErrorEnvelope.self, upTo: 8192).error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
+          try await leaveLegacy(manifest)
+        } else {
+          guard response.status.code == 200 else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
+          if !(try await departureLiteral(response.body)) { pending = true }
+          continue
+        }
+      }
+      switch try await legacyEvidence(manifest) {
+      case .pending: pending = true
+      case .drained: break
+      case let .leaseExpired(ids): lost += ids
+      }
+    }
+    if pending { return .pending }
+    return lost.isEmpty ? .drained : .leaseExpired(lost)
   }
 
   func recover() async throws {
@@ -96,7 +213,17 @@ actor ExecSupervisorRegistry {
     let candidates = Set(manifests.keys).union(tombstones.keys).filter { !creating.contains($0) }
     let retained = Set(try await files.list(root))
     for id in candidates where !retained.contains(root + "/" + id.uuidString) {
-      tombstones.removeValue(forKey: id); manifests.removeValue(forKey: id); active.remove(id); reservations.removeValue(forKey: id); recoveryFailures.remove(id)
+      if let legacy = legacyDepartures[id] {
+        switch retainedLegacyEvidence(legacy, operation: id) {
+        case .leaseExpired: continue
+        case .pending:
+          tombstones[id] = OperationError(.supervisorUnavailable, message: "legacyReceiptDisappeared", operation: id, details: ["reason": "localReceiptDisappearance", "unacknowledged": true, "cleanupAuthorized": false])
+          continue
+        case .drained: break
+        }
+      }
+      terminalAcknowledgements.removeValue(forKey: id)
+      tombstones.removeValue(forKey: id); manifests.removeValue(forKey: id); active.remove(id); reservations.removeValue(forKey: id); recoveryFailures.remove(id); legacyDepartures.removeValue(forKey: id)
     }
   }
 
@@ -137,6 +264,16 @@ actor ExecSupervisorRegistry {
     let data = try await response.body.bytes(upTo: OperationLimits.responseBytes)
     if (response.status.code == 200 || response.status.code == 201) && !request.url.path.contains("/inputs/") {
       let snapshot = try JSONDecoder().decode(OperationSnapshot.self, from: data)
+      guard snapshot.operation == manifest.operation else { throw OperationError(.invalidResponse) }
+      let path = request.url.path.split(separator: "/")
+      let query = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+      if response.status.code == 200, request.method == .get, path.count == 6, let token = snapshot.terminalToken, snapshot.verdict != nil,
+         let accepted = query.first(where: { $0.name == "terminalAck" })?.value,
+         UUID(uuidString: accepted) == token { terminalAcknowledgements[manifest.operation] = token }
+      if legacyDepartures[manifest.operation] != nil {
+        legacyDepartures[manifest.operation]?.snapshot = snapshot
+        legacyDepartures[manifest.operation]?.leaseUntil = clock.now() + .milliseconds(OperationLimits().leaseMs)
+      }
       if snapshot.verdict != nil { active.remove(manifest.operation) }
       if let bytes = snapshot.bufferReservationBytes {
         guard (0 ... 576 * 1024).contains(bytes) else { throw OperationError(.unsupportedProtocol) }
@@ -194,4 +331,9 @@ actor ExecSupervisorRegistry {
     if recoveryFailures.contains(id) { try await identify(manifest); recoveryFailures.remove(id) }
     return try await forward(request, manifest: manifest)
   }
+}
+
+private func departureLiteral(_ body: Body) async throws -> Bool {
+  do { return try await body.json(Bool.self, upTo: 32) }
+  catch { throw OperationError(.invalidResponse, message: "Malformed supervisor departure receipt") }
 }

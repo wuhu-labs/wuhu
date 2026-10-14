@@ -18,7 +18,7 @@ import WuhuAI
     let payload: WebSocketMessage = kind == "valid" ? .text(text) : (kind == "binary" ? .binary([1, 2, 3, 4]) : .text(malformed))
     let sizes = TrafficSizes()
     let session = ResponsesWebSocketSession()
-    let observer = try socketAttemptObserver(file: nil, sizes: sizes)
+    let observer = socketAttemptObserver(trace: nil, sizes: sizes)
     try await withDependencies { values in
       values[WebSocketConnector.self] = .init { _ in
         let events = AsyncThrowingStream<WebSocketEvent, any Error>.makeStream()

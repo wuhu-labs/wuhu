@@ -1,4 +1,5 @@
 import Clocks
+import Credentials
 import Dependencies
 import Fetch
 import Foundation
@@ -90,7 +91,7 @@ private func makeExecutor(
   provider: String = "deepseek",
   model: String = "deepseek-v4-pro",
   hub: AttemptHub? = nil,
-  log: AttemptLogConfig? = nil,
+  trace: AttemptTraceClient? = nil,
   metrics: InferenceMetricsSink = .noop,
 ) async throws -> InferenceExecutor {
   let catalog = try fixtureCatalog()
@@ -100,7 +101,7 @@ private func makeExecutor(
     systemPrompt: "You are a session.",
     tools: [echoTool, compactTool],
     hub: hub,
-    log: log,
+    trace: trace,
     metrics: metrics,
   )
 }
@@ -280,17 +281,18 @@ private func run(
   }
 
   @Test func attemptLogCapturesRequestAndRawSSE() async throws {
-    let directory = try scratchURL("attempt-log")
-    defer { try? FileManager.default.removeItem(at: directory) }
-
+    let bytes = Mutex(Data())
+    let opened = Mutex<[UUID]>([])
     let attemptID = UUID(5)
-    let executor = try await makeExecutor(log: AttemptLogConfig(directory: directory))
+    let trace = AttemptTraceClient { id in
+      opened.withLock { $0.append(id) }
+      return AttemptTraceSink { chunk in bytes.withLock { $0.append(chunk) } }
+    }
+    let executor = try await makeExecutor(trace: trace)
     _ = try await run(executor, sse: textSSE, mode: .normal, attemptID: attemptID)
 
-    let logged = try String(
-      contentsOf: directory.appendingPathComponent("\(attemptID.uuidString.lowercased()).log"),
-      encoding: .utf8,
-    )
+    #expect(opened.withLock { $0 } == [attemptID])
+    let logged = String(decoding: bytes.withLock { $0 }, as: UTF8.self)
     let parts = logged.split(separator: "\n\n", maxSplits: 1)
     let request = try #require(JSONValue.parse(String(parts[0])))
     #expect(request.object?["model"] == .string("deepseek-v4-pro"))
@@ -383,5 +385,94 @@ private func run(
     #expect(metric.usage?.cacheWriteTokens == 20)
     #expect(metric.usage?.outputTokens == 5)
     #expect(metric.usage?.reasoningTokens == nil)
+  }
+}
+
+extension ExecutorTests {
+  @Test func noneOnlyAnthropicRouteEmitsNoThinkingWithoutReplayScope() async throws {
+    let document = ModelsDocument(providers: ["portable": .init(
+      dialect: .anthropic, baseURL: URL(string: "https://offline.test")!, opaqueReplay: ModelsDocument.OpaqueReplay.none,
+      models: ["model": .init(maxInput: 10000, maxOutput: 1000, efforts: ["none"], defaultEffort: "none")],
+    )])
+    let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("fixture") })
+      .resolve(.init(provider: "portable", model: "model", effort: "none"), session: .init("none-test"))
+    #expect(resolved.replayScope == nil)
+    let requests = RequestBox()
+    let executor = InferenceExecutor(session: .init("none-test"), model: resolved, systemPrompt: "offline", tools: [])
+    try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
+      let result = try await executor.run(attemptID: UUID(99), transcript: transcript, mode: .normal)
+      #expect(result.message.content.contains { if case .text = $0 { true } else { false } })
+    }
+    let body = try #require(requests.captured.first?.object)
+    #expect(body["thinking"] == nil)
+    #expect(body["output_config"] == nil)
+  }
+}
+
+#if os(Linux)
+  import Glibc
+#else
+  import Darwin
+#endif
+
+extension ExecutorTests {
+  @Test func environmentOnlyFirstPartyAnthropicThinkingRunsWithTransientVerifiedScope() async throws {
+    let name = "ENV_THINKING_REPLAY_TEST_API_KEY"
+    let previous = ProcessInfo.processInfo.environment[name]
+    setenv(name, "env-thinking-fixture", 1)
+    defer {
+      if let previous { setenv(name, previous, 1) } else { unsetenv(name) }
+    }
+    let document = ModelsDocument(providers: ["env-thinking-replay-test": .init(
+      dialect: .anthropic, baseURL: URL(string: "https://api.anthropic.com")!,
+      models: ["model": .init(maxInput: 10000, maxOutput: 1000, efforts: ["high"], defaultEffort: "high")],
+    )])
+    let catalog = ProviderCatalog(document: document, credentials: .environmentOnly)
+    let specifier = ModelSpecifier(provider: "env-thinking-replay-test", model: "model", effort: "high")
+    let session = SessionID("env-thinking-test")
+    let resolved = try await catalog.resolve(specifier, session: session)
+    #expect(resolved.replayScope != nil)
+    #expect(try await catalog.resolve(specifier, session: session).replayScope == resolved.replayScope)
+    let requests = RequestBox()
+    let executor = InferenceExecutor(session: session, model: resolved, systemPrompt: "offline", tools: [])
+    try await withDependencies { $0.fetch = stubFetch(sse: textSSE, into: requests) } operation: {
+      _ = try await executor.run(attemptID: UUID(98), transcript: transcript, mode: .normal)
+    }
+    #expect(requests.captured.first?.object?["thinking"]?.object?["type"] == .string("adaptive"))
+    setenv(name, "env-thinking-replacement", 1)
+    #expect(try await catalog.resolve(specifier, session: session).replayScope != resolved.replayScope)
+  }
+}
+
+@Suite struct WarmingPrefixTests {
+  @Test func ordinaryWarmingRenderRetainsByteIdenticalPreviousPrefix() async throws {
+    let executor = try await makeExecutor()
+    let box = RequestBox()
+    try await withDependencies {
+      $0.fetch = stubFetch(sse: textSSE, into: box)
+      $0.continuousClock = ImmediateClock()
+      $0.date = .constant(Date(timeIntervalSince1970: 100))
+      $0.uuid = .incrementing
+    } operation: {
+      var warming = transcript
+      let reply = try await executor.run(attemptID: UUID(40), transcript: warming, mode: .normal)
+      warming.appendAssistant(reply.message, id: UUID(40), metadata: reply.metadata)
+      warming.append(.notification(.init(id: UUID(41), timestamp: Date(timeIntervalSince1970: 3400), kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: "<cache-warming-notice>Ignore if there is nothing to do.</cache-warming-notice>"))))
+      _ = try await executor.run(attemptID: UUID(42), transcript: warming, mode: .normal)
+      let before = try #require(box.captured.first?.object)
+      let after = try #require(box.captured.last?.object)
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys]
+      for field in ["system", "tools"] {
+        #expect(try encoder.encode(before[field]) == encoder.encode(after[field]))
+      }
+      let prefix = try #require(before["messages"]?.array)
+      let messages = try #require(after["messages"]?.array)
+      #expect(messages.count > prefix.count)
+      #expect(try encoder.encode(prefix) == encoder.encode(Array(messages.prefix(prefix.count))))
+      let normalBefore = await transcript.renderRequest(session: executor.session, systemPrompt: executor.systemPrompt, tools: executor.tools)
+      let normalAfter = await warming.renderRequest(session: executor.session, systemPrompt: executor.systemPrompt, tools: executor.tools)
+      #expect(try encoder.encode(normalBefore.messages) == encoder.encode(Array(normalAfter.messages.prefix(normalBefore.messages.count))))
+    }
   }
 }

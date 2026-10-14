@@ -8,6 +8,7 @@ import AsyncHTTPClient
 import struct Credentials.CredentialResolver
 import struct Credentials.CredentialsStore
 import Dependencies
+import Fetch
 import Logging
 import Serve
 import struct SpaceContract.AIDisclosure
@@ -68,6 +69,8 @@ public actor SpaceHost {
       let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin)
       let secrets = try configDirectory.map { try secretStores(configDirectory: $0, spaceID: id) }
       let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
+      let v2Hub = MachineV2Hub(space: space)
+      let v2Service = await MachineV2Service.open(space: space, hub: v2Hub, directory: folder.appendingPathComponent("machine-v2"))
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
       let usage = UsageBoard()
@@ -80,11 +83,21 @@ public actor SpaceHost {
         credentials: credentials,
         secrets: secrets,
         usage: usage,
+        machinesV2: v2Service.scriptAccess(),
         oidcToken: { audience, session in
           @Dependency(\.date) var date
           @Dependency(\.uuid) var uuid
           let record = try await space.sessions.record(session)
           return try await serverIdentity.tokenForInference(audience: audience, space: space.identity().rawValue, group: record.group.rawValue, session: session.rawValue, now: date.now, id: uuid())
+        },
+        oidcReadiness: { audience in
+          @Dependency(\.date) var date
+          @Dependency(\.uuid) var uuid
+          _ = try await serverIdentity.tokenForInference(audience: audience, space: space.identity().rawValue, group: "shared", session: "model-group-readiness", now: date.now, id: uuid())
+        },
+        oidcBindingIdentity: { audience, session in
+          let record = try await space.sessions.record(session)
+          return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
         },
         identityFetch: { request, session, protect in
           try await scriptFetch.response(request, session: session, space: space, protect: protect)
@@ -132,6 +145,7 @@ public actor SpaceHost {
         secrets: secrets,
         execTokens: execTokens,
         identityController: serverIdentity,
+        machineV2Hub: v2Hub,
         pageFetch: PageFetch(controller: serverIdentity).response,
       )
       let sockets = HostSockets()
@@ -142,12 +156,18 @@ public actor SpaceHost {
         await withTaskGroup(of: Void.self) { group in
           group.addTask { await serverIdentity.run() }
           group.addTask { await hub.run() }
+          group.addTask {
+            do { try await v2Service.run() }
+            catch is CancellationError {}
+            catch { logger.error("Machine v2 coordinator stopped", metadata: ["error": "\(error)"]) }
+          }
           group.addTask { await sessions.run() }
           group.addTask { await webPushRuntime.run() }
           group.addTask { await pushRelayRuntime.run() }
           await group.waitForAll()
         }
       }, shutdownBody: {
+        await v2Service.shutdown()
         await sessions.service.shutdown()
         await metricsWriter.close()
         try await webPushHTTPClient.shutdown()

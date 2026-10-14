@@ -20,7 +20,7 @@ private let identityModelsJSON = """
 {
   "testing": {
     "dialect": "anthropic",
-    "baseURL": "http://localhost:1",
+    "baseURL": "http://localhost:1", "opaqueReplay": "affine",
     "models": {
       "test-model": {
         "maxInput": 100000,
@@ -377,7 +377,7 @@ private final class IdentityHarness: Sendable {
       #expect(help.stdout.contains("without WUHU_IDENTITY=wallet"))
       #expect(help.stdout.contains("WUHU_IDENTITY=wallet takes the human path"))
       #expect(help.stdout.contains("human-owned root"))
-      #expect(help.stdout.contains("template supplying them"))
+      #expect(help.stdout.contains("--model-group or a template supplying a target"))
       var environment = h.sessionEnvironment
       environment["WUHU_IDENTITY"] = "wallet"
       let missing = await h.run(["session", "create", "needs model"], environment: environment)

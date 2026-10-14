@@ -29,14 +29,14 @@ struct GeneratedImage: Equatable {
 final class MachineWriteClaims: Sendable {
   private let claimed = Mutex<Set<Address>>([])
 
-  fileprivate func claim(_ destination: Address) throws {
+  func claim(_ destination: Address) throws {
     guard case .machine = destination else { return }
     guard claimed.withLock({ $0.insert(destination).inserted }) else {
       throw neverOverwrites(destination.rendered)
     }
   }
 
-  fileprivate func release(_ destination: Address) {
+  func release(_ destination: Address) {
     _ = claimed.withLock { $0.remove(destination) }
   }
 }
@@ -48,17 +48,12 @@ extension ToolExecutor {
     _ arguments: GenerateImageArguments,
     state: ToolExecutionState,
   ) async throws -> ToolResultPayload {
-    let destination = try await resolve(arguments.destination, as: session)
-    if let recorded = try await store.receipt(session, toolCallID: callID) { return recorded }
-    try await refuseUnwritable(destination, by: session)
+    let destination = try await owner.resolveImageDestination(arguments.destination, session: session)
+    if let recorded = try await owner.imageReceipt(session, call: callID) { return recorded }
+    try await owner.refuseImageDestination(destination, session: session)
     let image = try await capabilities().image(arguments.prompt, options: .init(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size))
     guard PNGHeader(image) != nil else { throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.") }
-    let payload = try await place(image, at: destination, by: session, receipt: callID)
-    if case .machine = destination {
-      try await deliverContext(session, callID, touching: destination.folder, state: state)
-      try await store.recordReceipt(session, toolCallID: callID, payload: payload)
-    }
-    return payload
+    return try await owner.placeImage(image, at: destination, session: session, call: callID, state: state)
   }
 
   // The run_script side of generate_image: the same checks, provider and
@@ -71,14 +66,14 @@ extension ToolExecutor {
     images: [String] = [],
     options: CapabilityOptions = .init(),
   ) async throws -> GeneratedImage {
-    let destination = try await resolve(raw, as: session)
+    let destination = try await owner.resolveImageDestination(raw, session: session)
     try claims.claim(destination)
     do {
-      try await refuseUnwritable(destination, by: session)
+      try await owner.refuseImageDestination(destination, session: session)
       guard images.count <= 5 else { throw CapabilityError(.invalidArgument, "At most five reference images are accepted.") }
       var input: [Data] = []
       for path in images {
-        let bytes = try await capabilityInput(path, as: session, limit: 25 * 1024 * 1024)
+        let bytes = try await owner.capabilityInput(path, as: session, limit: 25 * 1024 * 1024)
         guard PNGHeader(bytes) != nil else { throw CapabilityError(.invalidArgument, "Reference images must be PNG files.") }
         input.append(bytes)
       }
@@ -86,65 +81,16 @@ extension ToolExecutor {
       guard let header = PNGHeader(image) else {
         throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.")
       }
-      _ = try await place(image, at: destination, by: session, receipt: nil)
+      _ = try await owner.placeImage(image, at: destination, session: session, call: nil, state: nil)
       return GeneratedImage(path: destination.rendered, bytes: image.count, width: header.width, height: header.height)
     } catch {
       claims.release(destination)
       throw error
     }
   }
-
-  private func refuseUnwritable(_ destination: Address, by session: SessionID) async throws {
-    try refuseSystem(destination)
-    if case let .space(path, group, _) = destination, let target = try? SpacePath(validating: path) {
-      try await SessionHome.refuseForeignWrite(to: target, in: group, by: session, home: space.principal(of: session).group)
-    }
-    try await refuseExisting(destination)
-  }
-
-  private func place(
-    _ image: Data,
-    at destination: Address,
-    by session: SessionID,
-    receipt callID: ToolCallID?,
-  ) async throws -> ToolResultPayload {
-    switch destination {
-    case let .space(path, group, _):
-      do {
-        return try await store.recordedSpaceWrite(
-          session,
-          toolCallID: callID,
-          path: path,
-          in: group,
-          content: image,
-          ifMatchRev: nil,
-          payload: { .write(.init(path: destination.rendered, revision: .journal($0))) },
-        ).payload
-      } catch SpaceError.versionMismatch {
-        throw neverOverwrites(destination.rendered)
-      }
-    case let .machine(machine, path):
-      try await refuseExisting(destination)
-      let revision = try await machineWrite(machine, path: path, bytes: [UInt8](image))
-      return .write(.init(path: destination.rendered, revision: revision))
-    case .system:
-      throw systemReadOnly(destination)
-    }
-  }
-
-  private func refuseExisting(_ destination: Address) async throws {
-    let exists = switch destination {
-    case let .space(path, group, _): (try? await space.fs(group).stat(path)) != nil
-    case let .machine(machine, path): try await machineStat(machine, path: path) != nil
-    case let .system(path): (try? await SystemFiles.vfs.stat(path)) != nil
-    }
-    if exists {
-      throw neverOverwrites(destination.rendered)
-    }
-  }
 }
 
-private func neverOverwrites(_ path: String) -> ToolProblem {
+func neverOverwrites(_ path: String) -> ToolProblem {
   ToolProblem("\(path) already exists; generate_image never overwrites")
 }
 

@@ -24,7 +24,7 @@ import struct WuhuAI.ToolCall
           try await sessions.recordScopeContext(
             sid,
             toolCallID: ToolCallID(call.id),
-            context: ScopeContext(folders: [repo: repo], text: "repo manual"),
+            context: ScopeContext(folders: [repo: repo], deliveredContext: ["hash": repo + "/AGENTS.md"], text: "repo manual"),
           )
         }
         return .read(.init(path: repo, revision: .journal(1), content: call.id))
@@ -50,6 +50,7 @@ import struct WuhuAI.ToolCall
       #expect(shape == ["result \(ids[0])", "context repo manual", "result \(ids[1])"])
       let expected: [String: String?] = [repo: repo]
       #expect(transcript.environment.tools.folderRoots == expected)
+      #expect(transcript.environment.tools.deliveredContext == ["hash": repo + "/AGENTS.md"])
     }
   }
 }

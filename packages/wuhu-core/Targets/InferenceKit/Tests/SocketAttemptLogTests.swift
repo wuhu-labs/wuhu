@@ -1,4 +1,5 @@
 import Dependencies
+import struct ExecutionOwner.AttemptLogConfig
 import FetchWebSocket
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -19,7 +20,7 @@ import WuhuAI
     let server = LogSocket()
     let socket = ResponsesWebSocketSession()
     let model = ResolvedModel(specifier: .init(provider: "offline", model: "test", effort: "low"), endpoint: OpenAIGPTEndpoint(model: "test", apiKey: "do-not-log-credential"), budget: .init(maxInput: 10000, maxOutput: 100), transport: .websocket)
-    let executor = InferenceExecutor(session: .init("one"), model: model, systemPrompt: "offline", tools: [], log: .init(directory: directory), webSocket: socket)
+    let executor = InferenceExecutor(session: .init("one"), model: model, systemPrompt: "offline", tools: [], trace: AttemptLogConfig(directory: directory).traceClient, webSocket: socket)
     try await withDependencies { $0[WebSocketConnector.self] = server.connector } operation: {
       _ = try await executor.run(attemptID: UUID(1), transcript: .init(), mode: .normal)
       let firstURL = directory.appendingPathComponent("\(UUID(1).uuidString.lowercased()).log")

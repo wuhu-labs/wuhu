@@ -1,5 +1,9 @@
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -41,8 +45,14 @@ public protocol MediaResolver: Sendable {
 /// which adapts the raw event stream into an ``Inference`` you can watch
 /// (`stream()`) or run to completion (`collect()`).
 public protocol ModelEndpoint: Sendable {
-  /// Opaque identity string for cross-provider replay gating and tracing.
+  /// Dialect/provider identity for wire compatibility and tracing; not an account binding.
   var providerID: String { get }
+
+  /// Verified account/wire binding. Unknown bindings cannot replay opaque content.
+  var replayScope: String? { get }
+
+  /// A new epoch retires continuation and cache/thread identity.
+  var routeEpoch: String? { get }
 
   /// Wire-level model name.
   var model: String { get }
@@ -65,6 +75,8 @@ public protocol ModelEndpoint: Sendable {
 }
 
 extension ModelEndpoint {
+  public var replayScope: String? { nil }
+  public var routeEpoch: String? { nil }
   public func modifyBody(_ body: inout OrderedDictionary<String, JSONValue>, options: RequestOptions) {}
 
   public func modifyHeaders(_ headers: inout RequestHeaders, options: RequestOptions) {}

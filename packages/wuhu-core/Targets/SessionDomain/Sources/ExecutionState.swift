@@ -9,17 +9,20 @@ public enum Subscription: Hashable, Sendable, Codable {
 public struct ToolExecutionState: Hashable, Sendable {
   public var fileAccessLog: [String: FileRevision]
   public var folderRoots: [String: String?]
+  public var deliveredContext: [String: String]
   public var subscriptions: [SubscriptionID: Subscription]
   public var handlerSubscriptions: Set<SubscriptionID> = []
 
   public init(
     fileAccessLog: [String: FileRevision] = [:],
     folderRoots: [String: String?] = [:],
+    deliveredContext: [String: String] = [:],
     subscriptions: [SubscriptionID: Subscription] = [:],
     handlerSubscriptions: Set<SubscriptionID> = [],
   ) {
     self.fileAccessLog = fileAccessLog
     self.folderRoots = folderRoots
+    self.deliveredContext = deliveredContext
     self.subscriptions = subscriptions
     self.handlerSubscriptions = handlerSubscriptions
   }
@@ -34,6 +37,7 @@ public struct ToolExecutionState: Hashable, Sendable {
     switch input {
     case let .notification(notification):
       folderRoots.merge(notification.folderRoots ?? [:]) { $1 }
+      deliveredContext.merge(notification.deliveredContext ?? [:]) { first, _ in first }
       if notification.endsSubscription {
         subscriptions.removeValue(forKey: notification.subscriptionID)
       }
@@ -89,11 +93,11 @@ extension SubscriptionID {
   }
 }
 
-// Environments stored before repository context existed carry no folderRoots.
 extension ToolExecutionState: Codable {
   enum CodingKeys: String, CodingKey {
     case fileAccessLog
     case folderRoots
+    case deliveredContext
     case subscriptions
   }
 
@@ -102,6 +106,7 @@ extension ToolExecutionState: Codable {
     self.init(
       fileAccessLog: try container.decode([String: FileRevision].self, forKey: .fileAccessLog),
       folderRoots: try container.decodeIfPresent([String: String?].self, forKey: .folderRoots) ?? [:],
+      deliveredContext: try container.decodeIfPresent([String: String].self, forKey: .deliveredContext) ?? [:],
       subscriptions: try container.decode([SubscriptionID: Subscription].self, forKey: .subscriptions),
     )
   }

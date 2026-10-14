@@ -35,7 +35,11 @@ extension Transcript {
   }
 
   public var hasWork: Bool {
-    guard let last = items.last else { return false }
+    guard let last = items.last(where: { item in
+      if case let .notification(notice) = item, notice.kind == .context, notice.content.text.isEmpty,
+         notice.isCacheWarming || notice.subscriptionID == SubscriptionID("context-pressure") { return false }
+      return true
+    }) else { return false }
     if !pendingToolCallIDs.isEmpty { return true }
     switch last {
     case .assistant:

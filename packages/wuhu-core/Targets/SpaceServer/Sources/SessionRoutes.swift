@@ -52,6 +52,7 @@ func addSessionRoutes(
       if input.executor == "claude-code" { throw ExecutorUnavailableError() }
       var params = SessionCreationParams(
         executor: input.executor,
+        modelGroup: input.modelGroup,
         provider: input.provider,
         model: input.model,
         effort: input.effort,
@@ -71,7 +72,8 @@ func addSessionRoutes(
       guard kind == .agent else {
         return errorResponse(.forbidden, code: "taskInput", message: "a person creates agents only; a task is created by its parent session")
       }
-      let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor)
+      let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor, resolveModelGroup: runtime.resolveModelGroup)
+      let route = try await runtime.prepareModelRoute(executor, .create)
       let id = try await store.createSession(
         group: group,
         title: input.title,
@@ -80,6 +82,7 @@ func addSessionRoutes(
         createdBy: identity,
         executor: executor,
         snapshot: .init(),
+        modelRoute: route,
       )
       if let template {
         do {
@@ -95,12 +98,15 @@ func addSessionRoutes(
       }
       let (model, effort): (String?, String?) = switch executor {
       case .kernel(let specifier), .claudeCode(let specifier): (specifier.model, specifier.effort)
+      case let .modelGroup(_, effort): (route?.specifier.model, effort)
       case .contractor: (nil, nil)
       }
       return try Response.json(SessionCreateOutput(
         id: id.rawValue,
         executor: executor.kind,
         model: model,
+        provider: route?.specifier.provider ?? params.provider,
+        modelGroup: params.modelGroup,
         effort: effort,
         kind: kind == .agent ? .agent : .task,
         parent: nil,
@@ -108,6 +114,22 @@ func addSessionRoutes(
     } catch {
       return sessionErrorResponse(error)
     }
+  }
+
+  router.get("/v1/session/:id/model-route") { request, parameters in
+    guard let id = sessionID(parameters) else { return unknownSession(parameters) }
+    if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
+    do {
+      let record = try await store.record(id)
+      let route = try await store.modelRoute(id)
+      let active = await activeModelSpecifier(record, store: store)
+      return try Response.json(SessionModelRouteOutput(
+        requestedTarget: JSONValue.parse(record.executor.configJSON)!,
+        activeProvider: active?.provider, activeModel: active?.model,
+        route: try route.map { try JSONValueEncoder().encode($0) },
+        decisions: try JSONValueEncoder().encode(await store.modelRouteHistory(id)),
+      ))
+    } catch { return sessionErrorResponse(error) }
   }
 
   router.get("/v1/templates") { request, _ in
@@ -123,6 +145,7 @@ func addSessionRoutes(
           kind: template.kind.map { $0 == .agent ? .agent : .task },
           provider: template.params.provider,
           model: template.params.model,
+          modelGroup: template.params.modelGroup,
           effort: template.params.effort,
           description: template.description,
         )
@@ -261,17 +284,18 @@ func addSessionRoutes(
       if record.kind == .task, input.message?.isEmpty == false {
         throw SessionStoreError.taskTakesNoHumanInput(id.rawValue)
       }
-      var params = SessionCreationParams(executor: input.executor, provider: input.provider, model: input.model, effort: input.effort)
+      var params = SessionCreationParams(executor: input.executor, modelGroup: input.modelGroup, provider: input.provider, model: input.model, effort: input.effort)
       // A restart on the same provider keeps what it does not name; another
       // provider's model and effort never carry over.
       if case .claudeCode = record.executor, input.provider == nil { throw ExecutorUnavailableError() }
       let current = record.executor.creationParams
-      if params.provider == nil || params.provider == current.provider {
+      if params.modelGroup != nil || params.provider == nil || params.provider == current.provider {
         params = params.merged(over: current)
       }
-      let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor)
+      let executor = try await SessionExecutor.resolve(params, resolveModelExecutor: runtime.resolveModelExecutor, resolveModelGroup: runtime.resolveModelGroup)
+      let route = try await runtime.prepareModelRoute(executor, .startOver)
       let restart = try await service.restart(
-        id, executor: executor, note: restartOpening(executor: executor, record: record, at: dateGen.now),
+        id, executor: executor, note: restartOpening(executor: executor, record: record, at: dateGen.now), modelRoute: route,
       )
       var queued: Int?
       if let message = input.message, !message.isEmpty {
@@ -283,6 +307,7 @@ func addSessionRoutes(
       }
       let (model, effort): (String?, String?) = switch restart.executor {
       case let .kernel(specifier), let .claudeCode(specifier): (specifier.model, specifier.effort)
+      case let .modelGroup(_, effort): (route?.specifier.model, effort)
       case .contractor: (nil, nil)
       }
       return try Response.json(SessionRestartOutput(
@@ -290,6 +315,8 @@ func addSessionRoutes(
         generation: restart.generation,
         executor: restart.executor.kind,
         model: model,
+        provider: route?.specifier.provider ?? params.provider,
+        modelGroup: params.modelGroup,
         effort: effort,
         queued: queued,
       ))
@@ -739,6 +766,8 @@ func sessionErrorResponse(_ error: any Error) -> Response {
     }
   case let error as SessionStoreError:
     switch error {
+    case let .modelRouteInvalid(group, member):
+      return errorResponse(.unprocessableContent, code: "modelRouteInvalid", message: "model group \(group) pinned member \(member) no longer matches the stored concrete target; Start over")
     case let .unknownSession(key):
       return errorResponse(.notFound, code: "notFound", message: "unknown session: \(key)")
     case let .unknownMessage(id):
@@ -818,7 +847,7 @@ func sessionErrorResponse(_ error: any Error) -> Response {
   case SessionError.archiveGraceExpired:
     return errorResponse(.conflict, code: "archiveGraceExpired", message: "the archive grace has expired")
   case let error as CatalogError:
-    return errorResponse(.unprocessableContent, code: "invalidArgument", message: error.description)
+    return errorResponse(.unprocessableContent, code: error.code, message: error.description)
   case let error as ExecutorUnavailableError:
     return errorResponse(.unprocessableContent, code: "executorNoLongerSupported", message: error.description)
   case let error as ExecutorSpecError:
@@ -932,6 +961,7 @@ private func restartOpening(executor: SessionExecutor, record: SessionRecord, at
   let spec: String = switch executor {
   case let .kernel(model), let .claudeCode(model):
     "\(executor.kind) \(model.provider)/\(model.model) (\(model.effort))"
+  case let .modelGroup(id, effort): "kernel model group \(id) (\(effort))"
   case .contractor:
     executor.kind
   }
@@ -946,6 +976,8 @@ extension SessionExecutor {
     switch self {
     case let .kernel(model), let .claudeCode(model):
       SessionCreationParams(provider: model.provider, model: model.model, effort: model.effort)
+    case let .modelGroup(id, effort):
+      SessionCreationParams(modelGroup: id, effort: effort)
     case .contractor:
       SessionCreationParams()
     }

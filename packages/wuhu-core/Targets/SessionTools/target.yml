@@ -11,6 +11,7 @@ checks:
   test: [linux, mac]
 dependencies:
   - Credentials
+  - ExecutionOwner
   - InferenceKit
   - Fetch
   - SessionDomain
@@ -41,6 +42,7 @@ tests:
       mode: copy
   dependencies:
     - Credentials
+    - ExecutionOwner
     - Fetch
     - SessionDomain
     - SpaceContract

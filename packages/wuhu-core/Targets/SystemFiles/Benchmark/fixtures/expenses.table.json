@@ -1,0 +1,94 @@
+{
+  "columns": [
+    {
+      "name": "date",
+      "type": "string"
+    },
+    {
+      "name": "category",
+      "type": "string"
+    },
+    {
+      "name": "amount",
+      "type": "number"
+    },
+    {
+      "name": "note",
+      "type": "string"
+    }
+  ],
+  "rows": [
+    {
+      "date": "2026-10-01",
+      "category": "groceries",
+      "amount": 64.2,
+      "note": "weekly shop"
+    },
+    {
+      "date": "2026-10-01",
+      "category": "transport",
+      "amount": 2.9,
+      "note": "metro"
+    },
+    {
+      "date": "2026-10-02",
+      "category": "eating out",
+      "amount": 28,
+      "note": "lunch w/ sam"
+    },
+    {
+      "date": "2026-10-03",
+      "category": "groceries",
+      "amount": 12.5,
+      "note": "fruit"
+    },
+    {
+      "date": "2026-10-04",
+      "category": "rent",
+      "amount": 1800,
+      "note": "october"
+    },
+    {
+      "date": "2026-10-05",
+      "category": "transport",
+      "amount": 45,
+      "note": "monthly pass"
+    },
+    {
+      "date": "2026-10-06",
+      "category": "eating out",
+      "amount": 61.4,
+      "note": "dinner"
+    },
+    {
+      "date": "2026-10-07",
+      "category": "fun",
+      "amount": 15,
+      "note": "cinema"
+    },
+    {
+      "date": "2026-10-08",
+      "category": "groceries",
+      "amount": 71.3,
+      "note": "weekly shop"
+    },
+    {
+      "date": "2026-10-09",
+      "category": "utilities",
+      "amount": 92.1,
+      "note": "electricity"
+    },
+    {
+      "date": "2026-10-10",
+      "category": "fun",
+      "amount": 38,
+      "note": "books"
+    },
+    {
+      "date": "2026-10-11",
+      "category": "eating out",
+      "amount": 9.5,
+      "note": "coffee"
+    }
+  ]
+}

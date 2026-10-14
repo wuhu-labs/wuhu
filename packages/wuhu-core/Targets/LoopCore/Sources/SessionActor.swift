@@ -64,7 +64,7 @@ actor SessionActor {
     case unarchive(Callback<Void>)
     case interrupt(Callback<Void>)
     case resume(Callback<Void>)
-    case restart(SessionExecutor?, String?, Callback<SessionRestart>)
+    case restart(SessionExecutor?, String?, SessionModelRoute?, Callback<SessionRestart>)
   }
 
   nonisolated let id: SessionID
@@ -183,7 +183,7 @@ actor SessionActor {
       case .unarchive(let callback), .interrupt(let callback), .resume(let callback):
         callback.resume(throwing: SessionError.archiveInProgress)
         return
-      case .restart(_, _, let callback):
+      case .restart(_, _, _, let callback):
         callback.resume(throwing: SessionError.archiveInProgress)
         return
       }
@@ -240,9 +240,9 @@ actor SessionActor {
       await callback.run {
         try await handleResume()
       }
-    case .restart(let executor, let note, let callback):
+    case .restart(let executor, let note, let route, let callback):
       await callback.run {
-        try await handleRestart(executor: executor, note: note)
+        try await handleRestart(executor: executor, note: note, modelRoute: route)
       }
     }
   }
@@ -336,9 +336,9 @@ actor SessionActor {
 
   // No ensureLifecycle: the store's refusal is the single gate, and
   // materializing here would run a loop pass on a session about to be wiped.
-  private func handleRestart(executor: SessionExecutor?, note: String?) async throws -> SessionRestart {
+  private func handleRestart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     // Its frames would land in the fresh generation.
-    let restart = try await repo.restart(executor: executor, note: note)
+    let restart = try await repo.restart(executor: executor, note: note, modelRoute: modelRoute)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()

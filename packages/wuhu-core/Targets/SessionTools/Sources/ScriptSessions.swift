@@ -28,6 +28,7 @@ struct ScriptSessions {
     var group: String?
     var provider: String?
     var model: String?
+    var modelGroup: String? = nil
     var effort: String?
     var template: String?
     var tags: [String]?
@@ -59,6 +60,7 @@ struct ScriptSessions {
             group: options.group,
             provider: options.provider,
             model: options.model,
+            modelGroup: options.modelGroup,
             effort: options.effort,
             tags: options.tags,
             template: options.template,
@@ -68,9 +70,13 @@ struct ScriptSessions {
         } catch let error as ExecutorUnavailableError {
           return .object(["error": .string(error.description), "code": "executorNoLongerSupported"])
         } catch let problem as ToolProblem {
-          throw ToolProblem("createSession: \(problem.message)")
+          throw ToolProblem("createSession: \(problem.message)", code: problem.code)
         }
         var made: OrderedDictionary<String, JSONValue> = ["id": .string(spawned.id.rawValue)]
+        if let group = spawned.modelGroup { made["modelGroup"] = .string(group) }
+        if let member = spawned.member { made["member"] = .string(member) }
+        if let provider = spawned.provider { made["provider"] = .string(provider) }
+        if let model = spawned.model { made["model"] = .string(model) }
         if let requestID = spawned.requestID {
           made["requestId"] = .string(requestID.rawValue)
         }
@@ -173,6 +179,7 @@ private func scripted(_ body: () async throws -> JSONValue) async throws -> JSON
   do {
     return try await body()
   } catch let problem as ToolProblem {
+    if let code = problem.code { return .object(["error": .string(problem.message), "code": .string(code)]) }
     throw ScriptError(problem.message)
   } catch is CancellationError {
     throw CancellationError()
@@ -198,7 +205,7 @@ export async function toolRoster() {
 
 export async function createSession(options) {
   if (options === null || typeof options !== "object") {
-    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, effort, template, tags, message, expectsReply, key }")
+    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, key }")
   }
   const made = await create(options)
   if (made.error !== undefined) {
@@ -207,7 +214,11 @@ export async function createSession(options) {
     if (made.code !== undefined) error.code = made.code
     throw error
   }
-  return made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
+  const result = made.requestId === undefined ? { id: made.id } : { id: made.id, requestId: made.requestId }
+  for (const key of ["modelGroup", "member", "provider", "model"]) {
+    if (made[key] !== undefined) result[key] = made[key]
+  }
+  return result
 }
 
 export function sendMessage(options) {

@@ -4,6 +4,7 @@
   import Foundation
 #endif
 
+import struct InferenceKit.ModelsDocument
 import JSONValue
 import SpaceClient
 import struct SpaceContract.ReadOutput
@@ -83,6 +84,7 @@ enum WellKnownModels {
     "deepseek": {
       "dialect": "anthropic",
       "baseURL": "https://api.deepseek.com/anthropic",
+      "opaqueReplay": "affine",
       "models": {
         "deepseek-v4-pro": {
           "maxInput": 131072,
@@ -117,6 +119,7 @@ struct ModelsMerge {
         added.append("provider \(providerID)")
         continue
       }
+      guard userProvider["kind"] != .string("group") else { continue }
       var userModels = userProvider["models"]?.object ?? [:]
       for (modelName, basisModel) in basisProvider.object?["models"]?.object ?? [:] {
         guard userModels[modelName] == nil else { continue }
@@ -154,7 +157,39 @@ func prettyJSON(_ value: JSONValue, indent: Int = 0) -> String {
   }
 }
 
+func renderedModels(providers: JSONValue, groups: JSONValue) -> String {
+  let providerRows = (providers.object ?? [:]).sorted(by: { $0.key < $1.key }).map { id, entry in
+    let models = (entry.object?["models"]?.object ?? [:]).keys.sorted().map { "  \(id)/\($0)\n" }.joined()
+    return "provider \(id)\n" + models
+  }.joined()
+  let groupRows = (groups.object ?? [:]).sorted(by: { $0.key < $1.key }).map { id, entry in
+    let policy = entry.object?["policy"]?.jsonString() ?? "{}"
+    let members = (entry.object?["members"]?.array ?? []).map { member in
+      let fields = member.object
+      return "  \(fields?["id"]?.stringValue ?? "?"): \(fields?["provider"]?.stringValue ?? "?")/\(fields?["model"]?.stringValue ?? "?")\n"
+    }.joined()
+    return "group \(id) \(policy)\n" + members
+  }.joined()
+  return providerRows + groupRows
+}
+
 extension Executor {
+  mutating func modelsList(json: Bool) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let client = try await self.authenticated(space)
+    let output: ReadOutput = try await client.tool("read", ["path": .string(ModelsDocument.spacePath)])
+    var groupText: String?
+    do {
+      let groupOutput: ReadOutput = try await client.tool("read", ["path": .string(ModelsDocument.groupPath)])
+      groupText = groupOutput.content
+    } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
+    _ = try ModelsDocument(json: Data(output.content.utf8), groupsJSON: groupText.map { Data($0.utf8) })
+    guard let providers = JSONValue.parse(output.content) else { throw CLIError(message: "Model catalogs are not valid JSON") }
+    let groups = groupText.flatMap(JSONValue.parse) ?? .object([:])
+    let catalog: JSONValue = ["providers": providers, "groups": groups]
+    await self.runner.stdout(json ? prettyJSON(catalog) + "\n" : renderedModels(providers: providers, groups: groups))
+  }
+
   mutating func modelsUpdate() async throws {
     let space = try self.wallet.pinnedSpace()
     guard let basis = JSONValue.parse(WellKnownModels.seed) else {
@@ -175,6 +210,12 @@ extension Executor {
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
 
     let merge = ModelsMerge(basis: basis, user: user)
+    var groupText: String?
+    do {
+      let output: ReadOutput = try await self.authenticated(space).tool("read", ["path": .string(ModelsDocument.groupPath)])
+      groupText = output.content
+    } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
+    _ = try ModelsDocument(json: Data(merge.merged.jsonString().utf8), groupsJSON: groupText.map { Data($0.utf8) })
     guard !merge.added.isEmpty else {
       await self.runner.stdout("models: up to date\n")
       return

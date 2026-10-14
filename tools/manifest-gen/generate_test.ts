@@ -3111,3 +3111,52 @@ Deno.test('Wuhu mobile plists declare only scheduled push refresh in every signi
     assertEquals(info.BGTaskSchedulerPermittedIdentifiers, undefined)
   }
 })
+
+Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Development only', () => {
+  const app: AppManifest = {
+    name: 'Example',
+    hmr: true,
+    viewPilot: false,
+    libraries: [
+      { name: 'AppLibrary', sources: 'Sources', dependencies: [] },
+      { name: 'WidgetLibrary', sources: 'Widgets', dependencies: [] },
+    ],
+    targets: [{
+      name: 'ExampleIOS',
+      platform: 'iOS',
+      bundleID: 'test.example',
+      bundleName: 'Example',
+      entitlements: {},
+      families: ['iphone'],
+      appIcons: [],
+      infoPlist: 'Info.plist',
+      minimumOSVersion: '26.0',
+      info: {},
+      dependencies: [':AppLibrary'],
+    }],
+  }
+  app.extensions = [{
+    ...app.targets[0]!,
+    name: 'ExampleWidget',
+    dependencies: [':WidgetLibrary'],
+  }]
+  const build = generateAppBuildBazel(app)
+  assertIncludes(
+    build,
+    'wuhu_hmr_app(\n    name = "ExampleIOSHMR",\n    app = ":ExampleIOS",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "ios",\n    ]),\n)',
+  )
+  assertIncludes(
+    build,
+    '"//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"]',
+  )
+  assertIncludes(build, '"//bazel/rules:hmr_enabled": ["-interposable"]')
+  const widget = build.slice(
+    build.indexOf('name = "WidgetLibrary"'),
+    build.indexOf('ios_application(', build.indexOf('name = "WidgetLibrary"')),
+  )
+  assertEquals(widget.includes('HMRRuntime'), false)
+  assertEquals(
+    generateAppBuildBazel({ ...app, hmr: false }).includes('HMRRuntime'),
+    false,
+  )
+})

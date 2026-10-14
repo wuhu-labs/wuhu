@@ -2,6 +2,8 @@ import Foundation
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
+import StructuredQueries
+import StructuredQueriesSQLite
 
 let sessionSchemaSQL = """
 CREATE TABLE IF NOT EXISTS "sessions" (
@@ -141,6 +143,14 @@ enum Sessions {
     } else {
       .archived(graceExpiresAt: try SQLiteDateFormat.date(from: row["grace_expires_at"]))
     }
+    var executor = try SessionExecutor(kind: row["executor"], configJSON: row["executor_config"])
+    if case .kernel = executor,
+       let route = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db),
+       let group = route.groupID
+    {
+      let pin = try decode(SessionModelRoute.self, from: route.payload)
+      executor = .modelGroup(id: group, effort: pin.specifier.effort)
+    }
     return SessionRecord(
       id: SessionID(row["id"] as String),
       kind: SessionKind(rawValue: row["kind"])!,
@@ -148,7 +158,7 @@ enum Sessions {
       title: row["title"],
       tags: try decode([String].self, from: row["tags"]),
       createdBy: row["created_by"],
-      executor: try SessionExecutor(kind: row["executor"], configJSON: row["executor_config"]),
+      executor: executor,
       createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
       lastActivityAt: try SQLiteDateFormat.date(from: row["last_activity_at"]),
       hold: SessionHold(rawValue: row["hold"])!,

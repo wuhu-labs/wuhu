@@ -1,3 +1,4 @@
+import struct Credentials.CredentialBinding
 import Dependencies
 import Fetch
 import FetchWebSocket
@@ -23,7 +24,7 @@ import WuhuAI
       let endpoint: any ModelEndpoint
       switch dialect {
       case "responses": endpoint = OpenAIGPTEndpoint(model: "test", apiKey: "offline")
-      case "anthropic": endpoint = AnthropicEndpoint(model: "test", apiKey: "offline")
+      case "anthropic": endpoint = AnthropicEndpoint(model: "test", replayScope: "verified-offline", apiKey: "offline")
       default: endpoint = ReplayChatEndpoint()
       }
       let model = ResolvedModel(specifier: .init(provider: "offline", model: "test", effort: "low"), endpoint: endpoint, budget: .init(maxInput: 1_001_000, maxOutput: 1000))
@@ -79,8 +80,8 @@ import WuhuAI
       let sessions = try Space.inMemory().sessions
       let sid = try await sessions.createSession(group: .shared, title: "pressure replay", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
-      let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
-      let model = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
+      let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
+      let model = try await ProviderCatalog(document: document, credentials: .bound { _ in CredentialBinding(credential: .apiKey("offline"), identityEpoch: "verified-offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
       let bodies = Box<[JSONValue]>([])
       let commits = Box<[AssistantEntry]>([])
       let dials = Box(0)

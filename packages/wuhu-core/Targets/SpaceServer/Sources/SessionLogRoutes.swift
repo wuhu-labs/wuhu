@@ -42,7 +42,7 @@ func addSessionLogRoutes(
     do {
       let record = try await store.record(id)
       switch record.executor {
-      case .kernel, .claudeCode:
+      case .kernel, .modelGroup, .claudeCode:
         let (generation, items) = try await store.transcriptSnapshot(id)
         var upper = items.count
         if let before = query["before"] {
@@ -77,7 +77,7 @@ func addSessionLogRoutes(
     do {
       let record = try await store.record(id)
       switch record.executor {
-      case .kernel, .claudeCode:
+      case .kernel, .modelGroup, .claudeCode:
         let (generation, items) = try await store.transcriptSnapshot(id)
         switch resolveKernelRef(ref, generation: generation, count: items.count, session: id.rawValue) {
         case let .refused(response):

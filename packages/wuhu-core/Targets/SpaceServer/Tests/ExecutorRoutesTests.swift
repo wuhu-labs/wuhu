@@ -143,7 +143,7 @@ import Testing
         skills: SystemFiles.instructions.skills.map { .init(name: $0.name, description: $0.description, path: $0.path) }
           + [.init(name: "review", description: "Review things", path: "/.agents/skills/review/SKILL.md")],
       ))
-      #expect(home.skills.prefix(10).map(\.name) == ["avatar", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "space-html-pages", "transcription", "web-search"])
+      #expect(home.skills.prefix(10).map(\.name) == ["avatar", "data-organization", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "space-html-pages", "transcription"])
       #expect(try await harness.get("/v1/session/no-such/home").status == .notFound)
     }
   }

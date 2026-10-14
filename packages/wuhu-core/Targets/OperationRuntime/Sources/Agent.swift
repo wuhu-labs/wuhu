@@ -89,6 +89,16 @@ public actor OperationAgent {
     running = false
   }
 
+  public func admissionUsage() -> (active: Int, receipts: Int, bufferBytes: Int) {
+    sweep()
+    return (operations.values.filter { $0.verdict == nil }.count, operations.count, operations.values.reduce(0) { $0 + $1.bufferReservation })
+  }
+
+  public func departureSettled() -> Bool {
+    sweep()
+    return leaving && pendingDeparture.isEmpty && !departureEvidenceLost
+  }
+
   public func hasRetainedOperations() -> Bool { sweep(); return !operations.isEmpty }
   public func inspect(_ operation: UUID) -> OperationSnapshot? { sweep(); return operations[operation]?.snapshot() }
 

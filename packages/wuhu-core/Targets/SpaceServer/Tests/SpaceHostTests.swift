@@ -128,6 +128,49 @@ import Testing
     #expect(aborted.withLock { $0 })
   }
 
+  @Test(arguments: [false, true]) func boundedSessionIsCancelledBeforeTransportAbort(cancelCaller: Bool) async throws {
+    let requests = HostRequests()
+    let sockets = HostSockets()
+    let (started, start) = AsyncStream<Void>.makeStream()
+    let (blocked, releaseRead) = AsyncStream<Void>.makeStream()
+    let cancelled = Mutex(false)
+    let cancelledAtAbort = Mutex(false)
+    let aborted = Mutex(false)
+    let handler = spaceOwnedHandler(handler: { _ in
+      .boundedWebSocket(limits: .init(), subprotocol: "bounded.test") { transport in
+        await withTaskCancellationHandler {
+          _ = try? await transport.receive()
+        } onCancel: {
+          cancelled.withLock { $0 = true }
+        }
+      }
+    }, requests: requests, sockets: sockets)
+    let result = try await handler(Request(url: URL(string: "https://bounded.test/")!))
+    guard case let .boundedWebSocket(_, _, session) = result else {
+      Issue.record("expected bounded upgrade"); return
+    }
+    let running = Task {
+      await session(.init(receive: {
+        start.yield(())
+        await Task.detached { for await _ in blocked {} }.value
+        return nil
+      }, send: { _ in }, abort: {
+        cancelledAtAbort.withLock { $0 = cancelled.withLock { $0 } }
+        aborted.withLock { $0 = true }
+        releaseRead.finish()
+      }))
+    }
+    var ready = started.makeAsyncIterator()
+    _ = await ready.next()
+    if cancelCaller { running.cancel() }
+    else { await requests.shutdown(sockets: sockets) }
+    await running.value
+    #expect(aborted.withLock { $0 })
+    #expect(cancelledAtAbort.withLock { $0 })
+    await requests.shutdown(sockets: sockets)
+    start.finish()
+  }
+
   @Test func shutdownAbortsCancelsAndAwaitsBoundedSession() async throws {
     let requests = HostRequests()
     let sockets = HostSockets()

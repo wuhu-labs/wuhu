@@ -121,6 +121,17 @@ public actor OperationClient {
     }
   }
 
+  public func acknowledgeLeave(_ machine: String) async throws {
+    var components = URLComponents(url: address(machine), resolvingAgainstBaseURL: false)!
+    components.queryItems = [.init(name: "leaveAck", value: "true")]
+    do {
+      _ = try await request(MachineDescription.self, url: components.url!)
+      throw OperationError(.invalidResponse, message: "Machine did not confirm settled departure")
+    } catch let error as OperationError where error.code == .leaving {
+      detached.insert(machine); leftDates[machine] = wallNow()
+    }
+  }
+
   public func start(
     _ machine: String,
     request start: StartRequest,
@@ -225,6 +236,13 @@ public actor OperationClient {
     }
   }
 
+  /// Keeps abandoned stop intent deliverable after local silence became unknown, without renewing a caller or replaying start.
+  public func reconcileAbandoned(_ id: UUID) async throws -> OperationSnapshot {
+    let record = try await store.read(id)
+    guard let reason = record.stopReason else { throw OperationError(.invalidInput, operation: id) }
+    return try await sendStop(id, reason: reason, bestEffort: record.unknown != nil)
+  }
+
   public func poll(_ id: UUID, channel: String? = nil, holdMs: Int = 0, terminalAck: Bool = false) async throws -> OperationSnapshot {
     let key = "\(id)/output/\(channel ?? "state")"
     guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
@@ -269,7 +287,7 @@ public actor OperationClient {
   func saveUnknown(_ error: OperationError, record: ClientRecord, dispatchInFlight: Bool) async throws {
     guard !dispatchInFlight else { return }
     _ = try await store.transaction(record.id) { current in
-      if (current.evidenceGeneration ?? 0) == (record.evidenceGeneration ?? 0) { current.unknown = error }
+      if current.snapshot?.verdict == nil, (current.evidenceGeneration ?? 0) == (record.evidenceGeneration ?? 0) { current.unknown = error }
     }
   }
 

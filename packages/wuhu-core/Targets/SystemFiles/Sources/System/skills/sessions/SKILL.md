@@ -11,12 +11,12 @@ description: Create sessions from run_script with wuhu:session — a top-level a
 import { createSession, request, setTags, archive, unarchive, interrupt, resume } from "wuhu:session"
 ```
 
-- `createSession({ title, kind, topLevel, group, provider, model, effort, template, tags, message, expectsReply, key })` resolves to `{ id, requestId? }` as soon as the session exists. It takes what the `create_session` tool takes:
+- `createSession({ title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, key })` resolves to `{ id, requestId? }` as soon as the session exists. It takes what the `create_session` tool takes:
   - `kind` is `"task"` (the default) or `"agent"`. An agent has a box; a task answers only through `report`. An agent template, or `topLevel`, makes `"agent"` the default.
   - `topLevel: true` makes a root agent with no parent. Only an agent may create one, and `expectsReply` is refused: a root has nobody to report to. It belongs to the humans: it gives you no parent/ancestry control, but you retain the creator archive/unarchive exception below. `created_by` records you as its creator.
   - A child lives in your group. Only a top-level agent takes `group`: it lands in your group unless `group` names another one your group reads.
   - With `expectsReply` (and a `message`) the child starts on the message and owes you one final report. Without it, `message` arrives as a DM from you and nothing is owed.
-  - Omitted `provider`, `model` and `effort` default to your own; a template's values win over that, explicit arguments over both.
+  - `modelGroup` requests a session routing group from `/model-groups.json`; it is mutually exclusive with `provider`/`model`. Omitted targets inherit your requested target, not your group's active member. A template's target wins over that default, and an explicit target replaces both as a whole. `effort` is optional and must be supported by every group member.
   - `key` makes a retry safe: the same key from the same session returns the first session instead of creating a second. Without a key, every call creates.
   - If cloning the template or handing over the message fails after the session exists, it throws an `Error` whose `id` is the new session. It is not rolled back. A retry with the same `key` finishes what is missing, or throws the same way again.
 - `request(id, message, { deadlineSeconds })` opens one request on a child of yours and resolves to `{ requestId }`. A child holds one open request at a time.

@@ -10,6 +10,7 @@
 #endif
 import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
+import func ComputerFiles.fileOperationKinds
 import Fetch
 import FetchAsyncHTTPClient
 import struct OperationProtocol.ErrorEnvelope
@@ -34,10 +35,7 @@ public enum ExecSupervisor {
       guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK else { throw OperationError(.invalidConfiguration) }
       guard unlink(socket) == 0 else { throw OperationError(.invalidConfiguration) }
     }
-    var configuration = HTTPClient.Configuration()
-    configuration.redirectConfiguration = .disallow
-    let http = HTTPClient(eventLoopGroupProvider: .singleton, configuration: configuration)
-    do {
+    try await withUnixHTTP { http in
       let registry = try ExecSupervisorRegistry(
         machine: machine,
         operationsDirectory: operationsDirectory,
@@ -47,15 +45,20 @@ public enum ExecSupervisor {
         authorize: { _, _ in },
       )
       try await registry.recover()
-      let server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, handler: registry.handler)
+      let files = try OperationAgent(machine: machine, kinds: fileOperationKinds(), authorize: { _, _ in })
+      let agent = ComputerAgent(machine: machine, registry: registry, files: files)
+      let server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, handler: { request in
+        if request.url.path == "/leave" { return try await agent.controlHandler(request) }
+        return try await agent.handler(request)
+      })
       guard chmod(socket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await registry.run() }
+        group.addTask { await files.run() }
         await server.runUntilCancelled()
-        group.cancelAll()
+        await files.shutdown(); group.cancelAll()
       }
-      try await http.shutdown()
-    } catch { try await http.shutdown(); throw error }
+    }
   }
 
   public static func run(directory: String) async throws {
@@ -102,6 +105,13 @@ actor SupervisorGate {
 
   func handle(_ request: Request) async throws -> Response {
     guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { return try .json(ErrorEnvelope(.init(.machineNotAuthorized)), status: .forbidden) }
+    if request.url.path == "/leave", request.method == .put {
+      await agent.leave()
+      return try .json(true)
+    }
+    if request.url.path == "/departure", request.method == .get {
+      return try .json(await agent.departureSettled())
+    }
     if request.url.path == "/identity", request.method == .get {
       var response = try Response.json(manifest)
       if let snapshot = await agent.inspect(manifest.operation) {

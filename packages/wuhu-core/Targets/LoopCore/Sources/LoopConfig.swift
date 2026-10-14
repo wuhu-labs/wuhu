@@ -47,14 +47,26 @@ public struct ToolInvocation: Sendable {
   }
 }
 
+public struct ReplayBoundaryRequired: Error, Sendable {
+  public var binding: ReplayBinding
+  public var budget: ContextBudget
+
+  public init(binding: ReplayBinding, budget: ContextBudget) {
+    self.binding = binding
+    self.budget = budget
+  }
+}
+
 public struct InferenceReply: Sendable {
   public var message: AssistantMessage
   public var metadata: AssistantMessageMetadata
+  public var replayBinding: ReplayBinding?
   public var committed: @Sendable (AssistantEntry, Transcript) async -> Void
 
-  public init(message: AssistantMessage, metadata: AssistantMessageMetadata, committed: @escaping @Sendable (AssistantEntry, Transcript) async -> Void = { _, _ in }) {
+  public init(message: AssistantMessage, metadata: AssistantMessageMetadata, replayBinding: ReplayBinding? = nil, committed: @escaping @Sendable (AssistantEntry, Transcript) async -> Void = { _, _ in }) {
     self.message = message
     self.metadata = metadata
+    self.replayBinding = replayBinding
     self.committed = committed
   }
 }
@@ -97,6 +109,7 @@ public struct LoopConfig: Sendable {
   // reaches this seam, so crash-retry rejoin stays possible).
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
   public var invalidateInference: @Sendable (SessionID) async -> Void
+  public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
   public var thresholds: CompactionThresholds
   public var archiveGrace: Duration
   public var eviction: EvictionPolicy
@@ -108,6 +121,7 @@ public struct LoopConfig: Sendable {
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
+    allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
     thresholds: CompactionThresholds = .init(),
     archiveGrace: Duration = .seconds(24 * 3600),
     eviction: EvictionPolicy = .init(),
@@ -118,6 +132,7 @@ public struct LoopConfig: Sendable {
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
     self.invalidateInference = invalidateInference
+    self.allowCacheWarming = allowCacheWarming
     self.thresholds = thresholds
     self.archiveGrace = archiveGrace
     self.eviction = eviction

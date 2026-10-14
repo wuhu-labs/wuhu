@@ -106,6 +106,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
   public var conversations: [ConversationID]
   public var requestID: RequestID?
   public var folderRoots: [String: String?]?
+  public var deliveredContext: [String: String]?
   public var content: MessageContent
 
   public init(
@@ -117,6 +118,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     conversations: [ConversationID] = [],
     requestID: RequestID? = nil,
     folderRoots: [String: String?]? = nil,
+    deliveredContext: [String: String]? = nil,
     content: MessageContent,
   ) {
     self.id = id
@@ -127,6 +129,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     self.conversations = conversations
     self.requestID = requestID
     self.folderRoots = folderRoots
+    self.deliveredContext = deliveredContext
     self.content = content
   }
 }
@@ -140,6 +143,7 @@ public struct AssistantEntry: Hashable, Sendable, Codable {
   public var stopReason: StopReason
   public var usage: Usage
   public var toolCallIDs: [String: ToolCallID]
+  public var replayBinding: ReplayBinding?
 
   public init(
     id: UUID,
@@ -148,6 +152,7 @@ public struct AssistantEntry: Hashable, Sendable, Codable {
     stopReason: StopReason,
     usage: Usage,
     toolCallIDs: [String: ToolCallID],
+    replayBinding: ReplayBinding? = nil,
   ) {
     self.id = id
     self.timestamp = timestamp
@@ -155,6 +160,7 @@ public struct AssistantEntry: Hashable, Sendable, Codable {
     self.stopReason = stopReason
     self.usage = usage
     self.toolCallIDs = toolCallIDs
+    self.replayBinding = replayBinding
   }
 
   public var toolCalls: [ToolCall] {
@@ -203,8 +209,9 @@ public struct GenerationHead: Hashable, Sendable, Codable {
   public var settle: SettleState?
   public var settleBoundary: SettleBoundary?
   public var note: String?
+  public var replayBinding: ReplayBinding?
 
-  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil) {
+  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil, replayBinding: ReplayBinding? = nil) {
     self.id = id
     self.timestamp = timestamp
     self.summary = summary
@@ -212,5 +219,6 @@ public struct GenerationHead: Hashable, Sendable, Codable {
     self.settle = settle
     self.settleBoundary = settleBoundary
     self.note = note
+    self.replayBinding = replayBinding
   }
 }

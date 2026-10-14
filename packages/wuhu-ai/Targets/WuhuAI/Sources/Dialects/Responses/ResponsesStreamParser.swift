@@ -13,6 +13,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
   _ sse: Events,
   providerID: String,
   model: String,
+  replayScope: String? = nil,
   finiteResponse: Bool = false,
 ) -> AsyncThrowingStream<InferenceEvent, any Error> where Events.Element == SSEEvent {
   AsyncThrowingStream { continuation in
@@ -147,6 +148,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
                 summary: summaryText,
                 opaque: encrypted ?? "",
                 id: id,
+                replayScope: replayScope,
               ))))
               let idx = content.count - 1
               reasoningIndexByID[id] = idx
@@ -262,7 +264,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
 
             } else if itemType == "web_search_call",
                       let payload = dict["item"],
-                      let item = HostedToolContent(providerID: providerID, payload: payload)
+                      let item = HostedToolContent(providerID: providerID, payload: payload, replayScope: replayScope)
             {
               content.append(.hostedTool(item))
               currentTextIndex = nil
@@ -286,6 +288,7 @@ func parseResponsesStream<Events: AsyncSequence & Sendable>(
                   summary: summaryText ?? existing?.summary,
                   opaque: encrypted ?? existing?.opaque ?? "",
                   id: id,
+                  replayScope: replayScope,
                 )))
                 if let summaryText {
                   continuation.yield(.reasoningEnd(

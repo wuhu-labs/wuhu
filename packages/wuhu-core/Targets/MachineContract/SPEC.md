@@ -149,3 +149,7 @@ secret's value reaches it only inside the `ExecStart` that needs it.
   `step`/`cursor` is an opaque resume cursor over a deterministic traversal
   order: `cursor` is present iff the page was truncated, and passing it back
   as `step` continues.
+
+## Machine v2 dial credential
+
+`MachineV2Connect` is separate from v1: `x-wuhu-machine-v2-key`, `challenge`, `signature`, and `machines` headers carry the enrolled key label, one-shot challenge, raw algorithm-tagged signature and comma-separated addressed machine IDs. Signing bytes are UTF-8 `wuhu-machine-v2-tunnel-connect.v1\n<challenge>\n<sorted machine IDs joined by newline>`. The machine set is signed, duplicate or malformed IDs are refused, and v1 challenge signatures never authorize v2. The credential lists allowed IDs, never an implicit connection-bound machine. Today's enrollment grants one machine per key; a wider requested credential is refused, not silently narrowed. Only the exact `wuhu-fetch-tunnel.v1` WebSocket protocol is selected.

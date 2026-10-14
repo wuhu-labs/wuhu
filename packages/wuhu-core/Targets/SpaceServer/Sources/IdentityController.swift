@@ -104,6 +104,11 @@ actor IdentityController {
     try resolve(settings.overrides[ServerIdentity.audience(audience)] ?? settings.defaultIssuer)
   }
 
+  func inferenceReplayIdentity(audience: URL, space: String, group: String) throws -> String {
+    let issuer = try issuerFor(audience)
+    return String(decoding: try JSONEncoder().encode([issuer, ServerIdentity.audience(audience), space, group]), as: UTF8.self)
+  }
+
   private func resolve(_ choice: IssuerChoice) throws -> String {
     switch choice {
     case .self: return try ServerIdentity.issuer(origin)

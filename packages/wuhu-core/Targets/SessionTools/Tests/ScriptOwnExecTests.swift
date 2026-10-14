@@ -11,6 +11,15 @@ import Testing
     }
   }
 
+  @Test func ownedExecWithoutMachineAccessKeepsInternalFailure() async throws {
+    try await withRig { rig in
+      let machine = try await rig.space.addMachine(name: "unavailable").id
+      let own = try await rig.space.mintExec(machine: machine, caller: rig.session.rawValue)
+      let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
+      #expect(result == "internal")
+    }
+  }
+
   @Test func ownAndForeignExecsUseTheSameGate() async throws {
     let world = MachineWorld()
     try await withRig(world: world) { rig in

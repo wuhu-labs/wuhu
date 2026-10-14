@@ -58,7 +58,7 @@ func isSessionExec(_ environment: [String: String]) -> Bool {
 extension Command {
   var runsWithoutWallet: Bool {
     switch self {
-    case .serve, .upgrade, .user: true
+    case .serve, .upgrade, .user, .machineV2Install: true
     default: false
     }
   }
@@ -73,7 +73,7 @@ extension Command {
     switch self {
     case let .upgrade(upgrade):
       !upgrade.check
-    case .use, .trust, .untrust, .userAdd, .userInvite, .userAdmin, .userList, .userHandle, .userProfile, .userRemove,
+    case .machineV2Install, .use, .trust, .untrust, .userAdd, .userInvite, .userAdmin, .userList, .userHandle, .userProfile, .userRemove,
          .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineJoin, .machineRun, .machineRotate,
          .machineRevoke, .machineMove, .authSet, .authList, .authRemove, .authLogin,
          .authLogout, .modelsUpdate, .groupUse, .identitySet, .identityRotate, .identityRegisterNew:

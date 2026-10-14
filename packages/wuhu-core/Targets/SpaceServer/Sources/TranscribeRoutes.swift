@@ -65,7 +65,7 @@ func spaceCapabilities(space: Space, credentials: CredentialResolver) async thro
 
 func capabilityFailure(_ error: CapabilityError) -> Response {
   let status: Status = switch error.code {
-  case .invalidArgument, .unsupportedFeature: .badRequest
+  case .invalidArgument, .unsupportedFeature, .unsupportedTarget: .badRequest
   case .providerAuth: .unauthorized
   case .providerRegion, .providerEntitlement: .forbidden
   case .providerRateLimited: .tooManyRequests

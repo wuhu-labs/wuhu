@@ -220,3 +220,120 @@ extension MachineV2StoreTests {
     }
   }
 }
+
+extension MachineV2StoreTests {
+  @Test func machineActiveCapacityIsSharedAcrossCallerGroups() async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
+    var limits = OperationLimits(); limits.activeOperations = 2
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [ComputerKindSchemas.read])
+    func record() -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: "shared-machine", start: .init(kind: "read.v1", input: [:]), description: description) }
+    _ = try await first.claim(.init(scope: "script", key: "one"), record: record())
+    _ = try await second.claim(.init(scope: "script", key: "two"), record: record())
+    do { _ = try await first.claim(.init(scope: "another-script", key: "three"), record: record()); Issue.record("cross-group machine cap bypass") }
+    catch let error as OperationError { #expect(error.code == .capacityExceeded) }
+    #expect(try await first.lookup(.init(scope: "another-script", key: "three")) == nil)
+  }
+
+  @Test func machineBufferReservationsAreSharedButScriptCapacityRemainsGroupScoped() async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
+    var limits = OperationLimits(); limits.bufferBytes = 16 * 1024 * 1024
+    let descriptor = KindDescriptor("large.v1", inputSchema: [:], resultSchema: [:], outputChannels: [.init("out", windowBytes: 8 * 1024 * 1024)])
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [descriptor])
+    func record(machine: String = "shared-machine") -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: machine, start: .init(kind: "large.v1", input: [:]), description: description) }
+    _ = try await first.claim(.init(scope: "script", key: "one"), record: record())
+    _ = try await second.claim(.init(scope: "script", key: "two"), record: record())
+    do { _ = try await second.claim(.init(scope: "another-script", key: "three"), record: record()); Issue.record("cross-group buffer cap bypass") }
+    catch let error as OperationError { #expect(error.code == .capacityExceeded) }
+    for index in 1 ..< 8 {
+      _ = try await first.claim(.init(scope: "script", key: String(index)), record: record(machine: "first-\(index)"))
+      _ = try await second.claim(.init(scope: "script", key: String(index)), record: record(machine: "second-\(index)"))
+    }
+  }
+}
+
+extension MachineV2StoreTests {
+  @Test func persistedPresenceEvidenceSurvivesReopenAndIsGroupFiltered() async throws {
+    let time = Mutex(Date(timeIntervalSince1970: 1_000_000_000))
+    try await withDependencies { $0.date = .init { time.withLock { $0 } } } operation: {
+      let folder = try ScratchFolder("machine-v2-presence")
+      let database = folder.url.appendingPathComponent("space.sqlite")
+      let space = try Space.open(file: database)
+      let machine = try await space.addMachine(name: "presence")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      let initial = try #require(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared))
+      #expect(initial.state == .lost)
+      #expect(initial.observedAt == Date(timeIntervalSince1970: 1_000_000_000))
+      #expect(initial.reason == "neverAttached")
+      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .attached, description: description)
+      let attached = try #require(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared))
+      #expect(attached.state == .attached)
+      #expect(attached.observedAt == Date(timeIntervalSince1970: 1_000_000_000))
+      #expect(attached.reason == nil)
+      time.withLock { $0 += 20 }
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .detached, reason: "leaving")
+      let reopened = try Space.open(file: database)
+      let detached = try #require(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared))
+      #expect(detached.state == .detached)
+      #expect(detached.observedAt == Date(timeIntervalSince1970: 1_000_000_020))
+      #expect(detached.reason == "leaving")
+      time.withLock { $0 += 1 }
+      try await reopened.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .detached, reason: "leaving")
+      #expect(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_021))
+      #expect(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .init(rawValue: "other")) == nil)
+      #expect(try await reopened.machineV2PresenceEvidence("not-a-machine", group: .shared) == nil)
+      time.withLock { $0 += 59 }
+      try await reopened.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .lost, reason: "leaseSilence")
+      let lost = try #require(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared))
+      #expect(lost.state == .lost)
+      #expect(lost.observedAt == Date(timeIntervalSince1970: 1_000_000_021))
+      #expect(lost.reason == "leaseSilence")
+      time.withLock { $0 += 20 }
+      try await reopened.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .lost, reason: "leaseSilence")
+      #expect(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == lost.observedAt)
+      time.withLock { $0 += 1 }
+      try await reopened.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .attached, description: description)
+      #expect(try await reopened.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_101))
+    }
+  }
+
+  @Test func malformedPresenceEvidenceIsTypedUnavailableRatherThanInventedStateOrDate() async throws {
+    let space = try Space.inMemory()
+    for (state, timestamp) in [("not-a-state", "2001-09-09 01:46:40.000"), ("detached", "not-a-timestamp")] {
+      try await space.writer.write { db in
+        let row = MachineV2PresenceRow(machineID: "corrupt", grp: "shared", state: state, description: nil, observedAt: timestamp, reason: "leaving")
+        try MachineV2PresenceRow.upsert { row }.execute(db)
+      }
+      do { _ = try await space.machineV2PresenceEvidence("corrupt", group: .shared); Issue.record("malformed persisted presence accepted") }
+      catch let error as OperationError { #expect(error.code == .storeUnavailable) }
+      #expect(try await space.machineV2PresenceEvidence("corrupt", group: .init(rawValue: "other")) == nil)
+    }
+  }
+}
+
+extension MachineV2StoreTests {
+  @Test func lostPresenceKeepsLastAnswerAcrossRepeatedProbesAndNeverAnsweredUsesRegistration() async throws {
+    let time = Mutex(Date(timeIntervalSince1970: 1_000_000_000))
+    try await withDependencies { $0.date = .init { time.withLock { $0 } } } operation: {
+      let space = try Space.inMemory()
+      let machine = try await space.addMachine(name: "silence")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      time.withLock { $0 += 60 }
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .lost, reason: "leaseSilence")
+      #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_000))
+      time.withLock { $0 += 20 }
+      let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .attached, description: description)
+      time.withLock { $0 += 60 }
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .lost, reason: "leaseSilence")
+      #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_080))
+      time.withLock { $0 += 20 }
+      try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .lost, reason: "transport")
+      #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.observedAt == Date(timeIntervalSince1970: 1_000_000_080))
+    }
+  }
+}

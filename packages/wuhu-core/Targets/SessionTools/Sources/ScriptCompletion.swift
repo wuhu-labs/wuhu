@@ -52,11 +52,16 @@ struct CompletionRequest {
     guard let name = options["model"]?.stringValue, !name.isEmpty else {
       throw CompletionError(code: "missingModel", message: "complete requires a model from /models.json.")
     }
-    guard let separator = name.firstIndex(of: "/"), separator != name.startIndex, name.index(after: separator) != name.endIndex else {
-      throw CompletionError(code: "unknownModel", message: "Model must be a provider/model name from /models.json.")
+    if let separator = name.firstIndex(of: "/") {
+      guard separator != name.startIndex, name.index(after: separator) != name.endIndex else {
+        throw CompletionError(code: "unknownModel", message: "Model must be a provider/model name from /models.json.")
+      }
+      provider = String(name[..<separator])
+      model = String(name[name.index(after: separator)...])
+    } else {
+      provider = name
+      model = ""
     }
-    provider = String(name[..<separator])
-    model = String(name[name.index(after: separator)...])
     if let value = options["schema"] {
       guard value.object != nil else {
         throw CompletionError(code: "invalidArgument", message: "schema must be a JSON schema object.")
@@ -100,8 +105,9 @@ extension ToolExecutor {
     do {
       if let completionCatalog { catalog = try await completionCatalog() }
       else {
-        let bytes = try await space.fs(.shared).read(ModelsDocument.spacePath).1
-        catalog = ProviderCatalog(document: try ModelsDocument(json: bytes), credentials: credentials)
+        let bytes = try await owner.capabilityDocument(ModelsDocument.spacePath)
+        let groups = try await owner.capabilityDocument(ModelsDocument.groupPath)
+        catalog = ProviderCatalog(document: try ModelsDocument(json: bytes ?? Data(), groupsJSON: groups), credentials: credentials)
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -110,10 +116,15 @@ extension ToolExecutor {
     }
     let specifier: ModelSpecifier
     do {
+      if catalog.document.groups[request.provider] != nil {
+        throw CatalogError.unsupportedTarget(request.provider)
+      }
       specifier = try catalog.defaultSpecifier(provider: request.provider, model: request.model)
       try catalog.validate(specifier)
     } catch let error as CatalogError {
       switch error {
+      case .unsupportedTarget:
+        throw CompletionError(code: "unsupportedTarget", message: "Model groups are supported only by sessions; complete requires a concrete provider/model.")
       case .unknownProvider, .unknownModel:
         throw CompletionError(code: "unknownModel", message: "The requested provider/model is not in /models.json.")
       default: throw CompletionError(code: "providerNotConfigured", message: "The requested model configuration is invalid.")
@@ -145,7 +156,7 @@ extension ToolExecutor {
     var firstEvent: Duration?
     var completed: AssistantMessage?
     var failure: InferenceError?
-    let options = RequestOptions(maxTokens: resolved.budget.maxOutput, reasoning: .effort(specifier.effort), outputSchema: request.schema)
+    let options = RequestOptions(maxTokens: resolved.budget.maxOutput, reasoning: specifier.effort == "none" && resolved.endpoint is any AnthropicMessagesEndpoint ? .none : .effort(specifier.effort), outputSchema: request.schema)
     for await event in resolved.endpoint.runInference(context: request.context, options: options, mediaResolver: nil) {
       if firstEvent == nil, case .success = event { firstEvent = started.duration(to: clock.now) }
       switch event {
@@ -180,27 +191,7 @@ extension ToolExecutor {
       durationMs: started.duration(to: clock.now).completionMilliseconds,
       usage: usage,
     )
-    if let completionMetrics { await completionMetrics.record(metric) }
-    else {
-      try await space.recordInference(InferenceRecord(
-        id: UUID().uuidString.lowercased(),
-        session: session,
-        at: timestamp,
-        provider: metric.provider,
-        model: metric.model,
-        servedModel: servedModel,
-        effort: specifier.effort,
-        input: usage?.uncachedInputTokens,
-        cacheRead: usage?.cacheReadTokens,
-        cacheWrite: usage?.cacheWriteTokens,
-        output: usage?.outputTokens,
-        reasoning: usage?.reasoningTokens,
-        outcome: metric.outcome.rawValue,
-        error: metric.errorKind,
-        durationMs: metric.durationMs,
-        ttftMs: metric.ttftMs,
-      ))
-    }
+    try await owner.recordCompletion(metric)
     if let failure {
       if case .cancelled = failure { throw CancellationError() }
       throw CompletionError(code: "inferenceFailed", message: "The requested model's inference failed; no fallback was attempted.")

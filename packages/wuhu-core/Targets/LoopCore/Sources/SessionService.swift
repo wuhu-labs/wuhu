@@ -20,7 +20,11 @@ public struct SessionService: Sendable {
   private let log: Logger
 
   public init(sessions: SessionStore, loopConfig: LoopConfig) async {
-    await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(sessions: sessions, id: $0) }
+    await self.init(sessions: sessions, owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: loopConfig)
+  }
+
+  public init(sessions: SessionStore, owner: any SessionExecutionOwnerClient, loopConfig: LoopConfig) async {
+    await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(owner: owner, id: $0) }
   }
 
   init(sessions: SessionStore, loopConfig: LoopConfig, log: Logger = Logger(label: "wuhu.session-service"), makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
@@ -302,14 +306,15 @@ public struct SessionService: Sendable {
     _ sessionID: SessionID,
     executor: SessionExecutor?,
     note: String?,
+    modelRoute: SessionModelRoute? = nil,
   ) async throws -> SessionRestart {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await inactiveExecutorRecord(sessionID) != nil {
-      return try await sessions.restart(sessionID, executor: executor, note: note)
+      return try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
     }
     return try await retryingEviction {
       try await withCallback(of: SessionRestart.self) {
-        send(action: .restart(executor, note, $0), to: sessionID)
+        send(action: .restart(executor, note, modelRoute, $0), to: sessionID)
       }
     }
   }

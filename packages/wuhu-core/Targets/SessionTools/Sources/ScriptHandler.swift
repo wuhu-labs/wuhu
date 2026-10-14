@@ -12,9 +12,42 @@ import SpaceCore
 import SpaceTools
 import Synchronization
 
-struct ScriptHandlerResult: Sendable {
-  var stateJSON: String
-  var wakes: [String]
+public struct ScriptHandlerResult: Sendable {
+  public var stateJSON: String
+  public var wakes: [String]
+  public init(stateJSON: String, wakes: [String]) { self.stateJSON = stateJSON; self.wakes = wakes }
+}
+
+public struct ScriptHandlerInvocation: Sendable {
+  public var path: String
+  public var session: SessionID
+  public var rows: Rows?
+  public var fireTime: Date?
+  public var stateJSON: String?
+  public init(path: String, session: SessionID, rows: Rows? = nil, fireTime: Date? = nil, stateJSON: String? = nil) {
+    self.path = path; self.session = session; self.rows = rows; self.fireTime = fireTime; self.stateJSON = stateJSON
+  }
+}
+
+public protocol HandlerExecutionClient: Sendable {
+  func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
+}
+
+struct ScriptHandlerExecutor: HandlerExecutionClient {
+  let scripts: Scripts
+  let tools: ToolExecutor
+  init(scripts: Scripts, tools: ToolExecutor) { self.scripts = scripts; self.tools = tools }
+  func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
+    let result = try await scripts.runHandler(
+      path: invocation.path,
+      session: invocation.session,
+      rows: invocation.rows,
+      fireTime: invocation.fireTime,
+      stateJSON: invocation.stateJSON,
+      tools: tools,
+    )
+    return .init(stateJSON: result.stateJSON, wakes: result.wakes)
+  }
 }
 
 final class ScriptHandlerContext: Sendable {
@@ -107,13 +140,13 @@ extension Scripts {
       session: session,
       source: "import handler from \(quoted); await __handler_invoke(handler); delete globalThis.__handler_invoke;",
       lifetime: .seconds(60),
-      secrets: ScriptSecrets(stores: secrets, space: space, session: session),
+      secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
       machines: machines,
       handler: context,
     )
     await withTaskCancellationHandler {
-      await execution.run(space: space)
+      await execution.run(owner: owner)
     } onCancel: {
       execution.cancelHandler()
     }

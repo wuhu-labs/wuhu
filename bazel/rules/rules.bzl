@@ -383,6 +383,11 @@ WUHU_UI_CONTROL_COPTS = select({
     "//conditions:default": [],
 })
 
+WUHU_HMR_COPTS = select({
+    "//bazel/rules:hmr_enabled": ["-D", "BUILD_WITH_HMR"],
+    "//conditions:default": [],
+})
+
 def _swift_6_copts(kwargs):
     return WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_CONTROLLABLE_CLOCK_COPTS + kwargs.pop("copts", [])
 
@@ -554,3 +559,26 @@ def aligned_target(name, deps = None, test_deps = None, package_name = None, inc
             module_name = "{}Tests".format(name),
             package_name = package_name,
         )
+
+def _hmr_transition_impl(settings, attr):
+    return {
+        "//bazel/rules:hmr": True,
+        "//bazel/signing:variant": "dev",
+    }
+
+_hmr_transition = transition(
+    implementation = _hmr_transition_impl,
+    inputs = [],
+    outputs = ["//bazel/rules:hmr", "//bazel/signing:variant"],
+)
+
+def _hmr_app_impl(ctx):
+    return [DefaultInfo(files = ctx.attr.app[0][DefaultInfo].files)]
+
+wuhu_hmr_app = rule(
+    implementation = _hmr_app_impl,
+    attrs = {
+        "app": attr.label(mandatory = True, cfg = _hmr_transition),
+        "_allowlist_function_transition": attr.label(default = "@bazel_tools//tools/allowlists/function_transition_allowlist"),
+    },
+)

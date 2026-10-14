@@ -4,7 +4,9 @@
   import Foundation
 #endif
 import CExecSupervisor
+import func ComputerFiles.fileOperationKinds
 @testable import ExecSupervisor
+import class OperationRuntime.OperationAgent
 #if os(Linux)
   import Glibc
 #else
@@ -19,6 +21,7 @@ import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import struct OperationProtocol.WriteReceipt
+import Synchronization
 import Testing
 
 private actor SupervisorFixture {
@@ -27,6 +30,19 @@ private actor SupervisorFixture {
   var launches = 0
   var identityMismatch = false
   var reservation = 0
+  var capabilityStatus = 200
+  var drained = true
+  var terminal = true
+  let terminalToken = UUID()
+  var rejectAck = false
+  func rejectAcknowledgements(_ rejected: Bool) { rejectAck = rejected }
+  var reason: String?
+  func expiredReceipt(drained: Bool = false) { capabilityStatus = 404; self.drained = drained; terminal = true; reason = "leaseExpired" }
+  var malformedDeparture: String?
+  func remainRunning() { terminal = false }
+  func malformedReceipt(_ literal: String) { malformedDeparture = literal }
+  func capability(_ status: Int, drained: Bool = true) { capabilityStatus = status; self.drained = drained }
+  func consumeOutput() { drained = true }
   var childPID: Int32?
   func launchProbe() throws -> Int32? {
     var pid: Int32 = 0
@@ -65,17 +81,182 @@ private actor SupervisorFixture {
       response.headers[.init("X-Wuhu-Supervisor-Reservation")!] = String(reservation)
       return response
     }
+    if request.url.path == "/leave" || request.url.path == "/departure" {
+      if capabilityStatus == 200 {
+        if request.url.path == "/departure", let malformedDeparture { return Response(status: .ok, body: .bytes(Data(malformedDeparture.utf8), contentType: "application/json")) }
+        return try .json(true)
+      }
+      return try .json(ErrorEnvelope(.init(capabilityStatus == 404 ? .unknownOperation : .machineNotAuthorized)), status: .init(code: capabilityStatus))
+    }
     if request.url.path.contains("/inputs/") { return try .json(WriteReceipt(acceptedThrough: .zero, end: false, blocked: false)) }
-    return try .json(OperationSnapshot(operation: manifest.operation, verdict: Verdict(.completed, result: .null), terminalToken: UUID(), finalOffsets: ["stdout": .zero, "stderr": .zero], outputConsumed: true, bufferReservationBytes: reservation))
+    if request.method == .get, let raw = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "terminalAck" })?.value {
+      if rejectAck || UUID(uuidString: raw) != terminalToken { return try .json(ErrorEnvelope(.init(.invalidInput)), status: .badRequest) }
+    }
+    return try .json(OperationSnapshot(operation: manifest.operation, verdict: terminal ? Verdict(reason == nil ? .completed : .stopped, result: .null, reason: reason) : nil, terminalToken: terminal ? terminalToken : nil, finalOffsets: ["stdout": .zero, "stderr": .zero], outputConsumed: drained, bufferReservationBytes: reservation))
   }
 
   nonisolated var files: SupervisorFiles { .init(create: { await self.create($0, $1) }, load: { try await self.load($0) }, list: { _ in await self.directories() }) }
-  nonisolated func registry(probe: Bool = false) throws -> ExecSupervisorRegistry {
-    try .init(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: .continuous, launch: { _, _ in if probe { return try await self.launchProbe() }; await self.launch(); return nil })
+  nonisolated func registry(probe: Bool = false, clock: OperationClock = .continuous) throws -> ExecSupervisorRegistry {
+    try .init(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, _ in if probe { return try await self.launchProbe() }; await self.launch(); return nil })
   }
 }
 
 @Suite struct RegistryContractTests {
+  @Test func explicitLegacy404DrainsThroughExistingOperationStopAndRetainedReceipt() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.capability(404, drained: false)
+    try await registry.leave()
+    #expect(!(try await registry.departureSettled()))
+    #expect(await effects.requests.filter { $0.url.path.hasSuffix("/stop") }.count == 1)
+    await effects.consumeOutput()
+    _ = try await registry.handler(ackRequest(id, token: effects.terminalToken))
+    #expect(try await registry.departureSettled())
+    #expect(await effects.requests.filter { $0.method == .post }.count == 1)
+    #expect(await effects.requests.filter { $0.url.path == "/departure" }.isEmpty)
+  }
+
+  @Test func legacyDrainRequiresAcceptedMatchingTerminalAcknowledgement() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.capability(404)
+    try await registry.leave()
+    #expect(!(try await registry.departureSettled()))
+    #expect(try await registry.handler(ackRequest(id, token: UUID())).status.code == 400)
+    #expect(!(try await registry.departureSettled()))
+    await effects.rejectAcknowledgements(true)
+    let token = effects.terminalToken
+    #expect(try await registry.handler(ackRequest(id, token: token)).status.code == 400)
+    #expect(!(try await registry.departureSettled()))
+    await effects.rejectAcknowledgements(false)
+    #expect(try await registry.handler(ackRequest(id, token: token)).status.code == 200)
+    #expect(try await registry.departureSettled())
+  }
+
+  @Test func acceptedAcknowledgementBeforeLegacyDiscoveryIsRetained() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    #expect(try await registry.handler(ackRequest(id, token: effects.terminalToken)).status.code == 200)
+    await effects.capability(404)
+    try await registry.leave()
+    #expect(try await registry.departureSettled())
+  }
+
+  @Test func leaseExpiredAlwaysRemainsLossEvenWithConsumedOutputAndAcceptedAck() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.expiredReceipt(drained: true)
+    #expect(try await registry.handler(ackRequest(id, token: effects.terminalToken)).status.code == 200)
+    try await registry.leave()
+    #expect(!(try await registry.departureSettled()))
+    if case let .leaseExpired(ids) = try await registry.departureEvidence() { #expect(ids == [id]) }
+    else { Issue.record("expired verdict became a clean departure") }
+  }
+
+  @Test func unresolvedReceiptDisappearanceRetainsTypedUnacknowledgedEvidence() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.capability(404)
+    try await registry.leave()
+    await effects.removeAll()
+    for _ in 0 ..< 2 {
+      do { _ = try await registry.departureEvidence(); Issue.record("disappearance became clean proof") }
+      catch let error as OperationError {
+        #expect(error.code == .supervisorUnavailable)
+        #expect(error.message == "legacyReceiptDisappeared")
+        #expect(error.operation == id)
+        #expect(error.details == ["reason": "localReceiptDisappearance", "unacknowledged": true, "cleanupAuthorized": false])
+      }
+    }
+    #expect(await registry.legacyDepartures[id] != nil)
+    #expect(await registry.owns(id))
+    #expect(await registry.terminalAcknowledgements[id] == nil)
+  }
+
+  @Test func disappearanceCannotEraseAlreadyObservedLeaseLoss() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.expiredReceipt(drained: true)
+    try await registry.leave()
+    await effects.removeAll()
+    if case let .leaseExpired(ids) = try await registry.departureEvidence() { #expect(ids == [id]) }
+    else { Issue.record("observed loss disappeared") }
+    #expect(!(try await registry.departureSettled()))
+  }
+
+  @Test func legacyLeaseDurationNeverInventsTerminalEvidence() async throws {
+    let now = Mutex(Duration.zero)
+    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { _ in })
+    let effects = SupervisorFixture(); let registry = try effects.registry(clock: clock); let id = UUID()
+    await effects.remainRunning()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.capability(404)
+    try await registry.leave()
+    now.withLock { $0 = .seconds(61) }
+    #expect(!(try await registry.departureSettled()))
+    #expect(await effects.requests.filter { $0.method == .post }.count == 1)
+    #expect(await effects.requests.filter { $0.method == .get && $0.url.path.contains("/operations/") }.count == 1)
+  }
+
+  @Test func observedLegacyLeaseExpiryIsTypedLossNeverCleanGoodbyeOrConsumption() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.expiredReceipt()
+    let files = try OperationAgent(machine: "test", kinds: fileOperationKinds(), authorize: { _, _ in })
+    let agent = ComputerAgent(machine: "test", registry: registry, files: files)
+    let response = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put))
+    let error = try await response.body.json(ErrorEnvelope.self).error
+    #expect(error.code == .requestDeadline)
+    #expect(error.message == "leaveUnacknowledged")
+    #expect(error.operation == id)
+    #expect(error.details == ["reason": "legacyLeaseExpired", "operations": [.string(id.uuidString)]])
+    #expect(!(await agent.leaveAcknowledged))
+    #expect(!(await agent.drainCompleted))
+    #expect(!(try await registry.departureSettled()))
+    let describe = Request(url: URL(string: "http://agent/machine/v2/machines/test?leaveAck=true")!)
+    #expect(try await agent.handler(describe).body.json(ErrorEnvelope.self).error.code != .leaving)
+    #expect(!(await agent.leaveAcknowledged))
+  }
+
+  @Test func legacyExpiryProofCannotAuthorizeCleanupWhileAnotherKindIsUnsettled() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.expiredReceipt()
+    let now = Mutex(Duration.zero)
+    let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
+      if duration >= .seconds(1) { now.withLock { $0 += duration }; return }
+      try await ContinuousClock().sleep(for: .milliseconds(1))
+    })
+    let files = try OperationAgent(machine: "test", kinds: fileOperationKinds(), clock: clock, authorize: { _, _ in })
+    let fileRequest = Request(url: URL(string: "http://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": "/tmp/not-run"])))
+    #expect(try await files.handler(fileRequest).status.code == 201)
+    let agent = ComputerAgent(machine: "test", registry: registry, files: files, clock: clock)
+    let response = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put))
+    #expect(try await response.body.json(ErrorEnvelope.self).error.message == "drainFailed")
+    #expect(await agent.departureLoss == nil)
+    #expect(!(await agent.leaveAcknowledged))
+    await files.shutdown()
+  }
+
+  @Test func malformedModernDepartureReceiptIsTypedAndNeverLegacy() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    try await registry.leave()
+    await effects.malformedReceipt("tru")
+    do { _ = try await registry.departureSettled(); Issue.record("malformed receipt accepted") }
+    catch let error as OperationError { #expect(error.code == .invalidResponse) }
+    #expect(await effects.requests.filter { $0.url.path.hasSuffix("/stop") }.isEmpty)
+  }
+
+  @Test func non404CapabilityFailureNeverSelectsLegacyBehavior() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    await effects.capability(403)
+    do { try await registry.leave(); Issue.record("capability refusal must be typed") }
+    catch let error as OperationError { #expect(error.code == .supervisorUnavailable) }
+    #expect(await effects.requests.filter { $0.url.path.hasSuffix("/stop") }.isEmpty)
+  }
+
   @Test func machineMismatchIsTypedPerEntryWithItsPath() async throws {
     let effects = SupervisorFixture(); let first = try effects.registry(); let healthy = UUID(); let changed = UUID()
     for id in [healthy, changed] {
@@ -178,4 +359,10 @@ private actor SupervisorFixture {
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .supervisorIdentityMismatch)
     #expect(await effects.launches == 1)
   }
+}
+
+private func ackRequest(_ operation: UUID, token: UUID) -> Request {
+  var request = execRequest(operation)
+  request.url = URL(string: request.url.absoluteString + "?terminalAck=" + token.uuidString)!
+  return request
 }

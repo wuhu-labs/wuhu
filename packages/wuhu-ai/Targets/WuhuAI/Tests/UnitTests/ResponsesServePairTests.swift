@@ -62,7 +62,7 @@ import WuhuAI
       }
       do {
         try await withDependencies { $0[WebSocketConnector.self] = connector } operation: {
-          let endpoint = OpenAIGPTEndpoint(model: "test", apiKey: "offline")
+          let endpoint = OpenAIGPTEndpoint(model: "test", replayScope: "test-scope", apiKey: "offline")
           var context = Context(messages: [.user(UserMessage(content: [.text(TextContent(text: "use lookup"))]))])
           var committed = try await endpoint.withWebSocket(session: session, attemptID: "one").inference(context: context).collect()
           if case var .toolCall(call) = committed.content[0] { call.id = "kernel_server_call"; committed.content[0] = .toolCall(call) }

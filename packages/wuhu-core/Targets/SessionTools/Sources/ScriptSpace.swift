@@ -15,7 +15,7 @@ import SpaceTools
 // code, hint and token a page would see.
 struct ScriptSpace: Sendable {
   let execution: ScriptExecution
-  let space: Space
+  let owner: any ScriptOwnerClient
   let streams = ScriptStreams()
 
   private var session: SessionID {
@@ -57,8 +57,8 @@ struct ScriptSpace: Sendable {
         let room = execution.buffers.withLock(\.room)
         let rows: Rows
         do {
-          rows = try await space.query(
-            string(arguments, 0), parameters: array(arguments, 1), byteLimit: room, as: try await principal(),
+          rows = try await owner.query(
+            string(arguments, 0), parameters: array(arguments, 1), byteLimit: room, session: session,
           )
         } catch SpaceError.queryResultTooLarge {
           throw overBudget(.queryResult)
@@ -87,8 +87,7 @@ struct ScriptSpace: Sendable {
         let principal = try await principal()
         let path = try scriptWritable(string(arguments, 0), by: session, as: principal)
         let edits = try RowEdit.parse(arguments[safe: 1] ?? .null)
-        let commit = try await SpaceToolContext(space: space, principal: principal).commitRows(path, edits: edits)
-        return .object(["rev": .integer(commit.rev.value), "ids": .array(commit.ids.map { .integer(Int($0)) })])
+        return try await owner.commitRows(path, edits: edits, session: session)
       }
     })
     engine.define("__wuhu_space_attributes", promising: { arguments in
@@ -108,14 +107,11 @@ struct ScriptSpace: Sendable {
   }
 
   private func principal() async throws -> Principal {
-    try await space.principal(of: session)
+    try await owner.principal(of: session)
   }
 
   private func openObserve(_ sql: String, parameters: [JSONValue]) async throws -> JSONValue {
-    let principal = try await principal()
-    _ = try Space.bound(parameters)
-    try await space.validateQuery(sql, as: principal)
-    let snapshots = await space.observeQuery(sql, parameters: parameters, throttle: .zero, as: principal)
+    let snapshots = try await owner.observe(sql, parameters: parameters, session: session)
     return .integer(await streams.open(snapshots, newestOnly: true) { Wire.typedQueryOutput($0) })
   }
 
@@ -126,13 +122,12 @@ struct ScriptSpace: Sendable {
     case nil, .null?: nil
     default: throw ToolRunError.failed(code: .invalidArgument, message: "from must be a non-negative revision", hint: nil)
     }
-    let watched = try await WatchedGlob(glob, as: try await principal(), in: space)
-    let events = await space.observeFS(glob: watched.pattern, from: start, group: watched.group)
-    return .integer(await streams.open(events.mutations, newestOnly: false) { Wire.mutationJSON($0, prefix: watched.prefix) })
+    let events = try await owner.watch(glob, from: start, session: session)
+    return .integer(await streams.open(events, newestOnly: false) { $0 })
   }
 
   private func run(_ name: String, _ input: JSONValue, as principal: Principal) async throws -> JSONValue {
-    try await SpaceToolbox.all.first { $0.name == name }!.run(SpaceToolContext(space: space, principal: principal), input: input)
+    try await owner.dataOperation(ScriptDataOperation(rawValue: name)!, input: input, session: session)
   }
 }
 

@@ -412,6 +412,7 @@ export interface AppReleaseManifest {
 
 export interface AppManifest {
   name: string
+  hmr?: boolean
   viewPilot?: boolean
   marketingVersion?: string
   developmentRegion?: string
@@ -3895,8 +3896,12 @@ function generateAppBundleRule(
       ? `    frameworks = ${quotedStarlarkList(target.frameworks)},\n`
       : ''
   }${
-    target.linkopts?.length
-      ? `    linkopts = ${quotedStarlarkList(target.linkopts)},\n`
+    target.linkopts?.length || (app.hmr && app.targets.includes(target))
+      ? `    linkopts = ${quotedStarlarkList(target.linkopts ?? [])}${
+        app.hmr && app.targets.includes(target)
+          ? ' + select({\n        "//bazel/rules:hmr_enabled": ["-interposable"],\n        "//conditions:default": [],\n    })'
+          : ''
+      },\n`
       : ''
   }${
     extensions.length
@@ -4025,6 +4030,7 @@ export function generateAppBuildBazel(
 ): string {
   const embedsViewPilot = appEmbedsViewPilot(app)
   const coptsSymbols = [
+    ...(app.hmr ? ['WUHU_HMR_COPTS', 'wuhu_hmr_app'] : []),
     ...new Set([
       'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
       ...(embedsViewPilot ? ['WUHU_UI_CONTROL_COPTS'] : []),
@@ -4153,9 +4159,18 @@ export function generateAppBuildBazel(
 
   const intentsLibraries = appIntentsLibraries(app)
   for (const library of app.libraries ?? []) {
+    const embedsHMR = app.hmr &&
+      app.targets.some((target) =>
+        reachesLibrary(
+          target.dependencies,
+          library.name,
+          new Map((app.libraries ?? []).map((entry) => [entry.name, entry])),
+        )
+      )
     const coptsExpr = [
       ...new Set([
         'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
+        ...(embedsHMR ? ['WUHU_HMR_COPTS'] : []),
         ...(appBundles(app).some((target) =>
             bundleEmbedsViewPilot(app, target) &&
             reachesLibrary(
@@ -4186,7 +4201,11 @@ export function generateAppBuildBazel(
           ? `    linkopts = ${
             quotedStarlarkList(['-framework', 'AppIntents'])
           },\n`
-          : ''}    deps = ${quotedStarlarkList(library.dependencies ?? [])},\n${
+          : ''}    deps = ${quotedStarlarkList(library.dependencies ?? [])}${
+        embedsHMR
+          ? ' + select({\n        "//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"],\n        "//conditions:default": [],\n    })'
+          : ''
+      },\n${
         platformsAttr(
           appLibraryPlatforms(app, library),
           `${app.name} app.yml`,
@@ -4209,6 +4228,14 @@ export function generateAppBuildBazel(
         target.watchApplication,
       ),
     )
+    if (app.hmr && ['macOS', 'iOS'].includes(target.platform)) {
+      chunks.push(`wuhu_hmr_app(
+    name = "${target.name}HMR",
+    app = ":${target.name}",
+    tags = ["manual"],
+${platformsAttr([appTargetPlatform(target)], `${app.name} HMR`)})
+`)
+    }
   }
 
   return chunks.join('\n')

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ModelGroupMember","type":"object","properties":{"id":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"}},"required":["id","provider","model"],"additionalProperties":false}

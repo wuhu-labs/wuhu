@@ -168,8 +168,15 @@ enum Main {
       environment: ProcessInfo.processInfo.environment,
       currentDirectory: FileManager.default.currentDirectoryPath,
       version: BuildStamp.version,
+      machineV2ServiceCommand: { try await capturedProcessOutput($0) },
     )
-    let code = await runner.run(arguments: Array(CommandLine.arguments.dropFirst()))
+    let code: Int32
+    do {
+      if try await MachineV2Runtime.command(arguments: Array(CommandLine.arguments.dropFirst()), environment: runner.environment, fetch: .asyncHTTPClient(client, timeout: .seconds(5)), stdin: runner.stdin, stdout: runner.stdout) { code = 0 }
+      else { code = await runner.run(arguments: Array(CommandLine.arguments.dropFirst())) }
+    } catch {
+      FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); code = 1
+    }
     var shutdownFailed = false
     for shutdown in [inferenceClient.shutdown, client.shutdown] {
       do {

@@ -50,6 +50,10 @@ extension SessionActor {
         break
       }
 
+      if (try live).transcript.hasPendingCacheWarming, try await !loopConfig.allowCacheWarming(id) {
+        let transcript = try await repo.discardPendingCacheWarming()
+        try modify { $0.transcript = transcript }
+      }
       guard try await refreshRegisteredSubscriptions() else { return }
       if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
@@ -111,7 +115,7 @@ extension SessionActor {
   }
 
   private func refreshRegisteredSubscriptions() async throws -> Bool {
-    let registered = try await repo.sessions.registeredSubscriptions(id)
+    let registered = try await repo.registeredSubscriptions()
     try Task.checkCancellation()
     guard !(try live).archiving else { return false }
     try modify {
@@ -337,7 +341,7 @@ extension SessionActor {
       case .success(let reply):
         var appended = (try live).transcript
         let before = appended.items.count
-        let entry = appended.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata)
+        let entry = appended.appendAssistant(reply.message, id: attemptID, metadata: reply.metadata, replayBinding: reply.replayBinding)
         // The model tried to finish. A nag due now is written with its message,
         // so the session never reads settled while it owes one.
         let now = date()
@@ -357,6 +361,25 @@ extension SessionActor {
         if mode == .forcedCompact, !reply.message.callsCompact {
           try await fallbackCompact()
         }
+        return
+
+      case .failure(let boundary as ReplayBoundaryRequired):
+        let state = try live
+        let compacted: Transcript
+        do {
+          let portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+          compacted = try await repo.writePortableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable)
+        } catch {
+          try Task.checkCancellation()
+          await markErrored(error: error)
+          return
+        }
+        try modify {
+          $0.transcript = compacted
+          $0.generation += 1
+          $0.compactRequestClaim = nil
+        }
+        await loopConfig.invalidateInference(id)
         return
 
       case .failure(let error):
@@ -631,7 +654,7 @@ extension Transcript {
       switch item {
       case .assistant, .generationHead:
         return false
-      case let .notification(notification) where notification.kind == .context && notification.subscriptionID == SubscriptionID("context-pressure"):
+      case let .notification(notification) where notification.kind == .context && notification.subscriptionID == SubscriptionID("context-pressure") && !notification.content.text.isEmpty:
         return true
       default:
         continue

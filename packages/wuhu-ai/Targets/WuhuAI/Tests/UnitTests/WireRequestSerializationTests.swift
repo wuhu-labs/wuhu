@@ -66,7 +66,7 @@ import WuhuAI
       ),
       (
         "anthropic",
-        AnthropicEndpoint(model: "claude-sonnet-4-6-wire-determinism", apiKey: "test-key", promptCache: .fiveMinutes),
+        AnthropicEndpoint(model: "claude-sonnet-4-6-wire-determinism", replayScope: "test-scope", apiKey: "test-key", promptCache: .fiveMinutes),
       ),
       (
         "deepseek-chat",
@@ -74,7 +74,7 @@ import WuhuAI
       ),
       (
         "deepseek-anthropic",
-        DeepSeekAnthropicEndpoint(model: "deepseek-v4-pro-wire-determinism", apiKey: "test-key"),
+        DeepSeekAnthropicEndpoint(model: "deepseek-v4-pro-wire-determinism", replayScope: "test-scope", apiKey: "test-key"),
       ),
       (
         "gemini",
@@ -120,7 +120,7 @@ import WuhuAI
             model: "claude-sonnet-4-6-wire-determinism",
             summary: "Need to preserve deterministic request JSON.",
             opaque: "signature_wire_determinism",
-            id: "rs_wire_determinism",
+            id: "rs_wire_determinism", replayScope: "test-scope",
           ))),
           .toolCall(.init(
             id: "call_wire_determinism_001",

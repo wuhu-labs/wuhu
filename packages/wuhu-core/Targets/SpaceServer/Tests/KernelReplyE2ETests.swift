@@ -116,7 +116,7 @@ private final class ToolsWitness: Sendable {
   @Test func delegatedTaskReportsFinalAndTheAgentRelaysIt() async throws {
     try await withReplayableDeps {
       let witness = ToolsWitness()
-      try await withRecording("gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools"]) {
+      try await withRecording("gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools", "prompt_cache_key"]) {
         let hold = ChildHold()
         try await withDependencies {
           $0.fetch = hold.wrapping(witness.wrapping($0.fetch))

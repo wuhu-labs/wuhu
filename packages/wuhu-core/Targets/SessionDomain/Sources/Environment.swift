@@ -65,7 +65,13 @@ public struct SessionEnvironment: Hashable, Sendable, Codable {
     } else {
       0 ..< 0
     }
-    for (position, item) in transcript.items.enumerated() {
+    for (position, historical) in transcript.items.enumerated() {
+      var item = historical
+      if position > 0, position < transcript.keptCount, case var .notification(notice) = item {
+        notice.folderRoots = nil
+        notice.deliveredContext = nil
+        item = .notification(notice)
+      }
       guard carried.contains(position) else {
         apply(item)
         continue

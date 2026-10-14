@@ -38,6 +38,70 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
 }
 
 @Suite struct MachineNotesTests {
+  @Test func identicalNotesAndRepositoriesAcrossMachinesLoadOnce() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let studio = try await space.addMachine(name: "studio").id.rawValue
+      let mini = try await space.addMachine(name: "mini").id.rawValue
+      for machine in [studio, mini] {
+        _ = try await space.fs(.shared).write("/_/machines/\(machine)/AGENTS.md", Data("repo manual".utf8), ifMatch: nil)
+        _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/deploy/SKILL.md", Data(deploySkill.utf8), ifMatch: nil)
+      }
+      var world = ToolWorld(executor: ToolExecutor(space: space, machines: box().seam), session: try await makeSession(space))
+      let first = try await touch(&world, "machines://studio/work/repo/README.md")
+      #expect(first.components(separatedBy: "repo manual").count == 2)
+      #expect(first.contains("machines://\(studio)/work/repo/AGENTS.md is identical to /_/machines/\(studio)/AGENTS.md (loaded earlier)"))
+      let second = try await touch(&world, "machines://mini/work/repo/README.md")
+      #expect(second.contains("/_/machines/\(mini)/AGENTS.md is identical to /_/machines/\(studio)/AGENTS.md (loaded earlier)"))
+      #expect(second.contains("- deploy — identical to /_/machines/\(studio)/.agents/skills/deploy/SKILL.md (loaded earlier) (/_/machines/\(mini)/.agents/skills/deploy/SKILL.md)"))
+      #expect(!second.contains("repo manual"))
+      #expect(!second.contains("Ship it to the fleet."))
+    }
+  }
+
+  @Test func anEditAfterTheSkillReadCannotMismarkItsDeliveredDescription() async throws {
+    let before = "---\ndescription: Before the edit.\n---\n# Deploy"
+    let after = "---\ndescription: After the edit.\n---\n# Deploy"
+    let content = Box(before)
+    let reads = Box(0)
+    let reader = ContextInstructions(
+      read: { address in
+        guard address.rendered.hasSuffix("/deploy/SKILL.md") else { return nil }
+        reads.withLock { $0 += 1 }
+        return content.withLock { text in
+          let read = text
+          text = after
+          return read
+        }
+      },
+      names: { _ in ["deploy"] },
+    )
+    var delivery = ContextDelivery(alreadyLoaded: [:])
+    let first = await reader.load(.space("/_/machines/first", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    #expect(first.contains("- deploy — Before the edit."))
+    #expect(reads.value == 1)
+    let next = await reader.load(.space("/_/machines/next", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    #expect(next.contains("- deploy — After the edit."))
+    #expect(!next.contains("identical"))
+    let third = await reader.load(.space("/_/machines/third", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    #expect(third.contains("- deploy — identical to /_/machines/next/.agents/skills/deploy/SKILL.md (loaded earlier)"))
+  }
+
+  @Test func unavailableMachineSkillsCannotFailTheToolOrRecordUnseenHashes() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let machine = try await space.addMachine(name: "studio").id.rawValue
+      try await writeNotes(space, "studio")
+      _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/unreadable/SKILL.md", Data([0xFF]), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/_/machines/\(machine)/.agents/skills/missing/readme.md", Data("not a skill".utf8), ifMatch: nil)
+      var world = ToolWorld(executor: ToolExecutor(space: space, machines: box().seam), session: try await makeSession(space))
+      let notice = try await touch(&world, "machines://studio/work/repo/README.md")
+      #expect(notice.contains("- deploy — Ship it to the fleet."))
+      #expect(notice.contains("repo manual"))
+      #expect(!world.state.deliveredContext.values.contains { $0.contains("unreadable") || $0.contains("missing") })
+    }
+  }
+
   @Test func theFirstTouchOfAMachineDeliversItsNotesOnceAheadOfTheRepository() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

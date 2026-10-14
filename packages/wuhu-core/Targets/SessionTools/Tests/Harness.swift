@@ -161,7 +161,7 @@ struct ToolWorld {
       state: state,
     )
     state.apply(payload)
-    delivered = try await executor.store.scopeContext(session, toolCallID: ToolCallID(id))
+    delivered = try await executor.owner.scopeContext(session, toolCallID: ToolCallID(id))
     if let delivered {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
     }

@@ -43,6 +43,31 @@ common:sign-adhoc --//bazel/signing:variant=adhoc
 common:sign-store --//bazel/signing:variant=store
 common:release-unsigned --define=wuhu_unsigned_release=true --features=disable_legacy_signing
 
+# Static Swift runtime for distributable Linux binaries (release CLI, hosted
+# server; tools/release/linux-static.ts passes --config=linux-static-runtime).
+# static-stdlib-args.lnk covers the stdlib; the Foundation archives (and their
+# curl dependency) have circular references, hence the explicit --start-group
+# list. FoundationEssentials archives must precede libFoundation.a in the group:
+# shared prespecialized-generic weak symbols exist in both, and whichever
+# archive the group scan hits first satisfies FE-internal references — FE last
+# would extract full Foundation (and transitively ICU) for symbols FE already
+# defines.
+build:linux-static-runtime --linkopt=-L/usr/lib/swift_static/linux
+build:linux-static-runtime --linkopt=@/usr/lib/swift_static/linux/static-stdlib-args.lnk
+build:linux-static-runtime --linkopt=-Wl,--start-group
+build:linux-static-runtime --linkopt=-lFoundationEssentials
+build:linux-static-runtime --linkopt=-l_FoundationCollections
+build:linux-static-runtime --linkopt=-l_FoundationCShims
+build:linux-static-runtime --linkopt=-lFoundation
+build:linux-static-runtime --linkopt=-lFoundationNetworking
+build:linux-static-runtime --linkopt=-lFoundationInternationalization
+build:linux-static-runtime --linkopt=-l_FoundationICU
+build:linux-static-runtime --linkopt=-l_CFURLSessionInterface
+build:linux-static-runtime --linkopt=-lCoreFoundation
+build:linux-static-runtime --linkopt=-lcurl
+build:linux-static-runtime --linkopt=-Wl,--end-group
+build:linux-static-runtime --linkopt=-Wl,--strip-all
+
 # Version stamping. Always on, for all builds including local: BuildStamp
 # skew detection only works if every binary carries its true provenance.
 build --workspace_status_command=tools/workspace-status.sh
@@ -73,3 +98,11 @@ build --jobs=auto
 # Test output
 test --test_output=errors
 test --test_summary=terse
+
+# Persistent cache homes reach deno tests: check.ts forwards the canonical
+# DENO_DIR itself; direct and deno task test runs inherit the client's.
+test --test_env=DENO_DIR
+test --test_env=WUHU_RELEASE_CACHE
+
+# Local SwiftUI injection. Store/AdHoc signing never enables its hooks.
+common:hmr --//bazel/rules:hmr=true

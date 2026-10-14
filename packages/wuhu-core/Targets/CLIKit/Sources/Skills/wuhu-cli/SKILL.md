@@ -272,7 +272,8 @@ A device is an app install signed into the space; it registers itself on every c
 ## Sessions and messaging
 
 ```bash
-wuhu models update                  # seed/merge /models.json (additive; your edits win)
+wuhu models [--json]                # concrete models and groups with policy/ordered member aliases
+wuhu models update                  # seed/merge providers-only /models.json; /model-groups.json untouched
 wuhu tool-roster [--executor kernel] [--json]  # the tools sessions of that kind are given
 wuhu usage [--json]                 # plan usage per codex provider, window by window
 wuhu auth set <provider> < key.txt  # store an api key for the pinned space (stdin)
@@ -280,6 +281,9 @@ wuhu auth login codex               # chatgpt device-code login (codex subscript
 wuhu auth list                      # stored credentials, values redacted
 wuhu auth remove <provider>         # drop a credential; `wuhu auth logout` also revokes chatgpt tokens
 wuhu session create --provider anthropic --model claude-sonnet-5 [--effort high] [--tag t]... "Title"
+wuhu session create --model-group work [--effort high] "Title"
+wuhu session restart --model-group work <session-id>  # Start over with fresh group placement
+wuhu session inspect <session-id>   # requested target, active route, placement reason/evidence (JSON)
 wuhu session request [--deadline SECS] <child-id> "message"   # a session's exec only
 wuhu send <session-id> "message" [--wait [--timeout SECS]]
 wuhu session log <session-id>       # channel view (default, every executor)
@@ -297,7 +301,7 @@ wuhu inbox
   `harbor-lantern-moss`, not a UUID; every session verb and `send` want that
   id, and they **reject** anything not shaped like ≥3 lowercase hyphenated
   words with `not a session id`. Never fabricate or validate ids as UUIDs.
-- `--provider`/`--model` are required, validated against `/models.json` —
+- Either `--provider`/`--model` or `--model-group` selects a target, validated against `/models.json` (concrete) and `/model-groups.json` (groups); the two forms are mutually exclusive. A child inherits the parent’s requested target rather than its active group member. Templates supply defaults, and explicit targets replace those defaults as a whole —
   run `wuhu models update` first on a fresh space. Every provider runs in the kernel. `--effort` must be one of the model's declared
   effort strings (omitted means the model's default). The
   session is inert until something is posted; the title is a positional
@@ -334,9 +338,8 @@ wuhu inbox
   included, and prints the stored tags one per line; with no tags it clears
   the list. A session retags itself and its descendants from run_script's
   `wuhu:session` (`setTags`).
-- `session list` is sugar over
-  `wuhu query 'SELECT id, title, hold, work, lifecycle, last_activity_at FROM sessions ...'` —
-  query or `observe --sql` the `sessions` table directly for dashboards.
+- `models` discovers concrete providers/models from `/models.json` and groups from `/model-groups.json`. `--json` returns `{providers, groups}` keyed by catalog IDs. A missing group file means no groups; malformed catalogs and provider/group ID collisions are errors. `models update` writes only provider defaults, never the group file. A seed provider colliding with a declared group ID fails before either file is changed.
+- `session list` queries `sessions` with a left join to scoped `session_model_routes`, including requested_model_group from the route’s group_id, active_provider, active_model and model_route_phase. Stored executor_config is always concrete provider/model/effort; group intent lives in the additive route row. Concrete sessions without a route keep their provider/model from executor_config. `session inspect <id>` prints structured JSON with requestedTarget, active provider/model and route placement reason/evidence and recorded decisions. Query or observe the same scoped projections for dashboards.
 - `archive` takes the entire descendant subtree, leaves first and root last. Without `--force`, it checks every node and refuses without archiving anything if one is busy, listing every busy id and title. `--force` first interrupts busy nodes, then archives them all and closes open requests with a final-kind “archived before reporting” message to each requester. Separately created top-level agents stay live. `unarchive` restores only one session and works only inside the ~24 h grace window.
 - `inbox` prints notifications above this wallet's cursor, then advances the
   cursor — a second call prints nothing until something new arrives. One

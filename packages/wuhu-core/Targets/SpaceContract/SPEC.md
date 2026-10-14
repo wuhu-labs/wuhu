@@ -322,3 +322,15 @@ HistoryInput adds optional after (exclusive revision cursor) and limit; HistoryO
 ## Human-only conversations
 
 `ConversationCreateInput` creates a `users` channel with `members: [String]`, optional `title: String?` and optional `identity: String?`. Members name people, never sessions. A person creator joins automatically; a session creator does not. `ConversationPayload.title` is nullable and absent on older servers; null displays members' names. `ChannelMembersInput` carries `people: [String]` for `POST /v1/channel/:id/add` and `remove`; `ChannelRenameInput` carries nullable `title` for `POST /v1/channel/:id/rename`. Each mutation returns `{}`. Blank titles and session membership are `invalidArgument`; unread channels are `notFound`. Channels reuse the existing message, history and watermark contracts. `users` retains mention/reply-target/attention-window wake behavior but does not enroll a session that posts. Person members and sessions in groups reading the home group read and post; non-member people cannot.
+
+## Requested model groups
+
+SessionCreateInput and SessionRestartInput accept modelGroup plus optional effort, mutually exclusive with provider/model. SessionTemplateDescriptor includes modelGroup for requested-target discovery. Explicit targets replace template/inherited targets as a whole; omission preserves existing defaults. Routing intent is distinct from the active provider/model emitted by session responses.
+
+SessionCreateOutput and SessionRestartOutput add optional provider and modelGroup. Provider/model identify the pinned concrete route when available; modelGroup identifies the requested target. GET /v1/session/:id/model-route returns SessionModelRouteOutput with requestedTarget JSON, optional activeProvider/activeModel, optional route JSON and optional decisions JSON containing recorded placement history. Route includes the member alias, concrete specifier, placement reason and per-member headroom evidence; it contains no credentials or account identity.
+
+ProvidersOutput adds optional groups, separate from providers for compatibility with older servers. Each ModelGroupDescriptor includes id, ordered ModelGroupMember entries (id/provider/model), defaultEffort, shared effortLevels and policy JSON. Group efforts are the intersection of all members. Select and quota-aware routing policies remain groups, never synthetic providers.
+
+Requested group targets are conceptual API values: sessions.executor_config stays concrete provider/model/effort for dev.114 compatibility, while session_model_routes carries the additive group/member intent and pin. requestedTarget and modelGroup are reconstructed from route state rather than inferred from raw executor_config. Group creation requires an initial pin.
+
+Catalog storage is split for rollback compatibility: /models.json is providers-only and /model-groups.json contains group entries. ProvidersOutput still returns separate providers/groups discovery arrays. Provider/group IDs cannot collide; groups retain their discriminated kind: group declaration shape.

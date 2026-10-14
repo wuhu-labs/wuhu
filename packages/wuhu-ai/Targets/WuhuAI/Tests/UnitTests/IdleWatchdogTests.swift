@@ -45,7 +45,7 @@ struct IdleWatchdogTests {
   func idleSilenceTimesOut() async throws {
     let clock = TestClock()
     let gate = StallGate()
-    let endpoint = AnthropicEndpoint(model: "claude-test", apiKey: "test-key")
+    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
       .withFetch(FetchClient { _ in try await gate.stall() })
 
     let outcome = Task { () -> InferenceError? in
@@ -73,7 +73,7 @@ struct IdleWatchdogTests {
   @Test("a stream that completes never trips an armed watchdog")
   func completionBeatsTheWatchdog() async throws {
     let clock = TestClock()
-    let endpoint = AnthropicEndpoint(model: "claude-test", apiKey: "test-key")
+    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
       .withFetch(FetchClient { _ in
         Response(status: .ok, body: .string(completingSSE, encoding: .utf8))
       })
@@ -92,7 +92,7 @@ struct IdleWatchdogTests {
 
   @Test("no idle window means no watchdog even when time never advances")
   func nilIdleTimeoutSkipsTheWatchdog() async throws {
-    let endpoint = AnthropicEndpoint(model: "claude-test", apiKey: "test-key")
+    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "test-scope", apiKey: "test-key")
       .withFetch(FetchClient { _ in
         Response(status: .ok, body: .string(completingSSE, encoding: .utf8))
       })

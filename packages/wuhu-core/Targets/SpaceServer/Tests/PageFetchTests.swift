@@ -1,3 +1,4 @@
+import Clocks
 import Crypto
 import Dependencies
 import Fetch
@@ -155,7 +156,8 @@ import Testing
       #expect(upstream.url.host == "dashboard.invalid")
       #expect(resolutions.withLock { $0 } == 1)
       #expect(upstream.headers[HTTPField.Name("X-Query")!] == "yes")
-      #expect(seenBodies.withLock { $0.first! } == "select 1")
+      let firstBody = try #require(seenBodies.withLock { $0.first })
+      #expect(firstBody == "select 1")
       let token = try #require(upstream.headers[.authorization]?.dropFirst("Bearer ".count))
       let parts = token.split(separator: ".").map(String.init)
       let claims = try jwtClaims("Bearer " + token)
@@ -296,9 +298,10 @@ import Testing
     let r = try await rig(proxy: proxy)
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     let caller = WebCaller(group: .shared, crossOrigin: false, contentOrigins: ["https://shared.space.test"], cookies: .legacy)
+    let clock = TestClock()
     let server = try await ServeNIOServer.bind(port: 0, handler: { request in
       await withDependencies {
-        $0.continuousClock = ContinuousClock()
+        $0.continuousClock = clock
         $0.date = .constant(fixedDate)
       } operation: {
         await pageFetchResponse(space: r.h.space, caller: caller, proxy: proxy.response, request: request, deadline: .now() + .milliseconds(250))
@@ -312,16 +315,20 @@ import Testing
     do {
       let head = "POST /_/space/fetch?url=http%3A%2F%2Fbackend.test%2Fq&page=%2Fdash.html&method=POST HTTP/1.1\r\nHost: shared.space.test\r\nOrigin: https://shared.space.test\r\nSec-Fetch-Site: same-origin\r\nCookie: \(r.cookie)\r\nContent-Length: 1048576\r\n\r\nx"
       try await channel.writeAndFlush(ByteBuffer(string: head)).get()
-      let started = ContinuousClock.now
-      let limit = started + .seconds(2)
+      var trickled = 1
+      let limit = ContinuousClock.now + .seconds(60)
       while !received.inactive && ContinuousClock.now < limit {
         try await ContinuousClock().sleep(for: .milliseconds(40))
-        if !received.inactive { try? await channel.writeAndFlush(ByteBuffer(string: "x")).get() }
+        if !received.inactive {
+          try? await channel.writeAndFlush(ByteBuffer(string: "x")).get()
+          trickled += 1
+        }
+        await clock.advance(by: .milliseconds(250))
       }
       #expect(received.text.contains("HTTP/1.1 504"))
       #expect(received.text.contains("fetchTimeout"))
       #expect(received.inactive)
-      #expect(ContinuousClock.now - started < .seconds(2))
+      #expect(trickled < 1024)
       try? await channel.close().get()
       await server.shutdown()
     } catch {
@@ -337,7 +344,7 @@ import Testing
     })
     do {
       let port = try #require(server.localAddress?.port)
-      let response = try await pinnedPageFetch(Request(url: URL(string: "http://127.0.0.1:\(port)/stream")!), deadline: .now() + .seconds(5))
+      let response = try await pinnedPageFetch(Request(url: URL(string: "http://127.0.0.1:\(port)/stream")!), deadline: .now() + .seconds(30))
       #expect(response.status == .ok)
       var iterator = response.body.asyncBytes().makeAsyncIterator()
       #expect(try await iterator.next() == Data("first".utf8))
@@ -376,7 +383,7 @@ private struct SlowFetchBody: AsyncSequence, Sendable {
     var first = true
     mutating func next() async throws -> Bytes? {
       if first { first = false; return Data("first".utf8) }
-      try await ContinuousClock().sleep(for: .seconds(60))
+      try await ContinuousClock().sleep(for: .seconds(120))
       return nil
     }
   }

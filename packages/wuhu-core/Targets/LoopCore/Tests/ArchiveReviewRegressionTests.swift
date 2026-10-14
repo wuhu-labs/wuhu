@@ -13,7 +13,7 @@ import WuhuAI
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let service = await SessionService(sessions: sessions, loopConfig: makeConfig()) { id in
-        SessionRepo(sessions: sessions, id: id, archiveWrite: { store, id, grace in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
           if id == child { _ = try await store.restart(root, executor: .kernel(.test), note: nil) }
           return try await store.archive(id, grace: grace)
         })
@@ -52,7 +52,7 @@ import WuhuAI
         outsideRan.withLock { $0 = true }
         return Fix.reply("done")
       })) { id in
-        SessionRepo(sessions: sessions, id: id, archiveWrite: { store, id, grace in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
           if id == child {
             writing.withLock { $0 = true }
             await gate.wait(unless: { Task.isCancelled })
@@ -98,7 +98,7 @@ import WuhuAI
         ran.withLock { $0 = true }
         return Fix.reply("done")
       })) { id in
-        SessionRepo(sessions: sessions, id: id, archiveWrite: { _, _, _ in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { _, _, _ in
           writing.withLock { $0 = true }
           await gate.wait(unless: { Task.isCancelled })
           throw UnexpectedCall("archive write failed")
@@ -133,7 +133,7 @@ import WuhuAI
       let writing = Box(false)
       let gate = Latch()
       let service = await SessionService(sessions: sessions, loopConfig: makeConfig()) { id in
-        SessionRepo(sessions: sessions, id: id, archiveWrite: { store, id, grace in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
           writing.withLock { $0 = true }
           await gate.wait(unless: { Task.isCancelled })
           return try await store.archive(id, grace: grace)
@@ -190,7 +190,7 @@ import WuhuAI
         }
         return Fix.reply("done")
       })) { id in
-        SessionRepo(sessions: sessions, id: id, queueHeadRead: { store, id in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
           if id == busy, !busyRead.value {
             busyRead.withLock { $0 = true }
             await busyGate.wait(unless: { Task.isCancelled })
@@ -220,7 +220,7 @@ import WuhuAI
         busyGate.release()
         await #expect(throws: SubtreeArchiveBusy.self) { try await archive.value }
         try await until("compact runs after refused archive releases reservation") { compactRan.value }
-        #expect(try await sessions.pendingCommand(compact) == nil)
+        try await until("compact completion clears the command") { try await sessions.pendingCommand(compact) == nil }
         #expect(try await sessions.record(compact).lifecycle == .live)
       } catch {
         pendingGate.release()

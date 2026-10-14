@@ -23,7 +23,7 @@ import Testing
       defer { entered.continuation.finish(); release.continuation.finish(); gate.cancel() }
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(sessions: sessions, id: id, compactClaimWrite: { store, id, generation in
+        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, compactClaimWrite: { store, id, generation in
           if beforeWrite {
             entered.continuation.yield(())
             await gate.value
@@ -43,7 +43,7 @@ import Testing
       let looper = try #require(await actor.looperTask)
       if restart {
         try await sessions.markInterrupted(id)
-        _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, $0)) }
+        _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
       } else {
         await actor.shutdown()
       }
@@ -80,7 +80,7 @@ import Testing
       let claims = Box(0)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(sessions: sessions, id: id, compactClaimWrite: { _, _, _ in
+        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, compactClaimWrite: { _, _, _ in
           let claim = claims.withLock { $0 += 1; return $0 }
           entered.continuation.yield(claim)
           if claim == 1 { await oldGate.value } else { await newGate.value }
@@ -95,7 +95,7 @@ import Testing
       var iterator = entered.stream.makeAsyncIterator()
       #expect(await iterator.next() == 1)
       let oldLooper = try #require(await actor.looperTask)
-      _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, $0)) }
+      _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
       try await sessions.requestCommand(id, .compact(instructions: "new"))
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       #expect(await iterator.next() == 2)
@@ -148,7 +148,7 @@ func verifyLegacyCompactToken(space: Space, id: SessionID, replacement: Bool) as
   defer { entered.continuation.finish(); release.continuation.finish(); settled.continuation.finish(); gate.cancel() }
   let actor = SessionActor(
     id: id,
-    repo: SessionRepo(sessions: sessions, id: id),
+    repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id),
     loopConfig: makeConfig(inference: { request in
       if request.mode == .forcedCompact {
         entered.continuation.yield(())

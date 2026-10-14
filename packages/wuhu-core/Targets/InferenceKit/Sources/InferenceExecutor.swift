@@ -35,7 +35,7 @@ public struct InferenceExecutor: Sendable {
   public var tools: [Tool]
   public var compactToolName: String
   public var hub: AttemptHub?
-  public var log: AttemptLogConfig?
+  public var trace: AttemptTraceClient?
   public var metrics: InferenceMetricsSink
   public var webSocket: ResponsesWebSocketSession?
   public var receiveQuota: @Sendable (JSONValue) async -> Void
@@ -48,7 +48,7 @@ public struct InferenceExecutor: Sendable {
     tools: [Tool],
     compactToolName: String = "compact",
     hub: AttemptHub? = nil,
-    log: AttemptLogConfig? = nil,
+    trace: AttemptTraceClient? = nil,
     metrics: InferenceMetricsSink = .noop,
     webSocket: ResponsesWebSocketSession? = nil,
     receiveQuota: @escaping @Sendable (JSONValue) async -> Void = { _ in },
@@ -60,7 +60,7 @@ public struct InferenceExecutor: Sendable {
     self.tools = tools
     self.compactToolName = compactToolName
     self.hub = hub
-    self.log = log
+    self.trace = trace
     self.metrics = metrics
     self.mediaResolver = mediaResolver
     self.webSocket = webSocket
@@ -84,7 +84,7 @@ public struct InferenceExecutor: Sendable {
     )
     var options = RequestOptions(
       maxTokens: model.budget.maxOutput,
-      reasoning: .effort(model.specifier.effort),
+      reasoning: model.specifier.effort == "none" && model.endpoint is any AnthropicMessagesEndpoint ? .none : .effort(model.specifier.effort),
       idleTimeout: idleTimeout,
     )
     if mode == .forcedCompact {
@@ -99,12 +99,13 @@ public struct InferenceExecutor: Sendable {
       guard let webSocket, let responses = endpoint as? any ResponsesEndpoint else {
         throw InferenceError.invalidInput(status: 422, body: "WebSocket transport has no runtime session")
       }
-      endpoint = responses.withWebSocket(session: webSocket, attemptID: attemptID.uuidString, observer: try socketAttemptObserver(file: log?.fileURL(attemptID: attemptID), sizes: sizes), receiveQuota: receiveQuota)
-    } else if let log {
+      endpoint = responses.withWebSocket(session: webSocket, attemptID: attemptID.uuidString, observer: socketAttemptObserver(trace: try await trace?.open(attemptID), sizes: sizes), receiveQuota: receiveQuota)
+    } else if let trace {
       @Dependency(\.fetch) var fetch
       endpoint = endpoint.withFetch(attemptLoggingFetch(
         base: fetch,
-        file: log.fileURL(attemptID: attemptID),
+        trace: trace,
+        attemptID: attemptID,
         sizes: sizes,
       ))
     }
@@ -225,7 +226,7 @@ public struct InferenceExecutor: Sendable {
     usage: Usage?,
     elapsed: Duration,
   ) {
-    guard log != nil else { return }
+    guard trace != nil else { return }
     let logger = Logger(label: "wuhu.inference")
     logger.info("inference attempt", metadata: [
       "attempt": "\(attemptID.uuidString.lowercased())",

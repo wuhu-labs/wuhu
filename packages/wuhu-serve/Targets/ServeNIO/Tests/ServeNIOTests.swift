@@ -129,6 +129,48 @@ struct ServeNIOTests {
     #expect(snapshot.didShutdownAddresses.count == 1)
   }
 
+  @Test func peerDisconnectCancelsIdleResponseProducer() async throws {
+    let terminated = Mutex(false)
+    let (stream, continuation) = AsyncStream<Data>.makeStream()
+    continuation.onTermination = { _ in terminated.withLock { $0 = true } }
+    try await withTCPServer { _ in
+      Response(status: .ok, body: .stream(stream))
+    } operation: { server in
+      defer { continuation.finish() }
+      let port = try #require(server.boundAddress.port)
+      try await withRawConnection(port: port) { channel, accumulator in
+        try await channel.writeAndFlush(channel.allocator.buffer(bytes: rawRequest(path: "/idle")))
+        try await waitUntil { accumulator.text.contains("HTTP/1.1 200") }
+        try await channel.close()
+        try await waitUntil { terminated.withLock { $0 } }
+      }
+    }
+  }
+
+  @Test func closingIdleResponseDiscardsPipelinedRequestsAndObservesDisconnect() async throws {
+    let terminated = Mutex(false)
+    let requests = Mutex(0)
+    let (stream, continuation) = AsyncStream<Data>.makeStream()
+    continuation.onTermination = { _ in terminated.withLock { $0 = true } }
+    try await withTCPServer { _ in
+      requests.withLock { $0 += 1 }
+      return Response(status: .ok, headers: [.init("Connection")!: "close"], body: .stream(stream))
+    } operation: { server in
+      defer { continuation.finish() }
+      let port = try #require(server.boundAddress.port)
+      try await withRawConnection(port: port) { channel, accumulator in
+        var burst = rawRequest(path: "/idle", keepAlive: true)
+        burst += rawRequest(path: "/queued", keepAlive: true)
+        try await channel.writeAndFlush(channel.allocator.buffer(bytes: burst))
+        try await waitUntil { accumulator.text.contains("HTTP/1.1 200") }
+        try await channel.writeAndFlush(channel.allocator.buffer(bytes: rawRequest(path: "/later", keepAlive: true)))
+        try await channel.close()
+        try await waitUntil { terminated.withLock { $0 } }
+        #expect(requests.withLock { $0 } == 1)
+      }
+    }
+  }
+
   @Test func shutdownTerminatesActiveStreamingConnections() async throws {
     let recorder = HookRecorder()
     let controller = StreamingBodyController()

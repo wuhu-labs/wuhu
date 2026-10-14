@@ -49,7 +49,7 @@ import WuhuRecordReplay
 
     try await withRecording(recording) {
       let endpoint = OpenAICodexEndpoint(
-        model: "gpt-6.1-sol",
+        model: "gpt-6.1-sol", replayScope: "test-scope",
         baseURL: URL(string: "https://chatgpt.com/backend-api/codex")!,
         jwt: "",
         originator: "codex_cli_rs",
@@ -75,5 +75,5 @@ private func hostedItem(id: String, action: String) throws -> HostedToolContent 
   let payload = try #require(JSONValue.parse("""
   {"id":"\(id)","type":"web_search_call","status":"completed","action":\(action)}
   """))
-  return try #require(HostedToolContent(providerID: "openai-codex", payload: payload))
+  return try #require(HostedToolContent(providerID: "openai-codex", payload: payload, replayScope: "test-scope"))
 }

@@ -43,6 +43,7 @@ extension SessionStore {
     snapshot: StateSnapshot? = nil,
     receipt: (session: SessionID, callID: ToolCallID)? = nil,
     cloneOwed: Bool = false,
+    modelRoute: SessionModelRoute? = nil,
   ) async throws -> SessionID {
     @Dependency(\.uuid) var uuid
     let title = try Self.usableTitle(title)
@@ -50,6 +51,7 @@ extension SessionStore {
     let now = SQLiteDateFormat.string(from: nowDate)
     let tagsJSON = try Sessions.encode(tags)
     try executor.requireSupported()
+    let storedExecutor = try Sessions.concreteExecutor(executor, route: modelRoute)
     let head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0) }
     let minted = Allocations.mintSecretCandidate(rng)
     return try await writer.write { db in
@@ -83,9 +85,10 @@ extension SessionStore {
         """,
         arguments: [
           name, allocation, kind.rawValue, parent?.rawValue, title, tagsJSON, createdBy,
-          executor.kind, executor.configJSON, now, now, group.rawValue,
+          storedExecutor.kind, storedExecutor.configJSON, now, now, group.rawValue,
         ],
       )
+      try Sessions.writeModelRoute(name, route: modelRoute, in: db)
       if kind == .agent {
         try Conversations.create(
           id: name, kind: .box, group: group, ownerSession: name,
@@ -109,7 +112,7 @@ extension SessionStore {
           receipt.session.rawValue,
           toolCallID: receipt.callID.rawValue,
           payload: try Sessions.encode(ToolResultPayload.createSession(
-            .init(sessionID: id, title: title, cloneOwed: cloneOwed ? true : nil),
+            .init(sessionID: id, title: title, cloneOwed: cloneOwed ? true : nil, modelGroup: modelRoute?.group, member: modelRoute?.member, provider: modelRoute?.specifier.provider, model: modelRoute?.specifier.model),
           )),
           now: now,
           in: db,
@@ -168,6 +171,9 @@ extension SessionStore {
       let runtime = try Sessions.runtime(key, in: db)
       try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
       try Sessions.append(key, generation: runtime.generation, items: items, in: db)
+      if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
+        try CacheWarmingRow.recordInference(key, origin: transcript.cacheWarmingInputOrigin, now: dateGen.now, in: db)
+      }
       try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
     }
   }
@@ -190,6 +196,7 @@ extension SessionStore {
       if let closing {
         try Sessions.append(key, generation: runtime.generation, items: [TranscriptItem.toolResult(closing)], in: db)
       }
+      try CacheWarmingRow.resetOffer(key, in: db)
       let compacted = transcript.compacted(head: head, kept: kept)
       let generation = runtime.generation + 1
       try Sessions.writeGeneration(key, generation: generation, transcript: compacted, in: db)
@@ -201,7 +208,7 @@ extension SessionStore {
 
   // One line, trimmed, capped: the title is a row every roster and dashboard
   // renders, so a wall of prose would be someone else's broken layout.
-  public static let titleLimit: Int = 200
+  public static let titleLimit: Int = SessionTitle.maximumCharacters
 
   // A root is level 1; a session at level depthLimit + 1 is refused.
   public static let depthLimit: Int = 16
@@ -296,7 +303,7 @@ extension SessionStore {
       if record.work == .errored {
         try db.execute(sql: "UPDATE sessions SET work = 'no_work' WHERE id = ?", arguments: [key])
         let transcript = switch record.executor {
-        case .kernel, .contractor: try Sessions.transcript(key, in: db)
+        case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
         case .claudeCode: Transcript()
         }
         try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
@@ -330,7 +337,7 @@ extension SessionStore {
         let transcript: Transcript
         do {
           transcript = switch record?.executor {
-          case .kernel, .contractor: try Sessions.transcript(key, in: db)
+          case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
           case .claudeCode, nil: Transcript()
           }
         } catch where isUnreadableSessionData(error) {

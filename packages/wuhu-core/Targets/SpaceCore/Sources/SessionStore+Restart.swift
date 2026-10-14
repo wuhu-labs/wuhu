@@ -33,6 +33,7 @@ extension SessionStore {
     _ id: SessionID,
     executor: SessionExecutor? = nil,
     note: String? = nil,
+    modelRoute: SessionModelRoute? = nil,
   ) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid
     let key = id.rawValue
@@ -47,14 +48,17 @@ extension SessionStore {
       guard record.lifecycle == .live else { throw SessionStoreError.restartOfArchivedSession(key) }
       let stopped = record.hold == .interrupted || record.work == .errored
       guard stopped || record.work != .hasWork else { throw SessionStoreError.busyForRestart(key) }
-      if let executor {
+      let storedExecutor = try Sessions.concreteExecutor(executor ?? record.executor, route: modelRoute)
+      if executor != nil || modelRoute != nil {
         try db.execute(
           sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
-          arguments: [executor.kind, executor.configJSON, key],
+          arguments: [storedExecutor.kind, storedExecutor.configJSON, key],
         )
       }
+      try Sessions.writeModelRoute(key, route: modelRoute, in: db)
       let runtime = try Sessions.runtime(key, in: db)
       try Sessions.discardCommand(key, in: db)
+      try CacheWarmingRow.reset(key, in: db)
       var subscriptions: [SubscriptionID: Subscription] = [:]
       for armed in try Row.fetchAll(
         db, sql: "SELECT * FROM session_subscriptions WHERE session_id = ?", arguments: [key],
@@ -137,7 +141,7 @@ extension Sessions {
   static func generationState(_ key: String, in db: Database) throws -> GenerationState {
     let generation = try runtime(key, in: db).generation
     switch try record(key, in: db).executor {
-    case .kernel, .contractor: break
+    case .kernel, .modelGroup, .contractor: break
     case .claudeCode: return GenerationState(generation: Int(generation), note: nil)
     }
     let payload = try String.fetchOne(

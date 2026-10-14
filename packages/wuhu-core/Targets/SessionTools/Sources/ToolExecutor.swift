@@ -1,7 +1,10 @@
 import struct Credentials.CredentialResolver
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct InferenceKit.CapabilityError
-import struct InferenceKit.InferenceMetricsSink
 import struct InferenceKit.ProviderCatalog
 import JSONValue
 import protocol MachineChannel.FrameTransport
@@ -16,9 +19,11 @@ import struct WuhuAI.ToolCall
 // failure, never thrown past the executor.
 struct ToolProblem: Error {
   var message: String
+  var code: String?
 
-  init(_ message: String) {
+  init(_ message: String, code: String? = nil) {
     self.message = message
+    self.code = code
   }
 }
 
@@ -71,121 +76,39 @@ enum RosterTool: String, CaseIterable {
 }
 
 public struct ToolExecutor: Sendable {
-  let space: Space
-  let machines: MachineSeam?
-  let execBackend: ExecBackend?
-  let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
-  let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
-  let completionMetrics: InferenceMetricsSink?
+  let owner: any ToolOwnerClient
   let credentials: CredentialResolver
+  let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
   let scripts: Scripts?
-  let control: SessionControl?
 
   public init(
-    space: Space,
-    machines: MachineSeam? = nil,
-    exec: ExecBackend? = nil,
-    resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
+    owner: any ToolOwnerClient,
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
-    completionMetrics: InferenceMetricsSink? = nil,
     scripts: Scripts? = nil,
-    control: SessionControl? = nil,
   ) {
-    self.space = space
-    self.machines = machines
-    execBackend = exec
-    self.resolveModelExecutor = resolveModelExecutor
+    self.owner = owner
     self.credentials = credentials
     self.completionCatalog = completionCatalog
-    self.completionMetrics = completionMetrics
     self.scripts = scripts
-    self.control = control
   }
 
-  var store: SessionStore { space.sessions }
-
-  public func execute(
-    session: SessionID,
-    call: ToolCall,
-    state: ToolExecutionState,
-  ) async throws -> ToolResultPayload {
+  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
     guard let tool = RosterTool(rawValue: call.name) else {
       return .failure(.init(message: "unknown tool: \(call.name)"))
     }
     do {
-      return try await run(tool, session: session, call: call, state: state)
-    } catch let error as ExecutorUnavailableError {
-      return .failure(.init(message: error.description, code: "executorNoLongerSupported"))
-    } catch let error as CapabilityError {
-      return .failure(.init(message: error.description))
-    } catch let problem as ToolProblem {
-      return .failure(.init(message: problem.message))
-    } catch let error as ToolRunError {
-      return .failure(.init(message: renderedFailure(error)))
-    } catch let error as SpaceError {
-      return .failure(.init(message: renderedFailure(Wire.failure(error))))
-    } catch is CancellationError {
-      throw CancellationError()
-    }
-  }
-
-  private func run(
-    _ tool: RosterTool,
-    session: SessionID,
-    call: ToolCall,
-    state: ToolExecutionState,
-  ) async throws -> ToolResultPayload {
-    let callID = ToolCallID(call.id)
-    switch tool {
-    case .read:
-      return try await read(session, callID, decoded(ReadArguments.self, call), state: state)
-    case .write:
-      return try await write(session, callID, decoded(WriteArguments.self, call), state: state)
-    case .edit:
-      return try await edit(session, callID, decoded(EditArguments.self, call), state: state)
-    case .grep:
-      return try await grep(session, callID, decoded(GrepArguments.self, call), state: state)
-    case .find:
-      return try await find(session, callID, decoded(FindArguments.self, call), state: state)
-    case .exec:
-      return try await exec(session, callID, decoded(ExecArguments.self, call), state: state)
-    case .machines:
-      return try await machineRoster(session)
-    case .templates:
-      return try await templateRoster(session)
-    case .observe:
-      return try await observe(session, callID, decoded(ObserveArguments.self, call))
-    case .timer:
-      return try await timer(session, callID, decoded(TimerArguments.self, call))
-    case .cancelObservation:
-      return try await cancel(.observation, session, decoded(CancelArguments.self, call), state: state)
-    case .cancelTimer:
-      return try await cancel(.timer, session, decoded(CancelArguments.self, call), state: state)
-    case .query:
-      return try await query(session, decoded(QueryArguments.self, call))
-    case .sendMessage:
-      if case let .object(fields) = call.arguments.json, fields["user"] != nil {
-        throw problem(.humanAgentDirectMessage)
+      switch tool {
+      case .runScript: return try await runScript(session, decoded(RunScriptArguments.self, call))
+      case .stopScript: return try await stopScript(session, decoded(StopScriptArguments.self, call))
+      case .generateImage: return try await generateImage(session, ToolCallID(call.id), decoded(GenerateImageArguments.self, call), state: state)
+      default: return try await owner.execute(session: session, call: call, state: state)
       }
-      return try await sendMessage(session, callID, decoded(SendMessageArguments.self, call))
-    case .request:
-      return try await request(session, callID, decoded(RequestArguments.self, call))
-    case .report:
-      return try await report(session, callID, decoded(ReportArguments.self, call))
-    case .createSession:
-      return try await createSession(session, callID, decoded(CreateSessionArguments.self, call))
-    case .setTitle:
-      return try await setTitle(session, decoded(SetTitleArguments.self, call))
-    case .generateImage:
-      return try await generateImage(session, callID, decoded(GenerateImageArguments.self, call), state: state)
-    case .manipulateUI:
-      return try await manipulateUI(session, decoded(ManipulateUIArguments.self, call))
-    case .runScript:
-      return try await runScript(session, decoded(RunScriptArguments.self, call))
-    case .stopScript:
-      return try await stopScript(session, decoded(StopScriptArguments.self, call))
-    }
+    } catch let error as CapabilityError { return .failure(.init(message: error.description)) }
+    catch let error as ToolProblem { return .failure(.init(message: error.message, code: error.code)) }
+    catch let error as ToolRunError { return .failure(.init(message: renderedFailure(error))) }
+    catch let error as SpaceError { return .failure(.init(message: renderedFailure(Wire.failure(error)))) }
+    catch is CancellationError { throw CancellationError() }
   }
 
   private func decoded<Arguments: Decodable>(
@@ -208,4 +131,13 @@ func renderedFailure(_ error: ToolRunError) -> String {
   if case let .string(hint)? = fields["hint"] { text += " (\(hint))" }
   if case let .string(token)? = fields["token"] { text += " [current token: \(token)]" }
   return text
+}
+
+extension ToolExecutor {
+  func refuseUnlessLive(_ session: SessionID) async throws { try await owner.refuseUnlessLive(session) }
+  func spawn(_ caller: SessionID, _ call: ToolCallID, _ order: SpawnOrder) async throws -> Spawned { try await owner.spawn(caller, call, order) }
+  func sendMessage(_ caller: SessionID, _ call: ToolCallID, _ arguments: SendMessageArguments) async throws -> ToolResultPayload { try await owner.sendMessage(caller, call, arguments) }
+  func request(_ caller: SessionID, _ call: ToolCallID, _ arguments: RequestArguments) async throws -> ToolResultPayload { try await owner.request(caller, call, arguments) }
+  func setTags(_ caller: SessionID, of target: SessionID, to tags: [String]) async throws { try await owner.setTags(caller, of: target, to: tags) }
+  func control(_ verb: SessionControl.Verb, _ caller: SessionID, of target: SessionID, force: Bool = false) async throws { try await owner.control(verb, caller, of: target, force: force) }
 }

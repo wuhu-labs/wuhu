@@ -5,10 +5,10 @@ import SpaceFS
 import Testing
 
 @Suite struct SystemFilesTests {
-  @Test func theBinaryCarriesTheSystemAgentsAndElevenSkills() {
+  @Test func theBinaryCarriesTheSystemAgentsAndThirteenSkills() {
     #expect(SystemFiles.files["/AGENTS.md"] != nil)
     #expect(SystemFiles.instructions.skills.map(\.name) == [
-      "avatar", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "space-html-pages", "transcription", "web-search", "widgets",
+      "avatar", "data-organization", "data-views", "image", "monitor", "observe-group-channel", "read-box", "sessions", "space-html-pages", "transcription", "web-search", "widgets", "writing-style",
     ])
     #expect(SystemFiles.instructions.skills.allSatisfy { !$0.description.isEmpty })
     #expect(SystemFiles.instructions.skills.first?.path == "wuhu://system/skills/avatar/SKILL.md")
@@ -32,8 +32,11 @@ import Testing
     let anchors: [String: [String]] = [
       "/AGENTS.md": [
         "/_/observe", "/models.json", #""strategy":"incr""#, "notifications", "/_/shell.js", "/_/sessions/<your-id>/",
-        "wuhu://system/",
+        "wuhu://system/", "## Replies", "`writing-style` skill", "## Scratch files",
       ],
+      "/skills/writing-style/SKILL.md": ["first line", "15 lines", "## A proposal", "no closing offer"],
+      "/skills/avatar/SKILL.md": ["which number?", "cropped, not regenerated", "wuhu:machine"],
+      "/skills/data-organization/SKILL.md": ["frontmatter", ".view", "/.widgets/", "Nothing is created until"],
       "/skills/space-html-pages/SKILL.md": [
         "wuhu.context", "wuhu:navigate", "--wuhu-inset-top", "safe-area-inset-top",
         "viewport-fit=cover", "user-scalable=no", "overflow-x: clip", "overscroll-behavior-x: none",

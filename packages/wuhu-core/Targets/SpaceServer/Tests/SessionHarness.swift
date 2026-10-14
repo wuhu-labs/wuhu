@@ -1,3 +1,4 @@
+import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecretStores
 import Dependencies
@@ -20,7 +21,7 @@ let testModelsJSON = """
 {
   "testing": {
     "dialect": "anthropic",
-    "baseURL": "http://localhost:1",
+    "baseURL": "http://localhost:1", "opaqueReplay": "affine",
     "models": {
       "test-model": {
         "maxInput": 100000,
@@ -65,6 +66,7 @@ struct SessionHarness {
     credentials: CredentialResolver = .unavailable,
     execTokens: ExecTokens? = nil,
     secrets: SpaceSecretStores? = nil,
+    cacheWarmingUsage: UsageBoard? = nil,
     inference: @escaping @Sendable (LoopCore.InferenceRequest, AttemptHub) async throws -> LoopCore.InferenceReply = { _, _ in
       throw InferenceError.other(status: nil, body: "no inference scripted")
     },
@@ -79,14 +81,16 @@ struct SessionHarness {
     let hub = MachineHub(space: space, tokens: execTokens)
     self.hub = hub
     let attempts = AttemptHub()
+    let cacheUsage = cacheWarmingUsage ?? UsageBoard()
     let config = LoopConfig(
       executeTool: { _ in .failure(.init(message: "no tools in this harness")) },
       inference: { request in try await inference(request, attempts) },
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
+      allowCacheWarming: { try await CacheWarmer(space: space, usage: cacheUsage).allows($0) },
     )
     let service = await SessionService(sessions: store, loopConfig: config)
-    runtime = SessionRuntime(space: space, service: service, attempts: attempts)
+    runtime = SessionRuntime(space: space, service: service, attempts: attempts, credentials: credentials)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil,
       credentials: credentials, secrets: secrets, execTokens: execTokens,
@@ -147,8 +151,10 @@ struct SessionHarness {
     return try await space.mintPersona(key: key).name
   }
 
-  init(assembledModels models: String) async throws {
-    credentials = .environmentOnly
+  init(assembledModels models: String, credentialResolver: CredentialResolver? = nil, oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil) async throws {
+    credentials = credentialResolver ?? .bound { providerID in
+      CredentialBinding(credential: .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? ""), identityEpoch: "assembled-fixture-credential")
+    }
     let space = try Space.inMemory()
     self.space = space
     store = space.sessions
@@ -158,9 +164,12 @@ struct SessionHarness {
     runtime = await SessionRuntime.assemble(
       space: space,
       hub: hub,
-      credentials: CredentialResolver { providerID in
-        .apiKey(CredentialResolver.environmentAPIKey(providerID) ?? "")
-      },
+      attemptLog: nil,
+      metrics: .noop,
+      credentials: credentials,
+      secrets: nil,
+      usage: UsageBoard(),
+      oidcToken: oidcToken,
     )
     handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true, webApp: nil)
     api = ServeTesting.client(upgrading: handler)

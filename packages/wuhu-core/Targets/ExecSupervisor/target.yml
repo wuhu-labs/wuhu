@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ComputerFiles
   - CExecSupervisor
   - OperationProtocol
   - OperationRuntime
@@ -15,6 +16,7 @@ dependencies:
   - FetchAsyncHTTPClient
   - AsyncHTTPClient
   - NIOCore
+  - NIOPosix
 tests:
   size: large
   resources:
@@ -23,7 +25,10 @@ tests:
   exclude:
     - Recordings/**
   dependencies:
+    - ComputerFiles
     - OperationClient
+    - NIOPosix
+    - AsyncHTTPClient
     - CExecSupervisor
     - FetchExchangeRecording
     - OperationProtocol
@@ -33,5 +38,4 @@ tests:
     - Serve
     - ServeNIO
     - FetchAsyncHTTPClient
-    - AsyncHTTPClient
     - Clocks

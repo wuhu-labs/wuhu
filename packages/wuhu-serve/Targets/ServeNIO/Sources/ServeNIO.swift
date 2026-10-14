@@ -195,8 +195,8 @@ public final class ServeNIOServer: @unchecked Sendable {
         }
       }
       await self.state.waitForConnectionsToDrain()
-      self.state.finishShutdown()
       self.hooks.onDidShutdown(self.boundAddress)
+      self.state.finishShutdown()
     case .inProgress, .finished:
       await self.state.waitUntilShutdown()
     }
@@ -475,7 +475,7 @@ final class ServeNIOServerState: @unchecked Sendable {
     }
     connection.task = task
     self.state.connections[id] = connection
-    let shouldCancel = self.state.phase != .running
+    let shouldCancel = self.state.phase != .running || connection.channelClosed
     self.unlockState()
     return shouldCancel
   }
@@ -554,18 +554,17 @@ final class ServeNIOServerState: @unchecked Sendable {
   }
 
   private func channelDidClose(id: Int) {
-    let drainWaiters = self.withLock {
-      guard var connection = $0.connections[id] else {
-        return [CheckedContinuation<Void, Never>]()
-      }
+    let (task, drainWaiters) = self.withLock { state -> (Task<Void, Never>?, [CheckedContinuation<Void, Never>]) in
+      guard var connection = state.connections[id] else { return (nil, []) }
       connection.channelClosed = true
       if connection.taskCompleted || connection.task == nil {
-        $0.connections.removeValue(forKey: id)
+        state.connections.removeValue(forKey: id)
       } else {
-        $0.connections[id] = connection
+        state.connections[id] = connection
       }
-      return self.takeDrainWaitersIfNeeded(state: &$0)
+      return (connection.task, self.takeDrainWaitersIfNeeded(state: &state))
     }
+    task?.cancel()
     self.resume(drainWaiters)
   }
 
@@ -808,6 +807,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
   private let requestsContinuation: AsyncStream<InboundRequest>.Continuation
   private var currentBody: RequestBodyBuffer?
   private var didStartLoop = false
+  private var closingResponse = false
 
   init(
     options: ServeOptions,
@@ -829,6 +829,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    guard !self.closingResponse else { return }
     switch self.unwrapInboundIn(data) {
     case let .head(head):
       self.receiveHead(head, context: context)
@@ -854,7 +855,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
   func errorCaught(context: ChannelHandlerContext, error: any Error) {
     self.currentBody?.finish(throwing: error)
     self.currentBody = nil
-    guard !self.serverState.isShuttingDown else {
+    guard !self.serverState.isShuttingDown, !self.closingResponse else {
       context.close(promise: nil)
       return
     }
@@ -996,6 +997,7 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
     let keepAlive = drained && inbound.keepAlive && inbound.version.major == 1 && !serverState.isShuttingDown
 
     do {
+      if !keepAlive, inbound.version.major == 1 { try await Self.prepareClosingResponse(channel: channel) }
       try await Self.writeResponse(
         response,
         version: inbound.version,
@@ -1014,6 +1016,20 @@ final class ServeNIOHTTPHandler: ChannelInboundHandler, RemovableChannelHandler 
       }
       return false
     }
+  }
+
+  private static func prepareClosingResponse(channel: Channel) async throws {
+    try await channel.eventLoop.submit {
+      let pipeline = channel.pipeline.syncOperations
+      let handler = try pipeline.handler(type: ServeNIOHTTPHandler.self)
+      handler.closingResponse = true
+      handler.currentBody?.finish(throwing: CancellationError())
+      handler.currentBody = nil
+      handler.requestsContinuation.finish()
+      // Darwin needs reads to observe EOF; NIO's pipeline gate suppresses them until response end.
+      let gate = try pipeline.handler(type: HTTPServerPipelineHandler.self)
+      return pipeline.removeHandler(gate)
+    }.flatMap { $0 }.get()
   }
 
   private static func drainBody(_ buffer: RequestBodyBuffer?) async -> Bool {

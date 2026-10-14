@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -9,6 +13,7 @@ func parseAnthropicStream(
   _ sse: AsyncThrowingStream<SSEEvent, any Error>,
   providerID: String,
   model: String,
+  replayScope: String? = nil,
 ) -> AsyncThrowingStream<InferenceEvent, any Error> {
   AsyncThrowingStream { continuation in
     let task = Task {
@@ -106,6 +111,7 @@ func parseAnthropicStream(
                 model: model,
                 summary: thinkingText,
                 opaque: signature,
+                replayScope: replayScope,
               ))))
               currentReasoningIndex = content.count - 1
               currentTextIndex = nil
@@ -124,6 +130,7 @@ func parseAnthropicStream(
                 summary: nil,
                 opaque: data,
                 redacted: true,
+                replayScope: replayScope,
               ))))
               currentReasoningIndex = content.count - 1
               currentTextIndex = nil

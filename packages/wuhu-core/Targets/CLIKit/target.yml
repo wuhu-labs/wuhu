@@ -10,6 +10,16 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - FetchExchangeRecording
+  - HTTPTypes
+  - Serve
+  - ExecSupervisor
+  - OperationProtocol
+  - FetchTunnel
+  - FetchTunnelWebSocket
+  - ServeTunnel
+  - FetchAsyncHTTPClient
+  - AsyncHTTPClient
   - Assertion
 
   - Credentials
@@ -20,6 +30,7 @@ dependencies:
   - Crypto
   - FetchWebSocket
   - NIOCore
+  - NIOPosix
   - SpaceContract
   - SessionDomain
   - WuhuAI
@@ -34,6 +45,10 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - OperationProtocol
+    - FetchTunnel
+    - FetchWebSocket
+    - FetchExchangeRecording
     - Assertion
     - Credentials
     - SpaceContract

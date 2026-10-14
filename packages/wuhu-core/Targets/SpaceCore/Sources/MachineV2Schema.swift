@@ -1,6 +1,7 @@
 import StructuredQueries
 
 let machineV2SchemaSQL = """
+CREATE TABLE IF NOT EXISTS machine_v2_key_check (id TEXT PRIMARY KEY, sealed TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS machine_v2_retention (id TEXT PRIMARY KEY, grp TEXT NOT NULL, kind TEXT NOT NULL, expired_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS machine_v2_retention_expiry ON machine_v2_retention(grp, kind, expired_at);
 CREATE TABLE IF NOT EXISTS machine_v2_maintenance (id TEXT PRIMARY KEY, ran_at TEXT NOT NULL);
@@ -113,4 +114,10 @@ struct MachineV2RetentionRow {
 struct MachineV2MaintenanceRow {
   @Column(primaryKey: true) var id: String
   @Column("ran_at") var ranAt: String
+}
+
+@Table("machine_v2_key_check")
+struct MachineV2KeyCheckRow {
+  @Column(primaryKey: true) var id: String
+  var sealed: String
 }

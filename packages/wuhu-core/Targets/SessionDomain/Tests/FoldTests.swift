@@ -8,6 +8,25 @@ import WuhuAI
     Transcript(items: items).environment.tools
   }
 
+  @Test func `delivered context hashes replay with first-source attribution and reset across a retained tail`() throws {
+    let first = ScopeContext(folders: ["machines://m1/repo": "machines://m1/repo"], deliveredContext: ["hash": "first/AGENTS.md"], text: "manual")
+    let duplicate = ScopeContext(folders: ["machines://m2/repo": "machines://m2/repo"], deliveredContext: ["hash": "second/AGENTS.md"], text: "identical")
+    let original = Transcript(items: [
+      .notification(first.notice(id: UUID(), at: Fix.instant)),
+      .notification(duplicate.notice(id: UUID(), at: Fix.instant)),
+    ])
+    let replayed = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(original))
+    #expect(replayed.environment.tools.deliveredContext == ["hash": "first/AGENTS.md"])
+    let compacted = replayed.compacted(head: .init(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init()), kept: 0 ..< 2)
+    #expect(compacted.environment.tools.deliveredContext.isEmpty)
+    #expect(compacted.environment.tools.folderRoots.isEmpty)
+    #expect(compacted.items.dropFirst() == original.items[...])
+    let fresh = ScopeContext(folders: ["machines://m2/repo": "machines://m2/repo"], deliveredContext: ["hash": "fresh/AGENTS.md"], text: "manual")
+    var next = compacted
+    next.items.append(.notification(fresh.notice(id: UUID(), at: Fix.instant)))
+    #expect(next.environment.tools.deliveredContext == ["hash": "fresh/AGENTS.md"])
+  }
+
   @Test func `cancellation supersedes subscriptions`() {
     let folded = state([
       Fix.result(.observe(.init(subscriptionID: .init("obs-1"), sql: "select 1"))),

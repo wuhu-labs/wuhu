@@ -761,6 +761,8 @@ func withRig(
   world: MachineWorld? = nil,
   credentials: CredentialResolver = .unavailable,
   resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
+  resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
+  prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
   control: SessionControl? = nil,
   group: GroupID = .shared,
   task: Bool = false,
@@ -793,8 +795,8 @@ func withRig(
       let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
       let scripts = Scripts(space: space, secrets: stores, machines: access)
       let executor = ToolExecutor(
-        space: space, machines: machines, resolveModelExecutor: resolveModelExecutor,
-        credentials: credentials, scripts: scripts, control: control,
+        space: space, machines: machines, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup,
+        prepareModelRoute: prepareModelRoute, credentials: credentials, scripts: scripts, control: control,
       )
       let rig = try ScriptRig(
         space: space, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,

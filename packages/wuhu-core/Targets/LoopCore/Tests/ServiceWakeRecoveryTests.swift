@@ -39,7 +39,7 @@ import WuhuAI
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
-      }), log: logs.logger) { SessionRepo(sessions: sessions, id: $0) }
+      }), log: logs.logger) { SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: $0) }
       try await runService(service) { service in
         var iterator = commits.stream.makeAsyncIterator()
         #expect(await iterator.next() == healthy)
@@ -105,7 +105,7 @@ import WuhuAI
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
-      }), log: logs.logger) { SessionRepo(sessions: sessions, id: $0) }
+      }), log: logs.logger) { SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: $0) }
       try await runService(service) { service in
         var iterator = commits.stream.makeAsyncIterator()
         #expect(await iterator.next() == healthy)
@@ -183,7 +183,7 @@ import WuhuAI
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
       }), log: logs.logger) { id in
-        SessionRepo(sessions: sessions, id: id, hydrationRead: { store, session in
+        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, hydrationRead: { store, session in
           if session == bad { hydrations.withLock { $0 += 1 } }
           return try await store.hydrate(session)
         })
@@ -242,7 +242,7 @@ import WuhuAI
           reply.committed = { _, _ in commits.continuation.yield(()) }
           return reply
         })) { id in
-          SessionRepo(sessions: sessions, id: id, hydrationRead: { store, session in
+          SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, hydrationRead: { store, session in
             if session == bad {
               calls.withLock { $0 += 1 }
               throw DatabaseError(resultCode: .SQLITE_LOCKED)
@@ -285,7 +285,7 @@ import WuhuAI
           reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
           return reply
         })) { id in
-          SessionRepo(sessions: sessions, id: id, hydrationRead: { store, session in
+          SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, hydrationRead: { store, session in
             if session == bad {
               let count = calls.withLock { $0 += 1; return $0 }
               if !recovered.value && (exhausted || count <= 2) { throw DatabaseError(resultCode: .SQLITE_BUSY) }

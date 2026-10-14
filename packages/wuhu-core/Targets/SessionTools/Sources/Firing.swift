@@ -21,13 +21,11 @@ public struct SubscriptionFiring: Sendable {
     try? CronSchedule.parse(expression).next(after: after)
   }
 
-  let handlerScripts: Scripts?
-  let handlerTools: ToolExecutor?
+  let handler: (any HandlerExecutionClient)?
 
-  public init(space: Space, scripts: Scripts? = nil, tools: ToolExecutor? = nil) {
+  public init(space: Space, handler: (any HandlerExecutionClient)?) {
     self.space = space
-    handlerScripts = scripts
-    handlerTools = tools
+    self.handler = handler
   }
 
   public func run() async {
@@ -342,13 +340,13 @@ public struct SubscriptionFiring: Sendable {
       )
     }
     do {
-      guard let handlerScripts, let handlerTools else {
+      guard let handler else {
         throw ScriptError("subscription handlers are not configured in this runtime")
       }
-      let result = try await handlerScripts.runHandler(
+      let result = try await handler.executeHandler(.init(
         path: path, session: subscription.session, rows: rows, fireTime: fireTime,
-        stateJSON: attempt.stateJSON, tools: handlerTools,
-      )
+        stateJSON: attempt.stateJSON,
+      ))
       try Task.checkCancellation()
       var wakes = result.wakes.map(notification)
       if advance == .retire {
@@ -403,7 +401,7 @@ public struct SubscriptionFiring: Sendable {
       switch error {
       case .archiveGraceExpired, .unknownSession:
         try await retire(subscription)
-      case .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
+      case .modelRouteInvalid, .unknownMessage, .unknownConversation, .replyTargetInAnotherConversation,
            .selfDirectMessage, .humanAgentDirectMessage, .taskHasNoBox, .taskTakesNoHumanInput, .noParent, .notTheParent,
            .requestAlreadyOpen, .unknownRequest,
            .busyForRestart, .requestDeadlineWithoutFireDate, .restartOfArchivedSession, .parentUnavailableForCreation, .unusableTitle, .tooDeep, .notInCharge, .mayNotArchive:

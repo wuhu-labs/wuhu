@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -9,6 +13,7 @@ func parseChatCompletionsStream(
   _ sse: AsyncThrowingStream<SSEEvent, any Error>,
   providerID: String,
   model: String,
+  replayScope: String? = nil,
 ) -> AsyncThrowingStream<InferenceEvent, any Error> {
   AsyncThrowingStream { continuation in
     let task = Task {
@@ -148,6 +153,7 @@ func parseChatCompletionsStream(
                       model: model,
                       summary: text,
                       opaque: signature ?? "",
+                      replayScope: replayScope,
                     ))))
                     currentReasoningIndex = content.count - 1
                     currentToolCallIndex = nil

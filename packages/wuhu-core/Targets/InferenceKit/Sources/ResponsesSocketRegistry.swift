@@ -14,6 +14,9 @@ struct SocketRegistryIdentity: Hashable, Sendable {
   var model: String
   var configuration: ModelsDocument.Provider
   var credential: ProviderCredential
+  var replayScope: String? = nil
+  var bindingIdentity: String = "legacy"
+  var routeEpoch: String = "0"
 }
 
 public actor ResponsesSocketRegistry {

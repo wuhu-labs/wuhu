@@ -82,6 +82,7 @@ public struct SessionHydration: Hashable, Sendable {
 public enum SessionStoreError: Error, Equatable, Sendable {
   public static let humanAgentDirectMessageExplanation = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
 
+  case modelRouteInvalid(group: String, member: String)
   case unknownSession(String)
   case archiveGraceExpired(String)
   case busyForRestart(String)
@@ -139,7 +140,7 @@ extension SessionStore {
     let key = id.rawValue
     return try await writer.read { db in
       switch try Sessions.record(key, in: db).executor {
-      case .kernel, .contractor: try Sessions.transcript(key, in: db)
+      case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
       case .claudeCode: Transcript()
       }
     }
@@ -151,7 +152,7 @@ extension SessionStore {
       let record = try Sessions.record(key, in: db)
       let runtime = try Sessions.runtime(key, in: db)
       let transcript: SessionTranscript = switch record.executor {
-      case .kernel: .kernel(try Sessions.kernelTranscript(key, in: db))
+      case .kernel, .modelGroup: .kernel(try Sessions.kernelTranscript(key, in: db))
       case .contractor: .kernel(try Sessions.transcript(key, in: db))
       case .claudeCode: throw ExecutorUnavailableError()
       }

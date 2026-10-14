@@ -37,4 +37,21 @@ public struct ProviderDescriptor: Codable, Equatable, Sendable {
 @Contract
 public struct ProvidersOutput: Codable, Equatable, Sendable {
   public let providers: [ProviderDescriptor]
+  public let groups: [ModelGroupDescriptor]?
+}
+
+@Contract
+public struct ModelGroupMember: Codable, Equatable, Sendable {
+  public let id: String
+  public let provider: String
+  public let model: String
+}
+
+@Contract
+public struct ModelGroupDescriptor: Codable, Equatable, Sendable {
+  public let id: String
+  public let members: [ModelGroupMember]
+  public let defaultEffort: String
+  public let effortLevels: [String]
+  public let policy: JSONValue
 }

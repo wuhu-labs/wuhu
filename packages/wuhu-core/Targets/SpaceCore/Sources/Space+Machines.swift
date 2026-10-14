@@ -218,6 +218,14 @@ extension Space {
       let from = GroupID(rawValue: row.grp)
       let movedRow = MachineRow(id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue)
       try MachineRow.update(movedRow).execute(db)
+      if var member = try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
+        member.grp = group.rawValue
+        try MachineV2MemberRow.update(member).execute(db)
+      }
+      if var presence = try MachineV2PresenceRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
+        presence.grp = group.rawValue
+        try MachineV2PresenceRow.update(presence).execute(db)
+      }
       let record = Self.machineRecord(from: movedRow)
       guard from != group, try Substrate.head(notes, group: from, in: db) != nil else { return record }
       let rev = try Substrate.mintRevision(mtime: mtime, group: group, in: db)
@@ -506,7 +514,7 @@ extension Space {
   // Uniqueness is a lookup inside the write transaction, never a unique index:
   // an index would fail Space.open on a legacy space holding two same-named
   // machines.
-  private static func requireMachineNameFree(_ name: String, besides id: MachineID?, in db: Database) throws {
+  static func requireMachineNameFree(_ name: String, besides id: MachineID?, in db: Database) throws {
     guard let holder = try machineNameHolder(name, in: db), holder != id?.rawValue else { return }
     throw SpaceError.machineNameTaken(name)
   }

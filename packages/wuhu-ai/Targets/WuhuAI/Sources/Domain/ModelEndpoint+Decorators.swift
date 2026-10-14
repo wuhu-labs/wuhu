@@ -1,6 +1,10 @@
 import Dependencies
 import Fetch
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 
 extension ModelEndpoint {
   /// Wrap with a custom fetch client.
@@ -23,6 +27,8 @@ private struct FetchWrappedEndpoint<Base: ModelEndpoint>: ModelEndpoint {
 
   var providerID: String { endpoint.providerID }
   var model: String { endpoint.model }
+  var replayScope: String? { endpoint.replayScope }
+  var routeEpoch: String? { endpoint.routeEpoch }
 
   func runInference(
     context: Context,
@@ -43,6 +49,8 @@ private struct MediaResolverWrappedEndpoint<Base: ModelEndpoint>: ModelEndpoint 
 
   var providerID: String { endpoint.providerID }
   var model: String { endpoint.model }
+  var replayScope: String? { endpoint.replayScope }
+  var routeEpoch: String? { endpoint.routeEpoch }
 
   func runInference(
     context: Context,

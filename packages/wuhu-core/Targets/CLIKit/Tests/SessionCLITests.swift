@@ -20,7 +20,7 @@ private let testModelsJSON = """
 {
   "testing": {
     "dialect": "anthropic",
-    "baseURL": "http://localhost:1",
+    "baseURL": "http://localhost:1", "opaqueReplay": "affine",
     "models": {
       "test-model": {
         "maxInput": 100000,
@@ -425,6 +425,71 @@ private func until(
       #expect(final.requestID == .init("cli-request"))
       #expect(final.content.text.contains("archived before reporting"))
       #expect(try await harness.store.record(requester).lifecycle == .live)
+    }
+  }
+
+  @Test func modelDiscoveryCombinesSeparateFilesAndUpdateLeavesGroupsUntouched() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "unexpected"))]) }
+      let groups = #"{"work":{"kind":"group","defaultEffort":"high","members":[{"id":"first","provider":"testing","model":"test-model"}],"policy":{"type":"select","member":"first"}}}"#
+      let written = try await harness.space.fs(.shared).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
+      #expect(await harness.run(["models", "update"]) == 0)
+      let groupFile = try await harness.space.fs(.shared).read("/model-groups.json")
+      #expect(groupFile.0 == written)
+      #expect(String(decoding: groupFile.1, as: UTF8.self) == groups)
+      let before = await harness.stdout.text
+      #expect(await harness.run(["models", "--json"]) == 0)
+      let discovery = try #require(JSONValue.parse(String(await harness.stdout.text.dropFirst(before.count))))
+      #expect(discovery.object?["providers"]?.object?["testing"] != nil)
+      #expect(discovery.object?["providers"]?.object?["work"] == nil)
+      #expect(discovery.object?["groups"]?.object?["work"]?.object?["kind"] == "group")
+    }
+  }
+
+  @Test func modelUpdateRefusesSeedGroupCollisionWithoutChangingEitherFile() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "unexpected"))]) }
+      let groups = #"{"anthropic":{"kind":"group","defaultEffort":"high","members":[{"id":"first","provider":"testing","model":"test-model"}],"policy":{"type":"select","member":"first"}}}"#
+      _ = try await harness.space.fs(.shared).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
+      let originalModels = try await harness.space.fs(.shared).read("/models.json")
+      let originalGroups = try await harness.space.fs(.shared).read("/model-groups.json")
+      #expect(await harness.run(["models", "update"]) == 1)
+      #expect(await harness.stderr.text.contains("anthropic"))
+      let modelsAfter = try await harness.space.fs(.shared).read("/models.json")
+      let groupsAfter = try await harness.space.fs(.shared).read("/model-groups.json")
+      #expect(modelsAfter.0 == originalModels.0 && modelsAfter.1 == originalModels.1)
+      #expect(groupsAfter.0 == originalGroups.0 && groupsAfter.1 == originalGroups.1)
+    }
+  }
+
+  @Test func groupInspectAndListExposeTheStoredRouteWithoutInference() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionCLIHarness { _ in
+        Issue.record("inspection must not call inference")
+        return reply([.text(.init(text: "unexpected"))])
+      }
+      let route = SessionModelRoute(
+        group: "work", member: "backup", specifier: .init(provider: "testing", model: "test-model", effort: "high"),
+        bindingFingerprint: "binding", epoch: "epoch", reason: .create, placedAt: Date(timeIntervalSince1970: 1), evidence: [],
+      )
+      let id = try await harness.store.createSession(
+        group: .shared, title: "routed", kind: .agent, createdBy: "owner",
+        executor: .modelGroup(id: "work", effort: "high"), modelRoute: route,
+      )
+      let beforeInspect = await harness.stdout.text
+      #expect(await harness.run(["session", "inspect", id.rawValue]) == 0)
+      let inspected = try #require(JSONValue.parse(String(await harness.stdout.text.dropFirst(beforeInspect.count))))
+      #expect(inspected.object?["requestedTarget"]?.object?["modelGroup"] == "work")
+      #expect(inspected.object?["activeProvider"] == "testing")
+      #expect(inspected.object?["activeModel"] == "test-model")
+      #expect(inspected.object?["route"]?.object?["member"] == "backup")
+      #expect(inspected.object?["route"]?.object?["reason"] == "create")
+      let beforeList = await harness.stdout.text
+      #expect(await harness.run(["session", "list"]) == 0)
+      let listed = String(await harness.stdout.text.dropFirst(beforeList.count))
+      #expect(listed.contains("requested_model_group"))
+      #expect(listed.contains("active_provider"))
+      #expect(listed.contains("work") && listed.contains("testing") && listed.contains("test-model"))
     }
   }
 

@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import JSONValue
 import OrderedCollections
 
@@ -12,6 +16,7 @@ func parseGeminiStream(
   _ sse: AsyncThrowingStream<SSEEvent, any Error>,
   providerID: String,
   model: String,
+  replayScope: String? = nil,
 ) -> AsyncThrowingStream<InferenceEvent, any Error> {
   AsyncThrowingStream { continuation in
     let task = Task {
@@ -75,6 +80,7 @@ func parseGeminiStream(
                     model: model,
                     summary: thoughtText,
                     opaque: sig,
+                    replayScope: replayScope,
                   ))))
                   currentReasoningIndex = content.count - 1
                   currentTextIndex = nil
@@ -128,6 +134,7 @@ func parseGeminiStream(
                     model: model,
                     summary: nil,
                     opaque: sig,
+                    replayScope: replayScope,
                   ))))
                   let reasonIdx = content.count - 1
                   currentReasoningIndex = reasonIdx
@@ -178,6 +185,7 @@ func parseGeminiStream(
                     model: model,
                     summary: nil,
                     opaque: sig,
+                    replayScope: replayScope,
                   ))))
                   continuation.yield(.reasoningStart(
                     contentIndex: content.count - 1,

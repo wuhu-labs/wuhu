@@ -28,7 +28,9 @@ func callResult(
   harness.toolStates.values.withLock {
     var state = $0[id] ?? ToolExecutionState()
     state.apply(payload)
-    state.folderRoots.merge(context?.folders ?? [:]) { $1 }
+    if let context {
+      state.apply(delivered: .notification(context.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
+    }
     $0[id] = state
   }
   let failed: Bool = if case .failure = payload { true } else { false }

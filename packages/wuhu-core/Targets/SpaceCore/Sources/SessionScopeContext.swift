@@ -30,7 +30,7 @@ extension SessionStore {
     let row = SessionScopeContextRow(
       sessionID: id.rawValue,
       toolCallID: toolCallID.rawValue,
-      folders: try Sessions.encode(context.folders),
+      folders: try Sessions.encode(ScopeContextMetadata(folders: context.folders, deliveredContext: context.deliveredContext ?? [:])),
       text: context.text,
     )
     try await writer.write { db in
@@ -52,7 +52,33 @@ extension SessionStore {
         .where({ $0.sessionID.eq(key) && $0.toolCallID.eq(callID) })
         .fetchOne(db)
       else { return nil }
-      return ScopeContext(folders: try Sessions.decode([String: String?].self, from: row.folders), text: row.text)
+      let metadata = try Sessions.decode(ScopeContextMetadata.self, from: row.folders)
+      return ScopeContext(folders: metadata.folders, deliveredContext: metadata.deliveredContext.isEmpty ? nil : metadata.deliveredContext, text: row.text)
+    }
+  }
+}
+
+private struct ScopeContextMetadata: Codable {
+  var folders: [String: String?]
+  var deliveredContext: [String: String]
+
+  init(folders: [String: String?], deliveredContext: [String: String]) {
+    self.folders = folders
+    self.deliveredContext = deliveredContext
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case folders, deliveredContext
+  }
+
+  init(from decoder: any Decoder) throws {
+    let keyed = try decoder.container(keyedBy: CodingKeys.self)
+    if keyed.contains(.folders) {
+      folders = try keyed.decode([String: String?].self, forKey: .folders)
+      deliveredContext = try keyed.decode([String: String].self, forKey: .deliveredContext)
+    } else {
+      folders = try decoder.singleValueContainer().decode([String: String?].self)
+      deliveredContext = [:]
     }
   }
 }

@@ -247,18 +247,18 @@ final class ScriptExecution: Sendable {
 
   // MARK: The engine's side
 
-  func run(space: Space) async {
+  func run(owner: any ScriptOwnerClient) async {
     let killed = state.withLock { state -> ScriptStop? in
       state.started = true
       return state.killRequested
     }
     if let killed { return finish(.killed(killed)) }
     await withTaskGroup(of: Void.self) { group in
-      group.addTask { await self.deliver(to: space) }
+      group.addTask { await self.deliver(to: owner) }
       group.addTask { await self.processes.run() }
       group.addTask { await self.v2Operations.run() }
       let ending = await withTaskGroup(of: ScriptEnding?.self) { race in
-        race.addTask { await self.evaluate(space: space) }
+        race.addTask { await self.evaluate(owner: owner) }
         race.addTask { await self.supervise() }
         let first = await race.next() ?? nil
         race.cancelAll()
@@ -271,7 +271,7 @@ final class ScriptExecution: Sendable {
       let minted = await processes.shutdown { [machines] id in try await machines?.exec.kill(id) }
       if !minted.isEmpty {
         do {
-          try await space.releaseScriptExecs(script: id)
+          try await owner.releaseScriptExecs(script: id)
         } catch is CancellationError {
           // The server is shutting down: the rows stay, and the next boot
           // reaps the processes and tells the owner.
@@ -284,14 +284,14 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func evaluate(space: Space) async -> ScriptEnding {
+  private func evaluate(owner: any ScriptOwnerClient) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
-    ScriptBindings(execution: self, space: space, secrets: secrets).install(in: engine)
-    ScriptFiles(space: space, execution: self).install(in: engine)
-    ScriptSpace(execution: self, space: space).install(in: engine)
-    ScriptDiscovery(execution: self, space: space).install(in: engine)
-    ScriptMachineBindings(execution: self, space: space, access: machines).install(in: engine)
-    ScriptMachineV2Bindings(execution: self, space: space, access: machinesV2).install(in: engine)
+    ScriptBindings(execution: self, owner: owner, secrets: secrets).install(in: engine)
+    ScriptFiles(owner: owner, execution: self).install(in: engine)
+    ScriptSpace(execution: self, owner: owner).install(in: engine)
+    ScriptDiscovery(execution: self, owner: owner).install(in: engine)
+    ScriptMachineBindings(execution: self, owner: owner, access: machines).install(in: engine)
+    ScriptMachineV2Bindings(execution: self, owner: owner, access: machinesV2).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)
@@ -301,9 +301,8 @@ final class ScriptExecution: Sendable {
       try engine.execute(scriptPrelude, name: "<prelude>")
       if let handler { try handler.install(in: engine) }
       try engine.defineModule("wuhu:machine", source: machineModule)
-      let acting = try await space.principal(of: session).group
       let modules = scriptModules(
-        in: space, at: Rev(try await space.currentRevision()), acting: acting, readable: try await space.reads(acting), typedErrors: handler != nil,
+        owner: owner, snapshot: try await owner.moduleSnapshot(for: session), typedErrors: handler != nil,
       )
       try await engine.run(module: source, name: "script", meta: ["session": .string(session.rawValue)], loader: modules)
       return .released
@@ -347,9 +346,9 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func deliver(to space: Space) async {
+  private func deliver(to owner: any ScriptOwnerClient) async {
     for await text in outbox {
-      await notify(space, session, script: id, text)
+      await notify(owner, session, script: id, text)
     }
   }
 
@@ -520,7 +519,7 @@ struct ScriptConsole {
 }
 
 // Wakes `session` with a message from script `script`.
-func notify(_ space: Space, _ session: SessionID, script: String, _ text: String) async {
+func notify(_ owner: any ScriptOwnerClient, _ session: SessionID, script: String, _ text: String) async {
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
   let notification = SystemNotification(
@@ -531,7 +530,7 @@ func notify(_ space: Space, _ session: SessionID, script: String, _ text: String
     content: .init(text: text),
   )
   do {
-    _ = try await space.sessions.enqueue(session, input: .notification(notification))
+    try await owner.notify(session: session, notification: notification)
   } catch {
     Logger(label: "wuhu.run-script").warning("script \(script) could not reach \(session.rawValue): \(error)")
   }

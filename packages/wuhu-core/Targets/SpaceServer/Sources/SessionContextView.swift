@@ -10,7 +10,7 @@ func sessionContext(
 ) async -> SessionContext? {
   switch record.executor {
   case .claudeCode: return nil
-  case .kernel:
+  case .kernel, .modelGroup:
     guard let transcript = try? await store.transcript(record.id) else { return nil }
     let budget = await budget(record.id)
     let maxTokens = budget.usableTokens

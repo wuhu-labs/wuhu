@@ -18,6 +18,7 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let executor: String?
   public let provider: String?
   public let model: String?
+  public let modelGroup: String?
   public let effort: String?
   public let template: String?
   public let identity: String?
@@ -45,6 +46,7 @@ public struct SessionTemplateDescriptor: Codable, Equatable, Sendable {
   public let kind: SessionKindPayload?
   public let provider: String?
   public let model: String?
+  public let modelGroup: String?
   public let effort: String?
   public let description: String?
 }
@@ -75,6 +77,8 @@ public struct SessionCreateOutput: Codable, Equatable, Sendable {
   public let id: String
   public let executor: String
   public let model: String?
+  public let provider: String?
+  public let modelGroup: String?
   public let effort: String?
   public let kind: SessionKindPayload
   public let parent: String?
@@ -143,13 +147,14 @@ public struct SessionTagsInput: Codable, Equatable, Sendable {
   public let tags: [String]
 }
 
-// Omitted executor fields keep the session's current spec; the merge is
-// field-by-field over the live executor, not a replacement.
+// Omitted target fields keep the requested target. An explicit modelGroup or
+// provider/model replaces the target as a whole; effort can change independently.
 @Contract
 public struct SessionRestartInput: Codable, Equatable, Sendable {
   public let executor: String?
   public let provider: String?
   public let model: String?
+  public let modelGroup: String?
   public let effort: String?
   public let message: String?
   public let identity: String?
@@ -162,6 +167,8 @@ public struct SessionRestartOutput: Codable, Equatable, Sendable {
   public let generation: Int
   public let executor: String
   public let model: String?
+  public let provider: String?
+  public let modelGroup: String?
   public let effort: String?
   public let queued: Int?
 }
@@ -441,4 +448,13 @@ public struct ChannelMembersInput: Codable, Equatable, Sendable {
 @Contract
 public struct ChannelRenameInput: Codable, Equatable, Sendable {
   public let title: String?
+}
+
+@Contract
+public struct SessionModelRouteOutput: Codable, Equatable, Sendable {
+  public let requestedTarget: JSONValue
+  public let activeProvider: String?
+  public let activeModel: String?
+  public let route: JSONValue?
+  public let decisions: JSONValue?
 }

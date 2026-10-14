@@ -135,6 +135,7 @@ private func sessionRouter(
   let executor = sessionToolExecutor(
     space: space, hub: hub, credentials: credentials, scripts: runtime.scripts,
     control: sessionControl { runtime.service },
+    usage: runtime.usage, resolveModelGroup: runtime.resolveModelGroup, prepareModelRoute: runtime.prepareModelRoute,
   )
   @Dependency(\.uuid) var uuid
   let forward: RouteHandler = { request, _ in
@@ -259,6 +260,7 @@ private func sessionRouter(
     arguments["executor"] = input.executor.map(JSONValue.string)
     arguments["provider"] = input.provider.map(JSONValue.string)
     arguments["model"] = input.model.map(JSONValue.string)
+    arguments["modelGroup"] = input.modelGroup.map(JSONValue.string)
     arguments["effort"] = input.effort.map(JSONValue.string)
     arguments["template"] = input.template.map(JSONValue.string)
     arguments["tags"] = input.tags.map { .array($0.map(JSONValue.string)) }
@@ -276,12 +278,15 @@ private func sessionRouter(
       let record = try await store.record(created.sessionID)
       let (model, effort): (String?, String?) = switch record.executor {
       case .kernel(let specifier), .claudeCode(let specifier): (specifier.model, specifier.effort)
+      case let .modelGroup(_, effort): (try await store.modelRoute(record.id)?.specifier.model, effort)
       case .contractor: (nil, nil)
       }
       return try Response.json(SessionCreateOutput(
         id: record.id.rawValue,
         executor: record.executor.kind,
         model: model,
+        provider: await activeModelSpecifier(record, store: store)?.provider,
+        modelGroup: { if case let .modelGroup(id, _) = record.executor { id } else { nil } }(),
         effort: effort,
         kind: record.kind == .agent ? .agent : .task,
         parent: record.parent?.rawValue,

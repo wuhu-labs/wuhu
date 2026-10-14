@@ -92,3 +92,23 @@ import WuhuAI
     }
   }
 }
+
+extension ResponsesSocketRegistryTests {
+  @Test func routeEpochRetiresSocketWithoutChangingReplayScope() async throws {
+    let registry = ResponsesSocketRegistry()
+    var document = try ModelsDocument(json: fixtureJSON)
+    document.providers["openai"]?.transport = .websocket
+    let catalog = ProviderCatalog(document: document, credentials: .bound { _ in
+      CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "socket-fixture")
+    })
+    let spec = ModelSpecifier(provider: "openai", model: "gpt-5.4", effort: "medium")
+    let first = try await catalog.resolve(spec, session: .init("one"), routeEpoch: "one")
+    let next = try await catalog.resolve(spec, session: .init("one"), routeEpoch: "two")
+    #expect(first.replayScope == next.replayScope)
+    let original = try await registry.acquire(session: .init("one"), model: first)
+    await registry.release(session: .init("one"), lease: original.lease)
+    let changed = try await registry.acquire(session: .init("one"), model: next)
+    #expect(changed.session !== original.session)
+    await registry.shutdown()
+  }
+}

@@ -54,6 +54,7 @@ public struct CommandRunner: Sendable {
   public var environment: [String: String]
   public var currentDirectory: String
   public var version: String
+  public var machineV2ServiceCommand: (@Sendable ([String]) async throws -> String)?
 
   public init(
     fetch: FetchClient,
@@ -71,6 +72,7 @@ public struct CommandRunner: Sendable {
     environment: [String: String],
     currentDirectory: String,
     version: String = "0.0.0-unstamped",
+    machineV2ServiceCommand: (@Sendable ([String]) async throws -> String)? = nil,
   ) {
     self.fetch = fetch
     self.observeFetch = observeFetch ?? fetch
@@ -87,6 +89,7 @@ public struct CommandRunner: Sendable {
     self.environment = environment
     self.currentDirectory = currentDirectory
     self.version = version
+    self.machineV2ServiceCommand = machineV2ServiceCommand
   }
 
   public func run(arguments: [String]) async -> Int32 {
@@ -118,6 +121,10 @@ public struct CommandRunner: Sendable {
           "serving \(config.folder) on \(config.host):\(config.port) at \(config.origin ?? "https://localhost:\(config.port)")\n",
         )
         try await serve(config)
+        return 0
+      }
+      if case let .machineV2Install(install) = command {
+        try await self.runMachineV2Install(install)
         return 0
       }
       if case let .upgrade(upgrade) = command {
@@ -277,6 +284,7 @@ enum Command: Equatable {
   case machineAdd(name: String?)
   case machineJoin(server: String, fingerprint: String?, name: String?)
   case machineRun
+  case machineV2Install(MachineV2InstallCommand)
   case machineList
   case machineName(machine: String, name: String)
   case machineRotate(id: String)
@@ -291,6 +299,7 @@ enum Command: Equatable {
   case ps
   case kill(id: String)
   case skillExport
+  case modelsList(json: Bool)
   case modelsUpdate
   case usage(json: Bool)
   case toolRoster(executor: SessionToolExecutor?, json: Bool)
@@ -315,6 +324,7 @@ enum Command: Equatable {
   case sessionRestart(SessionRestartCommand)
   case sessionLog(id: String, view: SessionLogView)
   case sessionEntry(session: String, ref: String)
+  case sessionInspect(id: String)
   case sessionList
   case groupList
   case groupUse(String?)
@@ -345,6 +355,7 @@ struct SessionCreateCommand: Equatable {
   var title: String
   var provider: String?
   var model: String?
+  var modelGroup: String? = nil
   var effort: String?
   var tags: [String]
   var template: String?
@@ -356,6 +367,7 @@ struct SessionRestartCommand: Equatable {
   var id: String
   var provider: String?
   var model: String?
+  var modelGroup: String? = nil
   var effort: String?
   var message: String?
 }

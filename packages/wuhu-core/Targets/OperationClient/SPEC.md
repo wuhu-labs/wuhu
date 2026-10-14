@@ -15,3 +15,7 @@ The real store must implement atomic unique owner claims with immutable input id
 `OperationClientTestSupport.verifyOperationStoreContract` is an importable test-support helper for owner uniqueness/conflict, output payload/cursor, pending input offset/payload/EOF and accepted offset, and rollback of every payload/cursor field. It rejects stores that drop payloads or damage them on rollback; concrete future stores must run it plus their own crash/restart tests.
 
 `OperationStore.transaction` accepts an escaping Sendable update for concrete asynchronous transactional stores. `reconcile(id, holdMs:)` can hold normal state polls, while preserving stop-only reconciliation for abandoned records. A nonzero hold does not drain output or relax deadlines.
+
+`reconcileAbandoned` requires durable stop intent and keeps that idempotent stop deliverable after the local full-silence verdict became unknown. It does not resend a start, reset the caller budget or erase unknown without fresh conclusive evidence. `acknowledgeLeave` sends the explicit `leaveAck=true` describe request; only the runner's settled `leaving` reply confirms success. A regular description is not a departure acknowledgement.
+
+A definitive unknown-operation response after the runner has expired its receipt cannot overwrite a persisted terminal verdict. Startup drain/ack may stop asking about that receipt while retaining the known execution outcome.

@@ -1,0 +1,22 @@
+name: WorkerProtocol
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Fetch
+  - Serve
+  - ServeNIO
+  - JSONValue
+  - HTTPTypes
+  - NIOCore
+  - NIOPosix
+tests:
+  dependencies:
+    - Fetch
+    - FetchAsyncHTTPClient
+    - AsyncHTTPClient
+    - NIOCore
+    - NIOPosix
+    - JSONValue

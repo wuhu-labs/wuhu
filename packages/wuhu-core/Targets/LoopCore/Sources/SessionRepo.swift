@@ -11,44 +11,56 @@ import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
 
 struct SessionRepo: Sendable {
-  var sessions: SessionStore
+  var owner: any SessionExecutionOwnerClient
   var id: SessionID
-  var hydrationRead: @Sendable (SessionStore, SessionID) async throws -> SessionHydration = { try await $0.hydrate($1) }
-  var queueHeadRead: @Sendable (SessionStore, SessionID) async throws -> Int = { try await $0.queueHead($1) }
-  var pendingCommandRead: @Sendable (SessionStore, SessionID) async throws -> SessionCommand? = { try await $0.pendingCommand($1) }
-  var compactClaimWrite: @Sendable (SessionStore, SessionID, Int) async throws -> CompactRequestClaim? = { try await $0.claimCompactRequest($1, generation: $2) }
-  var archiveWrite: @Sendable (SessionStore, SessionID, Duration) async throws -> Date = { try await $0.archive($1, grace: $2) }
+  var hydrationRead: @Sendable (any SessionExecutionOwnerClient, SessionID) async throws -> SessionHydration = { try await $0.hydrate($1) }
+  var queueHeadRead: @Sendable (any SessionExecutionOwnerClient, SessionID) async throws -> Int = { try await $0.queueHead($1) }
+  var pendingCommandRead: @Sendable (any SessionExecutionOwnerClient, SessionID) async throws -> SessionCommand? = { try await $0.pendingCommand($1) }
+  var compactClaimWrite: @Sendable (any SessionExecutionOwnerClient, SessionID, Int) async throws -> CompactRequestClaim? = { try await $0.claimCompactRequest($1, generation: $2) }
+  var archiveWrite: @Sendable (any SessionExecutionOwnerClient, SessionID, Duration) async throws -> Date = { try await $0.archive($1, grace: $2) }
+
+  func registeredSubscriptions() async throws -> (ids: Set<SubscriptionID>, handlers: Set<SubscriptionID>) {
+    try await owner.registeredSubscriptions(id)
+  }
 
   func hydrate() async throws -> SessionHydration {
-    try await hydrationRead(sessions, id)
+    try await hydrationRead(owner, id)
   }
 
   func enqueue(input: QueueInput) async throws -> Int {
-    try await sessions.enqueue(id, input: input)
+    try await owner.enqueue(id, input: input)
   }
 
   func drainQueue() async throws -> QueueDrain {
-    try await sessions.drainQueue(id)
+    try await owner.drainQueue(id)
+  }
+
+  func discardPendingCacheWarming() async throws -> Transcript {
+    try await owner.discardPendingCacheWarming(id)
   }
 
   func append(_ items: [TranscriptItem], transcript: Transcript, completingCompactRequest: CompactRequestClaim? = nil) async throws {
-    try await sessions.append(id, items: items, transcript: transcript, completingCompactRequest: completingCompactRequest)
+    try await owner.append(id, items: items, transcript: transcript, completingCompactRequest: completingCompactRequest)
   }
 
   func scopeContext(_ callID: ToolCallID) async throws -> ScopeContext? {
-    try await sessions.scopeContext(id, toolCallID: callID)
+    try await owner.scopeContext(id, toolCallID: callID)
   }
 
   func queueHead() async throws -> Int {
-    try await queueHeadRead(sessions, id)
+    try await queueHeadRead(owner, id)
   }
 
   func pendingCommand() async throws -> SessionCommand? {
-    try await pendingCommandRead(sessions, id)
+    try await pendingCommandRead(owner, id)
   }
 
   func claimCompactRequest(generation: Int) async throws -> CompactRequestClaim? {
-    try await compactClaimWrite(sessions, id, generation)
+    try await compactClaimWrite(owner, id, generation)
+  }
+
+  func writePortableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript {
+    try await owner.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript)
   }
 
   func writeCompaction(
@@ -57,30 +69,30 @@ struct SessionRepo: Sendable {
     kept: Range<Int>?,
     completingCompactRequest: CompactRequestClaim? = nil,
   ) async throws -> Transcript {
-    try await sessions.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest)
+    try await owner.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest)
   }
 
   func markInterrupted() async throws {
-    try await sessions.markInterrupted(id)
+    try await owner.markInterrupted(id)
   }
 
   func markResumed() async throws {
-    try await sessions.markResumed(id)
+    try await owner.markResumed(id)
   }
 
   func markErrored(errorDescription: String) async throws {
-    try await sessions.markErrored(id, message: errorDescription)
+    try await owner.markErrored(id, message: errorDescription)
   }
 
   func archive(grace: Duration) async throws -> Date {
-    try await archiveWrite(sessions, id, grace)
+    try await archiveWrite(owner, id, grace)
   }
 
   func unarchive() async throws {
-    try await sessions.unarchive(id)
+    try await owner.unarchive(id)
   }
 
-  func restart(executor: SessionExecutor?, note: String?) async throws -> SessionRestart {
-    try await sessions.restart(id, executor: executor, note: note)
+  func restart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
+    try await owner.restart(id, executor: executor, note: note, modelRoute: modelRoute)
   }
 }

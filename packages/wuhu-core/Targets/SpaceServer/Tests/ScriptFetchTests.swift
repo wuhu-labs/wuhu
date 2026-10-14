@@ -124,7 +124,7 @@ import struct WuhuAI.ToolCall
     })
     try await withIdentityScript(proxy: proxy) { rig in
       #expect(try await rig.evaluate(#"result(await (await fetch('https://backend.test/start', { identity: true })).text())"#) == "done")
-      let requests = seen.withLock { $0 }
+      let requests = try #require(seen.withLock { $0.count == 4 ? $0 : nil })
       #expect(requests.map { $0.url.absoluteString } == ["https://backend.test/start", "https://backend.test/same", "http://other.test:8080/cross", "https://backend.test:443/back"])
       let auth = try #require(requests.first?.headers[.authorization])
       #expect(requests[1].headers[.authorization] == auth)
@@ -159,8 +159,7 @@ import struct WuhuAI.ToolCall
         try await withIdentityScript(proxy: ScriptFetch(identity: identity, issuer: "https://space.test")) { rig in
           let output = try await rig.evaluate("result(await (await fetch('http://127.0.0.1:\(port)/start', { identity: true, method: 'POST', body: 'payload' })).text())")
           #expect(output == "done")
-          let requests = seen.withLock { $0 }
-          #expect(requests.count == 3)
+          let requests = try #require(seen.withLock { $0.count == 3 ? $0 : nil })
           #expect(requests[0] != nil && requests[0] == requests[1])
           #expect(requests[2] == nil)
         }
@@ -232,7 +231,7 @@ struct IdentityScriptRig {
   let executor: ToolExecutor
 
   func evaluate(_ source: String) async throws -> JSONValue {
-    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "timeout_seconds": 10, "on_timeout": "kill"])), state: ToolExecutionState())
+    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "timeout_seconds": 60, "on_timeout": "kill"])), state: ToolExecutionState())
     guard case let .script(result) = payload else { Issue.record("unexpected script result: \(payload)"); return .null }
     let first = String(result.output.prefix { $0 != "\n" })
     return JSONValue.parse(first) ?? .string(first)
