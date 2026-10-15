@@ -1,0 +1,36 @@
+name: WorkerOwner
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - ExecutionOwner
+  - WorkerProtocol
+  - LoopCore
+  - SessionDomain
+  - SpaceCore
+  - SpaceContract
+  - SessionTools
+  - InferenceKit
+  - Credentials
+  - Fetch
+  - JSONValue
+  - WuhuAI
+  - Logging
+tests:
+  dependencies:
+    - Scratch
+    - ExecutionOwner
+    - WorkerProtocol
+    - LoopCore
+    - SessionDomain
+    - SpaceCore
+    - SpaceContract
+    - SessionTools
+    - InferenceKit
+    - Credentials
+    - Fetch
+    - JSONValue
+    - WuhuAI
+    - Logging

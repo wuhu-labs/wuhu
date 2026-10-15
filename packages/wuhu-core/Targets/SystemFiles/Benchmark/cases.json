@@ -148,12 +148,8 @@
       "prompt": "Create an idle child task titled bench-{tag}-group-child using the named model group bench-deepseek. Request that group as its target, not the concrete DeepSeek provider/model behind it. Don't send it a message or start any work yet; tell me the child's session id.",
       "required": [
         "child_created",
-        "child_requested_group",
-        "skill_reads"
+        "child_requested_group"
       ],
-      "skills": {
-        "sessions": true
-      },
       "judge": "PASS only if an actual child task titled bench-{tag}-group-child was created under the subject with requested modelGroup bench-deepseek, and the reply identifies the child. Choosing deepseek/deepseek-flash directly or merely claiming to have used the group is a fail. The child must remain idle without a message/request."
     },
     {

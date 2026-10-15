@@ -10,6 +10,52 @@ import SessionDomain
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct CompactClaimLifecycleTests {
+  @Test func supersededStrictClaimReloadsReplacementInsteadOfErroringLoop() async throws {
+    try await withKernelDeps { _ in
+      let sessions = try Space.inMemory().sessions
+      let id = try await sessions.createSession(group: .shared, title: "strict replacement", kind: .agent, createdBy: "morgan", model: .test)
+      try await sessions.requestCommand(id, .compact(instructions: "old"))
+      let entered = AsyncStream<Void>.makeStream()
+      let release = AsyncStream<Void>.makeStream()
+      let gate = Task { for await _ in release.stream { break } }
+      defer { entered.continuation.finish(); release.continuation.finish(); gate.cancel() }
+      let attempts = Box(0), commits = Box<[String]>([])
+      let actor = SessionActor(
+        id: id,
+        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, compactClaimWrite: { store, id, generation in
+          try await store.claimCompactRequest(id, generation: generation)?.requiringCurrentCompletion()
+        }),
+        loopConfig: makeConfig(inference: { request in
+          let count = attempts.withLock { $0 += 1; return $0 }
+          if count == 1 { entered.continuation.yield(()); await gate.value }
+          let label = count == 1 ? "stale" : "current"
+          if count == 2 {
+            #expect(request.mode == .forcedCompact)
+            #expect(request.transcript.items.contains { if case let .notification(n) = $0 { n.content.text.contains("replacement") } else { false } })
+          }
+          var reply = Fix.reply(label)
+          reply.committed = { _, _ in commits.withLock { $0.append(label) } }
+          return reply
+        }, compact: { _ in .init(summary: "folded") }),
+        liveness: LivenessTracker(),
+      )
+      await actor.activate()
+      try await withCallback(of: Void.self) { actor.post(.wake($0)) }
+      for await _ in entered.stream { break }
+      try await sessions.requestCommand(id, .compact(instructions: "replacement"))
+      release.continuation.yield(())
+      try await until("replacement compact completes") {
+        let command = try await sessions.pendingCommand(id)
+        let generation = try await sessions.generationState(id).generation
+        return command == nil && generation == 1
+      }
+      #expect(!commits.value.contains("stale"))
+      #expect(commits.value.contains("current"))
+      #expect(try await sessions.record(id).work != .errored)
+      await actor.shutdown()
+    }
+  }
+
   @Test(arguments: [(false, false), (false, true), (true, false), (true, true)], [nil, "keep the notes"] as [String?])
   func teardownDuringClaimPreservesOrIntentionallyDiscardsCommand(ordering: (restart: Bool, beforeWrite: Bool), instructions: String?) async throws {
     let (restart, beforeWrite) = ordering

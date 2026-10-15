@@ -74,6 +74,22 @@ enum Main {
       )
       $0[UpgradeEnvironment.self] = .live
     }
+    if CommandLine.arguments.dropFirst() == ["_execution-worker"] {
+      do {
+        var bootstrap = Data()
+        while bootstrap.count <= 16 << 10 {
+          guard let chunk = try FileHandle.standardInput.read(upToCount: (16 << 10) + 1 - bootstrap.count), !chunk.isEmpty else { break }
+          bootstrap.append(chunk)
+        }
+        try await ExecutionWorker.run(bootstrap: bootstrap, release: BuildStamp.version)
+        try await client.shutdown()
+        try await inferenceClient.shutdown()
+        exit(0)
+      } catch {
+        FileHandle.standardError.write(Data("Execution worker stopped\n".utf8))
+        exit(1)
+      }
+    }
     // Space traffic dials pin-mode when the user store has a recorded pin and
     // system-PKI mode otherwise; nothing is recorded outside wuhu use/trust.
     let trust: ServerTrust

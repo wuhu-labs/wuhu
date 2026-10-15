@@ -181,6 +181,36 @@ import Testing
     #expect(try await !space.isAdmin(.anonymous, of: .shared))
   }
 
+  // administeredGroups(by:) names exactly the groups isAdmin admits, for an
+  // agent session, a human admin and non-admin, and an anonymous caller.
+  @Test func administeredGroupsNamesWhatIsAdminAdmitsForEveryActor() async throws {
+    let space = try makeSpace()
+    let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
+    let alice = try await space.addAccount(kind: .human, name: "alice")
+    let morgansGroup = try #require(try await space.personalGroup(of: morgan.id))
+    let alicesGroup = try #require(try await space.personalGroup(of: alice.id))
+    let agent = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
+    let task = try await space.sessions.createSession(
+      group: .shared, title: "St", kind: .task, parent: agent, createdBy: "owner", executor: .kernel(.test),
+    )
+    let alicePerson = SpaceCore.Actor.person(persona: alicesGroup.rawValue, account: alice.id)
+    let cases: [(SpaceCore.Actor, Set<GroupID>)] = [
+      (.session(agent), [.shared]),
+      (.session(task), []),
+      (.person(persona: morgansGroup.rawValue, account: morgan.id), [.shared, morgansGroup]),
+      (alicePerson, [alicesGroup]),
+      (.anonymous, []),
+    ]
+    for (actor, expected) in cases {
+      #expect(try await space.administeredGroups(by: actor) == expected, "\(actor)")
+      for group in [GroupID.shared, morgansGroup, alicesGroup] {
+        #expect(try await space.isAdmin(actor, of: group) == expected.contains(group), "\(actor) of \(group)")
+      }
+    }
+    _ = try await space.removeAccount(alice.id)
+    #expect(try await space.administeredGroups(by: alicePerson).isEmpty)
+  }
+
   @Test func aPersonAdministersTheirOwnGroupAndSharedOnlyByEdge() async throws {
     let space = try makeSpace()
     let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)

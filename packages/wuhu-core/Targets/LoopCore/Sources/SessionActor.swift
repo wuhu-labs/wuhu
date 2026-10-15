@@ -30,7 +30,7 @@ actor SessionActor {
   }
 
   struct LiveState {
-    let mountID = UUID()
+    let mountID: UUID
     var generation: Int
     var compactRequestClaim: CompactRequestClaim?
     var transcript: Transcript
@@ -282,16 +282,36 @@ actor SessionActor {
     while await nudges.next() != nil {
       let token = liveness.start()
       defer { liveness.end(token) }
+      let pass = UUID()
       do {
-        try await loop()
-        await afterLoop()
+        try await loopConfig.executionActivity(id, pass, true)
+        do {
+          try await loop()
+          await afterLoop()
+        } catch is StaleCompactClaim {
+          let hydration = try await repo.hydrate()
+          let current = try live
+          current.parkWake?.task.cancel()
+          var reloaded = LiveState(hydration: hydration, now: date(), mountID: current.mountID)
+          reloaded.sessionStatus = current.sessionStatus
+          reloaded.archiving = current.archiving
+          liveState = reloaded
+          nudge()
+        }
       } catch is CancellationError {
+        await endExecutionActivity(pass)
         return
       } catch {
-        guard !Task.isCancelled else { return }
-        await markErrored(error: error)
+        if !Task.isCancelled { await markErrored(error: error) }
       }
+      await endExecutionActivity(pass)
     }
+  }
+
+  private func endExecutionActivity(_ pass: UUID) async {
+    let activity = loopConfig.executionActivity
+    let id = id
+    await Task { try? await activity(id, pass, false) }.value
   }
 
   // Every queue writer signals the work bus and lands here: deliveries written
@@ -400,7 +420,7 @@ actor SessionActor {
 }
 
 extension SessionActor.LiveState {
-  init(hydration: SessionHydration, now: Date) {
+  init(hydration: SessionHydration, now: Date, mountID: UUID = UUID()) {
     let status: SessionActor.RunStatus = if hydration.record.hold == .interrupted {
       .interrupted
     } else if hydration.record.work == .errored {
@@ -409,6 +429,7 @@ extension SessionActor.LiveState {
       .healthy
     }
     self.init(
+      mountID: mountID,
       generation: hydration.generation,
       transcript: { switch hydration.transcript { case let .kernel(transcript): transcript } }(),
       queueHead: hydration.queueHead,

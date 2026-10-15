@@ -155,6 +155,7 @@ public struct InferenceExecutor: Sendable {
     let elapsed = started.duration(to: clock.now)
     let ttft = firstEventSeen ? ttftDuration : nil
 
+    await trace?.close(attemptID)
     if let failure {
       hub?.publish(session: session, .finished(
         attemptID: attemptID,

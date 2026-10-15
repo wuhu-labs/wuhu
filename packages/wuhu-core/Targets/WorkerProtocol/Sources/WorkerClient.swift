@@ -31,6 +31,11 @@ public actor WorkerClient {
     return agreed
   }
 
+  public func requireCapability(_ capability: String) throws {
+    guard let agreement else { throw WorkerProtocolError(.notNegotiated, message: "Worker hello must succeed before execution") }
+    guard agreement.capabilities.contains(capability) else { throw WorkerProtocolError(.missingCapability, message: "Missing execution capability: " + capability) }
+  }
+
   public func call(_ call: WorkerCall) async throws -> JSONValue {
     try requireAgreement(call)
     let body = try Body.json(call)

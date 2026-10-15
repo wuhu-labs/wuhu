@@ -68,6 +68,14 @@ private let chatGPTOnly = CredentialResolver { _ in
 }
 
 @Suite struct CatalogTests {
+  @Test func additiveProviderKeysRemainBackwardCompatible() throws {
+    let json = try #require(String(data: fixtureJSON, encoding: .utf8))
+      .replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"acceptsUnsignedThinking\": true, \"dialect\": \"anthropic\"")
+    let document = try ModelsDocument(json: Data(json.utf8))
+    #expect(document.providers.keys.sorted() == ["anthropic", "codex", "deepseek", "openai"])
+    #expect(document.providers["anthropic"]?.models["claude-sonnet-5"]?.maxInput == 200_000)
+  }
+
   @Test func documentRoundTrips() throws {
     let document = try ModelsDocument(json: fixtureJSON)
     let reencoded = try ModelsDocument(json: JSONEncoder().encode(document))

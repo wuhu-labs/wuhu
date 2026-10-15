@@ -30,8 +30,8 @@ import WorkerProtocol
   let listener = try await WorkerListener.bind(socket: socket, handler: endpoint.handler)
   var configuration = HTTPClient.Configuration()
   configuration.redirectConfiguration = .disallow
-  let control = HTTPClient(configuration: configuration)
-  let bytes = HTTPClient(configuration: configuration)
+  let control = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
+  let bytes = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
   let result: Result<Void, any Error>
   var stage = "hello"
   do {
@@ -295,4 +295,43 @@ private func createStaleSocket(at path: String) throws {
   }
   await drain.value
   await replacement?.shutdown()
+}
+
+@Test func finiteDownloadsDeclareLengthAndCompleteAcrossClosingConnections() async throws {
+  let directory = "/tmp/worker-" + UUID().uuidString
+  #expect(mkdir(directory, 0o700) == 0)
+  defer { _ = rmdir(directory) }
+  let socket = directory + "/owner.sock"
+  let payload = Data(repeating: 42, count: 128 << 10)
+  let endpoint = try WorkerEndpoint(token: "token", hello: .init(release: "parent"), invoke: { $0.payload }, upload: { _, body in
+    try await body.discard()
+  }, download: { call in call.operation == "empty" ? .empty : .bytes(payload) })
+  let listener = try await WorkerListener.bind(socket: socket, handler: endpoint.handler)
+  let control = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton))
+  let bytes = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton))
+  let result: Result<Void, any Error>
+  do {
+    let actual = FetchClient.asyncHTTPClient(bytes, timeout: .seconds(10))
+    let inspecting = FetchClient { request in
+      let response = try await actual(request)
+      let header = try #require(request.headers[.init("X-Wuhu-Worker-Stream")!])
+      let metadata = try #require(Data(base64Encoded: header))
+      let call = try JSONDecoder().decode(WorkerCall.self, from: metadata)
+      #expect(response.headers[.init("Content-Length")!] == (call.operation == "empty" ? "0" : String(payload.count)))
+      #expect(response.headers[.init("Transfer-Encoding")!] == nil)
+      return response
+    }
+    let client = try WorkerClient(socket: socket, token: "token", control: .asyncHTTPClient(control, timeout: .seconds(10)), bytes: inspecting)
+    _ = try await client.negotiate(.init(release: "worker"))
+    for _ in 0 ..< 30 {
+      #expect(try await client.stream(.init(operation: "finite")).data() == payload)
+      #expect(try await client.stream(.init(operation: "empty")).data().isEmpty)
+      #expect(try await client.call(.init(operation: "control", payload: "alive")) == "alive")
+    }
+    result = .success(())
+  } catch { result = .failure(error) }
+  await listener.shutdown()
+  try await control.shutdown()
+  try await bytes.shutdown()
+  try result.get()
 }

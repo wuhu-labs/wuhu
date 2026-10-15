@@ -16,6 +16,7 @@ import Testing
     let harness: SessionHarness
     let tokens: ExecTokens
     let bearer: String
+    let account: AccountID
     let alice: GroupID
     let bob: GroupID
   }
@@ -39,7 +40,7 @@ import Testing
       )
     }
     try await harness.space.addEdge(src: Self.team, dst: Self.library, kind: .read, by: nil)
-    return Space(harness: harness, tokens: tokens, bearer: bearer, alice: alice, bob: bob)
+    return Space(harness: harness, tokens: tokens, bearer: bearer, account: key.account, alice: alice, bob: bob)
   }
 
   func sessionToken(_ s: Space, in group: GroupID) async throws -> String {
@@ -138,6 +139,28 @@ import Testing
       let hostful = try await read("wuhu://library.localspace/book.md", group: Self.team)
       #expect(hostful.status == .ok)
       #expect(try await hostful.text().contains("book"))
+    }
+  }
+
+  func administered(_ s: Space, bearer: String?) async throws -> Set<String> {
+    let response = try await list(s, bearer: bearer)
+    #expect(response.status == .ok)
+    let listed = try JSONValueDecoder().decode([GroupSummary].self, from: try await json(response))
+    return Set(listed.filter { $0.admin == true }.map(\.id))
+  }
+
+  // `admin` follows `is_admin`: a person through an admin edge from a group
+  // they belong to, a live top-level agent in its own group.
+  @Test func adminNamesTheGroupsTheCallerAdministers() async throws {
+    try await withSessionDeps {
+      let s = try await space()
+      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue])
+      _ = try await s.harness.space.setAdmin(s.account, admin: true)
+      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue, "shared"])
+      #expect(try await administered(s, bearer: try await sessionToken(s, in: Self.team)) == ["team"])
+      #expect(try await administered(s, bearer: nil) == [])
+      let dev = try await space(dev: true)
+      #expect(try await administered(dev, bearer: nil) == ["shared", dev.alice.rawValue, dev.bob.rawValue, "team", "library"])
     }
   }
 

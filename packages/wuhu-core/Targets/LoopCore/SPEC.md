@@ -57,6 +57,12 @@ Start over optionally carries a prepared `SessionModelRoute` through service/act
 
 Each `SessionActor` is given a session-scoped repository backed only by `SessionExecutionOwnerClient`; subscription refreshes use that same repository instead of reaching through it to `SessionStore`. Parent `SessionService` composition may supply an owner client explicitly, or use the existing in-process store adapter. Session placement, boot admission and archive coordination stay in the parent. This changes dependencies, not durable boundaries or lifecycle behavior.
 
+## Execution placement seam
+
+`SessionExecutionClient` is the registry-facing execution/lifecycle contract. `SessionExecution` implements it with local `SessionRegistry`/`SessionActor` instances and their liveness tracker. `SessionService(sessions:execution:archiveGrace:)` keeps boot scanning, work signals, archive reservations, subtree admission and persisted lifecycle state in the parent store while delegating registry verbs. Its original initializers construct the local implementation and preserve in-process behavior. A remote service has no parent actor registry. `SessionExecutionRetired` is the retryable dropped-callback outcome; boot and work-signal wakes share the bounded retirement/backoff policy. `enqueue` commits directly to the parent store, then best-effort wakes execution: a post-commit wake failure never escapes to invite input replay.
+
+A strict `StaleCompactClaim` is command supersession, not a terminal session error: the loop reloads persisted hydration and continues with the replacement command. `LoopConfig.executionActivity` acknowledges active-pass admission before work and releases it through uncancelled cleanup; its default is a no-op for local execution.
+
 ## Compaction placement and last-resort route transitions
 
 `prepareCompaction` runs after an ordinary compacted generation is produced and can supply a portable atomic route transition; nil preserves the route and history. `ReplayBoundaryRequired` optionally carries a replacement route and expected epoch; the loop projects locally, preserves receipts/input, commits handoff and pin together, invalidates inference state, then restarts the generation. `ModelRouteWaiting` is a nonterminal, cancellation-aware clock wait, never a reply/report or user timer subscription. Rehydration retains the persisted deadline and no new episode is opened merely by waiting. Route context notices do not answer obligations.

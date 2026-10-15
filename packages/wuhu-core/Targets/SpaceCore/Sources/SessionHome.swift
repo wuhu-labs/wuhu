@@ -118,7 +118,7 @@ public struct SessionHome: Hashable, Sendable {
   /// The session's own home: the tail of the session part.
   public let home: InstructionScope
 
-  init(path: String, group: GroupID, spaceLayer: InstructionScope, groupLayer: InstructionScope, home: InstructionScope) {
+  public init(path: String, group: GroupID, spaceLayer: InstructionScope, groupLayer: InstructionScope, home: InstructionScope) {
     self.path = path
     self.group = group
     self.spaceLayer = spaceLayer

@@ -11,9 +11,9 @@ import Testing
 import WuhuAI
 
 @Suite struct ReplayScopeContractTests {
-  @Test(arguments: ["account-a", "account-b", nil] as [String?])
-  func anthropicSignaturesAndRedactedBlocksRequireExactKnownScope(target: String?) async throws {
-    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: target, apiKey: "offline")
+  @Test(arguments: ["account-a", "account-b", nil] as [String?], [false, true])
+  func anthropicSignaturesAndRedactedBlocksRequireExactKnownScope(target: String?, acceptsUnsigned: Bool) async throws {
+    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: target, apiKey: "offline", acceptsUnsignedThinking: acceptsUnsigned)
     let context = history(provider: "anthropic")
     let body = try await emitted(endpoint, context: context)
     let serialized = body.jsonString()

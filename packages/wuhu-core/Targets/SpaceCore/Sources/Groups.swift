@@ -170,6 +170,11 @@ extension Space {
     try await writer.read { db in try Groups.isAdmin(actor, of: group, in: db) }
   }
 
+  /// Every group `actor` administers, by the same rule as `isAdmin`, in one read.
+  public func administeredGroups(by actor: Actor) async throws -> Set<GroupID> {
+    try await writer.read { db in try Groups.administeredGroups(by: actor, in: db) }
+  }
+
   /// A live human with a membership in a self-administering group that holds
   /// an admin edge to `group`: the rule `is_admin` and last-admin counting use.
   public func isHumanAdmin(_ account: AccountID, of group: GroupID) async throws -> Bool {
@@ -266,6 +271,30 @@ enum Groups {
     case .anonymous:
       false
     }
+  }
+
+  static func administeredGroups(by actor: Actor, in db: Database) throws -> Set<GroupID> {
+    let ids: [String] = switch actor {
+    case let .session(id):
+      try String.fetchAll(
+        db,
+        sql: "SELECT grp FROM sessions WHERE id = ? AND kind = 'agent' AND parent IS NULL AND lifecycle = 'live'",
+        arguments: [id.rawValue],
+      )
+    case let .person(_, account):
+      try String.fetchAll(
+        db,
+        sql: """
+        SELECT g.id FROM groups g, accounts a
+          WHERE a.id = ? AND a.kind = 'human' AND a.removed_at IS NULL
+            AND EXISTS (\(adminMembershipSQL(account: "a.id", group: "g.id")))
+        """,
+        arguments: [account.rawValue],
+      )
+    case .anonymous:
+      []
+    }
+    return Set(ids.map(GroupID.init(rawValue:)))
   }
 
   static func isHumanAdmin(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {

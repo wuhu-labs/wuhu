@@ -56,6 +56,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var transport: Transport?
     public var auth: Auth?
     public var capacity: [String: Double]?
+    public var acceptsUnsignedThinking: Bool?
     public var opaqueReplay: OpaqueReplay? {
       didSet { invalidOpaqueReplay = nil }
     }
@@ -63,7 +64,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     private var invalidOpaqueReplay: JSONValue?
     public var models: [String: Model]
 
-    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, capacity: [String: Double]? = nil, opaqueReplay: OpaqueReplay? = nil, models: [String: Model]) {
+    public init(dialect: Dialect, baseURL: URL, originator: String? = nil, transport: Transport? = nil, auth: Auth? = nil, capacity: [String: Double]? = nil, opaqueReplay: OpaqueReplay? = nil, acceptsUnsignedThinking: Bool? = nil, models: [String: Model]) {
       self.dialect = dialect
       self.baseURL = baseURL
       self.originator = originator
@@ -71,6 +72,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       self.auth = auth
       self.capacity = capacity
       self.opaqueReplay = opaqueReplay
+      self.acceptsUnsignedThinking = acceptsUnsignedThinking
       self.models = models
     }
   }
@@ -187,6 +189,9 @@ extension ModelsDocument.Provider {
     guard transport != .websocket || dialect == .responses || dialect == .codex else {
       throw CatalogError.invalidTransport(provider: providerID)
     }
+    if acceptsUnsignedThinking != nil, dialect != .anthropic, dialect != .claude {
+      throw CatalogError.unsignedThinkingRequiresAnthropic(provider: providerID)
+    }
     if let invalidOpaqueReplay {
       let value = if case let .string(value) = invalidOpaqueReplay { value } else { "non-string" }
       throw CatalogError.invalidOpaqueReplay(provider: providerID, value: value)
@@ -200,7 +205,7 @@ extension ModelsDocument.Provider {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case dialect, baseURL, originator, transport, auth, capacity, opaqueReplay, models
+    case dialect, baseURL, originator, transport, auth, capacity, opaqueReplay, acceptsUnsignedThinking, models
   }
 
   public init(from decoder: any Decoder) throws {
@@ -211,6 +216,7 @@ extension ModelsDocument.Provider {
     transport = try container.decodeIfPresent(ModelsDocument.Transport.self, forKey: .transport)
     auth = try container.decodeIfPresent(ModelsDocument.Auth.self, forKey: .auth)
     capacity = try container.decodeIfPresent([String: Double].self, forKey: .capacity)
+    acceptsUnsignedThinking = try container.decodeIfPresent(Bool.self, forKey: .acceptsUnsignedThinking)
     models = try container.decode([String: ModelsDocument.Model].self, forKey: .models)
     if let value = try container.decodeIfPresent(JSONValue.self, forKey: .opaqueReplay) {
       if case let .string(raw) = value, let setting = ModelsDocument.OpaqueReplay(rawValue: raw) {
@@ -231,6 +237,7 @@ extension ModelsDocument.Provider {
     if let invalidOpaqueReplay { try container.encode(invalidOpaqueReplay, forKey: .opaqueReplay) }
     else { try container.encodeIfPresent(opaqueReplay, forKey: .opaqueReplay) }
     try container.encodeIfPresent(capacity, forKey: .capacity)
+    try container.encodeIfPresent(acceptsUnsignedThinking, forKey: .acceptsUnsignedThinking)
     try container.encode(models, forKey: .models)
   }
 }

@@ -163,7 +163,7 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
   public var replayScope: String?
   public var routeEpoch: String?
   public let baseURL: URL
-  public let acceptsUnsignedThinking: Bool = false
+  public let acceptsUnsignedThinking: Bool
 
   public var apiKey: String
   public var promptCache: AnthropicPromptCache
@@ -175,6 +175,7 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
     baseURL: URL = URL(string: "https://api.anthropic.com")!,
     apiKey: String,
     promptCache: AnthropicPromptCache = .disabled,
+    acceptsUnsignedThinking: Bool = false,
   ) {
     self.model = model
     self.replayScope = replayScope
@@ -182,6 +183,7 @@ public struct AnthropicEndpoint: AnthropicMessagesEndpoint {
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.promptCache = promptCache
+    self.acceptsUnsignedThinking = acceptsUnsignedThinking
   }
 
   public func modifyBody(_ body: inout OrderedDictionary<String, JSONValue>, options: RequestOptions) {
@@ -287,6 +289,7 @@ public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
   public var replayScope: String?
   public var routeEpoch: String?
   public let baseURL: URL
+  public let acceptsUnsignedThinking: Bool
 
   public var apiKey: String
 
@@ -296,12 +299,14 @@ public struct DeepSeekAnthropicEndpoint: AnthropicMessagesEndpoint {
     routeEpoch: String? = nil,
     baseURL: URL = URL(string: "https://api.deepseek.com/anthropic")!,
     apiKey: String,
+    acceptsUnsignedThinking: Bool = true,
   ) {
     self.model = model
     self.replayScope = replayScope
     self.routeEpoch = routeEpoch
     self.baseURL = baseURL
     self.apiKey = apiKey
+    self.acceptsUnsignedThinking = acceptsUnsignedThinking
   }
 
   public func modifyBody(_ body: inout OrderedDictionary<String, JSONValue>, options: RequestOptions) {

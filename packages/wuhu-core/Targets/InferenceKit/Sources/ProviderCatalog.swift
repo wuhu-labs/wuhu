@@ -37,6 +37,7 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
   case invalidOIDCDialect(provider: String)
   case claudeAPIKeyRequired(provider: String)
   case invalidOpaqueReplay(provider: String, value: String)
+  case unsignedThinkingRequiresAnthropic(provider: String)
   case opaqueReplayRequiresNoThinking(provider: String, model: String)
 
   public var description: String {
@@ -57,6 +58,8 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
       "invalid cacheWarming configuration: \(reason)"
     case let .invalidOpaqueReplay(provider, value):
       "invalid opaqueReplay \"\(value)\" for provider \(provider); expected affine or none"
+    case let .unsignedThinkingRequiresAnthropic(provider):
+      "acceptsUnsignedThinking requires an Anthropic Messages provider: \(provider)"
     case let .opaqueReplayRequiresNoThinking(provider, model):
       "model \(provider)/\(model) cannot use thinking effort with opaqueReplay: none (request none effort or set opaqueReplay: affine only with upstream account affinity)"
     case let .claudeAPIKeyRequired(provider):
@@ -217,7 +220,7 @@ public struct ProviderCatalog: Sendable {
       case .responses:
         endpoint = OpenAIGPTEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: token, promptCacheKey: cacheKey)
       case .anthropic, .claude:
-        endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek", replayScope: replayScope, routeEpoch: routeEpoch)
+        endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek", acceptsUnsignedThinking: provider.acceptsUnsignedThinking ?? (specifier.provider == "deepseek"), replayScope: replayScope, routeEpoch: routeEpoch)
       case .codex:
         throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
       }
@@ -250,11 +253,11 @@ public struct ProviderCatalog: Sendable {
     case (.claude, .claudeCodeOAuth), (.claude, .chatGPT):
       throw .invalidInput(status: 401, body: CatalogError.claudeAPIKeyRequired(provider: specifier.provider).description)
     case let (.claude, .apiKey(key)):
-      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
+      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour, acceptsUnsignedThinking: provider.acceptsUnsignedThinking ?? false)
     case let (.anthropic, .apiKey(key)) where specifier.provider == "deepseek":
-      endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key)
+      endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, acceptsUnsignedThinking: provider.acceptsUnsignedThinking ?? true)
     case let (.anthropic, .apiKey(key)):
-      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
+      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour, acceptsUnsignedThinking: provider.acceptsUnsignedThinking ?? false)
     case let (.responses, .apiKey(key)):
       endpoint = OpenAIGPTEndpoint(
         model: specifier.model,

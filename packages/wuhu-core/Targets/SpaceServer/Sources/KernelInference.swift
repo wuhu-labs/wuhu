@@ -102,7 +102,7 @@ func kernelInference(
         tools: SessionToolExecutor.kernel.tools,
         compactToolName: KernelToolset.compactToolName,
         hub: attempts,
-        trace: owner.tracesAttempts ? AttemptTraceClient { try await owner.openAttemptTrace($0) } : nil,
+        trace: owner.tracesAttempts ? AttemptTraceClient(open: { try await owner.openAttemptTrace($0) }, close: { await owner.closeAttemptTrace($0) }) : nil,
         metrics: metrics,
         webSocket: lease?.session,
         receiveQuota: { event in

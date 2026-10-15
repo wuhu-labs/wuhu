@@ -84,7 +84,7 @@ public actor WorkerEndpoint {
         }
         try Task.checkCancellation()
         var headers: Headers = [.init("Connection")!: "close", .init("X-Wuhu-Worker-ABI")!: "1", .init("X-Wuhu-Worker-Call")!: call.id.uuidString]
-        if request.url.path == "/worker/upload" { headers[.init("Content-Length")!] = "0" }
+        if let length = body.contentLength { headers[.init("Content-Length")!] = String(length) }
         return Response(status: .ok, headers: headers, body: body)
       default: throw WorkerProtocolError(.invalidMessage, message: "Unknown worker message route")
       }

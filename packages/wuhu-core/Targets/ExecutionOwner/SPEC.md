@@ -14,6 +14,8 @@ Attempt trace files are parent-owned. `AttemptLogConfig` composes a sink in the 
 
 Model group declarations are a separate live `modelGroupDocument` read; absent `/model-groups.json` returns nil. `modelDocument` remains provider-only and is the only catalog input to concrete budget resolution. A malformed group file therefore cannot inflate a direct or already-pinned concrete member's usable budget. The owner supplies current route reads and binding establishment; group intent remains additive while persisted executor_config stays compatible with dev.114. Prepared Start-over routes cross the restart owner method and commit with the generation reset, preserving append-only placement history. `inferenceReadiness(audience:)` validates the parent-owned OIDC prerequisites without issuing inference or exposing signer material; production composition injects local signer validation. Group credentials/readiness and routing are not implemented with worker-local storage access.
 
+`closeAttemptTrace` releases a remotely held attempt sink after an inference attempt. Its default is a no-op for local owners whose sink lifetime already scopes the file handle. A remote owner closes the parent lease explicitly; it never opens trace files in the execution process.
+
 ## Compaction placement and last-resort route transitions
 
 The semantic execution-owner interface forwards epoch-checked route failure updates and optional atomic compaction/handoff route transitions. It does not expose a database writer. In-process/tool-owner forwarding preserves the complete expected epoch, route, portable generation and failure provenance rather than reducing them to ordinary compaction.

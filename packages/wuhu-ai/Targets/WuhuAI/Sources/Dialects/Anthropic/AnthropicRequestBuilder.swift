@@ -445,7 +445,7 @@ func validateAnthropicThinking(
           first["type"]?.stringValue == "redacted_thinking" ||
           (first["type"]?.stringValue == "thinking" && !(first["signature"]?.stringValue ?? "").isEmpty)
     else {
-      throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires same-scope signed thinking; explicitly request reasoning none after a portable boundary")
+      throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires signed thinking; the current tool-use assistant history has missing, unsigned or incompatible thinking")
     }
   }
 }

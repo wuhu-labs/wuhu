@@ -32,6 +32,9 @@ dependencies:
   - LoopCore
   - InferenceKit
   - ExecutionOwner
+  - WorkerOwner
+  - WorkerProtocol
+  - FetchAsyncHTTPClient
   - SpaceContract
   - SpaceTools
   - SpaceCore
@@ -52,11 +55,16 @@ dependencies:
   - Dependencies
   - AsyncHTTPClient
   - NIOCore
+  - NIOPosix
   - NIOHTTP1
   - Subprocess
   - WebPush
   - WuhuVFS
 tests:
+  externalData:
+    - //packages/wuhu-core:wuhu
+  env:
+    WUHU_EXECUTION_WORKER_BINARY: "$(rootpath //packages/wuhu-core:wuhu)"
   size: large
   dependencies:
     - Assertion
@@ -76,6 +84,7 @@ tests:
     - LoopCore
     - InferenceKit
     - ExecutionOwner
+    - WorkerProtocol
     - WuhuAI
     - SpaceContract
     - SpaceTools

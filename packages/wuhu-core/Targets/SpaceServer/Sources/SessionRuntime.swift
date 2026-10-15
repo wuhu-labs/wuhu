@@ -135,6 +135,7 @@ extension SessionRuntime {
     secrets: SpaceSecretStores?,
     usage: UsageBoard,
     machinesV2: ScriptMachineV2Access? = nil,
+    executionWorkerForTesting: String? = nil,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
@@ -223,7 +224,13 @@ extension SessionRuntime {
       thresholds: thresholds,
     )
 
-    let service = await SessionService(sessions: space.sessions, owner: owner, loopConfig: config)
+    let service: SessionService
+    if let executable = executionWorkerForTesting {
+      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) })
+      service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace)
+    } else {
+      service = await SessionService(sessions: space.sessions, owner: owner, loopConfig: config)
+    }
     serviceSlot.bind(service)
     return SessionRuntime(
       space: space,

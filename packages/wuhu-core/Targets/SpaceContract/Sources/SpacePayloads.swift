@@ -173,7 +173,7 @@ public struct AIProviderDisclosure: Codable, Equatable, Sendable {
 }
 
 /// A group as the caller stands to it, whatever group the request names. The
-/// two flags are nil from a server that predates them.
+/// flags are nil from a server that predates them.
 @Contract
 public struct GroupSummary: Codable, Equatable, Sendable {
   public let id: String
@@ -181,6 +181,8 @@ public struct GroupSummary: Codable, Equatable, Sendable {
   public let member: Bool?
   /// Some group the caller is a member of reads this one.
   public let readable: Bool?
+  /// The caller administers this group: the rule `is_admin` uses.
+  public let admin: Bool?
 }
 
 /// `PUT /v1/groups/:id`: the settings to change; a missing one stays.

@@ -19,8 +19,11 @@ public struct AttemptTraceSink: Sendable {
 public struct AttemptTraceClient: Sendable {
   public var open: @Sendable (UUID) async throws -> AttemptTraceSink
 
-  public init(open: @escaping @Sendable (UUID) async throws -> AttemptTraceSink) {
+  public var close: @Sendable (UUID) async -> Void
+
+  public init(open: @escaping @Sendable (UUID) async throws -> AttemptTraceSink, close: @escaping @Sendable (UUID) async -> Void = { _ in }) {
     self.open = open
+    self.close = close
   }
 }
 

@@ -22,7 +22,7 @@ import WuhuAI
 
   @Test func malformedCurrentTurnIsStillGuardedWithoutBoundary() async throws {
     await withReasoningDependencies {
-      await #expect(throws: InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires same-scope signed thinking; explicitly request reasoning none after a portable boundary")) {
+      await #expect(throws: InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires signed thinking; the current tool-use assistant history has missing, unsigned or incompatible thinking")) {
         try await executor(scope: "scope").run(attemptID: UUID(), transcript: history(signed: false, carried: false), mode: .normal)
       }
     }

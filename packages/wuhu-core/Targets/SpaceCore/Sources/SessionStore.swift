@@ -44,6 +44,38 @@ public struct SessionRecord: Hashable, Sendable {
   public var errorMessage: String?
   public var lifecycle: SessionLifecycle
   public var group: GroupID
+
+  public init(
+    id: SessionID,
+    kind: SessionKind,
+    parent: SessionID?,
+    title: String,
+    tags: [String],
+    createdBy: String,
+    executor: SessionExecutor,
+    createdAt: Date,
+    lastActivityAt: Date,
+    hold: SessionHold,
+    work: SessionWork,
+    errorMessage: String?,
+    lifecycle: SessionLifecycle,
+    group: GroupID,
+  ) {
+    self.id = id
+    self.kind = kind
+    self.parent = parent
+    self.title = title
+    self.tags = tags
+    self.createdBy = createdBy
+    self.executor = executor
+    self.createdAt = createdAt
+    self.lastActivityAt = lastActivityAt
+    self.hold = hold
+    self.work = work
+    self.errorMessage = errorMessage
+    self.lifecycle = lifecycle
+    self.group = group
+  }
 }
 
 public struct SessionQueueEntry: Hashable, Sendable {
@@ -77,6 +109,22 @@ public struct SessionHydration: Hashable, Sendable {
   public var undrained: [SessionQueueEntry]
   public var queueHead: Int
   public var queueTail: Int
+
+  public init(
+    generation: Int,
+    record: SessionRecord,
+    transcript: SessionTranscript,
+    undrained: [SessionQueueEntry],
+    queueHead: Int,
+    queueTail: Int,
+  ) {
+    self.generation = generation
+    self.record = record
+    self.transcript = transcript
+    self.undrained = undrained
+    self.queueHead = queueHead
+    self.queueTail = queueTail
+  }
 }
 
 public enum SessionStoreError: Error, Equatable, Sendable {

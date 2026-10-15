@@ -12,8 +12,13 @@ import SpaceCore
 import Synchronization
 
 public struct SessionService: Sendable {
-  let livenessTracker = LivenessTracker()
-  let registry: SessionRegistry
+  let execution: any SessionExecutionClient
+  let localExecution: SessionExecution?
+  var registry: SessionRegistry {
+    precondition(localExecution != nil, "remote services have no parent actor registry")
+    return localExecution!.registry
+  }
+
   let sessions: SessionStore
   let archiveGrace: Duration
   private let archives = ArchiveCoordinator()
@@ -31,26 +36,31 @@ public struct SessionService: Sendable {
     self.sessions = sessions
     self.log = log
     archiveGrace = loopConfig.archiveGrace
-    registry = SessionRegistry(
-      makeRepo: makeRepo,
-      loopConfig: loopConfig,
-      liveness: livenessTracker,
-    )
-    await registry.activate()
+    let execution = await SessionExecution(makeRepo: makeRepo, loopConfig: loopConfig)
+    self.execution = execution
+    localExecution = execution
   }
 
-  public func shutdown() async { await registry.stop() }
+  public init(sessions: SessionStore, execution: any SessionExecutionClient, archiveGrace: Duration) {
+    self.sessions = sessions
+    self.execution = execution
+    self.archiveGrace = archiveGrace
+    localExecution = nil
+    log = Logger(label: "wuhu.session-service")
+  }
+
+  public func shutdown() async { await execution.shutdown() }
 
   public func start() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { [livenessTracker] in
-        await livenessTracker.drain()
+      group.addTask { [execution] in
+        await execution.drain()
       }
-      group.addTask { [registry] in
+      group.addTask { [execution] in
         let (parking, continuation) = AsyncStream<Void>.makeStream()
         for await _ in parking {}
         continuation.finish()
-        await registry.stop()
+        await execution.shutdown()
       }
       let signals = sessions.workSignals()
       let boot: [SessionID]
@@ -70,12 +80,7 @@ public struct SessionService: Sendable {
       }
       for id in boot {
         guard !Task.isCancelled else { return }
-        do {
-          try await wake(id)
-        } catch {
-          guard !Task.isCancelled else { return }
-          await failSession(id, error: error, phase: "boot wake")
-        }
+        _ = await wakeWithRetry(id, phase: "boot wake")
       }
       group.addTask {
         let pending = PendingWakes()
@@ -113,7 +118,7 @@ public struct SessionService: Sendable {
     }
   }
 
-  private func wakeWithRetry(_ id: SessionID) async -> Bool {
+  private func wakeWithRetry(_ id: SessionID, phase: String = "work signal wake") async -> Bool {
     @Dependency(\.continuousClock) var clock
     for attempt in 0 ... 3 {
       do {
@@ -121,7 +126,10 @@ public struct SessionService: Sendable {
         return true
       } catch {
         guard !Task.isCancelled else { return false }
-        if case SessionStoreError.unknownSession = error { return false }
+        if case SessionStoreError.unknownSession = error {
+          if phase == "boot wake" { await failSession(id, error: error, phase: phase) }
+          return false
+        }
         let transient: Bool
         if let database = error as? DatabaseError {
           transient = database.resultCode == .SQLITE_BUSY || database.resultCode == .SQLITE_LOCKED
@@ -129,7 +137,7 @@ public struct SessionService: Sendable {
           transient = error is UnfulfilledError
         }
         guard transient, attempt < 3 else {
-          await failSession(id, error: error, phase: "work signal wake")
+          await failSession(id, error: error, phase: phase)
           return false
         }
         log.warning("session wake retry scheduled", metadata: ["session": "\(id.rawValue)", "error": "\(error)", "attempt": "\(attempt + 1)"])
@@ -145,17 +153,11 @@ public struct SessionService: Sendable {
 
   private func failSession(_ id: SessionID, error: any Error, phase: String) async {
     log.error("\(phase) failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-    await registry.discard(id)
+    await execution.discard(id)
     do {
       try await sessions.markErrored(id, message: error is ExecutorUnavailableError ? "executor no longer supported" : "\(phase) failed: \(error)")
     } catch {
       log.error("could not mark session errored", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-    }
-  }
-
-  func send(action: SessionActor.ExternalAction, to sessionID: SessionID) {
-    Task { [registry] in
-      await registry.post(action, to: sessionID)
     }
   }
 
@@ -185,24 +187,16 @@ public struct SessionService: Sendable {
     if case .contractor = record.executor { return }
     guard record.work != .errored else { return }
     try await retryingEviction {
-      try await withCallback(of: Void.self) {
-        send(action: .wake($0), to: sessionID)
-      }
+      try await execution.wake(sessionID)
     }
   }
 
   public func enqueue(item: QueueInput, to sessionID: SessionID) async throws -> Int {
-    if sessions.isReservedForArchive(sessionID) {
-      return try await sessions.enqueue(sessionID, input: item)
+    let position = try await sessions.enqueue(sessionID, input: item)
+    if !sessions.isReservedForArchive(sessionID) {
+      _ = await wakeWithRetry(sessionID)
     }
-    if try await inactiveExecutorRecord(sessionID) != nil {
-      return try await sessions.enqueue(sessionID, input: item)
-    }
-    return try await retryingEviction {
-      try await withCallback(of: Int.self) {
-        send(action: .enqueue(item, $0), to: sessionID)
-      }
-    }
+    return position
   }
 
   public func interrupt(_ sessionID: SessionID) async throws {
@@ -213,9 +207,7 @@ public struct SessionService: Sendable {
       return
     }
     try await retryingEviction {
-      try await withCallback(of: Void.self) {
-        send(action: .interrupt($0), to: sessionID)
-      }
+      try await execution.interrupt(sessionID)
     }
   }
 
@@ -227,12 +219,10 @@ public struct SessionService: Sendable {
         return
       }
       try await retryingEviction {
-        try await withCallback(of: Void.self) {
-          send(action: .resume($0), to: sessionID)
-        }
+        try await execution.resume(sessionID)
       }
     } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting {
-      await registry.discard(sessionID)
+      await execution.discard(sessionID)
       throw SessionError.unreadableData(sessionID)
     }
   }
@@ -276,7 +266,7 @@ public struct SessionService: Sendable {
           if case .live = record.lifecycle { _ = try await sessions.archive(record.id, grace: archiveGrace) }
         } else {
           try await retryingEviction {
-            try await withCallback(of: Void.self) { send(action: .archive(reservation, $0), to: record.id) }
+            try await execution.archive(record.id, reservation: reservation)
           }
         }
       }
@@ -290,7 +280,7 @@ public struct SessionService: Sendable {
   private func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
     if try await inactiveExecutorRecord(id) != nil { return true }
     return try await retryingEviction {
-      try await withCallback(of: Bool.self) { send(action: .prepareArchive(reservation, $0), to: id) }
+      try await execution.prepareArchive(id, reservation: reservation)
     }
   }
 
@@ -298,7 +288,7 @@ public struct SessionService: Sendable {
     for id in ids {
       sessions.releaseArchiveReservation(id, token: reservation)
       guard (try? await inactiveExecutorRecord(id)) == nil else { continue }
-      _ = try? await withCallback(of: Void.self) { send(action: .releaseArchive(reservation, $0), to: id) }
+      try? await execution.releaseArchive(id, reservation: reservation)
     }
   }
 
@@ -313,9 +303,7 @@ public struct SessionService: Sendable {
       return try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
     }
     return try await retryingEviction {
-      try await withCallback(of: SessionRestart.self) {
-        send(action: .restart(executor, note, modelRoute, $0), to: sessionID)
-      }
+      try await execution.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
     }
   }
 
@@ -329,9 +317,7 @@ public struct SessionService: Sendable {
       return
     }
     try await retryingEviction {
-      try await withCallback(of: Void.self) {
-        send(action: .unarchive($0), to: sessionID)
-      }
+      try await execution.unarchive(sessionID)
     }
   }
 }

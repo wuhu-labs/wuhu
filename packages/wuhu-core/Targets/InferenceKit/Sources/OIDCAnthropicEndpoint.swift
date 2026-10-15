@@ -13,11 +13,11 @@ struct OIDCAnthropicEndpoint: AnthropicMessagesEndpoint {
   let baseURL: URL
   let token: String
   let deepSeek: Bool
+  let acceptsUnsignedThinking: Bool
   var replayScope: String?
   var routeEpoch: String?
 
   var providerID: String { deepSeek ? "deepseek" : "anthropic" }
-  var acceptsUnsignedThinking: Bool { deepSeek }
 
   func modifyBody(_ body: inout OrderedDictionary<String, JSONValue>, options: RequestOptions) {
     if deepSeek {

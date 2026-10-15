@@ -2,6 +2,7 @@
   "deepseek": {
     "dialect": "anthropic",
     "baseURL": "https://api.deepseek.com/anthropic",
+    "opaqueReplay": "affine",
     "models": {
       "deepseek-flash": {
         "maxInput": 1048576,

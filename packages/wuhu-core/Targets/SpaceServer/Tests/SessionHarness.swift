@@ -34,17 +34,24 @@ let testModelsJSON = """
 }
 """
 
-// The session stack resolves uuid/date/clock through swift-dependencies; a
-// test context must supply them, and the service must be constructed inside
-// the same scope so its store inherits them.
-func withSessionDeps<R>(_ body: () async throws -> R) async rethrows -> R {
-  try await withDependencies {
-    $0.date = DateGenerator { Date() }
-    $0.uuid = UUIDGenerator { UUID() }
-    $0.continuousClock = ContinuousClock()
-    $0.withRandomNumberGenerator = WithRandomNumberGenerator(SystemRandomNumberGenerator())
-  } operation: {
-    try await body()
+private let sessionFixtureAdmission = SessionFixtureAdmission(capacity: 8)
+
+func withSessionDeps<R>(_ body: () async throws -> R) async throws -> R {
+  try await sessionFixtureAdmission.acquire()
+  do {
+    let result = try await withDependencies {
+      $0.date = DateGenerator { Date() }
+      $0.uuid = UUIDGenerator { UUID() }
+      $0.continuousClock = ContinuousClock()
+      $0.withRandomNumberGenerator = WithRandomNumberGenerator(SystemRandomNumberGenerator())
+    } operation: {
+      try await body()
+    }
+    await sessionFixtureAdmission.release()
+    return result
+  } catch {
+    await sessionFixtureAdmission.release()
+    throw error
   }
 }
 

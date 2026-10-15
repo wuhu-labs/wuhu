@@ -36,8 +36,17 @@ extension SpaceToolContext {
       member = all
       readable = all
     }
-    return try await space.groups().filter { $0.removedAt == nil }.map {
-      GroupSummary(id: $0.id.rawValue, member: member.contains($0.id), readable: readable.contains($0.id))
+    let live = try await space.groups().filter { $0.removedAt == nil }.map(\.id)
+    // The dev seat acts in every group, so it administers every group too.
+    let administered: Set<GroupID> = if case .anonymous = caller.actor {
+      dev ? Set(live) : []
+    } else {
+      try await space.administeredGroups(by: caller.actor)
+    }
+    return live.map { group in
+      GroupSummary(
+        id: group.rawValue, member: member.contains(group), readable: readable.contains(group), admin: administered.contains(group),
+      )
     }
   }
 

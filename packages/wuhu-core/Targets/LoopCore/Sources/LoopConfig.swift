@@ -120,6 +120,7 @@ public struct LoopConfig: Sendable {
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
   public var invalidateInference: @Sendable (SessionID) async -> Void
   public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
+  public var executionActivity: @Sendable (SessionID, UUID, Bool) async throws -> Void
   public var thresholds: CompactionThresholds
   public var archiveGrace: Duration
   public var eviction: EvictionPolicy
@@ -133,6 +134,7 @@ public struct LoopConfig: Sendable {
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
+    executionActivity: @escaping @Sendable (SessionID, UUID, Bool) async throws -> Void = { _, _, _ in },
     thresholds: CompactionThresholds = .init(),
     archiveGrace: Duration = .seconds(24 * 3600),
     eviction: EvictionPolicy = .init(),
@@ -145,6 +147,7 @@ public struct LoopConfig: Sendable {
     self.killInterruptedTool = killInterruptedTool
     self.invalidateInference = invalidateInference
     self.allowCacheWarming = allowCacheWarming
+    self.executionActivity = executionActivity
     self.thresholds = thresholds
     self.archiveGrace = archiveGrace
     self.eviction = eviction
