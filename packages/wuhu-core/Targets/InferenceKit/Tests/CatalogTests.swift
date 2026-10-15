@@ -68,7 +68,7 @@ private let chatGPTOnly = CredentialResolver { _ in
 }
 
 @Suite struct CatalogTests {
-  @Test func additiveProviderKeysRemainBackwardCompatible() throws {
+  @Test func retiredProviderKeysAreIgnored() throws {
     let json = try #require(String(data: fixtureJSON, encoding: .utf8))
       .replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"acceptsUnsignedThinking\": true, \"dialect\": \"anthropic\"")
     let document = try ModelsDocument(json: Data(json.utf8))

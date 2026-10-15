@@ -4,9 +4,8 @@
   import Foundation
 #endif
 import CExecSupervisor
-import func ComputerFiles.fileOperationKinds
+@testable import ComputerFiles
 @testable import ExecSupervisor
-import class OperationRuntime.OperationAgent
 #if os(Linux)
   import Glibc
 #else
@@ -202,8 +201,7 @@ private actor SupervisorFixture {
     let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
     _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
     await effects.expiredReceipt()
-    let files = try OperationAgent(machine: "test", kinds: fileOperationKinds(), authorize: { _, _ in })
-    let agent = ComputerAgent(machine: "test", registry: registry, files: files)
+    let agent = try ComputerAgent(machine: "test", external: registry.external)
     let response = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put))
     let error = try await response.body.json(ErrorEnvelope.self).error
     #expect(error.code == .requestDeadline)
@@ -227,15 +225,14 @@ private actor SupervisorFixture {
       if duration >= .seconds(1) { now.withLock { $0 += duration }; return }
       try await ContinuousClock().sleep(for: .milliseconds(1))
     })
-    let files = try OperationAgent(machine: "test", kinds: fileOperationKinds(), clock: clock, authorize: { _, _ in })
+    let agent = try ComputerAgent(machine: "test", external: registry.external, clock: clock)
     let fileRequest = Request(url: URL(string: "http://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": "/tmp/not-run"])))
-    #expect(try await files.handler(fileRequest).status.code == 201)
-    let agent = ComputerAgent(machine: "test", registry: registry, files: files, clock: clock)
+    #expect(try await agent.runtime.handler(fileRequest).status.code == 201)
     let response = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put))
     #expect(try await response.body.json(ErrorEnvelope.self).error.message == "drainFailed")
     #expect(await agent.departureLoss == nil)
     #expect(!(await agent.leaveAcknowledged))
-    await files.shutdown()
+    await agent.shutdown()
   }
 
   @Test func malformedModernDepartureReceiptIsTypedAndNeverLegacy() async throws {

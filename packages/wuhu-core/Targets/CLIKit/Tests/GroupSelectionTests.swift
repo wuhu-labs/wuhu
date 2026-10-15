@@ -344,6 +344,68 @@ import Testing
     #expect(refused.stderr.contains("this server has no groups"))
   }
 
+  @Test func machineAddWithoutSelectionOmitsTheGroup() async throws {
+    let h = try GroupHarness(features: ["groups"])
+    let result = await h.run(["machine", "add"])
+    #expect(result.code == 0, "\(result.stderr)")
+    let request = try #require(await h.recorder.requests.last)
+    #expect(request.url.path == "/v1/machine")
+    #expect(request.headers["wuhu-group"] == nil)
+    #expect(try await request.json(JSONValue.self) == [:])
+  }
+
+  @Test func machineAddAcceptsEitherGroupFlagPosition() throws {
+    #expect(try Command.parse(["machine", "add", "--group", "shared"]) == .machineAdd(name: nil, group: "shared"))
+    #expect(try Command.parse(["machine", "add", "--name", "box", "--group", "shared"]) == .machineAdd(name: "box", group: "shared"))
+    let expected = Invocation(group: nil, command: .machineAdd(name: nil, group: "shared"))
+    #expect(try Invocation.parse(["machine", "add", "--group", "shared"]) == expected)
+    #expect(try Invocation.parse(["--group", "shared", "machine", "add"]) == expected)
+    #expect(throws: UsageError.self) { try Invocation.parse(["machine", "add", "--group", "Not A Group"]) }
+    #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine", "add", "--group", "shared"]) }
+  }
+
+  @Test(arguments: [
+    ["machine", "add", "--name", "box", "--group", "shared"],
+    ["--group", "shared", "machine", "add", "--name", "box"],
+  ])
+  func machineAddSendsTheSelectedGroupInItsBody(arguments: [String]) async throws {
+    let h = try GroupHarness(features: ["groups"])
+    let result = await h.run(arguments)
+    #expect(result.code == 0, "\(result.stderr)")
+    let request = try #require(await h.recorder.requests.last)
+    #expect(request.method == .post)
+    #expect(request.url.path == "/v1/machine")
+    #expect(request.headers["wuhu-group"] == nil)
+    #expect(try await request.json(JSONValue.self) == ["name": "box", "group": "shared"])
+  }
+
+  @Test(arguments: [Source.environment, .config])
+  func implicitGroupSelectionDoesNotChangeTheRegistrationTarget(source: Source) async throws {
+    let h = try GroupHarness(features: ["groups"], configGroup: source == .config ? "alice" : nil)
+    let result = await h.run(["machine", "add"], environment: source == .environment ? ["WUHU_GROUP": "alice"] : [:])
+    #expect(result.code == 0, "\(result.stderr)")
+    let request = try #require(await h.recorder.requests.last)
+    #expect(request.headers["wuhu-group"] == "alice")
+    #expect(try await request.json(JSONValue.self) == [:])
+  }
+
+  @Test(arguments: [nil, "alice"] as [String?])
+  func anExplicitTargetMustBeConfirmedByTheServer(echoed: String?) async throws {
+    let h = try GroupHarness(features: ["groups"], machineGroup: echoed)
+    let result = await h.run(["machine", "add", "--group", "shared"])
+    #expect(result.code == 1)
+    #expect(result.stderr.contains(echoed == nil ? "server too old to place machines in a group" : "server placed the machine in group alice, not shared"))
+    #expect(result.stderr.contains("machine move mc_abcdefgh --group shared"))
+    #expect(result.stdout.contains("machine mc_abcdefgh"))
+    #expect(result.stdout.contains("token jt_test"))
+  }
+
+  @Test func anOldServerStillWorksWhenNoTargetWasRequested() async throws {
+    let h = try GroupHarness(features: ["groups"], machineGroup: nil)
+    let result = await h.run(["machine", "add"])
+    #expect(result.code == 0, "\(result.stderr)")
+  }
+
   @Test func theGlobalFlagParsesBeforeTheVerb() throws {
     #expect(try Invocation.parse(["--group", "alice", "ls", "/"]).group == "alice")
     #expect(try Invocation.parse(["ls", "/"]).group == nil)
@@ -449,6 +511,7 @@ private struct GroupHarness {
     configGroup: String? = nil,
     pinned: Bool = true,
     notifications: [JSONValue] = [],
+    machineGroup: String? = "shared",
   ) throws {
     self.scratch = try ScratchFolder("groups")
     let root = self.scratch.url
@@ -481,6 +544,10 @@ private struct GroupHarness {
           info.set("group", group.map { JSONValue.string($0) })
         }
         return try Response.json(info)
+      case "/v1/machine":
+        var output: JSONValue = ["id": "mc_abcdefgh", "token": "jt_test"]
+        output.set("group", machineGroup.map(JSONValue.string))
+        return try Response.json(output)
       case "/v1/groups":
         let values: [JSONValue] = groups.map { id in JSONValue.object(["id": JSONValue.string(id)]) }
         return try Response.json(JSONValue.array(values))

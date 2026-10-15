@@ -151,7 +151,7 @@ private func status(of code: ErrorCode) -> Status {
   case .conflict: .conflict
   case .invalidPath, .invalidArgument: .badRequest
   case .unauthorized: .forbidden
-  case .unsupported: .unprocessableContent
+  case .unsupported, .unknownKind: .unprocessableContent
   case .unavailable: .serviceUnavailable
   case .internal: .internalServerError
   case .capabilityInvalidArgument, .unsupportedFeature: .badRequest

@@ -3,31 +3,36 @@
 #else
   import Foundation
 #endif
-import func ComputerFiles.fileOperationKinds
+import CExecSupervisor
+@testable import ComputerFiles
 @testable import ExecSupervisor
 import Fetch
 import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.StartRequest
-import class OperationRuntime.OperationAgent
+import struct OperationRuntime.AnyOperationKind
+import struct OperationRuntime.OperationCancellation
+import struct OperationRuntime.OperationChannels
+import protocol OperationRuntime.OperationKind
+import class Scratch.ScratchFolder
 import Synchronization
 import Testing
 
 @Suite struct ComputerAgentTests {
-  func fixture(clock: OperationClock = .continuous, supervisorFiles: SupervisorFiles? = nil) throws -> ComputerAgent {
+  func fixture(clock: OperationClock = .continuous, supervisorFiles: SupervisorFiles? = nil) throws -> (ComputerAgent, ExecSupervisorRegistry) {
     let registry = try ExecSupervisorRegistry(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", fetch: FetchClient { _ in throw OperationError(.supervisorUnavailable) }, authorize: { _, _ in }, files: supervisorFiles ?? .init(create: { _, _ in }, load: { _ in throw OperationError(.invalidConfiguration) }, list: { _ in [] }), clock: clock, launch: { _, _ in nil })
-    let files = try OperationAgent(machine: "test", kinds: fileOperationKinds(), clock: clock, authorize: { _, _ in })
-    return ComputerAgent(machine: "test", registry: registry, files: files, clock: clock)
+    return (try ComputerAgent(machine: "test", external: registry.external, clock: clock), registry)
   }
 
   func describe(ack: Bool = false) -> Request { Request(url: URL(string: "https://agent/machine/v2/machines/test" + (ack ? "?leaveAck=true" : ""))!) }
 
   @Test func combinesKindsAndRejectsOtherMachineBeforeDispatch() async throws {
-    let agent = try fixture()
+    let (agent, _) = try fixture()
     let description = try await agent.handler(describe()).body.json(MachineDescription.self)
-    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "find.v1", "grep.v1"])
+    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1"])
     #expect(description.acceptingStarts)
     let response = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/not-authorized")!))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .machineNotAuthorized)
@@ -35,7 +40,7 @@ import Testing
   }
 
   @Test func fileAndExecAdmissionShareOneActiveMachineCap() async throws {
-    let agent = try fixture()
+    let (agent, registry) = try fixture()
     let fileIDs = (0 ..< 32).map { _ in UUID() }
     for fileID in fileIDs {
       let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + fileID.uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": "/tmp/not-opened-before-run"])))
@@ -44,18 +49,18 @@ import Testing
     let id = UUID()
     let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + id.uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
     #expect(try await agent.handler(request).body.json(ErrorEnvelope.self).error.code == .capacityExceeded)
-    #expect(!(await agent.registry.owns(id)))
+    #expect(!(await registry.owns(id)))
     let fileID = fileIDs[0]
     var duplicate = request; duplicate.url = URL(string: "https://agent/machine/v2/machines/test/operations/" + fileID.uuidString)!
     #expect(try await agent.handler(duplicate).body.json(ErrorEnvelope.self).error.code == .operationExists)
-    await agent.files.shutdown()
+    await agent.shutdown()
   }
 
   @Test func localLeaveWaitsForLogicalAcknowledgementNotConnectionClose() async throws {
-    let agent = try fixture()
+    let (agent, registry) = try fixture()
     let leave = Task { try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put)) }
     defer { leave.cancel() }
-    while !(await agent.registry.leaving) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    while !(await registry.leaving) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
     #expect(!(await agent.leaveAcknowledged))
     #expect(try await agent.handler(describe()).body.json(ErrorEnvelope.self).error.code == .leaving)
     #expect(!(await agent.leaveAcknowledged))
@@ -75,7 +80,7 @@ import Testing
       }
       try await ContinuousClock().sleep(for: .milliseconds(1))
     })
-    let agent = try fixture(clock: clock)
+    let (agent, _) = try fixture(clock: clock)
     holder.withLock { $0 = agent }
     let failure = try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put)).body.json(ErrorEnvelope.self).error
     #expect(failure.code == .requestDeadline)
@@ -93,7 +98,7 @@ import Testing
       try await ContinuousClock().sleep(for: .milliseconds(1))
     })
     let files = SupervisorFiles(create: { _, _ in try await ContinuousClock().sleep(for: .seconds(300)) }, load: { _ in throw OperationError(.invalidConfiguration) }, list: { _ in [] })
-    let agent = try fixture(clock: clock, supervisorFiles: files)
+    let (agent, _) = try fixture(clock: clock, supervisorFiles: files)
     let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
     let start = Task { try await agent.handler(request) }
     defer { start.cancel() }
@@ -107,4 +112,77 @@ import Testing
     #expect(await agent.pending.count == 1)
     start.cancel(); _ = try await start.value
   }
+
+  @Test func withComputerAgentServesInjectedBackendsHoldsTheLockAndUnwindsOnSuccessAndThrow() async throws {
+    let scratch = try ScratchFolder("wca")
+    defer { scratch.remove() }
+    let root = scratch.path
+    let statused = Mutex<[String]>([])
+    let files = ComputerFileSystem(
+      status: { path in statused.withLock { $0.append(path) }; throw OperationError(.fileUnavailable) },
+      read: { _, _, _ in throw OperationError(.fileUnavailable) },
+      walk: { _, _ in throw OperationError(.fileUnavailable) },
+    )
+    struct Boom: Error {}
+    for fails in [false, true] {
+      let escaped = Mutex<ComputerAgent?>(nil)
+      let ran = Mutex(false)
+      do {
+        let value = try await ExecSupervisor.withComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: files, kinds: [AnyOperationKind(NoteKind())]) { agent in
+          ran.withLock { $0 = true }
+          escaped.withLock { $0 = agent }
+          let second = exec_lock_agent(root)
+          #expect(second < 0, "the lock is held while the body runs")
+          if second >= 0 { exec_close(second) }
+          let description = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/test")!)).body.json(MachineDescription.self)
+          #expect(description.acceptingStarts)
+          #expect(description.kinds.map(\.name) == ["exec.v1", "read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "note.v1"])
+          let path = "/injected-\(fails)"
+          let read = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": .string(path)])))
+          #expect(try await agent.handler(read).status.code == 201)
+          let deadline = ContinuousClock.now + .seconds(10)
+          while !statused.withLock({ $0.contains(path) }), ContinuousClock.now < deadline { try await ContinuousClock().sleep(for: .milliseconds(10)) }
+          #expect(statused.withLock { $0.contains(path) }, "read.v1 runs over the injected file system")
+          if fails { throw Boom() }
+          return 7
+        }
+        #expect(!fails)
+        #expect(value == 7)
+      } catch is Boom { #expect(fails, "the body's own error propagates unchanged") }
+      #expect(ran.withLock { $0 })
+      let lock = exec_lock_agent(root)
+      #expect(lock >= 0, "the lock is released when the body returns or throws")
+      if lock >= 0 { exec_close(lock) }
+      let agent = try #require(escaped.withLock { $0 })
+      let start = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": "/tmp/not-opened"])))
+      #expect(try await agent.handler(start).body.json(ErrorEnvelope.self).error.code == .leaving, "the in-process runtime is shut down")
+    }
+  }
+
+  @Test func composedRegistryRunLoopLivesExactlyAsLongAsTheBody() async throws {
+    let scratch = try ScratchFolder("wca")
+    defer { scratch.remove() }
+    let root = scratch.path
+    // Not our child: the run loop's nonblocking reap fails ECHILD and drops it, which is how a live loop shows without spawning anything.
+    let registry = try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: .local, kinds: []) { _, registry in
+      await registry.track(Int32.max)
+      let deadline = ContinuousClock.now + .seconds(10)
+      while await registry.childPIDs.contains(Int32.max), ContinuousClock.now < deadline { try await ContinuousClock().sleep(for: .milliseconds(10)) }
+      #expect(!(await registry.childPIDs.contains(Int32.max)), "registry.run() polls tracked children while the body runs")
+      return registry
+    }
+    await registry.track(Int32.max)
+    try await ContinuousClock().sleep(for: .milliseconds(400))
+    #expect(await registry.childPIDs.contains(Int32.max), "registry.run() stopped with the body")
+  }
+}
+
+private struct NoteKind: OperationKind {
+  struct Input: Decodable, Sendable {}
+  let descriptor = KindDescriptor("note.v1", inputSchema: ["type": "object"], resultSchema: ["type": "string"], deliveryPolicy: .boundedResult)
+  func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> String { "" }
+}
+
+extension ExecSupervisorRegistry {
+  func track(_ pid: Int32) { childPIDs.insert(pid) }
 }

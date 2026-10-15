@@ -118,6 +118,7 @@ enum Main {
             dev: config.dev,
             version: BuildStamp.version,
             publicRead: config.publicRead,
+            executionPlacement: config.executionWorker ? try .worker() : .inProcess,
             devImport: config.devImport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             devExport: config.devExport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             certificate: config.certificate.map { URL(fileURLWithPath: $0) },
@@ -127,6 +128,7 @@ enum Main {
             groupCertificate: config.groupCertificate.map { URL(fileURLWithPath: $0) },
             groupPrivateKey: config.groupPrivateKey.map { URL(fileURLWithPath: $0) },
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },
+            otelEndpoint: config.otelEndpoint.flatMap(URL.init(string:)),
           )
         }
         let sources = [SIGINT, SIGTERM].map { number in

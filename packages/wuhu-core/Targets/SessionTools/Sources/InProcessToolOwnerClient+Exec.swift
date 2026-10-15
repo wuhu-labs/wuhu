@@ -1,4 +1,5 @@
 import Dependencies
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -75,6 +76,9 @@ extension InProcessToolOwnerClient {
     let environment = try execEnvironment(arguments)
     if let recorded = try await store.receipt(session, toolCallID: callID) { return recorded }
 
+    let span = ServerTracing.enabled ? ServerSpan(.machine, session: session.rawValue) : nil
+    var spanAttributes: [SpanAttribute: String]? = span == nil ? nil : [.machine: machine.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
+    defer { if let spanAttributes { span?.finish(spanAttributes) } }
     let claim = try await backend.claim(machine, session, callID)
     let maxOutput = min(arguments.maxOutput ?? execOutputBudget, 4 << 20)
     let start = ExecStart(
@@ -95,7 +99,7 @@ extension InProcessToolOwnerClient {
     // retry must be able to rejoin the still-running exec. An interrupted
     // exec is never retried, so its caller leg stays gone and the
     // machine-domain rejoin deadline delivers the kill.
-    return try await runExec(start, backend: backend) { drive in
+    let result = try await runExec(start, backend: backend) { drive in
       var record: ExecRecord?
       if let fetched = try? await backend.status(claim.record.id) { record = fetched }
       switch drive {
@@ -134,6 +138,13 @@ extension InProcessToolOwnerClient {
         }
       }
     }
+    if case let .exec(exec) = result {
+      spanAttributes?[.exitCode] = String(exec.exitCode)
+      spanAttributes?[.bytesOut] = String(exec.output.utf8.count)
+      spanAttributes?[.outcome] = "ok"
+      spanAttributes?[.verdict] = "exited"
+    }
+    return result
   }
 
   private enum DriveOutcome: Sendable {

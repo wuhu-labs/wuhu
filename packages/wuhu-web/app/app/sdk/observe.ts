@@ -23,6 +23,9 @@ export interface Subscription<Event> {
   url(cursor: number | null): string | null
   cursorOf(event: Event): number | null
   readonly retention?: Retention<Event>
+  // A subscription the server may not support stops at the first refusal
+  // (400 or 422) instead of retrying it.
+  readonly stopOnRefusal?: boolean
 }
 
 // The events a reopen replays, before connecting, to paint what was last
@@ -70,7 +73,8 @@ export interface EventStream {
   // Fires on every received chunk, including heartbeat comments that decode
   // to no message — the liveness signal a quiet stream still carries.
   onActivity(handler: () => void): void
-  onError(handler: () => void): void
+  // `status` is the HTTP status of a refused open, absent for a dropped stream.
+  onError(handler: (status?: number) => void): void
   close(): void
 }
 
@@ -125,6 +129,7 @@ export function observeStore<Data, Event>(
   let cancelOpenDeadline: (() => void) | null = null
   let cancelStaleDeadline: (() => void) | null = null
   let closed = false
+  let refused = false
   let restoring: Promise<void> | null = null
   let restored = retention == null
   let kept: Event[] = []
@@ -185,7 +190,7 @@ export function observeStore<Data, Event>(
   }
 
   const connect = () => {
-    if (closed || !network.online()) return
+    if (closed || refused || !network.online()) return
     const url = subscription.url(cursor)
     if (url === null) return
     const opened = open(url)
@@ -228,7 +233,7 @@ export function observeStore<Data, Event>(
       remember(event)
       emit()
     })
-    opened.onError(() => {
+    opened.onError((status) => {
       if (stream !== opened) return
       stream = null
       cancelOpenDeadline?.()
@@ -237,6 +242,12 @@ export function observeStore<Data, Event>(
       cancelStaleDeadline = null
       opened.close()
       setLiveness('reconnecting')
+      if (
+        subscription.stopOnRefusal && (status === 400 || status === 422)
+      ) {
+        refused = true
+        return
+      }
       scheduleReconnect()
     })
   }

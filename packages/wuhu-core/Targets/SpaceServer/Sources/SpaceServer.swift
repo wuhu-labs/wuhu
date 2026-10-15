@@ -181,9 +181,9 @@ public enum SpaceServer {
       return jsonResponse(.object(info))
     }
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
-    sessions?.scripts.configureDiscovery(contentHost: discoveryContentHost)
+    sessions?.configureDiscovery(contentHost: discoveryContentHost)
     if let identityController {
-      sessions?.scripts.configureDiscovery(identity: { try await identityController.snapshot() })
+      sessions?.configureDiscovery(identity: { try await identityController.snapshot() })
     }
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
@@ -266,8 +266,11 @@ public enum SpaceServer {
       "/.well-known/openid-configuration", "/.well-known/jwks.json",
     ]
     return hostRouted(contentHost, api: gated { request in
-      let v2KeyStatus = request.method == .get && request.headers[MachineV2Connect.pubkeyHeader] != nil && request.url.path.hasPrefix("/v1/machine-v2/") && request.url.path.split(separator: "/").count == 3
-      if selfAuthenticating.contains(request.url.path) || v2KeyStatus {
+      let v2Path = request.url.path.hasPrefix("/v1/machine-v2/") ? request.url.path.split(separator: "/") : []
+      let v2KeySigned = request.headers[MachineV2Connect.pubkeyHeader] != nil && (
+        (request.method == .get && v2Path.count == 3) || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
+      )
+      if selfAuthenticating.contains(request.url.path) || v2KeySigned {
         return try await routed(request)
       }
       if webApp != nil, request.method == .get, !isAPIPath(request.url) {
@@ -326,6 +329,7 @@ public enum SpaceServer {
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
     publicRead: Bool = false,
+    executionPlacement: ExecutionPlacement = .inProcess,
     devImport: URL? = nil,
     devExport: URL? = nil,
     certificate: URL? = nil,
@@ -335,6 +339,7 @@ public enum SpaceServer {
     groupCertificate: URL? = nil,
     groupPrivateKey: URL? = nil,
     webAppDirectory: URL? = nil,
+    otelEndpoint: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
     let aiDisclosure: AIDisclosure?
@@ -397,7 +402,7 @@ public enum SpaceServer {
     } else { webApp = .embedded }
     let spaceHost = try await SpaceHost.open(
       folder: folder, deployment: deployment, configDirectory: configDirectory,
-      fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
+      fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, executionPlacement: executionPlacement, contentHostPattern: contentHostPattern,
       aiDisclosure: aiDisclosure, version: version, webApp: webApp,
       devImport: devImport, devExport: devExport,
     )
@@ -412,12 +417,21 @@ public enum SpaceServer {
         upgrading: directory.handler,
       )
     } catch { try? await spaceHost.shutdown(); throw error }
+    let telemetry: ServerTelemetryRuntime?
+    do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0) } }
+    catch {
+      await api.shutdown()
+      try? await spaceHost.shutdown()
+      throw error
+    }
     await withTaskGroup(of: Void.self) { group in
+      if let telemetry { group.addTask { await telemetry.run() } }
       group.addTask { await spaceHost.run() }
       await api.runUntilCancelled()
       try? await spaceHost.shutdown()
       group.cancelAll()
     }
+    if let telemetry { await telemetry.shutdown() }
     try await spaceHost.shutdown()
   }
 }

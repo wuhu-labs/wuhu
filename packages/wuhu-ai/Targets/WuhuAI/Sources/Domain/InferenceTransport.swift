@@ -31,7 +31,7 @@ func normalizedRequestContext(_ context: Context, targetProviderID: String, repl
 /// stream's `onTermination` and finishes without a terminal event.
 func runSSEInference(
   buildRequest: @escaping @Sendable () async throws -> (url: URL, headers: [String: String], body: OrderedDictionary<String, JSONValue>),
-  modifyBody: @escaping @Sendable (inout OrderedDictionary<String, JSONValue>, RequestOptions) throws -> Void,
+  modifyBody: @escaping @Sendable (inout OrderedDictionary<String, JSONValue>, RequestOptions) -> Void,
   modifyHeaders: @escaping @Sendable (inout RequestHeaders, RequestOptions) -> Void,
   receiveResponseHeaders: @escaping @Sendable ([String: String]) async -> Void = { _ in },
   options: RequestOptions,
@@ -64,7 +64,7 @@ func runSSEInference(
           group.addTask {
             let (url, rawHeaders, requestBody) = try await buildRequest()
             var body = requestBody
-            try modifyBody(&body, options)
+            modifyBody(&body, options)
             var headers = RequestHeaders(values: rawHeaders)
             modifyHeaders(&headers, options)
 

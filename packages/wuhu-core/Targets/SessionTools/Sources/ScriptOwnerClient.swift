@@ -37,8 +37,7 @@ public struct ScriptIdentityReply: Sendable {
 }
 
 public protocol ScriptOwnerClient: Sendable {
-  var scriptMachines: ScriptMachineAccess? { get }
-  var scriptMachinesV2: ScriptMachineV2Access? { get }
+  func scriptMachines(for session: SessionID) -> ScriptMachineAccess?
   func identityRequest(_ request: Request, session: SessionID) async -> ScriptIdentityReply
   func identityConfiguration() async throws -> JSONValue
   func principal(of session: SessionID) async throws -> Principal
@@ -63,7 +62,6 @@ public protocol ScriptOwnerClient: Sendable {
   func setSecret(_ name: String, value: String, session: SessionID) async throws
   func usableMachines(session: SessionID) async throws -> [MachineRecord]
   func resolveMachine(_ reference: String, session: SessionID) async throws -> MachineRecord?
-  func machineV2Members(group: GroupID) async throws -> [String]
   func ownExecs(session: SessionID) async throws -> [ExecStatus]
   func ownExecStatus(_ id: String, session: SessionID) async throws -> ExecStatus
   func ownExecToKill(_ id: String, session: SessionID) async throws -> ExecID

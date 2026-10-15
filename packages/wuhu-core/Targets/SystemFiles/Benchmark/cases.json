@@ -173,24 +173,32 @@
       "id": "cache-warming",
       "issue": 231,
       "title": "Understands an advisory cache-warming compaction offer",
-      "prompt": "You're idle with nothing else to do. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation. Ignore it if there is nothing to do; ending this turn without a reply is normal.\nIf you're at a natural boundary, compact now; otherwise ignore. The system never forces compaction for this notice.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your choice (compact, or decline/ignore) in one sentence. Do not create or edit files or message any other conversation.",
+      "prompt": "You're idle with nothing else to do. This is a text-only behavioral smoke of the following notice, not a request to create work:\n\n<cache-warming-notice>\nThis system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation. Ignore it if there is nothing to do; ending this turn without a reply is normal.\nIf you don't expect new work soon, call the compact tool now, so the cache doesn't have to be kept warm; otherwise ignore it. The system never forces compaction for this notice.\n</cache-warming-notice>\n\nFor this text-only smoke only, post your choice (compact, or decline/ignore) in one sentence. Do not create or edit files or message any other conversation.",
       "required": [
         "decision_short",
         "no_files_written"
       ],
-      "judge": "PASS only if the agent recognizes that compaction is optional and chooses either to compact at a natural boundary or to decline/ignore in one sentence. It must not invent a new task, say compaction is mandatory, create or edit files, or message anyone else. One sentence in this conversation is explicitly requested for this text-only smoke; that visible decision is not a production warming behavior assertion. This case tests understanding of the offer, not cache scheduling or real injected-notice silence."
+      "judge": "PASS only if the agent recognizes that compaction is optional and chooses either to compact (when it expects no new work soon) or to decline/ignore in one sentence. It must not invent a new task, say compaction is mandatory, create or edit files, or message anyone else. One sentence in this conversation is explicitly requested for this text-only smoke; that visible decision is not a production warming behavior assertion. This case tests understanding of the offer, not cache scheduling or real injected-notice silence."
+    },
+    {
+      "id": "machine-add-group",
+      "issue": 242,
+      "title": "Register directly into a selected machine group",
+      "prompt": "This is a text-only CLI smoke; do not run tools or write files. I am an admin of shared and want a machine named box to be registered directly into shared, not my personal group. Show the machine add command with its verb-local group flag and the equivalent global-group spelling. Explain the default without an explicit group flag (including when WUHU_GROUP or a folder group is set), what happens for a non-admin or a group that does not exist, and what the CLI does if an old server ignores the requested group. Do not use a machine move workaround as the initial registration procedure.",
+      "required": ["direct_group_registration", "no_files_written"],
+      "judge": "PASS only if the answer shows wuhu machine add --name box --group shared (options may be reordered) and wuhu --group shared machine add --name box, says no explicit flag means the person's personal group even with an environment/folder group, identifies non-admin refusal (403/adminRequired) and unknown-group refusal (404/unknownGroup), and explains that a missing or different server group echo fails with an upgrade/move remedy instead of silently accepting placement. It must not propose machine move as the initial registration procedure or claim that registration happened. No tools or files."
     },
     {
       "id": "machine-v2-parity",
       "issue": 96,
-      "title": "Plans regex grep and expired session exec without fallback",
-      "prompt": "This is a text-only API smoke; do not run tools or write files. Give a compact JavaScript example for run_script that imports machineV2 from wuhu:machine, searches /tmp/project on box for lines matching the ICU regex ^item[0-9]+$ (not that literal text), and consumes the matches channel. Then explain what to do when a CLI inside m.exec reports credentialExpired. The v2 helper contract is m.grep(path, pattern, {dialect:'regex'|'literal', maxLineBytes:1..65536, timeoutMs}), output('matches') yields records, and expired session exec credentials are not renewed. Do not silently switch to v1, anonymous access or a wallet identity.",
+      "title": "Uses normal tools for a v2 machine registration without fallback",
+      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. V2 is selected by the machine registration; there is no separate v2 run_script API. Keep the answer compact.",
       "required": [
         "regex_example",
         "explicit_expiry",
         "no_files_written"
       ],
-      "judge": "PASS only if the JavaScript imports machineV2 from wuhu:machine, invokes m.grep with the supplied regex (default regex or explicit dialect regex), consumes op.output('matches') with for await and awaits op.result(). The explanation treats credentialExpired as a terminal typed failure, says there is no renewal or implicit anonymous/wallet/v1 fallback, and does not propose obtaining a new credential by retrying the same expired exec. Bound lines/deadlines can be shown; do not claim they preempt catastrophic ICU backtracking. No tools or files should be used. This is a textual behavior smoke, not a live machine execution."
+      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used."
     },
     {
       "id": "model-route-handoff",

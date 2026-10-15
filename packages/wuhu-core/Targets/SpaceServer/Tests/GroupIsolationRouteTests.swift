@@ -30,6 +30,7 @@ import Testing
     let bob: String
     let bobGroup: GroupID
     let admin: String
+    let adminGroup: GroupID
     let p: SessionID
     let s: SessionID
   }
@@ -41,7 +42,7 @@ import Testing
     defer { try? FileManager.default.removeItem(at: folder) }
     let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
     let tokens = ExecTokens(spaceURL: "https://space.test:5530")
-    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens, secrets: stores)
+    let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens, secrets: stores, machineV2: true)
     let (alice, aliceKey) = try await harness.enrolledBearer()
     let aliceGroup = try await harness.space.ensurePersonalGroup(account: aliceKey.account)
     let (bob, bobKey) = try await harness.enrolledBearer()
@@ -53,7 +54,7 @@ import Testing
     let s = try await harness.store.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", executor: Self.model)
     try await body(World(
       harness: harness, tokens: tokens, stores: stores, folder: folder,
-      alice: alice, aliceAccount: aliceKey.account, aliceGroup: aliceGroup, bob: bob, bobGroup: bobGroup, admin: admin, p: p, s: s,
+      alice: alice, aliceAccount: aliceKey.account, aliceGroup: aliceGroup, bob: bob, bobGroup: bobGroup, admin: admin, adminGroup: adminGroup, p: p, s: s,
     ))
   }
 
@@ -226,6 +227,131 @@ import Testing
         #expect(try await send(w, .post, "/v1/exec", mint, bearer: try await token(w, w.p)).status == .ok)
         #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.admin).status == .notFound)
         #expect(try await send(w, .post, "/v1/exec", mint, bearer: w.alice, group: w.aliceGroup).status == .ok)
+      }
+    }
+  }
+
+  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
+  func anAdminAddsAMachineDirectlyToTheRequestedGroup(path: String) async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let added = try await send(w, .post, path, .object(["name": "common-v2", "group": "shared"]), bearer: w.admin)
+        #expect(added.status == .ok)
+        let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
+        let id = output.id
+        #expect(output.group == "shared")
+        #expect(try await w.harness.space.machine(id)?.group == .shared)
+        let listed = try await send(w, .get, "/v1/machine", bearer: try await token(w, w.s))
+        #expect(listed.status == .ok)
+        #expect(try JSONValueDecoder().decode([MachineStatus].self, from: try await json(listed)).contains { $0.id == id })
+      }
+    }
+  }
+
+  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
+  func anAdminEdgeDoesNotRequireTargetGroupMembership(path: String) async throws {
+    try await withSessionDeps {
+      try await world { w in
+        try await w.harness.space.addEdge(src: w.adminGroup, dst: w.bobGroup, kind: .admin, by: nil)
+        let body: JSONValue = ["name": "admin-only-v2", "group": .string(w.bobGroup.rawValue)]
+        let actingAsTarget = try await send(w, .post, path, body, bearer: w.admin, group: w.bobGroup)
+        #expect(actingAsTarget.status == .forbidden)
+        #expect(try await code(actingAsTarget) == "groupForbidden")
+        let added = try await send(w, .post, path, body, bearer: w.admin)
+        #expect(added.status == .ok)
+        let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
+        #expect(output.group == w.bobGroup.rawValue)
+        #expect(try await w.harness.space.machine(output.id)?.group == w.bobGroup)
+      }
+    }
+  }
+
+  @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
+  func addingToAGroupRequiresItsAdminAndAnExistingGroup(path: String) async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let denied = try await send(w, .post, path, .object(["name": "denied-v2", "group": "shared"]), bearer: w.alice)
+        #expect(denied.status == .forbidden)
+        #expect(try await code(denied) == "adminRequired")
+        let unknown = try await send(w, .post, path, .object(["name": "unknown-v2", "group": "missing"]), bearer: w.admin)
+        #expect(unknown.status == .notFound)
+        #expect(try await code(unknown) == "unknownGroup")
+        #expect(try await w.harness.space.resolveMachine("denied-v2") == nil)
+        #expect(try await w.harness.space.resolveMachine("unknown-v2") == nil)
+      }
+    }
+  }
+
+  @Test func aPersonEnrollsTheirAppMachineInOneCallLinkedToTheirOwnDevice() async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let (_, aliceDeviceKey) = try await w.harness.enrolledBearer(account: w.aliceAccount)
+        let mac = try await w.harness.space.upsertDevice(pubkey: aliceDeviceKey.pubkey, installation: "alice-mac", kind: "mac", name: "Alice's Mac")
+        let (_, strangerKey) = try await w.harness.enrolledBearer()
+        let foreign = try await w.harness.space.upsertDevice(pubkey: strangerKey.pubkey, installation: "other-mac", kind: "mac", name: "Other Mac")
+        func body(_ name: String, device: String, pubkey: String = Curve25519.Signing.PrivateKey().pubkeyLabel) -> JSONValue {
+          ["name": .string(name), "pubkey": .string(pubkey), "device": .string(device)]
+        }
+
+        let refused = try await send(w, .post, "/v1/machine-v2", body("borrowed", device: foreign.id), bearer: w.alice)
+        #expect(refused.status == .notFound)
+        #expect(try await code(refused) == "unknownDevice")
+        #expect(try await w.harness.space.device(id: foreign.id)?.machine == nil)
+        let fromSession = try await send(w, .post, "/v1/machine-v2", body("agent-made", device: mac.id), bearer: try await token(w, w.p))
+        #expect(fromSession.status == .forbidden)
+
+        let pubkey = Curve25519.Signing.PrivateKey().pubkeyLabel
+        let enrolled = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
+        #expect(enrolled.status == .ok)
+        let output = try JSONValueDecoder().decode(EnrollConsumeOutput.self, from: try await json(enrolled))
+        let machine = MachineID(rawValue: try #require(output.machine))
+        #expect(try await w.harness.space.machine(machine)?.group == w.aliceGroup)
+        #expect(try await w.harness.space.device(id: mac.id)?.machine == machine)
+        #expect(try await w.harness.space.machineV2Members(group: w.aliceGroup).contains(machine.rawValue))
+
+        // A retry after a lost response replays; another key under the name does not.
+        let replayed = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
+        #expect(replayed.status == .ok)
+        #expect(try JSONValueDecoder().decode(EnrollConsumeOutput.self, from: try await json(replayed)) == output)
+        let otherKey = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id), bearer: w.alice)
+        #expect(otherKey.status == .conflict)
+        #expect(try await code(otherKey) == "machineNameTaken")
+      }
+    }
+  }
+
+  @Test func aBodylessMachineRegistrationKeepsThePersonalDefault() async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let added = try await send(w, .post, "/v1/machine", bearer: w.alice)
+        #expect(added.status == .ok)
+        let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
+        #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
+      }
+    }
+  }
+
+  @Test func aPersonsV2MachineDefaultsToTheirPersonalGroup() async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let added = try await send(w, .post, "/v1/machine-v2", .object(["name": "hers-v2"]), bearer: w.alice)
+        #expect(added.status == .ok)
+        let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
+        #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
+      }
+    }
+  }
+
+  @Test func sessionRegistrationPolicyKeepsItsPrincipalGroup() async throws {
+    try await withSessionDeps {
+      try await world { w in
+        let principal = Principal(actor: .session(w.p), group: w.aliceGroup)
+        for requested in [nil, "shared", "missing"] {
+          switch try await machineRegistrationGroup(requested, principal: principal, space: w.harness.space) {
+          case let .success(group): #expect(group == w.aliceGroup)
+          case .failure: Issue.record("a session's group policy must not use a requested target")
+          }
+        }
       }
     }
   }

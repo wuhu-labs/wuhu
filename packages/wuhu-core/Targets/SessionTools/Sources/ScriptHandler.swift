@@ -33,11 +33,11 @@ public protocol HandlerExecutionClient: Sendable {
   func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
 }
 
-struct ScriptHandlerExecutor: HandlerExecutionClient {
+public struct ScriptHandlerExecutor: HandlerExecutionClient {
   let scripts: Scripts
   let tools: ToolExecutor
-  init(scripts: Scripts, tools: ToolExecutor) { self.scripts = scripts; self.tools = tools }
-  func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
+  public init(scripts: Scripts, tools: ToolExecutor) { self.scripts = scripts; self.tools = tools }
+  public func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     let result = try await scripts.runHandler(
       path: invocation.path,
       session: invocation.session,
@@ -142,11 +142,11 @@ extension Scripts {
       lifetime: .seconds(60),
       secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
-      machines: machines,
+      machines: owner.scriptMachines(for: session),
       handler: context,
     )
     await withTaskCancellationHandler {
-      await execution.run(owner: owner)
+      await execution.run(owner: owner, lifecycle: lifecycle)
     } onCancel: {
       execution.cancelHandler()
     }

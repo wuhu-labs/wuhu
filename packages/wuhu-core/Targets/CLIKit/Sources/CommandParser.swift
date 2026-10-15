@@ -30,6 +30,12 @@ extension Command {
     switch verb {
     case "machine-v2":
       let action = try parser.required("install|upgrade|rollback|uninstall", verb: verb)
+      if action == "add" {
+        guard let name = try parser.option("--name", verb: "machine-v2 add") else { throw UsageError(message: "machine-v2 add requires --name <name>") }
+        let group = try parser.option("--group", verb: "machine-v2 add")
+        try parser.finish(verb: "machine-v2 add")
+        return .machineV2Add(name: name, group: group)
+      }
       let binary = try parser.option("--binary", verb: verb)
       let machine = try parser.required("machine-id", verb: verb)
       try parser.finish(verb: verb)
@@ -331,11 +337,18 @@ extension Command {
       let port = try parser.intOption("--port", verb: verb) ?? 5530
       let dev = parser.flag("--dev")
       let publicRead = parser.flag("--public-read")
+      let executionWorker = parser.flag("--execution-worker")
       let devImport = try parser.option("--dev-import", verb: verb)
       let devExport = try parser.option("--dev-export", verb: verb)
       let cert = try parser.option("--cert", verb: verb)
       let key = try parser.option("--key", verb: verb)
       let webApp = try parser.option("--web-app", verb: verb)
+      let otelEndpoint = try parser.option("--otel-endpoint", verb: verb)
+      if let otelEndpoint {
+        guard let url = URL(string: otelEndpoint), ["http", "https"].contains(url.scheme), url.host != nil,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil
+        else { throw UsageError(message: "serve: --otel-endpoint must be an HTTP(S) collector URL without credentials, query or fragment") }
+      }
       var ignored: [String] = []
       for name in ["--web-port", "--web-origin"] {
         if try parser.option(name, verb: verb) != nil { ignored.append(name) }
@@ -388,6 +401,7 @@ extension Command {
         origin: origin,
         dev: dev,
         publicRead: publicRead,
+        executionWorker: executionWorker,
         devImport: devImport,
         devExport: devExport,
         certificate: cert,
@@ -396,7 +410,7 @@ extension Command {
         contentHostPattern: contentHostPattern,
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
-        webApp: webApp,
+        otelEndpoint: otelEndpoint, webApp: webApp,
         ignoredOptions: ignored,
       ))
     default:
@@ -630,8 +644,9 @@ extension Command {
     switch subcommand {
     case "add":
       let name = try parser.option("--name", verb: "machine add")
+      let group = try parser.option("--group", verb: "machine add")
       try parser.finish(verb: "machine add")
-      return .machineAdd(name: name)
+      return .machineAdd(name: name, group: group)
     case "join":
       let name = try parser.option("--name", verb: "machine join")
       let server = try parser.required("server-url", verb: "machine join")
@@ -1207,7 +1222,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1273,7 +1288,11 @@ extension Command {
     \(exitCodes)
     """,
     "machine-v2": """
-    usage: wuhu machine-v2 install|upgrade <machine-id> --binary <signed-wuhu>
+    usage: wuhu machine-v2 add --name <name> [--group <group>]
+           wuhu machine-v2 join <https-origin> [fingerprint] [--name <name>] < token
+           wuhu machine-v2 run|leave <machine-id>
+           wuhu machine-v2 preflight <machine-id> <private-result-path>
+           wuhu machine-v2 install|upgrade <machine-id> --binary <signed-wuhu>
            wuhu machine-v2 rollback|uninstall <machine-id>
 
     install and upgrade change only this v2 machine's private binary/service.
@@ -1282,11 +1301,15 @@ extension Command {
     \(exitCodes)
     """,
     "machine add": """
-    usage: wuhu machine add [--name N]
+    usage: wuhu machine add [--name N] [--group G]
 
     mints a machine in the pinned space and prints its id, one-time join
     token, and, when the server runs its generated certificate, that
     certificate's fingerprint. the token is shown once and dies at first use.
+    --group G (also before the verb) selects only the registration target
+    and needs an admin of it, not membership. without that flag, uses your
+    personal group; environment and folder groups do not set the target.
+    a missing or different server group echo fails with an upgrade/move hint.
     \(exitCodes)
     """,
     "machine join": """

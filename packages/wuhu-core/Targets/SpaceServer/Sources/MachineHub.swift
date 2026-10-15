@@ -1,3 +1,8 @@
+#if canImport(FoundationEssentials)
+  import struct FoundationEssentials.UUID
+#else
+  import struct Foundation.UUID
+#endif
 import enum Credentials.SecretError
 import struct Credentials.SpaceSecretStores
 import Dependencies
@@ -5,6 +10,7 @@ import JSONValue
 import Logging
 import MachineChannel
 import MachineContract
+import struct OperationProtocol.OperationError
 import Serve
 import SessionDomain
 import SpaceCore
@@ -34,7 +40,9 @@ public actor MachineHub {
     case probeMachine(MachineID, generation: Int)
   }
 
-  private let space: Space
+  let space: Space
+  var v2: MachineV2Service?
+  var legacyMachines: Set<MachineID> = []
   private let clock: any Clock<Duration>
   private let callerGrace: Duration
   private let machineGrace: Duration
@@ -118,6 +126,7 @@ public actor MachineHub {
   // exec orphaned across a restart can never hang live forever.
   public func run() async {
     for record in (try? await space.liveExecs()) ?? [] where callerLegs[record.id] == nil {
+      if (try? await v2Group(record.machine)) != nil { try? await space.finishExec(record.id, .machineLost); continue }
       remember(record)
       timersContinuation.yield((callerGrace, .callerGone(record.id, generation: callerGenerations[record.id, default: 0])))
     }
@@ -173,6 +182,13 @@ public actor MachineHub {
   }
 
   public func runCallerSession(_ record: ExecRecord, socket: WebSocket) async {
+    do {
+      if try await v2Group(record.machine) != nil {
+        guard let v2 else { throw OperationError(.machineUnavailable) }
+        await v2.runCaller(record, socket: socket, space: space, tokens: tokens, secrets: secrets)
+        return
+      }
+    } catch { socket.close(); return }
     let generation = bindCaller(record, socket: socket)
     if record.terminal == nil, let current = try? await space.execRecord(record.id), current.terminal == .machineLost {
       await failCaller(record.id, machine: record.machine)
@@ -184,13 +200,22 @@ public actor MachineHub {
     await unbindCaller(record.id, generation: generation)
   }
 
-  public func noteMinted(_ record: ExecRecord) {
+  public func noteMinted(_ record: ExecRecord) async {
+    if (try? await v2Group(record.machine)) != nil { await v2?.noteMinted(record, space: space); return }
     remember(record)
     timersContinuation.yield((callerGrace, .callerGone(record.id, generation: callerGenerations[record.id, default: 0])))
   }
 
-  public func attachedMachines() -> Set<MachineID> {
-    Set(machineLegs.keys)
+  public func attachedMachines() async -> Set<MachineID> {
+    var attached = Set(machineLegs.keys)
+    for group in (try? await space.groups()) ?? [] {
+      for id in (try? await space.machineV2Members(group: group.id)) ?? [] {
+        if let evidence = try? await space.machineV2PresenceEvidence(id, group: group.id), evidence.state == .attached {
+          attached.insert(MachineID(rawValue: id))
+        }
+      }
+    }
+    return attached
   }
 
   // The row turns `cancelled` before the kill frame goes out, and the real exit
@@ -200,6 +225,12 @@ public actor MachineHub {
   public func kill(_ id: ExecID) async throws {
     guard let record = try await space.execRecord(id) else { throw MachineHubError.execNotFound(id) }
     guard record.terminal == nil else { return }
+    if try await v2Group(record.machine) != nil {
+      guard let v2 else { throw OperationError(.machineUnavailable) }
+      try await v2.killExec(record)
+      try await space.finishExec(id, .cancelled)
+      return
+    }
     try await space.finishExec(id, .cancelled)
     await forgetTerminal(id)
     if let leg = machineLegs[record.machine] {
@@ -221,11 +252,19 @@ public actor MachineHub {
   public static let maximumFrameBytes: Int = 16 << 20
 
   public func vfs(machine: MachineID, op: VFSOp) async throws -> VFSResult {
+    if let group = try await v2Group(machine) {
+      guard let v2 else { throw OperationError(.machineUnavailable) }
+      return try await v2.client(group: group).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"))
+    }
     let response: VFSResponse = try await roundTrip(machine, .vfsRequest) { VFSRequest(id: $0, op: op) }
     return response.result
   }
 
   public func search(machine: MachineID, query: SearchQuery) async throws -> SearchResult {
+    if let group = try await v2Group(machine) {
+      guard let v2 else { throw OperationError(.machineUnavailable) }
+      return try await v2.client(group: group).search(machine: machine.rawValue, query: query)
+    }
     let response: SearchResponse = try await roundTrip(machine, .searchRequest) { SearchRequest(id: $0, query: query) }
     return response.result
   }

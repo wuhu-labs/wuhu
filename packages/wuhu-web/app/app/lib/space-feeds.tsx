@@ -21,6 +21,12 @@ import {
 } from './session-model.ts'
 import type { EnrolledDevice } from '~/sdk/auth'
 import { channelRows, channelsSQL, type ChannelSummary } from './channels.ts'
+import {
+  routeRows,
+  type SessionRoute,
+  sessionRoutesSQL,
+  withRoutes,
+} from './model-route.ts'
 import { useObserve } from './use-observe.ts'
 import { applyRevision, loadPaths, type PathMap } from './tree.ts'
 import { type SidebarFile, sidebarPaths, touchesSidebars } from './sidebars.ts'
@@ -116,6 +122,8 @@ interface KeptTree {
 }
 
 const keepTreeDelayMs = 1_000
+
+const noRoutes: ReadonlyMap<string, SessionRoute> = new Map()
 
 export interface GroupFeed {
   loaded: boolean
@@ -315,11 +323,19 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     (_, output) => channelRows(output),
     null,
   ).data
-  const sessions = useObserve<SessionRecord[] | null, QueryOutput>(
+  const rows = useObserve<SessionRecord[] | null, QueryOutput>(
     sqlSubscription(sessionsSQL, client.group),
     (_, output) => sessionRows(output, client.group),
     null,
   ).data
+  // A server without the route tables refuses this query once; its sessions
+  // keep their rows and carry no route for the rest of the connection.
+  const routes = useObserve<ReadonlyMap<string, SessionRoute>, QueryOutput>(
+    { ...sqlSubscription(sessionRoutesSQL, client.group), stopOnRefusal: true },
+    (_, output) => routeRows(output),
+    noRoutes,
+  ).data
+  const sessions = useMemo(() => withRoutes(rows, routes), [rows, routes])
 
   return useMemo(() => ({
     loaded: loaded !== null,

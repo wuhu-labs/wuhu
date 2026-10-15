@@ -15,11 +15,11 @@ import Testing
 import WuhuAI
 
 @Suite struct GroupSwitchingTests {
-  func setup(seconds: Int = 1800, policy: ModelsDocument.Policy? = nil) async throws -> (SessionHarness, InProcessExecutionOwnerClient, ProviderCatalog, SessionID) {
+  func setup(seconds: Int = 1800, policy: ModelsDocument.Policy? = nil, model: String = "test-model") async throws -> (SessionHarness, InProcessExecutionOwnerClient, ProviderCatalog, SessionID) {
     let harness = try await SessionHarness(credentials: .bound { provider in
       .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
     })
-    try await ModelGroupRouteTests().install(harness)
+    try await ModelGroupRouteTests().install(harness, model: model)
     let fs = await harness.space.fs(.shared)
     let (entry, data) = try await fs.read(ModelsDocument.groupPath)
     var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)

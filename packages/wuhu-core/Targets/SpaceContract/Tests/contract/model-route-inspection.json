@@ -1,0 +1,112 @@
+{
+  "activeModel" : "claude-primary",
+  "activeProvider" : "anthropic",
+  "decisions" : [
+    {
+      "bindingFingerprint" : "fp-backup",
+      "epoch" : "epoch-1",
+      "evidence" : [
+        {
+          "member" : "primary",
+          "observedAt" : "2026-10-03T04:00:00Z",
+          "score" : 0.01,
+          "windows" : [
+            {
+              "capacity" : 1,
+              "name" : "five_hour",
+              "remaining" : 0.01,
+              "resetsAt" : "2026-10-03T09:00:00Z",
+              "score" : 0.01,
+              "usedPercent" : 99
+            }
+          ]
+        }
+      ],
+      "group" : "fleet",
+      "member" : "backup",
+      "placedAt" : "2026-10-03T04:00:00Z",
+      "reason" : "create",
+      "specifier" : {
+        "effort" : "medium",
+        "model" : "gpt-backup",
+        "provider" : "openai"
+      }
+    },
+    {
+      "bindingFingerprint" : "fp-primary",
+      "epoch" : "epoch-2",
+      "evidence" : [
+        {
+          "member" : "primary",
+          "observedAt" : "2026-10-03T04:00:00Z",
+          "score" : 0.01,
+          "windows" : [
+            {
+              "capacity" : 1,
+              "name" : "five_hour",
+              "remaining" : 0.01,
+              "resetsAt" : "2026-10-03T09:00:00Z",
+              "score" : 0.01,
+              "usedPercent" : 99
+            }
+          ]
+        }
+      ],
+      "group" : "fleet",
+      "member" : "primary",
+      "placedAt" : "2026-10-03T04:01:00Z",
+      "reason" : "compaction",
+      "specifier" : {
+        "effort" : "high",
+        "model" : "claude-primary",
+        "provider" : "anthropic"
+      },
+      "switchCause" : "quota"
+    }
+  ],
+  "requestedTarget" : {
+    "effort" : "high",
+    "modelGroup" : "fleet"
+  },
+  "route" : {
+    "bindingFingerprint" : "fp-primary",
+    "epoch" : "epoch-2",
+    "evidence" : [
+      {
+        "member" : "primary",
+        "observedAt" : "2026-10-03T04:00:00Z",
+        "score" : 0.01,
+        "windows" : [
+          {
+            "capacity" : 1,
+            "name" : "five_hour",
+            "remaining" : 0.01,
+            "resetsAt" : "2026-10-03T09:00:00Z",
+            "score" : 0.01,
+            "usedPercent" : 99
+          }
+        ]
+      }
+    ],
+    "failure" : {
+      "code" : "refusal",
+      "consecutiveFailures" : 2,
+      "deadline" : "2026-10-03T04:40:00Z",
+      "firstFailureAt" : "2026-10-03T04:10:00Z",
+      "lastFailureAt" : "2026-10-03T04:10:30Z",
+      "reason" : "quota",
+      "retryAt" : "2026-10-03T05:10:00Z",
+      "source" : "upstream"
+    },
+    "group" : "fleet",
+    "member" : "primary",
+    "placedAt" : "2026-10-03T04:01:00Z",
+    "reason" : "compaction",
+    "specifier" : {
+      "effort" : "high",
+      "model" : "claude-primary",
+      "provider" : "anthropic"
+    },
+    "switchCause" : "quota"
+  }
+}

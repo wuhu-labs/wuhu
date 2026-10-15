@@ -7,6 +7,7 @@
 import Assertion
 import Dependencies
 import Fetch
+import JSONValue
 import protocol MachineChannel.FrameTransport
 import SpaceClient
 import enum SpaceContract.GroupHeader
@@ -83,17 +84,26 @@ extension Executor {
       return client
     }
     let runner = self.runner
+    let server = Wallet.assertionKey(space)
     var dial: (@Sendable (URL, [(String, String)]) async throws -> any FrameTransport)?
     if let inner = runner.dial {
       dial = { url, headers in
         let assertion = try await bearer.value()
-        return try await inner(url, headers + [("authorization", "Bearer " + assertion)])
+        do {
+          return try await inner(url, headers + [("authorization", "Bearer " + assertion)])
+        } catch let error as SpaceClient.DialRefusal {
+          if error.status == 401, error.code == "unauthorized", error.message.hasPrefix("assertion expired") {
+            let body: JSONValue = ["code": "unauthorized", "message": .string(expiredAssertion(server: server).message)]
+            throw SpaceClient.DialRefusal(status: error.status, body: Array(body.jsonString().utf8))
+          }
+          throw error
+        }
       }
     }
     let client = SpaceClient(
       space: space,
-      fetch: authorized(longRunning ? runner.observeFetch : runner.fetch, bearer),
-      observeFetch: authorized(runner.observeFetch, bearer),
+      fetch: authorized(longRunning ? runner.observeFetch : runner.fetch, bearer, server: server),
+      observeFetch: authorized(runner.observeFetch, bearer, server: server),
       dial: dial,
       group: group,
     )
@@ -112,7 +122,6 @@ extension Executor {
     // A session's exec never reads the device keys.
     guard self.session == nil else { return nil }
     let endpoint = try self.endpoint(space: space)
-    let held = self.wallet.assertion(space: space).flatMap(SignedAssertion.init(rawValue:))
     guard endpoint.secure else { return nil }
     @Dependency(\.date) var dateGen
     let keys = try DeviceKeyStore(environment: self.runner.environment)
@@ -122,7 +131,7 @@ extension Executor {
     // The store is authoritative for the audience: a cached assertion is
     // honored only if it targets that id, so a stale id left by a space reset
     // + re-enroll can never shadow the live one into permanent 401s.
-    let cached = held.flatMap { $0.claims.space == identity ? $0 : nil }
+    let cached = self.wallet.assertion(space: space, identity: identity)
     if cached == nil {
       guard try keys.load(space: identity) != nil else { return nil }
     }
@@ -141,10 +150,27 @@ extension Executor {
   }
 }
 
-private func authorized(_ fetch: FetchClient, _ bearer: BearerSource) -> FetchClient {
+private func authorized(_ fetch: FetchClient, _ bearer: BearerSource, server: String) -> FetchClient {
   FetchClient { request in
     var request = request
     request.headers.setSensitive(.authorization, "Bearer " + (try await bearer.value()))
-    return try await fetch(request)
+    var response = try await fetch(request)
+    guard response.status.code == 401 else { return response }
+    let data = try await response.data()
+    let object = JSONValue.parse(String(decoding: data, as: UTF8.self))?.object
+    if object?["code"]?.stringValue == "unauthorized",
+       object?["message"]?.stringValue?.hasPrefix("assertion expired") == true
+    {
+      throw expiredAssertion(server: server)
+    }
+    response.body = .bytes(data)
+    return response
   }
+}
+
+private func expiredAssertion(server: String) -> CLIError {
+  CLIError(message: """
+  assertion expired for \(server); the server rejected this device's credential
+  re-authenticate this device for \(server): wuhu login < invite-link (mint one on an enrolled device: wuhu share-login)
+  """)
 }

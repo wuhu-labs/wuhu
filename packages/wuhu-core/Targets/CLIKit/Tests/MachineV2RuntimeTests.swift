@@ -241,3 +241,19 @@ private actor EnrollmentEffects {
     #expect(try await replay.client(safe).status.code == 200)
   }
 }
+
+extension MachineV2RuntimeTests {
+  @Test(arguments: ["join", "preflight"])
+  func sessionRefusalExplainsPersonActionAndExactWalletOptInBeforeEffects(_ verb: String) async throws {
+    let effects = Mutex(0)
+    do {
+      _ = try await MachineV2Runtime.command(arguments: ["machine-v2", verb], environment: ["WUHU_EXEC": "1", "WUHU_TOKEN": "session-token", "WUHU_SPACE_URL": "https://example.test"], fetch: .init { _ in effects.withLock { $0 += 1 }; return .text("unreachable") }, stdin: { effects.withLock { $0 += 1 }; return "unreachable" }, stdout: { _ in effects.withLock { $0 += 1 } })
+      Issue.record("session identity accepted")
+    } catch let error as CLIError {
+      #expect(error.message.contains("person action"))
+      #expect(error.message.contains("WUHU_IDENTITY=wallet wuhu machine-v2 \(verb)"))
+      #expect(!error.message.contains("session-token"))
+    }
+    #expect(effects.withLock { $0 } == 0)
+  }
+}

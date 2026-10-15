@@ -4,6 +4,11 @@ import JSONValue
 @Contract
 public struct MachineAddInput: Codable, Equatable, Sendable {
   public let name: String?
+  public let group: String?
+  /// Machine v2 only: the machine's own key, enrolled in the same call instead of minting a join token.
+  public let pubkey: String?
+  /// Machine v2 only, with `pubkey`: the caller's device this machine runs on.
+  public let device: String?
 }
 
 @Contract
@@ -11,6 +16,7 @@ public struct MachineAddOutput: Codable, Equatable, Sendable {
   public let id: MachineID
   public let token: String
   public let fingerprint: String?
+  public let group: String?
 }
 
 @Contract

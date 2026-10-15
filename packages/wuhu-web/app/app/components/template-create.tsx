@@ -3,11 +3,7 @@ import { useOutletContext } from 'react-router'
 import { KindChoice, ModelControls } from '~/components/session-create'
 import { ModalDialog } from '~/components/modal-dialog'
 import type { SpaceContext } from '~/routes/space'
-import {
-  defaultEffortOf,
-  defaultModelOf,
-  selectableProviders,
-} from '~/lib/session-create'
+import { initialChoice, type ModelCatalog } from '~/lib/session-create'
 import {
   emptyTemplateDraft,
   templateBrief,
@@ -17,32 +13,26 @@ import {
   templateNameError,
   templateReady,
 } from '~/lib/templates'
-import type { ProviderDescriptor } from '~/lib/contract.gen'
-import { fetchProviders } from '~/sdk/providers'
+import { fetchModelCatalog } from '~/sdk/providers'
 import { errorMessage } from '~/sdk/errors'
 
 function CreateForm({
-  providers,
+  catalog,
   taken,
   onCancel,
   onCreated,
 }: {
-  providers: ProviderDescriptor[]
+  catalog: ModelCatalog
   taken: (name: string) => boolean
   onCancel: () => void
   onCreated: () => void
 }) {
   const { client } = useOutletContext<SpaceContext>()
-  const [draft, setDraft] = useState<TemplateDraft>(() => {
-    const first = providers[0]
-    const model = defaultModelOf(first)
-    return {
-      ...emptyTemplateDraft,
-      provider: first?.id ?? '',
-      model,
-      effort: defaultEffortOf(model),
-    }
-  })
+  const { providers, groups } = catalog
+  const [draft, setDraft] = useState<TemplateDraft>(() => ({
+    ...emptyTemplateDraft,
+    ...initialChoice(catalog),
+  }))
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -87,12 +77,13 @@ function CreateForm({
         value={draft.kind}
         onChange={(kind) => setDraft({ ...draft, kind })}
       />
-      {providers.length === 0 && (
+      {providers.length === 0 && groups.length === 0 && (
         <p className='wuhu-muted'>No models are configured.</p>
       )}
-      {providers.length > 0 && (
+      {(providers.length > 0 || groups.length > 0) && (
         <ModelControls
           providers={providers}
+          groups={groups}
           draft={draft}
           onChange={setDraft}
         />
@@ -144,15 +135,15 @@ export function TemplateCreateDialog({
   onClose: () => void
   onCreated: () => void
 }) {
-  const [providers, setProviders] = useState<ProviderDescriptor[] | null>(null)
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open || providers != null) return
+    if (!open || catalog != null) return
     let cancelled = false
-    fetchProviders().then(
+    fetchModelCatalog().then(
       (found) => {
-        if (!cancelled) setProviders(selectableProviders(found))
+        if (!cancelled) setCatalog(found)
       },
       (failure: unknown) => {
         if (!cancelled) setLoadError(errorMessage(failure))
@@ -161,17 +152,17 @@ export function TemplateCreateDialog({
     return () => {
       cancelled = true
     }
-  }, [open, providers])
+  }, [open, catalog])
 
   return (
     <ModalDialog open={open} title='New template' onClose={onClose}>
       {loadError && <p className='wuhu-alert'>{loadError}</p>}
-      {!loadError && providers == null && (
+      {!loadError && catalog == null && (
         <p className='wuhu-muted'>Loading models…</p>
       )}
-      {!loadError && providers != null && (
+      {!loadError && catalog != null && (
         <CreateForm
-          providers={providers}
+          catalog={catalog}
           taken={taken}
           onCancel={onClose}
           onCreated={onCreated}

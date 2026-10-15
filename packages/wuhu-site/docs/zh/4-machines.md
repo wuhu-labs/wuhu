@@ -35,13 +35,13 @@ runner 是拿运行它的那个系统账号的权限去做 agent 让它做的事
 
 ## 谁能用它
 
-机器属于某个组，一开始在添加它的人的个人组里。任何能读那个组的组，里面的 agent 都能用它。所以你个人组里的机器只有你能用；把它移到 `shared`，所有人的 agent 就都能用：
+每台机器属于一个组。注册时可以用 `--group` 直接选组；例如注册到 `shared`，能读取 `shared` 的组里的 agent 就都能使用它：
 
 ```sh
-wuhu machine move mini --group shared
+wuhu machine add --name mini --group shared
 ```
 
-移动需要两个组的 admin 权限。
+这需要目标组的 admin 权限，但不要求你是该组的成员。全局写法 `wuhu --group shared machine add --name mini` 也只选择注册目标。不显式传这个选项时，机器注册到你的个人组；环境变量和文件夹中的组设置不会改变注册目标。CLI 会核对服务器返回的实际组；旧服务器忽略目标或返回其他组时，会报错并提示升级或移动机器。移动已有机器仍可用 `wuhu machine move mini --group shared`，需要两个组的 admin 权限。
 
 ## agent 命令里的 CLI
 

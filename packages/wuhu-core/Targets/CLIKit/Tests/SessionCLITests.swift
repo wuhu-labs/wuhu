@@ -368,14 +368,11 @@ private func until(
   @Test func inboxPrintsAboveTheCursorAndAdvances() async throws {
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in
-        throw InferenceError.other(status: 500, body: "provider exploded")
+        Issue.record("inbox must not invoke inference")
+        return reply([])
       }
       let id = try await harness.createSession()
-
-      #expect(await harness.run(["send", id, "go"]) == 0)
-      try await until("errored notification") {
-        try await harness.store.notifications(recipient: "owner").contains { $0.kind == .sessionErrored }
-      }
+      try await harness.store.markErrored(SessionID(id), message: "provider exploded")
 
       let before = await harness.stdout.text
       #expect(await harness.run(["inbox"]) == 0)

@@ -7,6 +7,7 @@ import Assertion
 import Dependencies
 import Fetch
 import FetchTunnel
+import JSONValue
 import MachineContract
 import struct OperationProtocol.OperationError
 import Serve
@@ -18,6 +19,43 @@ import SpaceCore
 
 func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
   let challenges = OneShotChallenges(prefix: "mv2_")
+  @Sendable func enroll(_ input: MachineAddInput, pubkey: String, principal: Principal) async throws -> Response {
+    guard let name = input.name, MachineName.normalized(name) != nil else {
+      return errorResponse(.badRequest, code: "invalidMachineName", message: "Machine v2 enrollment requires a machine name")
+    }
+    let enrolledBy: AccountID?
+    switch principal.actor {
+    case let .person(_, account): enrolledBy = account
+    case .anonymous: enrolledBy = nil
+    case .session:
+      guard input.device == nil else {
+        return errorResponse(.forbidden, code: "forbidden", message: "Only a person links a machine to a device")
+      }
+      enrolledBy = nil
+    }
+    let group: GroupID
+    switch try await machineRegistrationGroup(input.group, principal: principal, space: space) {
+    case let .success(resolved): group = resolved
+    case let .failure(response): return response
+    }
+    do {
+      let enrolled = try await space.enrollMachineV2(name: name, group: group, pubkey: pubkey, device: input.device, enrolledBy: enrolledBy)
+      return try Response.json(EnrollConsumeOutput(account: enrolled.key.account.rawValue, capabilities: enrolled.key.capabilities.map(\.rawValue).sorted(), machine: enrolled.machine.id.rawValue, machineName: enrolled.machine.name))
+    } catch let SpaceError.machineNameTaken(name) {
+      return errorResponse(.conflict, code: "machineNameTaken", message: "Machine name \(name) is already taken")
+    } catch SpaceError.malformedPubkey {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "Malformed machine public key")
+    } catch SpaceError.alreadyExists {
+      return errorResponse(.conflict, code: "keyTaken", message: "This public key is already enrolled")
+    } catch let SpaceError.unknownDevice(device) {
+      return errorResponse(.notFound, code: "unknownDevice", message: "No device \(device) of yours")
+    } catch let error as SpaceError {
+      throw error
+    } catch {
+      return machineAuthUnavailable()
+    }
+  }
+
   router.post("/v1/machine-v2") { request, _ in
     let principal: Principal
     switch try await principalOf(request) {
@@ -25,21 +63,41 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     case let .refused(response): return response
     }
     let input = try await request.json(MachineAddInput.self)
+    if let pubkey = input.pubkey {
+      return try await enroll(input, pubkey: pubkey, principal: principal)
+    }
+    guard input.device == nil else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "A device link needs the machine's pubkey")
+    }
     guard let name = input.name, let normalized = MachineName.normalized(name), normalized.hasSuffix("-v2") else {
       return errorResponse(.badRequest, code: "invalidMachineName", message: "Machine v2 requires its own name ending in -v2")
     }
-    let group: GroupID = switch principal.actor {
-    case let .person(_, account): try await space.ensurePersonalGroup(account: account)
-    case .session: principal.group
-    case .anonymous: .shared
+    let group: GroupID
+    switch try await machineRegistrationGroup(input.group, principal: principal, space: space) {
+    case let .success(resolved): group = resolved
+    case let .failure(response): return response
     }
     do {
       let (machine, token) = try await space.addMachineV2(name: normalized, group: group)
-      return try Response.json(MachineAddOutput(id: machine.id, token: token.token.rawValue, fingerprint: fingerprint))
+      return try Response.json(MachineAddOutput(id: machine.id, token: token.token.rawValue, fingerprint: fingerprint, group: machine.group.rawValue))
     } catch let SpaceError.machineNameTaken(name) {
       return errorResponse(.conflict, code: "machineNameTaken", message: "Machine name \(name) is already taken")
     }
   }
+
+  router.post("/v1/machine-v2/:id/revoke") { request, parameters in
+    guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
+      return errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")
+    }
+    let revoked: Bool
+    do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch { return machineAuthUnavailable() }
+    guard revoked else {
+      return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not a live key of this Machine v2 identity")
+    }
+    await hub.kick(MachineID(rawValue: id))
+    return jsonResponse(.object([:]))
+  }
+
   router.post("/v1/machine-v2/enroll") { request, _ in
     let input = try await request.json(EnrollConsumeInput.self)
     do {
@@ -50,19 +108,26 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
       return errorResponse(.unauthorized, code: "tokenInvalid", message: "Not a live Machine v2 enrollment token")
     } catch SpaceError.malformedPubkey {
       return errorResponse(.badRequest, code: "invalidArgument", message: "Malformed machine public key")
+    } catch let error as SpaceError {
+      throw error
+    } catch let error as OperationError {
+      throw error
+    } catch {
+      return machineAuthUnavailable()
     }
   }
   router.get("/v1/machine-v2/:id") { request, parameters in
     if request.headers[MachineV2Connect.pubkeyHeader] != nil {
-      guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"],
-            credential.machines == [id], let machine = try await space.resolveMachine(id)
-      else {
+      guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
         return errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")
       }
-      do { try await hub.authorize(credential) } catch {
+      if let refusal = await authorizationRefusal(hub, credential, message: "Not an enrolled Machine v2 identity") { return refusal }
+      let resolved: MachineRecord?
+      do { resolved = try await space.resolveMachine(id) } catch { return machineAuthUnavailable() }
+      guard let machine = resolved else {
         return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not an enrolled Machine v2 identity")
       }
-      return try Response.json(MachineStatus(id: machine.id, name: machine.name, attached: false))
+      return try await machineV2Status(space: space, machine: machine)
     }
     let principal: Principal
     switch try await principalOf(request) {
@@ -74,7 +139,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     else {
       return errorResponse(.notFound, code: "unknownMachine", message: "No enrolled Machine v2 identity")
     }
-    return try Response.json(MachineStatus(id: machine.id, name: machine.name, attached: false))
+    return try await machineV2Status(space: space, machine: machine)
   }
   router.get("/v1/machine-v2/challenge") { _, _ in
     try Response.json(MachineChallengeOutput(challenge: challenges.mint()))
@@ -86,9 +151,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     guard let credential = machineV2Credential(request, challenges: challenges) else {
       return .response(errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected"))
     }
-    do { try await hub.authorize(credential) } catch {
-      return .response(errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Credential cannot serve the addressed machines"))
-    }
+    if let refusal = await authorizationRefusal(hub, credential, message: "Credential cannot serve the addressed machines") { return .response(refusal) }
     return .boundedWebSocket(limits: .init(), subprotocol: TunnelTransport.webSocketSubprotocol) { transport in
       await hub.run(credential, transport: transport)
     }
@@ -105,4 +168,35 @@ private func machineV2Credential(_ request: Request, challenges: OneShotChalleng
   guard !machines.isEmpty, machines.count <= 32, Set(machines).count == machines.count, machines.allSatisfy(MachineID.isValid),
         key.isValidSignature(bytes, for: MachineV2Connect.signingPayload(challenge: challenge, machines: machines)) else { return nil }
   return .init(pubkey: pubkey, machines: Set(machines))
+}
+
+// 401 tells a machine its key is dead and may be discarded; anything that is
+// not a definitive refusal must stay retryable, or an outage destroys keys.
+private func authorizationRefusal(_ hub: MachineV2Hub, _ credential: MachineV2Hub.Credential, message: String) async -> Response? {
+  do {
+    try await hub.authorize(credential)
+    return nil
+  } catch let error as OperationError where error.code == .machineNotAuthorized {
+    return errorResponse(.unauthorized, code: "machineNotAuthorized", message: message)
+  } catch {
+    return machineAuthUnavailable()
+  }
+}
+
+private func machineAuthUnavailable() -> Response {
+  errorResponse(.serviceUnavailable, code: "machineAuthUnavailable", message: "Machine v2 authorization is temporarily unavailable; retry")
+}
+
+private struct MachineV2Status: Encodable {
+  let id: MachineID
+  let name: String?
+  let attached: Bool
+  let state: String
+  let observedAt: Date?
+  let reason: String?
+}
+
+private func machineV2Status(space: Space, machine: MachineRecord) async throws -> Response {
+  let evidence = try await space.machineV2PresenceEvidence(machine.id.rawValue, group: machine.group)
+  return try Response.json(MachineV2Status(id: machine.id, name: machine.name, attached: evidence?.state == .attached, state: evidence?.state.rawValue ?? "detached", observedAt: evidence?.observedAt, reason: evidence?.reason))
 }

@@ -1,5 +1,6 @@
 import Dependencies
 import enum Fetch.TransportFailureKind
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -20,6 +21,21 @@ import struct WuhuAI.ToolCall
 
 extension SessionActor {
   func loop() async throws {
+    guard ServerTracing.enabled else { return try await untracedLoop() }
+    try Task.checkCancellation()
+    let group = try live.group
+    let span = ServerTracing.$context.withValue(nil) { ServerSpan(.turn, session: id.rawValue, group: group) }
+    var outcome = "ok"
+    defer { span.finish([.outcome: outcome]) }
+    do {
+      try await ServerTracing.$context.withValue(span.context) { try await untracedLoop() }
+    } catch {
+      outcome = error is CancellationError ? "cancelled" : "error"
+      throw error
+    }
+  }
+
+  private func untracedLoop() async throws {
     // A cancelled pass (retirement, shutdown) must stop before its next
     // state read: only live sessions may read state. The check must precede
     // every `live` access — a buffered nudge can re-enter after dismount.
@@ -77,7 +93,7 @@ extension SessionActor {
           try await runInference(mode: .forcedCompact)
         } else if (try live).transcript.hasWork {
           try await runInference(mode: .normal)
-        } else if let nag = try idleNag() {
+        } else if let nag = try await idleNag() {
           try await appended([.notification(nag.notification(id: uuid(), at: date()))])
         } else {
           return
@@ -109,9 +125,9 @@ extension SessionActor {
 
   // Only a model that stopped is asked whether it may; a generation that never
   // ran (created, restarted) is inert. What is left is a park wake.
-  private func idleNag() throws -> Nag? {
+  private func idleNag() async throws -> Nag? {
     guard case .assistant? = (try live).transcript.items.last else { return nil }
-    return try nagOrScheduleWake((try live).transcript.environment)
+    return try await nagOrScheduleWake((try live).transcript.environment)
   }
 
   private func refreshRegisteredSubscriptions() async throws -> Bool {
@@ -185,12 +201,45 @@ it will not be retried automatically.
 """
 
 extension SessionActor {
+  private enum ToolDispatchResult: Sendable {
+    case completed(ToolResultPayload?), cancelled
+  }
+
   func execute(_ toolCall: ToolCall) async throws {
+    guard ServerTracing.enabled else { _ = try await executeBody(toolCall); return }
+    let span = ServerSpan(.tool)
+    var attributes: [SpanAttribute: String] = [.tool: toolCall.name, .bytesIn: String(toolCall.arguments.json.jsonString().utf8.count), .bytesOut: "0"]
+    if case let .string(reference)? = toolCall.arguments.json.object?["machine"] {
+      attributes[.machineReference] = reference
+    } else if case let .string(path)? = toolCall.arguments.json.object?["path"], path.hasPrefix("machines://") {
+      attributes[.machineReference] = String(path.dropFirst("machines://".count).prefix { $0 != "/" })
+    }
+    defer { span.finish(attributes) }
+    do {
+      let result = try await ServerTracing.$context.withValue(span.context) { try await executeBody(toolCall) }
+      switch result {
+      case let .completed(payload):
+        attributes[.outcome] = "ok"
+        attributes[.bytesOut] = payload.flatMap { try? JSONEncoder().encode($0).count }.map(String.init) ?? "0"
+        if let payload, case let .failure(failure) = payload {
+          attributes[.outcome] = "error"
+          attributes[.errorCode] = failure.code
+        }
+      case .cancelled:
+        attributes[.outcome] = "cancelled"
+      }
+    } catch {
+      attributes[.outcome] = error is CancellationError ? "cancelled" : "error"
+      throw error
+    }
+  }
+
+  private func executeBody(_ toolCall: ToolCall) async throws -> ToolDispatchResult {
     switch KernelTool(rawValue: toolCall.name) {
     case .bookmark:
-      return try await executeBookmark(toolCall)
+      return try await .completed(executeBookmark(toolCall))
     case .compact:
-      return try await executeCompact(toolCall)
+      return try await .completed(executeCompact(toolCall))
     case nil:
       break
     }
@@ -207,32 +256,30 @@ extension SessionActor {
     let callID = ToolCallID(toolCall.id)
     switch result {
     case .success(let payload):
-      // Even when cancelled, a real result means the side effects happened:
-      // commit it.
       try await writeToolResult(.toolCall(callID), payload, deliveredBy: callID)
+      return .completed(payload)
     case .failure(is CancellationError):
-      // Interrupt marks the tool so resume never retries it; a crash-shaped
-      // cancellation (retirement, teardown) marks nothing and restart retries.
-      guard !Task.isCancelled else { return }
+      guard !Task.isCancelled else { return .cancelled }
       if case .interrupting = (try live).sessionStatus {
         await loopConfig.killInterruptedTool(invocation)
         try await writeToolResult(.toolCall(callID), .failure(.init(message: interruptedToolMessage)))
       }
+      return .cancelled
     case .failure(let error):
-      try await writeToolResult(.toolCall(callID), .failure(.init(message: String(describing: error))))
+      let payload = ToolResultPayload.failure(.init(message: String(describing: error)))
+      try await writeToolResult(.toolCall(callID), payload)
+      return .completed(payload)
     }
   }
 
-  private func executeBookmark(_ toolCall: ToolCall) async throws {
+  private func executeBookmark(_ toolCall: ToolCall) async throws -> ToolResultPayload? {
     let arguments: BookmarkArguments
     do {
       arguments = try decodeArguments(BookmarkArguments.self, from: toolCall)
     } catch {
-      try await writeToolResult(
-        .toolCall(.init(toolCall.id)),
-        .failure(.init(message: "invalid bookmark arguments: \(error)")),
-      )
-      return
+      let payload = ToolResultPayload.failure(.init(message: "invalid bookmark arguments: \(error)"))
+      try await writeToolResult(.toolCall(.init(toolCall.id)), payload)
+      return payload
     }
     let marker = BookmarkMarker(
       id: uuid(),
@@ -241,19 +288,18 @@ extension SessionActor {
       toolCallID: .init(toolCall.id),
     )
     try await appended([.bookmark(marker)])
+    return nil
   }
 
-  private func executeCompact(_ toolCall: ToolCall) async throws {
+  private func executeCompact(_ toolCall: ToolCall) async throws -> ToolResultPayload {
     let callID = ToolCallID(toolCall.id)
     let arguments: CompactArguments
     do {
       arguments = try decodeArguments(CompactArguments.self, from: toolCall)
     } catch {
-      try await writeToolResult(
-        .toolCall(callID),
-        .failure(.init(message: "invalid compact arguments: \(error)")),
-      )
-      return
+      let payload = ToolResultPayload.failure(.init(message: "invalid compact arguments: \(error)"))
+      try await writeToolResult(.toolCall(callID), payload)
+      return payload
     }
 
     let transcript = (try live).transcript
@@ -261,11 +307,9 @@ extension SessionActor {
     do {
       kept = try transcript.compactKeptRange(callID: callID, bookmark: arguments.bookmark)
     } catch let notFound as BookmarkNotFound {
-      try await writeToolResult(
-        .toolCall(callID),
-        .failure(.init(message: "bookmark \"\(notFound.name)\" not found; name an existing bookmark or omit it to fold everything")),
-      )
-      return
+      let payload = ToolResultPayload.failure(.init(message: "bookmark \"\(notFound.name)\" not found; name an existing bookmark or omit it to fold everything"))
+      try await writeToolResult(.toolCall(callID), payload)
+      return payload
     }
 
     let environment = transcript.environment
@@ -290,6 +334,7 @@ extension SessionActor {
       $0.compactRequestClaim = nil
     }
     await loopConfig.invalidateInference(id)
+    return closing.payload
   }
 
   func runInference(mode: InferenceMode) async throws {

@@ -35,13 +35,13 @@ The runner does what agents ask with the permissions of the OS user that runs it
 
 ## Who can use it
 
-A machine belongs to a group, and it starts in the personal group of whoever added it. Agents in any group that can read that group can use it. So a machine in your personal group is yours alone; move it to `shared` and everyone's agents can use it:
+A machine belongs to one group. Choose it at registration with `--group`; for example, register directly in `shared` so agents in any group that reads `shared` can use it:
 
 ```sh
-wuhu machine move mini --group shared
+wuhu machine add --name mini --group shared
 ```
 
-Moving needs admin rights in both groups.
+This needs admin rights in the target group, not membership. The global spelling `wuhu --group shared machine add --name mini` selects the same registration target. Without an explicit flag, the machine starts in your personal group; environment and folder group settings do not set the target. The CLI checks the server's echoed placement and fails with an upgrade/move hint if the server cannot confirm it. To move an existing machine, use `wuhu machine move mini --group shared`, which needs admin rights in both groups.
 
 ## The CLI inside an agent's command
 

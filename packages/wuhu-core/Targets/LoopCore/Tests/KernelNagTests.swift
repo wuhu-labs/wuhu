@@ -140,6 +140,34 @@ private final class WorkFlips: TransactionObserver, Sendable {
     }
   }
 
+  @Test func `parent reminders survive eviction of the parked execution actor`() async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.createSession(group: .shared, title: "parked", kind: .task, createdBy: "morgan", model: .test)
+      let script = InferenceScript([
+        Fix.replying("parking"),
+        Fix.replying("waiting"),
+        Fix.replying("reporting", calls: [Self.call("report", "final")]),
+        Fix.replying("reported"),
+      ])
+      var config = makeConfig(executeTool: { _ in
+        .report(.init(messageID: .init("final"), requestID: .init("r1"), conversationID: .init("dm"), kind: .final))
+      }, inference: { try await script($0) })
+      config.eviction = .init(idleTTL: .seconds(1), maxIdle: 0, sweepInterval: .seconds(1))
+      try await runService(sessions, config) { service in
+        _ = try await service.enqueue(item: Self.request, to: sid)
+        try await until("parked") { try await sessions.settledWork(sid) && script.count == 2 }
+        try await until("idle") { await service.registry.sessions[sid]?.idleSince != nil }
+        try await time.asleep("parent reminder", dueIn: 60)
+        try await time.wake("reaper", after: 1)
+        try await until("parked actor evicted") { await service.registry.sessions.isEmpty }
+        await time.advance(by: 59)
+        try await until("parent wakes a freshly hydrated actor") { try await sessions.settledWork(sid) && script.count == 4 }
+        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
+      }
+    }
+  }
+
   @Test func `a task waiting on an armed timer or a deadline on its child's request is never nagged`() async throws {
     let wakes: [ToolResultPayload] = [
       .timer(.init(subscriptionID: .init("timer.c-1"), schedule: .oneShot(anchor.addingTimeInterval(3600)), message: "check")),
@@ -236,6 +264,28 @@ private final class WorkFlips: TransactionObserver, Sendable {
       }
       #expect(afterExec.value == 0)
       #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 1)
+    }
+  }
+
+  @Test(arguments: [SessionKind.agent, .task])
+  func parentBootReconstructsTheReminderFromDurableState(kind: SessionKind) async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let sid = try await sessions.createSession(group: .shared, title: "parked", kind: kind, createdBy: "morgan", model: .test)
+      let first = InferenceScript([Fix.replying("parking"), Fix.replying("waiting")])
+      try await runService(sessions, makeConfig(inference: { try await first($0) })) { service in
+        _ = try await service.enqueue(item: Self.request, to: sid)
+        try await until("first parent parks") { try await sessions.settledWork(sid) && first.count == 2 }
+        try await time.asleep("first parent reminder", dueIn: 60)
+      }
+      #expect(try await sessions.bootSessions().contains(sid))
+      let second = InferenceScript([Fix.replying("reminded after parent restart")])
+      try await runService(sessions, makeConfig(inference: { try await second($0) })) { _ in
+        try await time.asleep("reconstructed parent reminder", dueIn: 60)
+        await time.advance(by: 60)
+        try await until("reconstructed deadline fires") { try await sessions.settledWork(sid) && second.count == 1 }
+        #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
+      }
     }
   }
 

@@ -118,6 +118,25 @@ extension MachineV2TunnelTests {
     #expect(try await f.space.keys(account: legacy.account).isEmpty)
     _ = try await f.space.consumeJoinToken(token.token, pubkey: key.pubkeyLabel)
     #expect(try await f.space.machine(pubkey: key.pubkeyLabel) == legacy.id)
+    let replayedAsV2 = try await f.http("/v1/machine-v2/enroll", method: .post, input: ["token": token.token.rawValue, "pubkey": key.pubkeyLabel])
+    #expect(replayedAsV2.status == .unauthorized)
+  }
+
+  @Test func aLostEnrollResponseReplaysWithTheSameKeyOnly() async throws {
+    let f = try await Fixture()
+    let created = try await f.space.addMachineV2(name: "retry-v2")
+    let key = Curve25519.Signing.PrivateKey()
+    let input = ["token": created.token.token.rawValue, "pubkey": key.pubkeyLabel]
+    let first = try await f.http("/v1/machine-v2/enroll", method: .post, input: input)
+    #expect(first.status == .ok)
+    let enrolled = try await first.body.json(EnrollConsumeOutput.self)
+    #expect(enrolled.machine == created.machine.id.rawValue)
+    let replayed = try await f.http("/v1/machine-v2/enroll", method: .post, input: input)
+    #expect(replayed.status == .ok)
+    #expect(try await replayed.body.json(EnrollConsumeOutput.self) == enrolled)
+    let thief = try await f.http("/v1/machine-v2/enroll", method: .post, input: ["token": created.token.token.rawValue, "pubkey": Curve25519.Signing.PrivateKey().pubkeyLabel])
+    #expect(thief.status == .unauthorized)
+    #expect(try await f.space.keys(account: created.machine.account).map(\.pubkey) == [key.pubkeyLabel])
   }
 }
 
@@ -192,5 +211,86 @@ extension MachineV2TunnelTests {
     catch let error as OperationError {
       #expect(error.details == ["state": "lost", "started": false, "silentSince": .number(answer.observedAt.timeIntervalSince1970)])
     }
+  }
+}
+
+extension MachineV2TunnelTests {
+  func signed(_ handler: UpgradingHandler, _ path: String, method: Fetch.Method = .post, key: Curve25519.Signing.PrivateKey, machine: MachineID) async throws -> Request {
+    guard case let .response(minted) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/challenge")!)) else { throw OperationError(.invalidResponse) }
+    let challenge = try await minted.body.json(MachineChallengeOutput.self).challenge
+    var headers = RequestHeaders()
+    headers[MachineV2Connect.pubkeyHeader] = key.pubkeyLabel
+    headers[MachineV2Connect.challengeHeader] = challenge
+    headers[MachineV2Connect.machinesHeader] = machine.rawValue
+    headers[MachineV2Connect.signatureHeader] = try key.signature(for: MachineV2Connect.signingPayload(challenge: challenge, machines: [machine.rawValue])).base64EncodedString()
+    return Request(url: URL(string: "https://space.test" + path)!, method: method, headers: headers)
+  }
+
+  @Test func oneCallEnrollmentInstallsTheKeyWithoutASuffixOrJoinToken() async throws {
+    let f = try await Fixture()
+    let key = Curve25519.Signing.PrivateKey()
+    let enrolled = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "Laptop", pubkey: key.pubkeyLabel))
+    #expect(enrolled.status == .ok)
+    let output = try await enrolled.body.json(EnrollConsumeOutput.self)
+    #expect(output.machineName == "laptop")
+    #expect(output.capabilities == ["exec-machine"])
+    let machine = MachineID(rawValue: try #require(output.machine))
+    #expect(try await f.space.machine(pubkey: key.pubkeyLabel) == machine)
+    #expect(try await f.space.machineV2Members(group: .shared).contains(machine.rawValue))
+    #expect(try await f.space.machine(machine)?.account.rawValue == output.account)
+    try await f.hub.authorize(.init(pubkey: key.pubkeyLabel, machines: [machine.rawValue]))
+
+    let taken = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "laptop", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
+    #expect(taken.status == .conflict)
+    _ = try await f.space.addMachine(name: "old-box")
+    let takenByV1 = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "old-box", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
+    #expect(takenByV1.status == .conflict)
+    let reused = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: key.pubkeyLabel))
+    #expect(reused.status == .conflict)
+    let malformed = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: "ed25519:nope"))
+    #expect(malformed.status == .badRequest)
+    let unknownDevice = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel, device: "no-such-device"))
+    #expect(unknownDevice.status == .notFound)
+    let deviceWithoutKey = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other-v2", device: "no-such-device"))
+    #expect(deviceWithoutKey.status == .badRequest)
+    #expect(try await f.space.resolveMachine("other") == nil)
+  }
+
+  @Test func aMachineRevokesItsOwnKeyWithOneSignedRequest() async throws {
+    let f = try await Fixture()
+    let path = "/v1/machine-v2/\(f.machine.id.rawValue)/revoke"
+    let stranger = Curve25519.Signing.PrivateKey()
+    let other = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: stranger.pubkeyLabel))
+    #expect(other.status == .ok)
+    guard case let .response(foreign) = try await f.handler(try await signed(f.handler, path, key: stranger, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
+    #expect(foreign.status == .unauthorized)
+    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
+
+    let wall = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, webApp: nil, machineV2Hub: f.hub)
+    let request = try await signed(wall, path, key: f.key, machine: f.machine.id)
+    guard case let .response(revoked) = try await wall(request) else { Issue.record("revoke should be HTTP"); return }
+    #expect(revoked.status == .ok)
+    #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == nil)
+    #expect(try await f.space.machine(f.machine.id) != nil)
+    await #expect(throws: (any Error).self) { try await f.hub.authorize(.init(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])) }
+    guard case let .response(again) = try await f.handler(try await signed(f.handler, path, key: f.key, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
+    #expect(again.status == .unauthorized)
+    #expect(try await f.space.machine(pubkey: stranger.pubkeyLabel) != nil)
+  }
+
+  @Test func aRevokeSignedBeforeARotationNeverDeletesTheReplacementKey() async throws {
+    let f = try await Fixture()
+    let path = "/v1/machine-v2/\(f.machine.id.rawValue)/revoke"
+    let signedBeforeRotation = try await signed(f.handler, path, key: f.key, machine: f.machine.id)
+    _ = try await f.space.resetCredentials(account: f.machine.account)
+    let replacement = Curve25519.Signing.PrivateKey()
+    _ = try await f.space.addKey(replacement.pubkeyLabel, account: f.machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    guard case let .response(stale) = try await f.handler(signedBeforeRotation) else { Issue.record("revoke should be HTTP"); return }
+    #expect(stale.status == .unauthorized)
+    #expect(try await f.space.machine(pubkey: replacement.pubkeyLabel) == f.machine.id)
+
+    guard case let .response(current) = try await f.handler(try await signed(f.handler, path, key: replacement, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
+    #expect(current.status == .ok)
+    #expect(try await f.space.machine(pubkey: replacement.pubkeyLabel) == nil)
   }
 }

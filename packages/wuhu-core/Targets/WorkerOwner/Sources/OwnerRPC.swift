@@ -13,13 +13,40 @@ struct OwnerRPC: Sendable {
   let client: WorkerClient
   func call<Request: Encodable & Sendable, Result: Decodable & Sendable>(_ operation: String, _ request: Request) async throws -> Result {
     let call = WorkerCall(operation: operation, payload: try ownerEncode(request))
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await perform(call)
+    } onCancel: {
+      Task { [client] in
+        _ = try? await client.call(WorkerCall(operation: "owner.cancel", payload: ownerEncode(StreamRequest(id: call.id))))
+      }
+    }
+  }
+
+  func resource(_ operation: String, id: UUID) async throws -> Body {
+    do {
+      return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        return try await client.stream(WorkerCall(operation: operation, payload: ownerEncode(StreamRequest(id: id))))
+      } onCancel: { Task { await cancel(id) } }
+    } catch {
+      await cancel(id)
+      throw error
+    }
+  }
+
+  func cancel(_ id: UUID) async {
+    _ = try? await client.call(WorkerCall(operation: "owner.cancel", payload: ownerEncode(StreamRequest(id: id))))
+  }
+
+  private func perform<Result: Decodable & Sendable>(_ call: WorkerCall) async throws -> Result {
     let metadata = try JSONEncoder().encode(call)
     let body: Body
     if metadata.count <= 12 << 10 {
       body = try await client.stream(call)
     } else {
-      try await client.upload(WorkerCall(id: call.id, operation: "owner.input", payload: .string(operation)), body: .json(call.payload))
-      body = try await client.stream(WorkerCall(id: call.id, operation: "owner.output", payload: .string(operation)))
+      try await client.upload(WorkerCall(id: call.id, operation: "owner.input", payload: .string(call.operation)), body: .json(call.payload))
+      body = try await client.stream(WorkerCall(id: call.id, operation: "owner.output", payload: .string(call.operation)))
     }
     let envelope: OwnerEnvelope
     do { envelope = try await body.json(OwnerEnvelope.self) }
@@ -45,7 +72,7 @@ func ownerDecode<Value: Decodable>(_ type: Value.Type, _ value: JSONValue) throw
   catch { throw WorkerProtocolError(.invalidMessage, message: "Invalid owner operation payload") }
 }
 
-func ownerReply(_ body: () async throws -> JSONValue) async throws -> JSONValue {
+func ownerReply(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> JSONValue) async throws -> JSONValue {
   do { return try await ownerEncode(OwnerEnvelope(value: body(), fault: nil)) }
   catch is CancellationError { throw CancellationError() }
   catch let error as WorkerProtocolError { throw error }

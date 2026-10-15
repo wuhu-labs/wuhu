@@ -1,0 +1,12 @@
+name: SessionToolsTestSupport
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+dependencies:
+  - SessionTools
+  - SessionDomain
+  - SpaceCore
+  - SpaceTools
+  - JSONValue
+  - WuhuAI

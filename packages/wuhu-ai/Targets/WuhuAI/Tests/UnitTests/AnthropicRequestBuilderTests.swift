@@ -174,7 +174,48 @@ import Testing
     #expect(textBlock["text"] == .string("Here is the answer"))
   }
 
-  @Test func unencryptedReasoningBecomesUnsignedThinkingWhenAccepted() async throws {
+  /// Claude's own rule rejects a thinking block without a signature, so to a
+  /// Claude model (decided from the model id, whatever the host) unsigned
+  /// readable thinking travels as text; signed thinking keeps its block.
+  @Test(arguments: [
+    ("claude-sonnet-4-6", "https://api.anthropic.com/v1", true),
+    ("anthropic/claude-opus-5-5", "https://egress.invalid/anthropic", true),
+    ("mimo-v2.6-pro", "https://api.xiaomimimo.com/anthropic", false),
+    ("glm-5.1", "https://claude-format.invalid/v1", false),
+  ])
+  func unsignedThinkingIsTextOnlyForClaudeModels(model: String, baseURL: String, claude: Bool) async throws {
+    let context = Context(messages: [
+      .assistant(AssistantMessage(
+        content: [
+          .reasoning(.unencrypted("cross-provider thoughts")),
+          .reasoning(.encrypted(EncryptedReasoningContent(providerID: "mimo", model: "m", summary: "own unsigned thoughts", opaque: ""))),
+          .reasoning(.encrypted(EncryptedReasoningContent(providerID: "anthropic", model: "m", summary: "signed thoughts", opaque: "sig_abc"))),
+          .text(TextContent(text: "the answer")),
+        ],
+      )),
+    ])
+
+    let (_, _, body) = try await buildAnthropicRequest(
+      model: model,
+      baseURL: URL(string: baseURL)!,
+      context: context,
+      options: RequestOptions(),
+    )
+
+    let content = (body["messages"]?.array?[0].object?["content"]?.array ?? []).map { $0.object ?? [:] }
+    #expect(content.count == 4)
+    for (block, text) in zip(content.prefix(2), ["cross-provider thoughts", "own unsigned thoughts"]) {
+      if claude {
+        #expect(block == ["type": .string("text"), "text": .string(text)])
+      } else {
+        #expect(block == ["type": .string("thinking"), "thinking": .string(text)])
+      }
+    }
+    #expect(content[2] == ["type": .string("thinking"), "thinking": .string("signed thoughts"), "signature": .string("sig_abc")])
+    #expect(content[3]["type"] == .string("text"))
+  }
+
+  @Test func unencryptedReasoningBecomesUnsignedThinking() async throws {
     let context = Context(messages: [
       .assistant(AssistantMessage(
         content: [
@@ -189,7 +230,6 @@ import Testing
       baseURL: URL(string: "https://a.com/v1")!,
       context: context,
       options: RequestOptions(),
-      acceptsUnsignedThinking: true,
     )
 
     let content = body["messages"]?.array?[0].object?["content"]?.array ?? []
@@ -199,35 +239,6 @@ import Testing
     #expect(first["thinking"] == .string("cross-provider thoughts"))
     #expect(first["signature"] == nil)
     #expect(first["text"] == nil)
-  }
-
-  @Test func unencryptedReasoningDegradesToTextWhenUnsignedThinkingRejected() async throws {
-    // api.anthropic.com answers an unsigned thinking block with
-    // "thinking.signature: Field required".
-    let context = Context(messages: [
-      .assistant(AssistantMessage(
-        content: [
-          .reasoning(.unencrypted("cross-provider thoughts")),
-          .text(TextContent(text: "the answer")),
-        ],
-      )),
-    ])
-
-    let (_, _, body) = try await buildAnthropicRequest(
-      model: "m",
-      baseURL: URL(string: "https://a.com/v1")!,
-      context: context,
-      options: RequestOptions(),
-      acceptsUnsignedThinking: false,
-    )
-
-    let content = body["messages"]?.array?[0].object?["content"]?.array ?? []
-    #expect(content.count == 2)
-    let first = content[0].object ?? [:]
-    #expect(first["type"] == .string("text"))
-    #expect(first["text"] == .string("cross-provider thoughts"))
-    #expect(first["thinking"] == nil)
-    #expect(first["signature"] == nil)
   }
 
   @Test func buildsRequestWithRedactedThinking() async throws {

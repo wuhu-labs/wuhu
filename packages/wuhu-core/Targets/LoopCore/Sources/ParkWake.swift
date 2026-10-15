@@ -6,16 +6,23 @@
 import SessionDomain
 
 extension SessionActor {
-  // Nothing to deliver: the environment either nags now, or says when a park
-  // reminder falls due and the actor stays loaded until then.
-  func nagOrScheduleWake(_ environment: SessionEnvironment) throws -> Nag? {
+  func nagOrScheduleWake(_ environment: SessionEnvironment) async throws -> Nag? {
     try modify {
       $0.parkWake?.task.cancel()
       $0.parkWake = nil
     }
     let now = date()
-    if let nag = environment.nag(task: (try live).isTask, now: now) { return nag }
-    guard let due = environment.nextTimer(now: now) else { return nil }
+    let nag = environment.nag(task: (try live).isTask, now: now)
+    let due = nag == nil ? environment.nextTimer(now: now) : nil
+    if let schedule = loopConfig.scheduleWake {
+      if try due != nil || live.delegatedWake {
+        try await schedule(id, due)
+        try modify { $0.delegatedWake = due != nil }
+      }
+      return nag
+    }
+    if let nag { return nag }
+    guard let due else { return nil }
     let wait = Duration.seconds(max(0, due.timeIntervalSince(now)))
     let wake = Task { [clock] in
       guard (try? await clock.sleep(for: wait)) != nil else { return }

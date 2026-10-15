@@ -221,16 +221,13 @@ extension SessionStore {
     onFailure: @escaping @Sendable (SessionID, any Error) throws -> Void = { _, error in throw error },
   ) async throws -> [SessionID] {
     try await writer.read { db in
-      // A task's park wake lives only in its loaded actor, computed from its
-      // session environment; loading every task with an open request is what
-      // schedules it again after a restart.
       try Row.fetchAll(
         db,
         sql: """
         SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)) AS parked
         FROM sessions
         WHERE lifecycle = 'live' AND executor IN ('kernel', 'claude-code')
-          AND (executor = 'claude-code' OR work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR (kind = 'task' AND work = 'no_work'))
+          AND (executor = 'claude-code' OR work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR work = 'no_work')
         ORDER BY allocation
         """,
       ).compactMap { row -> SessionID? in

@@ -21,6 +21,7 @@ public struct SessionService: Sendable {
 
   let sessions: SessionStore
   let archiveGrace: Duration
+  private let reminders: SessionReminders
   private let archives = ArchiveCoordinator()
   private let log: Logger
 
@@ -36,7 +37,12 @@ public struct SessionService: Sendable {
     self.sessions = sessions
     self.log = log
     archiveGrace = loopConfig.archiveGrace
+    let reminders = SessionReminders(sessions: sessions)
+    self.reminders = reminders
+    var loopConfig = loopConfig
+    loopConfig.scheduleWake = { id, due in await reminders.schedule(id, at: due) }
     let execution = await SessionExecution(makeRepo: makeRepo, loopConfig: loopConfig)
+    await reminders.bind(execution)
     self.execution = execution
     localExecution = execution
   }
@@ -44,23 +50,31 @@ public struct SessionService: Sendable {
   public init(sessions: SessionStore, execution: any SessionExecutionClient, archiveGrace: Duration) {
     self.sessions = sessions
     self.execution = execution
+    reminders = SessionReminders(sessions: sessions, execution: execution)
     self.archiveGrace = archiveGrace
     localExecution = nil
     log = Logger(label: "wuhu.session-service")
   }
 
-  public func shutdown() async { await execution.shutdown() }
+  public func scheduleWake(_ id: SessionID, at due: Date?) async {
+    await reminders.schedule(id, at: due)
+  }
+
+  public func shutdown() async {
+    await reminders.shutdown()
+    await execution.shutdown()
+  }
 
   public func start() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { [execution] in
         await execution.drain()
       }
-      group.addTask { [execution] in
+      group.addTask {
         let (parking, continuation) = AsyncStream<Void>.makeStream()
         for await _ in parking {}
         continuation.finish()
-        await execution.shutdown()
+        await shutdown()
       }
       let signals = sessions.workSignals()
       let boot: [SessionID]
@@ -209,6 +223,7 @@ public struct SessionService: Sendable {
     try await retryingEviction {
       try await execution.interrupt(sessionID)
     }
+    await reminders.schedule(sessionID, at: nil)
   }
 
   public func resume(_ sessionID: SessionID) async throws {
@@ -269,6 +284,7 @@ public struct SessionService: Sendable {
             try await execution.archive(record.id, reservation: reservation)
           }
         }
+        await reminders.schedule(member.id, at: nil)
       }
     } catch {
       await releaseArchive(prepared, reservation: reservation)
@@ -302,9 +318,11 @@ public struct SessionService: Sendable {
     if try await inactiveExecutorRecord(sessionID) != nil {
       return try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
     }
-    return try await retryingEviction {
+    let result = try await retryingEviction {
       try await execution.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
     }
+    await reminders.schedule(sessionID, at: nil)
+    return result
   }
 
   public func unarchive(_ sessionID: SessionID) async throws {

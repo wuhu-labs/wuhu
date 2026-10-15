@@ -315,7 +315,7 @@ extension Space {
     )
   }
 
-  private static func keyRecord(from row: Row) throws -> KeyRecord {
+  static func keyRecord(from row: Row) throws -> KeyRecord {
     guard let capabilities = capabilitySet(row["capabilities"]) else {
       throw CorruptCredentialRow(stored: row["capabilities"])
     }

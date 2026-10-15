@@ -41,6 +41,7 @@ public actor SpaceHost {
     folder: URL, deployment: DeploymentRecord, configDirectory: URL?,
     allowEnvironmentCredentials: Bool = true, fallbackOrigin: String = "https://localhost", port: Int? = nil,
     dev: Bool = false, publicRead: Bool = false,
+    executionPlacement: ExecutionPlacement = .inProcess,
     contentHostPattern: String? = nil, aiDisclosure: AIDisclosure? = nil,
     version: String = SpaceServer.unstampedVersion, webApp: WebApp? = .embedded,
     devImport: URL? = nil, devExport: URL? = nil,
@@ -71,6 +72,7 @@ public actor SpaceHost {
       let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
       let v2Hub = MachineV2Hub(space: space)
       let v2Service = await MachineV2Service.open(space: space, hub: v2Hub, directory: folder.appendingPathComponent("machine-v2"))
+      await hub.configureV2(v2Service)
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
       let usage = UsageBoard()
@@ -83,7 +85,7 @@ public actor SpaceHost {
         credentials: credentials,
         secrets: secrets,
         usage: usage,
-        machinesV2: v2Service.scriptAccess(tokens: execTokens),
+        executionPlacement: executionPlacement,
         oidcToken: { audience, session in
           @Dependency(\.date) var date
           @Dependency(\.uuid) var uuid

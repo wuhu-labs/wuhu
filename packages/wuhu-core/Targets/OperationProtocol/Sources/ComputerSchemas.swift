@@ -31,7 +31,7 @@ public enum ComputerKindSchemas {
       "root": ["type": "string", "pattern": "^/"],
       "glob": string,
       "includeSymlinks": ["type": "boolean"],
-      "entryLimit": positive,
+      "entryLimit": positive, "matchLimit": positive, "resumeEntries": ["type": "integer", "minimum": 0], "resumeLine": positive,
     ], required: ["root", "glob", "includeSymlinks"]),
     resultSchema: counts,
     outputChannels: [.init("entries", unit: .records, schema: object(["path": string, "kind": string], required: ["path", "kind"]))],
@@ -45,18 +45,26 @@ public enum ComputerKindSchemas {
         "pattern": string,
         "dialect": ["enum": ["literal", "regex"]],
         "maxLineBytes": ["type": "integer", "minimum": 1, "maximum": 65536],
-        "entryLimit": positive,
+        "entryLimit": positive, "matchLimit": positive, "resumeEntries": ["type": "integer", "minimum": 0], "resumeLine": positive,
       ],
       required: ["root", "pattern", "dialect", "maxLineBytes"],
     ),
     resultSchema: counts,
     outputChannels: [.init("matches", unit: .records, schema: object(["path": string, "line": offset, "text": string], required: ["path", "line", "text"]))],
   )
+  public static let stat = KindDescriptor("stat.v1", inputSchema: pathInput, resultSchema: entry, deliveryPolicy: .boundedResult)
+  public static let list = KindDescriptor("list.v1", inputSchema: pathInput, resultSchema: object(["count": offset], required: ["count"]), outputChannels: [.init("entries", unit: .records, schema: entry)])
+  public static let write = KindDescriptor("write.v1", inputSchema: object(["path": string, "ifMatch": string, "bytes": offset, "digest": string], required: ["path", "bytes", "digest"]), resultSchema: object(["version": string], required: ["version"]), inputChannels: [.init("data", windowBytes: 65536)])
+  public static let mkdir = KindDescriptor("mkdir.v1", inputSchema: pathInput, resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)
+  public static let remove = KindDescriptor("remove.v1", inputSchema: object(["path": string, "ifMatch": string], required: ["path"]), resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)
+  public static let move = KindDescriptor("move.v1", inputSchema: object(["from": string, "to": string], required: ["from", "to"]), resultSchema: object([:], required: []), deliveryPolicy: .boundedResult)
+  private static let pathInput = object(["path": string], required: ["path"])
+  private static let entry = object(["name": string, "kind": ["enum": ["file", "directory", "symlink"]], "size": ["type": "integer", "minimum": 0], "token": string, "mtime": ["type": "number"]], required: ["name", "kind", "size", "token", "mtime"])
   private static let string: JSONValue = ["type": "string"]
   private static let strings: JSONValue = ["type": "object", "additionalProperties": ["type": "string"]]
   private static let offset: JSONValue = ["type": "string", "pattern": "^[0-9]+$"]
   private static let positive: JSONValue = ["type": "integer", "minimum": 1]
-  private static let counts = object(["scanned": offset, "matched": offset, "skipped": ["type": "object", "additionalProperties": ["type": "integer", "minimum": 0]]], required: ["scanned", "matched", "skipped"])
+  private static let counts = object(["nextEntry": ["type": "integer", "minimum": 0], "nextLine": positive, "scanned": offset, "matched": offset, "skipped": ["type": "object", "additionalProperties": ["type": "integer", "minimum": 0]]], required: ["scanned", "matched", "skipped"])
   private static func object(_ properties: [String: JSONValue], required: [String]) -> JSONValue {
     [
       "type": "object",

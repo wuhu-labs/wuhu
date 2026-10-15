@@ -1,4 +1,7 @@
-import type { ProviderDescriptor } from './contract.gen.ts'
+import type {
+  ModelGroupDescriptor,
+  ProviderDescriptor,
+} from './contract.gen.ts'
 import { adoptSpec, restartInput } from './session-restart.ts'
 
 function equal(actual: unknown, expected: unknown) {
@@ -124,4 +127,59 @@ Deno.test('the opening message rides along only when there is one', () => {
     timezone: 'Asia/Shanghai',
   })
   equal(restartInput(choice, live, '   ', 'UTC'), { timezone: 'UTC' })
+})
+
+const fleet: ModelGroupDescriptor = {
+  id: 'fleet',
+  members: [{ id: 'primary', provider: 'codex', model: 'gpt-6-sol' }],
+  defaultEffort: 'medium',
+  effortLevels: ['low', 'medium', 'high'],
+  policy: null,
+}
+
+Deno.test('a group session opens on its group, and an untouched confirm keeps it', () => {
+  const live = { provider: 'codex', model: 'gpt-6-sol', effort: 'high' }
+  const adopted = adoptSpec(providers, live, [fleet], 'fleet')
+  equal(adopted.choice.group?.id, 'fleet')
+  equal(adopted.choice.effort, 'high')
+  equal(adopted.unmatched, { model: null, effort: null, group: null })
+  equal(restartInput(adopted.choice, live, '', 'UTC', 'fleet'), {
+    timezone: 'UTC',
+  })
+  equal(
+    restartInput(
+      { ...adopted.choice, effort: 'low' },
+      live,
+      '',
+      'UTC',
+      'fleet',
+    ),
+    { modelGroup: 'fleet', effort: 'low', timezone: 'UTC' },
+  )
+})
+
+Deno.test('leaving a group for its own member still sends the pick', () => {
+  const live = { provider: 'codex', model: 'gpt-6-sol', effort: 'medium' }
+  equal(
+    restartInput(
+      { provider: 'codex', model: sol, effort: 'medium', group: null },
+      live,
+      '',
+      'UTC',
+      'fleet',
+    ),
+    {
+      provider: 'codex',
+      model: 'gpt-6-sol',
+      effort: 'medium',
+      timezone: 'UTC',
+    },
+  )
+})
+
+Deno.test('a group the catalog no longer offers stays unpicked', () => {
+  const live = { provider: 'codex', model: 'gpt-6-sol', effort: 'medium' }
+  const adopted = adoptSpec(providers, live, [], 'gone')
+  equal(adopted.unmatched, { model: null, effort: null, group: 'gone' })
+  equal(restartInput(adopted.choice, live, '', 'UTC', 'gone'), null)
 })

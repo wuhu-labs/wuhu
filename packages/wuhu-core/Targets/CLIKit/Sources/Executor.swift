@@ -48,8 +48,10 @@ struct Executor {
       try await self.login()
     case let .shareLogin(ttl):
       try await self.shareLogin(ttl: ttl)
-    case let .machineAdd(name):
-      try await self.machineAdd(name: name)
+    case let .machineV2Add(name, group):
+      try await self.machineAdd(name: name, group: group, v2: true)
+    case let .machineAdd(name, group):
+      try await self.machineAdd(name: name, group: group)
     case let .machineJoin(server, fingerprint, name):
       try await self.machineJoin(server: server, fingerprint: fingerprint, name: name)
     case .machineRun:

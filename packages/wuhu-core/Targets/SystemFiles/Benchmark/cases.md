@@ -79,9 +79,9 @@ _Afterwards:_ a short decision recognizing that compaction is optional, with no 
 
 ## 13. machine-v2-parity
 
-_Text-only smoke:_ write a compact `run_script` example using `machineV2('box').grep('/tmp/project', '^item[0-9]+$')`, consuming `output('matches')`, and explain a CLI `credentialExpired` result. No tools or fixture machine are needed.
+_Text-only smoke:_ show normal grep tool arguments for `machines://box-v2/tmp/project`, regex `^item[0-9]+$`, and explain opaque step continuation in traversal order. Explain typed missing-kind and credential-expiry failures without a transport or identity fallback.
 
-_Afterwards:_ deterministic checks require the v2 import/helper/channel loop, explicit expiry and no files changed. The judge rejects literal search for the regex, missing result consumption, renewal, and anonymous/wallet/v1 fallbacks. This checks the model-facing API/expiry semantics; live ICU Unicode matching, literal parity, credential injection/idempotency and exec environment redaction are separately exercised by affected Swift contract tests, including `ScriptMachineV2Tests.realScriptGrepParityBenchmark` (2000 lines, two dialects).
+_Afterwards:_ deterministic checks require the normal tool path/regex, step continuation, explicit expiry and no files changed. The judge rejects the removed dedicated v2 script API, renewal and anonymous/wallet/v1 fallback.
 
 ## Scoring
 

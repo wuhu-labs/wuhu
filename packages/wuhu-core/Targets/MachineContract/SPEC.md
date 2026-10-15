@@ -23,6 +23,12 @@ contract: changes here are contract changes.
   payload. All byte accounting — cursors, `window`, `maxOutput` — counts
   **decoded raw bytes**, never base64 characters.
 
+## Machine registration
+
+`MachineAddInput` carries optional `name` and `group` for both `POST /v1/machine` and `POST /v1/machine-v2`. For people, an omitted group preserves personal-group registration; an explicit group must exist (`404 unknownGroup`) and admit the caller as an admin (`403 adminRequired`), just as the target of a machine move does. Sessions always register in their principal's group. The dev seat defaults to `shared` and can name an existing target. The CLI accepts `machine add --group G` or global `--group G machine add` and sends the selection in the body. `pubkey` and `device` apply only to `POST /v1/machine-v2`: a present `pubkey` turns registration into one-call enrollment of that key (no join token, no `-v2` suffix), and `device` links the new machine to the caller's device; both are omitted on the wire when nil, so old servers keep reading the body.
+
+`MachineAddOutput.group` echoes the actual registration group on both routes. It is optional on decode for older-server compatibility; a CLI requesting placement must verify an exact echo and fail clearly if the old server ignores the group or returns another placement.
+
 ## Frames
 
 A connection carries `Frame` values: `{streamID, opcode, body}` where `body`

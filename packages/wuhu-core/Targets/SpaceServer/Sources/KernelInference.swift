@@ -12,6 +12,7 @@ import struct SessionDomain.ReplayBinding
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
 import enum SpaceContract.SessionToolExecutor
+import struct SpaceContract.UsageWindow
 import struct SpaceCore.SessionRecord
 import WuhuAI
 
@@ -22,12 +23,16 @@ func kernelInference(
   sockets: ResponsesSocketRegistry,
   attempts: AttemptHub,
   usage: UsageBoard,
+  eventSink: AttemptEventSink? = nil,
+  synchronizeUsage: @escaping @Sendable () async throws -> Void = {},
+  receiveUsage: (@Sendable (String, String?, [UsageWindow], Date) async -> Void)? = nil,
   makeBindingEpoch: @escaping @Sendable () -> UUID = { UUID() },
   committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
   @Dependency(\.date) var date
   let metrics = InferenceMetricsSink { await owner.recordMetric($0) }
   return { request in
+    try await synchronizeUsage()
     let record: SessionRecord
     let resolved: ResolvedModel
     let warmingPolicy: CacheWarmingPolicy?
@@ -101,13 +106,17 @@ func kernelInference(
         systemPrompt: try await systemPrompt(owner: owner, record: record),
         tools: SessionToolExecutor.kernel.tools,
         compactToolName: KernelToolset.compactToolName,
-        hub: attempts,
+        hub: eventSink == nil ? attempts : nil,
+        eventSink: eventSink,
         trace: owner.tracesAttempts ? AttemptTraceClient(open: { try await owner.openAttemptTrace($0) }, close: { await owner.closeAttemptTrace($0) }) : nil,
         metrics: metrics,
         webSocket: lease?.session,
         receiveQuota: { event in
           let parsed = codexSocketUsage(event)
-          if !parsed.windows.isEmpty { usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now) }
+          if !parsed.windows.isEmpty {
+            usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now)
+            await receiveUsage?(resolved.specifier.provider, parsed.plan, parsed.windows, date.now)
+          }
         },
         mediaResolver: { [group = record.group] in OwnerMediaResolver(owner: owner, limits: $0, group: group) },
       )
@@ -119,6 +128,7 @@ func kernelInference(
         handles: try await owner.handlesByPrincipal(),
         devices: try await owner.deviceNames(),
       )
+      try await synchronizeUsage()
       if let held = try await owner.modelRoute(request.sessionID), held.failure != nil {
         try await owner.updateModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
       }

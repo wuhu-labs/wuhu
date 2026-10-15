@@ -37,6 +37,7 @@ public struct ComputerWalk: Sendable {
 public struct ComputerFileSystem: Sendable {
   public let status: @Sendable (String) async throws -> ComputerFileStatus
   public let read: @Sendable (String, UInt64, Int) async throws -> Data
+  public let operations: ComputerFileOperations
   public let walk: @Sendable (String, Bool) async throws -> ComputerWalk
-  public init(status: @escaping @Sendable (String) async throws -> ComputerFileStatus, read: @escaping @Sendable (String, UInt64, Int) async throws -> Data, walk: @escaping @Sendable (String, Bool) async throws -> ComputerWalk) { self.status = status; self.read = read; self.walk = walk }
+  public init(status: @escaping @Sendable (String) async throws -> ComputerFileStatus, read: @escaping @Sendable (String, UInt64, Int) async throws -> Data, walk: @escaping @Sendable (String, Bool) async throws -> ComputerWalk, operations: ComputerFileOperations = .unsupported) { self.status = status; self.read = read; self.walk = walk; self.operations = operations }
 }

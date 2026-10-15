@@ -10,6 +10,7 @@
   import Darwin
 #endif
 
+import struct Assertion.SignedAssertion
 import JSONValue
 import struct SpaceClient.ObserveRequest
 
@@ -202,7 +203,7 @@ struct Wallet {
 
   // Live bearer credentials: owner-only like device keys, but re-mintable, so
   // a loose file is dropped and rewritten tight instead of a hard error.
-  mutating func assertion(space: String) -> String? {
+  mutating func assertion(space: String, identity: String) -> SignedAssertion? {
     let url = self.directory.appendingPathComponent("assertions.json")
     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
     guard Self.isOwnerOnly(url) else {
@@ -214,7 +215,19 @@ struct Wallet {
       return nil
     }
     do {
-      return try Self.read([String: String].self, at: url)?[space]
+      let assertions = try Self.read([String: String].self, at: url) ?? [:]
+      let canonical = Self.assertionKey(space)
+      let aliases = assertions.filter { Self.assertionKey($0.key) == canonical }
+      let selected = Self.freshestAssertion(in: aliases, identity: identity)
+      if let selected, aliases.count != 1 || aliases[canonical] != selected.rawValue {
+        self.updateAssertions { assertions in
+          let aliases = assertions.filter { Self.assertionKey($0.key) == canonical }
+          guard let current = Self.freshestAssertion(in: aliases, identity: identity) else { return }
+          for key in aliases.keys { assertions.removeValue(forKey: key) }
+          assertions[canonical] = current.rawValue
+        }
+      }
+      return selected
     } catch {
       self.warnings.append("warning: ignoring malformed \(url.path)\n")
       return nil
@@ -226,12 +239,45 @@ struct Wallet {
   // we refuse to follow, a read-only wallet, a full disk — warns and is skipped,
   // never failing the command; the next verb simply re-mints.
   mutating func recordAssertion(_ raw: String, space: String) {
+    let canonical = Self.assertionKey(space)
+    self.updateAssertions { assertions in
+      assertions = assertions.filter { Self.assertionKey($0.key) != canonical }
+      assertions[canonical] = raw
+    }
+  }
+
+  private static func freshestAssertion(in aliases: [String: String], identity: String) -> SignedAssertion? {
+    // Filter the authoritative audience before ranking: an old space id
+    // must not erase a good alias after a reset and re-enrollment.
+    aliases.values.compactMap(SignedAssertion.init(rawValue:))
+      .filter { $0.claims.space == identity && $0.hasValidSignature(publicKeyLabel: $0.claims.key) }
+      .max {
+        if $0.claims.expiresAt != $1.claims.expiresAt { return $0.claims.expiresAt < $1.claims.expiresAt }
+        return $0.rawValue < $1.rawValue
+      }
+  }
+
+  static func assertionKey(_ space: String) -> String {
+    guard let url = URL(string: space.contains("://") ? space : "https://" + space),
+          let scheme = url.scheme?.lowercased(),
+          scheme == "https" || scheme == "http",
+          var host = url.host?.lowercased()
+    else { return space }
+    if host.contains(":"), !host.hasPrefix("[") { host = "[" + host + "]" }
+    let port = url.port ?? (scheme == "https" ? 443 : 80)
+    return (scheme == "https" ? "" : "http://") + "\(host):\(port)"
+  }
+
+  private mutating func updateAssertions(_ update: (inout [String: String]) -> Void) {
     let url = self.directory.appendingPathComponent("assertions.json")
     do {
-      // A loose file is untrusted: never merge its entries into the tightened cache.
-      var assertions = Self.isOwnerOnly(url) ? ((try? Self.read([String: String].self, at: url)) ?? [:]) : [:]
-      assertions[space] = raw
       try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+      let lock = try self.lockAssertions()
+      defer { close(lock) }
+      // Atomic replacement protects readers, but only a locked fresh read
+      // protects other servers' credentials from concurrent writers.
+      var assertions = Self.isOwnerOnly(url) ? ((try? Self.read([String: String].self, at: url)) ?? [:]) : [:]
+      update(&assertions)
       try Self.writeOwnerOnly(try JSONEncoder().encode(assertions), to: url)
     } catch let error as CacheWriteError where error.isSymlink {
       self.warnings.append("""
@@ -244,6 +290,26 @@ struct Wallet {
       the command succeeded and the next command will re-mint.\n
       """)
     }
+  }
+
+  private func lockAssertions() throws -> Int32 {
+    let url = self.directory.appendingPathComponent(".assertions.lock")
+    let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    guard fd >= 0 else { throw CacheWriteError(isSymlink: false) }
+    var info = stat()
+    guard fstat(fd, &info) == 0, info.st_uid == geteuid(),
+          info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o777 == 0o600
+    else {
+      close(fd)
+      throw CacheWriteError(isSymlink: false)
+    }
+    while flock(fd, LOCK_EX) != 0 {
+      if errno == EINTR { continue }
+      close(fd)
+      throw CacheWriteError(isSymlink: false)
+    }
+    // Never unlink: waiters must keep locking the same inode after release.
+    return fd
   }
 
   private struct CacheWriteError: Error {

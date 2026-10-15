@@ -1,0 +1,14 @@
+name: ServerTelemetry
+kind: library
+sources: Sources
+dependencies:
+  - Dependencies
+  - Clocks
+  - Fetch
+  - Logging
+tests:
+  dependencies:
+    - Dependencies
+    - Clocks
+    - Fetch
+    - ControlledTime

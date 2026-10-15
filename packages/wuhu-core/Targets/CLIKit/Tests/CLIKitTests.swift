@@ -16,6 +16,28 @@ import Testing
 
 @Suite
 struct RequestMappingTests {
+  @Test func v2AddUsesExplicitEndpointSuffixAndGroupWithoutChangingLegacyAdd() async throws {
+    for (verb, endpoint, expectedName) in [("machine-v2", "/v1/machine-v2", "box-v2"), ("machine", "/v1/machine", "box")] {
+      for arguments in [["--group", "shared", verb, "add", "--name", "box"], [verb, "add", "--name", "box", "--group", "shared"]] {
+        let h = try Harness { request in
+          if request.url.path == "/v1/server" { return try .json(JSONValue.object(["features": ["groups"], "server": "https://space.test"])) }
+          return try .json(JSONValue.object(["id": "mc_aaaaaaaa", "token": "jt_once", "fingerprint": "sha256:test", "group": "shared"]))
+        }
+        #expect(await h.runner.run(arguments: arguments) == 0)
+        let sent = try #require(await h.recorder.requests.last)
+        #expect(sent.url.path == endpoint); #expect(sent.method == .post)
+        #expect(sent.headers["wuhu-group"] == nil)
+        #expect(try await requestBodyJSON(sent) == ["name": .string(expectedName), "group": "shared"])
+        #expect(await h.stdout.text.contains("token jt_once"))
+        #expect(await h.stderr.text.contains("wuhu \(verb) join"))
+      }
+    }
+    #expect(throws: UsageError.self) { try Command.parse(["machine-v2", "add"]) }
+    #expect(try Command.parse(["machine-v2", "add", "--name", "box"]).isRefusedToSessions)
+    #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine-v2", "add", "--name", "box", "--group", "shared"]) }
+    #expect(throws: UsageError.self) { try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "Not A Group"]) }
+  }
+
   @Test func identityVerbsMapToReadOnlyDiscoveryAndHumanOnlySettings() async throws {
     try await assertRequest(["identity"], response: ["defaultIssuer": "https://space.test", "overrides": [:]]) { request in
       #expect(request.method == .get)

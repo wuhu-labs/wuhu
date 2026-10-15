@@ -75,7 +75,7 @@ extension InProcessToolOwnerClient {
   }
 
   public func discoveryContext(session: SessionID, contentHost: String?) async throws -> JSONValue {
-    try await context(session).discoveryContext(contentHost: contentHost)
+    try await context(session).discoveryContext(contentHost: contentHost ?? identityConfigurationProvider.contentHost.withLock { $0 })
   }
 
   public func discoveryGroups(session: SessionID) async throws -> JSONValue {
@@ -87,7 +87,6 @@ extension InProcessToolOwnerClient {
   public func directMessage(_ arguments: [JSONValue], reader: SessionID) async throws -> JSONValue { try await directMessagePage(arguments, in: space, reader: reader) }
   public func usableMachines(session: SessionID) async throws -> [MachineRecord] { try await space.machines(usableFrom: principal(of: session).group) }
   public func resolveMachine(_ reference: String, session: SessionID) async throws -> MachineRecord? { try await space.resolveMachine(reference, usableFrom: principal(of: session).group) }
-  public func machineV2Members(group: GroupID) async throws -> [String] { try await space.machineV2Members(group: group) }
   public func ownExecs(session: SessionID) async throws -> [ExecStatus] { try await context(session).ownExecs() }
   public func ownExecStatus(_ id: String, session: SessionID) async throws -> ExecStatus { try await context(session).ownExecStatus(id) }
   public func ownExecToKill(_ id: String, session: SessionID) async throws -> ExecID { try await context(session).ownExecStatus(id).id }
@@ -98,9 +97,15 @@ extension InProcessToolOwnerClient {
 
 final class InProcessIdentityConfiguration: Sendable {
   let value = Mutex<(@Sendable () async throws -> JSONValue)?>(nil)
+  let contentHost = Mutex<String?>(nil)
 }
 
 extension InProcessToolOwnerClient {
+  public func configureScriptDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
+    if let contentHost { identityConfigurationProvider.contentHost.withLock { $0 = contentHost } }
+    if let identity { identityConfigurationProvider.value.withLock { $0 = identity } }
+  }
+
   public func identityRequest(_ request: Request, session: SessionID) async -> ScriptIdentityReply {
     guard let identityFetch else {
       return .init(response: .failure(ScriptIdentityUnavailable(message: "the server fetch identity is unavailable")), protectedValues: [])

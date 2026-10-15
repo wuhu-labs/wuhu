@@ -32,7 +32,7 @@ export function templateDirectory(name: string): string {
 
 export function templateReady(draft: TemplateDraft): boolean {
   return templateNameError(draft.name) == null && draft.kind != null &&
-    draft.provider !== ''
+    (draft.provider !== '' || draft.group != null)
 }
 
 export function templateManifest(draft: TemplateDraft): string {
@@ -42,6 +42,7 @@ export function templateManifest(draft: TemplateDraft): string {
   const manifest = {
     ...(draft.kind == null ? {} : { kind: draft.kind }),
     ...(description === '' ? {} : { description }),
+    ...(draft.group == null ? {} : { modelGroup: draft.group.id }),
     ...(draft.provider === '' ? {} : { provider: draft.provider }),
     ...(model == null ? {} : { model: model.id }),
     ...(effort == null || effort === '' ? {} : { effort }),
@@ -56,7 +57,12 @@ export function templateBrief(draft: TemplateDraft): string {
 }
 
 export function templateLine(template: SessionTemplateDescriptor): string {
-  return [template.provider, template.model, template.effort]
+  return [
+    template.modelGroup,
+    template.provider,
+    template.model,
+    template.effort,
+  ]
     .filter((part): part is string => part != null && part !== '')
     .join(' · ')
 }

@@ -10,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ServerTelemetry
   - Credentials
   - ExecutionOwner
   - InferenceKit
@@ -41,6 +42,7 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - SessionToolsTestSupport
     - Credentials
     - ExecutionOwner
     - Fetch

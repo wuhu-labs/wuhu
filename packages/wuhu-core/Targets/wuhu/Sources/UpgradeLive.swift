@@ -36,16 +36,6 @@ extension UpgradeEnvironment {
   }
 }
 
-private struct ProcessFailure: Error, CustomStringConvertible {
-  var command: [String]
-  var status: Int32
-  var stderr: String
-
-  var description: String {
-    "\(self.command.joined(separator: " ")) exited \(self.status): \(self.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"
-  }
-}
-
 // Draining while the child runs keeps a chatty process from blocking on a
 // full pipe and never reaching the termination handler.
 private final class DrainedPipe: Sendable {
@@ -87,7 +77,7 @@ func capturedProcessOutput(_ command: [String]) async throws -> String {
       if process.terminationStatus == 0 {
         continuation.resume(returning: output)
       } else {
-        continuation.resume(throwing: ProcessFailure(command: command, status: process.terminationStatus, stderr: errors))
+        continuation.resume(throwing: CommandFailure(command: command, status: process.terminationStatus, stderr: errors.trimmingCharacters(in: .whitespacesAndNewlines)))
       }
     }
     do {

@@ -37,7 +37,7 @@ class FakeStream implements EventStream {
   private openHandler: (() => void) | null = null
   private messageHandler: ((data: string) => void) | null = null
   private activityHandler: (() => void) | null = null
-  private errorHandler: (() => void) | null = null
+  private errorHandler: ((status?: number) => void) | null = null
 
   constructor(readonly url: string) {}
 
@@ -50,7 +50,7 @@ class FakeStream implements EventStream {
   onActivity(handler: () => void) {
     this.activityHandler = handler
   }
-  onError(handler: () => void) {
+  onError(handler: (status?: number) => void) {
     this.errorHandler = handler
   }
   close() {
@@ -66,8 +66,8 @@ class FakeStream implements EventStream {
   heartbeat() {
     this.activityHandler?.()
   }
-  fail() {
-    this.errorHandler?.()
+  fail(status?: number) {
+    this.errorHandler?.(status)
   }
 }
 
@@ -531,4 +531,27 @@ Deno.test('glob revision folds once, checkpoints only complete batches, and resu
   timer.fire()
   assertEquals(net.urls.at(-1), '/v1/observe?glob=**&from=5&batch=1')
   store.close()
+})
+
+Deno.test('a subscription that stops on refusal never retries a refused query, but retries a drop', () => {
+  const net = new FakeNet()
+  const timer = new FakeTimer()
+  const optional = { ...revSubscription(0), stopOnRefusal: true }
+  const { store } = collectStore(net, timer, optional)
+  net.last.fireOpen()
+  net.last.fail()
+  timer.fire()
+  assertEquals(net.streams.length, 2)
+  net.last.fail(422)
+  assertEquals(backoffs(timer), [250])
+  assertEquals(timer.pendingCount, 0)
+  assertEquals(store.getSnapshot().liveness, 'reconnecting')
+  assertEquals(net.streams.length, 2)
+
+  const plain = new FakeNet()
+  const plainTimer = new FakeTimer()
+  collectStore(plain, plainTimer, revSubscription(0))
+  plain.last.fail(422)
+  plainTimer.fire()
+  assertEquals(plain.streams.length, 2)
 })

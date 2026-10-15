@@ -15,6 +15,10 @@ import Testing
     let fail = Mutex(false)
     func run(_ arguments: [String]) throws -> String {
       self.commands.withLock { $0.append(arguments) }
+      if arguments.count > 1, arguments[1] == "print" { throw CommandFailure(command: arguments, status: 113, stderr: "Could not find service") }
+      if arguments == ["/usr/bin/id", "-un"] { return "recording-user\n" }
+      if arguments.first == "/usr/bin/loginctl" { return "yes\n" }
+      if arguments == ["/usr/bin/systemctl", "--user", "show-environment"] { return "" }
       if self.fail.withLock({ $0 }) { throw CLIError(message: "service manager refused") }
       return ""
     }
@@ -63,13 +67,37 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: installer.binary.path))
   }
 
+  @Test func completedMutationUnlocksWhileDuplicateDescriptorIsRetained() async throws {
+    let effects = Effects()
+    let (scratch, _, original, candidate) = try self.fixture(effects)
+    defer { scratch.remove() }
+    let inherited = Mutex<Int32?>(nil)
+    let lockPath = original.root.appendingPathComponent(".install-lock").path
+    var installer = original
+    installer.command = { arguments in
+      if arguments == ["/usr/bin/systemctl", "--user", "daemon-reload"], inherited.withLock({ $0 == nil }) {
+        let descriptor = try duplicateOpenDescriptor(path: lockPath)
+        inherited.withLock { $0 = descriptor }
+      }
+      return try effects.run(arguments)
+    }
+    defer { if let descriptor = inherited.withLock({ $0 }) { close(descriptor) } }
+    try await installer.install(candidate: candidate)
+    #expect(inherited.withLock { $0 != nil })
+    do {
+      try await installer.uninstall { throw CLIError(message: "still draining") }
+      Issue.record("undrained uninstall succeeded")
+    } catch let error as MachineV2InstallError { #expect(error.code == .drainFailed) }
+    try await installer.install(candidate: candidate)
+  }
+
   @Test func crashedLockHolderDoesNotWedgeInstallRollbackOrUninstall() async throws {
     let effects = Effects()
     let (scratch, _, installer, candidate) = try self.fixture(effects)
     defer { scratch.remove() }
     try await installer.install(candidate: candidate)
     let lockPath = installer.root.appendingPathComponent(".install-lock").path
-    let fd = open(lockPath, O_RDWR)
+    let fd = open(lockPath, O_RDWR | O_CLOEXEC)
     #expect(fd >= 0)
     guard fd >= 0 else { return }
     guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); Issue.record("cannot hold installer lock"); return }
@@ -94,7 +122,7 @@ import Testing
         Issue.record("concurrent installer acquired held lock")
       } catch let error as MachineV2InstallError { #expect(error.code == .busy) }
     }
-    #expect(effects.commands.withLock { $0.count } == count)
+    #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/id", "-un"], ["/usr/bin/loginctl", "show-user", "recording-user", "-p", "Linger", "--value"], ["/usr/bin/systemctl", "--user", "show-environment"]])
     kill(holder.processIdentifier, SIGKILL)
     holder.waitUntilExit()
     #expect(FileManager.default.fileExists(atPath: lockPath))
@@ -159,7 +187,7 @@ import Testing
     #expect(try Data(contentsOf: installer.previous) == Data("previous".utf8))
     #expect(try Data(contentsOf: installer.serviceFile) == Data("existing service".utf8))
     #expect(effects.commands.withLock { $0.allSatisfy { $0[0] == "/bin/launchctl" } })
-    #expect(effects.commands.withLock { $0.last } == ["/bin/launchctl", "bootout", "gui/501/ai.wuhu.machine-v2.mc_test-v2.preflight"])
+    #expect(effects.commands.withLock { $0.suffix(2).map { $0[1] } } == ["bootout", "print"])
   }
 
   @Test func launchdRetryAcceptsOnlyExplicitNotLoadedBootout() async throws {
@@ -223,4 +251,76 @@ import Testing
     await #expect(throws: MachineV2InstallError.self) { try await installer.install(candidate: candidate) }
     #expect(effects.commands.withLock { $0.isEmpty })
   }
+}
+
+extension MachineV2InstallerTests {
+  @Test(arguments: ["linger-off", "linger-error", "bus-error", "missing-binary"])
+  func linuxPreflightFailsBeforeAnyInstallationWrites(_ failure: String) async throws {
+    let effects = Effects()
+    let (scratch, home, original, candidate) = try fixture(effects)
+    defer { scratch.remove() }
+    var installer = original
+    installer.command = { arguments in
+      if arguments.first == "/usr/bin/loginctl" {
+        if failure == "linger-off" { return "no\n" }
+        if failure == "linger-error" { throw CLIError(message: "no user session") }
+      }
+      if arguments.last == "show-environment", failure == "bus-error" { throw CLIError(message: "Failed to connect to bus") }
+      return try effects.run(arguments)
+    }
+    if failure == "missing-binary" { try FileManager.default.removeItem(at: candidate) }
+    do { try await installer.install(candidate: candidate); Issue.record("preflight failure installed") }
+    catch let error as MachineV2InstallError {
+      #expect(error.code == (failure == "missing-binary" ? .missingBinary : .preflightFailed))
+      if failure.hasPrefix("linger") { #expect(error.message.contains("sudo loginctl enable-linger recording-user")) }
+      if failure == "bus-error" { #expect(error.message.contains("Failed to connect to bus")) }
+    }
+    #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".wuhu").path))
+    #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == (failure == "missing-binary" ? [] : ["candidate"]))
+  }
+
+  @Test func failedLinuxPreflightPreservesInstalledBinaryUnitAndPreviousArtifact() async throws {
+    let effects = Effects()
+    let (scratch, _, original, candidate) = try fixture(effects)
+    defer { scratch.remove() }
+    try await original.install(candidate: candidate)
+    try Data("backup".utf8).write(to: original.previous)
+    let oldBinary = try Data(contentsOf: original.binary)
+    let oldUnit = try Data(contentsOf: original.serviceFile)
+    try Data("upgrade".utf8).write(to: candidate)
+    var installer = original
+    installer.command = { arguments in
+      if arguments.first == "/usr/bin/loginctl" { return "no" }
+      return try effects.run(arguments)
+    }
+    await #expect(throws: MachineV2InstallError.self) { try await installer.install(candidate: candidate) }
+    #expect(try Data(contentsOf: installer.binary) == oldBinary)
+    #expect(try Data(contentsOf: installer.serviceFile) == oldUnit)
+    #expect(try Data(contentsOf: installer.previous) == Data("backup".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: installer.binary.deletingLastPathComponent().path).sorted() == ["previous", "wuhu"])
+  }
+
+  @Test func linuxServiceCommandsDeriveRuntimeDirectoryAndPreserveExplicitValue() {
+    let command = ["/usr/bin/systemctl", "--user", "daemon-reload"]
+    for environment in [[:], ["XDG_RUNTIME_DIR": ""]] {
+      #expect(machineV2ServiceArguments(command, platform: .linux, environment: environment, userID: 123) == ["/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/123"] + command)
+    }
+    #expect(machineV2ServiceArguments(command, platform: .linux, environment: ["XDG_RUNTIME_DIR": "/custom/runtime"], userID: 123) == ["/usr/bin/env", "XDG_RUNTIME_DIR=/custom/runtime"] + command)
+    #expect(machineV2ServiceArguments(command, platform: .macOS, environment: [:], userID: 123) == command)
+  }
+}
+
+private func duplicateOpenDescriptor(path: String) throws -> Int32 {
+  var target = stat()
+  guard stat(path, &target) == 0 else { throw CLIError(message: "cannot stat lock fixture") }
+  for entry in try FileManager.default.contentsOfDirectory(atPath: "/dev/fd") {
+    guard let descriptor = Int32(entry) else { continue }
+    var info = stat()
+    guard fstat(descriptor, &info) == 0, info.st_dev == target.st_dev, info.st_ino == target.st_ino else { continue }
+    let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+    guard duplicate >= 0 else { throw CLIError(message: "cannot duplicate lock fixture") }
+    return duplicate
+  }
+  throw CLIError(message: "installer lock descriptor not found")
 }

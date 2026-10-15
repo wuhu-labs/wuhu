@@ -46,11 +46,10 @@ public extension Scripts {
     space: Space,
     secrets: SpaceSecretStores? = nil,
     machines: ScriptMachineAccess? = nil,
-    machinesV2: ScriptMachineV2Access? = nil,
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) {
     self.init(
-      owner: InProcessToolOwnerClient(space: space, secrets: secrets, identityFetch: identityFetch, scriptMachines: machines, scriptMachinesV2: machinesV2),
+      owner: InProcessToolOwnerClient(space: space, secrets: secrets, identityFetch: identityFetch, scriptMachines: machines),
     )
   }
 }
@@ -87,7 +86,6 @@ public extension InProcessToolOwnerClient {
     machines: MachineSeam? = nil,
     exec: ExecBackend? = nil,
     scriptMachines: ScriptMachineAccess? = nil,
-    scriptMachinesV2: ScriptMachineV2Access? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
@@ -103,7 +101,6 @@ public extension InProcessToolOwnerClient {
       machines: machines,
       exec: exec,
       scriptMachines: scriptMachines,
-      scriptMachinesV2: scriptMachinesV2,
       resolveModelExecutor: resolveModelExecutor,
       resolveModelGroup: resolveModelGroup,
       prepareModelRoute: prepareModelRoute,

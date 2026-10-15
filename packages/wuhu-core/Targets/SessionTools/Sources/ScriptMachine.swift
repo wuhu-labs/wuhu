@@ -21,8 +21,8 @@ import SpaceTools
 // What wuhu:machine reaches: the machines' files, and execs minted for the
 // script that runs them.
 public struct ScriptMachineAccess: Sendable {
-  let files: MachineSeam
-  let exec: ExecBackend
+  public let files: MachineSeam
+  public let exec: ExecBackend
 
   public init(files: MachineSeam, exec: ExecBackend) {
     self.files = files

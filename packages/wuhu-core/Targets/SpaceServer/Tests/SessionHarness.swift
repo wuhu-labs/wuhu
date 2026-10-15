@@ -74,6 +74,7 @@ struct SessionHarness {
     execTokens: ExecTokens? = nil,
     secrets: SpaceSecretStores? = nil,
     cacheWarmingUsage: UsageBoard? = nil,
+    machineV2: Bool = false,
     inference: @escaping @Sendable (LoopCore.InferenceRequest, AttemptHub) async throws -> LoopCore.InferenceReply = { _, _ in
       throw InferenceError.other(status: nil, body: "no inference scripted")
     },
@@ -101,6 +102,7 @@ struct SessionHarness {
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil,
       credentials: credentials, secrets: secrets, execTokens: execTokens,
+      machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil,
     )
     api = ServeTesting.client(upgrading: handler)
   }

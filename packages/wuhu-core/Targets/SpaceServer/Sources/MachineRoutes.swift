@@ -9,6 +9,8 @@ import Dependencies
 import Fetch
 import JSONValue
 import MachineContract
+import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
 import struct SpaceContract.GroupID
@@ -47,21 +49,15 @@ func addMachineRoutes(
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    // A person's machine joins their own group; the --dev seat's joins shared.
-    let group: GroupID = switch principal.actor {
-    case let .person(_, account): try await space.ensurePersonalGroup(account: account)
-    case .session: principal.group
-    case .anonymous: .shared
-    }
-    let name: String?
-    if request.body != nil {
-      name = try await request.json(MachineAddInput.self).name
-    } else {
-      name = nil
+    let input = try await request.body == nil ? MachineAddInput() : request.json(MachineAddInput.self)
+    let group: GroupID
+    switch try await machineRegistrationGroup(input.group, principal: principal, space: space) {
+    case let .success(resolved): group = resolved
+    case let .failure(response): return response
     }
     let added: MachineRecord
     do {
-      added = try await space.addMachine(name: name, group: group)
+      added = try await space.addMachine(name: input.name, group: group)
     } catch let SpaceError.invalidMachineName(raw) {
       return errorResponse(.badRequest, code: "invalidMachineName", message: "invalid machine name: \(raw)")
     } catch let SpaceError.machineNameTaken(taken) {
@@ -73,7 +69,7 @@ func addMachineRoutes(
       createdBy: nil,
       lifetime: machineJoinTokenLifetime,
     )
-    return try Response.json(MachineAddOutput(id: added.id, token: minted.token.rawValue, fingerprint: fingerprint))
+    return try Response.json(MachineAddOutput(id: added.id, token: minted.token.rawValue, fingerprint: fingerprint, group: added.group.rawValue))
   }
 
   router.get("/v1/machine") { request, _ in
@@ -239,9 +235,12 @@ func addMachineRoutes(
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }
     do {
+      try await hub.requireExecKind(input.machine)
       let record = try await space.mintExec(machine: input.machine, group: principal.group)
       await hub.noteMinted(record)
       return try Response.json(ExecMintOutput(id: record.id))
+    } catch let error as OperationError {
+      return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
     } catch is SpaceError {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }
@@ -336,9 +335,28 @@ private func verifiedConnectSignature(pubkey: String, challenge: String, signatu
   return key.isValidSignature(signatureBytes, for: MachineConnect.signingPayload(challenge: challenge))
 }
 
-private enum Admission<Value> {
+enum Admission<Value> {
   case success(Value)
   case failure(Response)
+}
+
+func machineRegistrationGroup(_ requested: String?, principal: Principal, space: Space) async throws -> Admission<GroupID> {
+  if case .session = principal.actor { return .success(principal.group) }
+  if let requested {
+    let group = GroupID(rawValue: requested)
+    guard try await space.groupExists(group) else {
+      return .failure(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(requested)"))
+    }
+    guard try await admits(principal, of: group, space: space) else {
+      return .failure(errorResponse(.forbidden, code: "adminRequired", message: "adding a machine needs an admin of group \(requested)"))
+    }
+    return .success(group)
+  }
+  switch principal.actor {
+  case let .person(_, account): return try await .success(space.ensurePersonalGroup(account: account))
+  case .session: return .success(principal.group)
+  case .anonymous: return .success(.shared)
+  }
 }
 
 // The --dev seat is unrestricted.

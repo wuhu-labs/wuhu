@@ -84,7 +84,7 @@ extension Command {
     case let .upgrade(upgrade):
       !upgrade.check
     case .machineV2Install, .use, .trust, .untrust, .userAdd, .userInvite, .userAdmin, .userList, .userHandle, .userProfile, .userRemove,
-         .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineJoin, .machineRun, .machineRotate,
+         .keyList, .keyRevoke, .login, .shareLogin, .machineAdd, .machineV2Add, .machineJoin, .machineRun, .machineRotate,
          .machineRevoke, .machineMove, .authSet, .authList, .authRemove, .authLogin,
          .authLogout, .modelsUpdate, .groupUse, .identitySet, .identityRotate, .identityRegisterNew:
       true

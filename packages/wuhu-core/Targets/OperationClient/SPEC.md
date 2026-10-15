@@ -19,3 +19,21 @@ The real store must implement atomic unique owner claims with immutable input id
 `reconcileAbandoned` requires durable stop intent and keeps that idempotent stop deliverable after the local full-silence verdict became unknown. It does not resend a start, reset the caller budget or erase unknown without fresh conclusive evidence. `acknowledgeLeave` sends the explicit `leaveAck=true` describe request; only the runner's settled `leaving` reply confirms success. A regular description is not a departure acknowledgement.
 
 A definitive unknown-operation response after the runner has expired its receipt cannot overwrite a persisted terminal verdict. Startup drain/ack may stop asking about that receipt while retaining the known execution outcome.
+
+## Filesystem helpers
+
+Internal `awaitResult(id)` polls using the advertised hold bound, retries transport/request-deadline failures within the existing operation lease/caller budget, acknowledges terminal evidence and returns only a completed JSON result. Failed verdicts throw their typed operation error; stopped verdicts throw operationEnded with the actual stop reason. It does not drain output; channel-bearing callers must consume their streams first.
+
+Internal typed `stat`, `list`, `writeFile`, `mkdir`, `remove` and `move` helpers take machine, paths, stable OperationOwner and optional caller duration. Their admission follows generic start: describe must already establish presence. `vfs(machine:op:owner:timeout:)` is the MachineContract compatibility adapter for server/CLI seams; it obtains the initial description when none is cached and returns VFSResult.error only for filesystem/input/size outcomes. Configuration, unavailable-machine, protocol, cancellation and deadline failures remain thrown OperationErrors, never a v1 fallback. Tokens from stat/read/write interoperate. Read uses read.v1 output with offset/length validation and the v1 8 MiB per-call bound (larger image attachments use the existing ranged reader). List streams metadata then sorts within an 8 MiB encoded-record budget. Both consume bounded output incrementally and acknowledge final offsets and terminal receipts. A caller that exceeds materialization bounds stops the operation rather than returning a truncated success.
+
+Write sends length plus SHA-256 in start and streams only 64 KiB input chunks. Retried input exchanges use the persisted identical pending chunk/offset/EOF, honor partial acceptance and backpressure, and never resend start. An owner key with different bytes is invocationConflict even when the path and length match. Convenience calls persist stop intent if interrupted before terminal evidence. As with generic takeOutput, already-consumed output is not a replayable result cache for a second independent caller using the same owner.
+
+Only `vfs` is the public filesystem compatibility entry point; the typed implementation helpers and result waiter are internal. Source lookup failure markers preserve v1 notFound for stat/remove/move sources (including ENOTDIR and EACCES), without relabeling mutation permission failures as missing entries.
+
+The notFound compatibility category requires an explicit failed-lookup marker, never ENOENT alone: missing destination parents for write/move remain io. Read/list first establish metadata existence; missing/inaccessible metadata lookups are notFound, while failed data/directory opens after a successful lookup remain io.
+
+Start refuses unknownKind locally only when the stored description neither lists the kind nor names it in `availability`; a gated or known-but-unlinked kind is sent so the machine, which owns the gate, answers kindUnavailable or permissionDenied.
+
+## Normal machine tool adapters
+
+`search(machine:query:)` maps normal find/grep requests onto record channels, preserving SearchResult shapes and bounded pages. Opaque cursors bind machine identity and query; paging follows traversal order, not sorted order. Concurrent edits may skip/repeat entries. Invalid or foreign cursors return invalidArgument. Optional matchLimit/resumeEntries/resumeLine kind inputs provide completed page results with nextEntry/nextLine, while unpaged entry-limit operations keep their stopped verdict.

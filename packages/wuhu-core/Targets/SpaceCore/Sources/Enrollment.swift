@@ -22,6 +22,16 @@ CREATE TABLE IF NOT EXISTS "join_tokens" (
 CREATE TRIGGER IF NOT EXISTS "join_tokens_grp_required" BEFORE INSERT ON "join_tokens" WHEN NEW."grp" = ''
   BEGIN SELECT RAISE(ABORT, 'grp required: join_tokens'); END;
 CREATE INDEX IF NOT EXISTS "join_tokens_by_account" ON "join_tokens" ("account_id");
+-- What a consumed machine token enrolled, so the same token with the same pubkey
+-- replays to the same key: a box that lost the response retries instead of
+-- being locked out. A receipt dies with its key (rotation, revocation, kick)
+-- and is pruned once the token's own expiry passes.
+CREATE TABLE IF NOT EXISTS "join_token_receipts" (
+  "token_hash" TEXT NOT NULL PRIMARY KEY,
+  "pubkey" TEXT NOT NULL REFERENCES "account_keys" ("pubkey") ON DELETE CASCADE,
+  "expires_at" TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "join_token_receipts_by_pubkey" ON "join_token_receipts" ("pubkey");
 """
 
 public struct JoinToken: Hashable, Sendable {
@@ -69,6 +79,90 @@ extension Space {
     return (MachineRecord(id: id, account: account, name: name, createdAt: createdAt, group: group), MintedJoinToken(token: token, expiresAt: expiresAt))
   }
 
+  /// One-call enrollment for a machine whose key already exists on the caller's
+  /// side (the Wuhu app): the machine, its account, its v2 membership, its live
+  /// key and an optional device link commit in one transaction, with no join
+  /// token in between. The name needs no `-v2` suffix; it is unique across v1
+  /// and v2.
+  ///
+  /// `enrolledBy`, when given, must own `device`; a device it does not own is
+  /// reported as unknown.
+  ///
+  /// Replaying is idempotent: when `name` is already held by a v2 machine in
+  /// `group` whose live exec-machine key is `pubkey` and was enrolled by the
+  /// same person, the call returns that machine and key unchanged (re-applying
+  /// the device link). Anything else holding the name is `machineNameTaken`.
+  /// An unattributed enrollment (`enrolledBy` nil, the dev seat) never replays:
+  /// there is no person to match.
+  public func enrollMachineV2(
+    name raw: String,
+    group: GroupID,
+    pubkey: String,
+    device: String? = nil,
+    enrolledBy: AccountID? = nil,
+  ) async throws -> MachineV2Enrollment {
+    guard let name = MachineName.normalized(raw) else { throw SpaceError.invalidMachineName(raw) }
+    let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
+    let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
+    let now = dateGen.now
+    let stamp = SQLiteDateFormat.string(from: now)
+    return try await writer.write { db in
+      var linked: DeviceRow?
+      if let device {
+        guard let row = try DeviceRow.where({ $0.id.eq(device) }).fetchOne(db),
+              enrolledBy == nil || row.accountID == enrolledBy?.rawValue else { throw SpaceError.unknownDevice(device) }
+        linked = row
+      }
+      if let replayed = try Self.replayedEnrollment(name: name, group: group, pubkey: pubkey, enrolledBy: enrolledBy, at: now, in: db) {
+        if var linked, linked.machineID != replayed.machine.id.rawValue {
+          linked.machineID = replayed.machine.id.rawValue
+          try DeviceRow.upsert { linked }.execute(db)
+        }
+        return replayed
+      }
+      try Self.requireMachineNameFree(name, besides: nil, in: db)
+      try EnrollmentMachineAccountRow.insert {
+        EnrollmentMachineAccountRow(id: account.rawValue, kind: AccountKind.machine.rawValue, name: name, createdAt: stamp, removedAt: nil)
+      }.execute(db)
+      let row = MachineRow(id: id.rawValue, accountID: account.rawValue, name: name, createdAt: stamp, grp: group.rawValue)
+      try MachineRow.insert { row }.execute(db)
+      try MachineV2MemberRow.insert { MachineV2MemberRow(machineID: id.rawValue, grp: group.rawValue, createdAt: stamp) }.execute(db)
+      let key = try Self.insertKey(pubkey, account: account, capabilities: [.execMachine], createdBy: enrolledBy, createdAt: now, expiresAt: nil, in: db)
+      if var linked {
+        linked.machineID = id.rawValue
+        try DeviceRow.upsert { linked }.execute(db)
+      }
+      return MachineV2Enrollment(machine: Self.machineRecord(from: row), key: key)
+    }
+  }
+
+  private static func replayedEnrollment(name: String, group: GroupID, pubkey: String, enrolledBy: AccountID?, at now: Date, in db: Database) throws -> MachineV2Enrollment? {
+    guard let enrolledBy,
+          let holder = try MachineRow.where({ $0.name.lower().eq(name) }).fetchOne(db), holder.grp == group.rawValue,
+          try MachineV2MemberRow.where({ $0.machineID.eq(holder.id) }).fetchOne(db) != nil,
+          let stored = try Row.fetchOne(db, sql: "SELECT * FROM account_keys WHERE pubkey = ? AND account_id = ?", arguments: [pubkey, holder.accountID]),
+          let key = try? keyRecord(from: stored), isLive(key.expiresAt, at: now), key.capabilities.contains(.execMachine),
+          key.createdBy == enrolledBy
+    else { return nil }
+    return MachineV2Enrollment(machine: machineRecord(from: holder), key: key)
+  }
+
+  /// A machine's own revocation. One transaction checks that `pubkey` is a
+  /// live exec-machine key of `machine`'s account and purges every credential
+  /// of that account, so a rotation can only land wholly before (the key is
+  /// dead: false) or wholly after it. The machine row stays.
+  public func revokeMachine(_ machine: MachineID, presenting pubkey: String) async throws -> Bool {
+    let now = dateGen.now
+    return try await writer.write { db in
+      guard let row = try MachineRow.where({ $0.id.eq(machine.rawValue) }).fetchOne(db),
+            let stored = try Row.fetchOne(db, sql: "SELECT * FROM account_keys WHERE pubkey = ? AND account_id = ?", arguments: [pubkey, row.accountID]),
+            let key = try? Self.keyRecord(from: stored), Self.isLive(key.expiresAt, at: now), key.capabilities.contains(.execMachine)
+      else { return false }
+      _ = try Self.purgeCredentials(account: key.account, in: db)
+      return true
+    }
+  }
+
   public func mintJoinToken(
     account: AccountID,
     capabilities: Set<KeyCapability>,
@@ -104,12 +198,20 @@ extension Space {
     let now = dateGen.now
     let hash = Self.credentialDigest(token.rawValue)
     return try await writer.write { db in
+      try db.execute(sql: "DELETE FROM join_token_receipts WHERE expires_at <= ?", arguments: [SQLiteDateFormat.string(from: now)])
       guard let row = try EnrollmentTokenRow.where({ $0.tokenHash.eq(hash) }).fetchOne(db) else {
-        throw JoinTokenRejected()
+        // Already consumed: the same pubkey replays to the key it enrolled,
+        // while that key lives; any other pubkey is refused as before.
+        guard let receipt = try Row.fetchOne(db, sql: "SELECT pubkey FROM join_token_receipts WHERE token_hash = ?", arguments: [hash]),
+              receipt["pubkey"] as String == pubkey,
+              let stored = try Row.fetchOne(db, sql: "SELECT * FROM account_keys WHERE pubkey = ?", arguments: [pubkey]),
+              let key = try? Self.keyRecord(from: stored), Self.isLive(key.expiresAt, at: now),
+              try !machineV2 || Self.isMachineV2Account(key.account.rawValue, in: db)
+        else { throw JoinTokenRejected() }
+        return key
       }
       if machineV2 {
-        guard let machine = try MachineRow.where({ $0.accountID.eq(row.accountID) }).fetchOne(db),
-              try MachineV2MemberRow.where({ $0.machineID.eq(machine.id) && $0.grp.eq(machine.grp) }).fetchOne(db) != nil else { throw JoinTokenRejected() }
+        guard try Self.isMachineV2Account(row.accountID, in: db) else { throw JoinTokenRejected() }
       }
       guard try Self.isLive(SQLiteDateFormat.date(from: row.expiresAt), at: now) else {
         throw JoinTokenRejected()
@@ -118,7 +220,7 @@ extension Space {
         throw CorruptCredentialRow(stored: row.capabilities)
       }
       try EnrollmentTokenRow.where { $0.tokenHash.eq(hash) }.delete().execute(db)
-      return try Self.insertKey(
+      let key = try Self.insertKey(
         pubkey,
         account: AccountID(rawValue: row.accountID),
         capabilities: capabilities,
@@ -127,7 +229,21 @@ extension Space {
         expiresAt: nil,
         in: db,
       )
+      // Person invites stay strictly one-time ("dies at first use"); only a
+      // machine's enroll or re-key, whose box retries on its own, replays.
+      if try MachineRow.where({ $0.accountID.eq(row.accountID) }).fetchOne(db) != nil {
+        try db.execute(
+          sql: "INSERT INTO join_token_receipts (token_hash, pubkey, expires_at) VALUES (?, ?, ?)",
+          arguments: [hash, pubkey, row.expiresAt],
+        )
+      }
+      return key
     }
+  }
+
+  private static func isMachineV2Account(_ account: String, in db: Database) throws -> Bool {
+    guard let machine = try MachineRow.where({ $0.accountID.eq(account) }).fetchOne(db) else { return false }
+    return try MachineV2MemberRow.where({ $0.machineID.eq(machine.id) && $0.grp.eq(machine.grp) }).fetchOne(db) != nil
   }
 
   // The gate runs inside the claiming transaction, so a refused revoke leaves
@@ -151,6 +267,11 @@ extension Space {
       return account
     }
   }
+}
+
+public struct MachineV2Enrollment: Equatable, Sendable {
+  public let machine: MachineRecord
+  public let key: KeyRecord
 }
 
 public struct JoinTokenRevocationRefused: Error, Equatable, Sendable {

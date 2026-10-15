@@ -44,7 +44,8 @@ public enum MachineV2Runtime {
     guard arguments.first == "machine-v2" else { return false }
     if arguments.count == 1 || arguments == ["machine-v2", "--help"] || (arguments.count >= 2 && ["run", "leave", "preflight", "join"].contains(arguments[1]) && arguments.contains("--help")) {
       await stdout("""
-      usage: wuhu machine-v2 join <https-origin> [fingerprint] [--name <name-v2>] < v2-token
+      usage: wuhu machine-v2 add --name <name>
+             wuhu machine-v2 join <https-origin> [fingerprint] [--name <name-v2>] < v2-token
              wuhu machine-v2 install|upgrade <id> --binary <signed-wuhu>
              wuhu machine-v2 rollback|uninstall <id>
              wuhu machine-v2 run|leave <id>
@@ -54,7 +55,7 @@ public enum MachineV2Runtime {
       return true
     }
     guard arguments.count >= 2, ["run", "leave", "preflight", "join"].contains(arguments[1]) else { return false }
-    guard case .wallet = try Identity.resolve(environment: environment) else { throw CLIError(message: sessionRefusal) }
+    guard case .wallet = try Identity.resolve(environment: environment) else { throw CLIError(message: machineV2SessionRefusal(arguments[1])) }
     let trust = try ServerTrust(environment: environment)
     switch arguments[1] {
     case "join":
@@ -67,7 +68,7 @@ public enum MachineV2Runtime {
         else { throw UsageError(message: "invalid machine-v2 join option") }
       }
       let machine = try await join(server: arguments[2], fingerprint: fingerprint, name: name, token: stdin(), environment: environment, trust: trust, fetch: fetch)
-      await stdout("joined \(machine)\n")
+      await stdout("joined \(machine)\ninstall service: wuhu machine-v2 install \(machine) --binary <signed-wuhu>\nor run in foreground: wuhu machine-v2 run \(machine)\n")
     case "run":
       guard arguments.count == 3 else { throw UsageError(message: "machine-v2 run <id>") }
       try await run(home: .locate(environment: environment, machine: arguments[2]), trust: trust, fetch: fetch, recording: environment["WUHU_MACHINE_V2_RECORDING"].map { URL(fileURLWithPath: $0) })

@@ -52,8 +52,11 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
 }
 
 @Suite struct PortableThinkingTests {
-  @Test(arguments: ThinkingBoundary.allCases, [false, true])
-  fileprivate func portableBoundaryKeepsCurrentTurnRunningAndNextInputRestoresThinking(boundary: ThinkingBoundary, unsigned: Bool) async throws {
+  /// `claude` is a Claude model behind a non-Anthropic host (the one named
+  /// downgrade); `deepseek` and `mimo` (a non-Claude model on a `claude`-dialect
+  /// host) keep their effort.
+  @Test(arguments: ThinkingBoundary.allCases, ["claude", "deepseek", "mimo"])
+  fileprivate func portableBoundaryKeepsCurrentTurnRunningAndNextInputRestoresThinking(boundary: ThinkingBoundary, flavor: String) async throws {
     try await withSessionDeps {
       let bodies = Mutex<[JSONValue]>([])
       let urls = Mutex<[URL]>([])
@@ -65,11 +68,21 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
           return Response(status: .ok, body: .bytes(Data(portableTextSSE.utf8), contentType: "text/event-stream"))
         }
       } operation: {
-        let provider = unsigned ? "deepseek" : "testing"
-        let models = unsigned ? testModelsJSON.replacingOccurrences(of: "\"testing\"", with: "\"deepseek\"") : testModelsJSON
+        let provider = flavor == "deepseek" ? "deepseek" : "testing"
+        let modelName = flavor == "claude" ? "claude-test-model" : "test-model"
+        let models = switch flavor {
+        case "deepseek": testModelsJSON.replacingOccurrences(of: "\"testing\"", with: "\"deepseek\"")
+        case "claude": testModelsJSON.replacingOccurrences(of: "\"test-model\"", with: "\"claude-test-model\"")
+        default: testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"claude\"")
+        }
+        let duringTurn: String? = switch flavor {
+        case "deepseek": "enabled"
+        case "claude": nil
+        default: "adaptive"
+        }
         let identity = Mutex("old-account")
         let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { _ in .init(credential: .apiKey("fake"), identityEpoch: identity.withLock { $0 }) })
-        let id = try await harness.createSession(provider: provider)
+        let id = try await harness.createSession(provider: provider, model: modelName)
         let owner = InProcessExecutionOwnerClient(space: harness.space, credentials: harness.credentials)
         let initialCatalog = try await groupCatalog(owner: owner)()
         guard case let .kernel(specifier) = try await owner.record(id).executor else { Issue.record("expected kernel"); return }
@@ -108,7 +121,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         adopted = try await harness.store.transcript(id)
         let first = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
         #expect(first.message.content.contains(.text("completed")))
-        #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == (unsigned ? "enabled" : nil))
+        #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == duringTurn)
         #expect(!bodies.withLock { $0.last!.jsonString() }.contains("OLD_SIGNATURE"))
 
         let nextCall = ToolCall(id: "continued_call", name: "read", arguments: .object([:]))
@@ -116,14 +129,14 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let kernelCall = try #require(continued.toolCalls.first)
         adopted.append(.toolResult(.init(id: UUID(), timestamp: Date(), provenance: .toolCall(.init(kernelCall.id)), payload: .failure(.init(message: "second committed receipt")))))
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
-        #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == (unsigned ? "enabled" : nil))
+        #expect(try #require(bodies.withLock { $0.last }).object?["thinking"]?.object?["type"]?.stringValue == duringTurn)
 
         adopted.append(.message(.init(id: UUID(), messageID: .init("new-input"), conversationID: .init(id.rawValue), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "a fresh turn"))))
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
         let emitted = bodies.withLock { $0 }
         #expect(emitted.count == 3)
-        #expect(emitted.last?.object?["thinking"]?.object?["type"]?.stringValue == (unsigned ? "enabled" : "adaptive"))
-        #expect(emitted.allSatisfy { $0.object?["model"]?.stringValue == "test-model" })
+        #expect(emitted.last?.object?["thinking"]?.object?["type"]?.stringValue == (flavor == "deepseek" ? "enabled" : "adaptive"))
+        #expect(emitted.allSatisfy { $0.object?["model"]?.stringValue == modelName })
         #expect(Set(urls.withLock { $0 }).count == 1)
       }
     }
@@ -142,7 +155,7 @@ extension PortableThinkingTests {
           return Response(status: .ok, body: .bytes(Data(portableTextSSE.utf8), contentType: "text/event-stream"))
         }
       } operation: {
-        let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup()
+        let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup(model: "claude-test-model")
         let held = try #require(await owner.modelRoute(id))
         let resolved = try await catalog.resolve(held.specifier, session: id, routeEpoch: held.epoch)
         var source = try await harness.store.transcript(id)

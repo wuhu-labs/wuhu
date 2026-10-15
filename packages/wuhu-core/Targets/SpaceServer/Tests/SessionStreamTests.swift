@@ -1,4 +1,5 @@
-import Clocks
+import ControlledTime
+import Dependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -21,7 +22,14 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       let id = try await harness.createSession()
-      let clock = TestClock<Duration>()
+      let anchor = Date(timeIntervalSinceReferenceDate: 0)
+      let (clock, time) = withDependencies {
+        $0.installTimeControl(anchor: anchor)
+      } operation: {
+        @Dependency(\.continuousClock) var clock
+        @Dependency(\.timeControl) var time
+        return (clock, time)
+      }
       let response = conversationStreamResponse(space: harness.space, store: harness.store, conversation: ConversationID(id.rawValue), after: 0, viewer: .shared, clock: clock)
       let received = Mutex<[String]>([])
       let reader = Task {
@@ -33,19 +41,20 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
       defer { reader.cancel() }
 
       // The preamble is on the wire before any clock advance.
-      for _ in 0 ..< 100 where received.withLock({ $0.count }) < 1 { await Task.yield() }
+      try await time.asleep("first heartbeat", dueIn: 1)
+      try await until("SSE preamble") { received.withLock { $0.count } >= 1 }
       #expect(received.withLock { $0 } == [":\n\n"])
 
-      await clock.advance(by: .milliseconds(999))
-      for _ in 0 ..< 20 { await Task.yield() }
+      await time.advance(to: anchor.addingTimeInterval(0.999))
       #expect(received.withLock { $0 } == [":\n\n"])
 
-      await clock.advance(by: .milliseconds(1))
-      for _ in 0 ..< 100 where received.withLock({ $0.count }) < 2 { await Task.yield() }
+      await time.advance(to: anchor.addingTimeInterval(1.000001))
+      try await until("first SSE heartbeat") { received.withLock { $0.count } >= 2 }
       #expect(received.withLock { $0 } == [":\n\n", ":\n\n"])
 
-      await clock.advance(by: .seconds(1))
-      for _ in 0 ..< 100 where received.withLock({ $0.count }) < 3 { await Task.yield() }
+      try await time.asleep("second heartbeat", dueIn: 1)
+      await time.advance(to: anchor.addingTimeInterval(2.000002))
+      try await until("second SSE heartbeat") { received.withLock { $0.count } >= 3 }
       #expect(received.withLock { $0 } == [":\n\n", ":\n\n", ":\n\n"])
     }
   }

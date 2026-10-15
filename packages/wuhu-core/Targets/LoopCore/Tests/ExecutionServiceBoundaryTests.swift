@@ -72,4 +72,62 @@ private struct FaultingExecution: SessionExecutionClient {
       }
     }
   }
+
+  @Test func parentRemindersReplaceDeadlinesCancelAndJoinAtShutdown() async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let id = SessionID("fixture")
+      let wakes = Box(0)
+      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let execution = FaultingExecution(base: base, wakeCall: { _ in wakes.withLock { $0 += 1 } }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
+      let service = SessionService(sessions: sessions, execution: execution, archiveGrace: .seconds(60))
+      await service.scheduleWake(id, at: anchor.addingTimeInterval(10))
+      try await time.asleep("first deadline", dueIn: 10)
+      await service.scheduleWake(id, at: anchor.addingTimeInterval(20))
+      try await time.asleep("replacement deadline", dueIn: 20)
+      await time.advance(by: 10)
+      try await holds("replaced deadline never fires") { wakes.value == 0 }
+      await time.advance(by: 10)
+      try await until("replacement fires once") { wakes.value == 1 }
+      await service.scheduleWake(id, at: anchor.addingTimeInterval(30))
+      try await time.asleep("cancelled deadline", dueIn: 10)
+      await service.scheduleWake(id, at: nil)
+      await time.advance(by: 10)
+      try await holds("cancelled deadline never fires") { wakes.value == 1 }
+      await service.scheduleWake(id, at: anchor.addingTimeInterval(40))
+      try await time.asleep("shutdown deadline", dueIn: 10)
+      await service.shutdown()
+      await time.advance(by: 10)
+      try await holds("shutdown joins pending reminders") { wakes.value == 1 }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func parentReminderWakeFailuresRetryAndBecomeVisibleAfterExhaustion(exhausted: Bool) async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let id = try await sessions.createSession(group: .shared, title: "reminder", kind: .task, createdBy: "morgan", model: .test)
+      let wakes = Box(0)
+      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let execution = FaultingExecution(base: base, wakeCall: { _ in
+        let attempt = wakes.withLock { $0 += 1; return $0 }
+        if exhausted || attempt < 4 { throw ReplyLost() }
+      }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
+      let service = SessionService(sessions: sessions, execution: execution, archiveGrace: .seconds(60))
+      await service.scheduleWake(id, at: anchor.addingTimeInterval(10))
+      try await time.asleep("reminder", dueIn: 10)
+      await time.advance(by: 10)
+      for delay in [1, 2, 4] {
+        try await time.asleep("reminder wake retry", dueIn: Double(delay))
+        await time.advance(by: Double(delay))
+      }
+      try await until("four attempts complete") { wakes.value == 4 }
+      if exhausted {
+        try await until("failure persisted") { try await sessions.record(id).work == .errored }
+      } else {
+        #expect(try await sessions.record(id).work == .noWork)
+      }
+      await service.shutdown()
+    }
+  }
 }

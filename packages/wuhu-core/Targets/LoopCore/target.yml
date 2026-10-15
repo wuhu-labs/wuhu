@@ -2,6 +2,7 @@ name: LoopCore
 kind: library
 sources: Sources
 dependencies:
+  - ServerTelemetry
 
   - SessionDomain
   - SpaceCore
@@ -16,6 +17,7 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - ServerTelemetry
 
     - OrderedCollections
     - SessionDomain

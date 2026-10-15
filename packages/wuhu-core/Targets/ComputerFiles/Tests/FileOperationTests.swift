@@ -53,6 +53,53 @@ import Testing
     #expect(result["skipped"] == ["oversized": 1])
   }
 
+  @Test func grepMatchesTrailingEmptyLineAndEmptyFilesLikeV1() async throws {
+    for (text, expectedLine) in [("line\n", "2"), ("", "1")] {
+      let files = FakeFiles(data: Data(text.utf8))
+      let (_, records, end) = try await run(["root": "/file", "pattern": "^$", "dialect": "regex", "maxLineBytes": 32, "matchLimit": 10], kind: "grep.v1", channel: "matches", files: files.system)
+      #expect(end.verdict?.tag == .completed)
+      #expect(records == [["path": "/file", "line": .string(expectedLine), "text": ""]])
+    }
+  }
+
+  @Test func findPagesInTraversalOrderAndResumesAcrossTreeChanges() async throws {
+    let files = FakeFiles(data: Data(), entries: [.init(path: "/z.txt", kind: "file"), .init(path: "/a.txt", kind: "file"), .init(path: "/b.txt", kind: "file")])
+    let (_, first, end) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "matchLimit": 1], kind: "find.v1", channel: "entries", files: files.system)
+    #expect(first.first?.object?["path"] == "/z.txt"); #expect(end.verdict?.tag == .completed)
+    #expect(end.verdict?.result?.object?["nextEntry"] == 1)
+    let changed = FakeFiles(data: Data(), entries: [.init(path: "/z.txt", kind: "file"), .init(path: "/new.txt", kind: "file"), .init(path: "/a.txt", kind: "file")])
+    let (_, second, next) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "matchLimit": 2, "resumeEntries": 1], kind: "find.v1", channel: "entries", files: changed.system)
+    #expect(second.compactMap { $0.object?["path"]?.stringValue } == ["/new.txt", "/a.txt"])
+    #expect(next.verdict?.result?.object?["nextEntry"] == nil)
+  }
+
+  @Test(arguments: ["find.v1", "grep.v1"])
+  func directoryEntriesConsumeSearchBudgetAndCursorPositions(_ kind: String) async throws {
+    let entries = (0 ..< 1001).map { ComputerEntry(path: "/dir\($0)", kind: "directory") } + [.init(path: "/file.txt", kind: "file")]
+    let input: JSONValue = kind == "find.v1"
+      ? ["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "entryLimit": 1000]
+      : ["root": "/", "pattern": "needle", "dialect": "literal", "maxLineBytes": 32, "entryLimit": 1000]
+    let channel = kind == "find.v1" ? "entries" : "matches"
+    let limitedFiles = FakeFiles(data: Data("needle".utf8), entries: entries)
+    let (_, limited, stopped) = try await run(input, kind: kind, channel: channel, files: limitedFiles.system)
+    #expect(limited.isEmpty); #expect(stopped.verdict?.tag == .stopped); #expect(stopped.verdict?.reason == "entryLimit")
+    #expect(await limitedFiles.walked == 1000); #expect(await limitedFiles.reads == 0)
+    var paged = try #require(input.object)
+    paged["matchLimit"] = 10
+    let files = FakeFiles(data: Data("needle".utf8), entries: entries)
+    let (_, first, page) = try await run(.object(paged), kind: kind, channel: channel, files: files.system)
+    #expect(first.isEmpty); #expect(page.verdict?.tag == .completed)
+    #expect(page.verdict?.result?.object?["scanned"] == "1000")
+    #expect(page.verdict?.result?.object?["nextEntry"] == 1000)
+    #expect(await files.walked == 1000); #expect(await files.reads == 0)
+    paged["resumeEntries"] = 1000
+    let resumedFiles = FakeFiles(data: Data("needle".utf8), entries: entries)
+    let (_, remaining, end) = try await run(.object(paged), kind: kind, channel: channel, files: resumedFiles.system)
+    #expect(remaining.count == 1); #expect(remaining.first?.object?["path"] == "/file.txt")
+    #expect(end.verdict?.tag == .completed); #expect(end.verdict?.result?.object?["scanned"] == "2")
+    #expect(end.verdict?.result?.object?["nextEntry"] == nil)
+  }
+
   @Test func findLimitsStopRatherThanPage() async throws {
     let files = FakeFiles(data: Data(), entries: [.init(path: "/b.txt", kind: "file"), .init(path: "/a.txt", kind: "file")])
     let (_, records, end) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "entryLimit": 1], kind: "find.v1", channel: "entries", files: files.system)

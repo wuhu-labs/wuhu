@@ -89,6 +89,19 @@ struct Invocation: Equatable {
     if group != nil, case .use = command {
       throw UsageError(message: "use: name the group after the host: wuhu use <host:port> --group <id>")
     }
+    let registration: (target: String?, command: (String?) -> Command)? = switch command {
+    case let .machineAdd(name, target): (target, { .machineAdd(name: name, group: $0) })
+    case let .machineV2Add(name, target): (target, { .machineV2Add(name: name, group: $0) })
+    default: nil
+    }
+    if let registration {
+      guard group == nil || registration.target == nil else { throw UsageError(message: "--group is given twice") }
+      let target = registration.target ?? group
+      if let target, !isValidGroupID(target) {
+        throw UsageError(message: "\(target) (from --group) is not a group id: lowercase letters, digits and inner hyphens")
+      }
+      return Self(group: nil, command: registration.command(target))
+    }
     return Self(group: group, command: command)
   }
 }

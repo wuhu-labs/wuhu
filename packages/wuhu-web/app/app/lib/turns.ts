@@ -1,4 +1,5 @@
 import { firstLine, noticeLabel } from './turn-labels.ts'
+import { routeNotice, routeNoticeLine } from './model-route.ts'
 import {
   eventKey,
   type WorkEvent,
@@ -163,6 +164,14 @@ export function noticePresentation(notice: WorkNotice): NoticePresentation {
           '',
         ) + (sources.length > 1 ? ` + ${sources.length - 1} more` : ''),
       sources,
+    }
+  }
+  const moved = routeNotice(notice.text)
+  if (moved != null) {
+    return {
+      label: 'Model moved',
+      subject: routeNoticeLine(moved),
+      sources: [],
     }
   }
   if (

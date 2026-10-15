@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import class Foundation.FileHandle
   import FoundationEssentials
@@ -12,6 +13,19 @@ import class SpaceCore.Space
 
 func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: Logger) -> InferenceMetricsSink {
   InferenceMetricsSink { metric in
+    if ServerTracing.enabled {
+      let group = try? await space.sessions.record(metric.session).group.rawValue
+      let span = ServerSpan(.inference, session: metric.session.rawValue, group: group, start: metric.timestamp)
+      var attributes: [SpanAttribute: String] = [.provider: metric.provider, .model: metric.model, .effort: metric.effort, .outcome: metric.outcome.rawValue]
+      attributes[.ttftMs] = metric.ttftMs.map(String.init)
+      attributes[.errorCode] = metric.errorKind
+      attributes[.inputTokens] = metric.usage.map { String($0.uncachedInputTokens) }
+      attributes[.outputTokens] = metric.usage.map { String($0.outputTokens) }
+      attributes[.cacheReadTokens] = metric.usage.map { String($0.cacheReadTokens) }
+      attributes[.cacheWriteTokens] = metric.usage.map { String($0.cacheWriteTokens) }
+      attributes[.reasoningTokens] = metric.usage?.reasoningTokens.map(String.init)
+      span.finish(attributes, end: metric.timestamp.addingTimeInterval(Double(metric.durationMs) / 1000))
+    }
     await writer.append(metric.jsonLine())
     do {
       try await space.recordInference(InferenceRecord(
@@ -74,7 +88,7 @@ actor InferenceMetricsWriter {
       withIntermediateDirectories: true,
     )
     if !FileManager.default.fileExists(atPath: file.path) {
-      FileManager.default.createFile(atPath: file.path, contents: nil)
+      _ = FileManager.default.createFile(atPath: file.path, contents: nil)
     }
     let opened = try FileHandle(forWritingTo: file)
     try opened.seekToEnd()

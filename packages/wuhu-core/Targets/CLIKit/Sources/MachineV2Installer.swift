@@ -18,7 +18,7 @@ struct MachineV2InstallError: Error, CustomStringConvertible, Equatable {
 }
 
 struct MachineV2Installer {
-  enum Platform { case linux, macOS }
+  enum Platform: Sendable { case linux, macOS }
   var home: URL
   var machine: String
   var platform: Platform
@@ -39,11 +39,12 @@ struct MachineV2Installer {
 
   func install(candidate: URL) async throws {
     try self.validate()
-    let lock = try self.lock()
-    defer { close(lock) }
     guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
       throw MachineV2InstallError(code: .missingBinary, message: candidate.path)
     }
+    if self.platform == .linux { try await self.linuxPreflight() }
+    let lock = try self.lock()
+    defer { self.releaseLock(lock) }
     let pending = self.root.appendingPathComponent("bin/.pending-\(UUID().uuidString)")
     try FileManager.default.copyItem(at: candidate, to: pending)
     defer { try? FileManager.default.removeItem(at: pending) }
@@ -66,7 +67,7 @@ struct MachineV2Installer {
   func rollback() async throws {
     try self.validate()
     let lock = try self.lock()
-    defer { close(lock) }
+    defer { self.releaseLock(lock) }
     guard FileManager.default.isExecutableFile(atPath: self.previous.path) else {
       throw MachineV2InstallError(code: .missingBinary, message: "no previous v2 binary for \(self.machine)")
     }
@@ -80,7 +81,7 @@ struct MachineV2Installer {
   func uninstall(leave: @Sendable () async throws -> Void) async throws {
     try self.validate()
     let lock = try self.lock()
-    defer { close(lock) }
+    defer { self.releaseLock(lock) }
     var unacknowledged: MachineV2RuntimeError?
     do { try await leave() }
     catch let error as MachineV2RuntimeError where error.code == .leaveUnacknowledged { unacknowledged = error }
@@ -120,6 +121,11 @@ struct MachineV2Installer {
     return fd
   }
 
+  private func releaseLock(_ descriptor: Int32) {
+    _ = flock(descriptor, LOCK_UN)
+    close(descriptor)
+  }
+
   private func replace(_ source: URL, _ target: URL) throws {
     guard rename(source.path, target.path) == 0 else { throw MachineV2InstallError(code: .missingBinary, message: "binary rename failed: \(String(cString: strerror(errno)))") }
   }
@@ -138,31 +144,37 @@ struct MachineV2Installer {
       case .uninstall: _ = try await self.run(base + ["disable", "--now", self.unit])
       }
     case .macOS:
-      let base = ["/bin/launchctl"]
-      let domain = "gui/\(self.userID)"
       switch action {
       case let .install(existed):
-        if existed { try await self.bootout("\(domain)/\(self.label)") }
-        _ = try await self.run(base + ["bootstrap", domain, self.serviceFile.path])
-      case .restart: _ = try await self.run(base + ["kickstart", "-k", "\(domain)/\(self.label)"])
-      case .uninstall: try await self.bootout("\(domain)/\(self.label)")
+        if existed { try await self.bootout("gui/\(self.userID)/\(self.label)") }
+        try await self.launchd.bootstrap(label: self.label, plist: self.serviceFile)
+      case .restart:
+        try await self.bootout("gui/\(self.userID)/\(self.label)")
+        try await self.launchd.bootstrap(label: self.label, plist: self.serviceFile)
+      case .uninstall: try await self.bootout("gui/\(self.userID)/\(self.label)")
       }
     }
   }
 
-  private func bootout(_ service: String) async throws {
-    do { _ = try await self.command(["/bin/launchctl", "bootout", service]) }
-    catch {
-      let diagnostic = String(describing: error).trimmingCharacters(in: .whitespacesAndNewlines)
-      guard diagnostic.hasSuffix("Could not find specified service") || diagnostic.hasSuffix("Boot-out failed: 3: No such process") else {
-        throw MachineV2InstallError(code: .serviceFailure, message: "launchctl bootout \(service): \(error)")
-      }
-    }
-  }
+  private var launchd: MachineV2Launchd { .init(userID: userID, command: command) }
+  private func bootout(_ service: String) async throws { try await self.launchd.bootout(service) }
 
   private func run(_ arguments: [String]) async throws -> String {
     do { return try await self.command(arguments) }
     catch { throw MachineV2InstallError(code: .serviceFailure, message: "\(arguments.joined(separator: " ")): \(error)") }
+  }
+
+  private func linuxPreflight() async throws {
+    let user: String
+    do { user = try await self.command(["/usr/bin/id", "-un"]).trimmingCharacters(in: .whitespacesAndNewlines) }
+    catch { throw MachineV2InstallError(code: .preflightFailed, message: "cannot resolve the installing user: \(error)") }
+    guard !user.isEmpty, !user.contains(where: { $0.isWhitespace }) else { throw MachineV2InstallError(code: .preflightFailed, message: "id -un did not return one username") }
+    let linger: String
+    do { linger = try await self.command(["/usr/bin/loginctl", "show-user", user, "-p", "Linger", "--value"]).trimmingCharacters(in: .whitespacesAndNewlines) }
+    catch { throw MachineV2InstallError(code: .preflightFailed, message: "cannot check lingering for \(user): \(error); enable it with: sudo loginctl enable-linger \(user)") }
+    guard linger == "yes" else { throw MachineV2InstallError(code: .preflightFailed, message: "persistent user services require lingering; run: sudo loginctl enable-linger \(user)") }
+    do { _ = try await self.command(["/usr/bin/systemctl", "--user", "show-environment"]) }
+    catch { throw MachineV2InstallError(code: .preflightFailed, message: "user service manager is unavailable: \(error); verify /run/user/\(self.userID) and the user bus, then retry") }
   }
 
   private func preflight(executable: URL) async throws {
@@ -175,7 +187,7 @@ struct MachineV2Installer {
     try await self.bootout("\(domain)/\(preflightLabel)")
     try Data(definition.utf8).write(to: plist, options: .atomic)
     defer { try? FileManager.default.removeItem(at: result); try? FileManager.default.removeItem(at: plist) }
-    _ = try await self.run(["/bin/launchctl", "bootstrap", domain, plist.path])
+    try await self.launchd.bootstrap(label: preflightLabel, plist: plist, recovery: "WUHU_IDENTITY=wallet wuhu machine-v2 install \(self.machine) --binary <signed-wuhu>")
     do {
       for _ in 0 ..< 250 {
         if FileManager.default.fileExists(atPath: result.path) {

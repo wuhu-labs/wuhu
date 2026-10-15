@@ -24,8 +24,8 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
   let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
   let identityConfigurationProvider = InProcessIdentityConfiguration()
   let executionOwner: any ExecutionOwnerClient
+  public func scriptMachines(for session: SessionID) -> ScriptMachineAccess? { scriptMachines }
   public let scriptMachines: ScriptMachineAccess?
-  public let scriptMachinesV2: ScriptMachineV2Access?
   let space: Space
   let secrets: SpaceSecretStores?
   let machines: MachineSeam?
@@ -44,7 +44,6 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
     machines: MachineSeam? = nil,
     exec: ExecBackend? = nil,
     scriptMachines: ScriptMachineAccess? = nil,
-    scriptMachinesV2: ScriptMachineV2Access? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
@@ -54,7 +53,6 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
     self.identityFetch = identityFetch
     self.executionOwner = executionOwner
     self.scriptMachines = scriptMachines
-    self.scriptMachinesV2 = scriptMachinesV2
     self.space = space
     self.secrets = secrets
     self.machines = machines
@@ -85,7 +83,7 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
     } catch let problem as ToolProblem {
       return .failure(.init(message: problem.message, code: problem.code))
     } catch let error as ToolRunError {
-      return .failure(.init(message: renderedFailure(error)))
+      return .failure(.init(message: renderedFailure(error), code: error.payload.object?["code"]?.stringValue))
     } catch let error as SpaceError {
       return .failure(.init(message: renderedFailure(Wire.failure(error))))
     } catch is CancellationError {

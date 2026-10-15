@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -36,6 +37,7 @@ public actor OperationClient {
   var lastAnswer: [UUID: Duration] = [:]
   var callerDeadline: [UUID: Duration] = [:]
   var dispatching: Set<UUID> = []
+  var telemetrySpans: [UUID: ServerSpan] = [:]
   var busy: Set<String> = []
   var outputReservations: [UUID: Int] = [:]
   public init(
@@ -58,7 +60,12 @@ public actor OperationClient {
     ledger = ExchangeLedger(fetch: fetch, clock: clock, capacity: maxExchanges, abort: abort, trace: trace)
   }
 
-  public func shutdown() async { await ledger.shutdown() }
+  public func shutdown() async {
+    for span in telemetrySpans.values { span.finish([.version: "v2", .outcome: "cancelled"]) }
+    telemetrySpans.removeAll()
+    await ledger.shutdown()
+  }
+
   func address(_ machine: String, operation: UUID? = nil, suffix: String = "") -> URL {
     var url = origin.appendingPathComponent("machine/v2/machines").appendingPathComponent(machine)
     if let operation { url = url.appendingPathComponent("operations").appendingPathComponent(operation.uuidString) }
@@ -158,7 +165,7 @@ public actor OperationClient {
       ])
     }
     guard d.acceptingStarts else { throw OperationError(.leaving, details: ["started": false]) }
-    guard d.kinds.contains(where: { $0.name == start.kind }) else { throw OperationError(.unknownKind) }
+    guard d.kinds.contains(where: { $0.name == start.kind }) || d.availability?[start.kind] != nil else { throw OperationError(.unknownKind, message: "Machine does not support \(start.kind)", details: ["kind": .string(start.kind)]) }
     let body = try Body.json(start)
     guard (body.contentLength ?? 0) <= d.limits.inputBytes else { throw OperationError(.inputTooLarge) }
     var proposed = ClientRecord(id: ids(), correlation: ids(), machine: machine, start: start, description: d)
@@ -169,6 +176,9 @@ public actor OperationClient {
     }
     let claim = try await store.claim(owner, record: proposed)
     let r = claim.record
+    if ServerTracing.enabled, telemetrySpans[r.id] == nil, r.snapshot?.verdict == nil, telemetrySpans.count < 1024 {
+      telemetrySpans[r.id] = ServerSpan(.machine)
+    }
     onClaim(r.id)
     if lastAnswer[r.id] == nil { lastAnswer[r.id] = clock.now() }
     if let timeout, claim.dispatch { callerDeadline[r.id] = clock.now() + timeout }
@@ -315,7 +325,12 @@ public actor OperationClient {
       if s.verdict != nil || value.unknown?.details != ["outcome": "unknown", "reason": "leaseSilence"] { value.unknown = nil }
     }
     if let known = updated.snapshot, known.verdict != nil && s.verdict == nil { return known }
-    if s.verdict != nil {
+    if let verdict = s.verdict {
+      if let span = telemetrySpans.removeValue(forKey: r.id) {
+        var attributes: [SpanAttribute: String] = [.machine: r.machine, .version: "v2", .kind: r.start.kind, .verdict: verdict.tag.rawValue, .outcome: verdict.tag == .completed ? "ok" : "error"]
+        attributes[.errorCode] = verdict.error?.code.rawValue
+        span.finish(attributes)
+      }
       callerDeadline.removeValue(forKey: r.id)
       _ = try await store.transaction(r.id) { $0.callerRemainingMs = nil }
     } else if let deadline = callerDeadline[r.id] {

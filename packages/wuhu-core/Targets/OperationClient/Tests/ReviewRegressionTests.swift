@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -323,5 +324,77 @@ private struct SlashKind: OperationKind {
   _ = try await client.write(id, channel: "in", payload: .init(data: Data([1])))
   unknown.release(); await old.value
   #expect(try await store.read(id).unknown == nil)
+  await client.shutdown()
+}
+
+@Test func machineOperationSpanUsesStartingContextAndResolvedMachine() async throws {
+  let spans = Mutex<[FinishedSpan]>([])
+  try await ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
+    let time = LocalTime()
+    let agent = try machine(time)
+    let client = try driver(agent, time: time, store: MemoryOperationStore())
+    _ = try await client.describe("phone")
+    let tool = ServerSpan(.tool, session: "session", group: "shared")
+    let id = try await ServerTracing.$context.withValue(tool.context) { try await start(client) }
+    await agent.execute(id)
+    let snapshot = try await client.reconcile(id)
+    #expect(snapshot.verdict != nil)
+    let operation = try #require(spans.withLock { $0.first { $0.name == .machine } })
+    #expect(operation.parentSpanID == tool.context?.spanID)
+    #expect(operation.context.session == "session")
+    #expect(operation.attributes[.machine] == "phone")
+    #expect(operation.attributes[.version] == "v2")
+    #expect(operation.attributes[.kind] == "query.v1")
+    #expect(operation.attributes[.verdict] == "completed")
+    #expect(!String(decoding: try JSONEncoder().encode(operation), as: UTF8.self).contains("done"))
+    await client.shutdown()
+  }
+}
+
+@Test func oldServerStartForGatedLinkedKindSurfacesTheTypedRefusal() async throws {
+  // The server's view is an old build's: describe without availability, so its precheck admits the linked kind and dispatches.
+  let time = LocalTime()
+  let agent = try OperationAgent(machine: "phone", kinds: [.init(QueryKind())], clock: time.clock, availability: .init { ["query.v1": .needsConsent] }, authorize: { _, _ in })
+  let fetch = FetchClient { request in
+    var response = try await agent.handler(request)
+    if request.method == .get, request.url.path.hasSuffix("/machines/phone") {
+      let d = try await response.body.json(MachineDescription.self)
+      response.body = try .json(MachineDescription(instance: d.instance, acceptingStarts: d.acceptingStarts, limits: d.limits, kinds: d.kinds))
+    }
+    return response
+  }
+  let client = try driver(agent, time: time, store: MemoryOperationStore(), fetch: fetch)
+  #expect(try await client.describe("phone").availability == nil)
+  do {
+    _ = try await start(client)
+    Issue.record("a gated start must be refused")
+  } catch let error as OperationError {
+    #expect(error.code == .kindUnavailable)
+    #expect(error.details == ["kind": "query.v1", "reason": "needsConsent"])
+  }
+  #expect(await agent.operations.isEmpty)
+  await client.shutdown()
+}
+
+@Test func unknownErrorCodeFromANewerMachineDecodesAsItself() async throws {
+  let time = LocalTime(); let agent = try machine(time)
+  let fetch = FetchClient { request in
+    guard request.method == .post else { return try await agent.handler(request) }
+    var response = try Response.json(["error": ["code": "quotaPaused", "message": "later"]] as JSONValue, status: .init(code: 409))
+    response.headers[.init("X-Wuhu-Correlation-ID")!] = request.headers["X-Wuhu-Correlation-ID"]
+    response.headers[.init("X-Wuhu-Request-ID")!] = request.headers["X-Wuhu-Request-ID"]
+    response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+    return response
+  }
+  let client = try driver(agent, time: time, store: MemoryOperationStore(), fetch: fetch)
+  _ = try await client.describe("phone")
+  do {
+    _ = try await start(client)
+    Issue.record("the refusal must surface")
+  } catch let error as OperationError {
+    #expect(error.code.rawValue == "quotaPaused")
+    #expect(!error.code.isKnown)
+    #expect(error.message == "later")
+  }
   await client.shutdown()
 }

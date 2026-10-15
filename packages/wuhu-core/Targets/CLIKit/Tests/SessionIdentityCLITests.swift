@@ -455,3 +455,16 @@ extension SessionIdentityCLITests {
     }
   }
 }
+
+extension SessionIdentityCLITests {
+  @Test func machineV2InstallSessionRefusalNamesPersonActAndWalletCommand() async throws {
+    try await withIdentityDeps {
+      let harness = try await IdentityHarness()
+      let refused = await harness.asSession(["machine-v2", "install", "mc_test", "--binary", "/unused/wuhu"])
+      #expect(refused.code == 1)
+      #expect(refused.stderr.contains("person action"))
+      #expect(refused.stderr.contains("WUHU_IDENTITY=wallet wuhu machine-v2 install <id> --binary <signed-wuhu>"))
+      #expect(refused.hosts.isEmpty)
+    }
+  }
+}

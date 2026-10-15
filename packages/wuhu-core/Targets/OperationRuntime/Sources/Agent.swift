@@ -7,6 +7,7 @@ import Fetch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.Offset
 import struct OperationProtocol.OperationClock
@@ -27,6 +28,7 @@ public actor OperationAgent {
   let limits: OperationLimits
   let ids: @Sendable () -> UUID
   let authorize: @Sendable (Request, String) async throws -> Void
+  let availability: KindAvailabilityProvider?
   var operations: [UUID: OperationState] = [:]
   var leaving = false
   var pendingDeparture: Set<UUID> = []
@@ -44,22 +46,33 @@ public actor OperationAgent {
     limits: OperationLimits = .init(),
     instance: UUID = UUID(),
     ids: @escaping @Sendable () -> UUID = { UUID() },
+    availability: KindAvailabilityProvider? = nil,
     authorize: @escaping @Sendable (Request, String) async throws -> Void,
   ) throws {
-    guard limits.isValid, !machine.isEmpty, Set(kinds.map { $0.descriptor.name }).count == kinds.count else {
+    guard limits.isValid, !machine.isEmpty else { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
+    try Self.validate(descriptors: kinds.map(\.descriptor), limits: limits)
+    self.machine = machine; self.kinds = Dictionary(uniqueKeysWithValues: kinds.map { ($0.descriptor.name, $0) })
+    self.clock = clock; self.limits = limits; self.instance = instance; self.ids = ids; self.authorize = authorize; self.availability = availability
+    (starts, startQueue) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.activeOperations))
+  }
+
+  /// The registry checks every agent applies at init: unique nonempty names, the 2020-12 dialect, channel windows and record sizes within `limits`, no channels on bounded-result kinds, the worst-case poll response within the transport frame, and the whole registry within 1 MiB. Composers that serve kinds outside an OperationAgent (ComputerAgent's external kind) run the same checks over their combined registry.
+  public static func validate(descriptors: [KindDescriptor], limits: OperationLimits = .init()) throws {
+    guard limits.isValid, Set(descriptors.map(\.name)).count == descriptors.count else {
       throw OperationError(.invalidInput, message: "Invalid machine registry or limits")
     }
-    for kind in kinds {
-      let d = kind.descriptor; let all = d.inputChannels + d.outputChannels
+    let probe = UUID()
+    for d in descriptors {
+      let all = d.inputChannels + d.outputChannels
       guard !d.name.isEmpty, d.schemaDialect == "https://json-schema.org/draft/2020-12/schema",
             Set(all.map(\.name)).count == all.count,
             all.allSatisfy({ !$0.name.isEmpty && $0.windowBytes > 0 && $0.windowBytes <= limits.bufferBytes
                 && $0.maxRecordBytes > 0 && $0.maxRecordBytes <= min($0.windowBytes, limits.pollBytes) }),
             d.deliveryPolicy != .boundedResult || all.isEmpty else { throw OperationError(.unsupportedProtocol) }
       let metadata = OperationSnapshot(
-        operation: instance,
+        operation: probe,
         verdict: .init(.completed, result: .null),
-        terminalToken: instance,
+        terminalToken: probe,
         finalOffsets: Dictionary(uniqueKeysWithValues: d.outputChannels.map { ($0.name, Offset(rawValue: UInt64.max)) }),
         outputConsumed: false,
         channel: d.outputChannels.max(by: { $0.name.utf8.count < $1.name.utf8.count })?.name,
@@ -70,10 +83,7 @@ public actor OperationAgent {
       let head = try Body.json(metadata, outputFormatting: [.sortedKeys, .withoutEscapingSlashes]).contentLength ?? 0
       guard head + Int64(limits.resultBytes) + Int64(limits.pollBytes) * 2 + 32 <= OperationLimits.responseBytes else { throw OperationError(.capacityExceeded) }
     }
-    guard try JSONEncoder().encode(kinds.map(\.descriptor)).count <= 1024 * 1024 else { throw OperationError(.capacityExceeded) }
-    self.machine = machine; self.kinds = Dictionary(uniqueKeysWithValues: kinds.map { ($0.descriptor.name, $0) })
-    self.clock = clock; self.limits = limits; self.instance = instance; self.ids = ids; self.authorize = authorize
-    (starts, startQueue) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.activeOperations))
+    guard try JSONEncoder().encode(descriptors).count <= 1024 * 1024 else { throw OperationError(.capacityExceeded) }
   }
 
   public nonisolated var handler: Handler { { try await self.handle($0) } }
@@ -81,6 +91,9 @@ public actor OperationAgent {
     guard !running && !closed else { return }; running = true
     await withDiscardingTaskGroup { group in
       group.addTask { await self.maintenance() }
+      if let changes = availability?.changes {
+        group.addTask { for await _ in changes { await self.enforceAvailability() } }
+      }
       for await id in starts {
         group.addTask { await self.execute(id) }
       }
@@ -107,6 +120,14 @@ public actor OperationAgent {
     leaving = true
     pendingDeparture.formUnion(operations.values.filter { !$0.departureSettled }.map(\.id))
     for (id, operation) in operations where operation.verdict == nil { operations[id]?.stopReason = operation.stopReason ?? "leaving" }
+  }
+
+  /// Revocation: every running operation whose kind the gate no longer admits gets a stop intent with the gate's reason, so it ends with a real `stopped` verdict.
+  func enforceAvailability() async {
+    guard let gates = await availability?.current() else { return }
+    for (id, operation) in operations where operation.verdict == nil {
+      if let reason = gates[operation.kind]?.stopReason { operations[id]?.stopReason = operation.stopReason ?? reason }
+    }
   }
 
   func maintenance() async {
@@ -260,11 +281,13 @@ public actor OperationAgent {
     sweep()
     if path.count == 4 && request.method == .get {
       if leaving && pendingDeparture.isEmpty && !departureEvidenceLost { throw OperationError(.leaving) }
+      let gates = await availability?.describe(linked: kinds.keys)
       return try .json(MachineDescription(
         instance: instance,
         acceptingStarts: !leaving && !closed,
         limits: limits,
         kinds: kinds.values.map(\.descriptor).sorted { $0.name < $1.name },
+        availability: gates,
       ))
     }
     guard path.count >= 6, path[4] == "operations", let id = UUID(uuidString: path[5]) else { throw OperationError(.unknownOperation) }
@@ -274,6 +297,7 @@ public actor OperationAgent {
       let start: StartRequest
       do { start = try await request.json(StartRequest.self, upTo: limits.inputBytes) }
       catch FetchError.bodyLimitExceeded { throw OperationError(.inputTooLarge) }
+      try await availability?.admit(start.kind)
       guard let kind = kinds[start.kind] else { throw OperationError(.unknownKind) }
       let run: @Sendable (OperationChannels, OperationCancellation) async throws -> JSONValue
       do { run = try kind.prepare(start.input) } catch let error as OperationError { throw error } catch { throw OperationError(.invalidInput) }
@@ -287,14 +311,19 @@ public actor OperationAgent {
       let now = clock.now()
       operations[id] = .init(
         id: id,
+        kind: start.kind,
         inputs: Dictionary(uniqueKeysWithValues: d.inputChannels.map { ($0.name, ChannelState($0)) }),
         outputs: Dictionary(uniqueKeysWithValues: d.outputChannels.map { ($0.name, ChannelState($0)) }),
         leaseDeadline: now + .milliseconds(limits.leaseMs),
         lastRequest: now,
       )
       executions[id] = run
+      // A gate change between admission and insertion: its sweep may have run before this operation existed.
+      // Re-check while the operation is inserted but not yet runnable, so a revoked kind never runs its effect.
+      if availability?.changes != nil { await enforceAvailability() }
       guard case .enqueued = startQueue.yield(id) else { operations.removeValue(forKey: id); executions.removeValue(forKey: id); throw OperationError(.capacityExceeded) }
-      return try .json(operations[id]!.snapshot(), status: .created)
+      guard let created = operations[id] else { throw OperationError(.unknownOperation) }
+      return try .json(created.snapshot(), status: .created)
     }
     guard operations[id] != nil else { throw OperationError(.unknownOperation) }
     if request.method == .get && path.count == 6 {

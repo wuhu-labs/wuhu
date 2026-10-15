@@ -9,6 +9,24 @@ struct MachineContractCodingTests {
   private let encoder = JSONValueEncoder()
   private let decoder = JSONValueDecoder()
 
+  @Test func machineRegistrationGroupIsAdditiveAndOptional() throws {
+    #expect(try decoder.decode(MachineAddInput.self, from: ["name": "box"]) == MachineAddInput(name: "box"))
+    #expect(try encoder.encode(MachineAddInput(name: "box")) == ["name": "box"])
+    let targeted = MachineAddInput(name: "box", group: "shared")
+    #expect(try encoder.encode(targeted) == ["name": "box", "group": "shared"])
+    #expect(try decoder.decode(MachineAddInput.self, from: ["name": "box", "group": "shared"]) == targeted)
+    let keyed = MachineAddInput(name: "laptop", pubkey: "ed25519:AAAA", device: "red-fox-hill")
+    #expect(try encoder.encode(keyed) == ["name": "laptop", "pubkey": "ed25519:AAAA", "device": "red-fox-hill"])
+    #expect(try decoder.decode(MachineAddInput.self, from: ["name": "laptop", "pubkey": "ed25519:AAAA", "device": "red-fox-hill"]) == keyed)
+  }
+
+  @Test func registrationOutputCanReadOldServersAndEchoTheActualGroup() throws {
+    let old: JSONValue = ["id": "mc_abcdefgh", "token": "jt_test"]
+    #expect(try decoder.decode(MachineAddOutput.self, from: old).group == nil)
+    let output = MachineAddOutput(id: MachineID(rawValue: "mc_abcdefgh"), token: "jt_test", group: "shared")
+    #expect(try encoder.encode(output) == ["id": "mc_abcdefgh", "token": "jt_test", "group": "shared"])
+  }
+
   @Test func controlMessageEncodesInternallyTagged() throws {
     #expect(try encoder.encode(ControlMessage.hello(protocolVersion: 1)) == .object([
       "kind": "hello", "protocolVersion": 1,

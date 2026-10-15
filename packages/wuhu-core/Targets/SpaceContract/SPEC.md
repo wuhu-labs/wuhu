@@ -334,3 +334,5 @@ ProvidersOutput adds optional groups, separate from providers for compatibility 
 Requested group targets are conceptual API values: sessions.executor_config stays concrete provider/model/effort for dev.114 compatibility, while session_model_routes carries the additive group/member intent and pin. requestedTarget and modelGroup are reconstructed from route state rather than inferred from raw executor_config. Group creation requires an initial pin.
 
 Catalog storage is split for rollback compatibility: /models.json is providers-only and /model-groups.json contains group entries. ProvidersOutput still returns separate providers/groups discovery arrays. Provider/group IDs cannot collide; groups retain their discriminated kind: group declaration shape.
+
+Normal machine tools use `unknownKind` when a registered v2 machine does not advertise the requested operation kind. The message names that kind. No v1 fallback or successful truncated result is implied.

@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ServerTelemetry
   - Fetch
   - Serve
   - ServeNIO
@@ -14,6 +15,7 @@ dependencies:
   - NIOPosix
 tests:
   dependencies:
+    - ServerTelemetry
     - Fetch
     - FetchAsyncHTTPClient
     - AsyncHTTPClient

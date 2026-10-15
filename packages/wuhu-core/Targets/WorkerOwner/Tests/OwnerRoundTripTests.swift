@@ -15,13 +15,20 @@ import Testing
 @testable import WorkerOwner
 import WorkerProtocol
 
-func withOwnerRPC<Value>(owner: any ExecutionOwnerClient, hello: WorkerHello = ExecutionWorkerBootstrap.hello(release: "parent-newer"), body: (WorkerClient, RemoteExecutionOwner) async throws -> Value) async throws -> Value {
-  let parent = ParentExecutionEndpoint(owner: owner)
-  let endpoint = try OwnerByteEndpoint(invoke: parent.invoke).endpoint(token: "fixture-only", hello: hello)
+func withOwnerRPC<Value>(owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, hello: WorkerHello = ExecutionWorkerBootstrap.hello(release: "parent-newer"), body: (WorkerClient, RemoteExecutionOwner) async throws -> Value) async throws -> Value {
+  let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime)
+  let endpoint = try OwnerByteEndpoint(invoke: parent.invoke, upload: parent.upload, download: parent.stream).endpoint(token: "fixture-only", hello: hello)
   let fetch = FetchClient { try await endpoint.handler($0) }
   let client = try WorkerClient(socket: "/tmp/fixture.sock", token: "fixture-only", control: fetch, bytes: fetch)
   _ = try await client.negotiate(ExecutionWorkerBootstrap.hello(release: "worker-newer"))
-  return try await body(client, RemoteExecutionOwner(client: client, tracesAttempts: owner.tracesAttempts))
+  do {
+    let value = try await body(client, RemoteExecutionOwner(client: client, tracesAttempts: owner.tracesAttempts, machines: true))
+    await parent.shutdown()
+    return value
+  } catch {
+    await parent.shutdown()
+    throw error
+  }
 }
 
 @Suite(.timeLimit(.minutes(1))) struct OwnerRoundTripTests {

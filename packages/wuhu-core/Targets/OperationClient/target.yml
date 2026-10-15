@@ -5,11 +5,15 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - ServerTelemetry
   - OperationProtocol
   - JSONValue
   - Fetch
+  - MachineContract
+  - Crypto
 tests:
   dependencies:
+    - ServerTelemetry
     - OperationClientTestSupport
     - OperationRuntime
     - Clocks

@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -208,4 +209,32 @@ private struct PrivateFailure: Error, CustomStringConvertible {
   #expect(response.headers[.init("Content-Length")!] == "0")
   #expect(response.headers[.init("X-Wuhu-Worker-Call")!] == call.id.uuidString)
   #expect(try await response.body.bytes().isEmpty)
+}
+
+@Test func traceContextCrossesControlAndByteBoundaries() async throws {
+  let endpoint = try WorkerEndpoint(token: "token", hello: .init(release: "parent"), invoke: { call in
+    #expect(ServerTracing.context == call.traceContext)
+    #expect(ServerTracing.context?.session == "s")
+    return .null
+  }, upload: { call, body in
+    #expect(ServerTracing.context == call.traceContext)
+    #expect(ServerTracing.context?.session == "s")
+    try await body.discard()
+  }, download: { call in
+    #expect(ServerTracing.context == call.traceContext)
+    #expect(ServerTracing.context?.session == "s")
+    return .empty
+  })
+  let fetch = FetchClient { try await endpoint.handler($0) }
+  let client = try WorkerClient(socket: "/private/test.sock", token: "token", control: fetch, bytes: fetch)
+  _ = try await client.negotiate(.init(release: "worker"))
+  try await ServerTracing.$emitter.withValue({ _ in }) {
+    let turn = ServerSpan(.turn, session: "s", group: "g")
+    try await ServerTracing.$context.withValue(turn.context) {
+      _ = try await client.call(.init(operation: "test.control"))
+      try await client.upload(.init(operation: "test.upload"), body: .empty)
+      try await client.stream(.init(operation: "test.download")).discard()
+    }
+  }
+  #expect(ServerTracing.context == nil)
 }

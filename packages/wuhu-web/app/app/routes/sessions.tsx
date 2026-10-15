@@ -7,7 +7,11 @@ import { relativeTime } from '~/lib/relative-time'
 import { principalName } from '~/lib/directory'
 import { type Branch, nest } from '~/lib/outline'
 import { useDirectory, useSessionTitles } from '~/lib/use-directory'
-import { type SessionRecord, sessionStatus } from '~/lib/session-model'
+import {
+  rosterModelLabel,
+  type SessionRecord,
+  sessionStatus,
+} from '~/lib/session-model'
 import { useSpaceFeeds } from '~/lib/space-feeds'
 import { errorMessage } from '~/sdk/errors'
 import { archiveSession, unarchiveSession } from '~/sdk/session'
@@ -106,7 +110,7 @@ function Row({
       <div className='wuhu-session-item-main'>
         <Link to={sessionHref(session.id, session.group)}>{session.title}</Link>
         <span className='wuhu-session-item-model'>
-          {session.executorLabel} · by{' '}
+          {rosterModelLabel(session)} · by{' '}
           <Avatar principal={session.createdBy} size={18} />{' '}
           <span title={session.createdBy}>
             {principalName(directory, sessions, session.createdBy)}

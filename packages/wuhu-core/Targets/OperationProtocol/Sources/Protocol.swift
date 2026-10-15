@@ -32,13 +32,54 @@ public struct Offset: RawRepresentable, Codable, Hashable, Comparable, Sendable 
 }
 
 public struct OperationError: Error, Codable, Equatable, Sendable {
-  public enum Code: String, Codable, Sendable {
-    case unknownMachine, unknownKind, unknownOperation, unknownChannel, unsupportedProtocol
-    case operationExists, invalidOffset, offsetExpired, operationEnded, leaving, invalidInput
-    case inputTooLarge, recordTooLarge, resultTooLarge, capacityExceeded, invocationConflict
-    case machineUnavailable, callerDeadline, requestDeadline, requestCancelled, transport, invalidResponse, kindFailed
-    case machineNotAuthorized, traceUnavailable, storeUnavailable, fileChanged, unsupportedDialect, fileUnavailable, credentialExpired
-    case spawnFailed, supervisorUnavailable, supervisorIdentityMismatch, invalidConfiguration
+  /// An open set of error codes. The wire carries the raw string; a peer's code this build doesn't know decodes as itself instead of failing the envelope, so a newer machine's refusal reaches an older client intact. Switches over codes need a `default`.
+  public struct Code: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    init(_ rawValue: String) { self.rawValue = rawValue }
+    public init(from decoder: any Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: any Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }
+    public var description: String { rawValue }
+    /// Whether this build defines the code.
+    public var isKnown: Bool { Self.known.contains(self) }
+    public static let known: Set<Self> = [.unknownMachine, .unknownKind, .unknownOperation, .unknownChannel, .unsupportedProtocol, .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invalidInput, .inputTooLarge, .recordTooLarge, .resultTooLarge, .capacityExceeded, .invocationConflict, .machineUnavailable, .callerDeadline, .requestDeadline, .requestCancelled, .transport, .invalidResponse, .kindFailed, .machineNotAuthorized, .traceUnavailable, .storeUnavailable, .fileChanged, .unsupportedDialect, .fileUnavailable, .credentialExpired, .spawnFailed, .supervisorUnavailable, .supervisorIdentityMismatch, .invalidConfiguration, .kindUnavailable, .permissionDenied, .deviceLocked]
+    public static let unknownMachine = Self("unknownMachine")
+    public static let unknownKind = Self("unknownKind")
+    public static let unknownOperation = Self("unknownOperation")
+    public static let unknownChannel = Self("unknownChannel")
+    public static let unsupportedProtocol = Self("unsupportedProtocol")
+    public static let operationExists = Self("operationExists")
+    public static let invalidOffset = Self("invalidOffset")
+    public static let offsetExpired = Self("offsetExpired")
+    public static let operationEnded = Self("operationEnded")
+    public static let leaving = Self("leaving")
+    public static let invalidInput = Self("invalidInput")
+    public static let inputTooLarge = Self("inputTooLarge")
+    public static let recordTooLarge = Self("recordTooLarge")
+    public static let resultTooLarge = Self("resultTooLarge")
+    public static let capacityExceeded = Self("capacityExceeded")
+    public static let invocationConflict = Self("invocationConflict")
+    public static let machineUnavailable = Self("machineUnavailable")
+    public static let callerDeadline = Self("callerDeadline")
+    public static let requestDeadline = Self("requestDeadline")
+    public static let requestCancelled = Self("requestCancelled")
+    public static let transport = Self("transport")
+    public static let invalidResponse = Self("invalidResponse")
+    public static let kindFailed = Self("kindFailed")
+    public static let machineNotAuthorized = Self("machineNotAuthorized")
+    public static let traceUnavailable = Self("traceUnavailable")
+    public static let storeUnavailable = Self("storeUnavailable")
+    public static let fileChanged = Self("fileChanged")
+    public static let unsupportedDialect = Self("unsupportedDialect")
+    public static let fileUnavailable = Self("fileUnavailable")
+    public static let credentialExpired = Self("credentialExpired")
+    public static let spawnFailed = Self("spawnFailed")
+    public static let supervisorUnavailable = Self("supervisorUnavailable")
+    public static let supervisorIdentityMismatch = Self("supervisorIdentityMismatch")
+    public static let invalidConfiguration = Self("invalidConfiguration")
+    public static let kindUnavailable = Self("kindUnavailable")
+    public static let permissionDenied = Self("permissionDenied")
+    public static let deviceLocked = Self("deviceLocked")
   }
 
   public let code: Code
@@ -52,12 +93,12 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
   public var statusCode: Int {
     switch code {
     case .unknownMachine, .unknownKind, .unknownOperation: 404
-    case .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invocationConflict: 409
+    case .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invocationConflict, .kindUnavailable: 409
     case .inputTooLarge, .recordTooLarge, .resultTooLarge: 413
     case .capacityExceeded: 429
     case .fileChanged: 412
-    case .machineUnavailable: 503
-    case .machineNotAuthorized: 403
+    case .machineUnavailable, .deviceLocked: 503
+    case .machineNotAuthorized, .permissionDenied: 403
     default: 400
     }
   }
@@ -127,6 +168,7 @@ public struct KindDescriptor: Codable, Equatable, Sendable {
   public let inputChannels: [ChannelDescriptor]
   public let outputChannels: [ChannelDescriptor]
   public let deliveryPolicy: Policy
+  public let summary: String?
   public init(
     _ name: String,
     inputSchema: JSONValue,
@@ -134,11 +176,63 @@ public struct KindDescriptor: Codable, Equatable, Sendable {
     inputChannels: [ChannelDescriptor] = [],
     outputChannels: [ChannelDescriptor] = [],
     deliveryPolicy: Policy = .suspend,
+    summary: String? = nil,
     schemaDialect: String = "https://json-schema.org/draft/2020-12/schema",
   ) {
     self.name = name; self.inputSchema = inputSchema; self.resultSchema = resultSchema
     self.inputChannels = inputChannels; self.outputChannels = outputChannels
-    self.deliveryPolicy = deliveryPolicy; self.schemaDialect = schemaDialect
+    self.deliveryPolicy = deliveryPolicy; self.summary = summary; self.schemaDialect = schemaDialect
+  }
+}
+
+public enum KindAvailability: Codable, Equatable, Sendable {
+  case available
+  case unavailable(reason: String)
+  case needsConsent
+  case needsPermission(permission: String, state: String)
+
+  enum CodingKeys: String, CodingKey { case state, reason, permission, permissionState }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    switch try c.decode(String.self, forKey: .state) {
+    case "available": self = .available
+    case "unavailable": self = .unavailable(reason: try c.decode(String.self, forKey: .reason))
+    case "needsConsent": self = .needsConsent
+    case "needsPermission": self = .needsPermission(permission: try c.decode(String.self, forKey: .permission), state: try c.decode(String.self, forKey: .permissionState))
+    default: throw DecodingError.dataCorruptedError(forKey: .state, in: c, debugDescription: "Unknown kind availability")
+    }
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .available: try c.encode("available", forKey: .state)
+    case let .unavailable(reason): try c.encode("unavailable", forKey: .state); try c.encode(reason, forKey: .reason)
+    case .needsConsent: try c.encode("needsConsent", forKey: .state)
+    case let .needsPermission(permission, state):
+      try c.encode("needsPermission", forKey: .state); try c.encode(permission, forKey: .permission); try c.encode(state, forKey: .permissionState)
+    }
+  }
+
+  /// The stop reason for operations already running when their kind enters this state: `consentRevoked`, `permissionRevoked` or `kindUnavailable`; nil while available.
+  public var stopReason: String? {
+    switch self {
+    case .available: nil
+    case .unavailable: "kindUnavailable"
+    case .needsConsent: "consentRevoked"
+    case .needsPermission: "permissionRevoked"
+    }
+  }
+
+  public func refusal(kind: String) -> OperationError? {
+    switch self {
+    case .available: nil
+    case let .unavailable(reason): OperationError(.kindUnavailable, message: "\(kind) is unavailable on this machine: \(reason)", details: ["kind": .string(kind), "reason": .string(reason)])
+    case .needsConsent: OperationError(.kindUnavailable, message: "\(kind) needs the machine owner's consent", details: ["kind": .string(kind), "reason": "needsConsent"])
+    case let .needsPermission(permission, state):
+      OperationError(.permissionDenied, message: "\(kind) needs the \(permission) permission (\(state))", details: ["kind": .string(kind), "permission": .string(permission), "state": .string(state)])
+    }
   }
 }
 
@@ -148,8 +242,9 @@ public struct MachineDescription: Codable, Sendable {
   public let acceptingStarts: Bool
   public let limits: OperationLimits
   public let kinds: [KindDescriptor]
-  public init(instance: UUID, acceptingStarts: Bool, limits: OperationLimits, kinds: [KindDescriptor]) {
-    version = 2; self.instance = instance; self.acceptingStarts = acceptingStarts; self.limits = limits; self.kinds = kinds
+  public let availability: [String: KindAvailability]?
+  public init(instance: UUID, acceptingStarts: Bool, limits: OperationLimits, kinds: [KindDescriptor], availability: [String: KindAvailability]? = nil) {
+    version = 2; self.instance = instance; self.acceptingStarts = acceptingStarts; self.limits = limits; self.kinds = kinds; self.availability = availability
   }
 }
 

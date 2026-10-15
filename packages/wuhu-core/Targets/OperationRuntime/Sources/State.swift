@@ -108,6 +108,7 @@ struct ChannelState: Sendable {
 
 struct OperationState: Sendable {
   let id: UUID
+  var kind = ""
   var inputs: [String: ChannelState]
   var outputs: [String: ChannelState]
   var leaseDeadline: Duration

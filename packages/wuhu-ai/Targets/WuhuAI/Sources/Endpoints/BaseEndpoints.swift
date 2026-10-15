@@ -73,24 +73,18 @@ extension ResponsesEndpoint {
 
 public protocol AnthropicMessagesEndpoint: ModelEndpoint {
   var baseURL: URL { get }
-  var acceptsUnsignedThinking: Bool { get }
 }
 
 extension AnthropicMessagesEndpoint {
-  public var acceptsUnsignedThinking: Bool { true }
-
   public func runInference(
     context: Context,
     options: RequestOptions,
     mediaResolver: (any MediaResolver)?,
   ) -> AsyncStream<Result<InferenceEvent, InferenceError>> {
-    let (providerID, model, baseURL, acceptsUnsignedThinking) = (providerID, model, baseURL, acceptsUnsignedThinking)
+    let (providerID, model, baseURL) = (providerID, model, baseURL)
     return runSSEInference(
-      buildRequest: { try await buildAnthropicRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, acceptsUnsignedThinking: acceptsUnsignedThinking, mediaResolver: mediaResolver) },
-      modifyBody: { body, options in
-        self.modifyBody(&body, options: options)
-        try validateAnthropicThinking(body, replayScope: replayScope, acceptsUnsignedThinking: acceptsUnsignedThinking)
-      },
+      buildRequest: { try await buildAnthropicRequest(model: model, baseURL: baseURL, context: normalizedRequestContext(context, targetProviderID: providerID, replayScope: replayScope), options: options, mediaResolver: mediaResolver) },
+      modifyBody: { self.modifyBody(&$0, options: $1) },
       modifyHeaders: { self.modifyHeaders(&$0, options: $1) },
       options: options,
       parse: { parseAnthropicStream($0, providerID: providerID, model: model, replayScope: replayScope) },

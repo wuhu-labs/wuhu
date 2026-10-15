@@ -1,4 +1,9 @@
-import { lookupSession } from './session-model.ts'
+import {
+  executorLabel,
+  lookupSession,
+  rosterModelLabel,
+  sessionStatus,
+} from './session-model.ts'
 
 function equal(actual: unknown, expected: unknown) {
   const a = JSON.stringify(actual)
@@ -26,4 +31,53 @@ Deno.test('an id this tab just created stays loading until the roster lists it',
 
 Deno.test('any other id missing from the loaded roster is not found', () => {
   equal(lookupSession(roster, 'nobody', false), { kind: 'missing' })
+})
+
+Deno.test('a route waiting on its member is named, after errors', () => {
+  const route = {
+    group: 'fleet',
+    member: 'primary',
+    phase: 'waiting',
+    epoch: '1',
+    reason: 'create',
+    previousMember: null,
+    failureRevision: null,
+  }
+  const waiting = sessionStatus({ hold: 'live', work: 'working', route })
+  if (waiting?.label !== 'waiting on model') {
+    throw new Error(String(waiting?.label))
+  }
+  const errored = sessionStatus({ hold: 'errored', work: 'idle', route })
+  if (errored?.label !== 'errored') throw new Error(String(errored?.label))
+})
+
+Deno.test('a group session names its group and the member it runs on', () => {
+  equal(
+    executorLabel('kernel', '{"modelGroup":"fleet","effort":"high"}'),
+    'fleet',
+  )
+  equal(
+    executorLabel('kernel', '{"provider":"codex","model":"gpt-6-sol"}'),
+    'codex/gpt-6-sol',
+  )
+  const route = {
+    group: 'fleet',
+    member: 'backup',
+    phase: 'pinned',
+    epoch: '1',
+    reason: 'create',
+    previousMember: null,
+    failureRevision: null,
+  }
+  // The server stores a group session's concrete member executor.
+  const stored = executorLabel(
+    'kernel',
+    '{"provider":"anthropic","model":"claude-opus-5","effort":"high"}',
+  )
+  equal(stored, 'anthropic/claude-opus-5')
+  equal(rosterModelLabel({ executorLabel: stored, route }), 'fleet → backup')
+  equal(
+    rosterModelLabel({ executorLabel: 'codex/gpt-6-sol' }),
+    'codex/gpt-6-sol',
+  )
 })

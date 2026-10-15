@@ -105,7 +105,7 @@ import WuhuAI
     #expect(try ModelsDocument(json: JSONEncoder().encode(corrected)) == corrected)
   }
 
-  @Test func anthropicNoReplayThinkingFailsOnlyForSelectedThinkingEffort() throws {
+  @Test func anthropicNoReplayAcceptsEveryListedEffort() throws {
     for dialect in [ModelsDocument.Dialect.anthropic, .claude] {
       for explicit in [true, false] {
         let thinking = ModelsDocument.Model(maxInput: 1000, maxOutput: 100, efforts: ["none", "high"], defaultEffort: "none")
@@ -113,9 +113,7 @@ import WuhuAI
         let document = ModelsDocument(providers: ["proxy": provider])
         #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
         let catalog = ProviderCatalog(document: document, credentials: .unavailable)
-        #expect(throws: CatalogError.opaqueReplayRequiresNoThinking(provider: "proxy", model: "model")) {
-          try catalog.validate(.init(provider: "proxy", model: "model", effort: "high"))
-        }
+        try catalog.validate(.init(provider: "proxy", model: "model", effort: "high"))
         try catalog.validate(.init(provider: "proxy", model: "model", effort: "none"))
       }
     }

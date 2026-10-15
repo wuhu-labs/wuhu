@@ -15,7 +15,7 @@ import Synchronization
 extension ComputerFileSystem {
   public static var local: Self { local() }
   static func local(beforeOpen: @escaping @Sendable (String) throws -> Void = { _ in }, didInspect: @escaping @Sendable (String) -> Void = { _ in }, didYield: @escaping @Sendable (String) throws -> Void = { _ in }) -> Self {
-    Self(status: { path in try await diskIO { try fileStatus(path) } }, read: { path, offset, count in
+    Self(status: { path in try await diskIO { try fileLookup { try fileStatus(path) } } }, read: { path, offset, count in
       try await diskIO {
         guard count > 0 && count <= 65536, offset <= UInt64(Int64.max) else { throw OperationError(.invalidInput) }
         try beforeOpen(path)
@@ -48,16 +48,16 @@ extension ComputerFileSystem {
           }
         }
       }, close: { await diskIO { cursor.close() } }, skipCounts: { cursor.skipCounts() })
-    })
+    }, operations: .local)
   }
 }
 
 private let diskQueue = DispatchQueue(label: "wuhu.machine-v2.files", attributes: .concurrent)
-private func diskIO<T: Sendable>(_ effect: @escaping @Sendable () throws -> T) async throws -> T {
+func diskIO<T: Sendable>(_ effect: @escaping @Sendable () throws -> T) async throws -> T {
   try await cancellableDiskIO { check in try check(); return try effect() }
 }
 
-private func cancellableDiskIO<T: Sendable>(_ effect: @escaping @Sendable (@Sendable () throws -> Void) throws -> T) async throws -> T {
+func cancellableDiskIO<T: Sendable>(_ effect: @escaping @Sendable (@Sendable () throws -> Void) throws -> T) async throws -> T {
   let cancelled = Mutex(false)
   let check: @Sendable () throws -> Void = { if cancelled.withLock({ $0 }) { throw CancellationError() } }
   return try await withTaskCancellationHandler {
@@ -68,19 +68,19 @@ private func cancellableDiskIO<T: Sendable>(_ effect: @escaping @Sendable (@Send
   } onCancel: { cancelled.withLock { $0 = true } }
 }
 
-private func diskIO(_ effect: @escaping @Sendable () -> Void) async {
+func diskIO(_ effect: @escaping @Sendable () -> Void) async {
   await withCheckedContinuation { continuation in diskQueue.async { effect(); continuation.resume() } }
 }
 
-private func closeDescriptor(_ fd: Int32) { _ = close(fd) }
-private func diskError() -> OperationError { .init(.fileUnavailable, details: ["errno": .integer(Int(errno))]) }
-private func fileStatus(_ path: String) throws -> ComputerFileStatus {
+func closeDescriptor(_ fd: Int32) { _ = close(fd) }
+func diskError() -> OperationError { .init(.fileUnavailable, details: ["errno": .integer(Int(errno))]) }
+func fileStatus(_ path: String) throws -> ComputerFileStatus {
   var s = stat()
   guard lstat(path, &s) == 0 else { throw diskError() }
   return statusInfo(s)
 }
 
-private func statusInfo(_ s: stat) -> ComputerFileStatus {
+func statusInfo(_ s: stat) -> ComputerFileStatus {
   let kind: String
   switch s.st_mode & mode_t(S_IFMT) {
   case mode_t(S_IFREG): kind = "file"

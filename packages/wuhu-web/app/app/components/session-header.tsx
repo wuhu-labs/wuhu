@@ -11,6 +11,7 @@ import { stateTone } from '~/routes/sessions'
 import type { Liveness } from '~/sdk/observe'
 import type { SessionContext } from '~/lib/contract.gen'
 import { fetchSessionContext } from '~/sdk/session'
+import { RouteNotePill } from '~/components/route-note-pill'
 import type { SessionRecord } from '~/lib/session-model'
 
 function contextTone(percentage: number): 'rose' | 'amber' | 'neutral' {
@@ -68,6 +69,16 @@ export function SessionHeader({
           <>
             <Pill tone='neutral'>{record.kind}</Pill>
             <span className='wuhu-mono'>{record.executorLabel}</span>
+            {record.route && (
+              <RouteNotePill
+                key={id}
+                id={id}
+                group={group}
+                route={record.route}
+                liveness={liveness}
+                failureLine={Boolean(record.errorMessage)}
+              />
+            )}
             <Avatar principal={record.createdBy} size={18} />
             <span className='wuhu-mono' title={record.createdBy}>
               by {principalName(directory, sessions, record.createdBy)}

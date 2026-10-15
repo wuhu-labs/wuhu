@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -32,21 +33,29 @@ struct WorkerConnection: Sendable {
     executable: String,
     owner: any ExecutionOwnerClient,
     spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned,
+    runtime: WorkerRuntimeOwner? = nil,
+    machines: Bool = false,
     activity: @escaping @Sendable (ExecutionWorkerActivity) async throws -> Void,
     exited: @escaping @Sendable () async -> Void,
   ) async throws -> Self {
     let directory = "/tmp/wuhu-execution-" + UUID().uuidString
     guard mkdir(directory, 0o700) == 0 else { throw WorkerProtocolError(.unavailable, message: "Cannot create private execution directory") }
-    let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts)
-    let parent = ParentExecutionEndpoint(owner: owner)
-    let spawning = ParentSpawnEndpoint(spawn: spawn)
+    let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled)
+    let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: .init(spawn: spawn))
     let (ready, continuation) = AsyncStream<Int32>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let bytes = OwnerByteEndpoint { call in
-      if call.operation == "tool.spawn" { return try await spawning.invoke(call) }
-      return try await parent.invoke(call)
-    }
+    let bytes = OwnerByteEndpoint(invoke: parent.invoke)
     let hello = ExecutionWorkerBootstrap.hello(release: "parent")
+    let emitSpan = ServerTracing.emitter
     let endpoint = try WorkerEndpoint(token: bootstrap.token, hello: hello, invoke: { call in
+      if call.operation == "owner.cancel", let raw = call.payload.object?["id"]?.stringValue, let id = UUID(uuidString: raw) { await bytes.cancel(id) }
+      if call.operation == "telemetry.spans" {
+        let spans = try JSONDecoder().decode([FinishedSpan].self, from: Data(call.payload.jsonString().utf8))
+        guard spans.count <= 64 else { throw WorkerProtocolError(.capacityExceeded, message: "Telemetry batch exceeds limit") }
+        for span in spans {
+          if let emitSpan { emitSpan(span) } else { ServerTracing.emit(span) }
+        }
+        return .bool(true)
+      }
       if call.operation == "worker.activity" {
         try await activity(ExecutionWorkerActivity(call: call))
         return .bool(true)
@@ -58,11 +67,12 @@ struct WorkerConnection: Sendable {
       }
       return try await parent.invoke(call)
     }, upload: { call, body in
-      try await bytes.receive(call, body: body)
+      if try await !parent.upload(call, body: body) { try await bytes.receive(call, body: body) }
     }, download: { call in
       if call.operation == "worker.lease" {
         return .stream(AsyncStream<Data> { _ in })
       }
+      if let stream = try await parent.stream(call) { return stream }
       return try await bytes.send(call)
     })
     let listener: WorkerListener
@@ -70,6 +80,7 @@ struct WorkerConnection: Sendable {
     catch { _ = rmdir(directory); throw error }
     var configuration = HTTPClient.Configuration()
     configuration.redirectConfiguration = .disallow
+    configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit = 4096
     let control = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
     let byteClient = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
     let client = try WorkerClient(socket: bootstrap.workerSocket, token: bootstrap.token, control: .asyncHTTPClient(control, timeout: nil), bytes: .asyncHTTPClient(byteClient, timeout: nil))
@@ -87,6 +98,7 @@ struct WorkerConnection: Sendable {
         group.cancelAll()
       }
       continuation.finish()
+      await parent.shutdown()
       await listener.shutdown()
       try? await control.shutdown()
       try? await byteClient.shutdown()

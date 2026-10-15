@@ -12,7 +12,7 @@ import struct OperationProtocol.OperationError
 import OperationRuntime
 
 public func fileOperationKinds(files: ComputerFileSystem = .local) -> [AnyOperationKind] {
-  [AnyOperationKind(ReadKind(files: files)), AnyOperationKind(FindKind(files: files)), AnyOperationKind(GrepKind(files: files))]
+  [AnyOperationKind(ReadKind(files: files)), AnyOperationKind(FindKind(files: files)), AnyOperationKind(GrepKind(files: files))] + metadataOperationKinds(files: files.operations)
 }
 
 private struct ReadInput: Decodable, Sendable {
@@ -55,21 +55,26 @@ private struct ReadKind: OperationKind {
 private struct SearchInput: Decodable, Sendable {
   let root: String; let glob: String?; let pattern: String?; let dialect: String?; let maxLineBytes: Int?; let includeSymlinks: Bool; let entryLimit: Int?
   let matcher: GrepMatcher?
-  enum CodingKeys: String, CodingKey { case root, glob, pattern, dialect, maxLineBytes, includeSymlinks, entryLimit }
+  let matchLimit: Int?; let resumeEntries: Int; let resumeLine: Int
+  enum CodingKeys: String, CodingKey { case root, glob, pattern, dialect, maxLineBytes, includeSymlinks, entryLimit, matchLimit, resumeEntries, resumeLine }
   init(from decoder: any Decoder) throws {
-    try fields(decoder, allowed: ["root", "glob", "pattern", "dialect", "maxLineBytes", "includeSymlinks", "entryLimit"])
+    try fields(decoder, allowed: ["root", "glob", "pattern", "dialect", "maxLineBytes", "includeSymlinks", "entryLimit", "matchLimit", "resumeEntries", "resumeLine"])
     let c = try decoder.container(keyedBy: CodingKeys.self)
     root = try c.decode(String.self, forKey: .root); try absolute(root)
     glob = try c.decodeIfPresent(String.self, forKey: .glob); pattern = try c.decodeIfPresent(String.self, forKey: .pattern)
     dialect = try c.decodeIfPresent(String.self, forKey: .dialect); maxLineBytes = try c.decodeIfPresent(Int.self, forKey: .maxLineBytes)
     includeSymlinks = try c.decodeIfPresent(Bool.self, forKey: .includeSymlinks) ?? false; entryLimit = try c.decodeIfPresent(Int.self, forKey: .entryLimit)
+    matchLimit = try c.decodeIfPresent(Int.self, forKey: .matchLimit)
+    resumeEntries = try c.decodeIfPresent(Int.self, forKey: .resumeEntries) ?? 0
+    resumeLine = try c.decodeIfPresent(Int.self, forKey: .resumeLine) ?? 1
+    guard matchLimit.map({ $0 > 0 }) ?? true, resumeEntries >= 0, resumeLine >= 1 else { throw OperationError(.invalidInput) }
     guard entryLimit.map({ $0 > 0 }) ?? true else { throw OperationError(.invalidInput) }
     if let glob {
       guard pattern == nil, dialect == nil, maxLineBytes == nil, c.contains(.includeSymlinks) else { throw OperationError(.invalidInput) }
       guard !glob.isEmpty && glob.utf8.count <= 4096 else { throw OperationError(.invalidInput) }
       matcher = nil
     } else {
-      guard let pattern, !pattern.isEmpty, pattern.utf8.count <= 4096, let maxLineBytes, (1 ... 65536).contains(maxLineBytes) else { throw OperationError(.invalidInput) }
+      guard let pattern, pattern.utf8.count <= 4096, let maxLineBytes, (1 ... 65536).contains(maxLineBytes) else { throw OperationError(.invalidInput) }
       matcher = try GrepMatcher(pattern: pattern, dialect: dialect)
     }
   }
@@ -81,16 +86,29 @@ private struct FindKind: OperationKind {
     guard let glob = input.glob else { throw OperationError(.invalidInput) }
     let walk = try await files.walk(input.root, input.includeSymlinks)
     do {
-      var scanned = 0; var matched = 0
+      var scanned = 0; var matched = 0; var position = 0
       while true {
         try await cancellation.check()
-        if let limit = input.entryLimit, scanned >= limit { try await cancellation.stop(reason: "entryLimit") }
+        if let limit = input.entryLimit, scanned >= limit {
+          if input.matchLimit != nil {
+            await walk.close()
+            return pageResult(scanned: scanned, matched: matched, skipped: await walk.skipCounts(), nextEntry: position)
+          }
+          try await cancellation.stop(reason: "entryLimit")
+        }
         guard let entry = try await walk.next(check: { try await cancellation.check() }) else { break }
+        if position < input.resumeEntries { position += 1; continue }
         scanned += 1
+        guard entry.kind != "directory" else { position += 1; continue }
         let relative = entry.path.hasPrefix(input.root == "/" ? "/" : input.root + "/") ? String(entry.path.dropFirst(input.root == "/" ? 1 : input.root.count + 1)) : entry.path.split(separator: "/").last.map(String.init) ?? entry.path
-        if globMatches(glob, relative) {
+        if globMatches(glob, glob.hasPrefix("/") ? entry.path : relative) {
+          if let limit = input.matchLimit, matched >= limit {
+            await walk.close()
+            return pageResult(scanned: scanned, matched: matched, skipped: await walk.skipCounts(), nextEntry: position)
+          }
           try await channels.send(.init(records: [["path": .string(entry.path), "kind": .string(entry.kind)]]), to: "entries"); matched += 1
         }
+        position += 1
       }
       await walk.close(); return searchResult(scanned: scanned, matched: matched, skipped: await walk.skipCounts())
     } catch { await walk.close(); throw error }
@@ -103,24 +121,38 @@ private struct GrepKind: OperationKind {
     guard let matcher = input.matcher, let maximum = input.maxLineBytes else { throw OperationError(.invalidInput) }
     let walk = try await files.walk(input.root, false)
     do {
-      var scanned = 0; var matched = 0; var skipped: [String: Int] = [:]
+      var scanned = 0; var matched = 0; var skipped: [String: Int] = [:]; var position = 0
       while true {
         try await cancellation.check()
-        if let limit = input.entryLimit, scanned >= limit { try await cancellation.stop(reason: "entryLimit") }
-        guard let entry = try await walk.next(check: { try await cancellation.check() }) else { break }
-        scanned += 1; guard entry.kind == "file" else { continue }
-        do { try await scan(entry, matcher: matcher, maximum: maximum, channels: channels, cancellation: cancellation, matched: &matched) }
-        catch let error as OperationError {
-          let reason: String
-          switch error.code {
-          case .invalidInput: reason = "binary"
-          case .recordTooLarge: reason = "oversized"
-          case .fileChanged: reason = "changed"
-          case .fileUnavailable: reason = "unreadable"
-          default: throw error
+        if let limit = input.entryLimit, scanned >= limit {
+          if input.matchLimit != nil {
+            await walk.close()
+            return pageResult(scanned: scanned, matched: matched, skipped: skipped, nextEntry: position)
           }
-          skipped[reason, default: 0] += 1
+          try await cancellation.stop(reason: "entryLimit")
         }
+        guard let entry = try await walk.next(check: { try await cancellation.check() }) else { break }
+        if position < input.resumeEntries { position += 1; continue }
+        scanned += 1
+        guard entry.kind != "directory" else { position += 1; continue }
+        if entry.kind == "file" {
+          do { try await scan(entry, matcher: matcher, maximum: maximum, channels: channels, cancellation: cancellation, matched: &matched, startLine: position == input.resumeEntries ? input.resumeLine : 1, matchLimit: input.matchLimit) }
+          catch let page as SearchPageEnd {
+            await walk.close()
+            return pageResult(scanned: scanned, matched: matched, skipped: skipped, nextEntry: position, nextLine: page.line)
+          } catch let error as OperationError {
+            let reason: String
+            switch error.code {
+            case .invalidInput: reason = "binary"
+            case .recordTooLarge: reason = "oversized"
+            case .fileChanged: reason = "changed"
+            case .fileUnavailable: reason = "unreadable"
+            default: throw error
+            }
+            skipped[reason, default: 0] += 1
+          }
+        }
+        position += 1
       }
       await walk.close()
       for (reason, count) in await walk.skipCounts() { skipped[reason, default: 0] += count }
@@ -128,7 +160,7 @@ private struct GrepKind: OperationKind {
     } catch { await walk.close(); throw error }
   }
 
-  private func scan(_ entry: ComputerEntry, matcher: GrepMatcher, maximum: Int, channels: OperationChannels, cancellation: OperationCancellation, matched: inout Int) async throws {
+  private func scan(_ entry: ComputerEntry, matcher: GrepMatcher, maximum: Int, channels: OperationChannels, cancellation: OperationCancellation, matched: inout Int, startLine: Int, matchLimit: Int?) async throws {
     let path = entry.path
     let source = entry.file ?? ComputerFile(status: { try await self.files.status(path) }, read: { try await self.files.read(path, $0, $1) })
     let initial = try await source.status()
@@ -137,7 +169,10 @@ private struct GrepKind: OperationKind {
     func emit() async throws {
       guard let text = String(data: buffer, encoding: .utf8) else { throw OperationError(.invalidInput) }
       try await cancellation.check()
-      if try await matcher.matches(text, cancellation: cancellation) { try await channels.send(.init(records: [["path": .string(path), "line": .string(String(line)), "text": .string(text)]]), to: "matches"); matched += 1 }
+      if line >= UInt64(startLine), try await matcher.matches(text, cancellation: cancellation) {
+        if let matchLimit, matched >= matchLimit { throw SearchPageEnd(line: Int(line)) }
+        try await channels.send(.init(records: [["path": .string(path), "line": .string(String(line)), "text": .string(text)]]), to: "matches"); matched += 1
+      }
       buffer.removeAll(keepingCapacity: true); line += 1
     }
     while true {
@@ -146,7 +181,7 @@ private struct GrepKind: OperationKind {
       guard bytes.count <= 16384 else { throw OperationError(.invalidResponse) }
       guard try await source.status() == initial else { throw OperationError(.fileChanged) }
       if bytes.contains(0) { throw OperationError(.invalidInput) }
-      if bytes.isEmpty { if !buffer.isEmpty { try await emit() }; break }
+      if bytes.isEmpty { try await emit(); break }
       offset += UInt64(bytes.count)
       for byte in bytes {
         try Task.checkCancellation()
@@ -155,6 +190,14 @@ private struct GrepKind: OperationKind {
       }
     }
   }
+}
+
+private struct SearchPageEnd: Error { let line: Int }
+
+private func pageResult(scanned: Int, matched: Int, skipped: [String: Int], nextEntry: Int, nextLine: Int = 1) -> JSONValue {
+  var value = searchResult(scanned: scanned, matched: matched, skipped: skipped).object!
+  value["nextEntry"] = .integer(nextEntry); value["nextLine"] = .integer(nextLine)
+  return .object(value)
 }
 
 private func searchResult(scanned: Int, matched: Int, skipped: [String: Int]) -> JSONValue {
@@ -166,11 +209,11 @@ private struct FieldKey: CodingKey {
   init?(stringValue: String) { self.stringValue = stringValue }; init?(intValue: Int) { return nil }
 }
 
-private func fields(_ decoder: any Decoder, allowed: Set<String>) throws {
+func fields(_ decoder: any Decoder, allowed: Set<String>) throws {
   guard try decoder.container(keyedBy: FieldKey.self).allKeys.allSatisfy({ allowed.contains($0.stringValue) }) else { throw OperationError(.invalidInput) }
 }
 
-private func absolute(_ path: String) throws {
+func absolute(_ path: String) throws {
   guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096 else { throw OperationError(.invalidInput) }
 }
 

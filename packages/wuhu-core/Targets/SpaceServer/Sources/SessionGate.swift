@@ -9,6 +9,8 @@ import Dependencies
 import Fetch
 import JSONValue
 import MachineContract
+import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.OperationError
 import OrderedCollections
 import Serve
 import ServeRouting
@@ -228,9 +230,12 @@ private func sessionRouter(
       guard try await space.resolveMachine(input.machine.rawValue, usableFrom: principal().group) != nil else {
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
       }
+      try await hub.requireExecKind(input.machine)
       let record = try await space.mintExec(machine: input.machine, caller: principal().session.rawValue)
       await hub.noteMinted(record)
       return try Response.json(ExecMintOutput(id: record.id))
+    } catch let error as OperationError {
+      return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
     } catch is SpaceError {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }

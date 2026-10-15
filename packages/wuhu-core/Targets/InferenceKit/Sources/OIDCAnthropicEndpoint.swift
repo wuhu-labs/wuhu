@@ -13,7 +13,6 @@ struct OIDCAnthropicEndpoint: AnthropicMessagesEndpoint {
   let baseURL: URL
   let token: String
   let deepSeek: Bool
-  let acceptsUnsignedThinking: Bool
   var replayScope: String?
   var routeEpoch: String?
 

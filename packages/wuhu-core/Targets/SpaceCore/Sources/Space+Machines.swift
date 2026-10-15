@@ -19,6 +19,10 @@ public struct MachineRecord: Equatable, Sendable {
   public let createdAt: Date
   /// The group the machine belongs to: groups that read it may exec on it.
   public let group: GroupID
+
+  public init(id: MachineID, account: AccountID, name: String?, createdAt: Date, group: GroupID) {
+    self.id = id; self.account = account; self.name = name; self.createdAt = createdAt; self.group = group
+  }
 }
 
 // Underscore is excluded so a name can never satisfy MachineID.isValid, which
@@ -75,11 +79,16 @@ public struct ExecRecord: Equatable, Sendable {
   public let killDelivered: Bool
   /// The group the exec is homed in: groups that read it may see and join it.
   public let group: GroupID
+
+  public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID) {
+    self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group
+  }
 }
 
 public struct ExecClaim: Equatable, Sendable {
   public let record: ExecRecord
   public let rejoined: Bool
+  public init(record: ExecRecord, rejoined: Bool) { self.record = record; self.rejoined = rejoined }
 }
 
 // The execs a run_script execution owned when the server that ran it went
@@ -88,6 +97,8 @@ public struct ScriptExecOwner: Equatable, Sendable {
   public let script: String
   public let session: String
   public let live: [ExecID]
+
+  public init(script: String, session: String, live: [ExecID]) { self.script = script; self.session = session; self.live = live }
 }
 
 extension Space {
@@ -530,7 +541,7 @@ extension Space {
     try MachineRow.where { $0.name.lower().eq(name) }.select { $0.id }.fetchOne(db)
   }
 
-  private static func machineRecord(from row: MachineRow) -> MachineRecord {
+  static func machineRecord(from row: MachineRow) -> MachineRecord {
     MachineRecord(
       id: MachineID(rawValue: row.id),
       account: AccountID(rawValue: row.accountID),

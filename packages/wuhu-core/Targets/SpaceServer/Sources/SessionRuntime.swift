@@ -13,14 +13,17 @@ import JSONValue
 import Logging
 import LoopCore
 import struct MachineContract.ExecID
+import struct OperationProtocol.OperationError
 import Serve
 import SessionDomain
 import SessionTools
+import enum SpaceContract.ErrorCode
 import enum SpaceContract.SessionToolExecutor
 import SpaceCore
 import SpaceTools
 import Synchronization
 import SystemFiles
+import struct WorkerOwner.WorkerRuntimeOwner
 import WuhuAI
 
 public struct SessionRuntime: Sendable {
@@ -28,8 +31,10 @@ public struct SessionRuntime: Sendable {
   public let attempts: AttemptHub
   let store: SessionStore
   let firing: SubscriptionFiring
-  let scripts: Scripts
-  let sockets: ResponsesSocketRegistry
+  let scripts: Scripts?
+  let sockets: ResponsesSocketRegistry?
+  private let discoveryOwner: InProcessToolOwnerClient?
+  private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
   let warmer: CacheWarmer
@@ -39,6 +44,7 @@ public struct SessionRuntime: Sendable {
   let budget: @Sendable (SessionID) async -> ContextBudget
 
   public init(space: Space, service: SessionService, attempts: AttemptHub, credentials: CredentialResolver = .environmentOnly) {
+    startup = nil
     self.service = service
     self.attempts = attempts
     store = space.sessions
@@ -55,11 +61,12 @@ public struct SessionRuntime: Sendable {
       resolveModelExecutor: modelExecutorResolver(owner: executionOwner),
       resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute,
     )
+    discoveryOwner = owner as? InProcessToolOwnerClient
     resolveModelExecutor = modelExecutorResolver(owner: owner)
     budget = budgetResolver(owner: owner)
     scripts = Scripts(owner: owner)
     firing = SubscriptionFiring(space: space, scripts: scripts, tools: ToolExecutor(owner: owner, scripts: scripts))
-    scripts.configureDiscovery(toolRosters: sessionToolRosters())
+    scripts?.configureDiscovery(toolRosters: sessionToolRosters())
   }
 
   init(
@@ -67,13 +74,15 @@ public struct SessionRuntime: Sendable {
     service: SessionService,
     attempts: AttemptHub,
     usage: UsageBoard,
-    sockets: ResponsesSocketRegistry,
+    sockets: ResponsesSocketRegistry?,
     refresher: UsageRefresher?,
-    scripts: Scripts,
-    handlerTools: ToolExecutor,
+    scripts: Scripts?,
+    handler: any HandlerExecutionClient,
+    startup: (@Sendable () async -> Void)? = nil,
     owner: any ExecutionOwnerClient,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
   ) {
+    self.startup = startup
     self.service = service
     self.attempts = attempts
     store = space.sessions
@@ -81,15 +90,22 @@ public struct SessionRuntime: Sendable {
     self.sockets = sockets
     self.refresher = refresher
     warmer = CacheWarmer(space: space, usage: usage)
+    discoveryOwner = owner as? InProcessToolOwnerClient
     resolveModelExecutor = modelExecutorResolver(owner: owner)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, scripts: scripts, tools: handlerTools)
+    firing = SubscriptionFiring(space: space, handler: handler)
     self.scripts = scripts
   }
 
+  func configureDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
+    scripts?.configureDiscovery(contentHost: contentHost, identity: identity)
+    discoveryOwner?.configureScriptDiscovery(contentHost: contentHost, identity: identity)
+  }
+
   public func run() async {
+    await startup?()
     await withTaskGroup(of: Void.self) { group in
       group.addTask {
         do {
@@ -101,8 +117,8 @@ public struct SessionRuntime: Sendable {
       }
       group.addTask { await firing.run() }
       group.addTask { await warmer.run() }
-      group.addTask { await scripts.run() }
-      group.addTask { await sockets.run() }
+      if let scripts { group.addTask { await scripts.run() } }
+      if let sockets { group.addTask { await sockets.run() } }
       if let refresher {
         group.addTask { await refresher.run() }
       }
@@ -119,10 +135,11 @@ extension SessionRuntime {
     metrics: InferenceMetricsSink = .noop,
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
+    executionPlacement: ExecutionPlacement = .inProcess,
   ) async -> SessionRuntime {
     await assemble(
       space: space, hub: hub, attemptLog: attemptLog, metrics: metrics, credentials: credentials,
-      secrets: secrets, usage: UsageBoard(),
+      secrets: secrets, usage: UsageBoard(), executionPlacement: executionPlacement,
     )
   }
 
@@ -134,15 +151,13 @@ extension SessionRuntime {
     credentials: CredentialResolver,
     secrets: SpaceSecretStores?,
     usage: UsageBoard,
-    machinesV2: ScriptMachineV2Access? = nil,
-    executionWorkerForTesting: String? = nil,
+    executionPlacement: ExecutionPlacement = .inProcess,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
-    let sockets = ResponsesSocketRegistry()
     let executionOwner = InProcessExecutionOwnerClient(
       space: space, metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
     )
@@ -180,13 +195,39 @@ extension SessionRuntime {
       machines: machines,
       exec: exec,
       scriptMachines: ScriptMachineAccess(files: machines, exec: exec),
-      scriptMachinesV2: machinesV2,
       resolveModelExecutor: modelExecutorResolver(owner: executionOwner),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
       completionMetrics: executionMetrics,
       control: sessionControl { serviceSlot.service },
     )
+    if let executable = executionPlacement.executable {
+      let runtimeOwner = WorkerRuntimeOwner(attempts: attempts, scriptLost: lostWorkerScript(owner: owner), usage: { usage.snapshot() }, receiveUsage: { provider, value in
+        usage.record(provider, plan: value.plan, windows: value.windows, at: Date(timeIntervalSince1970: value.observedAt))
+      }, allowsWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) }, scheduleReminder: { session, due in
+        guard let service = serviceSlot.service else { throw SessionExecutionRetired() }
+        await service.scheduleWake(session, at: due)
+      }, scheduleWarming: { session, interval in
+        try await space.sessions.scheduleCacheWarming(session, intervalSeconds: interval)
+      })
+      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true)
+      let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: .seconds(24 * 3600))
+      serviceSlot.bind(service)
+      return SessionRuntime(
+        space: space,
+        service: service,
+        attempts: attempts,
+        usage: usage,
+        sockets: nil,
+        refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
+        scripts: nil,
+        handler: execution,
+        startup: { await Scripts.announceRestart(owner: owner) },
+        owner: owner,
+        catalog: catalog,
+      )
+    }
+    let sockets = ResponsesSocketRegistry()
     let scripts = Scripts(owner: owner)
     scripts.configureDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(owner: owner)
@@ -224,13 +265,7 @@ extension SessionRuntime {
       thresholds: thresholds,
     )
 
-    let service: SessionService
-    if let executable = executionWorkerForTesting {
-      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) })
-      service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace)
-    } else {
-      service = await SessionService(sessions: space.sessions, owner: owner, loopConfig: config)
-    }
+    let service = await SessionService(sessions: space.sessions, owner: owner, loopConfig: config)
     serviceSlot.bind(service)
     return SessionRuntime(
       space: space,
@@ -240,7 +275,7 @@ extension SessionRuntime {
       sockets: sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
       scripts: scripts,
-      handlerTools: executor,
+      handler: ScriptHandlerExecutor(scripts: scripts, tools: executor),
       owner: owner, catalog: catalog,
     )
   }
@@ -318,6 +353,7 @@ func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> Ses
 func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
   ExecBackend(
     claim: { machine, session, callID in
+      try await hub.requireExecKind(machine)
       let claim = try await space.claimExec(
         machine: machine,
         caller: session.rawValue,
@@ -338,6 +374,7 @@ func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
     },
     status: { try await space.execRecord($0) },
     mintScript: { machine, session, script in
+      try await hub.requireExecKind(machine)
       let record = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: script)
       await hub.noteMinted(record)
       return record
@@ -355,10 +392,12 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
     vfs: { machine, op in
       do { return try await hub.vfs(machine: machine, op: op) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
+      catch let error as OperationError { throw machineOperationFailure(error) }
     },
     search: { machine, query in
       do { return try await hub.search(machine: machine, query: query) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
+      catch let error as OperationError { throw machineOperationFailure(error) }
     },
     attached: { await hub.attachedMachines() },
   )
@@ -445,4 +484,17 @@ extension ToolResultPayload {
 // A kernel session's prompt, frozen at its prompt revision.
 func systemPrompt(space: Space, record: SessionRecord) async throws -> String {
   try await systemPrompt(owner: InProcessExecutionOwnerClient(space: space), record: record)
+}
+
+private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
+  let code: ErrorCode = switch error.code {
+  case .unknownKind: .unknownKind
+  case .invalidInput, .invalidOffset, .inputTooLarge: .invalidArgument
+  case .unsupportedDialect, .unsupportedProtocol: .unsupported
+  case .machineNotAuthorized, .credentialExpired: .unauthorized
+  case .fileChanged, .operationExists, .invocationConflict: .conflict
+  case .unknownMachine: .notFound
+  default: .unavailable
+  }
+  return .failed(code: code, message: "\(error.code.rawValue): \(error.message)", hint: nil)
 }

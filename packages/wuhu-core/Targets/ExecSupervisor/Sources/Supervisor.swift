@@ -10,7 +10,7 @@
 #endif
 import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
-import func ComputerFiles.fileOperationKinds
+import class ComputerFiles.ComputerAgent
 import Fetch
 import FetchAsyncHTTPClient
 import struct OperationProtocol.ErrorEnvelope
@@ -45,8 +45,7 @@ public enum ExecSupervisor {
         authorize: { _, _ in },
       )
       try await registry.recover()
-      let files = try OperationAgent(machine: machine, kinds: fileOperationKinds(), authorize: { _, _ in })
-      let agent = ComputerAgent(machine: machine, registry: registry, files: files)
+      let agent = try ComputerAgent(machine: machine, external: registry.external)
       let server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, handler: { request in
         if request.url.path == "/leave" { return try await agent.controlHandler(request) }
         return try await agent.handler(request)
@@ -54,9 +53,9 @@ public enum ExecSupervisor {
       guard chmod(socket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await registry.run() }
-        group.addTask { await files.run() }
+        group.addTask { await agent.run() }
         await server.runUntilCancelled()
-        await files.shutdown(); group.cancelAll()
+        await agent.shutdown(); group.cancelAll()
       }
     }
   }

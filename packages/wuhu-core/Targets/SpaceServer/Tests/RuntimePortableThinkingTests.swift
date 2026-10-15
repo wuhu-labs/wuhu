@@ -50,9 +50,11 @@ import Testing
           return Response(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
         }
       } operation: {
-        let models = wake == .context ? testModelsJSON.replacingOccurrences(of: "\"maxInput\": 100000,", with: "\"cacheWarming\": {}, \"maxInput\": 100000,") : testModelsJSON
+        // A Claude model: the one whose turn runs without thinking after the boundary.
+        let claude = testModelsJSON.replacingOccurrences(of: "\"test-model\"", with: "\"claude-test-model\"")
+        let models = wake == .context ? claude.replacingOccurrences(of: "\"maxInput\": 100000,", with: "\"cacheWarming\": {}, \"maxInput\": 100000,") : claude
         let harness = try await SessionHarness(assembledModels: models)
-        let id = try await harness.createSession()
+        let id = try await harness.createSession(model: "claude-test-model")
         var source = try await harness.store.transcript(id)
         let items = thinkingHistory(binding: nil, scope: nil)
         source.items += items
@@ -80,7 +82,7 @@ import Testing
         #expect(emitted.prefix(2).allSatisfy { $0.object?["thinking"] == nil })
         #expect(emitted.suffix(2).allSatisfy { $0.object?["thinking"]?.object?["type"]?.stringValue == "adaptive" })
         #expect(emitted.allSatisfy { !$0.jsonString().contains("OLD_SIGNATURE") })
-        #expect(emitted.allSatisfy { $0.object?["model"]?.stringValue == "test-model" })
+        #expect(emitted.allSatisfy { $0.object?["model"]?.stringValue == "claude-test-model" })
         #expect(try await harness.store.record(id).errorMessage == nil)
       }
     }

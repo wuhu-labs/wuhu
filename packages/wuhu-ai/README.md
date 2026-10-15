@@ -58,7 +58,7 @@ for try await event in events {
 
 Raw endpoints default `replayScope` to nil: reasoning signatures/encrypted records and hosted-tool payloads cannot replay, even to the same provider name. To preserve faithful replay, supply a verified, nonsecret binding identifier via `replayScope`, stable across same-account token refresh and replaced on account/credential or endpoint binding changes. `routeEpoch` retires WebSocket continuation and rotates GPT/Codex cache/thread identity on routing changes. Never use bearer tokens or personal account identifiers for either field.
 
-Strict Anthropic thinking requires a verified replay scope. A no-opaque endpoint must explicitly use `RequestOptions(reasoning: .none)`; requesting thinking instead is a typed error, not silent degradation. Unknown or foreign-scoped stored reasoning becomes ordinary readable summary text, never decoded opaque data; hosted records become safe type/action digests. See [the replay contract](Targets/WuhuAI/SPEC.md#replay-scope-and-portable-requests) for tool-loop and cache-key requirements.
+WuhuAI carries thinking and never polices it: Anthropic thinking is sent with or without a replay scope, and an upstream's own refusal surfaces as its error. Unknown or foreign-scoped signed reasoning keeps only its readable summary, as text, never decoded opaque data; unsigned readable thinking travels on as plain thinking, except to a Claude model, which rejects a thinking block without a signature and gets it as text; hosted records become safe type/action digests. See [the replay contract](Targets/WuhuAI/SPEC.md#replay-scope-and-portable-requests) for tool-loop and cache-key requirements.
 
 ## Adding as a Dependency
 

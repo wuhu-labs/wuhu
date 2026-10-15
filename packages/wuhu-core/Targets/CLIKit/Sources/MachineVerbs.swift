@@ -19,16 +19,23 @@ import struct SpaceClient.SpaceClient
 import struct SpaceContract.EnrollConsumeOutput
 
 extension Executor {
-  mutating func machineAdd(name: String?) async throws {
+  mutating func machineAdd(name: String?, group: String?, v2: Bool = false) async throws {
     let space = try self.wallet.pinnedSpace()
     let server = await self.advertisedServer(space: space)
     var body: JSONValue = .object([:])
+    let name = v2 ? name.map { $0.hasSuffix("-v2") ? $0 : $0 + "-v2" } : name
     body.set("name", name.map(JSONValue.string))
-    let output: MachineAddOutput = try await self.api(.post, "/v1/machine", space: space, body: body)
+    body.set("group", group.map(JSONValue.string))
+    let output: MachineAddOutput = try await self.api(.post, v2 ? "/v1/machine-v2" : "/v1/machine", space: space, body: body)
     await self.runner.stdout("machine \(output.id.rawValue)\n" + tokenLines(output.token, fingerprint: output.fingerprint))
+    if let group, output.group != group {
+      let reason = output.group.map { "server placed the machine in group \($0), not \(group)" }
+        ?? "server too old to place machines in a group"
+      throw CLIError(message: "\(reason); upgrade or use machine move \(output.id.rawValue) --group \(group). The machine was created; keep its join token.")
+    }
     await self.runner.stderr("""
     the join token is shown once. join from the box, feeding the token on stdin:
-      \(joinCommand(server: server, fingerprint: output.fingerprint))
+      \(joinCommand(server: server, fingerprint: output.fingerprint, v2: v2))
 
     """)
   }
@@ -201,8 +208,8 @@ private func tokenLines(_ token: String, fingerprint: String?) -> String {
   "token \(token)\n" + (fingerprint.map { "fingerprint \($0)\n" } ?? "")
 }
 
-private func joinCommand(server: String, fingerprint: String?) -> String {
-  ["wuhu machine join", server, fingerprint]
+private func joinCommand(server: String, fingerprint: String?, v2: Bool = false) -> String {
+  [v2 ? "wuhu machine-v2 join" : "wuhu machine join", server, fingerprint]
     .compactMap { $0 }.joined(separator: " ")
 }
 

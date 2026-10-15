@@ -36,7 +36,7 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
 
 @Suite struct CatalogEntryIsolationTests {
   @Test(arguments: [JSONValue?.none, .some(.string("none"))])
-  func mixedCatalogRetainsValidEntriesAndErrorsOnlyOnSelectedThinking(policy: JSONValue?) async throws {
+  func mixedCatalogRetainsValidEntriesAndAcceptsThinkingWithoutReplay(policy: JSONValue?) async throws {
     let document = try ModelsDocument(json: mixedReplayCatalogJSON(policy: policy))
     #expect(document.providers.count == 2)
     #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
@@ -45,11 +45,10 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
     #expect(valid.specifier.provider == "work-codex")
     try catalog.validate(.init(provider: "unsticky", model: "plain", effort: "none"))
     try catalog.validate(.init(provider: "unsticky", model: "thinking", effort: "none"))
-    let error = CatalogError.opaqueReplayRequiresNoThinking(provider: "unsticky", model: "thinking")
-    #expect(throws: error) { try catalog.validate(.init(provider: "unsticky", model: "thinking", effort: "high")) }
-    await #expect(throws: InferenceError.invalidInput(status: 422, body: error.description)) {
-      try await catalog.resolve(.init(provider: "unsticky", model: "thinking", effort: "high"), session: .init("test"))
-    }
+    try catalog.validate(.init(provider: "unsticky", model: "thinking", effort: "high"))
+    let thinking = try await catalog.resolve(.init(provider: "unsticky", model: "thinking", effort: "high"), session: .init("test"))
+    #expect(thinking.specifier.effort == "high")
+    #expect(thinking.replayScope == nil)
   }
 
   @Test(arguments: [JSONValue.string("unknown"), .integer(7), .array([.string("affine")]), .object(["mode": .string("affine")])])

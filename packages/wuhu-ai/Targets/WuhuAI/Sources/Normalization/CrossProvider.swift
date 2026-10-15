@@ -107,6 +107,11 @@ private func stableToolIDHash(_ value: String) -> String {
 
 // MARK: - Reasoning Normalization
 
+/// Same provider and known replay scope: every reasoning block goes back as
+/// received. Otherwise signed, redacted and opaque data is dropped (account- or
+/// provider-bound; a signed block's readable summary survives as assistant
+/// text), while unsigned readable thinking carries nothing bound and travels on
+/// as plain thinking.
 func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID: String, replayScope: String? = nil) {
   for i in messages.indices {
     guard case var .assistant(msg) = messages[i] else { continue }
@@ -125,7 +130,8 @@ func normalizeReasoningForTarget(in messages: inout [Message], targetProviderID:
         if let summary = enc.summary,
            !summary[...].trimmedWhitespace.isEmpty
         {
-          newContent.append(.text(TextContent(text: summary)))
+          let unsigned = enc.opaque.isEmpty && !enc.redacted
+          newContent.append(unsigned ? .reasoning(.unencrypted(summary)) : .text(TextContent(text: summary)))
         }
       }
     }

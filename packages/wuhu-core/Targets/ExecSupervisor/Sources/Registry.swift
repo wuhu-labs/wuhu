@@ -5,6 +5,7 @@
 #endif
 import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
+import enum ComputerFiles.ExternalDeparture
 import Fetch
 import FetchAsyncHTTPClient
 import enum JSONValue.JSONValue
@@ -38,9 +39,7 @@ actor ExecSupervisorRegistry {
     var lost = false
   }
 
-  enum DepartureEvidence {
-    case pending, drained, leaseExpired([UUID])
-  }
+  typealias DepartureEvidence = ExternalDeparture
 
   var legacyDepartures: [UUID: LegacyDeparture] = [:]
   var terminalAcknowledgements: [UUID: UUID] = [:]

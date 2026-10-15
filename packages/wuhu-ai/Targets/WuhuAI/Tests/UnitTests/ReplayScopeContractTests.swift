@@ -11,9 +11,9 @@ import Testing
 import WuhuAI
 
 @Suite struct ReplayScopeContractTests {
-  @Test(arguments: ["account-a", "account-b", nil] as [String?], [false, true])
-  func anthropicSignaturesAndRedactedBlocksRequireExactKnownScope(target: String?, acceptsUnsigned: Bool) async throws {
-    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: target, apiKey: "offline", acceptsUnsignedThinking: acceptsUnsigned)
+  @Test(arguments: ["account-a", "account-b", nil] as [String?])
+  func anthropicSignaturesAndRedactedBlocksRequireExactKnownScope(target: String?) async throws {
+    let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: target, apiKey: "offline")
     let context = history(provider: "anthropic")
     let body = try await emitted(endpoint, context: context)
     let serialized = body.jsonString()
@@ -64,22 +64,11 @@ import WuhuAI
     #expect(!body.jsonString().contains("legacy-signature"))
   }
 
-  @Test func noOpaqueAnthropicRequiresExplicitThinkingOffAndKeepsToolLoopValid() async throws {
+  @Test func noOpaqueAnthropicThinkingIsSentAndToolLoopStaysValid() async throws {
     let endpoint = AnthropicEndpoint(model: "claude-test", apiKey: "offline")
-    let sent = Mutex(0)
-    await withDependencies {
-      $0.fetch = FetchClient { _ in sent.withLock { $0 += 1 }; throw FetchError.unimplemented }
-    } operation: {
-      do {
-        _ = try await endpoint.inference(context: Context(messages: [.user(.init(content: [.text("start")]))]), options: .init(reasoning: .effort("high"))).collect()
-        Issue.record("Expected typed invalidInput")
-      } catch let error as InferenceError {
-        guard case let .invalidInput(status, body) = error else { Issue.record("Wrong error: \(error)"); return }
-        #expect(status == 400)
-        #expect(body?.contains("verified replay scope") == true)
-      } catch { Issue.record("Wrong error: \(error)") }
-    }
-    #expect(sent.withLock { $0 } == 0)
+    let thinking = try await emittedRequest(endpoint, context: toolHistory(), options: .init(reasoning: .effort("high")))
+    #expect(thinking.body.object?["thinking"]?.object?["type"] == .string("adaptive"), "No replay scope is not a reason to refuse; the upstream judges the request")
+    #expect(!thinking.body.jsonString().contains("signed-secret"))
     let body = try await emitted(endpoint, context: toolHistory())
     #expect(body.object?["thinking"] == nil)
     let messages = try #require(body.object?["messages"]?.array)
@@ -89,17 +78,39 @@ import WuhuAI
     #expect(!body.jsonString().contains("signed-secret"))
   }
 
-  @Test func scopedAnthropicRejectsProjectedToolHistoryInsteadOfSendingInvalidThinking() async throws {
+  @Test func crossScopeToolHistoryIsSentWithSignaturesStripped() async throws {
     let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: "account-b", apiKey: "offline")
-    await withDependencies {
-      $0.fetch = FetchClient { _ in Issue.record("Invalid thinking request escaped"); throw FetchError.unimplemented }
-    } operation: {
-      do {
-        _ = try await endpoint.inference(context: toolHistory(), options: .init(reasoning: .effort("high"))).collect()
-        Issue.record("Expected invalidInput")
-      } catch let error as InferenceError {
-        guard case .invalidInput = error else { Issue.record("Wrong error: \(error)"); return }
-      } catch { Issue.record("Wrong error: \(error)") }
+    let request = try await emittedRequest(endpoint, context: toolHistory(), options: .init(reasoning: .effort("high")))
+    #expect(request.body.object?["thinking"]?.object?["type"] == .string("adaptive"))
+    let assistant = try #require(request.body.object?["messages"]?.array?[1].object?["content"]?.array)
+    #expect(assistant.first?.object?["type"] == .string("text"))
+    #expect(assistant.first?.object?["text"] == .string("readable summary"))
+    #expect(assistant.last?.object?["type"] == .string("tool_use"))
+    #expect(!request.body.jsonString().contains("signed-secret"))
+    #expect(!request.body.jsonString().contains("signature"))
+  }
+
+  @Test func unsignedThinkingReplaysAsPlainThinkingInEveryToolStep() async throws {
+    // MiMo shape: readable thinking with an empty signature before each tool call.
+    let endpoint = AnthropicEndpoint(model: "mimo-test", replayScope: "account-a", baseURL: URL(string: "https://mimo.invalid/anthropic")!, apiKey: "offline")
+    var messages: [Message] = [.user(.init(content: [.text("start")]))]
+    for step in 1 ... 4 {
+      messages.append(.assistant(.init(content: [
+        .reasoning(.encrypted(.init(providerID: "anthropic", model: "mimo-test", summary: "step \(step) thinking", opaque: "", replayScope: "account-a"))),
+        .toolCall(.init(id: "call_\(step)", name: "test", arguments: .object([:]))),
+      ])))
+      messages.append(.toolResult(.init(toolCallId: "call_\(step)", content: [.text("result")])))
+      if step.isMultiple(of: 2) { messages.append(.user(.init(content: [.text("context notice \(step)")]))) }
+    }
+    let request = try await emittedRequest(endpoint, context: Context(messages: messages, tools: [.init(name: "test", description: "test", parameters: .object(["type": .string("object")]))]), options: .init(reasoning: .effort("high")))
+    #expect(request.body.object?["thinking"]?.object?["type"] == .string("adaptive"))
+    let assistants = try #require(request.body.object?["messages"]?.array).filter { $0.object?["role"] == .string("assistant") }
+    #expect(assistants.count == 4)
+    for (index, assistant) in assistants.enumerated() {
+      let first = assistant.object?["content"]?.array?.first?.object
+      #expect(first?["type"] == .string("thinking"))
+      #expect(first?["thinking"] == .string("step \(index + 1) thinking"))
+      #expect(first?["signature"] == nil)
     }
   }
 

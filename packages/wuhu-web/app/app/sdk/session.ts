@@ -7,6 +7,7 @@ import type {
   SessionCreateInput,
   SessionCreateOutput,
   SessionHomeOutput,
+  SessionModelRouteOutput,
   SessionRestartInput,
   SessionRestartOutput,
 } from '~/lib/contract.gen'
@@ -175,6 +176,14 @@ export async function fetchSessionContext(
     { headers: inGroup(session.group) },
   )
   return output.context ?? null
+}
+
+export function fetchModelRoute(
+  session: SessionAddress,
+): Promise<SessionModelRouteOutput> {
+  return api(`/v1/session/${session.id}/model-route`, {
+    headers: inGroup(session.group),
+  })
 }
 
 export function fetchSessionHome(

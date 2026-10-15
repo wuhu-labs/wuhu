@@ -19,6 +19,7 @@ public struct ServeCommand: Equatable, Sendable {
   public var origin: String? = nil
   public var dev: Bool
   public var publicRead: Bool = false
+  public var executionWorker: Bool = false
   public var devImport: String?
   public var devExport: String?
   public var certificate: String?
@@ -27,6 +28,7 @@ public struct ServeCommand: Equatable, Sendable {
   public var contentHostPattern: String? = nil
   public var groupCertificate: String? = nil
   public var groupPrivateKey: String? = nil
+  public var otelEndpoint: String? = nil
   public var webApp: String? = nil
   /// Deprecated options serve accepts and ignores, with a warning.
   public var ignoredOptions: [String] = []
@@ -104,6 +106,7 @@ public struct CommandRunner: Sendable {
       if case .session = identity {
         _ = try GroupSelection.resolve(flag: invocation.group, environment: self.environment, config: nil)
         if command.isRefusedToSessions {
+          if case let .machineV2Install(install) = command { throw CLIError(message: machineV2SessionRefusal(install.verb)) }
           throw CLIError(message: sessionRefusal)
         }
       }
@@ -281,7 +284,8 @@ enum Command: Equatable {
   case keyRevoke(pubkey: String)
   case login
   case shareLogin(ttl: Int?)
-  case machineAdd(name: String?)
+  case machineAdd(name: String?, group: String?)
+  case machineV2Add(name: String, group: String?)
   case machineJoin(server: String, fingerprint: String?, name: String?)
   case machineRun
   case machineV2Install(MachineV2InstallCommand)

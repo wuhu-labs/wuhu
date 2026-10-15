@@ -23,7 +23,6 @@ func buildAnthropicRequest(
   baseURL: URL,
   context: Context,
   options: RequestOptions,
-  acceptsUnsignedThinking: Bool = true,
   mediaResolver: (any MediaResolver)? = nil,
 ) async throws -> (url: URL, headers: [String: String], body: OrderedDictionary<String, JSONValue>) {
   let url = anthropicMessagesURL(baseURL: baseURL)
@@ -38,8 +37,8 @@ func buildAnthropicRequest(
     "model": .string(model),
     "messages": .array(try await buildMessages(
       context: context,
-      acceptsUnsignedThinking: acceptsUnsignedThinking,
       mediaResolver: mediaResolver,
+      claudeTarget: isClaudeModel(model),
     )),
     "stream": .bool(true),
     "max_tokens": .integer(options.maxTokens ?? 16384),
@@ -84,8 +83,8 @@ func buildAnthropicRequest(
 
 private func buildMessages(
   context: Context,
-  acceptsUnsignedThinking: Bool,
   mediaResolver: (any MediaResolver)?,
+  claudeTarget: Bool,
 ) async throws -> [JSONValue] {
   var messages: [JSONValue] = []
   // Local working copy: the parallel-tool-call splice below re-inserts buffered
@@ -108,7 +107,7 @@ private func buildMessages(
       i += 1
 
     case let .assistant(m):
-      let blocks = buildAssistantContentBlocks(m.content, acceptsUnsignedThinking: acceptsUnsignedThinking)
+      let blocks = buildAssistantContentBlocks(m.content, claudeTarget: claudeTarget)
       if !blocks.isEmpty {
         messages.append(.object([
           "role": .string("assistant"),
@@ -318,7 +317,7 @@ private func base64ImageBlock(base64: String, mimeType: String) -> JSONValue {
 
 private func buildAssistantContentBlocks(
   _ blocks: [ContentBlock],
-  acceptsUnsignedThinking: Bool,
+  claudeTarget: Bool,
 ) -> [JSONValue] {
   var parts: [JSONValue] = []
 
@@ -333,7 +332,7 @@ private func buildAssistantContentBlocks(
       }
 
     case let .reasoning(reasoning):
-      if let block = buildAnthropicReasoningBlock(reasoning, acceptsUnsignedThinking: acceptsUnsignedThinking) {
+      if let block = buildAnthropicReasoningBlock(reasoning, claudeTarget: claudeTarget) {
         parts.append(block)
       }
 
@@ -355,18 +354,18 @@ private func buildAssistantContentBlocks(
 
 // MARK: - Reasoning
 
+/// Readable thinking with no signature replays as a plain thinking block,
+/// except to a Claude model: Claude's own rule rejects a thinking block without
+/// a signature, so there (and only there) it travels as ordinary assistant text.
 private func buildAnthropicReasoningBlock(
   _ reasoning: ReasoningContent,
-  acceptsUnsignedThinking: Bool,
+  claudeTarget: Bool,
 ) -> JSONValue? {
   switch reasoning {
   case let .unencrypted(text):
     guard !text[...].trimmedWhitespace.isEmpty else { return nil }
-    guard acceptsUnsignedThinking else {
-      return .object([
-        "type": .string("text"),
-        "text": .string(text),
-      ])
+    if claudeTarget {
+      return .object(["type": .string("text"), "text": .string(text)])
     }
     return .object([
       "type": .string("thinking"),
@@ -387,6 +386,9 @@ private func buildAnthropicReasoningBlock(
     let hasText = !text[...].trimmedWhitespace.isEmpty
     let hasSignature = !enc.opaque.isEmpty
     guard hasText || hasSignature else { return nil }
+    if claudeTarget, !hasSignature {
+      return .object(["type": .string("text"), "text": .string(text)])
+    }
 
     var block: OrderedDictionary<String, JSONValue> = [
       "type": .string("thinking"),
@@ -417,35 +419,4 @@ private func extractBase64(from dataURI: String) -> String? {
   guard let commaIndex = dataURI.firstIndex(of: ",") else { return nil }
   let index = dataURI.index(after: commaIndex)
   return String(dataURI[index...])
-}
-
-func validateAnthropicThinking(
-  _ body: OrderedDictionary<String, JSONValue>,
-  replayScope: String?,
-  acceptsUnsignedThinking: Bool,
-) throws {
-  guard !acceptsUnsignedThinking,
-        let thinking = body["thinking"]?.object?["type"]?.stringValue,
-        thinking == "enabled" || thinking == "adaptive"
-  else { return }
-  guard replayScope != nil else {
-    throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking requires a verified replay scope; explicitly request reasoning none for a no-opaque route")
-  }
-  let messages = body["messages"]?.array ?? []
-  let turnStart = messages.lastIndex { message in
-    message.object?["role"]?.stringValue == "user" &&
-      message.object?["content"]?.array?.contains(where: { $0.object?["type"]?.stringValue != "tool_result" }) == true
-  } ?? messages.startIndex
-  for message in messages.dropFirst(turnStart) {
-    guard message.object?["role"]?.stringValue == "assistant",
-          let content = message.object?["content"]?.array,
-          content.contains(where: { $0.object?["type"]?.stringValue == "tool_use" })
-    else { continue }
-    guard let first = content.first?.object,
-          first["type"]?.stringValue == "redacted_thinking" ||
-          (first["type"]?.stringValue == "thinking" && !(first["signature"]?.stringValue ?? "").isEmpty)
-    else {
-      throw InferenceError.invalidInput(status: 400, body: "Anthropic thinking tool history requires signed thinking; the current tool-use assistant history has missing, unsigned or incompatible thinking")
-    }
-  }
 }

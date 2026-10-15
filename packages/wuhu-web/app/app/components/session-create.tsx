@@ -7,20 +7,26 @@ import {
   defaultEffortOf,
   defaultModelOf,
   draftReady,
+  effortsOf,
   emptyDraft,
+  groupMembersLine,
+  initialChoice,
+  type ModelCatalog,
   type ModelChoice,
   modelOf,
-  selectableProviders,
+  pickGroup,
   sessionCreateInput,
   type SessionDraft,
   type SessionKind,
+  templateUnmatched,
   type Unmatched,
 } from '~/lib/session-create'
 import type {
+  ModelGroupDescriptor,
   ProviderDescriptor,
   SessionTemplateDescriptor,
 } from '~/lib/contract.gen'
-import { fetchProviders } from '~/sdk/providers'
+import { fetchModelCatalog } from '~/sdk/providers'
 import { fetchTemplates } from '~/sdk/templates'
 import { errorMessage } from '~/sdk/errors'
 import { type CreatedSession, screens, sessionHref } from '~/lib/links'
@@ -73,102 +79,148 @@ export function KindChoice({
 }
 
 // `unmatched` names what the draft holds that the catalog does not offer; it
-// shows as a disabled, selected option until something else is picked.
+// shows as a disabled, selected option until something else is picked. Model
+// groups share the provider menu: a group stands in for provider and model.
 export function ModelControls<Draft extends ModelChoice>({
   providers,
+  groups = [],
   draft,
   unmatched,
   onChange,
 }: {
   providers: ProviderDescriptor[]
+  groups?: ModelGroupDescriptor[]
   draft: Draft
   unmatched?: Unmatched
   onChange: (draft: Draft) => void
 }) {
-  const selected = providers.find((p) => p.id === draft.provider)
-  const efforts = draft.model?.effortLevels ?? []
-  const unmatchedModel = draft.model == null ? unmatched?.model : null
+  const group = draft.group ?? null
+  const selected = group == null
+    ? providers.find((p) => p.id === draft.provider)
+    : undefined
+  const efforts = effortsOf(draft)
+  const unmatchedGroup = group == null && draft.provider === ''
+    ? unmatched?.group ?? null
+    : null
+  const unmatchedModel = group == null && draft.model == null
+    ? unmatched?.model
+    : null
   const unmatchedEffort = draft.effort == null ? unmatched?.effort : null
+  const defaultEffort = group?.defaultEffort ?? draft.model?.defaultEffort
+  const target = group != null
+    ? groupValue(group.id)
+    : unmatchedGroup != null
+    ? groupValue(unmatchedGroup)
+    : draft.provider
   return (
-    <div className='wuhu-field-row'>
-      <label className='wuhu-field'>
-        <span>provider</span>
-        <select
-          value={draft.provider}
-          onChange={(event) => {
-            const provider = providers.find((p) => p.id === event.target.value)
-            const model = defaultModelOf(provider)
-            onChange({
-              ...draft,
-              provider: event.target.value,
-              model,
-              effort: defaultEffortOf(model),
-            })
-          }}
-        >
-          {selected == null && (
-            <option value={draft.provider} disabled>
-              {draft.provider || '—'}
-            </option>
-          )}
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.id}
-            </option>
-          ))}
-        </select>
-      </label>
-      {(unmatchedModel != null || (selected?.models.length ?? 0) > 0) && (
+    <>
+      <div className='wuhu-field-row'>
         <label className='wuhu-field'>
-          <span>model</span>
+          <span>{group == null ? 'provider' : 'model group'}</span>
           <select
-            value={draft.model?.id ?? unmatchedModel ?? ''}
+            value={target}
             onChange={(event) => {
-              const model = modelOf(selected, event.target.value)
-              onChange({ ...draft, model, effort: defaultEffortOf(model) })
-            }}
-          >
-            {unmatchedModel != null && (
-              <option value={unmatchedModel} disabled>{unmatchedModel}</option>
-            )}
-            {selected?.models.map((model) => (
-              <option key={model.id} value={model.id}>{model.id}</option>
-            ))}
-          </select>
-        </label>
-      )}
-      {efforts.length > 0 && (
-        <label className='wuhu-field'>
-          <span>effort</span>
-          <select
-            value={draft.effort ?? unmatchedEffort ?? ''}
-            onChange={(event) =>
+              const value = event.target.value
+              const picked = groups.find((g) => groupValue(g.id) === value)
+              if (picked != null) {
+                onChange(pickGroup(draft, picked))
+                return
+              }
+              const provider = providers.find((p) => p.id === value)
+              const model = defaultModelOf(provider)
               onChange({
                 ...draft,
-                effort: event.target.value === '' ? null : event.target.value,
-              })}
+                group: null,
+                provider: value,
+                model,
+                effort: defaultEffortOf(model),
+              })
+            }}
           >
-            {unmatchedEffort != null && (
-              <option value={unmatchedEffort} disabled>
-                {unmatchedEffort}
+            {group == null && unmatchedGroup != null && (
+              <option value={target} disabled>{unmatchedGroup}</option>
+            )}
+            {group == null && unmatchedGroup == null && selected == null && (
+              <option value={draft.provider} disabled>
+                {draft.provider || '—'}
               </option>
             )}
-            {draft.model?.defaultEffort == null && <option value=''>—</option>}
-            {efforts.map((effort) => <option key={effort}>{effort}</option>)}
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.id}
+              </option>
+            ))}
+            {groups.length > 0 && (
+              <optgroup label='Model groups'>
+                {groups.map((option) => (
+                  <option key={option.id} value={groupValue(option.id)}>
+                    {option.id}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
-      )}
-    </div>
+        {(unmatchedModel != null || (selected?.models.length ?? 0) > 0) && (
+          <label className='wuhu-field'>
+            <span>model</span>
+            <select
+              value={draft.model?.id ?? unmatchedModel ?? ''}
+              onChange={(event) => {
+                const model = modelOf(selected, event.target.value)
+                onChange({ ...draft, model, effort: defaultEffortOf(model) })
+              }}
+            >
+              {unmatchedModel != null && (
+                <option value={unmatchedModel} disabled>
+                  {unmatchedModel}
+                </option>
+              )}
+              {selected?.models.map((model) => (
+                <option key={model.id} value={model.id}>{model.id}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {efforts.length > 0 && (
+          <label className='wuhu-field'>
+            <span>effort</span>
+            <select
+              value={draft.effort ?? unmatchedEffort ?? ''}
+              onChange={(event) =>
+                onChange({
+                  ...draft,
+                  effort: event.target.value === '' ? null : event.target.value,
+                })}
+            >
+              {unmatchedEffort != null && (
+                <option value={unmatchedEffort} disabled>
+                  {unmatchedEffort}
+                </option>
+              )}
+              {defaultEffort == null && <option value=''>—</option>}
+              {efforts.map((effort) => <option key={effort}>{effort}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      {group != null && <p className='wuhu-muted'>{groupMembersLine(group)}</p>}
+    </>
   )
 }
 
+// Group options live in the provider menu under a prefix no provider id has.
+function groupValue(id: string): string {
+  return `group:${id}`
+}
+
 function CreateForm({
-  providers,
+  catalog,
   groups,
   defaultGroup,
   onDone,
 }: {
-  providers: ProviderDescriptor[]
+  catalog: ModelCatalog
   groups: string[]
   defaultGroup: string
   onDone: () => void
@@ -179,16 +231,11 @@ function CreateForm({
   const [templates, setTemplates] = useState<
     ReadonlyMap<string, SessionTemplateDescriptor[]>
   >(new Map())
-  const [draft, setDraft] = useState<SessionDraft>(() => {
-    const first = providers[0]
-    const model = defaultModelOf(first)
-    return {
-      ...emptyDraft,
-      provider: first?.id ?? '',
-      model,
-      effort: defaultEffortOf(model),
-    }
-  })
+  const { providers } = catalog
+  const [draft, setDraft] = useState<SessionDraft>(() => ({
+    ...emptyDraft,
+    ...initialChoice(catalog),
+  }))
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -212,6 +259,7 @@ function CreateForm({
 
   const ready = draftReady(draft) && !submitting
   const template = offered.find((t) => t.name === draft.template)
+  const unmatched = templateUnmatched(template ?? null, catalog.groups)
 
   const submit = () => {
     if (!ready) return
@@ -264,6 +312,7 @@ function CreateForm({
                   draft,
                   offered.find((t) => t.name === event.target.value) ?? null,
                   providers,
+                  catalog.groups,
                 ))}
             >
               <option value=''>— none —</option>
@@ -295,15 +344,23 @@ function CreateForm({
           }}
         />
       </label>
-      {providers.length === 0 && (
+      {providers.length === 0 && catalog.groups.length === 0 && (
         <p className='wuhu-muted'>No models are configured.</p>
       )}
-      {providers.length > 0 && (
+      {(providers.length > 0 || catalog.groups.length > 0) && (
         <ModelControls
           providers={providers}
+          groups={catalog.groups}
           draft={draft}
+          unmatched={unmatched}
           onChange={setDraft}
         />
+      )}
+      {unmatched?.group != null && draft.group == null &&
+        draft.provider === '' && (
+        <p className='wuhu-alert'>
+          {unmatched.group} is no longer offered; pick a model.
+        </p>
       )}
       {error && <p className='wuhu-alert'>{error}</p>}
       <div className='wuhu-form-actions'>
@@ -334,17 +391,15 @@ export function SessionCreateDialog({
   group: string
   onClose: () => void
 }) {
-  const [providers, setProviders] = useState<ProviderDescriptor[] | null>(
-    null,
-  )
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open || providers != null) return
+    if (!open || catalog != null) return
     let cancelled = false
-    fetchProviders().then(
+    fetchModelCatalog().then(
       (found) => {
-        if (!cancelled) setProviders(selectableProviders(found))
+        if (!cancelled) setCatalog(found)
       },
       (failure: unknown) => {
         if (!cancelled) setLoadError(errorMessage(failure))
@@ -353,17 +408,17 @@ export function SessionCreateDialog({
     return () => {
       cancelled = true
     }
-  }, [open, providers])
+  }, [open, catalog])
 
   return (
     <ModalDialog open={open} title='New agent' onClose={onClose}>
       {loadError && <p className='wuhu-alert'>{loadError}</p>}
-      {!loadError && providers == null && (
+      {!loadError && catalog == null && (
         <p className='wuhu-muted'>Loading models…</p>
       )}
-      {!loadError && providers != null && (
+      {!loadError && catalog != null && (
         <CreateForm
-          providers={providers}
+          catalog={catalog}
           groups={groups}
           defaultGroup={group}
           onDone={onClose}

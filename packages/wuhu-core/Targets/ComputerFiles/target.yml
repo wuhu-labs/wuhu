@@ -8,6 +8,10 @@ dependencies:
   - OperationProtocol
   - OperationRuntime
   - JSONValue
+  - MachineContract
+  - Crypto
+  - Fetch
+  - Serve
 tests:
   dependencies:
     - OperationClient
@@ -16,3 +20,5 @@ tests:
     - JSONValue
     - Fetch
     - Scratch
+    - MachineContract
+    - Crypto

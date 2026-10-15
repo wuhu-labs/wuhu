@@ -170,6 +170,24 @@ import Testing
     }
   }
 
+  @Test(arguments: [("deepseek", "test-scope"), ("anthropic", "other-account"), ("anthropic", nil)] as [(String, String?)])
+  func unsignedReadableThinkingTravelsAsPlainThinkingAcrossScopes(provider: String, scope: String?) {
+    var messages: [Message] = [
+      .assistant(AssistantMessage(content: [
+        .reasoning(.encrypted(EncryptedReasoningContent(
+          providerID: provider, model: "open-model",
+          summary: "readable thinking", opaque: "", replayScope: scope,
+        ))),
+        .text(TextContent(text: "answer")),
+      ])),
+    ]
+
+    normalizeReasoningForTarget(in: &messages, targetProviderID: "anthropic", replayScope: "test-scope")
+
+    guard case let .assistant(msg) = messages[0] else { Issue.record("expected assistant"); return }
+    #expect(msg.content == [.reasoning(.unencrypted("readable thinking")), .text(TextContent(text: "answer"))])
+  }
+
   @Test func leavesUnencryptedReasoningUntouched() {
     var messages: [Message] = [
       .assistant(AssistantMessage(content: [

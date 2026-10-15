@@ -40,7 +40,7 @@ private final class WarmingTime: Sendable {
           let hydration = try await store.hydrate(id)
           let notice = try #require(hydration.undrained.last?.input)
           #expect(notice.content.text.contains("<cache-warming-notice>"))
-          #expect(notice.content.text.contains("compact now") == (index == 0))
+          #expect(notice.content.text.contains("call the compact tool now") == (index == 0))
           try await settle(store, id)
         }
         time.advance()
@@ -52,18 +52,18 @@ private final class WarmingTime: Sendable {
           #expect(try await !ping(store, id))
           time.advance()
           #expect(try await ping(store, id, tokens: 149_999))
-          #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact now") == false)
+          #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("call the compact tool now") == false)
           try await settle(store, id)
         }
         time.advance()
         #expect(try await ping(store, id, tokens: 150_000))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact now") == true)
+        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("call the compact tool now") == true)
         try await settle(store, id)
         _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: time.now, summary: "folded", snapshot: .init()), kept: nil)
         try await settle(store, id)
         time.advance()
         #expect(try await ping(store, id))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact now") == true)
+        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("call the compact tool now") == true)
       }
     }
   }
@@ -218,7 +218,7 @@ private final class WarmingTime: Sendable {
         #expect(try await !ping(store, id, max: 2))
         time.advance()
         #expect(try await ping(store, id, max: 2))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact now") == false)
+        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("call the compact tool now") == false)
         try await settle(store, id)
         time.advance()
         #expect(try await !ping(store, id, max: 2))
@@ -227,7 +227,7 @@ private final class WarmingTime: Sendable {
         try await store.scheduleCacheWarming(id, intervalSeconds: 3300)
         time.advance()
         #expect(try await ping(store, id, max: 2))
-        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("compact now") == true)
+        #expect(try await store.hydrate(id).undrained.last?.input.content.text.contains("call the compact tool now") == true)
         _ = try await store.enqueue(id, input: SessionFix.notification("real after restart"))
         try await settle(store, id)
         time.advance()

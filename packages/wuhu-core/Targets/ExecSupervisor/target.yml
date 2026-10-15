@@ -39,3 +39,4 @@ tests:
     - ServeNIO
     - FetchAsyncHTTPClient
     - Clocks
+    - Scratch

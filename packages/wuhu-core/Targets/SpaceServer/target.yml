@@ -18,6 +18,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ServerTelemetry
   - Assertion
 
 
@@ -67,6 +68,7 @@ tests:
     WUHU_EXECUTION_WORKER_BINARY: "$(rootpath //packages/wuhu-core:wuhu)"
   size: large
   dependencies:
+    - ServerTelemetry
     - Assertion
 
 
@@ -79,6 +81,7 @@ tests:
     - OperationRuntime
     - MachineChannel
     - MachineAgent
+    - ComputerFiles
     - SessionDomain
     - SessionTools
     - LoopCore
@@ -116,6 +119,8 @@ tests:
     - Scratch
     - ScratchTesting
     - WuhuVFS
+  data:
+    - Targets/SpaceContract/Tests/contract
   resources:
     - path: Recordings
       mode: copy

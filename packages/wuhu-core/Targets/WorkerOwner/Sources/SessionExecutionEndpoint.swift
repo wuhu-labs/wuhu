@@ -16,7 +16,12 @@ import struct WorkerProtocol.WorkerProtocolError
 
 public struct SessionExecutionEndpoint: Sendable {
   private let execution: any SessionExecutionClient
-  public init(execution: any SessionExecutionClient) { self.execution = execution }
+  private let beforeShutdownReply: @Sendable () async -> Void
+  public init(execution: any SessionExecutionClient, beforeShutdownReply: @escaping @Sendable () async -> Void = {}) {
+    self.execution = execution
+    self.beforeShutdownReply = beforeShutdownReply
+  }
+
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
     try await ownerReply {
       switch call.operation {
@@ -59,6 +64,7 @@ public struct SessionExecutionEndpoint: Sendable {
         return .bool(true)
       case "execution.shutdown":
         await execution.shutdown()
+        await beforeShutdownReply()
         return .bool(true)
       default: throw WorkerProtocolError(.invalidMessage, message: "Unknown worker execution operation")
       }

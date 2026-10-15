@@ -36,12 +36,13 @@ import WuhuAI
           await service.registry.sessions[sid]?.idleSince != nil
         }
 
-        // Sweep by sweep: the reaper sleeps again after each one.
-        for _ in 0 ..< 11 {
-          try await time.wake("the reaper", after: 30)
-        }
+        // Sweep by sweep until evicted: the reaper sleeps again after each one,
+        // and a redundant work-signal wake may refresh idleSince mid-way, so
+        // no fixed sweep count is enough.
         try await until("evicted") {
-          await service.registry.sessions.isEmpty
+          if await service.registry.sessions.isEmpty { return true }
+          try await time.wake("the reaper", after: 30)
+          return await service.registry.sessions.isEmpty
         }
 
         // Write-through made eviction safe: the verb lands on a lazily

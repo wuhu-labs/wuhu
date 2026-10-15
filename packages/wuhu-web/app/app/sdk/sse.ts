@@ -15,12 +15,12 @@ export function openAuthorizedStream(
     open?: () => void
     message?: (data: string) => void
     activity?: () => void
-    error?: () => void
+    error?: (status?: number) => void
   } = {}
   let closed = false
 
-  const fail = () => {
-    if (!closed) handlers.error?.()
+  const fail = (status?: number) => {
+    if (!closed) handlers.error?.(status)
   }
   ;(async () => {
     const response = await fetch(url, {
@@ -39,7 +39,7 @@ export function openAuthorizedStream(
       !contentType.includes('text/event-stream')
     ) {
       if (response.status === 401) notifyUnauthorized()
-      fail()
+      fail(response.ok ? undefined : response.status)
       return
     }
     handlers.open?.()
@@ -61,7 +61,7 @@ export function openAuthorizedStream(
       }
     }
     fail()
-  })().catch(fail)
+  })().catch(() => fail())
 
   return {
     onOpen(handler) {

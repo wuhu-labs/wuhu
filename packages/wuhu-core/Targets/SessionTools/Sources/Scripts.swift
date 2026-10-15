@@ -10,31 +10,34 @@ import Synchronization
 // tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
   let owner: any ScriptOwnerClient
+  let lifecycle: ScriptLifecycle?
   let discovery = Mutex(ScriptDiscoveryConfiguration())
-  var machines: ScriptMachineAccess? { owner.scriptMachines }
-  var machinesV2: ScriptMachineV2Access? { owner.scriptMachinesV2 }
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
 
-  public init(owner: any ScriptOwnerClient) {
+  public init(owner: any ScriptOwnerClient, lifecycle: ScriptLifecycle? = nil) {
+    self.lifecycle = lifecycle
     self.owner = owner
     (launches, launch) = AsyncStream.makeStream()
   }
 
-  public func run() async {
-    await announceRestart()
+  public func run(announceRestart: Bool = true) async {
+    if announceRestart { await self.announceRestart() }
     await withDiscardingTaskGroup { group in
       for await execution in launches {
         group.addTask {
-          await execution.run(owner: self.owner)
+          await execution.run(owner: self.owner, lifecycle: self.lifecycle)
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
     }
   }
 
-  private func announceRestart() async {
+  public func announceRestart() async { await Self.announceRestart(owner: owner) }
+
+  public static func announceRestart(owner: any ScriptOwnerClient) async {
+    let ownerClient = owner
     let owners: [ScriptExecOwner]
     do {
       owners = try await owner.takeScriptExecOwners()
@@ -48,7 +51,7 @@ public final class Scripts: Sendable {
         let ids = owner.live.map(\.rawValue).joined(separator: ", ")
         text += "; the machine processes it left running (\(ids)) get killed about a minute after the restart, or when their machine reconnects if it is away then"
       }
-      await notify(self.owner, SessionID(rawValue: owner.session), script: owner.script, text)
+      await notify(ownerClient, SessionID(rawValue: owner.session), script: owner.script, text)
     }
   }
 
@@ -62,8 +65,7 @@ public final class Scripts: Sendable {
       lifetime: lifetime,
       secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
-      machines: machines,
-      machinesV2: machinesV2,
+      machines: owner.scriptMachines(for: session),
     )
     running.withLock { $0[id] = execution }
     launch.yield(execution)

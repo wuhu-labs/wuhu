@@ -3,6 +3,7 @@ import struct MachineContract.ExecID
 import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineID
+import ServerTelemetry
 import SpaceCore
 import Synchronization
 
@@ -141,6 +142,7 @@ final class ScriptProcess: Sendable {
   let id: ExecID
   let machine: MachineID
   let acceptsStdin: Bool
+  private let span = ServerTracing.enabled ? ServerSpan(.machine) : nil
   private let outgoing: OutgoingExec
   private let endpoint: ChannelEndpoint
   private let backend: ExecBackend
@@ -173,6 +175,22 @@ final class ScriptProcess: Sendable {
   // MARK: The machine's side
 
   func drive() async {
+    defer {
+      if let span {
+        var attributes: [SpanAttribute: String] = [.machine: machine.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
+        state.withLock { state in
+          attributes[.bytesOut] = String(state.received)
+          if case let .exited(status) = state.end {
+            attributes[.outcome] = "ok"; attributes[.verdict] = "exited"
+            switch status {
+            case let .exited(code): attributes[.exitCode] = String(code)
+            case let .signaled(signal): attributes[.exitCode] = String(128 + signal)
+            }
+          }
+        }
+        span.finish(attributes)
+      }
+    }
     await withTaskGroup(of: Void.self) { group in
       group.addTask { [self] in
         guard let reason = try? await holdExecLeg(id, endpoint: endpoint, backend: backend) else {

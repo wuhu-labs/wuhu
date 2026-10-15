@@ -10,14 +10,17 @@ import SpaceContract
 import Testing
 
 @Suite struct ModelGroupRouteTests {
-  func install(_ harness: SessionHarness) async throws {
+  func install(_ harness: SessionHarness, model: String = "test-model") async throws {
     let fs = await harness.space.fs(.shared)
     let (entry, data) = try await fs.read("/models.json")
     var doc = try ModelsDocument(json: data)
+    if model != "test-model", let entry = doc.providers["testing"]?.models.removeValue(forKey: "test-model") {
+      doc.providers["testing"]?.models[model] = entry
+    }
     doc.providers["alternate"] = doc.providers["testing"]
     doc.groups["work"] = ModelsDocument.Group(members: [
-      .init(id: "a", provider: "testing", model: "test-model"),
-      .init(id: "b", provider: "alternate", model: "test-model"),
+      .init(id: "a", provider: "testing", model: model),
+      .init(id: "b", provider: "alternate", model: model),
     ], defaultEffort: "high", policy: .quotaAware())
     _ = try await fs.write("/models.json", JSONEncoder().encode(doc), ifMatch: entry)
     _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(doc.groups), ifMatch: nil)

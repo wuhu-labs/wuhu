@@ -162,7 +162,6 @@ import Testing
       baseURL: endpoint.baseURL,
       context: historyWithReasoning,
       options: options,
-      acceptsUnsignedThinking: endpoint.acceptsUnsignedThinking,
     )
     endpoint.modifyBody(&body, options: options)
     return body
@@ -212,12 +211,6 @@ import Testing
 
   // Clear reasoning must land in the target wire's reasoning channel, degrade to
   // plain text where that wire has none, and never be laundered into speech.
-
-  @Test func stockAnthropicEndpointRejectsUnsignedThinkingAndTheRestAcceptIt() {
-    #expect(AnthropicEndpoint(model: "claude-sonnet-4-6", apiKey: "k").acceptsUnsignedThinking == false)
-    #expect(DeepSeekAnthropicEndpoint(model: "deepseek-v4-pro", apiKey: "k").acceptsUnsignedThinking)
-    #expect(MiniMaxEndpoint(model: "minimax-m2", apiKey: "k").acceptsUnsignedThinking)
-  }
 
   @Test func chatCompletionsReplaysIntoReasoningContent() async throws {
     let (_, _, body) = try await buildChatCompletionsRequest(

@@ -182,7 +182,7 @@ Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane pointe
 ## Server
 
 ```bash
-wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>]
+wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>]
 ```
 
 Hosted servers can advertise `contentHost` from `GET /v1/server`, a template such as `{group}--alex.wuhu.studio`. Replace `{group}` with the group's id and prepend `https://`; otherwise use `https://<group>.<contentBase>` as on self-hosted servers. `wuhu serve --content-host-pattern '{group}--alex.wuhu.studio' --origin https://alex.wuhu.studio` selects flat hosts, requires exactly one `{group}` at the start, requires any pattern port to match the origin, and is exclusive with `--group-certificate`.
@@ -237,7 +237,7 @@ an enrolled device and a pinned space; its link dies at first use or after
 ## Machines, exec, secrets
 
 ```bash
-wuhu machine add [--name N]         # prints id + join token (shown ONCE)
+wuhu machine add [--name N] [--group G] # prints id + join token (shown ONCE)
 wuhu machine join <server-url> [fingerprint] [--name N] < token   # on the box; token from stdin, never argv
 wuhu machine run                    # on the box, foreground
 wuhu machine list                   # <name|-> <id> <attached|detached>
@@ -251,7 +251,7 @@ wuhu secret set NAME < value             # the acting group's secret, for run_sc
 wuhu secret list|remove [NAME]
 ```
 
-A machine belongs to one group: `machine add` puts it in your personal group, and only sessions and people acting in a group that reads it see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
+A machine belongs to one group: `machine add` puts it in your personal group without an explicit group flag; `machine add --group G` (or global `--group G machine add`) sets only the registration target, needs an admin of G but not membership (`403 adminRequired`, `404 unknownGroup`), and verifies the server echoed G (otherwise fails with an upgrade/move hint). Environment and folder groups do not set the target. Only sessions and people acting in a group that reads the machine's group see or use it. `machine move` hands it to another group (`--group shared` makes it usable from every group that reads shared). Secrets are per group too: `wuhu --group <g> secret …` works on that group's; setting needs an admin of it, removing a human admin. `exec --secret ENV=NAME` takes NAME from the group the machine belongs to, not the one you act in: the value rides the exec start, the machine masks it as `***`, and a name that group lacks fails before anything runs (`wuhu: no secret NAME in group G`, exit 127). Machines keep no secrets of their own.
 
 `<machine>` is the machine's name or its `mc_` id — every machine verb and route takes either, `exec --cwd` included. `machine join` claims `--name` (default: the box's hostname, suffixed until free — `mini`, `mini-2`, …) only when the machine is still unnamed; a named machine keeps its name, so renaming is `machine name` alone.
 
@@ -377,3 +377,5 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 ## Human-only channels
 
 `wuhu channel create [--title T] [person...]` creates a channel in the acting group and prints its id. A person creator is a member; a session creator is not. `wuhu channel add <id> <person...>` and `wuhu channel remove <id> <person...>` manage people. `wuhu channel rename <id> <title>` sets the title; `wuhu channel rename <id> --clear` returns to members' names. Session membership and blank titles are typed errors. People must be members to read, post or manage the channel. Sessions in groups reading its home group may read, post and manage it without joining. Plain person messages wake no session; mention, reply-target and the attention window still apply.
+
+`wuhu serve --execution-worker` explicitly runs loops, provider sockets, scripts and handlers in a same-binary per-space child; stores, scheduler, secrets/signing and machine brokers stay in the parent. It is off by default. Worker failure never selects in-process execution.

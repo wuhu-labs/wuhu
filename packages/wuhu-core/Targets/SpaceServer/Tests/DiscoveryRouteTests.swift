@@ -11,7 +11,7 @@ import Synchronization
 import Testing
 
 private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ source: String) async throws -> JSONValue {
-  let scripts = harness.runtime.scripts
+  let scripts = try #require(harness.runtime.scripts)
   let tools = ToolExecutor(space: harness.space, scripts: scripts)
   return try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await scripts.run() }

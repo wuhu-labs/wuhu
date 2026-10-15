@@ -6,6 +6,7 @@
 import Dependencies
 import SessionDomain
 @testable import SessionTools
+import struct SessionToolsTestSupport.ScriptOwnerContract
 import SpaceCore
 import Testing
 
@@ -87,8 +88,7 @@ extension InProcessScriptOwnerContractTests {
       backend.kill = { id in killed.withLock { $0.append(id.rawValue) } }
       let claim = try await backend.claim(machine, session, .init("interrupted"))
       let owner: any WorkerOwnerClient = InProcessToolOwnerClient(space: space, exec: backend, scriptMachines: .init(files: FakeMachineFS().seam, exec: backend))
-      #expect(owner.scriptMachines != nil)
-      #expect(owner.scriptMachinesV2 == nil)
+      #expect(owner.scriptMachines(for: session) != nil)
       await owner.killInterruptedExec(session: session, toolCallID: .init("missing"))
       #expect(killed.value.isEmpty)
       await owner.killInterruptedExec(session: session, toolCallID: .init("interrupted"))

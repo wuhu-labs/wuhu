@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineAddInput","type":"object","properties":{"name":{"type":["string","null"]}},"required":[],"additionalProperties":false}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineAddInput","type":"object","properties":{"name":{"type":["string","null"]},"group":{"type":["string","null"]},"pubkey":{"type":["string","null"]},"device":{"type":["string","null"]}},"required":[],"additionalProperties":false}

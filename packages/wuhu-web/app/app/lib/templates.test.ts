@@ -104,3 +104,28 @@ Deno.test('a template lives in its own directory and reads as one mono line', ()
     'claude · low',
   )
 })
+
+Deno.test('a group template names the group, not a provider', () => {
+  const group = {
+    id: 'fleet',
+    members: [{ id: 'primary', provider: 'claude', model: 'claude-opus-5-5' }],
+    defaultEffort: 'high',
+    effortLevels: ['high'],
+    policy: null,
+  }
+  const picked = draft({
+    name: 'night-shift',
+    kind: 'agent',
+    group,
+    effort: 'high',
+  })
+  assertEquals(templateReady(picked), true)
+  assertEquals(
+    JSON.parse(templateManifest(picked)),
+    { kind: 'agent', modelGroup: 'fleet', effort: 'high' },
+  )
+  assertEquals(
+    templateLine({ name: 'night-shift', modelGroup: 'fleet', effort: 'high' }),
+    'fleet · high',
+  )
+})

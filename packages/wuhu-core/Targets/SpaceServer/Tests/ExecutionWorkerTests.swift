@@ -16,11 +16,14 @@ import GRDB
 import InferenceKit
 import LoopCore
 import ServeNIO
+import ServerTelemetry
 import SessionDomain
+import SessionTools
 @testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
+import WorkerOwner
 import WorkerProtocol
 
 private let workerSSE = """
@@ -61,48 +64,99 @@ data: {}
     .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init(rawValue: "fixture"), content: .init(text: text)))
   }
 
-  @Test func testOnlyAssemblyRunsInferenceInSameBinaryChildAndCommitsThroughParent() async throws {
+  @Test(arguments: [false, true]) func workerAssemblyRunsInferenceInSameBinaryChildAndCommitsThroughParent(tracing: Bool) async throws {
+    let spans = Mutex<[FinishedSpan]>([])
+    let emit: @Sendable (FinishedSpan) -> Void = { span in spans.withLock { $0.append(span) } }
+    try await ServerTracing.$emitter.withValue(tracing ? emit : nil) {
+      try await withSessionDeps {
+        let requests = Mutex(0)
+        let metrics = Mutex<[InferenceMetric]>([])
+        let provider = try await ServeNIOServer.bind(port: 0, handler: { request in
+          #expect(request.headers[.init("x-api-key")!] == "fixture-credential")
+          _ = try await request.body?.data()
+          requests.withLock { $0 += 1 }
+          return Response(status: .ok, body: .bytes(Data(workerSSE.utf8), contentType: "text/event-stream"))
+        })
+        let space = try Space.inMemory()
+        try await models(space, port: #require(provider.localAddress?.port))
+        let runtime = await SessionRuntime.assemble(
+          space: space, hub: MachineHub(space: space), attemptLog: nil,
+          metrics: InferenceMetricsSink { metric in metrics.withLock { $0.append(metric) } },
+          credentials: CredentialResolver { _ in .apiKey("fixture-credential") }, secrets: nil,
+          usage: UsageBoard(), executionPlacement: .worker(executable: URL(fileURLWithPath: try binary())),
+        )
+        let result: Result<Void, any Error>
+        do {
+          let id = try await space.sessions.createSession(group: .shared, title: "worker", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: "small", effort: "none"))
+          #expect(requests.withLock { $0 } == 0)
+          _ = try await runtime.service.enqueue(item: input("hello"), to: id)
+          try await until("worker inference commits", timeout: .seconds(40)) { try await space.sessions.transcript(id).items.contains { if case .assistant = $0 { true } else { false } } }
+          let transcript = try await space.sessions.transcript(id)
+          #expect(transcript.items.contains { if case let .assistant(entry) = $0 { entry.content.contains(.text("Answered by the execution worker")) } else { false } })
+          #expect(requests.withLock { $0 } == 1)
+          #expect(metrics.withLock { $0.first?.session } == id)
+          #expect(metrics.withLock { $0.first?.outcome } == .ok)
+          try await runtime.service.interrupt(id)
+          #expect(try await space.sessions.record(id).hold == .interrupted)
+          try await runtime.service.resume(id)
+          #expect(try await space.sessions.record(id).hold == .normal)
+          let restarted = try await runtime.service.restart(id, executor: nil, note: nil)
+          #expect(restarted.generation == 1)
+          try await runtime.service.archive(id)
+          if case .archived = try await space.sessions.record(id).lifecycle {} else { Issue.record("remote archive did not persist") }
+          try await runtime.service.unarchive(id)
+          #expect(try await space.sessions.record(id).lifecycle == .live)
+          result = .success(())
+        } catch { result = .failure(error) }
+        await runtime.service.shutdown()
+        await provider.shutdown()
+        try result.get()
+        let relayed = spans.withLock { $0 }
+        if tracing {
+          #expect(relayed.contains { $0.name == .turn && $0.context.group == "shared" && !$0.context.session.isEmpty })
+          let encoded = String(decoding: try JSONEncoder().encode(relayed), as: UTF8.self)
+          #expect(!encoded.contains("fixture-credential"))
+          #expect(!encoded.contains("Answered by the execution worker"))
+        } else {
+          #expect(relayed.isEmpty)
+        }
+      }
+    }
+  }
+
+  @Test func workerPublishesParkDeadlineToTheParentInsteadOfKeepingATimer() async throws {
     try await withSessionDeps {
-      let requests = Mutex(0)
-      let metrics = Mutex<[InferenceMetric]>([])
       let provider = try await ServeNIOServer.bind(port: 0, handler: { request in
-        #expect(request.headers[.init("x-api-key")!] == "fixture-credential")
         _ = try await request.body?.data()
-        requests.withLock { $0 += 1 }
         return Response(status: .ok, body: .bytes(Data(workerSSE.utf8), contentType: "text/event-stream"))
       })
       let space = try Space.inMemory()
       try await models(space, port: #require(provider.localAddress?.port))
-      let runtime = await SessionRuntime.assemble(
-        space: space, hub: MachineHub(space: space), attemptLog: nil,
-        metrics: InferenceMetricsSink { metric in metrics.withLock { $0.append(metric) } },
-        credentials: CredentialResolver { _ in .apiKey("fixture-credential") }, secrets: nil,
-        usage: UsageBoard(), executionWorkerForTesting: try binary(),
-      )
+      let deadlines = Mutex<[Date?]>([])
+      let owner = InProcessExecutionOwnerClient(space: space, credentials: CredentialResolver { _ in .apiKey("fixture-credential") })
+      let runtime = workerRuntimeFixture(space: space, scheduleReminder: { _, due in deadlines.withLock { $0.append(due) } })
+      let worker = LazyExecutionWorker(executable: try binary(), sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw CancellationError() }, runtime: runtime)
+      let service = SessionService(sessions: space.sessions, execution: worker, archiveGrace: .seconds(60))
       let result: Result<Void, any Error>
       do {
-        let id = try await space.sessions.createSession(group: .shared, title: "worker", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: "small", effort: "none"))
-        #expect(requests.withLock { $0 } == 0)
-        _ = try await runtime.service.enqueue(item: input("hello"), to: id)
-        try await until("worker inference commits", timeout: .seconds(40)) { try await space.sessions.transcript(id).items.contains { if case .assistant = $0 { true } else { false } } }
+        let id = try await space.sessions.createSession(group: .shared, title: "parked", kind: .task, createdBy: "owner", model: .init(provider: "offline", model: "small", effort: "none"))
+        let request = QueueInput.message(.init(id: UUID(), messageID: .init("request"), conversationID: .init("dm"), sender: Sender(id: "owner", timeZone: TimeZone(secondsFromGMT: 0)!), timestamp: Date(), kind: .request, requestID: .init("request"), content: .init(text: "work")))
+        _ = try await service.enqueue(item: request, to: id)
+        try await until("worker delegates the park deadline", timeout: .seconds(40)) { deadlines.withLock { $0.contains { $0 != nil } } }
+        #expect(deadlines.withLock { $0.compactMap { $0 }.count } == 1)
         let transcript = try await space.sessions.transcript(id)
-        #expect(transcript.items.contains { if case let .assistant(entry) = $0 { entry.content.contains(.text("Answered by the execution worker")) } else { false } })
-        #expect(requests.withLock { $0 } == 1)
-        #expect(metrics.withLock { $0.first?.session } == id)
-        #expect(metrics.withLock { $0.first?.outcome } == .ok)
-        try await runtime.service.interrupt(id)
-        #expect(try await space.sessions.record(id).hold == .interrupted)
-        try await runtime.service.resume(id)
-        #expect(try await space.sessions.record(id).hold == .normal)
-        let restarted = try await runtime.service.restart(id, executor: nil, note: nil)
-        #expect(restarted.generation == 1)
-        try await runtime.service.archive(id)
-        if case .archived = try await space.sessions.record(id).lifecycle {} else { Issue.record("remote archive did not persist") }
-        try await runtime.service.unarchive(id)
-        #expect(try await space.sessions.record(id).lifecycle == .live)
+        let parks = transcript.items.compactMap { item -> SystemNotification? in
+          guard case let .notification(notice) = item, notice.kind == .parkReminder else { return nil }
+          return notice
+        }
+        let due = try #require(deadlines.withLock { $0.compactMap { $0 }.first })
+        let remindedAt = try #require(parks.last).timestamp
+        #expect(abs(due.timeIntervalSince(remindedAt) - 60) < 0.1)
+        await worker.discard(id)
+        #expect(deadlines.withLock { $0.compactMap { $0 }.count } == 1)
         result = .success(())
       } catch { result = .failure(error) }
-      await runtime.service.shutdown()
+      await service.shutdown()
       await provider.shutdown()
       try result.get()
     }
@@ -137,7 +191,7 @@ data: {}
         let attempt = starts.withLock { $0 += 1; return $0 }
         if fault == .replacementAdmission, attempt == 2 { throw WorkerProtocolError(.unavailable, message: "one replacement admission failure") }
         if attempt > 1, fault == .cleanupOnce { #expect(cleanupWrites.withLock { $0 } == 2) }
-        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: { _, _, _ in throw CancellationError() }, activity: activity, exited: exited)
+        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: { _, _, _ in throw CancellationError() }, runtime: workerRuntimeFixture(space: space), activity: activity, exited: exited)
       })
       let service = SessionService(sessions: space.sessions, execution: worker, archiveGrace: .seconds(60))
       #expect(await worker.processID == nil)
@@ -217,7 +271,7 @@ data: {}
       let space = try Space.inMemory()
       try await models(space, port: #require(provider.localAddress?.port))
       let owner = InProcessExecutionOwnerClient(space: space, credentials: CredentialResolver { _ in .apiKey("fixture-credential") })
-      let worker = LazyExecutionWorker(executable: try binary(), sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw CancellationError() })
+      let worker = LazyExecutionWorker(executable: try binary(), sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw CancellationError() }, runtime: workerRuntimeFixture(space: space))
       let service = SessionService(sessions: space.sessions, execution: worker, archiveGrace: .seconds(60))
       let result: Result<Void, any Error>
       do {
@@ -257,7 +311,7 @@ data: {}
       let space = try Space.inMemory()
       try await models(space, port: #require(provider.localAddress?.port))
       let owner = InProcessExecutionOwnerClient(space: space, credentials: CredentialResolver { _ in .apiKey("fixture-credential") })
-      let worker = LazyExecutionWorker(executable: try binary(), sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw WorkerProtocolError(.invalidMessage, message: "Unused test spawn") })
+      let worker = LazyExecutionWorker(executable: try binary(), sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw WorkerProtocolError(.invalidMessage, message: "Unused test spawn") }, runtime: workerRuntimeFixture(space: space))
       let service = SessionService(sessions: space.sessions, execution: worker, archiveGrace: .seconds(60))
       let result: Result<Void, any Error>
       do {
@@ -284,4 +338,10 @@ data: {}
       try result.get()
     }
   }
+}
+
+private func workerRuntimeFixture(space: Space, attempts: AttemptHub = .init(), scheduleReminder: @escaping @Sendable (SessionID, Date?) async throws -> Void = { _, _ in }) -> WorkerRuntimeOwner {
+  .init(attempts: attempts, usage: { [:] }, receiveUsage: { _, _ in }, allowsWarming: { _ in false }, scheduleReminder: scheduleReminder, scheduleWarming: { session, interval in
+    try await space.sessions.scheduleCacheWarming(session, intervalSeconds: interval)
+  })
 }

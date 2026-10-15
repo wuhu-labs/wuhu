@@ -5,6 +5,7 @@
 #endif
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ChannelPayload
+import enum OperationProtocol.KindAvailability
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.Verdict
@@ -32,6 +33,23 @@ public struct AnyOperationKind: Sendable {
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(result))
       }
     }
+  }
+}
+
+/// The machine's current gate per kind. A linked kind it doesn't name is available; a name it marks unavailable needn't be linked, so a known-but-absent kind (exec on a sandboxed build) is refused with its reason instead of unknownKind. The owner yields on `changes` after every gate change; the agent then re-reads `current` and stops each running operation whose kind is no longer available.
+public struct KindAvailabilityProvider: Sendable {
+  let current: @Sendable () async -> [String: KindAvailability]
+  let changes: AsyncStream<Void>?
+  public init(_ current: @escaping @Sendable () async -> [String: KindAvailability], changes: AsyncStream<Void>? = nil) { self.current = current; self.changes = changes }
+
+  public func describe(linked: some Sequence<String>) async -> [String: KindAvailability] {
+    var described = Dictionary(uniqueKeysWithValues: linked.map { ($0, KindAvailability.available) })
+    for (name, state) in await current() where state != .available || described[name] != nil { described[name] = state }
+    return described
+  }
+
+  public func admit(_ kind: String) async throws {
+    if let refusal = await current()[kind]?.refusal(kind: kind) { throw refusal }
   }
 }
 

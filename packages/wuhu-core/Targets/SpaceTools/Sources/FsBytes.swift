@@ -1,4 +1,8 @@
-import struct Foundation.Data
+#if canImport(FoundationEssentials)
+  import struct FoundationEssentials.Data
+#else
+  import struct Foundation.Data
+#endif
 import SpaceContract
 import SpaceCore
 import struct SpaceFS.VersionToken
@@ -7,11 +11,13 @@ public struct FileBytes: Sendable {
   public let token: String
   public let rev: Int?
   public let data: Data
+  public init(token: String, rev: Int?, data: Data) { self.token = token; self.rev = rev; self.data = data }
 }
 
 public struct FileVersion: Sendable {
   public let token: String
   public let rev: Int?
+  public init(token: String, rev: Int?) { self.token = token; self.rev = rev }
 }
 
 public extension SpaceToolContext {

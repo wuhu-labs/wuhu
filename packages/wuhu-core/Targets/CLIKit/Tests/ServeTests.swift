@@ -11,6 +11,14 @@ struct ServeParsingTests {
     )))
   }
 
+  @Test func workerPlacementIsExplicitOptIn() throws {
+    guard case let .serve(defaults) = try Command.parse(["serve", "/tmp/store"]),
+          case let .serve(enabled) = try Command.parse(["serve", "/tmp/store", "--execution-worker"])
+    else { Issue.record("expected serve"); return }
+    #expect(!defaults.executionWorker)
+    #expect(enabled.executionWorker)
+  }
+
   @Test func parsesAIDisclosureFile() throws {
     guard case let .serve(config) = try Command.parse(["serve", "store", "--ai-disclosure", "/config/disclosure.json"]) else {
       Issue.record("expected serve command")
@@ -194,5 +202,16 @@ struct ServeRoutingTests {
     ["serve", "store", "--origin", "https://alex.test", "--content-host-pattern", "{group}--alex.test", "--cert", "cert", "--key", "key", "--group-certificate", "gc", "--group-private-key", "gk"],
   ]) func rejectsInvalidConfiguration(arguments: [String]) {
     #expect(throws: UsageError.self) { try Command.parse(arguments) }
+  }
+}
+
+@Test func telemetryEndpointIsOptInAndValidated() throws {
+  guard case let .serve(off) = try Command.parse(["serve", "store"]),
+        case let .serve(on) = try Command.parse(["serve", "store", "--otel-endpoint", "http://collector.example:4318"])
+  else { Issue.record("expected serve command"); return }
+  #expect(off.otelEndpoint == nil)
+  #expect(on.otelEndpoint == "http://collector.example:4318")
+  for endpoint in ["file:///tmp/spans", "http://user:password@collector", "http://collector?token=secret", "not-a-url"] {
+    #expect(throws: UsageError.self) { try Command.parse(["serve", "store", "--otel-endpoint", endpoint]) }
   }
 }

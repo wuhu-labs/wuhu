@@ -3,7 +3,6 @@ import type { MenuAction } from '@wuhu/ui'
 import { ModalDialog } from '~/components/modal-dialog'
 import { ModelControls } from '~/components/session-create'
 import { ShareActions } from '~/components/share-actions'
-import type { ProviderDescriptor } from '~/lib/contract.gen'
 import {
   canCompose,
   type SessionAction,
@@ -11,14 +10,14 @@ import {
   sessionCapability,
 } from '~/lib/session-capability'
 import {
+  type ModelCatalog,
   type ModelChoice,
-  selectableProviders,
   type Unmatched,
 } from '~/lib/session-create'
 import type { SessionRecord } from '~/lib/session-model'
 import { adoptSpec, restartInput } from '~/lib/session-restart'
 import { errorMessage } from '~/sdk/errors'
-import { fetchProviders } from '~/sdk/providers'
+import { fetchModelCatalog } from '~/sdk/providers'
 import {
   archiveSession,
   browserTimezone,
@@ -186,7 +185,7 @@ function RestartForm(
 ) {
   const [adopted, setAdopted] = useState<
     {
-      providers: ProviderDescriptor[]
+      catalog: ModelCatalog
       choice: ModelChoice
       unmatched: Unmatched
     } | null
@@ -195,13 +194,21 @@ function RestartForm(
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const liveGroup = record.route?.group ?? null
   useEffect(() => {
     let cancelled = false
-    fetchProviders().then(
-      (found) => {
+    fetchModelCatalog().then(
+      (catalog) => {
         if (cancelled) return
-        const providers = selectableProviders(found)
-        setAdopted({ providers, ...adoptSpec(providers, record.spec) })
+        setAdopted({
+          catalog,
+          ...adoptSpec(
+            catalog.providers,
+            record.spec,
+            catalog.groups,
+            liveGroup,
+          ),
+        })
       },
       (failure: unknown) => {
         if (!cancelled) setError(errorMessage(failure))
@@ -213,7 +220,13 @@ function RestartForm(
   }, [])
 
   const input = adopted &&
-    restartInput(adopted.choice, record.spec, message, browserTimezone())
+    restartInput(
+      adopted.choice,
+      record.spec,
+      message,
+      browserTimezone(),
+      liveGroup,
+    )
   const run = () => {
     if (input == null) return
     setBusy(true)
@@ -236,7 +249,8 @@ function RestartForm(
       )}
       {adopted != null && (
         <ModelControls
-          providers={adopted.providers}
+          providers={adopted.catalog.providers}
+          groups={adopted.catalog.groups}
           draft={adopted.choice}
           unmatched={adopted.unmatched}
           onChange={(choice) =>
@@ -246,6 +260,11 @@ function RestartForm(
               unmatched: { model: null, effort: null },
             })}
         />
+      )}
+      {adopted?.unmatched.group != null && (
+        <p className='wuhu-alert'>
+          {adopted.unmatched.group} is no longer offered; pick a model.
+        </p>
       )}
       {adopted?.unmatched.model != null && (
         <p className='wuhu-alert'>

@@ -10,6 +10,7 @@ public enum ErrorCode: String, Codable, Equatable, Sendable {
   case unauthorized
   case unsupported
   case unavailable
+  case unknownKind
   case `internal`
   case providerNotConfigured = "provider_not_configured"
   case providerAuth = "provider_auth"

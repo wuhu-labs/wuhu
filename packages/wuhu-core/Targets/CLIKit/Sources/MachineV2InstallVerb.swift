@@ -14,6 +14,10 @@ enum MachineV2InstallCommand: Equatable {
   case rollback(machine: String)
   case uninstall(machine: String)
 
+  var verb: String {
+    switch self { case .install: "install"; case .rollback: "rollback"; case .uninstall: "uninstall" }
+  }
+
   var machine: String {
     switch self {
     case let .install(machine, _), let .rollback(machine), let .uninstall(machine): machine
@@ -31,7 +35,10 @@ extension CommandRunner {
     #else
       let platform = MachineV2Installer.Platform.linux
     #endif
-    let installer = MachineV2Installer(home: home, machine: action.machine, platform: platform, userID: getuid(), command: command)
+    let environment = self.environment
+    let installer = MachineV2Installer(home: home, machine: action.machine, platform: platform, userID: getuid(), command: { arguments in
+      try await command(machineV2ServiceArguments(arguments, platform: platform, environment: environment, userID: getuid()))
+    })
     switch action {
     case let .install(_, binary):
       let enrollment = try MachineV2Home.locate(environment: self.environment, machine: action.machine)
@@ -47,4 +54,21 @@ extension CommandRunner {
     }
     await self.stdout("machine-v2 \(action.machine): service updated\n")
   }
+}
+
+func machineV2ServiceArguments(_ arguments: [String], platform: MachineV2Installer.Platform, environment: [String: String], userID: UInt32) -> [String] {
+  guard platform == .linux else { return arguments }
+  let configured = environment["XDG_RUNTIME_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+  return ["/usr/bin/env", "XDG_RUNTIME_DIR=\(configured ?? "/run/user/\(userID)")"] + arguments
+}
+
+func machineV2SessionRefusal(_ verb: String) -> String {
+  let usage: String
+  switch verb {
+  case "install", "upgrade": usage = "\(verb) <id> --binary <signed-wuhu>"
+  case "join": usage = "join <https-origin> [fingerprint] [--name <name-v2>] < v2-token"
+  case "preflight": usage = "preflight <id> <private-result-path>"
+  default: usage = "\(verb) <id>"
+  }
+  return "machine-v2 \(verb) is a person action, not a session action; run explicitly as the wallet owner: WUHU_IDENTITY=wallet wuhu machine-v2 \(usage)"
 }

@@ -12,6 +12,13 @@ dependencies:
   - SpaceCore
   - SpaceContract
   - SessionTools
+  - MachineContract
+  - MachineChannel
+  - OperationProtocol
+  - SpaceTools
+  - SpaceFS
+  - OrderedCollections
+  - HTTPTypes
   - InferenceKit
   - Credentials
   - Fetch
@@ -20,6 +27,7 @@ dependencies:
   - Logging
 tests:
   dependencies:
+    - SessionToolsTestSupport
     - Scratch
     - ExecutionOwner
     - WorkerProtocol
@@ -28,6 +36,13 @@ tests:
     - SpaceCore
     - SpaceContract
     - SessionTools
+    - MachineContract
+    - MachineChannel
+    - OperationProtocol
+    - SpaceTools
+    - SpaceFS
+    - OrderedCollections
+    - HTTPTypes
     - InferenceKit
     - Credentials
     - Fetch

@@ -14,15 +14,20 @@ import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
 import struct SessionDomain.ToolCallID
 import enum SessionDomain.TranscriptItem
+import protocol SessionTools.HandlerExecutionClient
+import struct SessionTools.ScriptHandlerInvocation
+import struct SessionTools.ScriptHandlerResult
 import struct SessionTools.Spawned
 import struct SessionTools.SpawnOrder
 import struct SpaceCore.SessionRestart
 import struct SpaceCore.SessionStore
 import struct WorkerOwner.ExecutionWorkerActivity
+import struct WorkerOwner.RemoteHandlerExecution
 import struct WorkerOwner.RemoteSessionExecution
+import struct WorkerOwner.WorkerRuntimeOwner
 import struct WorkerProtocol.WorkerProtocolError
 
-actor LazyExecutionWorker: SessionExecutionClient {
+actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   typealias Starter = @Sendable (@escaping @Sendable (ExecutionWorkerActivity) async throws -> Void, @escaping @Sendable () async -> Void) async throws -> WorkerConnection
   private let startConnection: Starter
   private let owner: any ExecutionOwnerClient
@@ -40,11 +45,16 @@ actor LazyExecutionWorker: SessionExecutionClient {
   var processID: Int32? { connection?.processID }
   var activeSessions: Set<SessionID> { Set(activePasses.keys) }
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, startConnection: Starter? = nil) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil) {
     self.sessions = sessions; self.owner = owner
     self.startConnection = startConnection ?? { activity, exited in
-      try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, activity: activity, exited: exited)
+      try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtime, machines: machines, activity: activity, exited: exited)
     }
+  }
+
+  func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
+    let connection = try await connect()
+    return try await RemoteHandlerExecution(client: connection.client).executeHandler(invocation)
   }
 
   private func remote() async throws -> RemoteSessionExecution {

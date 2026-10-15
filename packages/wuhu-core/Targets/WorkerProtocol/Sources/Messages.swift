@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -50,8 +51,9 @@ public struct WorkerCall: Codable, Equatable, Sendable {
   public let id: UUID
   public let operation: String
   public let payload: JSONValue
-  public init(abi: Int = 1, id: UUID = UUID(), operation: String, payload: JSONValue = .null) {
-    self.abi = abi; self.id = id; self.operation = operation; self.payload = payload
+  public let traceContext: TraceContext?
+  public init(abi: Int = 1, id: UUID = UUID(), operation: String, payload: JSONValue = .null, traceContext: TraceContext? = ServerTracing.context) {
+    self.abi = abi; self.id = id; self.operation = operation; self.payload = payload; self.traceContext = traceContext
   }
 
   func validate() throws {

@@ -28,6 +28,7 @@ final class UsageBoard: Sendable {
   func record(_ provider: String, plan: String?, windows: [UsageWindow], at date: Date) {
     guard !windows.isEmpty else { return }
     entries.withLock { entries in
+      guard (entries[provider]?.usage.observedAt ?? -.infinity) <= date.timeIntervalSince1970 else { return }
       var merged = entries[provider]?.usage.windows ?? []
       for window in windows {
         if let held = merged.firstIndex(where: { $0.name == window.name }) {
@@ -42,6 +43,14 @@ final class UsageBoard: Sendable {
         observedAt: date.timeIntervalSince1970,
       )
       entries[provider] = Entry(usage: usage, attemptedAt: entries[provider]?.attemptedAt)
+    }
+  }
+
+  func snapshot() -> [String: ProviderUsage] { entries.withLock { $0.mapValues(\.usage) } }
+
+  func merge(_ snapshot: [String: ProviderUsage]) {
+    for (id, usage) in snapshot {
+      record(id, plan: usage.plan, windows: usage.windows, at: Date(timeIntervalSince1970: usage.observedAt))
     }
   }
 

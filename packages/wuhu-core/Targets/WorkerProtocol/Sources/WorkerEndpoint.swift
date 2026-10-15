@@ -1,3 +1,4 @@
+import ServerTelemetry
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -53,7 +54,7 @@ public actor WorkerEndpoint {
         try call.validate()
         guard call.abi == agreement.abi else { throw WorkerProtocolError(.incompatibleABI, message: "Call does not match negotiated ABI") }
         let reply: WorkerReply
-        do { reply = try await WorkerReply(id: call.id, result: invoke(call)) }
+        do { reply = try await ServerTracing.$context.withValue(call.traceContext) { try await WorkerReply(id: call.id, result: invoke(call)) } }
         catch is CancellationError { throw CancellationError() }
         catch { reply = WorkerReply(id: call.id, error: failure(error)) }
         try Task.checkCancellation()
@@ -74,13 +75,13 @@ public actor WorkerEndpoint {
         guard call.abi == agreement.abi else { throw WorkerProtocolError(.incompatibleABI, message: "Stream does not match negotiated ABI") }
         let body: Body
         if request.url.path == "/worker/upload" {
-          try await upload(call, request.body ?? .empty)
+          try await ServerTracing.$context.withValue(call.traceContext) { try await upload(call, request.body ?? .empty) }
           body = .empty
         } else {
           guard request.body == nil || request.body?.contentLength == 0 else {
             throw WorkerProtocolError(.invalidMessage, message: "Download requests cannot carry an upload body")
           }
-          body = try await download(call)
+          body = try await ServerTracing.$context.withValue(call.traceContext) { try await download(call) }
         }
         try Task.checkCancellation()
         var headers: Headers = [.init("Connection")!: "close", .init("X-Wuhu-Worker-ABI")!: "1", .init("X-Wuhu-Worker-Call")!: call.id.uuidString]

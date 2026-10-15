@@ -4,21 +4,98 @@
   import Foundation
 #endif
 import protocol ExecutionOwner.ExecutionOwnerClient
+import struct Fetch.Body
 import struct InferenceKit.AttemptTraceSink
 import enum JSONValue.JSONValue
+import protocol SessionTools.ToolOwnerClient
 import struct WorkerProtocol.WorkerCall
 import struct WorkerProtocol.WorkerProtocolError
 
 public struct ParentExecutionEndpoint: Sendable {
+  private let spawn: ParentSpawnEndpoint?
   private let owner: any ExecutionOwnerClient
+  private let runtime: ParentWorkerRuntime
   private let sessions: ParentSessionEndpoint
+  private let tools: ParentToolEndpoint?
+  private let scripts: ParentScriptEndpoint?
   private let traces = ParentTraces()
-  public init(owner: any ExecutionOwnerClient) {
+  private let machines = ParentMachines()
+  private let identity = ParentScriptIdentity()
+  private let streams = ParentScriptStreams()
+  private let operations = OwnerOperations()
+  public init(owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, spawn: ParentSpawnEndpoint? = nil) {
+    self.spawn = spawn
+    self.runtime = ParentWorkerRuntime(owner: runtime)
     self.owner = owner
+    scripts = (owner as? any ToolOwnerClient).map { .init(owner: $0) }
+    tools = (owner as? any ToolOwnerClient).map { .init(owner: $0) }
     sessions = .init(owner: owner)
   }
 
+  public func stream(_ call: WorkerCall) async throws -> Body? {
+    if call.operation == "machine.frames" {
+      let request = try ownerDecode(StreamRequest.self, call.payload)
+      return try await machines.stream(request.id)
+    }
+    if call.operation == "script.identity-body" {
+      let request = try ownerDecode(StreamRequest.self, call.payload)
+      return try await identity.body(request.id)
+    }
+    guard call.operation == "script.stream" else { return nil }
+    let request = try ownerDecode(StreamRequest.self, call.payload)
+    return try await streams.take(request.id)
+  }
+
+  public func upload(_ call: WorkerCall, body: Body) async throws -> Bool {
+    guard call.operation == "script.identity-upload" else { return false }
+    guard let scripts else { throw WorkerProtocolError(.invalidMessage, message: "Parent script owner is unavailable") }
+    _ = try await operations.run(call) {
+      try await identity.receive(call, body: body, owner: scripts.owner)
+      return .bool(true)
+    }
+    return true
+  }
+
+  public func shutdown() async { await operations.stop(); await machines.stop(); await streams.stop(); await identity.stop(); await traces.stop(); await runtime.stop() }
+
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
+    if call.operation == "owner.cancel" {
+      let request = try ownerDecode(StreamRequest.self, call.payload)
+      await operations.cancel(request.id)
+      await streams.cancel(request.id)
+      await identity.cancel(request.id)
+      await machines.cancel(request.id)
+      return .bool(true)
+    }
+    return try await operations.run(call) { try await perform(call) }
+  }
+
+  private func perform(_ call: WorkerCall) async throws -> JSONValue {
+    if call.operation.hasPrefix("runtime.") {
+      return try await runtime.invoke(call)
+    }
+    if call.operation.hasPrefix("machine.") {
+      guard let scripts else { throw WorkerProtocolError(.invalidMessage, message: "Parent script owner is unavailable") }
+      return try await machines.invoke(call, owner: scripts.owner)
+    }
+    if call.operation.hasPrefix("script.") {
+      guard let scripts else { throw WorkerProtocolError(.invalidMessage, message: "Parent script owner is unavailable") }
+      if call.operation == "script.identity-response" {
+        return try await ownerReply {
+          let request = try ownerDecode(StreamRequest.self, call.payload)
+          return try ownerEncode(await identity.metadata(request.id))
+        }
+      }
+      if call.operation == "script.observe-open" || call.operation == "script.watch-open" {
+        return try await ownerReply { try ownerEncode(await streams.open(call, owner: scripts.owner)) }
+      }
+      return try await scripts.invoke(call)
+    }
+    if call.operation == "tool.spawn", tools == nil, let spawn { return try await spawn.invoke(call) }
+    if call.operation.hasPrefix("tool.") {
+      guard let tools else { throw WorkerProtocolError(.invalidMessage, message: "Parent tool owner is unavailable") }
+      return try await tools.invoke(call)
+    }
     if call.operation.hasPrefix("session.") { return try await sessions.invoke(call) }
     return try await ownerReply {
       switch call.operation {
@@ -85,4 +162,5 @@ private actor ParentTraces {
   }
 
   func close(_ id: UUID) { sinks[id] = nil }
+  func stop() { sinks.removeAll() }
 }

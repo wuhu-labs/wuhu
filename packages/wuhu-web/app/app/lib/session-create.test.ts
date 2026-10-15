@@ -4,13 +4,22 @@ import {
   defaultEffortOf,
   defaultModelOf,
   draftReady,
+  effortsOf,
   emptyDraft,
+  groupMembersLine,
+  initialChoice,
   modelOf,
+  pickGroup,
   selectableProviders,
   sessionCreateInput,
   type SessionDraft,
+  templateUnmatched,
 } from './session-create.ts'
-import type { ProviderDescriptor, ProviderModel } from './contract.gen.ts'
+import type {
+  ModelGroupDescriptor,
+  ProviderDescriptor,
+  ProviderModel,
+} from './contract.gen.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
   const a = JSON.stringify(actual)
@@ -187,4 +196,112 @@ Deno.test('a person is offered no task templates', () => {
     ]).map((t) => t.name),
     ['lead', 'plain'],
   )
+})
+
+const fleet: ModelGroupDescriptor = {
+  id: 'fleet',
+  members: [
+    { id: 'primary', provider: 'claude', model: 'claude-opus-5-5' },
+    { id: 'spare', provider: 'anthropic', model: 'claude-sonnet-5' },
+  ],
+  defaultEffort: 'high',
+  effortLevels: ['medium', 'high'],
+  policy: null,
+}
+
+Deno.test('a picked group stands in for provider and model', () => {
+  const picked = pickGroup(
+    draft({ title: 'night', provider: 'anthropic', model: sonnet }),
+    fleet,
+  )
+  assertEquals(picked.provider, '')
+  assertEquals(picked.model, null)
+  assertEquals(picked.effort, 'high')
+  assertEquals(effortsOf(picked), ['medium', 'high'])
+  assertEquals(draftReady(picked), true)
+  assertEquals(sessionCreateInput(picked), {
+    input: {
+      title: 'night',
+      kind: 'agent',
+      modelGroup: 'fleet',
+      effort: 'high',
+    },
+  })
+})
+
+Deno.test('a group keeps an effort it offers and drops one it does not', () => {
+  assertEquals(pickGroup(draft({}), fleet, 'medium').effort, 'medium')
+  assertEquals(pickGroup(draft({}), fleet, 'max').effort, null)
+})
+
+Deno.test('a template naming a group opens on that group', () => {
+  const applied = applyTemplate(
+    draft({ title: 'x' }),
+    {
+      name: 'night-shift',
+      kind: 'agent',
+      modelGroup: 'fleet',
+      effort: 'medium',
+    },
+    [anthropic, claude],
+    [fleet],
+  )
+  assertEquals(applied.template, 'night-shift')
+  assertEquals(applied.group?.id, 'fleet')
+  assertEquals(applied.effort, 'medium')
+  const back = applyTemplate(
+    applied,
+    { name: 'plain', kind: 'agent', provider: 'anthropic' },
+    [anthropic, claude],
+    [fleet],
+  )
+  assertEquals(back.group, null)
+  assertEquals(back.provider, 'anthropic')
+})
+
+Deno.test('a catalog of only groups opens on its first group', () => {
+  assertEquals(
+    initialChoice({ providers: [], groups: [fleet] }).group?.id,
+    'fleet',
+  )
+  assertEquals(
+    initialChoice({ providers: [claude], groups: [fleet] }),
+    { provider: 'claude', model: opus, effort: 'high' },
+  )
+})
+
+Deno.test('a group names its members rather than pooling them', () => {
+  assertEquals(
+    groupMembersLine(fleet),
+    'Runs on one member at a time: primary (claude/claude-opus-5-5), spare (anthropic/claude-sonnet-5).',
+  )
+})
+
+Deno.test('a template naming a group no longer offered stays unpicked until a model is picked', () => {
+  const missing = {
+    name: 'night-shift',
+    kind: 'agent' as const,
+    modelGroup: 'retired',
+    effort: 'medium',
+  }
+  const applied = applyTemplate(
+    draft({ title: 'x' }),
+    missing,
+    [anthropic, claude],
+    [fleet],
+  )
+  assertEquals(applied.template, 'night-shift')
+  assertEquals(applied.group, null)
+  assertEquals(applied.provider, '')
+  assertEquals(draftReady(applied), false)
+  assertEquals(templateUnmatched(missing, [fleet]), {
+    model: null,
+    effort: null,
+    group: 'retired',
+  })
+  assertEquals(
+    templateUnmatched({ ...missing, modelGroup: 'fleet' }, [fleet]),
+    undefined,
+  )
+  assertEquals(draftReady(pickGroup(applied, fleet)), true)
 })

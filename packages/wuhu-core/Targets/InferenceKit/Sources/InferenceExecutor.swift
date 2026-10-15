@@ -34,6 +34,7 @@ public struct InferenceExecutor: Sendable {
   public var systemPrompt: String
   public var tools: [Tool]
   public var compactToolName: String
+  public var eventSink: AttemptEventSink?
   public var hub: AttemptHub?
   public var trace: AttemptTraceClient?
   public var metrics: InferenceMetricsSink
@@ -48,6 +49,7 @@ public struct InferenceExecutor: Sendable {
     tools: [Tool],
     compactToolName: String = "compact",
     hub: AttemptHub? = nil,
+    eventSink: AttemptEventSink? = nil,
     trace: AttemptTraceClient? = nil,
     metrics: InferenceMetricsSink = .noop,
     webSocket: ResponsesWebSocketSession? = nil,
@@ -59,6 +61,7 @@ public struct InferenceExecutor: Sendable {
     self.systemPrompt = systemPrompt
     self.tools = tools
     self.compactToolName = compactToolName
+    self.eventSink = eventSink
     self.hub = hub
     self.trace = trace
     self.metrics = metrics
@@ -116,7 +119,6 @@ public struct InferenceExecutor: Sendable {
     @Dependency(\.continuousClock) var continuousClock
     @Dependency(\.date) var dateGen
 
-    hub?.publish(session: session, .started(attemptID: attemptID))
     let timestamp = dateGen.now
     var completed: CompletedInference?
     var failure: InferenceError?
@@ -124,14 +126,14 @@ public struct InferenceExecutor: Sendable {
     var servedModel: String?
     var firstEventSeen = false
 
-    func handle(_ result: Result<InferenceEvent, InferenceError>) {
+    func handle(_ result: Result<InferenceEvent, InferenceError>) async throws {
       switch result {
       case let .success(event):
         if case let .usage(usage, reportedModel, _) = event {
           reportedUsage = usage
           servedModel = reportedModel
         }
-        hub?.publish(session: session, .delta(attemptID: attemptID, event: event))
+        try await publish(.delta(attemptID: attemptID, event: event))
         if case let .done(message, metadata) = event {
           completed = CompletedInference(message: message, metadata: metadata)
         }
@@ -140,41 +142,38 @@ public struct InferenceExecutor: Sendable {
       }
     }
 
-    var iterator = endpoint.runInference(context: context, options: options, mediaResolver: nil).makeAsyncIterator()
     let clock = AnyClock(continuousClock)
     let started = clock.now
-    let firstResult = await iterator.next()
-    let ttftDuration = started.duration(to: clock.now)
-    if let firstResult {
-      if case .success = firstResult { firstEventSeen = true }
-      handle(firstResult)
-    }
-    while failure == nil, let result = await iterator.next() {
-      handle(result)
-    }
+    var ttftDuration: Duration?
+    do {
+      try await publish(.started(attemptID: attemptID))
+      var iterator = endpoint.runInference(context: context, options: options, mediaResolver: nil).makeAsyncIterator()
+      let firstResult = await iterator.next()
+      ttftDuration = started.duration(to: clock.now)
+      if let firstResult {
+        if case .success = firstResult { firstEventSeen = true }
+        try await handle(firstResult)
+      }
+      while failure == nil, let result = await iterator.next() {
+        try await handle(result)
+      }
+    } catch { failure = InferenceError.normalize(error) }
     let elapsed = started.duration(to: clock.now)
     let ttft = firstEventSeen ? ttftDuration : nil
 
     await trace?.close(attemptID)
     if let failure {
-      hub?.publish(session: session, .finished(
-        attemptID: attemptID,
-        outcome: .failed(reason: String(describing: failure)),
-      ))
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
+      try await publish(.finished(attemptID: attemptID, outcome: .failed(reason: String(describing: failure))))
       throw failure
     }
     guard let completed else {
-      hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
+      try await publish(.finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
       throw InferenceCancelled()
     }
-    hub?.publish(session: session, .finished(
-      attemptID: attemptID,
-      outcome: .done(completed.message, completed.metadata),
-    ))
     logAttempt(
       attemptID: attemptID,
       mode: mode,
@@ -184,7 +183,13 @@ public struct InferenceExecutor: Sendable {
       elapsed: elapsed,
     )
     await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, servedModel: completed.metadata.servedModel, ttft: ttft, elapsed: elapsed))
+    try await publish(.finished(attemptID: attemptID, outcome: .done(completed.message, completed.metadata)))
     return completed
+  }
+
+  private func publish(_ event: AttemptEvent) async throws {
+    hub?.publish(session: session, event)
+    try await eventSink?.publish(session: session, event)
   }
 
   public func acknowledge(entry: AssistantEntry, transcript: Transcript, handles: [String: String] = [:], devices: [String: String] = [:]) async {

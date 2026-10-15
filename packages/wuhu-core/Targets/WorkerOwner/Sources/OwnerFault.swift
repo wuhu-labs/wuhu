@@ -1,13 +1,23 @@
 import enum Credentials.ChatGPTAuthError
 import enum LoopCore.SessionError
 import struct LoopCore.SessionExecutionRetired
+import enum MachineChannel.ChannelError
+import struct MachineContract.MachineError
+import struct OperationProtocol.OperationError
 import struct SessionDomain.ExecutorSpecError
 import struct SessionDomain.ExecutorUnavailableError
 import struct SessionDomain.SessionID
+import struct SessionTools.ScriptError
+import struct SessionTools.ScriptIdentityUnavailable
+import struct SessionTools.SessionControlRefusal
+import enum SpaceContract.ErrorCode
 import enum SpaceCore.PortableHandoffConflict
 import enum SpaceCore.SessionStoreError
+import enum SpaceCore.SpaceError
 import struct SpaceCore.StaleCompactClaim
 import struct SpaceCore.UnresolvedCompactClaim
+import enum SpaceTools.ToolRunError
+import enum SpaceTools.Wire
 import struct WorkerProtocol.WorkerProtocolError
 import enum WuhuAI.InferenceError
 
@@ -15,10 +25,29 @@ struct OwnerFault: Codable, Sendable {
   let kind: String
   let fields: [String]
   let inference: InferenceFailureSnapshot?
+  let tool: ToolFailureSnapshot?
+  let space: SpaceFailureSnapshot?
+  let operation: OperationError?
+  let machine: MachineError?
   init(_ error: any Error) {
+    operation = error as? OperationError
+    if case let .some(.remote(value)) = error as? ChannelError { machine = value } else { machine = nil }
+    space = (error as? SpaceError).map(SpaceFailureSnapshot.init)
+    if let error = error as? ToolRunError { tool = .init(error) }
+
+    else { tool = nil }
     inference = (error as? InferenceError).map(InferenceFailureSnapshot.init)
+    if operation != nil { kind = "machine.operation"; fields = []; return }
+    if space != nil { kind = "space.failure"; fields = []; return }
+    if tool != nil { kind = "tool.failure"; fields = []; return }
     if inference != nil { kind = "inference.failure"; fields = []; return }
     switch error {
+    case let error as ScriptError: kind = "script.failure"; fields = [error.description]
+    case ChannelError.severed: kind = "machine.severed"; fields = []
+    case let ChannelError.protocolViolation(message): kind = "machine.protocol"; fields = [message]
+    case ChannelError.remote: kind = "machine.remote"; fields = []
+    case let error as ScriptIdentityUnavailable: kind = "identity.unavailable"; fields = [error.message, error.code]
+    case let error as SessionControlRefusal: kind = "tool.control-refused"; fields = [error.message, error.reason == .busy ? "busy" : "other"]
     case let ChatGPTAuthError.loginRequired(detail): kind = "credential.loginRequired"; fields = [detail]
     case let SessionStoreError.unknownSession(value): kind = "store.unknownSession"; fields = [value]
     case let SessionStoreError.archiveGraceExpired(value): kind = "store.archiveGraceExpired"; fields = [value]
@@ -59,8 +88,17 @@ struct OwnerFault: Codable, Sendable {
   }
 
   func error() throws -> any Error {
+    if kind == "machine.operation", let operation { return operation }
+    if kind == "machine.remote", let machine { return ChannelError.remote(machine) }
+    if kind == "space.failure", let space { return try space.error() }
+    if kind == "tool.failure", let tool { return try tool.error() }
     if kind == "inference.failure", let inference { return try inference.error() }
     return switch (kind, fields.count) {
+    case ("script.failure", 1): ScriptError(fields[0])
+    case ("machine.severed", 0): ChannelError.severed
+    case ("machine.protocol", 1): ChannelError.protocolViolation(fields[0])
+    case ("identity.unavailable", 2): ScriptIdentityUnavailable(message: fields[0], code: fields[1])
+    case ("tool.control-refused", 2): SessionControlRefusal(fields[0], reason: fields[1] == "busy" ? .busy : .other)
     case ("credential.loginRequired", 1): ChatGPTAuthError.loginRequired(detail: fields[0])
     case ("store.unknownSession", 1): SessionStoreError.unknownSession(fields[0])
     case ("store.archiveGraceExpired", 1): SessionStoreError.archiveGraceExpired(fields[0])
@@ -100,4 +138,19 @@ struct OwnerFault: Codable, Sendable {
     default: throw WorkerProtocolError(.invalidMessage, message: "Invalid owner fault snapshot")
     }
   }
+}
+
+struct ToolFailureSnapshot: Codable, Sendable {
+  let code: ErrorCode
+  let message: String
+  let hint: String?
+  let token: String?
+  init(_ error: ToolRunError) {
+    switch error {
+    case let .undecodableInput(message): code = .invalidArgument; self.message = message; hint = nil; token = nil
+    case let .failed(code, message, hint, token): self.code = code; self.message = message; self.hint = hint; self.token = token
+    }
+  }
+
+  func error() throws -> ToolRunError { .failed(code: code, message: message, hint: hint, token: token) }
 }

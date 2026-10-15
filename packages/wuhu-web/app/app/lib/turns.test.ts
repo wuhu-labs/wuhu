@@ -142,3 +142,50 @@ Deno.test('a receipt source anchor survives its companion joining a folded decla
   assertEquals(joined.items.length, 3)
   assertEquals(summary.kind === 'summary' ? summary.tools : null, 1)
 })
+
+Deno.test('a model move reads as one notice line, never a message', () => {
+  const text =
+    'Model group fleet moved primary → backup (lastResort:quota). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed.'
+  const compaction =
+    'Model group fleet moved backup → primary (compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed.'
+  const projection = projectTurns([
+    fixtureEvent({
+      kind: 'input',
+      generation: 1,
+      position: 0,
+      part: 0,
+      text: 'go',
+    }),
+    fixtureEvent({
+      kind: 'notice',
+      generation: 1,
+      position: 1,
+      part: 0,
+      noticeKind: 'context',
+      text,
+    }),
+    fixtureEvent({
+      kind: 'notice',
+      generation: 2,
+      position: 0,
+      part: 0,
+      noticeKind: 'context',
+      text: compaction,
+    }),
+  ], false)
+  const notices = projection.items.filter((item) =>
+    item.content.kind === 'notice'
+  )
+  assertEquals(notices.map((item) => [item.label, item.subject]), [
+    [
+      'Model moved',
+      'fleet: primary → backup · after quota exhaustion · account-bound reasoning not carried',
+    ],
+    [
+      'Model moved',
+      'fleet: backup → primary · at compaction · account-bound reasoning not carried',
+    ],
+  ])
+  assertEquals(projection.rows.filter((row) => row.kind === 'input').length, 1)
+  assert(projection.items.every((item) => item.content.kind !== 'text'))
+})

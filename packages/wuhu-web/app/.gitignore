@@ -10,3 +10,4 @@
 /app/lib/contract.gen.ts
 /app/lib/space-url.vectors.json
 /app/lib/transcript-semantics.gen.json
+/app/lib/model-route-inspection.gen.json

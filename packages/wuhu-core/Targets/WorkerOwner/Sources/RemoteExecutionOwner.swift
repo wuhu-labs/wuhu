@@ -24,6 +24,7 @@ import struct SessionDomain.ToolCallID
 import struct SessionDomain.ToolResultItem
 import struct SessionDomain.Transcript
 import enum SessionDomain.TranscriptItem
+import protocol SessionTools.WorkerOwnerClient
 import struct SpaceContract.GroupID
 import struct SpaceCore.CompactRequestClaim
 import struct SpaceCore.QueueDrain
@@ -37,10 +38,14 @@ import struct WorkerProtocol.WorkerCall
 import class WorkerProtocol.WorkerClient
 import struct WorkerProtocol.WorkerProtocolError
 
-public struct RemoteExecutionOwner: ExecutionOwnerClient {
+public struct RemoteExecutionOwner: WorkerOwnerClient {
   public let tracesAttempts: Bool
+  let machinesEnabled: Bool
   let rpc: OwnerRPC
-  public init(client: WorkerClient, tracesAttempts: Bool) { rpc = OwnerRPC(client: client); self.tracesAttempts = tracesAttempts }
+  public init(client: WorkerClient, tracesAttempts: Bool, machines: Bool = false) {
+    rpc = OwnerRPC(client: client); self.tracesAttempts = tracesAttempts; machinesEnabled = machines
+  }
+
   public func record(_ id: SessionID) async throws -> SessionRecord {
     let result: RecordSnapshot = try await rpc.call("session.record", SessionIDRequest(id: id))
     return try result.record()

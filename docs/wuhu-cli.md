@@ -117,9 +117,11 @@ A handle is display only: it never logs in, never appears in auth, and the perso
 
 ## Machines, exec, secrets
 
+`machine add --group G` and `wuhu --group G machine add` register directly in G, needing an admin of it but not membership. Both flags select only the registration target, not the acting group. Without an explicit flag, registration uses your personal group; `WUHU_GROUP` and folder settings do not choose the target. The CLI verifies the server's echoed placement and fails with an upgrade/machine-move remedy if an older server ignores the request or echoes another group. The machine id and join token are still printed for recovery.
+
 | Verb | Purpose |
 | --- | --- |
-| `wuhu machine add [--name N]` | Mint a machine in the pinned space; prints id, one-time join token (once), and, when the server runs its generated certificate, that certificate's fingerprint. |
+| `wuhu machine add [--name N] [--group G]` | Mint a machine in the pinned space; prints id, one-time join token (once), and, when the server runs its generated certificate, that certificate's fingerprint. |
 | `wuhu machine join <server-url> [fingerprint] [--name N] < token` | Box side: record the fingerprint (if given) into user-level trust, enroll this box's own machine key by consuming the token (read from stdin, never argv), persist the agent config. The box claims `--name`, defaulting to its hostname, if the machine is still unnamed; the server suffixes it until free (`mini`, `mini-2`, …). A machine that already has a name keeps it — rename with `wuhu machine name`, never by rejoining. |
 | `wuhu machine run` | Box side: run the machine agent in the foreground (dial loop with signed challenge handshakes, stderr logs). |
 | `wuhu machine list` | List machines: `<name\|-> <id> <attached\|detached>`. |
@@ -247,6 +249,8 @@ no space pinned; run: wuhu use <host:port>
 ```
 
 The wallet intentionally never lives in `~/.wuhu`: that directory is user config — the server trust store (below), the device keys under `~/.wuhu/keys` (above), and the machine agent state under `~/.wuhu/machine` — never a `use` binding or identity. `WUHU_CONFIG_DIR` redirects the whole user-config directory (trust store and machine state alike); an empty `WUHU_CONFIG_DIR` or empty/unset `HOME` is a loud error, never a silent fallback.
+
+Device bearer assertions are cached owner-only in `.wuhu/assertions.json`. Equivalent HTTPS spellings (`space.example`, `space.example:443`, `https://space.example`) share one credential; legacy duplicates merge to the freshest valid assertion for the enrolled space. Different ports and HTTP remain separate. Cache writers serialize through an owner-only `.wuhu/.assertions.lock` so simultaneous commands preserve each other's server credentials. The JSON format is unchanged; when rolling back to an older CLI, use the canonical `host:port` wallet pin to reuse the migrated entry (older CLIs cannot look up removed aliases). Local expiry normally re-mints automatically. If the server explicitly rejects an assertion as expired, the command fails without replay, names that server, and tells you to re-authenticate there with `wuhu login < invite-link` (obtain a new link with `wuhu share-login` on an enrolled device).
 
 Wallet files:
 

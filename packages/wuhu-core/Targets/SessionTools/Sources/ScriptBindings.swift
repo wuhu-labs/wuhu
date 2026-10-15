@@ -19,10 +19,10 @@ import Synchronization
 // the query tool's one result must fit in what is left.
 let scriptBufferBytes = 64 << 20
 
-struct ScriptError: Error, CustomStringConvertible {
-  var description: String
+public struct ScriptError: Error, CustomStringConvertible, Sendable {
+  public var description: String
 
-  init(_ description: String) {
+  public init(_ description: String) {
     self.description = description
   }
 }

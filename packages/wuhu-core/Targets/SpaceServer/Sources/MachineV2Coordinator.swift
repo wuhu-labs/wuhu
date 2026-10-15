@@ -9,7 +9,6 @@ import class OperationClient.OperationClient
 import struct OperationClient.OperationOwner
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
-import struct SessionTools.ScriptMachineV2Client
 import struct SpaceContract.GroupID
 import class SpaceCore.Space
 
@@ -43,10 +42,6 @@ actor MachineV2Coordinator {
   ) {
     self.space = space; self.key = key; self.problemsGroup = problemsGroup; self.origin = origin
     self.clock = clock; self.fetch = fetch; self.abort = abort
-  }
-
-  func scriptClient(group: GroupID) async throws -> ScriptMachineV2Client {
-    try await ScriptMachineV2Client(client: client(group: group))
   }
 
   func credentialIssued(group: GroupID, owner: OperationOwner) async throws -> Bool {

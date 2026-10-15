@@ -38,7 +38,9 @@ actor SessionActor {
     var queueTail: Int
     var sessionStatus: RunStatus
     var lastUpdatedByLoopAt: Date?
+    let group: String
     let isTask: Bool
+    var delegatedWake = false
     var parkWake: (at: Date, task: Task<Void, Never>)?
     var archiving = false
     var claimingCompactRequest = false
@@ -436,6 +438,7 @@ extension SessionActor.LiveState {
       queueTail: hydration.queueTail,
       sessionStatus: status,
       lastUpdatedByLoopAt: now,
+      group: hydration.record.group.rawValue,
       isTask: hydration.record.kind == .task,
     )
   }

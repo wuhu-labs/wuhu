@@ -153,6 +153,29 @@ private func run(
 }
 
 @Suite struct ExecutorTests {
+  @Test(arguments: [true, false])
+  func publicationFailureStillClosesTracePublishesTerminalAndRecordsMetric(failAtStart: Bool) async throws {
+    let hub = AttemptHub()
+    let metric = MetricBox()
+    let closed = Mutex<[UUID]>([])
+    let events = Mutex<[String]>([])
+    var executor = try await makeExecutor(hub: hub, trace: .init(open: { _ in .init(append: { _ in }) }, close: { id in closed.withLock { $0.append(id) } }), metrics: .init { metric.set($0) })
+    executor.eventSink = .init { _, event in
+      switch event {
+      case .started:
+        events.withLock { $0.append("start") }
+        if failAtStart { throw InferenceError.invalidInput(status: 503, body: "publication refused") }
+      case .delta: throw InferenceError.invalidInput(status: 503, body: "publication refused")
+      case .finished: events.withLock { $0.append("finish") }
+      }
+    }
+    await #expect(throws: (any Error).self) { _ = try await run(executor, sse: textSSE, mode: .normal) }
+    #expect(events.withLock { $0 } == ["start", "finish"])
+    #expect(closed.withLock { $0 } == [UUID(2)])
+    #expect(metric.metric != nil)
+    #expect(hub.inFlight(session: SessionID("test-session-one")).isEmpty)
+  }
+
   @Test func malformedModelMessageMetricKeepsTypedKind() {
     let classified = InferenceMetric.classify(.malformedModelMessage(message: "bad tool_use", reason: "invalid_tool_use_name"))
     #expect(classified.outcome == .httpError)

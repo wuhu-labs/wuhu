@@ -10,6 +10,7 @@ import JSONValue
 import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
+import struct OperationProtocol.OperationError
 import SessionDomain
 import SpaceCore
 import SpaceTools
@@ -105,8 +106,9 @@ public struct ToolExecutor: Sendable {
       default: return try await owner.execute(session: session, call: call, state: state)
       }
     } catch let error as CapabilityError { return .failure(.init(message: error.description)) }
+    catch let error as OperationError { return .failure(.init(message: error.message.isEmpty ? error.code.rawValue : error.message, code: error.code.rawValue)) }
     catch let error as ToolProblem { return .failure(.init(message: error.message, code: error.code)) }
-    catch let error as ToolRunError { return .failure(.init(message: renderedFailure(error))) }
+    catch let error as ToolRunError { return .failure(.init(message: renderedFailure(error), code: error.payload.object?["code"]?.stringValue)) }
     catch let error as SpaceError { return .failure(.init(message: renderedFailure(Wire.failure(error)))) }
     catch is CancellationError { throw CancellationError() }
   }
