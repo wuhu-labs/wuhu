@@ -32,6 +32,7 @@ struct ExecutionWorkerBootFence {
   enum Read: Sendable {
     case missing, missingManifest, corrupt, foreignVersion, foreignSpace, unsafeStorage
     case manifest(ExecutionWorkerManifest)
+    case cleanup(ExecutionWorkerManifest.Credentials?)
   }
 
   enum Process: Sendable {
@@ -47,7 +48,7 @@ struct ExecutionWorkerBootFence {
     case missing, missingManifest, corrupt, foreignVersion, foreignSpace, unsafeStorage
     case absent, differentBirth, unverified, terminated, acknowledgedWithoutPIDHandle, unconfirmed
     case staleCredentialTerminated, unsafeProcessIdentity, pidHandleUnavailable, didNotExit
-    case cleanupFailed
+    case cleanupFailed, cleanupResumed
   }
 
   struct Effects: Sendable {
@@ -128,6 +129,11 @@ struct ExecutionWorkerBootFence {
       case .foreignVersion: uninspected(directory, reason: .foreignVersion); continue
       case .foreignSpace: uninspected(directory, reason: .foreignSpace); continue
       case .unsafeStorage: uninspected(directory, reason: .unsafeStorage); continue
+      case let .cleanup(savedCredentials):
+        if let savedCredentials { credentials.revoke(savedCredentials) }
+        do { try await effects.cleanup(directory); count(.cleanupResumed) }
+        catch { count(.cleanupFailed) }
+        continue
       case let .manifest(value): manifest = value
       }
       credentials.revoke(manifest.credentials)

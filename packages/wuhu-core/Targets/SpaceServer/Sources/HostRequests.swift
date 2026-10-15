@@ -61,7 +61,7 @@ actor HostRequests {
   }
 }
 
-private struct HostBodyChunks: AsyncSequence, Sendable {
+struct HostBodyChunks: AsyncSequence, Sendable {
   typealias Element = Bytes
   let chunks: AsyncThrowingStream<Bytes, any Error>
   let demand: AsyncStream<Void>.Continuation

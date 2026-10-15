@@ -64,6 +64,7 @@ struct SessionHarness {
   let handler: UpgradingHandler
   let credentials: CredentialResolver
   let toolStates = SessionTestToolStates()
+  let keyStreams = KeyStreams()
 
   init(
     models: Bool = true,
@@ -102,7 +103,7 @@ struct SessionHarness {
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil,
       credentials: credentials, secrets: secrets, execTokens: execTokens,
-      machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil,
+      machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)
   }

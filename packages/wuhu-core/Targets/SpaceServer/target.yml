@@ -69,6 +69,7 @@ tests:
     WUHU_EXECUTION_WORKER_BINARY: "$(rootpath //packages/wuhu-core:wuhu)"
   size: large
   dependencies:
+    - Subprocess
     - ServerTelemetry
     - Assertion
 

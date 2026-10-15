@@ -79,7 +79,7 @@ _Afterwards:_ a short decision recognizing that compaction is optional, with no 
 
 ## 13. machine-v2-parity
 
-_Text-only smoke:_ show normal grep tool arguments for `machines://box-v2/tmp/project`, regex `^item[0-9]+$`, and explain opaque step continuation in traversal order. Explain typed missing-kind and credential-expiry failures without a transport or identity fallback, and local `capacityExceeded`/`exchangeLimit` as saturation requiring backoff rather than machine-detachment inference. Also explain the installed macOS box agent versus Direct TCC-consent distinction: headless execs disclaim child responsibility where supported; Direct keeps prompts. EPERM is a permission refusal, not a reason to bypass privacy controls.
+_Text-only smoke:_ show normal grep tool arguments for `machines://box-v2/tmp/project`, regex `^item[0-9]+$`, and explain opaque step continuation in traversal order. Explain typed missing-kind and credential-expiry failures without a transport or identity fallback, and local `capacityExceeded`/`exchangeLimit` as saturation requiring backoff rather than machine-detachment inference. Distinguish recovery `offsetExpired`/`lostOutput`: missing bytes cannot be restored by polling or retry backoff, and known execution verdicts are retained rather than rewritten. Also explain the installed macOS box agent versus Direct TCC-consent distinction: headless execs disclaim child responsibility where supported; Direct keeps prompts. EPERM is a permission refusal, not a reason to bypass privacy controls.
 
 _Afterwards:_ deterministic checks require the normal tool path/regex, step continuation, explicit expiry and no files changed. The judge rejects the removed dedicated v2 script API, renewal and anonymous/wallet/v1 fallback.
 

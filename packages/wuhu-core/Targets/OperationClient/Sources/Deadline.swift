@@ -9,6 +9,8 @@ import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationTrace
 
+struct ExchangeSkipped: Error {}
+
 actor ExchangeLedger {
   struct Entry {
     let worker: Task<Void, Never>
@@ -23,13 +25,19 @@ actor ExchangeLedger {
   let abort: @Sendable (UUID) -> Void
   var entries: [UUID: Entry] = [:]
   let capacity: Int
+  var probeWaitingUntil: Duration?
   let trace: @Sendable (OperationTrace) throws -> Void
   init(fetch: FetchClient, clock: OperationClock, capacity: Int, abort: @escaping @Sendable (UUID) -> Void, trace: @escaping @Sendable (OperationTrace) throws -> Void) {
     self.fetch = fetch; self.clock = clock; self.capacity = capacity; self.abort = abort; self.trace = trace
   }
 
-  func exchange(_ request: Request, id: UUID, timeout: Duration, limit: Int) async throws -> Data {
-    guard entries.count < capacity else {
+  func exchange(_ request: Request, id: UUID, timeout: Duration, limit: Int, opportunistic: Bool = false) async throws -> Data {
+    if let until = probeWaitingUntil, clock.now() >= until { probeWaitingUntil = nil }
+    if opportunistic {
+      guard entries.count < capacity else { probeWaitingUntil = clock.now() + .seconds(5); throw ExchangeSkipped() }
+      probeWaitingUntil = nil
+    }
+    guard entries.count < capacity - (!opportunistic && probeWaitingUntil != nil ? 1 : 0) else {
       try record(request, id: id, began: clock.now(), event: .failure, error: .capacityExceeded)
       throw OperationError(.capacityExceeded, message: "Exchange limit reached (\(capacity) outstanding requests)", details: ["reason": "exchangeLimit"])
     }

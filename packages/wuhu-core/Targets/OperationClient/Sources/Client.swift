@@ -80,6 +80,8 @@ public actor OperationClient {
     record: ClientRecord? = nil,
     poll: Bool = false,
     silenceBound: Bool = true,
+    opportunistic: Bool = false,
+    timeoutLimit: Duration? = nil,
     validate: (T) async throws -> T = { $0 },
   ) async throws -> T {
     let requestID = ids()
@@ -87,6 +89,7 @@ public actor OperationClient {
     req.headers["X-Wuhu-Request-ID"] = requestID.uuidString
     req.headers["X-Wuhu-Correlation-ID"] = (record?.correlation ?? requestID).uuidString
     var timeout = poll ? pollTimeout : requestTimeout
+    if let timeoutLimit { timeout = min(timeout, timeoutLimit) }
     if let record, let deadline = callerDeadline[record.id] { timeout = min(timeout, max(.zero, deadline - clock.now())) }
     if silenceBound, let record, record.snapshot?.verdict == nil, let seen = lastAnswer[record.id] {
       timeout = min(timeout, max(.zero, seen + .milliseconds(record.description.limits.leaseMs) - clock.now()))
@@ -94,7 +97,7 @@ public actor OperationClient {
     let began = clock.now()
     let deadline = began + timeout
     do {
-      let data = try await ledger.exchange(req, id: requestID, timeout: timeout, limit: record == nil ? 1024 * 1024 : OperationLimits.responseBytes)
+      let data = try await ledger.exchange(req, id: requestID, timeout: timeout, limit: record == nil ? 1024 * 1024 : OperationLimits.responseBytes, opportunistic: opportunistic)
       do {
         let value: T
         do { value = try JSONDecoder().decode(type, from: data) } catch { throw OperationError(.invalidResponse) }
@@ -117,8 +120,18 @@ public actor OperationClient {
   }
 
   public func describe(_ machine: String) async throws -> MachineDescription {
+    try await describe(machine, opportunistic: false)
+  }
+
+  /// Skips saturation without a failure trace; probe priority expires after five seconds without another skipped probe.
+  public func probe(_ machine: String) async throws -> MachineDescription? {
+    do { return try await describe(machine, opportunistic: true) }
+    catch is ExchangeSkipped { return nil }
+  }
+
+  private func describe(_ machine: String, opportunistic: Bool) async throws -> MachineDescription {
     do {
-      let d = try await request(MachineDescription.self, url: address(machine))
+      let d = try await request(MachineDescription.self, url: address(machine), opportunistic: opportunistic, timeoutLimit: opportunistic ? .seconds(1) : nil)
       guard d.version == 2 && d.limits.isValid,
             d.kinds.allSatisfy({ $0.schemaDialect == "https://json-schema.org/draft/2020-12/schema" }) else { throw OperationError(.unsupportedProtocol) }
       guard descriptions[machine] != nil || descriptions.count < 4096 else { throw OperationError(.capacityExceeded) }

@@ -34,8 +34,25 @@ actor ExecutionWorkerManifestStore {
     return Self(directory: directory, space: space, runtimeRoot: runtimeRoot, descriptor: descriptor, state: state)
   }
 
+  static func create(root: String, generation: UUID, space: String, runtimeRoot: String = ExecutionWorkerSocketLocation.runtimeRoot) async throws -> ExecutionWorkerManifestStore {
+    let parent = try openDirectory(root)
+    defer { _ = close(parent) }
+    let name = generation.uuidString
+    guard mkdirat(parent, name, 0o700) == 0 else { throw unsafeStorage() }
+    let descriptor = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { throw unsafeStorage() }
+    var state = stat()
+    guard fstat(descriptor, &state) == 0, state.st_uid == geteuid(), state.st_mode & 0o7777 == 0o700, fsync(parent) == 0 else {
+      _ = close(descriptor)
+      throw unsafeStorage()
+    }
+    let store = Self(directory: root + "/" + name, space: space, runtimeRoot: runtimeRoot, descriptor: descriptor, state: state)
+    try await store.verifyDirectory()
+    return store
+  }
+
   func load() async throws -> ExecutionWorkerManifest? {
-    guard let data = try readManifest() else { return nil }
+    guard let data = try readRecord("manifest.json") else { return nil }
     let manifest: ExecutionWorkerManifest
     do { manifest = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: data) }
     catch { throw Self.unsafeStorage() }
@@ -46,7 +63,7 @@ actor ExecutionWorkerManifestStore {
   func inspectForBoot() -> ExecutionWorkerBootFence.Read {
     let data: Data
     do {
-      guard let bytes = try readManifest() else { return .missing }
+      guard let bytes = try readRecord("manifest.json") else { return .missing }
       data = bytes
     } catch { return .unsafeStorage }
     struct Header: Decodable { let version: Int }
@@ -80,9 +97,9 @@ actor ExecutionWorkerManifestStore {
     return false
   }
 
-  private func readManifest() throws -> Data? {
+  private func readRecord(_ name: String) throws -> Data? {
     try verifyDirectory()
-    let file = openat(descriptor, "manifest.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+    let file = openat(descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard file >= 0 else {
       if errno == ENOENT { return nil }
       throw Self.unsafeStorage()
@@ -104,9 +121,14 @@ actor ExecutionWorkerManifestStore {
 
   func save(_ manifest: ExecutionWorkerManifest) async throws {
     try manifest.validate(directory: directory, space: space, runtimeRoot: runtimeRoot)
+    guard try readRecord("cleanup.json") == nil else { throw Self.unsafeStorage() }
+    if manifest.sockets != nil { try Self.requireEntries(descriptor, allowed: ["manifest.json"]) }
+    try saveRecord(JSONEncoder().encode(manifest), name: "manifest.json")
+  }
+
+  private func saveRecord(_ bytes: Data, name: String) throws {
     try verifyDirectory()
-    try validateExistingFile()
-    let bytes = try JSONEncoder().encode(manifest)
+    try validateExistingFile(name: name)
     guard bytes.count <= Self.maximumBytes else { throw Self.unsafeStorage() }
     let temporary = ".manifest-" + UUID().uuidString
     let file = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0o600)
@@ -122,8 +144,37 @@ actor ExecutionWorkerManifestStore {
     _ = try Self.validateFile(file)
     guard fsync(file) == 0 else { throw Self.unsafeStorage() }
     try verifyDirectory()
-    try validateExistingFile()
-    guard renameat(descriptor, temporary, descriptor, "manifest.json") == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+    try validateExistingFile(name: name)
+    guard renameat(descriptor, temporary, descriptor, name) == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+  }
+
+  func loadCleanup() throws -> ExecutionWorkerCleanup? {
+    guard let bytes = try readRecord("cleanup.json") else { return nil }
+    guard let record = try? JSONDecoder().decode(ExecutionWorkerCleanup.self, from: bytes) else { throw Self.unsafeStorage() }
+    return record
+  }
+
+  func stageCleanup(_ record: ExecutionWorkerCleanup, manifest: ExecutionWorkerManifest?) async throws {
+    guard try await load() == manifest, try loadCleanup() == nil else { throw Self.unsafeStorage() }
+    try validateFencedRuntime(socketsInDirectory: false)
+    try saveRecord(JSONEncoder().encode(record), name: "cleanup.json")
+  }
+
+  func retireCleanupManifest(_ record: ExecutionWorkerCleanup) async throws {
+    guard try loadCleanup() == record else { throw Self.unsafeStorage() }
+    try Self.requireEntries(descriptor, allowed: ["manifest.json", "cleanup.json"])
+    if let manifest = try await load() {
+      guard manifest.space == record.space, manifest.generation == record.generation, manifest.sockets == record.location else { throw Self.unsafeStorage() }
+    }
+    try await remove()
+  }
+
+  func removeCleanup(_ record: ExecutionWorkerCleanup) throws {
+    guard try loadCleanup() == record else { throw Self.unsafeStorage() }
+    try Self.requireEntries(descriptor, allowed: ["cleanup.json"])
+    guard unlinkat(descriptor, "cleanup.json", 0) == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+    try verifyDirectory()
+    guard rmdir(directory) == 0 else { throw Self.unsafeStorage() }
   }
 
   func remove() async throws {
@@ -165,8 +216,8 @@ actor ExecutionWorkerManifestStore {
     guard fstat(current, &state) == 0, state.st_dev == device, state.st_ino == inode else { throw Self.unsafeStorage() }
   }
 
-  private func validateExistingFile() throws {
-    let file = openat(descriptor, "manifest.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+  private func validateExistingFile(name: String = "manifest.json") throws {
+    let file = openat(descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard file >= 0 else {
       if errno == ENOENT { return }
       throw Self.unsafeStorage()

@@ -90,6 +90,7 @@ public enum SpaceServer {
     identityController: IdentityController? = nil,
     machineV2Hub: MachineV2Hub? = nil,
     machineV2Releases: MachineV2Releases? = nil,
+    keyStreams: KeyStreams = KeyStreams(),
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
@@ -207,8 +208,8 @@ public enum SpaceServer {
         try await requestPrincipal(request, space: space, date: clock)
       }
     }
-    addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev)
-    addAccountRoutes(&router, space: space, dev: dev)
+    addAuthRoutes(&router, space: space, challenges: OneShotChallenges(prefix: "slc_"), fingerprint: fingerprint, dev: dev, keyStreams: keyStreams)
+    addAccountRoutes(&router, space: space, dev: dev, keyStreams: keyStreams)
     addDeviceRoutes(&router, space: space, dev: dev)
     addUserRoutes(&router, space: space, dev: dev)
     addProviderRoutes(&router, space: space, usage: sessions?.usage)
@@ -287,8 +288,8 @@ public enum SpaceServer {
         return try await routed(request)
       }
       switch try await bearerVerdict(request: request, space: space, now: dateGen.now) {
-      case .verified:
-        return try await routed(request)
+      case let .verified(credential):
+        return try await keyStreams.bind(routed(request), to: credential.key, space: space)
       case let .rejected(response):
         return .response(response)
       case .anonymous:

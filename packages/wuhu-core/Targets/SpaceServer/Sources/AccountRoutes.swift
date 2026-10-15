@@ -11,7 +11,7 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool) {
+func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStreams: KeyStreams) {
   @Dependency(\.date) var dateGen
 
   router.post("/v1/accounts") { request, _ in
@@ -71,6 +71,7 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool) {
       }
       do {
         let removed = try await space.removeAccount(id)
+        keyStreams.end(account: id)
         return try Response.json(AccountRemoveOutput(keys: removed.keys, readSessions: removed.readSessions))
       } catch SpaceError.lastAdmin {
         return lastAdminRefusal(id)

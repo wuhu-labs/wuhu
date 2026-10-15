@@ -42,7 +42,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   private var stopping: Task<Void, Never>?
   private let log = Logger(label: "wuhu.execution-directory")
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, credentialFence: ExecutionWorkerCredentialFence? = nil, startupExcludedIncarnations: Set<UUID> = [], startupExcludedSessions: Set<SessionID> = []) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, persistence: ExecutionWorkerPersistence? = nil, startConnection: Starter? = nil, credentialFence: ExecutionWorkerCredentialFence? = nil, startupExcludedIncarnations: Set<UUID> = [], startupExcludedSessions: Set<SessionID> = []) {
     self.startupExcludedSessions = startupExcludedSessions
     let scripts = WorkerScriptDirectory()
     self.scripts = scripts
@@ -65,7 +65,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
           await exited()
         }
         if let startConnection { return try await startConnection(incarnation, activity, lost) }
-        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, credentialFence: credentialFence, activity: activity, exited: lost)
+        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, persistence: persistence, incarnation: incarnation, credentialFence: credentialFence, activity: activity, exited: lost)
       }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations)
     }
     makeGeneration = make

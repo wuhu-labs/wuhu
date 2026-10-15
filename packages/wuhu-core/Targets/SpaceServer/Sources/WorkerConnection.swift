@@ -36,15 +36,22 @@ struct WorkerConnection: Sendable {
     spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned,
     runtime: WorkerRuntimeOwner? = nil,
     machines: Bool = false,
+    persistence: ExecutionWorkerPersistence? = nil,
+    incarnation: UUID = UUID(),
     credentialFence: ExecutionWorkerCredentialFence? = nil,
     activity: @escaping @Sendable (ExecutionWorkerActivity) async throws -> Void,
     exited: @escaping @Sendable () async -> Void,
   ) async throws -> Self {
-    let directory = "/tmp/wuhu-execution-" + UUID().uuidString
-    guard mkdir(directory, 0o700) == 0 else { throw WorkerProtocolError(.unavailable, message: "Cannot create private execution directory") }
+    let storage = try await persistence?.allocate(incarnation: incarnation)
+    let directory = storage?.location.directory ?? ("/tmp/wuhu-execution-" + UUID().uuidString)
+    if storage == nil {
+      guard mkdir(directory, 0o700) == 0 else { throw WorkerProtocolError(.unavailable, message: "Cannot create private execution directory") }
+    }
     let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled)
     let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: .init(spawn: spawn))
     let (ready, continuation) = AsyncStream<Int32>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let (admitted, admission) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    defer { admission.finish() }
     let hello = ExecutionWorkerBootstrap.hello(release: "parent")
     let emitSpan = ServerTracing.emitter
     let bytes = OwnerByteEndpoint(invoke: { call in
@@ -63,7 +70,8 @@ struct WorkerConnection: Sendable {
       if call.operation == "worker.ready" {
         guard let value = call.payload.intValue, let pid = Int32(exactly: value), pid > 0 else { throw WorkerProtocolError(.invalidMessage, message: "Invalid worker admission") }
         continuation.yield(pid)
-        return .bool(true)
+        for await accepted in admitted { return .bool(accepted) }
+        throw WorkerProtocolError(.unavailable, message: "Execution worker admission stopped")
       }
       return try await parent.invoke(call)
     }, upload: parent.upload, download: { call in
@@ -75,8 +83,18 @@ struct WorkerConnection: Sendable {
     let credentials = try WorkerCredentials(token: bootstrap.token, admission: { credentialFence?.admits($0) ?? true })
     let endpoint = bytes.endpoint(credentials: credentials, hello: hello)
     let transport: WorkerOwnerTransport
-    do { transport = try await WorkerOwnerTransport.bind(socket: bootstrap.parentSocket, handler: endpoint.handler) }
-    catch { _ = rmdir(directory); throw error }
+    do {
+      transport = try await WorkerOwnerTransport.bind(socket: bootstrap.parentSocket, handler: endpoint.handler)
+    } catch {
+      if let storage { try? await storage.cleanup() } else { _ = rmdir(directory) }
+      throw error
+    }
+    do { try await storage?.pinEndpoints() }
+    catch {
+      await transport.stop()
+      try? await storage?.cleanup()
+      throw error
+    }
     var configuration = HTTPClient.Configuration()
     configuration.redirectConfiguration = .disallow
     configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit = 4096
@@ -91,10 +109,22 @@ struct WorkerConnection: Sendable {
           var options = PlatformOptions()
           options.processGroupID = 0
           options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2))]
-          _ = try? await Subprocess.run(.path(.init(executable)), arguments: ["_execution-worker"], environment: .custom([:]), platformOptions: options, input: .array(Array(input)), output: .discarded, error: .discarded)
+          _ = try? await Subprocess.run(.path(.init(executable)), arguments: ["_execution-worker"], environment: .custom([:]), platformOptions: options, input: .inputWriter, output: .discarded, error: .discarded) { execution in
+            // The child cannot decode bootstrap or call the owner before its real OS identity is durable.
+            try await storage?.persist(processID: execution.processIdentifier.value, token: bootstrap.token)
+            try Task.checkCancellation()
+            var offset = 0
+            while offset < input.count {
+              let written = try await execution.standardInputWriter.write(Array(input.dropFirst(offset)))
+              guard written > 0 else { throw WorkerProtocolError(.unavailable, message: "Execution bootstrap input closed") }
+              offset += written
+            }
+            try await execution.standardInputWriter.finish()
+          }
           await client.close()
         }
         _ = await group.next()
+        admission.finish()
         group.cancelAll()
       }
       continuation.finish()
@@ -104,8 +134,11 @@ struct WorkerConnection: Sendable {
       await transport.stop()
       try? await control.shutdown()
       try? await byteClient.shutdown()
-      _ = unlink(bootstrap.workerSocket)
-      _ = rmdir(directory)
+      if let storage { try? await storage.cleanup() }
+      else {
+        _ = unlink(bootstrap.workerSocket)
+        _ = rmdir(directory)
+      }
       await exited()
     }
     do {
@@ -123,9 +156,12 @@ struct WorkerConnection: Sendable {
         }
         return try await group.next()!
       }
+      try await storage?.admit(processID: processID)
       _ = try await client.negotiate(hello)
+      admission.yield(true)
       return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport)
     } catch {
+      admission.finish()
       lifetime.cancel()
       await lifetime.value
       throw error

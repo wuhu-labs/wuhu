@@ -38,6 +38,7 @@ actor MachineV2Coordinator {
   private var detached: Set<String> = []
   private var leaveFailed: Set<String> = []
   private var probes: [String: Duration] = [:]
+  private var probing: Set<String> = []
   private var prepared = false
   private var running = false
   private var closed = false
@@ -103,6 +104,7 @@ actor MachineV2Coordinator {
       let store = try await space.machineV2Store(group: group, key: key, problemsGroup: problemsGroup)
       let records = try await space.machineV2Recovery(group: group, key: key)
       for operation in records {
+        if operation.record.unknown?.code == .offsetExpired { continue }
         if operation.record.snapshot?.verdict != nil, operation.record.snapshot?.outputConsumed == true { continue }
         if let caller = operation.record.start.caller, startupExcludedSessions.contains(SessionID(caller.session)) { continue }
         if operation.owner.scope == "exec/" + operation.owner.key,
@@ -200,6 +202,7 @@ actor MachineV2Coordinator {
     var members: [(GroupID, String)] = []
     for group in try await space.groups() where group.removedAt == nil {
       for machine in try await space.machineV2Members(group: group.id) {
+        if probing.contains(machine) { continue }
         if let last = probes[machine], clock.now() - last < .seconds(20) { continue }
         probes[machine] = clock.now()
         members.append((group.id, machine))
@@ -241,7 +244,14 @@ actor MachineV2Coordinator {
       let acknowledged = try await client.poll(id, terminalAck: true)
       if acknowledged.outputConsumed { recovery[group]?[machine]?.remove(id) }
     } catch let error as OperationError {
-      if error.code == .unknownOperation {
+      if error.code == .offsetExpired {
+        _ = try await store.transaction(id) {
+          $0.unknown = .init(.offsetExpired, message: "Operation output was lost during recovery", operation: id, details: ["reason": "lostOutput"])
+          $0.callerRemainingMs = nil
+          $0.pendingInputs = [:]
+        }
+        recovery[group]?[machine]?.remove(id)
+      } else if error.code == .unknownOperation {
         do {
           let current = try await store.read(id)
           if current.unknown?.details?.object?["reason"]?.stringValue != "leaseSilence" { recovery[group]?[machine]?.remove(id) }
@@ -253,11 +263,16 @@ actor MachineV2Coordinator {
   }
 
   private func probe(_ machine: String, group: GroupID) async throws {
+    guard probing.insert(machine).inserted else { return }
+    defer { probing.remove(machine) }
     let client = try await client(group: group, background: true)
     let now = clock.now()
     if presence[machine] == nil { presence[machine] = now; leases[machine] = .seconds(60) }
     do {
-      let description = try await client.describe(machine)
+      guard let description = try await client.probe(machine) else {
+        probes.removeValue(forKey: machine)
+        return
+      }
       if detached.contains(machine), !description.acceptingStarts { return }
       if leaveFailed.contains(machine), !description.acceptingStarts {
         try await space.recordMachineV2Presence(machine, group: group, state: .lost, reason: "leaveHandshakeFailed")

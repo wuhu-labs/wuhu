@@ -155,6 +155,7 @@ extension SessionRuntime {
     executionPlacement: ExecutionPlacement = .inProcess,
     credentialFence: ExecutionWorkerCredentialFence? = nil,
     startupFence: ExecutionWorkerBootFence.Result? = nil,
+    workerPersistence: ExecutionWorkerPersistence? = nil,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
@@ -220,7 +221,7 @@ extension SessionRuntime {
       }, scheduleWarming: { session, interval in
         try await space.sessions.scheduleCacheWarming(session, intervalSeconds: interval)
       })
-      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true, credentialFence: credentialFence, startupExcludedIncarnations: startupFence?.unresolved ?? [], startupExcludedSessions: blocked)
+      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true, persistence: workerPersistence, credentialFence: credentialFence, startupExcludedIncarnations: startupFence?.unresolved ?? [], startupExcludedSessions: blocked)
       let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: .seconds(24 * 3600), deferredSessions: blocked)
       serviceSlot.bind(service)
       return SessionRuntime(

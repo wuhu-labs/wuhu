@@ -431,6 +431,88 @@ extension ClientReviewRegressionTests {
     }
   }
 
+  @Test func skippedPresenceIsSilentAndGetsTheNextFreeSlotBeforeRecovery() async throws {
+    let firstGate = Pause(); let secondGate = Pause(); let traces = Mutex<[OperationTrace]>([])
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+    let client = try OperationClient(origin: URL(string: "https://memory.invalid")!, fetch: .init { request in
+      if request.url.path.hasSuffix("/first") { await firstGate.wait() }
+      if request.url.path.hasSuffix("/second") { await secondGate.wait() }
+      var response = try Response.json(description)
+      for name in ["X-Wuhu-Correlation-ID", "X-Wuhu-Request-ID"] { response.headers[.init(name)!] = request.headers[name] }
+      response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+      return response
+    }, store: MemoryOperationStore(), maxExchanges: 2, abort: { _ in }, trace: { trace in traces.withLock { $0.append(trace) } })
+    let first = Task { try await client.describe("first") }
+    let second = Task { try await client.describe("second") }
+    await firstGate.arrival(); await secondGate.arrival()
+    for _ in 0 ..< 4 { #expect(try await client.probe("healthy") == nil) }
+    #expect(traces.withLock { $0.filter { $0.event == .failure }.isEmpty })
+    firstGate.release(); _ = try await first.value
+    await expectCode(.capacityExceeded) { _ = try await client.describe("recovery") }
+    #expect(try await client.probe("healthy")?.acceptingStarts == true)
+    #expect(traces.withLock { $0.filter { $0.path.hasSuffix("/healthy") && $0.event == .dispatch }.count } == 1)
+    #expect(traces.withLock { $0.filter { $0.path.hasSuffix("/healthy") && $0.event == .failure }.isEmpty })
+    secondGate.release(); _ = try await second.value
+    await client.shutdown()
+  }
+
+  @Test func removedProbeReservationExpiresWithoutAnotherProbe() async throws {
+    let time = LocalTime(); let gate = Pause(); let calls = Mutex(0)
+    let ledger = ExchangeLedger(fetch: .init { request in
+      calls.withLock { $0 += 1 }; await gate.wait()
+      var response = Response.text("ok")
+      for name in ["X-Wuhu-Correlation-ID", "X-Wuhu-Request-ID"] { response.headers[.init(name)!] = request.headers[name] }
+      response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+      return response
+    }, clock: time.clock, capacity: 1, abort: { _ in }, trace: { _ in })
+    var request = Request(url: URL(string: "https://memory.invalid/machine/v2/machines/recovery")!)
+    request.headers["X-Wuhu-Correlation-ID"] = UUID().uuidString
+    request.headers["X-Wuhu-Request-ID"] = UUID().uuidString
+    let recoveryRequest = request
+    let first = Task { try await ledger.exchange(recoveryRequest, id: UUID(), timeout: .seconds(30), limit: 1024) }
+    await gate.arrival()
+    let removedProbe = Request(url: URL(string: "https://memory.invalid/machine/v2/machines/removed")!)
+    await #expect(throws: ExchangeSkipped.self) {
+      try await ledger.exchange(removedProbe, id: UUID(), timeout: .seconds(1), limit: 1024, opportunistic: true)
+    }
+    gate.release(); _ = try await first.value
+    time.advance(.seconds(4))
+    await expectCode(.capacityExceeded) { _ = try await ledger.exchange(recoveryRequest, id: UUID(), timeout: .seconds(30), limit: 1024) }
+    #expect(calls.withLock { $0 } == 1)
+    time.advance(.seconds(1))
+    _ = try await ledger.exchange(recoveryRequest, id: UUID(), timeout: .seconds(30), limit: 1024)
+    #expect(calls.withLock { $0 } == 2)
+    await ledger.shutdown()
+  }
+
+  @Test func hangingPresenceHasOneSecondDeadlineAndHealthyProbesProgress() async throws {
+    let clock = TestClock<Duration>(); let origin = clock.now; let sleeps = Mutex(0)
+    let time = OperationClock(now: { origin.duration(to: clock.now) }, sleep: { duration in
+      sleeps.withLock { $0 += 1 }; try await clock.sleep(for: duration)
+    })
+    let gate = Pause(); let traces = Mutex<[OperationTrace]>([])
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+    let client = try OperationClient(origin: URL(string: "https://memory.invalid")!, fetch: .init { request in
+      if request.url.path.hasSuffix("/hanging") { await gate.wait() }
+      var response = try Response.json(description)
+      for name in ["X-Wuhu-Correlation-ID", "X-Wuhu-Request-ID"] { response.headers[.init(name)!] = request.headers[name] }
+      response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+      return response
+    }, clock: time, store: MemoryOperationStore(), maxExchanges: 4, abort: { _ in }, trace: { trace in traces.withLock { $0.append(trace) } })
+    let hanging = Task { await expectCode(.requestDeadline) { _ = try await client.probe("hanging") } }
+    await gate.arrival()
+    for _ in 0 ..< 2000 { if sleeps.withLock({ $0 > 0 }) { break }; await Task.yield() }
+    for name in ["healthy-a", "healthy-b", "healthy-c"] {
+      #expect(try await client.probe(name)?.acceptingStarts == true)
+    }
+    await clock.advance(by: .seconds(1)); await hanging.value
+    for name in ["healthy-a", "healthy-b", "healthy-c"] {
+      #expect(try await client.probe(name)?.acceptingStarts == true)
+    }
+    #expect(traces.withLock { $0.filter { $0.error == .capacityExceeded }.isEmpty })
+    gate.release(); await client.shutdown()
+  }
+
   @Test func exchangeAdmissionRefusalHasAReasonAndTraceWithoutDispatch() async throws {
     let gate = Pause(); let traces = Mutex<[OperationTrace]>([])
     let ledger = ExchangeLedger(fetch: .init { request in

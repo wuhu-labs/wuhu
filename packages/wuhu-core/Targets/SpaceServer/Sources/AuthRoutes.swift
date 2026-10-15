@@ -12,7 +12,7 @@ import ServeRouting
 import SpaceContract
 import SpaceCore
 
-func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChallenges, fingerprint: String?, dev: Bool) {
+func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChallenges, fingerprint: String?, dev: Bool, keyStreams: KeyStreams) {
   @Dependency(\.date) var dateGen
   // Personas are allocator draws recorded against the minting key, so the
   // route re-verifies the bearer itself: even behind a --dev wall the draw
@@ -49,6 +49,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
         do {
           try await space.removeKey(pubkey: credential.key.pubkey)
         } catch SpaceError.notFound {}
+        keyStreams.end(pubkey: credential.key.pubkey)
         return Response(status: .noContent)
       case let .rejected(response):
         return response
@@ -70,6 +71,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
       do {
         try await space.removeKey(pubkey: input.pubkey)
       } catch SpaceError.notFound {}
+      keyStreams.end(pubkey: input.pubkey)
       return jsonResponse(.object([:]))
     }
   }

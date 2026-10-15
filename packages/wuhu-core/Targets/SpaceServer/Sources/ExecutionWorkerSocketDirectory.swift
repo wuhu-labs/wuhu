@@ -11,6 +11,19 @@
 import struct WorkerProtocol.WorkerProtocolError
 
 actor ExecutionWorkerSocketDirectory {
+  struct CleanupClaim: Codable, Equatable, Sendable {
+    let root: String
+    let directory: String
+    let binding: String
+
+    var isValid: Bool {
+      [root, directory, binding].allSatisfy { value in
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy { !$0.isEmpty && $0.utf8.count <= 20 && $0.utf8.allSatisfy { $0 >= 48 && $0 <= 57 } }
+      }
+    }
+  }
+
   private struct Identity: Codable, Equatable {
     let version: Int
     let space: String
@@ -21,6 +34,7 @@ actor ExecutionWorkerSocketDirectory {
     let device: dev_t
     let inode: ino_t
     init(_ state: stat) { device = state.st_dev; inode = state.st_ino }
+    var fingerprint: String { String(device) + ":" + String(inode) }
   }
 
   private let location: ExecutionWorkerSocketLocation
@@ -28,7 +42,7 @@ actor ExecutionWorkerSocketDirectory {
   private let descriptor: Int32
   private let rootIdentity: FileIdentity
   private let directoryIdentity: FileIdentity
-  private let files: [String: FileIdentity]
+  private var files: [String: FileIdentity]
   private static let names: Set<String> = ["identity.json", "worker.sock", "parent.sock"]
 
   private init(location: ExecutionWorkerSocketLocation, identity: Identity, descriptor: Int32, rootState: stat, state: stat, files: [String: FileIdentity]) {
@@ -78,22 +92,32 @@ actor ExecutionWorkerSocketDirectory {
     return location
   }
 
-  static func openIfPresent(_ location: ExecutionWorkerSocketLocation, space: String, generation: UUID, runtimeRoot: String = ExecutionWorkerSocketLocation.runtimeRoot) async throws -> ExecutionWorkerSocketDirectory? {
+  static func openIfPresent(_ location: ExecutionWorkerSocketLocation, space: String, generation: UUID, runtimeRoot: String = ExecutionWorkerSocketLocation.runtimeRoot, cleanupClaim: CleanupClaim? = nil) async throws -> ExecutionWorkerSocketDirectory? {
     try location.validate(space: space, generation: generation, runtimeRoot: runtimeRoot)
     var state = stat()
-    if lstat(location.root, &state) != 0, errno == ENOENT { return nil }
+    if lstat(location.root, &state) != 0, errno == ENOENT {
+      guard cleanupClaim == nil else { throw unsafeStorage() }
+      return nil
+    }
     let root = try ExecutionWorkerManifestStore.openDirectory(location.root)
     defer { _ = close(root) }
     var rootState = stat()
     guard fstat(root, &rootState) == 0 else { throw unsafeStorage() }
+    if let claim = cleanupClaim {
+      guard claim.isValid, FileIdentity(rootState).fingerprint == claim.root else { throw unsafeStorage() }
+    }
     if fstatat(root, location.key, &state, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT { return nil }
     let directory = try ExecutionWorkerManifestStore.openDirectory(location.directory)
     do {
       guard fstat(directory, &state) == 0 else { throw unsafeStorage() }
       let identity = Identity(version: 1, space: space, generation: generation)
       try ExecutionWorkerManifestStore.requireEntries(directory, allowed: names)
-      let binding = try readIdentity(directory, expected: identity)
-      var files = ["identity.json": binding]
+      var bindingState = stat()
+      let bindingMissing = fstatat(directory, "identity.json", &bindingState, AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT
+      var files: [String: FileIdentity] = [:]
+      if cleanupClaim != nil, bindingMissing {
+        try ExecutionWorkerManifestStore.requireEntries(directory, allowed: [])
+      } else { files["identity.json"] = try readIdentity(directory, expected: identity) }
       for name in ["worker.sock", "parent.sock"] {
         if let file = try socket(directory, name: name) { files[name] = file }
       }
@@ -104,8 +128,43 @@ actor ExecutionWorkerSocketDirectory {
       guard fstat(currentRoot, &currentRootState) == 0, FileIdentity(currentRootState) == FileIdentity(rootState),
             fstatat(root, location.key, &childState, AT_SYMLINK_NOFOLLOW) == 0, FileIdentity(childState) == FileIdentity(state)
       else { throw unsafeStorage() }
+      if let claim = cleanupClaim {
+        guard FileIdentity(state).fingerprint == claim.directory,
+              files["identity.json"]?.fingerprint == claim.binding || files.isEmpty
+        else { throw unsafeStorage() }
+        try ExecutionWorkerManifestStore.requireEntries(directory, allowed: ["identity.json"])
+      }
       return Self(location: location, identity: identity, descriptor: directory, rootState: rootState, state: state, files: files)
     } catch { _ = close(directory); throw error }
+  }
+
+  func cleanupClaim() throws -> CleanupClaim {
+    try verifyDirectory()
+    try ExecutionWorkerManifestStore.requireEntries(descriptor, allowed: ["identity.json"])
+    guard let binding = files["identity.json"], try Self.readIdentity(descriptor, expected: identity) == binding else { throw Self.unsafeStorage() }
+    return CleanupClaim(root: rootIdentity.fingerprint, directory: directoryIdentity.fingerprint, binding: binding.fingerprint)
+  }
+
+  func verifyCleanupClaim(_ expected: CleanupClaim) throws {
+    if files.isEmpty {
+      try verifyDirectory()
+      try ExecutionWorkerManifestStore.requireEntries(descriptor, allowed: [])
+      guard expected.isValid, rootIdentity.fingerprint == expected.root, directoryIdentity.fingerprint == expected.directory else { throw Self.unsafeStorage() }
+    } else {
+      guard try cleanupClaim() == expected else { throw Self.unsafeStorage() }
+    }
+  }
+
+  func pinEndpoints() throws {
+    try verifyDirectory()
+    try ExecutionWorkerManifestStore.requireEntries(descriptor, allowed: Self.names)
+    guard try Self.readIdentity(descriptor, expected: identity) == files["identity.json"] else { throw Self.unsafeStorage() }
+    for name in ["worker.sock", "parent.sock"] {
+      let current = try Self.socket(descriptor, name: name)
+      if let previous = files[name], current != previous { throw Self.unsafeStorage() }
+      if let current { files[name] = current }
+    }
+    try verifyDirectory()
   }
 
   func removeEndpoints() throws {
@@ -124,8 +183,13 @@ actor ExecutionWorkerSocketDirectory {
   }
 
   func cleanup() throws {
-    try removeEndpoints()
-    guard unlinkat(descriptor, "identity.json", 0) == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+    if files.isEmpty {
+      try ExecutionWorkerManifestStore.requireEntries(descriptor, allowed: [])
+    } else {
+      try removeEndpoints()
+      guard unlinkat(descriptor, "identity.json", 0) == 0 else { throw Self.unsafeStorage() }
+    }
+    guard fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
     try verifyDirectory()
     guard rmdir(location.directory) == 0 else { throw Self.unsafeStorage() }
   }

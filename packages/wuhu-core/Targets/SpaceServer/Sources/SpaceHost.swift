@@ -91,6 +91,7 @@ public actor SpaceHost {
         executionPlacement: executionPlacement,
         credentialFence: bootFence.credentials,
         startupFence: bootFence,
+        workerPersistence: configDirectory.map { .init(configDirectory: $0.path, space: id) },
         oidcToken: { audience, session in
           @Dependency(\.date) var date
           @Dependency(\.uuid) var uuid

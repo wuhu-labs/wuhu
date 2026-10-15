@@ -6,6 +6,7 @@
 import ComputerFiles
 import Crypto
 import Fetch
+import GRDB
 import OperationClient
 import OperationProtocol
 import Scratch
@@ -24,6 +25,7 @@ private final class RecoveryBacklog: Sendable {
   struct State {
     var active = 0
     var maximum = 0
+    var released = false
     var releases: [AsyncStream<Void>.Continuation] = []
   }
 
@@ -33,17 +35,48 @@ private final class RecoveryBacklog: Sendable {
   init() { (entered, entrance) = AsyncStream.makeStream() }
   func fetch() async throws -> Response {
     let (stream, release) = AsyncStream<Void>.makeStream()
-    state.withLock { $0.active += 1; $0.maximum = max($0.maximum, $0.active); $0.releases.append(release) }
+    let released = state.withLock { $0.active += 1; $0.maximum = max($0.maximum, $0.active); $0.releases.append(release); return $0.released }
+    if released { release.finish() }
     entrance.yield(())
     defer { state.withLock { $0.active -= 1 } }
     for await _ in stream {}
     throw OperationError(.machineUnavailable)
   }
 
-  func release() { state.withLock { $0.releases }.forEach { $0.finish() }; entrance.finish() }
+  func release() { state.withLock { $0.released = true; return $0.releases }.forEach { $0.finish() }; entrance.finish() }
 }
 
 @Suite struct MachineV2RecoveryAdmissionTests {
+  @Test(arguments: [false, true])
+  func expiredOutputIsTerminalForRecoveryAndRetainsKnownVerdictAcrossRestart(terminal: Bool) async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let record = Self.record(machine: "expired-output")
+    _ = try await store.claim(.init(scope: "expired", key: "one"), record: record)
+    let snapshot = OperationSnapshot(operation: record.id, verdict: .init(.completed, result: .bool(true)), terminalToken: UUID(), finalOffsets: ["out": .init(rawValue: 17)], outputConsumed: false)
+    if terminal { _ = try await store.transaction(record.id) { $0.snapshot = snapshot } }
+    let calls = Mutex(0)
+    let fetch = FetchClient { request in
+      calls.withLock { $0 += 1 }
+      return Self.reply(try .json(ErrorEnvelope(.init(.offsetExpired, operation: record.id)), status: .gone), to: request)
+    }
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, fetch: { _ in fetch }, abort: { _, _ in })
+    try await coordinator.prepare(); try await coordinator.tick()
+    let lost = try await store.read(record.id)
+    #expect(lost.unknown?.code == .offsetExpired)
+    #expect(lost.unknown?.details?.object?["reason"]?.stringValue == "lostOutput")
+    #expect(lost.snapshot?.verdict == (terminal ? snapshot.verdict : nil))
+    #expect(lost.snapshot?.outputConsumed != true)
+    for _ in 0 ..< 3 { try await coordinator.tick() }
+    await coordinator.shutdown()
+    let restarted = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, fetch: { _ in fetch }, abort: { _, _ in })
+    try await restarted.prepare(); try await restarted.tick()
+    #expect(calls.withLock { $0 } == 1)
+    let traces = try await space.query("SELECT error_code FROM machine_v2_trace WHERE correlation_id = '\(record.correlation.uuidString)'", as: .init(actor: .anonymous, group: .shared))
+    #expect(traces.rows == [[.text("offsetExpired")]])
+    await restarted.shutdown()
+  }
+
   @Test func consumedTerminalReceiptsNeverEnterRecovery() async throws {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
@@ -156,6 +189,90 @@ private final class RecoveryBacklog: Sendable {
     try await coordinator.tick()
     #expect(operationCalls.withLock { $0 } == drainedCalls)
     await coordinator.shutdown()
+  }
+
+  @Test func hangingBoxDoesNotBlockHealthyPresenceInCurrentOrNextSweep() async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let hanging = try await space.addMachine(name: "hanging-probe")
+    try await space.registerMachineV2(hanging.id.rawValue, group: .shared)
+    var healthy: [String] = []
+    for n in 0 ..< 3 {
+      let machine = try await space.addMachine(name: "healthy-\(n)")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      healthy.append(machine.id.rawValue)
+    }
+    let backlog = RecoveryBacklog(); let time = AdmissionTime()
+    let calls = Mutex(0); let (answers, answer) = AsyncStream<Void>.makeStream()
+    let description = Self.record(machine: "presence").description
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
+      FetchClient { request in
+        if request.url.path.hasSuffix("/" + hanging.id.rawValue) { return try await backlog.fetch() }
+        calls.withLock { $0 += 1 }; answer.yield(())
+        return Self.reply(try .json(description), to: request)
+      }
+    }, abort: { _, _ in })
+    try await coordinator.prepare()
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { try await coordinator.tick() }
+      var arrived = answers.makeAsyncIterator()
+      for _ in 0 ..< 3 { _ = await arrived.next() }
+      _ = try await tasks.next()
+      time.advance(.seconds(20))
+      tasks.addTask { try await coordinator.tick() }
+      for _ in 0 ..< 3 { _ = await arrived.next() }
+      #expect(calls.withLock { $0 } == 6)
+      backlog.release(); answer.finish()
+      while try await tasks.next() != nil {}
+      for machine in healthy {
+        #expect(try await space.machineV2PresenceEvidence(machine, group: .shared)?.state == .attached)
+      }
+      let refused = try await space.query("SELECT count(*) FROM machine_v2_trace WHERE error_code = 'capacityExceeded'", as: .init(actor: .anonymous, group: .shared))
+      #expect(refused.rows == [[.integer(0)]])
+      await coordinator.shutdown()
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func saturatedRecoverySkipsPresenceWithoutFailureAndRetriesNextSweep(removeProbe: Bool) async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    for n in 0 ..< 4 {
+      _ = try await store.claim(.init(scope: "blocked-\(n)", key: "one"), record: Self.record(machine: "backlog-\(n)"))
+    }
+    let backlog = RecoveryBacklog(); let time = AdmissionTime(); let probes = Mutex(0)
+    let description = Self.record(machine: "healthy").description
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
+      FetchClient { request in
+        if request.url.path.contains("/operations/") { return try await backlog.fetch() }
+        probes.withLock { $0 += 1 }
+        return Self.reply(try .json(description), to: request)
+      }
+    }, abort: { _, _ in })
+    try await coordinator.prepare()
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { try await coordinator.tick() }
+      var arrivals = 0
+      for await _ in backlog.entered { arrivals += 1; if arrivals == 4 { break } }
+      do {
+        let machine = try await space.addMachine(name: "healthy-presence")
+        try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+        try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .attached, description: description)
+        for _ in 0 ..< 4 { time.advance(.seconds(21)); try await coordinator.tick() }
+        #expect(probes.withLock { $0 } == 0)
+        #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.state == .attached)
+        let refusals = try await space.query("SELECT count(*) FROM machine_v2_trace WHERE error_code = 'capacityExceeded'", as: .init(actor: .anonymous, group: .shared))
+        #expect(refusals.rows == [[.integer(0)]])
+        if removeProbe {
+          try await space.writer.write { db in try db.execute(sql: "DELETE FROM machine_v2_members WHERE machine_id = ?", arguments: [machine.id.rawValue]) }
+        }
+        backlog.release()
+        while try await tasks.next() != nil {}
+        if removeProbe { time.advance(.seconds(5)) }
+        try await coordinator.tick()
+        #expect(probes.withLock { $0 } == (removeProbe ? 0 : 1))
+        await coordinator.shutdown()
+      } catch { backlog.release(); await coordinator.shutdown(); tasks.cancelAll(); throw error }
+    }
   }
 
   @Test func interactiveReadSucceedsWhileRecoveryHasFortyBlockedMachines() async throws {
