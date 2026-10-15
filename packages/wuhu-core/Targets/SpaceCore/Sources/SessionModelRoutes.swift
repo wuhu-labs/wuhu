@@ -1,3 +1,4 @@
+import Dependencies
 import GRDB
 import SessionDomain
 import StructuredQueries
@@ -82,6 +83,37 @@ extension SessionStore {
     }
   }
 
+  public func modelProviderRefusing(provider: String, model: String) async throws -> Bool {
+    @Dependency(\.date.now) var now
+    return try await writer.read { db in
+      for row in try SessionModelRouteRow.where({ $0.provider.eq(provider) && $0.phase.eq("waiting") }).fetchAll(db) {
+        let route = try Sessions.decode(SessionModelRoute.self, from: row.payload)
+        guard let failure = route.failure, failure.refusing, failure.evidenceExpiresAt > now,
+              failure.reason != .upstreamOutage || route.specifier.model == model else { continue }
+        let record = try Sessions.record(row.sessionID, in: db)
+        guard record.lifecycle == .live, record.hold == .normal else { continue }
+        let since = SQLiteDateFormat.string(from: failure.lastFailureAt ?? failure.firstFailureAt)
+        let recovered = try InferenceRow.where {
+          $0.provider.eq(provider) && $0.grp.eq(row.group) && $0.outcome.eq("ok") && $0.at.gt(since)
+        }.fetchAll(db).contains { failure.reason != .upstreamOutage || $0.model == model }
+        if !recovered { return true }
+      }
+      return false
+    }
+  }
+
+  public func updateModelRouteFailure(_ id: SessionID, expectedEpoch: String, failure: ModelRouteFailure?) async throws {
+    let key = id.rawValue
+    try await writer.write { db in
+      guard let row = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db), row.routeEpoch == expectedEpoch else { throw PortableHandoffConflict.routeChanged }
+      var route = try Sessions.decode(SessionModelRoute.self, from: row.payload)
+      route.failure = failure
+      let payload = try Sessions.encode(route)
+      let phase = failure?.refusing == true ? "waiting" : "pinned"
+      try SessionModelRouteRow.where { $0.sessionID.eq(key) }.update { $0.payload = payload; $0.phase = phase }.execute(db)
+    }
+  }
+
   public func establishModelRoute(_ id: SessionID, route: SessionModelRoute) async throws -> SessionModelRoute {
     let key = id.rawValue
     return try await writer.write { db in
@@ -144,10 +176,35 @@ extension Sessions {
       memberID: route.member,
       provider: route.specifier.provider,
       model: route.specifier.model,
-      reason: route.reason.rawValue,
+      reason: route.decisionReason,
       placedAt: SQLiteDateFormat.string(from: route.placedAt),
       payload: payload,
     )
     try SessionModelRouteHistoryRow.insert { decision }.execute(db)
   }
+}
+
+extension Sessions {
+  static func commitRouteTransition(_ key: String, transition: ModelRouteTransition, in db: Database) throws {
+    guard let row = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db), row.routeEpoch == transition.expectedEpoch else { throw PortableHandoffConflict.routeChanged }
+    let old = try decode(SessionModelRoute.self, from: row.payload)
+    let route = transition.route
+    guard old.group != nil, old.group == route.group, route.member != old.member, route.epoch != old.epoch, route.failure == nil,
+          transition.transcript.replayBinding?.epoch == route.epoch, transition.transcript.pendingToolCallIDs.isEmpty else { throw PortableHandoffConflict.routeChanged }
+    guard !transition.transcript.items.contains(where: { item in
+      guard case let .assistant(entry) = item else { return false }
+      return entry.content.contains { block in
+        switch block { case .reasoning(.encrypted), .hostedTool: true; default: false }
+      }
+    }) else { throw PortableHandoffConflict.routeChanged }
+    let config = SessionExecutor.kernel(route.specifier).configJSON
+    try RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config }.execute(db)
+    try writeModelRoute(key, route: route, in: db)
+  }
+}
+
+@Table("sessions")
+private struct RouteExecutorRow {
+  @Column(primaryKey: true) var id: String
+  @Column("executor_config") var executorConfig: String
 }

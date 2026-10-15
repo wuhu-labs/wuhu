@@ -77,6 +77,16 @@ _Text-only smoke input:_ an idle/no-other-work scenario and the exact warming no
 
 _Afterwards:_ a short decision recognizing that compaction is optional, with no new/changed files and no invented task. This lightweight case checks understanding of the advisory offer, not scheduling or production silence; it does not inject a system notice, require a newer binary, or modify the driver. A real system-notice/no-visible-output case needs the benchmark lead's harness support separately.
 
+## 13. machine-v2-parity
+
+_Text-only smoke:_ write a compact `run_script` example using `machineV2('box').grep('/tmp/project', '^item[0-9]+$')`, consuming `output('matches')`, and explain a CLI `credentialExpired` result. No tools or fixture machine are needed.
+
+_Afterwards:_ deterministic checks require the v2 import/helper/channel loop, explicit expiry and no files changed. The judge rejects literal search for the regex, missing result consumption, renewal, and anonymous/wallet/v1 fallbacks. This checks the model-facing API/expiry semantics; live ICU Unicode matching, literal parity, credential injection/idempotency and exec environment redaction are separately exercised by affected Swift contract tests, including `ScriptMachineV2Tests.realScriptGrepParityBenchmark` (2000 lines, two dialects).
+
 ## Scoring
 
 A run passes when every `required` deterministic check passes **and** the judge says PASS against the rubric. Pass rate per case is over 3 runs per condition. The judge is `codex/gpt-6.1-sol`; it sees the prompt, the reply, the deterministic results, the files the session created (with contents, truncated) and token/turn counts — not the tool trace, so "route" notes are inferred from the reply and the files.
+
+## 13. model-route-handoff
+
+_Text-only smoke:_ a last-resort quota route notice with an outstanding request. The agent explains its next action in one sentence without writing files. The judge requires continuing the outstanding request, re-reading material when needed, and respecting already committed tool receipts; a route change does not complete a request or permit replaying the former account's signatures.

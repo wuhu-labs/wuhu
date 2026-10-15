@@ -228,15 +228,12 @@ private let chatGPTOnly = CredentialResolver { _ in
     }
   }
 
-  @Test func resolveKeepsExpiredLoginTerminalAndActionable() async throws {
+  @Test func resolveKeepsExpiredLoginTypedAndProviderScoped() async throws {
     let expired = CredentialResolver { _ in
       throw ChatGPTAuthError.loginRequired(detail: "refresh returned 401")
     }
     let catalog = try fixtureCatalog(credentials: expired)
-    await #expect(throws: InferenceError.invalidInput(
-      status: 401,
-      body: ChatGPTAuthError.loginRequired(detail: "refresh returned 401").description,
-    )) {
+    await #expect(throws: InferenceError.credentialRefreshRefused(provider: "codex")) {
       try await catalog.resolve(.init(provider: "codex", model: "gpt-5.6-sol", effort: "low"), session: SessionID("catalog-tests"))
     }
   }

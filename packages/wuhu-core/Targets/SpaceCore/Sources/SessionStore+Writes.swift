@@ -184,6 +184,7 @@ extension SessionStore {
     head: GenerationHead,
     kept: Range<Int>?,
     completingCompactRequest: CompactRequestClaim? = nil,
+    transition: ModelRouteTransition? = nil,
   ) async throws -> Transcript {
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
@@ -197,7 +198,15 @@ extension SessionStore {
         try Sessions.append(key, generation: runtime.generation, items: [TranscriptItem.toolResult(closing)], in: db)
       }
       try CacheWarmingRow.resetOffer(key, in: db)
-      let compacted = transcript.compacted(head: head, kept: kept)
+      let compacted = transition?.transcript ?? transcript.compacted(head: head, kept: kept)
+      if let transition {
+        try Sessions.commitRouteTransition(key, transition: transition, in: db)
+        let existing = Set(transcript.items.map(\.id))
+        for item in compacted.items.dropFirst() where !existing.contains(item.id) {
+          let row = SessionContentRow(sessionID: key, id: item.id.uuidString.lowercased(), payload: try Sessions.encode(item))
+          try SessionContentRow.insert { row }.execute(db)
+        }
+      }
       let generation = runtime.generation + 1
       try Sessions.writeGeneration(key, generation: generation, transcript: compacted, in: db)
       try Sessions.refreshWork(key, transcript: compacted, now: now, in: db)

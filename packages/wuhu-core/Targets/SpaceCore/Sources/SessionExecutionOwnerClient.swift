@@ -8,6 +8,7 @@ import SessionDomain
 public protocol SessionExecutionOwnerClient: Sendable {
   func modelRoute(_ id: SessionID) async throws -> SessionModelRoute?
   func establishModelRoute(_ id: SessionID, route: SessionModelRoute) async throws -> SessionModelRoute
+  func updateModelRouteFailure(_ id: SessionID, expectedEpoch: String, failure: ModelRouteFailure?) async throws
   func record(_ id: SessionID) async throws -> SessionRecord
   func hydrate(_ id: SessionID) async throws -> SessionHydration
   func enqueue(_ id: SessionID, input: QueueInput) async throws -> Int
@@ -18,8 +19,8 @@ public protocol SessionExecutionOwnerClient: Sendable {
   func queueHead(_ id: SessionID) async throws -> Int
   func pendingCommand(_ id: SessionID) async throws -> SessionCommand?
   func claimCompactRequest(_ id: SessionID, generation: Int) async throws -> CompactRequestClaim?
-  func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript
-  func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?) async throws -> Transcript
+  func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition?) async throws -> Transcript
+  func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?, transition: ModelRouteTransition?) async throws -> Transcript
   func markInterrupted(_ id: SessionID) async throws
   func markResumed(_ id: SessionID) async throws
   func markErrored(_ id: SessionID, message: String) async throws
@@ -32,5 +33,15 @@ public protocol SessionExecutionOwnerClient: Sendable {
 extension SessionExecutionOwnerClient {
   public func restart(_ id: SessionID, executor: SessionExecutor?, note: String?) async throws -> SessionRestart {
     try await restart(id, executor: executor, note: note, modelRoute: nil)
+  }
+}
+
+extension SessionExecutionOwnerClient {
+  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript {
+    try await writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript, transition: nil)
+  }
+
+  public func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?) async throws -> Transcript {
+    try await writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest, transition: nil)
   }
 }

@@ -92,10 +92,7 @@ public actor MachineHub {
     self.init(space: space, callerGrace: callerGrace, machineGrace: machineGrace, keyRecheck: keyRecheck, tokens: nil)
   }
 
-  // With tokens, a session's exec start carries its credential; with secrets,
-  // an exec's `secrets` resolve in its machine's group. Only `serve()` and the
-  // package's tests pass them.
-  package init(
+  init(
     space: Space,
     callerGrace: Duration = .seconds(60),
     machineGrace: Duration = .seconds(60),

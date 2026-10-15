@@ -12,10 +12,11 @@ public enum SessionExecEnvironment {
   public static let exec: String = "WUHU_EXEC"
   public static let token: String = "WUHU_TOKEN"
   public static let spaceURL: String = "WUHU_SPACE_URL"
+  public static let expiresAt: String = "WUHU_TOKEN_EXPIRES_AT"
   public static let identity: String = "WUHU_IDENTITY"
   public static let group: String = "WUHU_GROUP"
 
-  public static let reserved: Set<String> = [exec, token, spaceURL]
+  public static let reserved: Set<String> = [exec, token, spaceURL, expiresAt]
 }
 
 /// The credential a session's exec runs with: a token that acts as the session

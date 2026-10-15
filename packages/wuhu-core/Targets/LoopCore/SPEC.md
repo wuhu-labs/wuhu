@@ -56,3 +56,7 @@ Start over optionally carries a prepared `SessionModelRoute` through service/act
 ## Owner boundary
 
 Each `SessionActor` is given a session-scoped repository backed only by `SessionExecutionOwnerClient`; subscription refreshes use that same repository instead of reaching through it to `SessionStore`. Parent `SessionService` composition may supply an owner client explicitly, or use the existing in-process store adapter. Session placement, boot admission and archive coordination stay in the parent. This changes dependencies, not durable boundaries or lifecycle behavior.
+
+## Compaction placement and last-resort route transitions
+
+`prepareCompaction` runs after an ordinary compacted generation is produced and can supply a portable atomic route transition; nil preserves the route and history. `ReplayBoundaryRequired` optionally carries a replacement route and expected epoch; the loop projects locally, preserves receipts/input, commits handoff and pin together, invalidates inference state, then restarts the generation. `ModelRouteWaiting` is a nonterminal, cancellation-aware clock wait, never a reply/report or user timer subscription. Rehydration retains the persisted deadline and no new episode is opened merely by waiting. Route context notices do not answer obligations.

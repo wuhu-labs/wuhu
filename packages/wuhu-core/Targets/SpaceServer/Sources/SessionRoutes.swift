@@ -126,8 +126,8 @@ func addSessionRoutes(
       return try Response.json(SessionModelRouteOutput(
         requestedTarget: JSONValue.parse(record.executor.configJSON)!,
         activeProvider: active?.provider, activeModel: active?.model,
-        route: try route.map { try JSONValueEncoder().encode($0) },
-        decisions: try JSONValueEncoder().encode(await store.modelRouteHistory(id)),
+        route: try route.map(modelRouteInspectionJSON),
+        decisions: .array(try await store.modelRouteHistory(id).map(modelRouteInspectionJSON)),
       ))
     } catch { return sessionErrorResponse(error) }
   }

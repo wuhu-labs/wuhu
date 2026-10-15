@@ -232,7 +232,7 @@ struct InferenceErrorTests {
     #expect(body == "weird")
   }
 
-  @Test("a mid-stream Anthropic overloaded_error maps to .transient")
+  @Test("a mid-stream Anthropic overloaded_error preserves service refusal provenance")
   func midStreamOverloadIsTransient() async throws {
     let sse = """
     event: message_start
@@ -251,13 +251,7 @@ struct InferenceErrorTests {
     let error = await captureInferenceError(fetch: stubFetch(response))
     let inferenceError = try #require(error)
 
-    guard case let .transient(status, body) = inferenceError else {
-      Issue.record("expected .transient, got \(inferenceError)")
-      return
-    }
-
-    #expect(status == nil)
-    #expect(body?.contains("Overloaded") == true)
+    #expect(inferenceError == .upstreamUnavailable(code: "overloaded_error"))
   }
 
   @Test("a Responses cancelled event maps to .cancelled")
@@ -314,5 +308,18 @@ struct InferenceErrorTests {
     #expect(status == nil)
     #expect(body?.contains("invalid_stream") == true)
     #expect(body?.contains("response.completed") == true)
+  }
+}
+
+extension InferenceErrorTests {
+  @Test func recognizedAccountAuthRefusalsAreDistinctFromPermissionsAndLocalErrors() {
+    #expect(InferenceError.classify(status: 401, headers: Headers(), body: #"{"error":{"code":"invalid_api_key"}}"#) == .authenticationRefused(code: "invalid_api_key"))
+    #expect(InferenceError.classify(status: 403, headers: Headers(), body: #"{"error":{"type":"account_banned"}}"#) == .authenticationRefused(code: "account_banned"))
+    let permission = #"{"error":{"code":"permission_denied"}}"#
+    #expect(InferenceError.classify(status: 403, headers: Headers(), body: permission) == .invalidInput(status: 403, body: permission))
+    #expect(InferenceError.classify(status: 401, headers: Headers(), body: "unknown rejection") == .invalidInput(status: 401, body: "unknown rejection"))
+    #expect(ProviderStreamError(type: "authentication_error", message: nil).asInferenceError() == .authenticationRefused(code: "authentication_error"))
+    #expect(ProviderStreamError(type: "overloaded_error", message: nil).asInferenceError() == .upstreamUnavailable(code: "overloaded_error"))
+    #expect(ProviderStreamError(type: "invalid_stream", message: nil).asInferenceError() == .transient(status: nil, body: "invalid_stream"))
   }
 }

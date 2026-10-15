@@ -158,7 +158,7 @@ extension ScriptMachineV2Tests {
       import { machineV2 } from 'wuhu:machine'
       const codes = []
       for (let i = 0; i < 12; i++) {
-        try { await machineV2('reject-v2').start('grep.v1', { root: '/', pattern: 'x', dialect: 'regex', maxLineBytes: 20 }, { key: String(i) }) }
+        try { await machineV2('reject-v2').start('grep.v1', { root: '/', pattern: 'x', dialect: 'pcre', maxLineBytes: 20 }, { key: String(i) }) }
         catch(e) { codes.push(e.code) }
       }
       result(codes)
@@ -316,6 +316,175 @@ extension ScriptMachineV2Tests {
         await agent.shutdown(); group.cancelAll()
       }
       #expect(posts.withLock { $0 } == 1)
+    }
+  }
+}
+
+extension ScriptMachineV2Tests {
+  @Test func execInjectsServerCredentialAndKeepsIdempotentInput() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory(); let machine = try await space.addMachine(name: "credential-v2")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      let store = MemoryOperationStore()
+      let agent = try OperationAgent(machine: machine.id.rawValue, kinds: [AnyOperationKind(CredentialEchoKind())], authorize: { _, _ in })
+      let client = try OperationClient(origin: URL(string: "https://memory.test")!, fetch: .init(fetch: agent.handler), store: store, abort: { _ in }, trace: { _ in })
+      let session = try await makeSession(space)
+      let minted = Mutex(0)
+      let scripts = Scripts(space: space, machinesV2: .init(client: { _ in ScriptMachineV2Client(client: client) }, credential: { principal, group, scope, key, timeout in
+        #expect(principal == session && group == .shared && !scope.isEmpty && key == "same" && timeout == .seconds(3))
+        minted.withLock { $0 += 1 }
+        return ["token": "wst_server_token", "spaceURL": "https://space.test", "expiresAt": 9_999_999_999]
+      }))
+      let execution = scripts.start("""
+      import { machineV2 } from 'wuhu:machine'
+      const m = machineV2('credential-v2')
+      const a = await m.exec('true', { cwd: '/tmp', key: 'same', timeoutMs: 3000 })
+      const b = await m.exec('true', { cwd: '/tmp', key: 'same', timeoutMs: 3000 })
+      let rejected
+      try { await m.start('exec.v1', { sessionCredential: {} }) } catch(e) { rejected = e.code }
+      result({ same: a.id === b.id, tag: (await a.result()).tag, rejected })
+      """, session: session, lifetime: .seconds(10), tools: ToolExecutor(space: space))
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
+        let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
+        #expect(answer == .result("{\"same\":true,\"tag\":\"completed\",\"rejected\":\"invalidInput\"}"))
+        await agent.shutdown(); group.cancelAll()
+      }
+      #expect(minted.withLock { $0 } == 2)
+      let record = try #require(try await store.lookup(.init(scope: execution.id, key: "same")))
+      #expect(record.start.input.object?["sessionCredential"] == ["token": "wst_server_token", "spaceURL": "https://space.test", "expiresAt": 9_999_999_999])
+    }
+  }
+
+  @Test func realScriptGrepParityBenchmark() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory(); let machine = try await space.addMachine(name: "grep-bench-v2")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      let source = Data(String(repeating: "miss\n你好42\n", count: 1000).utf8)
+      let cursor = Mutex(false)
+      let files = ComputerFileSystem(status: { _ in .init(version: "one", size: UInt64(source.count), kind: "file") }, read: { _, offset, count in
+        let start = min(Int(offset), source.count); return source.subdata(in: start ..< min(start + count, source.count))
+      }, walk: { _, _ in
+        cursor.withLock { $0 = false }
+        return .init(next: { cursor.withLock { if $0 { return nil }; $0 = true; return .init(path: "/fixture", kind: "file") } }, close: {})
+      })
+      let agent = try OperationAgent(machine: machine.id.rawValue, kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+      let client = try OperationClient(origin: URL(string: "https://memory.test")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+      let scripts = Scripts(space: space, machinesV2: .init(client: { _ in client }))
+      let execution = scripts.start(#"""
+      import { machineV2 } from 'wuhu:machine'
+      const m = machineV2('grep-bench-v2')
+      const counts = [], elapsedMs = []
+      for (const [pattern, options] of [['^\\p{L}+[0-9]{2}$', {}], ['你好42', {dialect:'literal'}]]) {
+        const start = Date.now()
+        const op = await m.grep('/fixture', pattern, options)
+        let count = 0
+        for await (const record of op.output('matches')) { if (record.text !== '你好42') throw Error('wrong match'); count++ }
+        const end = await op.result()
+        if (end.tag !== 'completed') throw Error(end.tag)
+        counts.push(count); elapsedMs.push(Date.now() - start)
+      }
+      result({counts, elapsedMs})
+      """#, session: try await makeSession(space), lifetime: .seconds(30), tools: ToolExecutor(space: space))
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await agent.run() }; group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
+        let answer = try? await execution.answer(within: .seconds(20), onTimeout: .kill)
+        if case let .result(text) = answer {
+          let measured = JSONValue.parse(text)
+          #expect(measured?.object?["counts"] == [1000, 1000])
+          #expect(measured?.object?["elapsedMs"]?.array?.count == 2)
+          print("v2-script-grep-2000-lines \(text)")
+        } else { Issue.record("grep benchmark failed: \(String(describing: answer))") }
+        await agent.shutdown(); group.cancelAll()
+      }
+    }
+  }
+}
+
+private struct CredentialEchoKind: OperationKind {
+  typealias Input = JSONValue
+  let descriptor = ComputerKindSchemas.exec
+  func run(_ input: JSONValue, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
+    #expect(input.object?["sessionCredential"]?.object?["token"] == "wst_server_token")
+    return ["termination": ["tag": "exit", "code": 0]]
+  }
+}
+
+extension ScriptMachineV2Tests {
+  @Test func fractionalTimeoutReachesClientWithoutRoundingToZero() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory(); let machine = try await space.addMachine(name: "fractional-timeout-v2")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      let received = Mutex<Duration?>(nil)
+      let client = ScriptMachineV2Client(describe: { _ in
+        .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [])
+      }, start: { _, request, _, timeout, _ in
+        #expect(request.kind == "read.v1")
+        received.withLock { $0 = timeout }
+        throw OperationError(.machineUnavailable)
+      }, reconcile: { _, _ in throw OperationError(.unknownOperation) }, poll: { _, _, _, _ in throw OperationError(.unknownOperation) }, takeOutput: { _, _ in [] }, write: { _, _, _, _ in throw OperationError(.unknownOperation) }, stop: { _, _ in throw OperationError(.unknownOperation) })
+      let scripts = Scripts(space: space, machinesV2: .init(client: { _ in client }))
+      let execution = scripts.start("""
+      import { machineV2 } from 'wuhu:machine'
+      try { await machineV2('fractional-timeout-v2').start('read.v1', {}, {key:'fractional', timeoutMs:0.5}) }
+      catch(e) { result(e.code) }
+      """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
+        let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
+        #expect(answer == .result("machineUnavailable"))
+      }
+      let timeout = try #require(received.withLock { $0 })
+      #expect(timeout > .zero)
+      #expect(timeout == .microseconds(500))
+    }
+  }
+
+  @Test func failedExecStartsReleaseUnclaimedCredentialsAndDescribeDoesNotMint() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory(); let machine = try await space.addMachine(name: "failed-exec-v2")
+      try await space.registerMachineV2(machine.id.rawValue, group: .shared)
+      let attempts = Mutex((describes: 0, minted: 0, released: 0, claimed: 0, live: Set<String>()))
+      let client = ScriptMachineV2Client(describe: { _ in
+        let first = attempts.withLock { $0.describes += 1; return $0.describes == 1 }
+        if first { throw OperationError(.machineUnavailable) }
+        return .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec])
+      }, start: { _, _, owner, _, onClaim in
+        guard owner.key == "good" else { throw OperationError(.machineUnavailable) }
+        let id = UUID(); onClaim(id); return id
+      }, reconcile: { id, _ in .init(operation: id, verdict: nil, terminalToken: nil, finalOffsets: [:], outputConsumed: false) }, poll: { id, _, _, _ in .init(operation: id, verdict: nil, terminalToken: nil, finalOffsets: [:], outputConsumed: false) }, takeOutput: { _, _ in [] }, write: { _, _, _, _ in throw OperationError(.invalidInput) }, stop: { id, reason in .init(operation: id, verdict: .init(.stopped, reason: reason), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true) })
+      let scripts = Scripts(space: space, machinesV2: .init(client: { _ in client }, credential: { _, _, _, key, _ in
+        try attempts.withLock {
+          guard $0.live.count < 8 else { throw OperationError(.capacityExceeded) }
+          $0.live.insert(key); $0.minted += 1
+        }
+        return ["token": "wst_server_token", "spaceURL": "https://space.test", "expiresAt": 9_999_999_999]
+      }, finishCredentialAttempt: { _, _, _, key, claimed in
+        attempts.withLock {
+          if claimed { $0.claimed += 1 }
+          else { $0.live.remove(key); $0.released += 1 }
+        }
+      }))
+      let execution = scripts.start("""
+      import { machineV2 } from 'wuhu:machine'
+      const m = machineV2('failed-exec-v2')
+      let failed = 0
+      for (let i = 0; i < 13; i++) {
+        try { await m.exec('true', { cwd:'/tmp', key:`failed-${i}` }) }
+        catch(e) { if(e.code === 'machineUnavailable') failed++ }
+      }
+      const operation = await m.exec('true', {cwd:'/tmp', key:'good'})
+      result({failed, admitted:!!operation.id})
+      """, session: try await makeSession(space), lifetime: .seconds(10), tools: ToolExecutor(space: space))
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await execution.run(owner: InProcessToolOwnerClient(space: space)) }
+        let answer = try? await execution.answer(within: .seconds(5), onTimeout: .kill)
+        #expect(answer == .result("{\"failed\":13,\"admitted\":true}"))
+      }
+      attempts.withLock {
+        #expect($0.minted == 13 && $0.released == 12 && $0.claimed == 1)
+        #expect($0.live == ["good"])
+      }
     }
   }
 }

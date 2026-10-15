@@ -55,7 +55,7 @@ struct CacheWarmer: Sendable {
 
   func allows(_ id: SessionID) async throws -> Bool {
     let record = try await space.sessions.record(id)
-    guard record.kind == .agent, let (model, _, entry) = try await configuration(record) else { return false }
+    guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, let (model, _, entry) = try await configuration(record) else { return false }
     guard let policy = entry.cacheWarming else { return false }
     return !quotaLow(provider: model.provider, policy: policy)
   }
@@ -75,6 +75,9 @@ struct CacheWarmer: Sendable {
       model = try ProviderCatalog(document: document, credentials: .unavailable).validateRoute(route, group: id, effort: effort)
     case .claudeCode, .contractor: return nil
     }
+    @Dependency(\.date.now) var now
+    if let failure = try await space.sessions.modelRoute(record.id)?.failure, !failure.refusing, failure.evidenceExpiresAt > now { return nil }
+    if try await space.sessions.modelProviderRefusing(provider: model.provider, model: model.model) { return nil }
     let entry = try ProviderCatalog(document: document, credentials: .unavailable).validate(model)
     return (model, document.providers[model.provider]!, entry)
   }

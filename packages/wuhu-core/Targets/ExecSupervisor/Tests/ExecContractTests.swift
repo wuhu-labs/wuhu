@@ -13,6 +13,7 @@ import CExecSupervisor
 import Fetch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ErrorEnvelope
+import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationLimits
 import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
@@ -167,6 +168,30 @@ enum TestFailure: Error { case timeout }
       _ = try await waitExit(agent, id: id)
       let out = try await waitOutputEnd(agent, id: id)
       #expect(out.payload?.data == Data("***".utf8))
+    }
+  }
+}
+
+extension ExecContractTests {
+  @Test func serverOwnedCredentialReplacesCallerFieldsAndIsMasked() async throws {
+    try await withExec { agent in
+      let id = UUID()
+      let input: JSONValue = ["argv": ["/bin/sh", "-c", "printf '%s|%s|%s|%s' \"$WUHU_EXEC\" \"$WUHU_SPACE_URL\" \"$WUHU_TOKEN_EXPIRES_AT\" \"$WUHU_TOKEN\""], "cwd": "/tmp", "stdin": false, "env": ["WUHU_EXEC": "fake", "WUHU_TOKEN": "fake", "WUHU_SPACE_URL": "fake", "WUHU_TOKEN_EXPIRES_AT": "fake"], "sessionCredential": ["token": "wst_private_token", "spaceURL": "https://session.test", "expiresAt": 12345]]
+      let response = try await agent.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: input))))
+      #expect(response.status.code == 201)
+      _ = try await waitExit(agent, id: id)
+      let out = try await waitOutputEnd(agent, id: id)
+      #expect(out.payload?.data == Data("1|https://session.test|12345.0|***".utf8))
+    }
+  }
+}
+
+extension ExecContractTests {
+  @Test func invalidSessionCredentialExpiryIsRejectedAtAdmission() throws {
+    for expiry in [Double.nan, .infinity, -.infinity, 0, -1] {
+      let input = ExecInput(argv: ["/bin/true"], cwd: "/tmp", env: nil, secretValues: nil, sessionCredential: .init(token: "wst_test", spaceURL: "https://test.invalid", expiresAt: expiry), stdin: false)
+      do { try input.validate(); Issue.record("invalid expiry accepted") }
+      catch let error as OperationError { #expect(error.code == .invalidInput) }
     }
   }
 }

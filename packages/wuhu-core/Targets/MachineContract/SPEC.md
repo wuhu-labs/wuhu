@@ -97,7 +97,8 @@ secret's value reaches it only inside the `ExecStart` that needs it.
   never by a caller, on an exec run for a session. The agent sets
   the `SessionExecEnvironment` names from it — `WUHU_EXEC=1`, `WUHU_TOKEN`,
   `WUHU_SPACE_URL` — after `env` and secrets, and masks the token in output;
-  absent, it unsets those three. An agent that predates the field ignores it
+  v1 also clears `WUHU_TOKEN_EXPIRES_AT`, never inheriting a v2 expiry;
+  absent, it unsets all four reserved names. An agent that predates the field ignores it
   (unknown keys are skipped), so its execs keep the wallet.
 - `window` absent means `ExecDefaults.window` (4 MiB); it is the un-acked
   flow-control window and the reconnect replay buffer, always finite.

@@ -6,7 +6,7 @@ public enum ComputerKindSchemas {
     inputSchema: object([
       "argv": ["type": "array", "minItems": 1, "items": ["type": "string"]],
       "cwd": ["type": "string", "pattern": "^/"], "env": strings, "secretValues": strings,
-      "sessionCredential": object(["token": string, "spaceURL": string], required: ["token", "spaceURL"]),
+      "sessionCredential": object(["token": string, "spaceURL": string, "expiresAt": ["type": "number"]], required: ["token", "spaceURL"]),
       "stdin": ["type": "boolean"],
     ], required: ["argv", "cwd", "stdin"]),
     resultSchema:
@@ -43,7 +43,7 @@ public enum ComputerKindSchemas {
       [
         "root": ["type": "string", "pattern": "^/"],
         "pattern": string,
-        "dialect": ["enum": ["literal"]],
+        "dialect": ["enum": ["literal", "regex"]],
         "maxLineBytes": ["type": "integer", "minimum": 1, "maximum": 65536],
         "entryLimit": positive,
       ],

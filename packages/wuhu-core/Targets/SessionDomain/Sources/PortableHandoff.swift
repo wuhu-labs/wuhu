@@ -98,7 +98,7 @@ extension Transcript {
         replayBinding: binding,
       )
       let notice = TranscriptItem.notification(SystemNotification(
-        id: uuid(), timestamp: now, kind: .context, subscriptionID: .context,
+        id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("replay-handoff"),
         content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the full carried input; re-read files/history as needed."),
       ))
       let carried = [TranscriptItem.generationHead(head)] + projected.indices.filter { selected.contains($0) }.map { projected[$0] } + [notice]

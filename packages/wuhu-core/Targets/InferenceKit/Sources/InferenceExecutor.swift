@@ -84,7 +84,7 @@ public struct InferenceExecutor: Sendable {
     )
     var options = RequestOptions(
       maxTokens: model.budget.maxOutput,
-      reasoning: model.specifier.effort == "none" && model.endpoint is any AnthropicMessagesEndpoint ? .none : .effort(model.specifier.effort),
+      reasoning: reasoning(for: transcript),
       idleTimeout: idleTimeout,
     )
     if mode == .forcedCompact {

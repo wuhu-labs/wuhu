@@ -3,9 +3,13 @@
 #else
   import Foundation
 #endif
+import Dependencies
 import struct Fetch.FetchClient
+import enum JSONValue.JSONValue
 import class OperationClient.OperationClient
+import struct OperationClient.OperationOwner
 import struct OperationProtocol.OperationError
+import struct SessionDomain.SessionID
 import struct SessionTools.ScriptMachineV2Access
 import struct SessionTools.ScriptMachineV2Client
 import struct SpaceContract.GroupID
@@ -38,8 +42,22 @@ actor MachineV2Service {
     }
   }
 
-  nonisolated func scriptAccess() -> ScriptMachineV2Access {
-    ScriptMachineV2Access(client: { try await self.scriptClient(group: $0) })
+  nonisolated func scriptAccess(tokens: ExecTokens) -> ScriptMachineV2Access {
+    ScriptMachineV2Access(client: { try await self.scriptClient(group: $0) }, credential: { session, group, scope, key, timeout in
+      try await self.credential(tokens: tokens, session: session, group: group, owner: .init(scope: scope, key: key), timeout: timeout)
+    }, finishCredentialAttempt: { session, group, scope, key, claimed in
+      tokens.finishCredentialAttempt(session: session, group: group, scope: scope, key: key, claimed: claimed)
+    })
+  }
+
+  private func credential(tokens: ExecTokens, session: SessionID, group: GroupID, owner: OperationOwner, timeout: Duration) async throws -> JSONValue {
+    if let failure { throw failure }
+    guard let coordinator else { throw OperationError(.storeUnavailable) }
+    let previouslyIssued = try await coordinator.credentialIssued(group: group, owner: owner)
+    @Dependency(\.date) var date
+    return try tokens.credential(session: session, group: group, scope: owner.scope, key: owner.key, timeout: timeout, now: date.now, previouslyIssued: previouslyIssued, reserveAttempt: true, active: {
+      try await coordinator.credentialActive(group: group, owner: owner)
+    })
   }
 
   private func scriptClient(group: GroupID) async throws -> ScriptMachineV2Client {

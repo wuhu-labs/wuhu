@@ -29,6 +29,7 @@ struct ExecEngine: Sendable {
       SessionExecEnvironment.exec: "1",
       SessionExecEnvironment.token: session.token,
       SessionExecEnvironment.spaceURL: session.spaceURL,
+      SessionExecEnvironment.expiresAt: String?.none,
     ]
   }
 

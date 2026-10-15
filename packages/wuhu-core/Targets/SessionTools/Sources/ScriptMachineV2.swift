@@ -9,13 +9,18 @@ import class JSONValue.JSONValueEncoder
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
 import QuickJSKit
+import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import SpaceCore
 import Synchronization
 
 public struct ScriptMachineV2Access: Sendable {
   public let client: @Sendable (GroupID) async throws -> ScriptMachineV2Client
-  public init(client: @escaping @Sendable (GroupID) async throws -> ScriptMachineV2Client) { self.client = client }
+  public let credential: (@Sendable (SessionID, GroupID, String, String, Duration) async throws -> JSONValue)?
+  public let finishCredentialAttempt: (@Sendable (SessionID, GroupID, String, String, Bool) async -> Void)?
+  public init(client: @escaping @Sendable (GroupID) async throws -> ScriptMachineV2Client, credential: (@Sendable (SessionID, GroupID, String, String, Duration) async throws -> JSONValue)? = nil, finishCredentialAttempt: (@Sendable (SessionID, GroupID, String, String, Bool) async -> Void)? = nil) {
+    self.client = client; self.credential = credential; self.finishCredentialAttempt = finishCredentialAttempt
+  }
 }
 
 final class ScriptV2Operations: Sendable {
@@ -96,29 +101,44 @@ final class ScriptMachineV2Bindings: Sendable {
       }
       let client = try await access.client(group)
       if verb == "describe" { return try JSONValueEncoder().encode(try await client.describe(machine.id.rawValue)) }
-      guard case let .string(kind)? = fields["kind"], let input = fields["input"], case let .string(key)? = fields["key"], !key.isEmpty, key.utf8.count <= 1024 else { throw OperationError(.invalidInput) }
+      guard case let .string(kind)? = fields["kind"], var input = fields["input"], case let .string(key)? = fields["key"], !key.isEmpty, key.utf8.count <= 1024 else { throw OperationError(.invalidInput) }
       guard !execution.secrets.carriesPlaceholder(Array(input.jsonString().utf8)) else { throw OperationError(.invalidInput, message: "Secret placeholders are only supported by fetch") }
       if case let .object(values) = input, values["secretValues"] != nil || values["sessionCredential"] != nil { throw OperationError(.invalidInput, message: "Exec credential fields are server-owned") }
       let timeout: Duration
       switch fields["timeoutMs"] {
       case let .integer(n)?: guard n > 0 && n <= Int(scriptSecondsCeiling * 1000) else { throw OperationError(.invalidInput) }; timeout = .milliseconds(n)
-      case let .number(n)?: guard n.isFinite && n > 0 && n <= scriptSecondsCeiling * 1000 else { throw OperationError(.invalidInput) }; timeout = .milliseconds(Int(n))
+      case let .number(n)?: guard n.isFinite && n > 0 && n <= scriptSecondsCeiling * 1000 else { throw OperationError(.invalidInput) }; timeout = .seconds(n / 1000)
       case nil: timeout = execution.lifetime
       default: throw OperationError(.invalidInput)
       }
+      func authorizedInput() async throws -> JSONValue {
+        guard kind == "exec.v1" else { return input }
+        guard case var .object(values) = input, let credential = access.credential else { throw OperationError(.invalidInput, message: "Session exec credential unavailable") }
+        values["sessionCredential"] = try await credential(execution.session, group, execution.id, key, min(timeout, execution.lifetime))
+        return .object(values)
+      }
+      func finishCredential(claimed: Bool) async {
+        if kind == "exec.v1" { await access.finishCredentialAttempt?(execution.session, group, execution.id, key, claimed) }
+      }
       if execution.v2Operations.existing(key) != nil {
-        let id = try await client.start(machine.id.rawValue, request: .init(kind: kind, input: input), owner: .init(scope: execution.id, key: key), timeout: min(timeout, execution.lifetime))
-        return .string(id.uuidString)
+        input = try await authorizedInput()
+        do {
+          let id = try await client.start(machine.id.rawValue, request: .init(kind: kind, input: input), owner: .init(scope: execution.id, key: key), timeout: min(timeout, execution.lifetime))
+          await finishCredential(claimed: true)
+          return .string(id.uuidString)
+        } catch { await finishCredential(claimed: true); throw error }
       }
       try execution.v2Operations.reserve()
-      var id: UUID?
+      var id: UUID?; var credentialReserved = false
       do {
         _ = try await client.describe(machine.id.rawValue)
+        input = try await authorizedInput(); credentialReserved = kind == "exec.v1"
         id = try await client.start(machine.id.rawValue, request: .init(kind: kind, input: input), owner: .init(scope: execution.id, key: key), timeout: min(timeout, execution.lifetime), onClaim: { id in
           self.execution.v2Operations.adopt(id, handle: .init(client: client, machine: machine.id.rawValue), key: key)
         })
       } catch {
         let claimed = execution.v2Operations.existing(key)
+        if credentialReserved { await finishCredential(claimed: claimed != nil) }
         try await execution.v2Operations.settle(nil, handle: nil)
         if let claimed {
           let code = (error as? OperationError)?.code
@@ -134,6 +154,7 @@ final class ScriptMachineV2Bindings: Sendable {
         }
         throw error
       }
+      if credentialReserved { await finishCredential(claimed: true) }
       try await execution.v2Operations.settle(id, handle: .init(client: client, machine: machine.id.rawValue), key: key)
       return .string(id!.uuidString)
     }

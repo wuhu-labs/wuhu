@@ -423,3 +423,106 @@ extension SessionGateTests {
     }
   }
 }
+
+import Crypto
+import OperationClient
+import OperationProtocol
+import Synchronization
+
+extension SessionGateTests {
+  @Test func v2CredentialsKeepSessionAuthorityAndExpireWithoutRenewal() async throws {
+    try await withSessionDeps {
+      let t = try await tree(dev: false)
+      let now = Date()
+      let active = Mutex(true)
+      let credential = try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(60), now: now, active: { active.withLock { $0 } })
+      let token = try #require(credential.object?["token"]?.stringValue)
+      #expect(token.hasPrefix(ExecTokens.prefix) && token.count == 68)
+      #expect(try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(1), active: { false }) == credential)
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
+      #expect(try await t.harness.post("/v1/session/\(t.child.rawValue)/tags", ["tags": ["v2"]], bearer: token).status == .ok)
+      #expect(try await t.harness.get("/v1/users", bearer: token).status == .forbidden)
+      #expect(try await t.harness.get("/v1/server?group=another", bearer: token).status == .forbidden)
+      let expired = await sessionVerdict(token, tokens: t.tokens, space: t.harness.space, now: now.addingTimeInterval(61))
+      guard case let .refused(response) = expired else { Issue.record("expired credential acted"); return }
+      #expect(response.status == .unauthorized)
+      #expect(try await response.body.text().contains("credentialExpired"))
+      #expect(throws: OperationError.self) { try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(61), active: { true }) }
+      active.withLock { $0 = false }
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      active.withLock { $0 = true }
+      _ = try await t.harness.store.archive(t.parent, grace: .seconds(3600))
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .forbidden)
+      #expect(throws: OperationError.self) {
+        try t.tokens.credential(session: t.parent, group: .shared, scope: "script", key: "exec", timeout: .seconds(300), now: now.addingTimeInterval(ExecTokens.longestLife + 61), previouslyIssued: true, active: { true })
+      }
+      let restarted = ExecTokens(spaceURL: t.tokens.spaceURL)
+      guard case .refused = await sessionVerdict(token, tokens: restarted, space: t.harness.space, now: now) else { Issue.record("forgotten token fell back"); return }
+    }
+  }
+
+  @Test func v2CredentialLifecycleChecksDurableOperationAndOriginGroup() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let key = SymmetricKey(size: .bits256)
+      let store = try await t.harness.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+      let coordinator = MachineV2Coordinator(space: t.harness.space, key: key, problemsGroup: .shared, origin: URL(string: "https://memory.test")!, fetch: { _ in .init { _ in throw OperationError(.transport) } }, abort: { _, _ in })
+      let owner = OperationOwner(scope: "script", key: "exec")
+      let credential = try t.tokens.credential(session: t.parent, group: .shared, scope: owner.scope, key: owner.key, timeout: .seconds(60), now: Date(), active: { try await coordinator.credentialActive(group: .shared, owner: owner) })
+      let token = try #require(credential.object?["token"]?.stringValue)
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
+      #expect(try await coordinator.credentialIssued(group: .shared, owner: owner) == false)
+      _ = try await store.claim(owner, record: record)
+      #expect(try await coordinator.credentialIssued(group: .shared, owner: owner))
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
+      _ = try await store.transaction(record.id) { $0.stopReason = "scriptEnded" }
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      _ = try await store.transaction(record.id) { $0.stopReason = nil; $0.unknown = OperationError(.unknownOperation) }
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      _ = try await store.transaction(record.id) { $0.unknown = nil; $0.snapshot = .init(operation: record.id, verdict: .init(.completed, result: [:]), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true) }
+      #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
+      let mismatch = try t.tokens.credential(session: t.parent, group: .init(rawValue: "another"), scope: "script", key: "other", timeout: .seconds(60), now: Date(), active: { true })
+      #expect(try await t.harness.get("/v1/server", bearer: try #require(mismatch.object?["token"]?.stringValue)).status == .forbidden)
+      await coordinator.shutdown()
+    }
+  }
+}
+
+extension SessionGateTests {
+  @Test func failedUnclaimedExecAttemptsCannotExhaustIssuerAndClaimedTombstonesRemain() throws {
+    let tokens = ExecTokens(spaceURL: "https://test.invalid")
+    let session = SessionID(rawValue: "test-session")
+    let now = Date()
+    for lifetime in [Duration.zero, .seconds(-1), .init(secondsComponent: 0, attosecondsComponent: 1)] {
+      do {
+        _ = try tokens.credential(session: session, group: .shared, scope: "invalid", key: String(describing: lifetime), timeout: lifetime, now: now, reserveAttempt: true, active: { false })
+        Issue.record("invalid expiry reserved a credential")
+      } catch let error as OperationError { #expect(error.code == .invalidInput) }
+    }
+    for index in 0 ... 65536 {
+      let key = String(index)
+      _ = try tokens.credential(session: session, group: .shared, scope: "failed", key: key, timeout: .seconds(60), now: now, reserveAttempt: true, active: { false })
+      tokens.finishCredentialAttempt(session: session, group: .shared, scope: "failed", key: key, claimed: false)
+    }
+    let other = SessionID(rawValue: "unrelated-session")
+    let credential = try tokens.credential(session: other, group: .shared, scope: "new", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
+    tokens.finishCredentialAttempt(session: other, group: .shared, scope: "new", key: "exec", claimed: true)
+    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
+    #expect(throws: OperationError.self) {
+      try tokens.credential(session: other, group: .shared, scope: "new", key: "exec", timeout: .seconds(60), now: now.addingTimeInterval(61), active: { true })
+    }
+  }
+
+  @Test func oneFailedAttemptCannotDiscardAConcurrentAttemptCredential() throws {
+    let tokens = ExecTokens(spaceURL: "https://test.invalid")
+    let session = SessionID(rawValue: "test-session")
+    let now = Date()
+    let credential = try tokens.credential(session: session, group: .shared, scope: "parallel", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
+    _ = try tokens.credential(session: session, group: .shared, scope: "parallel", key: "exec", timeout: .seconds(60), now: now, reserveAttempt: true, active: { true })
+    tokens.finishCredentialAttempt(session: session, group: .shared, scope: "parallel", key: "exec", claimed: false)
+    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
+    tokens.finishCredentialAttempt(session: session, group: .shared, scope: "parallel", key: "exec", claimed: true)
+    #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
+  }
+}

@@ -20,7 +20,7 @@ import struct OperationRuntime.OperationChannels
 import protocol OperationRuntime.OperationKind
 
 struct ExecInput: Codable, Sendable {
-  struct Credential: Codable, Sendable { let token: String; let spaceURL: String }
+  struct Credential: Codable, Sendable { let token: String; let spaceURL: String; var expiresAt: Double? = nil }
   let argv: [String]
   let cwd: String
   let env: [String: String]?
@@ -30,6 +30,7 @@ struct ExecInput: Codable, Sendable {
 
   func validate() throws {
     guard !argv.isEmpty, !argv[0].isEmpty, cwd.hasPrefix("/"),
+          sessionCredential?.expiresAt.map({ $0.isFinite && $0 > 0 }) ?? true,
           (argv + [cwd]).allSatisfy({ !$0.utf8.contains(0) }),
           (Array((env ?? [:]).keys) + Array((secretValues ?? [:]).keys)).allSatisfy({ !$0.isEmpty && !$0.contains("=") && !$0.utf8.contains(0) }),
           (Array((env ?? [:]).values) + Array((secretValues ?? [:]).values) + [sessionCredential?.token, sessionCredential?.spaceURL].compactMap { $0 }).allSatisfy({ !$0.utf8.contains(0) })
@@ -40,10 +41,10 @@ struct ExecInput: Codable, Sendable {
 
   var environment: [String] {
     var value = ProcessInfo.processInfo.environment
-    for key in ["WUHU_IDENTITY", "WUHU_GROUP", "WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL"] { value.removeValue(forKey: key) }
+    for key in ["WUHU_IDENTITY", "WUHU_GROUP", "WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL", "WUHU_TOKEN_EXPIRES_AT"] { value.removeValue(forKey: key) }
     value.merge(env ?? [:], uniquingKeysWith: { _, b in b }); value.merge(secretValues ?? [:], uniquingKeysWith: { _, b in b })
-    for key in ["WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL"] { value.removeValue(forKey: key) }
-    if let credential = sessionCredential { value["WUHU_EXEC"] = "1"; value["WUHU_TOKEN"] = credential.token; value["WUHU_SPACE_URL"] = credential.spaceURL }
+    for key in ["WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL", "WUHU_TOKEN_EXPIRES_AT"] { value.removeValue(forKey: key) }
+    if let credential = sessionCredential { value["WUHU_EXEC"] = "1"; value["WUHU_TOKEN"] = credential.token; value["WUHU_SPACE_URL"] = credential.spaceURL; if let expiresAt = credential.expiresAt { value["WUHU_TOKEN_EXPIRES_AT"] = String(expiresAt) } }
     return value.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
   }
 

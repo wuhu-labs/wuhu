@@ -4,6 +4,7 @@
   import Foundation
 #endif
 
+import Dependencies
 import Fetch
 import protocol MachineChannel.FrameTransport
 import enum MachineContract.SessionExecEnvironment
@@ -16,6 +17,10 @@ let sessionRefusal = "not available to a session; set WUHU_IDENTITY=wallet to ac
 struct SessionCredential: Equatable, Sendable {
   var token: String
   var space: String
+}
+
+struct SessionCredentialExpired: Error, CustomStringConvertible {
+  var description: String { "credentialExpired: session exec credential expired; credentials are not renewed and the wallet is not used in its place" }
 }
 
 enum Identity: Equatable {
@@ -45,6 +50,11 @@ enum Identity: Equatable {
       this exec runs for a session (WUHU_EXEC=1) but WUHU_SPACE_URL is unset or not a URL, so it cannot act \
       as the session; the wallet is not used in its place
       """)
+    }
+    if let raw = environment[SessionExecEnvironment.expiresAt] {
+      guard let expiry = Double(raw), expiry.isFinite else { throw CLIError(message: "invalid WUHU_TOKEN_EXPIRES_AT; the wallet is not used in its place") }
+      @Dependency(\.date) var date
+      guard expiry > date.now.timeIntervalSince1970 else { throw SessionCredentialExpired() }
     }
     return .session(SessionCredential(token: token, space: space))
   }

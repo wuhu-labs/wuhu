@@ -379,7 +379,7 @@ export function machineV2(reference) {
     },
     grep: (root, pattern, options = {}) => {
       const policy = v2options(options, ["key", "timeoutMs", "dialect", "maxLineBytes", "entryLimit"])
-      return start("grep.v1", { root: String(root), pattern: String(pattern), dialect: options.dialect ?? "literal", maxLineBytes: options.maxLineBytes ?? 65536, ...(options.entryLimit === undefined ? {} : { entryLimit: options.entryLimit }) }, policy)
+      return start("grep.v1", { root: String(root), pattern: String(pattern), dialect: options.dialect ?? "regex", maxLineBytes: options.maxLineBytes ?? 65536, ...(options.entryLimit === undefined ? {} : { entryLimit: options.entryLimit }) }, policy)
     },
   }
 }

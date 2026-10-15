@@ -282,7 +282,8 @@ extension SessionActor {
       provenance: .toolCall(callID),
       payload: .compact(.init(summary: arguments.summary)),
     )
-    let compacted = try await repo.writeCompaction(closing: closing, head: head, kept: kept)
+    let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept))
+    let compacted = try await repo.writeCompaction(closing: closing, head: head, kept: kept, transition: transition)
     try modify {
       $0.transcript = compacted
       $0.generation += 1
@@ -367,8 +368,14 @@ extension SessionActor {
         let state = try live
         let compacted: Transcript
         do {
-          let portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget)
-          compacted = try await repo.writePortableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable)
+          var portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+          let transition: ModelRouteTransition?
+          if let route = boundary.route, let expectedEpoch = boundary.expectedEpoch {
+            portable.appendRouteNotice(group: route.group!, from: (try await repo.owner.modelRoute(id))?.member ?? "unknown", to: route.member!, reason: route.decisionReason)
+            guard portable.estimatedContextTokens(images: boundary.budget.images) <= boundary.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
+            transition = ModelRouteTransition(expectedEpoch: expectedEpoch, route: route, transcript: portable)
+          } else { transition = nil }
+          compacted = try await repo.writePortableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable, transition: transition)
         } catch {
           try Task.checkCancellation()
           await markErrored(error: error)
@@ -381,6 +388,9 @@ extension SessionActor {
         }
         await loopConfig.invalidateInference(id)
         return
+
+      case .failure(let waiting as ModelRouteWaiting):
+        guard await backoff(attempt: 1, until: waiting.retryAt) else { return }
 
       case .failure(let error):
         switch classify(error) {
@@ -523,7 +533,8 @@ extension SessionActor {
         snapshot: .init(subscriptions: environment.tools.subscriptions, preReads: outcome.preReads),
         settle: environment.settle,
       )
-      let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept, completingCompactRequest: compactClaim)
+      let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept))
+      let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept, completingCompactRequest: compactClaim, transition: transition)
       try modify {
         $0.transcript = compacted
         $0.generation += 1
@@ -629,13 +640,13 @@ private func classify(_ error: any Error) -> FailureClass {
   // one transport failure that re-burned the prompt to learn nothing.
   case .transport(.idleTimeout): .transient(timedOut: true)
   case .transport: .outage(retryAt: nil)
-  case .transient: .transient(timedOut: false)
+  case .transient, .upstreamUnavailable: .transient(timedOut: false)
   case .contextTooLong: .contextTooLong
   case .requestTooLarge: .requestTooLarge(normalized)
   case let .capacityExceeded(code, _, _):
     code == "response_too_large" || code == "websocket_message_too_large"
       ? .requestTooLarge(normalized) : .capacity
-  case .requestTooLargeAfterCompaction, .invalidInput, .other: .terminal
+  case .requestTooLargeAfterCompaction, .credentialRefreshRefused, .authenticationRefused, .invalidInput, .other: .terminal
   }
 }
 

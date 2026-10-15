@@ -31,6 +31,7 @@ func kernelInference(
     let record: SessionRecord
     let resolved: ResolvedModel
     let warmingPolicy: CacheWarmingPolicy?
+    var routingCatalog: ProviderCatalog?
     do {
       record = try await owner.record(request.sessionID)
       let selectedCatalog: ProviderCatalog
@@ -39,6 +40,7 @@ func kernelInference(
       } else {
         selectedCatalog = try await catalog()
       }
+      routingCatalog = selectedCatalog
       let model: ModelSpecifier
       let route: SessionModelRoute
       switch record.executor {
@@ -68,7 +70,7 @@ func kernelInference(
         }
         route = held
         model = try selectedCatalog.validateRoute(held, group: id, effort: effort)
-        _ = try await selectedCatalog.validateGroupReadiness(id, effort: effort)
+        try await routeWaitOrSwitch(held, session: request.sessionID, catalog: selectedCatalog, usage: usage)
       case .claudeCode, .contractor:
         preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
       }
@@ -80,6 +82,9 @@ func kernelInference(
       }
     } catch {
       await sockets.invalidate(request.sessionID)
+      if let routingCatalog, let failure = try await recordRouteFailure(error, session: request.sessionID, owner: owner, catalog: routingCatalog, usage: usage, inferenceStarted: false) {
+        throw ModelRouteWaiting(retryAt: min(failure.deadline, failure.retryAt ?? date.now.addingTimeInterval(60)))
+      }
       throw error
     }
     let lease: (session: ResponsesWebSocketSession, lease: UUID)?
@@ -114,6 +119,9 @@ func kernelInference(
         handles: try await owner.handlesByPrincipal(),
         devices: try await owner.deviceNames(),
       )
+      if let held = try await owner.modelRoute(request.sessionID), held.failure != nil {
+        try await owner.updateModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
+      }
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
       return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry, transcript in
         if record.kind == .agent, let warmingPolicy { await committedWarming(request.sessionID, warmingPolicy) }
@@ -122,6 +130,9 @@ func kernelInference(
     } catch {
       if let lease { await sockets.invalidate(request.sessionID, lease: lease.lease) }
       if error is InferenceCancelled { throw InferenceError.cancelled }
+      if let routingCatalog, let failure = try await recordRouteFailure(error, session: request.sessionID, owner: owner, catalog: routingCatalog, usage: usage) {
+        throw ModelRouteWaiting(retryAt: min(failure.deadline, failure.retryAt ?? date.now.addingTimeInterval(60)))
+      }
       throw error
     }
   }

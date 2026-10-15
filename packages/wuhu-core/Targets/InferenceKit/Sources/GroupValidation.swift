@@ -1,3 +1,4 @@
+import enum Credentials.ChatGPTAuthError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -42,24 +43,9 @@ extension ProviderCatalog {
     let effort = try validateGroup(id, effort: effort)
     for member in document.groups[id]!.members {
       do {
-        let provider = document.providers[member.provider]!
-        if provider.auth == .oidc {
-          guard oidcToken != nil else { throw CatalogError.oidcNotConfigured(provider: member.provider) }
-          do { try await oidcReadiness?(provider.baseURL) }
-          catch { throw CatalogError.oidcNotConfigured(provider: member.provider) }
-          continue
-        }
-        guard let credential = try await credentials.resolve(member.provider) else {
-          throw CatalogError.missingCredential(provider: member.provider)
-        }
-        switch (provider.dialect, credential) {
-        case let (.codex, .chatGPT(token, account)):
-          guard !token.isEmpty, !account.isEmpty else { throw CatalogError.missingCredential(provider: member.provider) }
-        case let (.responses, .apiKey(key)), let (.anthropic, .apiKey(key)), let (.claude, .apiKey(key)):
-          guard !key.isEmpty else { throw CatalogError.missingCredential(provider: member.provider) }
-        case (.claude, _): throw CatalogError.claudeAPIKeyRequired(provider: member.provider)
-        default: throw CatalogError.credentialMismatch(provider: member.provider)
-        }
+        try await validateReadiness(.init(provider: member.provider, model: member.model, effort: effort))
+      } catch ChatGPTAuthError.loginRequired {
+        throw CatalogError.groupMember(group: id, member: member.id, reason: .credentialLoginRequired(provider: member.provider))
       } catch let error as CatalogError {
         throw CatalogError.groupMember(group: id, member: member.id, reason: error)
       } catch {
@@ -67,6 +53,28 @@ extension ProviderCatalog {
       }
     }
     return effort
+  }
+
+  public func validateReadiness(_ specifier: ModelSpecifier) async throws {
+    _ = try validate(specifier)
+    let provider = document.providers[specifier.provider]!
+    if provider.auth == .oidc {
+      guard oidcToken != nil else { throw CatalogError.oidcNotConfigured(provider: specifier.provider) }
+      do { try await oidcReadiness?(provider.baseURL) }
+      catch { throw CatalogError.oidcNotConfigured(provider: specifier.provider) }
+      return
+    }
+    guard let credential = try await credentials.resolve(specifier.provider) else {
+      throw CatalogError.missingCredential(provider: specifier.provider)
+    }
+    switch (provider.dialect, credential) {
+    case let (.codex, .chatGPT(token, account)):
+      guard !token.isEmpty, !account.isEmpty else { throw CatalogError.missingCredential(provider: specifier.provider) }
+    case let (.responses, .apiKey(key)), let (.anthropic, .apiKey(key)), let (.claude, .apiKey(key)):
+      guard !key.isEmpty else { throw CatalogError.missingCredential(provider: specifier.provider) }
+    case (.claude, _): throw CatalogError.claudeAPIKeyRequired(provider: specifier.provider)
+    default: throw CatalogError.credentialMismatch(provider: specifier.provider)
+    }
   }
 
   public func validateRoute(_ route: SessionModelRoute, group id: String, effort: String) throws -> ModelSpecifier {

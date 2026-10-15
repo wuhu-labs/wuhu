@@ -53,6 +53,10 @@ public struct InProcessExecutionOwnerClient: ExecutionOwnerClient {
     try await sessions.modelRoute(id)
   }
 
+  public func updateModelRouteFailure(_ id: SessionID, expectedEpoch: String, failure: ModelRouteFailure?) async throws {
+    try await sessions.updateModelRouteFailure(id, expectedEpoch: expectedEpoch, failure: failure)
+  }
+
   public func establishModelRoute(_ id: SessionID, route: SessionModelRoute) async throws -> SessionModelRoute {
     try await sessions.establishModelRoute(id, route: route)
   }
@@ -93,12 +97,12 @@ public struct InProcessExecutionOwnerClient: ExecutionOwnerClient {
     try await sessions.claimCompactRequest(id, generation: generation)
   }
 
-  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript {
-    try await sessions.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript)
+  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition? = nil) async throws -> Transcript {
+    try await sessions.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript, transition: transition)
   }
 
-  public func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?) async throws -> Transcript {
-    try await sessions.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest)
+  public func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?, transition: ModelRouteTransition? = nil) async throws -> Transcript {
+    try await sessions.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest, transition: transition)
   }
 
   public func markInterrupted(_ id: SessionID) async throws {

@@ -54,6 +54,7 @@ private struct ReadKind: OperationKind {
 
 private struct SearchInput: Decodable, Sendable {
   let root: String; let glob: String?; let pattern: String?; let dialect: String?; let maxLineBytes: Int?; let includeSymlinks: Bool; let entryLimit: Int?
+  let matcher: GrepMatcher?
   enum CodingKeys: String, CodingKey { case root, glob, pattern, dialect, maxLineBytes, includeSymlinks, entryLimit }
   init(from decoder: any Decoder) throws {
     try fields(decoder, allowed: ["root", "glob", "pattern", "dialect", "maxLineBytes", "includeSymlinks", "entryLimit"])
@@ -66,9 +67,10 @@ private struct SearchInput: Decodable, Sendable {
     if let glob {
       guard pattern == nil, dialect == nil, maxLineBytes == nil, c.contains(.includeSymlinks) else { throw OperationError(.invalidInput) }
       guard !glob.isEmpty && glob.utf8.count <= 4096 else { throw OperationError(.invalidInput) }
+      matcher = nil
     } else {
-      guard dialect == "literal" else { throw OperationError(.unsupportedDialect, details: ["supported": ["literal"]]) }
       guard let pattern, !pattern.isEmpty, pattern.utf8.count <= 4096, let maxLineBytes, (1 ... 65536).contains(maxLineBytes) else { throw OperationError(.invalidInput) }
+      matcher = try GrepMatcher(pattern: pattern, dialect: dialect)
     }
   }
 }
@@ -98,7 +100,7 @@ private struct FindKind: OperationKind {
 private struct GrepKind: OperationKind {
   let files: ComputerFileSystem; let descriptor = ComputerKindSchemas.grep
   func run(_ input: SearchInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
-    guard let pattern = input.pattern, let maximum = input.maxLineBytes, input.dialect == "literal" else { throw OperationError(.invalidInput) }
+    guard let matcher = input.matcher, let maximum = input.maxLineBytes else { throw OperationError(.invalidInput) }
     let walk = try await files.walk(input.root, false)
     do {
       var scanned = 0; var matched = 0; var skipped: [String: Int] = [:]
@@ -107,7 +109,7 @@ private struct GrepKind: OperationKind {
         if let limit = input.entryLimit, scanned >= limit { try await cancellation.stop(reason: "entryLimit") }
         guard let entry = try await walk.next(check: { try await cancellation.check() }) else { break }
         scanned += 1; guard entry.kind == "file" else { continue }
-        do { try await scan(entry, pattern: pattern, maximum: maximum, channels: channels, cancellation: cancellation, matched: &matched) }
+        do { try await scan(entry, matcher: matcher, maximum: maximum, channels: channels, cancellation: cancellation, matched: &matched) }
         catch let error as OperationError {
           let reason: String
           switch error.code {
@@ -126,7 +128,7 @@ private struct GrepKind: OperationKind {
     } catch { await walk.close(); throw error }
   }
 
-  private func scan(_ entry: ComputerEntry, pattern: String, maximum: Int, channels: OperationChannels, cancellation: OperationCancellation, matched: inout Int) async throws {
+  private func scan(_ entry: ComputerEntry, matcher: GrepMatcher, maximum: Int, channels: OperationChannels, cancellation: OperationCancellation, matched: inout Int) async throws {
     let path = entry.path
     let source = entry.file ?? ComputerFile(status: { try await self.files.status(path) }, read: { try await self.files.read(path, $0, $1) })
     let initial = try await source.status()
@@ -134,7 +136,8 @@ private struct GrepKind: OperationKind {
     var offset: UInt64 = 0; var line: UInt64 = 1; var buffer = Data()
     func emit() async throws {
       guard let text = String(data: buffer, encoding: .utf8) else { throw OperationError(.invalidInput) }
-      if text.contains(pattern) { try await channels.send(.init(records: [["path": .string(path), "line": .string(String(line)), "text": .string(text)]]), to: "matches"); matched += 1 }
+      try await cancellation.check()
+      if try await matcher.matches(text, cancellation: cancellation) { try await channels.send(.init(records: [["path": .string(path), "line": .string(String(line)), "text": .string(text)]]), to: "matches"); matched += 1 }
       buffer.removeAll(keepingCapacity: true); line += 1
     }
     while true {

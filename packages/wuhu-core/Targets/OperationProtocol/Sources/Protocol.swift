@@ -37,7 +37,7 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     case operationExists, invalidOffset, offsetExpired, operationEnded, leaving, invalidInput
     case inputTooLarge, recordTooLarge, resultTooLarge, capacityExceeded, invocationConflict
     case machineUnavailable, callerDeadline, requestDeadline, requestCancelled, transport, invalidResponse, kindFailed
-    case machineNotAuthorized, traceUnavailable, storeUnavailable, fileChanged, unsupportedDialect, fileUnavailable
+    case machineNotAuthorized, traceUnavailable, storeUnavailable, fileChanged, unsupportedDialect, fileUnavailable, credentialExpired
     case spawnFailed, supervisorUnavailable, supervisorIdentityMismatch, invalidConfiguration
   }
 

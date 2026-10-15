@@ -86,30 +86,36 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 }
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
-  guard let holder = tokens.holder(ofBearer: bearer, now: now) else {
-    return .refused(errorResponse(
-      .unauthorized,
-      code: "unauthorized",
-      message: "this session token is not valid: its exec has ended or passed its timeout, or the server restarted since it started",
-    ))
+  let session: SessionID
+  var boundGroup: GroupID?
+  if let holder = tokens.v2Holder(ofBearer: bearer) {
+    guard holder.expiresAt > now else { return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session exec credential expired; credentials are not renewed")) }
+    guard (try? await holder.active()) == true else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec operation ended or is unavailable")) }
+    session = holder.key.session; boundGroup = holder.key.group
+  } else {
+    guard let holder = tokens.holder(ofBearer: bearer, now: now) else {
+      return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token is not valid: its exec has ended or passed its timeout, or the server restarted since it started"))
+    }
+    guard let exec = try? await space.execRecord(holder.exec), !execHasEnded(exec.terminal) else {
+      tokens.revoke(holder.exec)
+      return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token's exec \(holder.exec.rawValue) has ended"))
+    }
+    session = holder.session
   }
-  guard let exec = try? await space.execRecord(holder.exec), !execHasEnded(exec.terminal) else {
-    tokens.revoke(holder.exec)
-    return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "this session token's exec \(holder.exec.rawValue) has ended"))
-  }
-  guard let record = try? await space.sessions.record(holder.session),
-        let group = try? await space.principal(of: holder.session).group
+  guard let record = try? await space.sessions.record(session),
+        let group = try? await space.principal(of: session).group
   else {
-    return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "unknown session: \(holder.session.rawValue)"))
+    return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "unknown session: \(session.rawValue)"))
   }
+  guard boundGroup == nil || boundGroup == group else { return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "Session exec group changed")) }
   guard case .live = record.lifecycle else {
     return .refused(errorResponse(
       .forbidden,
       code: "forbidden",
-      message: "session \(holder.session.rawValue) is archived and may no longer act",
+      message: "session \(session.rawValue) is archived and may no longer act",
     ))
   }
-  return .session(GatedSession(session: holder.session, group: group))
+  return .session(GatedSession(session: session, group: group))
 }
 
 private func principal() -> GatedSession {

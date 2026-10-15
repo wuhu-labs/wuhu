@@ -110,6 +110,18 @@ struct ExecTests {
     }
   }
 
+  @Test func v1SessionRemovesForeignV2CredentialExpiry() async throws {
+    let start = makeStart(execID(1), command: ["sh", "-c", "printf '%s|%s' \"${WUHU_TOKEN_EXPIRES_AT-unset}\" \"$WUHU_EXEC\""], env: ["WUHU_TOKEN_EXPIRES_AT": "1"], session: ExecSessionCredential(token: "wst_test", spaceURL: "https://space.test"))
+    #expect(ExecEngine.environmentOverlay(start)["WUHU_TOKEN_EXPIRES_AT"] == .some(String?.none))
+    try await Harness().run { h in
+      h.connect()
+      let exec = await h.caller.startExec(start)
+      let collected = try await collect(exec)
+      #expect(collected.stdoutText == "unset|1")
+      #expect(collected.exit == .exited(code: 0))
+    }
+  }
+
   @Test func withoutASessionTheServerNamesAreUnset() async throws {
     try await Harness().run { h in
       h.connect()

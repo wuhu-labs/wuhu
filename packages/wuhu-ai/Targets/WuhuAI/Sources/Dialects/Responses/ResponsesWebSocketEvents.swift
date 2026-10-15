@@ -162,8 +162,8 @@ struct ResponsesWebSocketEvents {
     switch code {
     case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota", "usage_limit_reached": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
     case "server_error", "internal_server_error", "overloaded_error", "temporarily_unavailable":
-      return .transient(status: nil, body: message)
-    case "invalid_api_key", "authentication_error", "unauthorized": return .invalidInput(status: 401, body: message)
+      return .upstreamUnavailable(code: code)
+    case "invalid_api_key", "authentication_error", "unauthorized", "account_deactivated", "account_banned": return .authenticationRefused(code: code)
     case "permission_denied", "forbidden": return .invalidInput(status: 403, body: message)
     case "previous_response_not_found", "websocket_connection_limit_reached": return .transient(status: status, body: message)
     case "invalid_stream_id", "websocket_stream_limit_reached", "invalid_request_error", "invalid_request", "invalid_value", "unsupported_parameter", "model_not_found":

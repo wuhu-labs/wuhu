@@ -13,6 +13,9 @@ import JSONValue
 /// The bounded failure surface for model inference.
 public enum InferenceError: Error, Sendable, Equatable {
   case rateLimited(retryAt: Date?)
+  case credentialRefreshRefused(provider: String)
+  case authenticationRefused(code: String)
+  case upstreamUnavailable(code: String)
   case capacityExceeded(code: String, message: String, status: Int?)
   case contextTooLong
   case requestTooLarge(limitBytes: Int)
@@ -35,6 +38,11 @@ extension InferenceError {
   ) -> InferenceError {
     if let body, let value = JSONValue.parse(body) {
       let object = (value.object?["error"] ?? value).object
+      let code = object?["code"]?.stringValue ?? object?["type"]?.stringValue
+      if ["invalid_api_key", "authentication_error", "unauthorized", "account_deactivated", "account_banned"].contains(code ?? ""), status == 401 || status == 403 {
+        return .authenticationRefused(code: code!)
+      }
+      if ["insufficient_quota", "usage_limit_reached", "rate_limit_error", "rate_limit_exceeded"].contains(code ?? "") { return .rateLimited(retryAt: parseRetryAfter(headers)) }
       if let capacity = capacityError(code: object?["code"]?.stringValue ?? object?["type"]?.stringValue, message: object?["message"]?.stringValue, status: status) {
         return capacity
       }
@@ -175,10 +183,16 @@ struct ProviderStreamError: Error, Sendable, Equatable {
 
   func asInferenceError() -> InferenceError {
     switch type {
+    case "authentication_error":
+      .authenticationRefused(code: "authentication_error")
+
     case "rate_limit_error":
       .rateLimited(retryAt: nil)
 
-    case "overloaded_error", "api_error", "invalid_stream":
+    case "overloaded_error", "api_error":
+      .upstreamUnavailable(code: type!)
+
+    case "invalid_stream":
       .transient(status: nil, body: diagnosticBody)
 
     case "invalid_request_error":

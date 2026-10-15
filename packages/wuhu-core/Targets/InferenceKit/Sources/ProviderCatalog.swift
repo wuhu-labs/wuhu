@@ -23,6 +23,7 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
   case invalidCapacity(provider: String, window: String)
   case invalidGroup(group: String, reason: String)
   case groupMember(group: String, member: String, reason: CatalogError)
+  case credentialLoginRequired(provider: String)
   case modelRouteInvalid(group: String, member: String)
   case invalidModel(provider: String, model: String)
   case oidcNotConfigured(provider: String)
@@ -48,6 +49,7 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
     case let .unknownGroup(group): "unknown model group: \(group)"
     case let .invalidGroup(group, reason): "invalid model group \(group): \(reason)"
     case let .groupMember(group, member, reason): "model group \(group) member \(member): \(reason.description)"
+    case let .credentialLoginRequired(provider): "credentialLoginRequired: \(provider) requires login after credential refresh refusal"
     case let .modelRouteInvalid(group, member): "modelRouteInvalid: model group \(group) pinned member \(member) was removed or rebound; restore it or Start over"
     case let .invalidModel(provider, model): "invalid context/output limits for \(provider)/\(model)"
     case let .oidcNotConfigured(provider): "OIDC authentication is not configured for provider \(provider)"
@@ -226,6 +228,8 @@ public struct ProviderCatalog: Sendable {
     let held: CredentialBinding?
     do {
       held = try await credentials.resolveBinding(specifier.provider)
+    } catch ChatGPTAuthError.loginRequired {
+      throw .credentialRefreshRefused(provider: specifier.provider)
     } catch let error as ChatGPTAuthError {
       throw error.asInferenceError
     } catch {
@@ -303,6 +307,7 @@ extension ChatGPTAuthError {
 extension CatalogError {
   public var code: String {
     switch self {
+    case .credentialLoginRequired: "credentialLoginRequired"
     case .modelRouteInvalid: "modelRouteInvalid"
     case .noUsableMembers: "modelGroupUnavailable"
     case .unsupportedTarget: "unsupportedTarget"

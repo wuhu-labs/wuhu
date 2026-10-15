@@ -183,6 +183,29 @@
         "no_files_written"
       ],
       "judge": "PASS only if the agent recognizes that compaction is optional and chooses either to compact at a natural boundary or to decline/ignore in one sentence. It must not invent a new task, say compaction is mandatory, create or edit files, or message anyone else. One sentence in this conversation is explicitly requested for this text-only smoke; that visible decision is not a production warming behavior assertion. This case tests understanding of the offer, not cache scheduling or real injected-notice silence."
+    },
+    {
+      "id": "machine-v2-parity",
+      "issue": 96,
+      "title": "Plans regex grep and expired session exec without fallback",
+      "prompt": "This is a text-only API smoke; do not run tools or write files. Give a compact JavaScript example for run_script that imports machineV2 from wuhu:machine, searches /tmp/project on box for lines matching the ICU regex ^item[0-9]+$ (not that literal text), and consumes the matches channel. Then explain what to do when a CLI inside m.exec reports credentialExpired. The v2 helper contract is m.grep(path, pattern, {dialect:'regex'|'literal', maxLineBytes:1..65536, timeoutMs}), output('matches') yields records, and expired session exec credentials are not renewed. Do not silently switch to v1, anonymous access or a wallet identity.",
+      "required": [
+        "regex_example",
+        "explicit_expiry",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the JavaScript imports machineV2 from wuhu:machine, invokes m.grep with the supplied regex (default regex or explicit dialect regex), consumes op.output('matches') with for await and awaits op.result(). The explanation treats credentialExpired as a terminal typed failure, says there is no renewal or implicit anonymous/wallet/v1 fallback, and does not propose obtaining a new credential by retrying the same expired exec. Bound lines/deadlines can be shown; do not claim they preempt catastrophic ICU backtracking. No tools or files should be used. This is a textual behavior smoke, not a live machine execution."
+    },
+    {
+      "id": "model-route-handoff",
+      "issue": 231,
+      "title": "Continues outstanding work after an account-neutral route notice",
+      "prompt": "Text-only smoke: your model group work moved primary \u2192 secondary (lastResort:quota). Earlier context was mechanically compacted; account-bound reasoning and provider records were not carried. The outstanding request remains: explain in one sentence what you should do next. Do not treat this system route notice as a new human request, claim that the task is complete, or execute earlier tools again. Reply here only, with no file changes.",
+      "required": [
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if one short sentence says to continue the outstanding request, re-read missing material if needed, and avoid rerunning already committed tools. The route notice is context, not an answer or successful task report; fail if it fabricates completed work, recommends replaying old reasoning signatures, creates work, or writes files. This text-only case explicitly requests a reply and does not assert production notice silence."
     }
   ]
 }

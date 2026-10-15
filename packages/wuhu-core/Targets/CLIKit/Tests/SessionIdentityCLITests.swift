@@ -77,11 +77,12 @@ private final class IdentityHarness: Sendable {
   let child: SessionID
   let stranger: SessionID
   let token: String
+  let expiresAt: String?
   private let serviceTask: Task<Void, Never>
 
   deinit { self.serviceTask.cancel() }
 
-  init() async throws {
+  init(v2: Bool = false) async throws {
     self.scratch = try ScratchFolder("identity")
     let root = self.scratch.url
     self.home = root.appendingPathComponent("home", isDirectory: true)
@@ -130,18 +131,27 @@ private final class IdentityHarness: Sendable {
       title: "coder", kind: .task, parent: self.parent, createdBy: self.parent.rawValue, executor: model,
     )
     self.stranger = try await self.store.createSession(group: .shared, title: "stranger", kind: .agent, createdBy: "owner", executor: model)
-    let machine = try await space.addMachine(name: "box")
-    let exec = try await space.mintExec(machine: machine.id, caller: self.parent.rawValue)
-    self.token = tokens.credential(session: self.parent, exec: exec.id, timeout: nil, now: Date()).token
+    if v2 {
+      let credential = try tokens.credential(session: self.parent, group: .shared, scope: "script", key: "cli", timeout: .seconds(60), now: Date(), active: { true })
+      self.token = try #require(credential.object?["token"]?.stringValue)
+      self.expiresAt = try #require(credential.object?["expiresAt"]).jsonString()
+    } else {
+      let machine = try await space.addMachine(name: "box")
+      let exec = try await space.mintExec(machine: machine.id, caller: self.parent.rawValue)
+      self.token = tokens.credential(session: self.parent, exec: exec.id, timeout: nil, now: Date()).token
+      self.expiresAt = nil
+    }
   }
 
   var sessionEnvironment: [String: String] {
-    [
+    var env = [
       "HOME": self.home.path,
       "WUHU_EXEC": "1",
       "WUHU_TOKEN": self.token,
       "WUHU_SPACE_URL": Self.sessionSpace,
     ]
+    env["WUHU_TOKEN_EXPIRES_AT"] = expiresAt
+    return env
   }
 
   func run(_ arguments: [String], environment: [String: String]) async -> (code: Int32, stdout: String, stderr: String, hosts: [String]) {
@@ -406,6 +416,42 @@ private final class IdentityHarness: Sendable {
       #expect(server.code == 1)
       #expect(server.stderr.contains("not available to a session"))
       #expect(!server.stderr.contains("WUHU_IDENTITY"))
+    }
+  }
+}
+
+extension SessionIdentityCLITests {
+  @Test func v2CredentialRunsRealCLIWithSessionAuthorityAndTypedExpiry() async throws {
+    try await withIdentityDeps {
+      let h = try await IdentityHarness(v2: true)
+      let notes = "/_/sessions/\(h.parent.rawValue)/v2.md"
+      let written = await h.asSession(["write", "--body", "v2 session", notes])
+      #expect(written.code == 0, "\(written.stderr)")
+      #expect(written.hosts.allSatisfy { $0 == "space.test:5530" })
+      #expect(try await h.space.fs(.shared).read(notes).1 == Data("v2 session".utf8))
+      let tags = await h.asSession(["session", "tags", h.child.rawValue, "wuhu:96"])
+      #expect(tags.code == 0 && tags.stdout == "wuhu:96\n")
+      let foreign = await h.asSession(["write", "--body", "x", "/_/sessions/\(h.stranger.rawValue)/v2.md"])
+      #expect(foreign.code == 1)
+      var environment = h.sessionEnvironment
+      environment["WUHU_TOKEN_EXPIRES_AT"] = "1"
+      let expired = await h.run(["read", notes], environment: environment)
+      #expect(expired.code == 1 && expired.stderr.contains("credentialExpired"))
+      #expect(expired.hosts.isEmpty)
+    }
+  }
+
+  @Test func expiredV2CredentialIsTypedAndNeverUsesWalletImplicitly() throws {
+    try withDependencies { $0.date = .constant(Date(timeIntervalSince1970: 100)) } operation: { () throws -> Void in
+      var env = ["WUHU_EXEC": "1", "WUHU_TOKEN": "wst_test", "WUHU_SPACE_URL": "https://session.test", "WUHU_TOKEN_EXPIRES_AT": "1"]
+      #expect(throws: SessionCredentialExpired.self) { try Identity.resolve(environment: env) }
+      env["WUHU_IDENTITY"] = "wallet"
+      #expect(try Identity.resolve(environment: env) == .wallet(announce: true))
+      env.removeValue(forKey: "WUHU_IDENTITY")
+      env["WUHU_TOKEN_EXPIRES_AT"] = "invalid"
+      #expect(throws: CLIError.self) { try Identity.resolve(environment: env) }
+      env["WUHU_TOKEN_EXPIRES_AT"] = "9999999999"
+      #expect(try Identity.resolve(environment: env) == .session(.init(token: "wst_test", space: "https://session.test")))
     }
   }
 }

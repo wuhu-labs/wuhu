@@ -12,7 +12,7 @@ import Scratch
 import Serve
 import ServeTesting
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Synchronization
 import Testing
 

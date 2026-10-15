@@ -104,7 +104,7 @@ extension FileOperationTests {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
     let id = UUID()
     let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(id)")!
-    let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "grep.v1", input: ["root": "/", "pattern": "(a+)+$", "dialect": "regex", "maxLineBytes": 65536]))))
+    let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "grep.v1", input: ["root": "/", "pattern": "(a+)+$", "dialect": "pcre", "maxLineBytes": 65536]))))
     #expect(response.status.code == 400)
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .unsupportedDialect)
     #expect(await files.walked == 0)
@@ -317,5 +317,54 @@ extension FileOperationTests {
     try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: folder.url.path)
     let (_, entries, end) = try await run(["root": .string(link.path + "/"), "glob": "**/*", "includeSymlinks": false], kind: "find.v1", channel: "entries", files: .local)
     #expect(entries.isEmpty); #expect(end.verdict?.tag == .failed); #expect(end.verdict?.error?.code == .invalidInput)
+  }
+}
+
+extension FileOperationTests {
+  @Test func regexUsesICUSyntaxAndUnicodeOnIncrementalLines() async throws {
+    let files = FakeFiles(data: Data("abc12\n你好42\nabc\nABC99\n".utf8), chunk: 2)
+    let (_, records, end) = try await run(["root": "/file", "pattern": "^\\p{L}+[0-9]{2}$", "dialect": "regex", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: files.system)
+    #expect(records.count == 3)
+    #expect(records[1] == ["path": "/file", "line": "2", "text": "你好42"])
+    #expect(end.verdict?.tag == .completed)
+    let (_, insensitive, _) = try await run(["root": "/file", "pattern": "(?i)^abc[0-9]+$", "dialect": "regex", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: files.system)
+    #expect(insensitive.count == 2)
+  }
+
+  @Test func invalidRegexRefusesBeforeAnyFilesystemEffect() async throws {
+    let files = FakeFiles(data: Data())
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
+    let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(UUID())")!
+    let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "grep.v1", input: ["root": "/", "pattern": "[", "dialect": "regex", "maxLineBytes": 65536]))))
+    #expect(response.status.code == 400)
+    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .invalidInput)
+    #expect(await files.walked == 0)
+    #expect(await files.reads == 0)
+  }
+}
+
+extension FileOperationTests {
+  @Test(arguments: ["stop", "lease"])
+  func pathologicalRegexStopsDuringICUBacktracking(_ action: String) async throws {
+    let files = FakeFiles(data: Data((String(repeating: "a", count: 32000) + "!\n").utf8))
+    let time = FileLocalTime()
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), clock: time.clock, authorize: { _, _ in })
+    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await agent.run() }; defer { group.cancelAll() }
+      _ = try await client.describe("disk")
+      let id = try await client.start("disk", request: .init(kind: "grep.v1", input: ["root": "/file", "pattern": "(a+)+$", "dialect": "regex", "maxLineBytes": 65536]), owner: .init(scope: "regex-stop", key: action))
+      while await files.reads < 2 { await Task.yield() }
+      try await OperationClock.continuous.sleep(.milliseconds(100))
+      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+      if action == "stop" { _ = try await client.stop(id, reason: "callerDeadline") }
+      else { time.advance(.seconds(61)) }
+      var end = try await client.reconcile(id)
+      while end.verdict == nil && ContinuousClock().now < deadline { await Task.yield(); end = try await client.reconcile(id) }
+      #expect(end.verdict?.tag == .stopped)
+      #expect(end.verdict?.reason == (action == "stop" ? "callerDeadline" : "leaseExpired"))
+      await agent.shutdown(); await client.shutdown()
+      #expect(ContinuousClock().now < deadline)
+    }
   }
 }

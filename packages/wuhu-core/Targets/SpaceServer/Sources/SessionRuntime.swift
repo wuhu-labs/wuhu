@@ -211,6 +211,7 @@ extension SessionRuntime {
         await mechanicalCompaction(of: transcript, images: budget(id).images)
       },
       budget: budget,
+      prepareCompaction: compactionPlacement(owner: executionOwner, catalog: catalog, usage: usage),
       killInterruptedTool: { invocation in
         guard invocation.call.name == "exec" else { return }
         await owner.killInterruptedExec(

@@ -1,3 +1,4 @@
+import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -51,8 +52,14 @@ public struct SessionModelRoute: Hashable, Sendable, Codable {
   public var reason: ModelPlacementReason
   public var placedAt: Date
   public var evidence: [ModelPlacementEvidence]
+  public var failure: ModelRouteFailure?
+  public var switchCause: ModelRouteFailure.Reason?
 
-  public init(group: String?, member: String?, specifier: ModelSpecifier, bindingFingerprint: String, epoch: String, reason: ModelPlacementReason, placedAt: Date, evidence: [ModelPlacementEvidence]) {
+  public var decisionReason: String { switchCause.map { "lastResort:" + $0.rawValue } ?? reason.rawValue }
+
+  public init(group: String?, member: String?, specifier: ModelSpecifier, bindingFingerprint: String, epoch: String, reason: ModelPlacementReason, placedAt: Date, evidence: [ModelPlacementEvidence], failure: ModelRouteFailure? = nil, switchCause: ModelRouteFailure.Reason? = nil) {
+    self.switchCause = switchCause
+    self.failure = failure
     self.group = group
     self.member = member
     self.specifier = specifier
@@ -61,5 +68,52 @@ public struct SessionModelRoute: Hashable, Sendable, Codable {
     self.reason = reason
     self.placedAt = placedAt
     self.evidence = evidence
+  }
+}
+
+public struct ModelRouteFailure: Hashable, Sendable, Codable {
+  public enum Reason: String, Hashable, Sendable, Codable { case quota, authentication, upstreamOutage }
+  public enum Source: String, Hashable, Sendable, Codable { case upstream, credentialRefresh }
+  public var source: Source
+  public var code: String
+  public var reason: Reason
+  public var firstFailureAt: Date
+  public var lastFailureAt: Date?
+  public var deadline: Date
+  public var retryAt: Date?
+  public var consecutiveFailures: Int
+
+  public init(reason: Reason, firstFailureAt: Date, deadline: Date, retryAt: Date?, consecutiveFailures: Int = 1, source: Source = .upstream, code: String = "refusal", lastFailureAt: Date? = nil) {
+    self.lastFailureAt = lastFailureAt
+    self.source = source
+    self.code = code
+    self.reason = reason
+    self.firstFailureAt = firstFailureAt
+    self.deadline = deadline
+    self.retryAt = retryAt
+    self.consecutiveFailures = consecutiveFailures
+  }
+
+  public var refusing: Bool { reason != .upstreamOutage || consecutiveFailures >= 3 }
+  public var evidenceExpiresAt: Date { retryAt ?? max(deadline, (lastFailureAt ?? firstFailureAt).addingTimeInterval(60)) }
+}
+
+public struct ModelRouteTransition: Sendable {
+  public var expectedEpoch: String
+  public var route: SessionModelRoute
+  public var transcript: Transcript
+
+  public init(expectedEpoch: String, route: SessionModelRoute, transcript: Transcript) {
+    self.expectedEpoch = expectedEpoch
+    self.route = route
+    self.transcript = transcript
+  }
+}
+
+extension Transcript {
+  public mutating func appendRouteNotice(group: String, from: String, to: String, reason: String) {
+    @Dependency(\.uuid) var uuid
+    @Dependency(\.date.now) var now
+    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model group \(group) moved \(from) → \(to) (\(reason)). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
   }
 }

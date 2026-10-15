@@ -50,11 +50,20 @@ public struct ToolInvocation: Sendable {
 public struct ReplayBoundaryRequired: Error, Sendable {
   public var binding: ReplayBinding
   public var budget: ContextBudget
+  public var route: SessionModelRoute?
+  public var expectedEpoch: String?
 
-  public init(binding: ReplayBinding, budget: ContextBudget) {
+  public init(binding: ReplayBinding, budget: ContextBudget, route: SessionModelRoute? = nil, expectedEpoch: String? = nil) {
+    self.route = route
+    self.expectedEpoch = expectedEpoch
     self.binding = binding
     self.budget = budget
   }
+}
+
+public struct ModelRouteWaiting: Error, Sendable {
+  public var retryAt: Date
+  public init(retryAt: Date) { self.retryAt = retryAt }
 }
 
 public struct InferenceReply: Sendable {
@@ -103,6 +112,7 @@ public struct LoopConfig: Sendable {
   public var executeTool: @Sendable (ToolInvocation) async throws -> ToolResultPayload
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
   public var compact: @Sendable (SessionID, Transcript) async throws -> CompactionResult
+  public var prepareCompaction: @Sendable (SessionID, Transcript) async throws -> ModelRouteTransition?
   public var budget: @Sendable (SessionID) async -> ContextBudget
   // Fired when an interrupt cancels a mid-flight tool: the composition root
   // propagates the kill to the effector (a crash-shaped cancellation never
@@ -119,6 +129,7 @@ public struct LoopConfig: Sendable {
     inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply,
     compact: @escaping @Sendable (SessionID, Transcript) async throws -> CompactionResult,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
+    prepareCompaction: @escaping @Sendable (SessionID, Transcript) async throws -> ModelRouteTransition? = { _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
@@ -126,6 +137,7 @@ public struct LoopConfig: Sendable {
     archiveGrace: Duration = .seconds(24 * 3600),
     eviction: EvictionPolicy = .init(),
   ) {
+    self.prepareCompaction = prepareCompaction
     self.executeTool = executeTool
     self.inference = inference
     self.compact = compact

@@ -23,10 +23,7 @@ func modelRoutePreparer(catalog: @escaping @Sendable () async throws -> Provider
     let catalog = try await catalog()
     _ = try await catalog.validateGroupReadiness(id, effort: effort)
     let group = catalog.document.groups[id]!
-    let snapshots = Dictionary(uniqueKeysWithValues: Set(group.members.map(\.provider)).compactMap { provider -> (String, ModelUsageSnapshot)? in
-      guard let held = usage.usage(provider) else { return nil }
-      return (provider, ModelUsageSnapshot(observedAt: held.observedAt, windows: held.windows.map { ModelUsageSnapshot.Window(name: $0.name, usedPercent: $0.usedPercent, resetsAt: $0.resetsAt) }))
-    })
+    let snapshots = groupUsage(group, usage: usage)
     @Dependency(\.date) var date
     @Dependency(\.uuid) var uuid
     let now = date.now
@@ -84,4 +81,11 @@ func activeModelSpecifier(_ record: SessionRecord, owner: any SessionExecutionOw
   case .modelGroup: try? await owner.modelRoute(record.id)?.specifier
   case .contractor: nil
   }
+}
+
+func groupUsage(_ group: ModelsDocument.Group, usage: UsageBoard) -> [String: ModelUsageSnapshot] {
+  Dictionary(uniqueKeysWithValues: Set(group.members.map(\.provider)).compactMap { provider -> (String, ModelUsageSnapshot)? in
+    guard let held = usage.usage(provider) else { return nil }
+    return (provider, ModelUsageSnapshot(observedAt: held.observedAt, windows: held.windows.map { .init(name: $0.name, usedPercent: $0.usedPercent, resetsAt: $0.resetsAt) }))
+  })
 }

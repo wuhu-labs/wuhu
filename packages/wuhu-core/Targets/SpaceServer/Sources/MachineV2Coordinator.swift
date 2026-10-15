@@ -6,6 +6,7 @@
 import Crypto
 import struct Fetch.FetchClient
 import class OperationClient.OperationClient
+import struct OperationClient.OperationOwner
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import struct SessionTools.ScriptMachineV2Client
@@ -46,6 +47,19 @@ actor MachineV2Coordinator {
 
   func scriptClient(group: GroupID) async throws -> ScriptMachineV2Client {
     try await ScriptMachineV2Client(client: client(group: group))
+  }
+
+  func credentialIssued(group: GroupID, owner: OperationOwner) async throws -> Bool {
+    guard !closed else { throw OperationError(.requestCancelled) }
+    let store = try await space.machineV2Store(group: group, key: key, problemsGroup: problemsGroup)
+    return try await store.lookup(owner)?.start.input.object?["sessionCredential"] != nil
+  }
+
+  func credentialActive(group: GroupID, owner: OperationOwner) async throws -> Bool {
+    guard !closed else { return false }
+    let store = try await space.machineV2Store(group: group, key: key, problemsGroup: problemsGroup)
+    guard let record = try await store.lookup(owner) else { return false }
+    return record.start.kind == "exec.v1" && record.snapshot?.verdict == nil && record.unknown == nil && record.stopReason == nil
   }
 
   func client(group: GroupID) async throws -> OperationClient {

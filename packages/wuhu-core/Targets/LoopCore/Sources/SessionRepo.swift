@@ -59,8 +59,8 @@ struct SessionRepo: Sendable {
     try await compactClaimWrite(owner, id, generation)
   }
 
-  func writePortableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript) async throws -> Transcript {
-    try await owner.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript)
+  func writePortableHandoff(expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition? = nil) async throws -> Transcript {
+    try await owner.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript, transition: transition)
   }
 
   func writeCompaction(
@@ -68,8 +68,9 @@ struct SessionRepo: Sendable {
     head: GenerationHead,
     kept: Range<Int>?,
     completingCompactRequest: CompactRequestClaim? = nil,
+    transition: ModelRouteTransition? = nil,
   ) async throws -> Transcript {
-    try await owner.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest)
+    try await owner.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest, transition: transition)
   }
 
   func markInterrupted() async throws {
