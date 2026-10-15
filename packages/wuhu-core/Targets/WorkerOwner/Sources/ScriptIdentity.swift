@@ -67,6 +67,10 @@ actor ParentScriptIdentity {
   struct Entry { var reply: ScriptIdentityReply?; var metadataTaken = false; var bodyTaken = false }
   private var replies: [UUID: Entry] = [:]
   private var stopped = false
+  func requireTransferable() throws {
+    guard replies.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Identity request resources cannot be transferred") }
+  }
+
   func stop() { stopped = true; replies.removeAll() }
   func receive(_ call: WorkerCall, body: Body, owner: any ScriptOwnerClient) async throws {
     guard !stopped else { throw CancellationError() }

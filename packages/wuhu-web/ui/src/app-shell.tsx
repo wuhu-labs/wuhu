@@ -4,14 +4,17 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useEffectEvent,
+  useReducer,
   useRef,
   useState,
 } from 'react'
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { Icon } from './icons.tsx'
 import { Tooltip } from './tooltip.tsx'
+import { type ChromeMode, chromeState, stepChrome } from './chrome-state.ts'
 
-export type ChromeMode = 'full' | 'focus'
+export type { ChromeMode }
 
 interface ChromeState {
   mode: ChromeMode
@@ -46,17 +49,26 @@ const fadeMotion = {
 const compactQuery = '(max-width: 63.999rem)'
 const edgePeekQuery = '(hover: hover) and (pointer: fine)'
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(
-    () => globalThis.matchMedia?.(query).matches ?? false,
-  )
+function matchesNow(query: string): boolean {
+  return globalThis.matchMedia?.(query).matches ?? false
+}
+
+// Calls `onChange` from the query's own change event, so whatever it sets
+// renders in the same commit as the change.
+function useMediaChange(query: string, onChange: (matches: boolean) => void) {
+  const changed = useEffectEvent(onChange)
   useEffect(() => {
     const list = globalThis.matchMedia(query)
-    const sync = () => setMatches(list.matches)
+    const sync = () => changed(list.matches)
     sync()
     list.addEventListener('change', sync)
     return () => list.removeEventListener('change', sync)
   }, [query])
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => matchesNow(query))
+  useMediaChange(query, setMatches)
   return matches
 }
 
@@ -77,13 +89,13 @@ export function AppShell({
   composer?: ReactNode
   children: ReactNode
 }) {
-  const compact = useMediaQuery(compactQuery)
-  const edgePeek = useMediaQuery(edgePeekQuery)
-  // Compact chrome has no room for a resident sidebar, so it opens collapsed.
-  const [mode, modeSet] = useState<ChromeMode>(
-    compact ? 'focus' : defaultMode,
+  const [chrome, send] = useReducer(
+    stepChrome,
+    defaultMode,
+    (mode) => chromeState(matchesNow(compactQuery), mode),
   )
-  const [peek, setPeek] = useState(false)
+  const { compact, mode, peek } = chrome
+  const edgePeek = useMediaQuery(edgePeekQuery)
   const [canvasEl, setCanvasEl] = useState<HTMLElement | null>(null)
   const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -97,38 +109,30 @@ export function AppShell({
     if (peekTimer.current === null) {
       peekTimer.current = globalThis.setTimeout(() => {
         peekTimer.current = null
-        setPeek(true)
+        send({ kind: 'peek', peek: true })
       }, 500)
     }
   }
   const setMode = (next: ChromeMode) => {
     cancelPeekTimer()
-    setPeek(false)
-    modeSet(next)
+    send({ kind: 'mode', mode: next })
   }
 
-  // Crossing the compact threshold re-decides the sidebar: an overlay is not a
-  // resting state, and a hidden sidebar on a wide screen is not one either.
-  const lastCompact = useRef(compact)
-  useEffect(() => {
-    if (lastCompact.current === compact) return
-    lastCompact.current = compact
-    cancelPeekTimer()
-    setPeek(false)
-    modeSet(compact ? 'focus' : 'full')
-  }, [compact])
+  useMediaChange(compactQuery, (next) => {
+    if (next !== compact) cancelPeekTimer()
+    send({ kind: 'compact', compact: next })
+  })
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') modeSet((m) => (m === 'focus' ? 'full' : m))
-      if (
+      if (event.key === 'Escape') send({ kind: 'escape' })
+      else if (
         event.key === '\\' && event.metaKey && !event.ctrlKey && !event.altKey
       ) {
         event.preventDefault()
-        modeSet((m) => (m === 'focus' ? 'full' : 'focus'))
-      }
-      if (event.key === 'Escape' || (event.key === '\\' && event.metaKey)) {
-        setPeek(false)
+        send({ kind: 'toggle' })
+      } else if (event.key === '\\' && event.metaKey) {
+        send({ kind: 'peek', peek: false })
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -173,7 +177,7 @@ export function AppShell({
             }}
             onPointerLeave={() => {
               cancelPeekTimer()
-              setPeek(false)
+              send({ kind: 'peek', peek: false })
             }}
           >
             <AnimatePresence initial={false}>

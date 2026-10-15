@@ -308,6 +308,9 @@ function SessionOutline({
     order,
   )
   const ids = listed.map((s) => s.id)
+  // React's "adjusting state while rendering" exception: the order is this
+  // component's own state, derived from the previous render's, and the same
+  // render settles it. A remount starts the order over on purpose.
   if (ids.join('\n') !== order.join('\n')) setOrder(ids)
 
   if (sessions == null) return <SidebarNote>Loading…</SidebarNote>

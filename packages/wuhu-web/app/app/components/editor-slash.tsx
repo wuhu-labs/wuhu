@@ -5,8 +5,13 @@ import Suggestion, {
   type SuggestionKeyDownProps,
   type SuggestionProps,
 } from '@tiptap/suggestion'
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
+import { forwardRef, useImperativeHandle, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import {
+  type HeldSelection,
+  holdSelection,
+  selectionIn,
+} from '~/lib/list-selection'
 
 interface Item {
   title: string
@@ -122,8 +127,10 @@ interface ListHandle {
 
 const List = forwardRef<ListHandle, SuggestionProps<Item>>(
   function List({ items, command }, ref) {
-    const [selected, setSelected] = useState(0)
-    useEffect(() => setSelected(0), [items])
+    const [held, setHeld] = useState<HeldSelection<Item> | null>(null)
+    const selected = selectionIn(held, items)
+    const setSelected = (change: (index: number) => number) =>
+      setHeld((current) => holdSelection(current, items, change))
     useImperativeHandle(
       ref,
       () => ({
@@ -157,7 +164,7 @@ const List = forwardRef<ListHandle, SuggestionProps<Item>>(
             aria-selected={index === selected}
             className='wuhu-slash-item'
             data-selected={index === selected}
-            onMouseEnter={() => setSelected(index)}
+            onMouseEnter={() => setSelected(() => index)}
             onMouseDown={(event) => {
               event.preventDefault()
               command(item)

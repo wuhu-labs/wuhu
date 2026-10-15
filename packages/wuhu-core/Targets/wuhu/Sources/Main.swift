@@ -193,7 +193,7 @@ enum Main {
       if try await MachineV2Runtime.command(arguments: Array(CommandLine.arguments.dropFirst()), environment: runner.environment, fetch: .asyncHTTPClient(client, timeout: .seconds(5)), stdin: runner.stdin, stdout: runner.stdout, version: BuildStamp.version, serviceCommand: { try await capturedProcessOutput($0) }) { code = 0 }
       else { code = await runner.run(arguments: Array(CommandLine.arguments.dropFirst())) }
     } catch {
-      FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); code = 1
+      FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); code = MachineV2Runtime.exitStatus(for: error)
     }
     var shutdownFailed = false
     for shutdown in [inferenceClient.shutdown, client.shutdown] {

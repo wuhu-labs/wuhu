@@ -113,6 +113,12 @@ public actor OperationAgent {
   }
 
   public func hasRetainedOperations() -> Bool { sweep(); return !operations.isEmpty }
+  public func hasRunningOperations() -> Bool { sweep(); return operations.values.contains { $0.verdict == nil } }
+  /// Gives every running operation a stop intent with `reason`; each still ends with a real `stopped` verdict. Retained receipts are untouched.
+  public func stopRunning(reason: String) {
+    for (id, operation) in operations where operation.verdict == nil { operations[id]?.stopReason = operation.stopReason ?? reason }
+  }
+
   public func inspect(_ operation: UUID) -> OperationSnapshot? { sweep(); return operations[operation]?.snapshot() }
 
   public func shutdown() { closed = true; startQueue.finish(); for id in operations.keys { operations[id]?.stopReason = "shutdown" } }

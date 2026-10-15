@@ -3,7 +3,6 @@ import {
   routeNote,
   routeRows,
   type SessionRoute,
-  stillRecovered,
   withRoutes,
 } from './model-route.ts'
 
@@ -114,12 +113,7 @@ Deno.test('a last-resort move names the member it left', () => {
   )
 })
 
-Deno.test('recovery is live only: waiting then pinned on the same epoch', () => {
-  assertEquals(stillRecovered(waiting, pinned, false), true)
-  assertEquals(stillRecovered(pinned, pinned, true), true)
-  assertEquals(stillRecovered(null, pinned, false), false)
-  assertEquals(stillRecovered(waiting, { ...pinned, epoch: '4' }, false), false)
-  assertEquals(stillRecovered(pinned, waiting, true), false)
+Deno.test('a recovered route reads recovered', () => {
   assertEquals(routeNote(pinned, null, true, now, time), {
     stage: 'recovered',
     text: 'fleet → primary · recovered',

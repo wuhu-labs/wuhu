@@ -18,6 +18,10 @@ actor CompactClaims {
 
   private var entries: [String: Entry] = [:]
 
+  func requireTransferable() throws {
+    guard entries.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Compact claim handles cannot be transferred") }
+  }
+
   func issue(session: SessionID, generation: Int, owner: any SessionExecutionOwnerClient) async throws -> CompactClaimSnapshot? {
     guard let claim = try await owner.claimCompactRequest(session, generation: generation) else { return nil }
     entries = entries.filter { $0.value.session != session || $0.value.claim.identifiesSameRequest(as: claim) }

@@ -4,7 +4,12 @@ import { BubbleMenu } from '@tiptap/react/menus'
 import { type MouseEvent, type ReactNode, useEffect, useRef } from 'react'
 import { useNavigate, useOutletContext } from 'react-router'
 import 'katex/dist/katex.min.css'
-import { markdownEditorOptions, setEditable } from './markdown-editor'
+import {
+  adoptRemote,
+  markdownEditorOptions,
+  type RemoteText,
+  setEditable,
+} from './markdown-editor'
 import { spaceLink } from '~/lib/links'
 import type { SpaceContext } from '~/routes/space'
 
@@ -39,24 +44,23 @@ function MenuButton({
 // One editor for both faces of a document. Reading is `editable: false` on the
 // same tree, so the layout never shifts when the Edit button flips it.
 export function DocumentEditor({
-  content,
+  initial,
+  remote,
   editable,
   sourcePath,
   onChange,
 }: {
-  content: string
+  initial: string
+  remote: RemoteText
   editable: boolean
   sourcePath: string
   onChange: (markdown: string) => void
 }) {
   const navigate = useNavigate()
   const { group, contentHost } = useOutletContext<SpaceContext>()
-  const loaded = useRef(content)
+  const held = useRef(remote.revision)
   const editor = useEditor({
-    ...markdownEditorOptions(content, editable, (markdown) => {
-      loaded.current = markdown
-      onChange(markdown)
-    }),
+    ...markdownEditorOptions(initial, editable, onChange),
     editorProps: {
       attributes: { class: 'wuhu-markdown wuhu-editor', spellcheck: 'false' },
     },
@@ -66,17 +70,16 @@ export function DocumentEditor({
     if (editor != null) setEditable(editor, editable)
   }, [editor, editable])
 
-  // A remote revision replaces the tree only while nobody is typing into it;
-  // an in-progress draft always wins over the wire.
+  // The editor owns its text. A remote revision replaces it only while nobody
+  // is typing into it; an in-progress draft always wins over the wire. A
+  // revision held back that way lands when the editor leaves edit mode (the
+  // `editable` dependency re-runs this effect) or when the next revision
+  // arrives; blur alone re-runs nothing.
+  const { revision, body } = remote
   useEffect(() => {
-    if (editor == null || content === loaded.current) return
-    if (editable && editor.isFocused) return
-    loaded.current = content
-    editor.commands.setContent(content, {
-      contentType: 'markdown',
-      emitUpdate: false,
-    })
-  }, [editor, content, editable])
+    if (editor == null) return
+    held.current = adoptRemote(editor, { revision, body }, held.current)
+  }, [editor, revision, body, editable])
 
   const active = useEditorState({
     editor,

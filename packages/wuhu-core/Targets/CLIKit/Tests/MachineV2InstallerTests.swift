@@ -47,6 +47,8 @@ import Testing
     #expect(try Data(contentsOf: installer.binary) == Data("new signed artifact".utf8))
     #expect(installer.serviceDefinition.contains("KillMode=process"))
     #expect(installer.serviceDefinition.contains("machine-v2 run mc_test-v2"))
+    // A revoked agent exits 0 and stays down; a crash or any failure still restarts.
+    #expect(installer.serviceDefinition.contains("Restart=always\nRestartPreventExitStatus=0\n"))
     try Data("newer signed artifact".utf8).write(to: candidate)
     try await installer.install(candidate: candidate)
     #expect(try Data(contentsOf: installer.previous) == Data("new signed artifact".utf8))
@@ -133,6 +135,84 @@ import Testing
     try await installer.uninstall {}
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
     #expect(FileManager.default.fileExists(atPath: lockPath))
+  }
+
+  @Test func reconcileRewritesOnlyAStaleInstalledDefinition() async throws {
+    let effects = Effects()
+    let (scratch, _, installer, candidate) = try self.fixture(effects)
+    defer { scratch.remove() }
+    #expect(try await installer.reconcile() == .missing)
+    #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
+    try await installer.install(candidate: candidate)
+    var count = effects.commands.withLock { $0.count }
+    #expect(try await installer.reconcile() == .current)
+    #expect(effects.commands.withLock { $0.count } == count)
+    let previous = installer.serviceDefinition.replacingOccurrences(of: "RestartPreventExitStatus=0\n", with: "")
+    try Data(previous.utf8).write(to: installer.serviceFile)
+    let lockPath = installer.root.appendingPathComponent(".install-lock").path
+    let fd = open(lockPath, O_RDWR | O_CLOEXEC)
+    try #require(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0)
+    do { _ = try await installer.reconcile(); Issue.record("reconciled under a held installation lock") }
+    catch let error as MachineV2InstallError { #expect(error.code == .busy) }
+    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == previous)
+    _ = flock(fd, LOCK_UN); close(fd)
+    count = effects.commands.withLock { $0.count }
+    #expect(try await installer.reconcile() == .rewritten)
+    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == installer.serviceDefinition)
+    #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/systemctl", "--user", "daemon-reload"]])
+    count = effects.commands.withLock { $0.count }
+    #expect(try await installer.reconcile() == .current)
+    #expect(effects.commands.withLock { $0.count } == count)
+    var mac = installer
+    mac.platform = .macOS
+    try FileManager.default.createDirectory(at: mac.serviceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("<plist/>".utf8).write(to: mac.serviceFile)
+    count = effects.commands.withLock { $0.count }
+    #expect(try await mac.reconcile() == .rewritten)
+    #expect(try String(contentsOf: mac.serviceFile, encoding: .utf8) == mac.serviceDefinition)
+    #expect(effects.commands.withLock { $0.count } == count)
+  }
+
+  @Test func aReloadThatFailedAfterTheRewriteIsRetriedOnlyWhenAsked() async throws {
+    let effects = Effects()
+    let (scratch, _, installer, candidate) = try self.fixture(effects)
+    defer { scratch.remove() }
+    try await installer.install(candidate: candidate)
+    try Data(installer.serviceDefinition.replacingOccurrences(of: "RestartPreventExitStatus=0\n", with: "").utf8).write(to: installer.serviceFile)
+    effects.fail.withLock { $0 = true }
+    do { _ = try await installer.reconcile(); Issue.record("failed reload reported success") }
+    catch let error as MachineV2InstallError { #expect(error.code == .serviceFailure) }
+    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == installer.serviceDefinition)
+    effects.fail.withLock { $0 = false }
+    var count = effects.commands.withLock { $0.count }
+    #expect(try await installer.reconcile() == .current)
+    #expect(effects.commands.withLock { $0.count } == count)
+    count = effects.commands.withLock { $0.count }
+    #expect(try await installer.reconcile(reloading: true) == .current)
+    #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/systemctl", "--user", "daemon-reload"]])
+  }
+
+  @Test func onlyTheInstalledJobStopsItselfAndASystemdReloadAloneSettlesIt() async throws {
+    let effects = Effects()
+    let (scratch, _, installer, _) = try self.fixture(effects)
+    defer { scratch.remove() }
+    let unit = "0::/user.slice/user-501.slice/user@501.service/app.slice/wuhu-machine-v2@mc_test-v2.service\n"
+    let linux = MachineV2Service(installer, environment: [:], controlGroups: unit)
+    #expect(linux.reloadApplies)
+    let stopUnit = try #require(linux.stopRunningJob)
+    try await stopUnit()
+    #expect(effects.commands.withLock { $0 } == [["/usr/bin/systemctl", "--user", "stop", "wuhu-machine-v2@mc_test-v2.service"]])
+    #expect(MachineV2Service(installer, environment: [:], controlGroups: "0::/user.slice/user-501.slice/session-1.scope\n").stopRunningJob == nil)
+    #expect(MachineV2Service(installer, environment: [:], controlGroups: nil).stopRunningJob == nil)
+    var mac = installer
+    mac.platform = .macOS
+    #expect(MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": "0"], controlGroups: unit).stopRunningJob == nil)
+    let job = MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": mac.label], controlGroups: nil)
+    #expect(!job.reloadApplies)
+    effects.commands.withLock { $0 = [] }
+    let bootout = try #require(job.stopRunningJob)
+    try await bootout()
+    #expect(effects.commands.withLock { $0.first } == ["/bin/launchctl", "bootout", "gui/501/\(mac.label)"])
   }
 
   @Test func lostLeaveAcknowledgementStillRemovesServiceButNeverReportsDetach() async throws {
@@ -236,6 +316,7 @@ import Testing
     #expect(plist["AbandonProcessGroup"] as? Bool == true)
     #expect(plist["Label"] as? String == "ai.wuhu.machine-v2.mc_test-v2")
     #expect(plist["ProgramArguments"] as? [String] == [installer.binary.path, "machine-v2", "run", installer.machine])
+    #expect(plist["KeepAlive"] as? [String: Bool] == ["SuccessfulExit": false])
   }
 
   @Test func unsafeIDAndSymlinkCannotTouchOtherInstallations() async throws {

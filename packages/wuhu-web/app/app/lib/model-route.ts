@@ -185,17 +185,3 @@ export function routeNote(
   }
   return { stage: 'pinned', text: `${placed} · ${reason}`, tone: 'neutral' }
 }
-
-// A route that leaves waiting on the same pin has recovered; it stays
-// recovered until the route moves or waits again.
-export function stillRecovered(
-  before: SessionRoute | null,
-  after: SessionRoute | null,
-  recovered: boolean,
-): boolean {
-  if (after == null || after.phase === 'waiting') return false
-  const same = before != null && before.group === after.group &&
-    before.epoch === after.epoch
-  if (!same) return false
-  return before.phase === 'waiting' || recovered
-}

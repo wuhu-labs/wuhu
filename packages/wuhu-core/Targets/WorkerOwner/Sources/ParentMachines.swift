@@ -20,6 +20,10 @@ actor ParentMachines {
   private var stopped = false
   private var connecting = 0
 
+  func requireTransferable() throws {
+    guard connections.isEmpty && connecting == 0 else { throw WorkerProtocolError(.unavailable, message: "Machine frame resources cannot be transferred") }
+  }
+
   func invoke(_ call: WorkerCall, owner: any ScriptOwnerClient) async throws -> JSONValue {
     try await ownerReply {
       switch call.operation {

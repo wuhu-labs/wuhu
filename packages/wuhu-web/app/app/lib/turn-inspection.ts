@@ -27,6 +27,31 @@ export interface Inspection {
 
 export const closedInspection: Inspection = { destination: null, history: null }
 
+// An inspection belongs to the transcript epoch it was opened in: a new
+// generation or history epoch reads it as closed, with nothing to reset.
+export interface HeldInspection {
+  inspection: Inspection
+  epoch: string
+}
+
+export function inspectionIn(
+  held: HeldInspection | null,
+  epoch: string,
+): Inspection {
+  return held != null && held.epoch === epoch
+    ? held.inspection
+    : closedInspection
+}
+
+// Applies `change` to the inspection as `epoch` reads it.
+export function holdInspection(
+  held: HeldInspection | null,
+  epoch: string,
+  change: (inspection: Inspection) => Inspection,
+): HeldInspection {
+  return { inspection: change(inspectionIn(held, epoch)), epoch }
+}
+
 export function inspected(
   inspection: Inspection,
   destination: Destination,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useChrome } from '@wuhu/ui'
 import { useFollowLatest } from '~/components/conversation-timeline'
 import { HistoryEdge, useOlderIntent } from '~/components/history-edge'
@@ -18,9 +18,12 @@ import {
 import {
   closedInspection,
   followInspection,
+  type HeldInspection,
   historyReturned,
+  holdInspection,
   inspected,
   type Inspection,
+  inspectionIn,
   validInspection,
 } from '~/lib/turn-inspection'
 import { type Names, turnStatus } from '~/lib/turn-labels'
@@ -92,10 +95,11 @@ function Turns({ id, record }: { id: string; record: SessionRecord }) {
     },
     [state, working, direct.origins, direct.history, direct.liveness],
   )
-  const [inspection, setInspection] = useState<Inspection>(closedInspection)
-  useEffect(() => {
-    setInspection(closedInspection)
-  }, [state.generation, direct.history?.historyEpoch])
+  const epoch = `${state.generation}:${direct.history?.historyEpoch ?? ''}`
+  const [held, setHeld] = useState<HeldInspection | null>(null)
+  const inspection = inspectionIn(held, epoch)
+  const setInspection = (change: (inspection: Inspection) => Inspection) =>
+    setHeld((current) => holdInspection(current, epoch, change))
   const directory = useDirectory()
   const sessions = useSessionTitles()
   const names: Names = {
@@ -140,7 +144,7 @@ function Turns({ id, record }: { id: string; record: SessionRecord }) {
         inspect={(destination) =>
           setInspection((current) => inspected(current, destination))}
         returnToHistory={() => setInspection(historyReturned)}
-        close={() => setInspection(closedInspection)}
+        close={() => setInspection(() => closedInspection)}
       />
     </div>
   )

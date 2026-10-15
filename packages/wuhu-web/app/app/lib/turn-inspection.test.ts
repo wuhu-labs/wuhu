@@ -7,7 +7,9 @@ import {
   followInspection,
   historyReturned,
   historyRow,
+  holdInspection,
   inspected,
+  inspectionIn,
   validInspection,
 } from './turn-inspection.ts'
 import {
@@ -196,4 +198,21 @@ Deno.test('backfill extends selected history without invalidating its durable so
     ),
     closedInspection,
   )
+})
+
+Deno.test('an inspection reads as closed once the transcript epoch moves', () => {
+  const destination = { kind: 'tool' as const, callID: 'call-1' }
+  const held = holdInspection(
+    null,
+    '0:',
+    (inspection) => inspected(inspection, destination),
+  )
+  assertEquals(inspectionIn(held, '0:'), {
+    destination,
+    history: null,
+  })
+  assertEquals(inspectionIn(held, '1:'), closedInspection)
+  assertEquals(inspectionIn(held, '0:epoch-2'), closedInspection)
+  const reopened = holdInspection(held, '1:', historyReturned)
+  assertEquals(inspectionIn(reopened, '1:'), closedInspection)
 })

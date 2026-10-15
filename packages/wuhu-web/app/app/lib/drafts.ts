@@ -79,7 +79,8 @@ export class Drafts {
   private readonly loading = new Set<string>()
   private readonly preparing = new Map<string, Set<string>>()
   private readonly listeners = new Set<() => void>()
-  private lostFiles = 0
+  private readonly vaultListeners = new Set<() => void>()
+  private unheardVaultFailure = false
 
   constructor(
     private readonly scope: string,
@@ -93,10 +94,16 @@ export class Drafts {
     return () => this.listeners.delete(listener)
   }
 
-  // Counts vault reads and writes that failed: files that won't survive a
-  // reload.
-  get vaultFailures(): number {
-    return this.lostFiles
+  // Calls `listener` for each vault read or write that fails: files that
+  // won't survive a reload. A failure nobody was listening for (a restoration
+  // read can reject before the composer mounts) goes to the first listener.
+  onVaultFailure = (listener: () => void): () => void => {
+    this.vaultListeners.add(listener)
+    if (this.unheardVaultFailure) {
+      this.unheardVaultFailure = false
+      listener()
+    }
+    return () => this.vaultListeners.delete(listener)
   }
 
   get(target: string): Draft {
@@ -283,8 +290,8 @@ export class Drafts {
   }
 
   private vaultFailed(): void {
-    this.lostFiles += 1
-    this.emit()
+    if (this.vaultListeners.size === 0) this.unheardVaultFailure = true
+    for (const listener of this.vaultListeners) listener()
   }
 
   private fresh(key: string): StoredDraft | null {

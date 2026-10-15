@@ -12,6 +12,8 @@ import struct WorkerProtocol.WorkerCall
 import struct WorkerProtocol.WorkerProtocolError
 
 public struct ParentExecutionEndpoint: Sendable {
+  private let control: (@Sendable (WorkerCall) async throws -> JSONValue)?
+  private let leases = ParentExecutionLeases()
   private let spawn: ParentSpawnEndpoint?
   private let owner: any ExecutionOwnerClient
   private let runtime: ParentWorkerRuntime
@@ -24,6 +26,11 @@ public struct ParentExecutionEndpoint: Sendable {
   private let streams = ParentScriptStreams()
   private let operations = OwnerOperations()
   public init(owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, spawn: ParentSpawnEndpoint? = nil) {
+    self.init(owner: owner, runtime: runtime, spawn: spawn, control: nil)
+  }
+
+  init(owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner?, spawn: ParentSpawnEndpoint?, control: (@Sendable (WorkerCall) async throws -> JSONValue)?) {
+    self.control = control
     self.spawn = spawn
     self.runtime = ParentWorkerRuntime(owner: runtime)
     self.owner = owner
@@ -32,7 +39,27 @@ public struct ParentExecutionEndpoint: Sendable {
     sessions = .init(owner: owner)
   }
 
+  func suspendResources() async throws { await leases.suspend(); try await streams.suspend() }
+  func resumeResources() async { await streams.resume(); await leases.resume() }
+
+  func checkpointReaders(retaining calls: Set<UUID>) async throws -> [ScriptStreamCheckpoint] {
+    try await operations.requireTransferable()
+    try await machines.requireTransferable()
+    try await identity.requireTransferable()
+    try await traces.requireTransferable()
+    try await runtime.requireTransferable()
+    try await sessions.requireTransferable()
+    return try await streams.checkpoint(retaining: calls)
+  }
+
+  func restoreReaders(_ checkpoints: [ScriptStreamCheckpoint]) async throws {
+    guard !checkpoints.isEmpty else { return }
+    guard let scripts else { throw WorkerProtocolError(.invalidConfiguration, message: "Logical reader owner is unavailable") }
+    try await streams.restore(checkpoints, owner: scripts.owner)
+  }
+
   public func stream(_ call: WorkerCall) async throws -> Body? {
+    if call.operation == "worker.lease" { return try await leases.open() }
     if call.operation == "machine.frames" {
       let request = try ownerDecode(StreamRequest.self, call.payload)
       return try await machines.stream(request.id)
@@ -58,7 +85,7 @@ public struct ParentExecutionEndpoint: Sendable {
 
   public func acknowledge(_ call: WorkerCall) async { await streams.acknowledge(call) }
 
-  public func shutdown() async { await operations.stop(); await machines.stop(); await streams.stop(); await identity.stop(); await traces.stop(); await runtime.stop() }
+  public func shutdown() async { await leases.stop(); await operations.stop(); await machines.stop(); await streams.stop(); await identity.stop(); await traces.stop(); await runtime.stop() }
 
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
     if call.operation == "owner.cancel" {
@@ -73,6 +100,10 @@ public struct ParentExecutionEndpoint: Sendable {
   }
 
   private func perform(_ call: WorkerCall) async throws -> JSONValue {
+    if ["worker.ready", "worker.activity", "telemetry.spans"].contains(call.operation) {
+      guard let control else { throw WorkerProtocolError(.unavailable, message: "Parent worker control is unavailable") }
+      return try await control(call)
+    }
     if call.operation.hasPrefix("runtime.") {
       return try await runtime.invoke(call)
     }
@@ -159,6 +190,10 @@ public struct ParentExecutionEndpoint: Sendable {
 
 private actor ParentTraces {
   private var sinks: [UUID: AttemptTraceSink] = [:]
+  func requireTransferable() throws {
+    guard sinks.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Attempt traces cannot be transferred") }
+  }
+
   func open(_ id: UUID, owner: any ExecutionOwnerClient) async throws {
     guard sinks[id] == nil else { return }
     guard sinks.count < 1024 else { throw WorkerProtocolError(.capacityExceeded, message: "Too many open worker attempt traces") }

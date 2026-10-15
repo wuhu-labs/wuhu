@@ -104,6 +104,10 @@ actor ParentWorkerRuntime {
     }
   }
 
+  func requireTransferable() throws {
+    guard active.isEmpty && scripts.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Active runtime scripts or attempts cannot be transferred") }
+  }
+
   func stop() async {
     let lost = scripts
     scripts.removeAll()

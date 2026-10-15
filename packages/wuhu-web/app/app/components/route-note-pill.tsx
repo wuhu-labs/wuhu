@@ -4,7 +4,9 @@ import { routeFailureOf, type SessionRoute } from '~/lib/model-route'
 import {
   routeFailureKey,
   routePill,
+  routePillHeld,
   routePillNote,
+  routePin,
   stepRoutePill,
 } from '~/lib/route-pill'
 import type { Liveness } from '~/sdk/observe'
@@ -22,22 +24,33 @@ export function RouteNotePill(
     failureLine: boolean
   },
 ) {
-  const [pill, send] = useReducer(
+  const [held, send] = useReducer(
     stepRoutePill,
-    route,
-    (initial) => routePill(initial, new Date()),
+    null,
+    () => routePillHeld(new Date()),
   )
+  const pill = routePill(route, held)
 
-  useEffect(() => send({ kind: 'route', route }), [route])
-
+  // The failure read also records the pin it reads for, which is how the pill
+  // knows a route that stops waiting on that pin has recovered.
   const key = routeFailureKey(route, liveness)
+  const { group: pinGroup, epoch, member } = routePin(route)
   useEffect(() => {
-    if (key == null) return
+    if (key == null) {
+      send({ kind: 'settled' })
+      return
+    }
+    const waitingPin = { group: pinGroup, epoch, member }
+    send({ kind: 'waiting', pin: waitingPin })
     let cancelled = false
     fetchModelRoute({ id, group }).then(
       (output) => {
         if (!cancelled) {
-          send({ kind: 'failure', failure: routeFailureOf(output) })
+          send({
+            kind: 'failure',
+            pin: waitingPin,
+            failure: routeFailureOf(output),
+          })
         }
       },
       () => undefined,
@@ -45,7 +58,7 @@ export function RouteNotePill(
     return () => {
       cancelled = true
     }
-  }, [id, group, key])
+  }, [id, group, key, pinGroup, epoch, member])
 
   const deadline = pill.route.phase === 'waiting'
     ? pill.failure?.deadline?.getTime() ?? null

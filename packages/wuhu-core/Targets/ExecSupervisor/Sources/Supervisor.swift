@@ -58,7 +58,8 @@ public enum ExecSupervisor {
       _ = unlink(directory + "/manifest.json")
       _ = rmdir(directory)
     }
-    let gate = SupervisorGate(manifest: manifest, agent: agent)
+    let (retirements, retired) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let gate = SupervisorGate(manifest: manifest, agent: agent, retired: { retired.yield() })
     // Version 2 dials the machine's rendezvous socket and creates no socket of its own. Version 1 manifests come only from an older
     // agent that launched this executable; they keep their own listening socket so that agent can still reach them.
     let server = manifest.version == 1 ? try await ServeNIOServer.bind(unixDomainSocketPath: manifest.socket, handler: gate.handler) : nil
@@ -69,6 +70,15 @@ public enum ExecSupervisor {
       group.addTask { await agent.run() }
       // The redial loop returns only once cancelled.
       if server == nil { group.addTask { await Rendezvous.redial(path: manifest.socket, hello: hello, group: events, handler: gate.handler) } }
+      // Retired: the exec is stopping (SIGTERM, then SIGKILL after five seconds). The supervisor exits once it has ended, or at the bound.
+      group.addTask {
+        for await _ in retirements { break }
+        guard !Task.isCancelled else { return }
+        let bound = clock.now() + retireBound
+        while await agent.hasRunningOperations(), clock.now() < bound {
+          do { try await clock.sleep(.milliseconds(20)) } catch { return }
+        }
+      }
       group.addTask {
         while !Task.isCancelled {
           do { try await clock.sleep(.seconds(1)) } catch { return }
@@ -81,13 +91,18 @@ public enum ExecSupervisor {
     }
     try? await events.shutdownGracefully()
   }
+
+  /// How long a retired supervisor waits for its exec to end before it exits anyway: the stop's five-second escalation plus margin.
+  static let retireBound: Duration = .seconds(8)
 }
 
 actor SupervisorGate {
   let manifest: SupervisorManifest
   let agent: OperationAgent
+  let retired: @Sendable () -> Void
   var started = false
-  init(manifest: SupervisorManifest, agent: OperationAgent) { self.manifest = manifest; self.agent = agent }
+  var retiring = false
+  init(manifest: SupervisorManifest, agent: OperationAgent, retired: @escaping @Sendable () -> Void = {}) { self.manifest = manifest; self.agent = agent; self.retired = retired }
   nonisolated var handler: Handler { { try await self.handle($0) } }
   func expired(now: Duration, lease: Duration, hasOperations: Bool) -> Bool {
     started ? !hasOperations : now >= lease
@@ -97,6 +112,14 @@ actor SupervisorGate {
     guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { return try .json(ErrorEnvelope(.init(.machineNotAuthorized)), status: .forbidden) }
     if request.url.path == "/leave", request.method == .put {
       await agent.leave()
+      return try .json(true)
+    }
+    // The agent stops serving this machine: stop the exec, refuse a start, and exit, dropping the receipts. The reply may not
+    // outlive an idle supervisor; the agent takes the operation directory's removal as the answer.
+    if request.url.path == "/retire", request.method == .put {
+      retiring = true
+      await agent.stopRunning(reason: "retired")
+      retired()
       return try .json(true)
     }
     if request.url.path == "/departure", request.method == .get {
@@ -114,6 +137,7 @@ actor SupervisorGate {
     guard path.count >= 6, Array(path.prefix(5)) == ["machine", "v2", "machines", manifest.machine, "operations"],
           UUID(uuidString: path[5]) == manifest.operation else { return try .json(ErrorEnvelope(.init(.unknownOperation)), status: .notFound) }
     if request.method == .post {
+      guard !retiring else { return try .json(ErrorEnvelope(.init(.leaving)), status: .init(code: OperationError(.leaving).statusCode)) }
       guard !started else { return try .json(ErrorEnvelope(.init(.operationExists)), status: .conflict) }
       started = true
     }

@@ -44,10 +44,15 @@ enum Rendezvous {
 
   /// `ctl.sock` sits beside the operations directory, in the machine's private directory.
   static func socketPath(operationsDirectory: String) -> String {
+    machineDirectory(operationsDirectory: operationsDirectory) + "/ctl.sock"
+  }
+
+  /// The machine's private directory: the parent of the operations directory, empty for the root.
+  static func machineDirectory(operationsDirectory: String) -> String {
     var root = operationsDirectory
     while root.count > 1, root.hasSuffix("/") { root.removeLast() }
-    guard let slash = root.lastIndex(of: "/") else { return "/ctl.sock" }
-    return String(root[..<slash]) + "/ctl.sock"
+    guard let slash = root.lastIndex(of: "/") else { return "" }
+    return String(root[..<slash])
   }
 
   static func validateSocketPath(_ path: String) throws {

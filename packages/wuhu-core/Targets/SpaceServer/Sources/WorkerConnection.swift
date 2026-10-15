@@ -12,7 +12,6 @@ import ServerTelemetry
 import class AsyncHTTPClient.HTTPClient
 import Dependencies
 import protocol ExecutionOwner.ExecutionOwnerClient
-import struct Fetch.Body
 import FetchAsyncHTTPClient
 import enum JSONValue.JSONValue
 import class NIOPosix.MultiThreadedEventLoopGroup
@@ -29,6 +28,7 @@ struct WorkerConnection: Sendable {
   let client: WorkerClient
   let lifetime: Task<Void, Never>
   var ownerTransport: WorkerOwnerTransport? = nil
+  var ownerHandoff: ParentExecutionHandoff? = nil
 
   static func start(
     executable: String,
@@ -48,13 +48,12 @@ struct WorkerConnection: Sendable {
       guard mkdir(directory, 0o700) == 0 else { throw WorkerProtocolError(.unavailable, message: "Cannot create private execution directory") }
     }
     let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled)
-    let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: .init(spawn: spawn))
     let (ready, continuation) = AsyncStream<Int32>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let (admitted, admission) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
     defer { admission.finish() }
     let hello = ExecutionWorkerBootstrap.hello(release: "parent")
     let emitSpan = ServerTracing.emitter
-    let bytes = OwnerByteEndpoint(invoke: { call in
+    let handoff = ParentExecutionHandoff(owner: owner, runtime: runtime, spawn: .init(spawn: spawn), control: { call in
       if call.operation == "telemetry.spans" {
         let spans = try JSONDecoder().decode([FinishedSpan].self, from: Data(call.payload.jsonString().utf8))
         guard spans.count <= 64 else { throw WorkerProtocolError(.capacityExceeded, message: "Telemetry batch exceeds limit") }
@@ -73,15 +72,10 @@ struct WorkerConnection: Sendable {
         for await accepted in admitted { return .bool(accepted) }
         throw WorkerProtocolError(.unavailable, message: "Execution worker admission stopped")
       }
-      return try await parent.invoke(call)
-    }, upload: parent.upload, download: { call in
-      if call.operation == "worker.lease" {
-        return .stream(AsyncStream<Data> { _ in })
-      }
-      return try await parent.stream(call)
-    }, acknowledged: parent.acknowledge)
+      throw WorkerProtocolError(.invalidMessage, message: "Unknown worker control")
+    })
     let credentials = try WorkerCredentials(token: bootstrap.token, admission: { credentialFence?.admits($0) ?? true })
-    let endpoint = bytes.endpoint(credentials: credentials, hello: hello)
+    let endpoint = try await handoff.endpoint(credentials: credentials, hello: hello)
     let transport: WorkerOwnerTransport
     do {
       transport = try await WorkerOwnerTransport.bind(socket: bootstrap.parentSocket, handler: endpoint.handler)
@@ -129,8 +123,7 @@ struct WorkerConnection: Sendable {
       }
       continuation.finish()
       await client.close()
-      await bytes.shutdown()
-      await parent.shutdown()
+      await handoff.shutdown()
       await transport.stop()
       try? await control.shutdown()
       try? await byteClient.shutdown()
@@ -159,7 +152,7 @@ struct WorkerConnection: Sendable {
       try await storage?.admit(processID: processID)
       _ = try await client.negotiate(hello)
       admission.yield(true)
-      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport)
+      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport, ownerHandoff: handoff)
     } catch {
       admission.finish()
       lifetime.cancel()

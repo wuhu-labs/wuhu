@@ -6,6 +6,7 @@ import {
   documentState,
   editDocument,
   keepLocal,
+  remoteDocument,
   useRemote,
 } from '~/lib/document-sync'
 import { editableDocument, joinEditable } from '~/lib/frontmatter'
@@ -105,7 +106,7 @@ export function MarkdownDocument({
         if (cancelled) return
         update((current) =>
           current.phase === 'clean' || current.phase === 'error'
-            ? documentState(read)
+            ? remoteDocument(current, read)
             : current
         )
       },
@@ -191,7 +192,11 @@ export function MarkdownDocument({
         </div>
       )}
       <DocumentEditor
-        content={editableDocument(state.draft).body}
+        initial={editableDocument(initial.content).body}
+        remote={{
+          revision: state.revision,
+          body: editableDocument(state.draft).body,
+        }}
         editable={editing}
         sourcePath={path}
         onChange={(body) =>

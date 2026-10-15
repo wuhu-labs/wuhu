@@ -239,14 +239,39 @@ Deno.test('the last write from either tab wins', () => {
   equal(new Drafts('s', shelf, vault, () => 0).get('session:a').text, 'right')
 })
 
-Deno.test('a vault that fails is counted, and the draft stays in memory', async () => {
+Deno.test('a vault that fails is reported to its listeners, and the draft stays in memory', async () => {
   const vault = new MemoryVault()
   vault.failing = true
   const drafts = new Drafts('s', new MemoryShelf(), vault, () => 0)
+  let failures = 0
+  const stop = drafts.onVaultFailure(() => failures += 1)
   drafts.update('session:a', (draft) => ({ ...draft, files: [photo] }))
   await settle()
-  equal(drafts.vaultFailures, 1)
+  equal(failures, 1)
   equal(shape(drafts.get('session:a')).files, ['photo.png'])
+  stop()
+  drafts.update('session:b', (draft) => ({ ...draft, files: [photo] }))
+  await settle()
+  equal(failures, 1)
+})
+
+Deno.test('a vault failure before anyone listens reaches the first listener once', async () => {
+  const shelf = new MemoryShelf()
+  const vault = new MemoryVault()
+  new Drafts('s', shelf, vault, () => 0).update(
+    'session:a',
+    (draft) => ({ ...draft, text: 'hi', files: [photo] }),
+  )
+  await settle()
+  vault.failing = true
+  const drafts = new Drafts('s', shelf, vault, () => 0)
+  equal(drafts.get('session:a').text, 'hi')
+  await settle()
+  let first = 0
+  let second = 0
+  drafts.onVaultFailure(() => first += 1)
+  drafts.onVaultFailure(() => second += 1)
+  equal([first, second], [1, 0])
 })
 
 Deno.test('a failed send goes back in front of what was written meanwhile', () => {

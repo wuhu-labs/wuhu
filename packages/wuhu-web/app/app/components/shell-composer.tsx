@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ComposerButton,
   type ComposerSession,
@@ -42,16 +42,11 @@ export function ShellComposer({
   const [sending, setSending] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
-  const vaultFailures = useSyncExternalStore(
-    drafts.subscribe,
-    () => drafts.vaultFailures,
+  useEffect(
+    () =>
+      drafts.onVaultFailure(() => setError("Files won't survive a reload.")),
+    [drafts],
   )
-  const seenFailures = useRef(vaultFailures)
-  useEffect(() => {
-    if (vaultFailures === seenFailures.current) return
-    seenFailures.current = vaultFailures
-    setError("Files won't survive a reload.")
-  }, [vaultFailures])
   const dictation = useDictation(
     (spoken) => drafts.update(draftKey, (held) => withDictation(held, spoken)),
     setError,

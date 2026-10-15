@@ -4,6 +4,7 @@ import {
   documentState,
   editDocument,
   keepLocal,
+  remoteDocument,
   useRemote,
 } from './document-sync.ts'
 
@@ -29,6 +30,7 @@ Deno.test('a completed save advances the document baseline', () => {
     base: { token: '2', content: 'ONE\ntwo\n' },
     draft: 'ONE\ntwo\n',
     phase: 'clean',
+    revision: 0,
   })
 })
 
@@ -45,6 +47,7 @@ Deno.test('typing during an ordinary save remains dirty on the new baseline', ()
     base: { token: '2', content: saving.draft },
     draft: newer.draft,
     phase: 'dirty',
+    revision: 0,
   })
 })
 
@@ -70,16 +73,54 @@ Deno.test('conflicts can explicitly choose either side', () => {
     token: '2',
     content: 'remote\n',
   })
-  assertEquals(
-    useRemote(conflict),
-    documentState({
-      token: '2',
-      content: 'remote\n',
-    }),
-  )
+  assertEquals(useRemote(conflict), {
+    ...documentState({ token: '2', content: 'remote\n' }),
+    revision: 1,
+  })
   assertEquals(keepLocal(conflict), {
     base: { token: '2', content: 'remote\n' },
     draft: 'local\n',
     phase: 'dirty',
+    revision: 0,
   })
+})
+
+Deno.test('the revision moves only when text the editor did not write replaces the draft', () => {
+  const dirty = editDocument(documentState(original), 'ONE\ntwo\n')
+  assertEquals(dirty.revision, 0)
+
+  const saved = applySync(dirty, dirty.draft, {
+    kind: 'saved',
+    rev: 2,
+    token: '2',
+    content: dirty.draft,
+  })
+  assertEquals(saved.revision, 0)
+
+  const merged = applySync(dirty, dirty.draft, {
+    kind: 'merged',
+    rev: 3,
+    token: '3',
+    content: 'ONE\ntwo\nthree\n',
+  })
+  assertEquals(merged.draft, 'ONE\ntwo\nthree\n')
+  assertEquals(merged.revision, 1)
+
+  assertEquals(
+    remoteDocument(saved, { token: '2', content: saved.draft }).revision,
+    0,
+  )
+  assertEquals(
+    remoteDocument(saved, { token: '4', content: 'other\n' }).revision,
+    1,
+  )
+
+  const conflict = applySync(editDocument(saved, 'local\n'), 'local\n', {
+    kind: 'conflict',
+    token: '5',
+    content: 'remote\n',
+  })
+  assertEquals(editDocument(conflict, 'local!\n').revision, 0)
+  assertEquals(keepLocal(conflict).revision, 0)
+  assertEquals(useRemote(conflict).revision, 1)
 })

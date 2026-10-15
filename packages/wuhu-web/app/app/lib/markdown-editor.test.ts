@@ -1,9 +1,10 @@
 import { Editor } from '@tiptap/core'
 import {
+  adoptRemote,
   markdownEditorOptions,
   setEditable,
 } from '../components/markdown-editor.ts'
-import { documentState, editDocument } from './document-sync.ts'
+import { applySync, documentState, editDocument } from './document-sync.ts'
 import { editableDocument, joinEditable } from './frontmatter.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
@@ -84,5 +85,54 @@ Deno.test('a real edit reaches the draft', () => {
 Deno.test('a document the editor has not changed joins back to its own text', () => {
   const { document, editor } = open(skill)
   assertEquals(joinEditable(document, editor.getMarkdown()), skill)
+  editor.destroy()
+})
+
+// A headless editor carries no plugin state, so undo history can't be read
+// here. The whole EditorState surviving by identity covers it: selection and
+// history both live in it.
+Deno.test("a clean sync with the editor's own text leaves its selection and undo history", () => {
+  const { document, editor, state } = open(skill)
+  setEditable(editor, true)
+  editor.commands.insertContentAt(editor.state.doc.content.size - 1, {
+    type: 'text',
+    text: '!',
+  })
+  editor.commands.setTextSelection({ from: 3, to: 6 })
+  if (editor.isFocused) throw new Error('a headless editor has no focus')
+  const dirty = state()
+  const saved = applySync(dirty, dirty.draft, {
+    kind: 'saved',
+    rev: 2,
+    token: '2',
+    content: dirty.draft,
+  })
+  const before = editor.state
+  const held = adoptRemote(editor, {
+    revision: saved.revision,
+    body: editableDocument(saved.draft).body,
+  }, dirty.revision)
+  assertEquals(held, dirty.revision)
+  if (editor.state !== before) throw new Error('the editor state was replaced')
+  assertEquals(editor.state.selection.toJSON(), {
+    type: 'text',
+    anchor: 3,
+    head: 6,
+  })
+
+  const merged = applySync(dirty, dirty.draft, {
+    kind: 'merged',
+    rev: 3,
+    token: '3',
+    content: joinEditable(document, 'Replaced.\n'),
+  })
+  assertEquals(
+    adoptRemote(editor, {
+      revision: merged.revision,
+      body: editableDocument(merged.draft).body,
+    }, held),
+    merged.revision,
+  )
+  assertEquals(editor.getMarkdown().trim(), 'Replaced.')
   editor.destroy()
 })

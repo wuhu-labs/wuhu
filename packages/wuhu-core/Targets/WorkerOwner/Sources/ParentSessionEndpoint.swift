@@ -31,6 +31,8 @@ struct ParentSessionEndpoint: Sendable {
   private let claims = CompactClaims()
   init(owner: any SessionExecutionOwnerClient) { self.owner = owner }
 
+  func requireTransferable() async throws { try await claims.requireTransferable() }
+
   func invoke(_ call: WorkerCall) async throws -> JSONValue {
     try await ownerReply {
       switch call.operation { case "session.record":

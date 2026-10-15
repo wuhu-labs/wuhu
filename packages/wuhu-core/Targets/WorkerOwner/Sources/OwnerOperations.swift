@@ -28,6 +28,10 @@ actor OwnerOperations {
     return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
   }
 
+  func requireTransferable() throws {
+    guard tasks.isEmpty && cancelled.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Active operations or cancellation fences cannot be transferred") }
+  }
+
   func cancel(_ id: UUID) {
     if let task = tasks[id] { task.cancel(); return }
     if cancelled.insert(id).inserted { order.append(id) }

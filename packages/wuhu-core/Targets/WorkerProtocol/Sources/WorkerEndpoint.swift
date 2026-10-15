@@ -17,6 +17,7 @@ public actor WorkerEndpoint {
   let invoke: @Sendable (WorkerCall) async throws -> JSONValue
   let upload: @Sendable (WorkerCall, Body) async throws -> Void
   let download: @Sendable (WorkerCall) async throws -> Body
+  private let admission: @Sendable (@Sendable () async throws -> Response) async throws -> Response
   var agreement: WorkerAgreement?
 
   public init(
@@ -25,9 +26,10 @@ public actor WorkerEndpoint {
     invoke: @escaping @Sendable (WorkerCall) async throws -> JSONValue,
     upload: @escaping @Sendable (WorkerCall, Body) async throws -> Void,
     download: @escaping @Sendable (WorkerCall) async throws -> Body,
+    admission: @escaping @Sendable (@Sendable () async throws -> Response) async throws -> Response = { try await $0() },
   ) throws {
     credentials = try WorkerCredentials(token: token)
-    self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download
+    self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download; self.admission = admission
   }
 
   public init(
@@ -36,11 +38,18 @@ public actor WorkerEndpoint {
     invoke: @escaping @Sendable (WorkerCall) async throws -> JSONValue,
     upload: @escaping @Sendable (WorkerCall, Body) async throws -> Void,
     download: @escaping @Sendable (WorkerCall) async throws -> Body,
+    admission: @escaping @Sendable (@Sendable () async throws -> Response) async throws -> Response = { try await $0() },
   ) {
-    self.credentials = credentials; self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download
+    self.credentials = credentials; self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download; self.admission = admission
   }
 
-  public nonisolated var handler: Handler { { try await self.handle($0) } }
+  public nonisolated var handler: Handler {
+    { request in
+      do { return try await self.admission { try await self.handle(request) } }
+      catch is CancellationError { throw CancellationError() }
+      catch { return self.refusal(error) }
+    }
+  }
 
   func handle(_ request: Request) async throws -> Response {
     do {
@@ -112,18 +121,20 @@ public actor WorkerEndpoint {
       default: throw WorkerProtocolError(.invalidMessage, message: "Unknown worker message route")
       }
     } catch is CancellationError { throw CancellationError() }
-    catch {
-      var response = (try? Response.json(failure(error), status: .badRequest)) ?? .text("Invalid worker message", status: .badRequest)
-      response.headers[.init("Connection")!] = "close"
-      return response
-    }
+    catch { return refusal(error) }
+  }
+
+  private nonisolated func refusal(_ error: any Error) -> Response {
+    var response = (try? Response.json(failure(error), status: .badRequest)) ?? .text("Invalid worker message", status: .badRequest)
+    response.headers[.init("Connection")!] = "close"
+    return response
   }
 
   private func authorize(_ token: String) async throws {
     guard await credentials.accepts(token) else { throw WorkerProtocolError(.unauthorized, message: "Worker incarnation is not admitted") }
   }
 
-  func failure(_ error: any Error) -> WorkerProtocolError {
+  nonisolated func failure(_ error: any Error) -> WorkerProtocolError {
     if let error = error as? WorkerProtocolError { return error }
     if case FetchError.bodyLimitExceeded = error { return .init(.capacityExceeded, message: "Worker message exceeds limit") }
     if case ServeError.requestBodyTooLarge = error { return .init(.capacityExceeded, message: "Worker message exceeds limit") }

@@ -57,3 +57,24 @@ export function markdownEditorOptions(
 export function setEditable(editor: Editor, editable: boolean) {
   editor.setEditable(editable, false)
 }
+
+export interface RemoteText {
+  revision: number
+  body: string
+}
+
+// Adopts text the editor didn't write, once per revision, and never under the
+// cursor of someone typing. Returns the revision the editor now holds.
+export function adoptRemote(
+  editor: Editor,
+  remote: RemoteText,
+  held: number,
+): number {
+  if (remote.revision === held) return held
+  if (editor.isEditable && editor.isFocused) return held
+  editor.commands.setContent(remote.body, {
+    contentType: 'markdown',
+    emitUpdate: false,
+  })
+  return remote.revision
+}

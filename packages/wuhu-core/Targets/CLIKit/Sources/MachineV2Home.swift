@@ -11,7 +11,7 @@
 import Crypto
 
 public struct MachineV2RuntimeError: Error, Equatable, Sendable, CustomStringConvertible {
-  public enum Code: String, Sendable { case serverUnavailable, invalidConfiguration, enrollmentFailed, machineNotV2, missingKey, localNetworkDenied, preflightFailed, leaveUnacknowledged, drainFailed }
+  public enum Code: String, Sendable { case serverUnavailable, invalidConfiguration, enrollmentFailed, machineNotV2, missingKey, localNetworkDenied, preflightFailed, leaveUnacknowledged, drainFailed, revoked }
   public let code: Code
   public let message: String
   public init(_ code: Code, message: String = "") { self.code = code; self.message = message }
@@ -34,6 +34,25 @@ struct MachineV2Home: Sendable {
   var operationsDirectory: URL { directory.appendingPathComponent("operations", isDirectory: true) }
   var socket: URL { directory.appendingPathComponent("agent.sock") }
   var binary: URL { directory.appendingPathComponent("bin/wuhu") }
+  /// Written when the server revokes this machine and the agent exits; the next run clears it.
+  var revokedMarker: URL { directory.appendingPathComponent("revoked") }
+
+  /// Whether the last run ended because the server revoked this machine.
+  var isRevoked: Bool {
+    var state = stat()
+    return lstat(revokedMarker.path, &state) == 0 && state.st_mode & S_IFMT == S_IFREG && state.st_uid == getuid()
+  }
+
+  func markRevoked() throws {
+    try validate()
+    let descriptor = open(revokedMarker.path, O_CREAT | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    guard descriptor >= 0 else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot record revocation: \(revokedMarker.path)") }
+    close(descriptor)
+  }
+
+  func clearRevoked() throws {
+    guard unlink(revokedMarker.path) == 0 || errno == ENOENT else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot clear revocation: \(revokedMarker.path)") }
+  }
 
   static func locate(environment: [String: String], machine: String) throws -> Self {
     guard let home = environment["HOME"], home.hasPrefix("/") else { throw MachineV2RuntimeError(.invalidConfiguration, message: "HOME must be absolute") }

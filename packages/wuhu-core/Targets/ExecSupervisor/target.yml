@@ -21,6 +21,11 @@ dependencies:
   - NIOPosix
 tests:
   size: large
+  # Retirement tests run real supervisor processes: `wuhu machine-v2 supervise`.
+  externalData:
+    - //packages/wuhu-core:wuhu
+  env:
+    WUHU_CLI: "$(rootpath //packages/wuhu-core:wuhu)"
   resources:
     - path: Recordings
       mode: copy

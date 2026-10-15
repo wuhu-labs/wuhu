@@ -50,6 +50,9 @@ actor ExecSupervisorRegistry {
   var active: Set<UUID> = []
   var recoveryFailures: Set<UUID> = []
   var creating: Set<UUID> = []
+  /// Starts admitted past the last `leaving` check whose request has not yet gone to their supervisor. Retirement waits for them,
+  /// so each is either refused or has a manifest retirement reaches.
+  var starting: Set<UUID> = []
   var tombstones: [UUID: OperationError] = [:]
   var malformedDirectories: Set<String> = []
   var childPIDs: Set<Int32> = []
@@ -62,6 +65,9 @@ actor ExecSupervisorRegistry {
 
   var links: [UUID: Link] = [:]
   var linkGenerations: UInt64 = 0
+  /// Why the agent stopped serving the machine, once it has; a revocation outranks a turn-off.
+  var retirement: SupervisorRetirement?
+  static let retireDeadline: Duration = .seconds(10)
 
   init(
     machine: String,
@@ -110,6 +116,46 @@ actor ExecSupervisorRegistry {
         guard response.status.code == 200, try await departureLiteral(response.body) else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
       }
     }
+  }
+
+  /// Asks every supervisor of this machine to stop its exec, drop its receipts and exit, then waits at most `deadline` for their
+  /// operation directories to go. A supervisor that refuses (a published one without the verb) or does not answer in time is left to
+  /// its own lease and receipt expiry; no process is signalled. Returns the operations still present.
+  @discardableResult
+  func retire(_ reason: SupervisorRetirement, deadline: Duration = retireDeadline) async -> Set<UUID> {
+    if retirement != .revoked { retirement = reason }
+    leaving = true
+    let until = clock.now() + deadline
+    // A start in flight finishes creating and launching its supervisor, then sees `leaving` and is refused before its exec runs.
+    while !starting.isEmpty, clock.now() < until {
+      do { try await clock.sleep(.milliseconds(10)) } catch { break }
+    }
+    let targets = Array(manifests.values)
+    let asked = await withTaskGroup(of: UUID?.self, returning: Set<UUID>.self) { group in
+      for manifest in targets { group.addTask { await self.askToRetire(manifest) ? manifest.operation : nil } }
+      var asked = Set<UUID>()
+      for await id in group { if let id { asked.insert(id) } }
+      return asked
+    }
+    var waiting = asked
+    while !waiting.isEmpty {
+      let retained = Set((try? await files.list(root)) ?? [])
+      waiting = waiting.filter { retained.contains(root + "/" + $0.uuidString) }
+      guard !waiting.isEmpty, clock.now() < until else { break }
+      do { try await clock.sleep(.milliseconds(25)) } catch { break }
+    }
+    try? await refreshReceipts()
+    return Set(manifests.keys).union(tombstones.keys)
+  }
+
+  /// Whether to wait for this supervisor's directory: it accepted, or its answer was lost (an idle supervisor exits at once).
+  /// An explicit refusal means it will not exit.
+  func askToRetire(_ manifest: SupervisorManifest) async -> Bool {
+    let response: Response
+    do { response = try await send(Request(url: URL(string: "http://supervisor/retire")!, method: .put), to: manifest, identity: true) }
+    catch { return true }
+    guard response.status.code == 200 else { try? await response.body.discard(); return false }
+    return (try? await departureLiteral(response.body)) ?? true
   }
 
   func leaveLegacy(_ manifest: SupervisorManifest) async throws {
@@ -349,6 +395,8 @@ actor ExecSupervisorRegistry {
       guard !leaving else { throw OperationError(.leaving) }
       guard manifests[id] == nil && tombstones[id] == nil else { throw OperationError(.operationExists) }
       let start = try await request.json(StartRequest.self, upTo: OperationLimits().inputBytes)
+      // Leaving or retirement may have begun while the body was read.
+      guard !leaving else { throw OperationError(.leaving) }
       guard manifests[id] == nil && tombstones[id] == nil else { throw OperationError(.operationExists) }
       guard start.kind == "exec.v1" else { throw OperationError(.unknownKind) }
       let input = try JSONDecoder().decode(ExecInput.self, from: Data(start.input.jsonString().utf8)); try input.validate()
@@ -359,7 +407,8 @@ actor ExecSupervisorRegistry {
       try validateManifest(manifest, directory: directory)
       manifests[id] = manifest
       active.insert(id); reservations[id] = Self.fullReservation
-      creating.insert(id)
+      creating.insert(id); starting.insert(id)
+      defer { starting.remove(id) }
       do { try await files.create(directory, manifest) }
       catch { creating.remove(id); throw error }
       creating.remove(id)
@@ -372,6 +421,14 @@ actor ExecSupervisorRegistry {
           try await clock.sleep(.milliseconds(20))
         }
       }
+      // Leaving began while the supervisor launched: it stays idle and never starts the exec. Once retirement has begun, it may
+      // have given up on this start at its deadline, so the start retires its own supervisor; after a plain leave, the retirement
+      // that follows reaches it.
+      guard !leaving else {
+        if retirement != nil { _ = await askToRetire(manifest) }
+        throw OperationError(.leaving, operation: id)
+      }
+      starting.remove(id)
       var forwarded = request; forwarded.body = try .json(start)
       return try await forward(forwarded, manifest: manifest)
     }

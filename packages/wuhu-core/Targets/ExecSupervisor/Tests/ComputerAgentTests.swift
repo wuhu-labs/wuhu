@@ -135,7 +135,7 @@ import Testing
       let retainedLock = Mutex<Int32?>(nil)
       defer { if let descriptor = retainedLock.withLock({ $0 }) { exec_close(descriptor) } }
       do {
-        let value = try await ExecSupervisor.withComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: files, kinds: [AnyOperationKind(NoteKind())]) { agent in
+        let value = try await ExecSupervisor.withComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: files, kinds: [AnyOperationKind(NoteKind())]) { agent, _ in
           ran.withLock { $0 = true }
           escaped.withLock { $0 = agent }
           let duplicate = try retainAgentLock(root)

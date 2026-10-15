@@ -37,6 +37,18 @@ struct MachineV2Installer {
     }
   }
 
+  /// The installer for this user's own service manager. `command` runs a service-manager command line as given.
+  static func local(home: URL, machine: String, environment: [String: String], command: @escaping @Sendable ([String]) async throws -> String) -> Self {
+    #if os(macOS)
+      let platform = Platform.macOS
+    #else
+      let platform = Platform.linux
+    #endif
+    return Self(home: home, machine: machine, platform: platform, userID: getuid(), command: { arguments in
+      try await command(machineV2ServiceArguments(arguments, platform: platform, environment: environment, userID: getuid()))
+    })
+  }
+
   func install(candidate: URL) async throws {
     try self.validate()
     guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
@@ -90,6 +102,36 @@ struct MachineV2Installer {
     if FileManager.default.fileExists(atPath: self.serviceFile.path) { try FileManager.default.removeItem(at: self.serviceFile) }
     if self.platform == .linux { _ = try await self.run(["/usr/bin/systemctl", "--user", "daemon-reload"]) }
     if let unacknowledged { throw unacknowledged }
+  }
+
+  enum Reconciliation: Equatable { case current, rewritten, missing }
+
+  /// Rewrites an installed service definition that differs from this binary's, and reports what it found. An
+  /// auto-upgrade installs through the outgoing agent's installer, so only the incoming agent can bring its own
+  /// definition. systemd applies it to the running unit at the reload; launchd keeps a loaded job's definition until
+  /// the job is next loaded. A missing definition is not recreated, and a held installation lock throws `busy`.
+  /// `reloading` reloads systemd even when the file is already current: an earlier rewrite whose reload failed or was
+  /// cancelled leaves a current file and a stale loaded unit.
+  func reconcile(reloading: Bool = false) async throws -> Reconciliation {
+    try self.validate()
+    guard FileManager.default.fileExists(atPath: self.serviceFile.path) else { return .missing }
+    let lock = try self.lock()
+    defer { self.releaseLock(lock) }
+    guard FileManager.default.fileExists(atPath: self.serviceFile.path) else { return .missing }
+    let stale = (try? Data(contentsOf: self.serviceFile)) != Data(self.serviceDefinition.utf8)
+    if stale { try Data(self.serviceDefinition.utf8).write(to: self.serviceFile, options: .atomic) }
+    if self.platform == .linux, stale || reloading { _ = try await self.run(["/usr/bin/systemctl", "--user", "daemon-reload"]) }
+    return stale ? .rewritten : .current
+  }
+
+  /// Stops the job from inside it: the service manager terminates the caller and, the stop being requested, does not
+  /// restart it whatever the loaded definition says. The definition stays: the systemd unit stays enabled, and the
+  /// plist loads again at the next login.
+  func stopRunningJob() async throws {
+    switch self.platform {
+    case .linux: _ = try await self.run(["/usr/bin/systemctl", "--user", "stop", self.unit])
+    case .macOS: try await self.bootout("gui/\(self.userID)/\(self.label)")
+    }
   }
 
   private func validate() throws {
@@ -222,6 +264,7 @@ struct MachineV2Installer {
       Type=simple
       ExecStart="\(executable)" machine-v2 run \(self.machine)
       Restart=always
+      RestartPreventExitStatus=0
       RestartSec=2
       KillMode=process
       UMask=0077
@@ -244,7 +287,7 @@ struct MachineV2Installer {
     <key>Label</key><string>\(xml(label))</string>
     <key>ProgramArguments</key><array>\(arguments.map { "<string>\(xml($0))</string>" }.joined())</array>
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><\(keepAlive ? "true" : "false")/>
+    <key>KeepAlive</key>\(keepAlive ? "<dict><key>SuccessfulExit</key><false/></dict>" : "<false/>")
     <key>AbandonProcessGroup</key><true/>
     <key>Umask</key><integer>63</integer>
     <key>StandardOutPath</key><string>\(xml(self.root.appendingPathComponent("agent.log").path))</string>

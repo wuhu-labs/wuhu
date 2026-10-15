@@ -67,9 +67,30 @@ private actor SupervisorFixture {
   }
 
   func directories() -> [String] { Array(manifests.keys) + Array(torn) }
-  func launch() { launches += 1 }
+  var heldLaunch: (reached: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)?
+  /// The next launch signals `reached`, then waits until `release` yields.
+  func holdNextLaunch() -> (reached: AsyncStream<Void>, release: AsyncStream<Void>.Continuation) {
+    let (reached, signal) = AsyncStream<Void>.makeStream()
+    let (release, releasing) = AsyncStream<Void>.makeStream()
+    heldLaunch = (signal, release)
+    return (reached, releasing)
+  }
+
+  func launch() async {
+    launches += 1
+    if let held = heldLaunch {
+      heldLaunch = nil
+      held.reached.yield()
+      for await _ in held.release { break }
+    }
+  }
+
   func fetch(_ request: Request) async throws -> Response {
     requests.append(request)
+    // A retired supervisor has exited: a second retire finds nobody to answer it.
+    if request.url.path == "/retire", !manifests.values.contains(where: { request.headers["X-Wuhu-Supervisor-Nonce"] == $0.nonce }) {
+      throw OperationError(.supervisorUnavailable)
+    }
     let manifest = try #require(manifests.values.first { request.headers["X-Wuhu-Supervisor-Nonce"] == $0.nonce })
     #expect(request.headers["Host"] == "localhost")
     if request.url.path == "/identity" {
@@ -79,6 +100,11 @@ private actor SupervisorFixture {
       response.headers[.init("X-Wuhu-Supervisor-Active")!] = "0"
       response.headers[.init("X-Wuhu-Supervisor-Reservation")!] = String(reservation)
       return response
+    }
+    if request.url.path == "/retire" {
+      // A retired supervisor removes its directory on its way out.
+      manifests = manifests.filter { $0.value.nonce != manifest.nonce }
+      return try .json(true)
     }
     if request.url.path == "/leave" || request.url.path == "/departure" {
       if capabilityStatus == 200 {
@@ -514,4 +540,97 @@ private func ackRequest(_ operation: UUID, token: UUID) -> Request {
   var request = execRequest(operation)
   request.url = URL(string: request.url.absoluteString + "?terminalAck=" + token.uuidString)!
   return request
+}
+
+/// A start body that signals once it is first read, then delivers its bytes only when released.
+private struct HeldBody: AsyncSequence, Sendable {
+  typealias Element = Bytes
+  let bytes: Bytes
+  let reached: AsyncStream<Void>.Continuation
+  let release: AsyncStream<Void>
+  struct AsyncIterator: AsyncIteratorProtocol {
+    let body: HeldBody
+    var sent = false
+    mutating func next() async -> Bytes? {
+      guard !sent else { return nil }
+      sent = true
+      body.reached.yield()
+      for await _ in body.release { break }
+      return body.bytes
+    }
+  }
+
+  func makeAsyncIterator() -> AsyncIterator { AsyncIterator(body: self) }
+}
+
+/// A start in flight when the agent retires is refused, or included in the retirement; it never runs an exec past it.
+@Suite struct RetireRaceTests {
+  let start = StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh", "-c", "exit 0"], "cwd": "/tmp", "stdin": false])
+
+  @Test func aStartWhoseBodyIsStillBeingReadWhenRetirementBeginsIsRefused() async throws {
+    let effects = SupervisorFixture()
+    let registry = try effects.registry()
+    let (reached, signal) = AsyncStream<Void>.makeStream()
+    let (release, releasing) = AsyncStream<Void>.makeStream()
+    let body = HeldBody(bytes: try JSONEncoder().encode(start), reached: signal, release: release)
+    let id = UUID()
+    let pending = Task { try await registry.handler(execRequest(id, method: .post, body: .stream(contentType: "application/json", body))) }
+    for await _ in reached { break }
+
+    #expect(await registry.retire(.revoked, deadline: .seconds(2)).isEmpty)
+    releasing.yield()
+    let response = try await pending.value
+    #expect(response.status.code == OperationError(.leaving).statusCode)
+    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .leaving)
+    #expect(await effects.launches == 0, "no supervisor is created for a refused start")
+    #expect(await effects.directories().isEmpty)
+  }
+
+  @Test func aStartLaunchingItsSupervisorWhenRetirementBeginsIsRefusedAndItsSupervisorRetired() async throws {
+    let effects = SupervisorFixture()
+    let registry = try effects.registry()
+    let (reached, releasing) = await effects.holdNextLaunch()
+    let id = UUID()
+    let pending = Task { try await registry.handler(execRequest(id, method: .post, body: .json(start))) }
+    for await _ in reached { break }
+
+    let finished = Mutex(false)
+    let retiring = Task {
+      let remaining = await registry.retire(.revoked, deadline: .seconds(5))
+      finished.withLock { $0 = true }
+      return remaining
+    }
+    while !(await registry.leaving) { await Task.yield() }
+    try await ContinuousClock().sleep(for: .milliseconds(100))
+    #expect(!finished.withLock { $0 }, "retirement waits for the start in flight")
+    releasing.yield()
+
+    let response = try await pending.value
+    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .leaving)
+    #expect(await retiring.value.isEmpty)
+    let paths = await effects.requests.map { "\($0.method.rawValue) \($0.url.path)" }
+    #expect(!paths.contains { $0.hasPrefix("POST") }, "the start never reached its supervisor: \(paths)")
+    #expect(paths.contains("PUT /retire"), "the launched supervisor was retired: \(paths)")
+    #expect(await effects.directories().isEmpty)
+  }
+
+  @Test func aStartWhoseLaunchOutlastsTheRetirementDeadlineRetiresItsOwnSupervisor() async throws {
+    let effects = SupervisorFixture()
+    let registry = try effects.registry()
+    let (reached, releasing) = await effects.holdNextLaunch()
+    let id = UUID()
+    let pending = Task { try await registry.handler(execRequest(id, method: .post, body: .json(start))) }
+    for await _ in reached { break }
+
+    // Retirement gives up on the start at its deadline; no supervisor exists yet to ask.
+    #expect(await registry.retire(.revoked, deadline: .milliseconds(200)) == [id])
+    releasing.yield()
+
+    let response = try await pending.value
+    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .leaving)
+    let paths = await effects.requests.map { "\($0.method.rawValue) \($0.url.path)" }
+    #expect(!paths.contains { $0.hasPrefix("POST") }, "the start never reached its supervisor: \(paths)")
+    #expect(paths.contains("PUT /retire"), "the late start retired its own supervisor: \(paths)")
+    #expect(await effects.directories().isEmpty)
+  }
 }
