@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import enum JSONValue.JSONValue
 import MachineChannel
 import MachineContract
 import SessionDomain
@@ -12,6 +13,7 @@ import SpaceTools
 import Synchronization
 import Testing
 @testable import WorkerOwner
+import struct WuhuAI.ToolCall
 
 @Suite(.timeLimit(.minutes(1))) struct MachineOwnerTests {
   @Test func machineFramesAndExecClaimsKeepParentAuthorityAndBoundaries() async throws {
@@ -49,6 +51,49 @@ import Testing
       #expect(try await space.takeScriptExecOwners().first?.script == "script")
     }
     #expect(transport.closed.withLock { $0 })
+  }
+}
+
+extension MachineOwnerTests {
+  // Under an execution worker a tool's machine calls run in the parent's RPC task, so the parent owner must bind
+  // the calling session itself; the worker's task-locals never cross the RPC.
+  @Test func workerToolCallsReachTheMachineAttributedToTheirSession() async throws {
+    let space = try Space.inMemory()
+    let machine = try await space.addMachine(name: "fixture")
+    let session = try await space.sessions.createSession(group: .shared, title: "machine", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: "small", effort: "none"))
+    let callers = Mutex<[SessionID?]>([])
+    let files = MachineSeam(vfs: { _, op in
+      callers.withLock { $0.append(MachineSeam.caller) }
+      switch op {
+      case .stat(path: "/notes.txt"): return .entry(entry: .init(name: "notes.txt", kind: .file, size: 5, token: "1", mtime: 1))
+      case .stat: return .error(error: MachineError(code: .notFound, message: "missing"))
+      case .write: return .written(token: "2")
+      case .read: return .file(token: "1", data: .init(Array("hello".utf8)))
+      default: return .ok
+      }
+    }, search: { _, _ in
+      callers.withLock { $0.append(MachineSeam.caller) }
+      return .paths(paths: ["/notes.txt"], cursor: nil)
+    }, attached: { [machine.id] })
+    let owner = InProcessToolOwnerClient(space: space, machines: files)
+    try await withOwnerRPC(owner: owner) { _, remote in
+      let tools = ToolExecutor(owner: remote, scripts: Scripts(owner: remote))
+      let read = ToolCall(id: "worker-read", name: "read", arguments: .object(["path": .string("machines://\(machine.id.rawValue)/notes.txt")]))
+      let find = ToolCall(id: "worker-find", name: "find", arguments: .object(["glob": "*", "path": .string("machines://\(machine.id.rawValue)/")]))
+      for call in [read, find] {
+        let payload = try await tools.execute(session: session, call: call, state: .init())
+        if case let .failure(failure) = payload { Issue.record("\(call.name) failed: \(failure.message)") }
+      }
+      let before = callers.withLock { $0.count }
+      // Generated images and capability inputs touch the machine from the parent owner too.
+      _ = try await remote.placeImage(Data([0x89, 0x50, 0x4E, 0x47]), at: .machine(machine.id, "/out/image.png"), session: session, call: nil, state: nil)
+      let placed = callers.withLock { $0.count }
+      #expect(placed > before)
+      #expect(try await remote.capabilityInput("machines://\(machine.id.rawValue)/notes.txt", as: session, limit: 1024) == Data("hello".utf8))
+      #expect(callers.withLock { $0.count } > placed)
+    }
+    let seen = callers.withLock { $0 }
+    #expect(seen.count >= 6); #expect(seen.allSatisfy { $0 == session })
   }
 }
 

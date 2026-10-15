@@ -89,6 +89,7 @@ public enum SpaceServer {
     identityJWKS: JSONValue? = nil,
     identityController: IdentityController? = nil,
     machineV2Hub: MachineV2Hub? = nil,
+    machineV2Releases: MachineV2Releases? = nil,
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
   ) -> UpgradingHandler {
     let machines = machineSeam(hub: hub)
@@ -194,7 +195,13 @@ public enum SpaceServer {
       try await requestPrincipal(request, space: space, date: clock)
     }
     if let machineV2Hub {
-      addMachineV2Routes(&router, space: space, hub: machineV2Hub, fingerprint: fingerprint) { request in
+      let releases = machineV2Releases ?? {
+        @Dependency(\.fetch) var fetch
+        @Dependency(\.continuousClock) var continuousClock
+        return MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: continuousClock)
+      }()
+      let upgrades = MachineV2Upgrades(space: space, serverVersion: version, releases: releases)
+      addMachineV2Routes(&router, space: space, hub: machineV2Hub, upgrades: upgrades, fingerprint: fingerprint) { request in
         try await requestPrincipal(request, space: space, date: clock)
       }
     }
@@ -268,7 +275,8 @@ public enum SpaceServer {
     return hostRouted(contentHost, api: gated { request in
       let v2Path = request.url.path.hasPrefix("/v1/machine-v2/") ? request.url.path.split(separator: "/") : []
       let v2KeySigned = request.headers[MachineV2Connect.pubkeyHeader] != nil && (
-        (request.method == .get && v2Path.count == 3) || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
+        (request.method == .get && v2Path.count == 3) || (request.method == .get && v2Path.count == 4 && v2Path[3] == "upgrade")
+          || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
       )
       if selfAuthenticating.contains(request.url.path) || v2KeySigned {
         return try await routed(request)
@@ -418,7 +426,7 @@ public enum SpaceServer {
       )
     } catch { try? await spaceHost.shutdown(); throw error }
     let telemetry: ServerTelemetryRuntime?
-    do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0) } }
+    do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0, version: version) } }
     catch {
       await api.shutdown()
       try? await spaceHost.shutdown()

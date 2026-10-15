@@ -369,7 +369,7 @@ func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
       let (server, client) = WebSocket.pair()
       // Bounded, not leaked: the hub session ends when the transport
       // closes its socket end (tool completion, cancellation, or kill).
-      Task { await hub.runCallerSession(record, socket: server) }
+      Task { await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous) }
       return WebSocketTransport(client)
     },
     status: { try await space.execRecord($0) },
@@ -390,12 +390,12 @@ func modelExecutorResolver(space: Space) -> @Sendable (String, String, String?) 
 func machineSeam(hub: MachineHub) -> MachineSeam {
   MachineSeam(
     vfs: { machine, op in
-      do { return try await hub.vfs(machine: machine, op: op) }
+      do { return try await hub.vfs(machine: machine, op: op, caller: MachineSeam.caller) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
       catch let error as OperationError { throw machineOperationFailure(error) }
     },
     search: { machine, query in
-      do { return try await hub.search(machine: machine, query: query) }
+      do { return try await hub.search(machine: machine, query: query, caller: MachineSeam.caller) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
       catch let error as OperationError { throw machineOperationFailure(error) }
     },

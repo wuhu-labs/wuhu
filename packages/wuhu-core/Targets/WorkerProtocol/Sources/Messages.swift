@@ -10,6 +10,7 @@ public struct WorkerProtocolError: Error, Codable, Equatable, Sendable {
   public enum Code: String, Codable, Sendable {
     case incompatibleABI, missingCapability, invalidMessage, unauthorized, notNegotiated
     case unavailable, invalidConfiguration, remoteFailure, capacityExceeded
+    case unknownOutcome, consumedReceipt, cancelled
   }
 
   public let code: Code
@@ -23,8 +24,13 @@ public struct WorkerHello: Codable, Equatable, Sendable {
   public let capabilities: Set<String>
   public let required: Set<String>
   public let release: String
-  public init(abis: [Int] = [1], capabilities: Set<String> = baseline, required: Set<String> = baseline, release: String) {
-    self.abis = abis; self.capabilities = capabilities; self.required = required; self.release = release
+  public let continuityID: UUID?
+  public init(abis: [Int] = [1], capabilities: Set<String> = baseline, required: Set<String> = baseline, release: String, continuityID: UUID? = nil) {
+    self.abis = abis; self.capabilities = capabilities; self.required = required; self.release = release; self.continuityID = continuityID
+  }
+
+  public func retainingReplies(_ id: UUID) -> Self {
+    .init(abis: abis, capabilities: capabilities.union(["owner.continuity.v1"]), required: required, release: release, continuityID: id)
   }
 
   public func negotiate(with peer: Self) throws -> WorkerAgreement {
@@ -46,14 +52,30 @@ public struct WorkerAgreement: Codable, Equatable, Sendable {
   public init(abi: Int, capabilities: Set<String>) { self.abi = abi; self.capabilities = capabilities }
 }
 
+public struct WorkerReceipt: Codable, Equatable, Sendable {
+  public let endpoint: UUID
+  public let client: UUID
+  public let sequence: Int
+  public init(endpoint: UUID, client: UUID, sequence: Int) { self.endpoint = endpoint; self.client = client; self.sequence = sequence }
+}
+
+public struct WorkerCallInventory: Codable, Equatable, Sendable {
+  public let id: UUID
+  public let operation: String
+  public let receipt: WorkerReceipt?
+  public let terminal: Bool
+  public init(_ call: WorkerCall, terminal: Bool = false) { id = call.id; operation = call.operation; receipt = call.receipt; self.terminal = terminal }
+}
+
 public struct WorkerCall: Codable, Equatable, Sendable {
   public let abi: Int
   public let id: UUID
   public let operation: String
   public let payload: JSONValue
   public let traceContext: TraceContext?
-  public init(abi: Int = 1, id: UUID = UUID(), operation: String, payload: JSONValue = .null, traceContext: TraceContext? = ServerTracing.context) {
-    self.abi = abi; self.id = id; self.operation = operation; self.payload = payload; self.traceContext = traceContext
+  public let receipt: WorkerReceipt?
+  public init(abi: Int = 1, id: UUID = UUID(), operation: String, payload: JSONValue = .null, traceContext: TraceContext? = ServerTracing.context, receipt: WorkerReceipt? = nil) {
+    self.abi = abi; self.id = id; self.operation = operation; self.payload = payload; self.traceContext = traceContext; self.receipt = receipt
   }
 
   func validate() throws {

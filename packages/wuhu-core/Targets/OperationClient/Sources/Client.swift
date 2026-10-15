@@ -174,6 +174,13 @@ public actor OperationClient {
       }
       throw OperationError(.unknownKind, message: message, details: ["kind": .string(start.kind)])
     }
+    if let unadvertised = Self.unadvertisedInputs(start, in: d), !unadvertised.isEmpty {
+      throw OperationError(
+        .kindUnavailable,
+        message: "Machine does not support \(start.kind) with \(unadvertised.joined(separator: ", ")): agent too old, upgrade",
+        details: ["kind": .string(start.kind), "reason": "agentTooOld", "started": false, "inputs": .array(unadvertised.map { .string($0) })],
+      )
+    }
     let body = try Body.json(start)
     guard (body.contentLength ?? 0) <= d.limits.inputBytes else { throw OperationError(.inputTooLarge) }
     var proposed = ClientRecord(id: ids(), correlation: ids(), machine: machine, start: start, description: d)
@@ -410,5 +417,17 @@ public actor OperationClient {
       if !bestEffort && (error.code == .requestDeadline || error.code == .transport) { _ = try await active(id, allowStopped: true) }
       throw error
     }
+  }
+
+  /// Top-level input fields a closed (`additionalProperties: false`) input
+  /// schema does not declare: an agent older than this caller, which would
+  /// refuse them or ignore them. Nil when the kind's schema is open or absent.
+  static func unadvertisedInputs(_ start: StartRequest, in description: MachineDescription) -> [String]? {
+    guard let schema = description.kinds.first(where: { $0.name == start.kind })?.inputSchema.object,
+          schema["additionalProperties"] == .bool(false),
+          let properties = schema["properties"]?.object,
+          let input = start.input.object
+    else { return nil }
+    return input.keys.filter { properties[$0] == nil }.sorted()
   }
 }

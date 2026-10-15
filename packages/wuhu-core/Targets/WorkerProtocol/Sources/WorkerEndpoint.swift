@@ -12,7 +12,7 @@ import enum Serve.ServeError
 public actor WorkerEndpoint {
   public static let controlBytes = 1 << 20
   public static let streamMetadataBytes = 12 << 10
-  let token: String
+  let credentials: WorkerCredentials
   let hello: WorkerHello
   let invoke: @Sendable (WorkerCall) async throws -> JSONValue
   let upload: @Sendable (WorkerCall, Body) async throws -> Void
@@ -26,8 +26,18 @@ public actor WorkerEndpoint {
     upload: @escaping @Sendable (WorkerCall, Body) async throws -> Void,
     download: @escaping @Sendable (WorkerCall) async throws -> Body,
   ) throws {
-    guard !token.isEmpty else { throw WorkerProtocolError(.invalidConfiguration, message: "Worker token is required") }
-    self.token = token; self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download
+    credentials = try WorkerCredentials(token: token)
+    self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download
+  }
+
+  public init(
+    credentials: WorkerCredentials,
+    hello: WorkerHello,
+    invoke: @escaping @Sendable (WorkerCall) async throws -> JSONValue,
+    upload: @escaping @Sendable (WorkerCall, Body) async throws -> Void,
+    download: @escaping @Sendable (WorkerCall) async throws -> Body,
+  ) {
+    self.credentials = credentials; self.hello = hello; self.invoke = invoke; self.upload = upload; self.download = download
   }
 
   public nonisolated var handler: Handler { { try await self.handle($0) } }
@@ -35,12 +45,13 @@ public actor WorkerEndpoint {
   func handle(_ request: Request) async throws -> Response {
     do {
       try Task.checkCancellation()
-      guard (request.headers["Authorization"] ?? request.headers.sensitiveValues["authorization"]) == "Bearer " + token else {
-        throw WorkerProtocolError(.unauthorized, message: "Worker incarnation is not admitted")
-      }
+      let authorization = request.headers["Authorization"] ?? request.headers.sensitiveValues["authorization"] ?? ""
+      let token = authorization.hasPrefix("Bearer ") ? String(authorization.dropFirst(7)) : ""
+      try await authorize(token)
       guard request.method == .post else { throw WorkerProtocolError(.invalidMessage, message: "Worker messages require POST") }
       if request.url.path == "/worker/hello" {
         let peer = try await request.json(WorkerHello.self, upTo: Self.controlBytes)
+        try await authorize(token)
         let agreed = try hello.negotiate(with: peer)
         if let agreement, agreement != agreed { throw WorkerProtocolError(.invalidMessage, message: "Worker agreement cannot change during an incarnation") }
         agreement = agreed
@@ -48,10 +59,20 @@ public actor WorkerEndpoint {
       }
       guard let agreement else { throw WorkerProtocolError(.notNegotiated, message: "Worker hello must succeed before execution") }
       switch request.url.path {
+      case "/worker/credentials/stage", "/worker/credentials/confirm":
+        guard agreement.capabilities.contains("worker.credential-rotation.v1") else { throw WorkerProtocolError(.missingCapability, message: "Worker credential rotation was not negotiated") }
+        if request.url.path == "/worker/credentials/stage" {
+          let stage = try await request.json(WorkerCredentialStage.self, upTo: 1024)
+          try await credentials.stage(successor: stage.successor, authenticatedBy: token)
+        } else {
+          try await credentials.confirm(authenticatedBy: token)
+        }
+        return try .json(true)
       case "/worker/call":
         guard agreement.capabilities.contains("owner.control.v1") else { throw WorkerProtocolError(.missingCapability, message: "owner.control.v1 was not negotiated") }
         let call = try await request.json(WorkerCall.self, upTo: Self.controlBytes)
         try call.validate()
+        try await authorize(token)
         guard call.abi == agreement.abi else { throw WorkerProtocolError(.incompatibleABI, message: "Call does not match negotiated ABI") }
         let reply: WorkerReply
         do { reply = try await ServerTracing.$context.withValue(call.traceContext) { try await WorkerReply(id: call.id, result: invoke(call)) } }
@@ -72,6 +93,7 @@ public actor WorkerEndpoint {
         }
         let call = try JSONDecoder().decode(WorkerCall.self, from: metadata)
         try call.validate()
+        try await authorize(token)
         guard call.abi == agreement.abi else { throw WorkerProtocolError(.incompatibleABI, message: "Stream does not match negotiated ABI") }
         let body: Body
         if request.url.path == "/worker/upload" {
@@ -95,6 +117,10 @@ public actor WorkerEndpoint {
       response.headers[.init("Connection")!] = "close"
       return response
     }
+  }
+
+  private func authorize(_ token: String) async throws {
+    guard await credentials.accepts(token) else { throw WorkerProtocolError(.unauthorized, message: "Worker incarnation is not admitted") }
   }
 
   func failure(_ error: any Error) -> WorkerProtocolError {

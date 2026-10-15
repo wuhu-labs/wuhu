@@ -181,11 +181,18 @@ public actor MachineHub {
     }
   }
 
-  public func runCallerSession(_ record: ExecRecord, socket: WebSocket) async {
+  /// Whether `leg` may attach to `record`'s exec: a v2 exec belongs to one actor at a time (`MachineV2Service.admits`).
+  public func admitsCaller(_ record: ExecRecord, leg: ExecLeg) async -> Bool {
+    guard ((try? await v2Group(record.machine)) ?? nil) != nil, let v2 else { return true }
+    return await v2.admits(record, leg: leg)
+  }
+
+  /// `leg` is the actor on this socket's side: a v2 start is attributed to whoever sent it, and only that actor stays attached.
+  public func runCallerSession(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg) async {
     do {
       if try await v2Group(record.machine) != nil {
         guard let v2 else { throw OperationError(.machineUnavailable) }
-        await v2.runCaller(record, socket: socket, space: space, tokens: tokens, secrets: secrets)
+        await v2.runCaller(record, socket: socket, leg: leg, space: space, tokens: tokens, secrets: secrets)
         return
       }
     } catch { socket.close(); return }
@@ -251,19 +258,19 @@ public actor MachineHub {
   // refuses to send it and the caller fails loudly instead.
   public static let maximumFrameBytes: Int = 16 << 20
 
-  public func vfs(machine: MachineID, op: VFSOp) async throws -> VFSResult {
+  public func vfs(machine: MachineID, op: VFSOp, caller: SessionID? = nil) async throws -> VFSResult {
     if let group = try await v2Group(machine) {
       guard let v2 else { throw OperationError(.machineUnavailable) }
-      return try await v2.client(group: group).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"))
+      return try await v2.client(group: group).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"), caller: space.startCaller(caller))
     }
     let response: VFSResponse = try await roundTrip(machine, .vfsRequest) { VFSRequest(id: $0, op: op) }
     return response.result
   }
 
-  public func search(machine: MachineID, query: SearchQuery) async throws -> SearchResult {
+  public func search(machine: MachineID, query: SearchQuery, caller: SessionID? = nil) async throws -> SearchResult {
     if let group = try await v2Group(machine) {
       guard let v2 else { throw OperationError(.machineUnavailable) }
-      return try await v2.client(group: group).search(machine: machine.rawValue, query: query)
+      return try await v2.client(group: group).search(machine: machine.rawValue, query: query, caller: space.startCaller(caller))
     }
     let response: SearchResponse = try await roundTrip(machine, .searchRequest) { SearchRequest(id: $0, query: query) }
     return response.result

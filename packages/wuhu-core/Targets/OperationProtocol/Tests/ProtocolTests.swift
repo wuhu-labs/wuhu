@@ -79,3 +79,20 @@ import Testing
   #expect(KindAvailability.needsPermission(permission: "calendar", state: "denied").stopReason == "permissionRevoked")
   #expect(KindAvailability.unavailable(reason: "disabled").stopReason == "kindUnavailable")
 }
+
+@Test func startCallerIsOptionalDisplayMetadataOutsideTheInvocationIdentity() throws {
+  let caller = StartRequest.Caller(session: "quick-breeze-badge", title: "Backend coder", group: "shared")
+  let attributed = StartRequest(kind: "read.v1", input: ["path": "/a"], caller: caller)
+  let wire = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(attributed))
+  #expect(wire.object?["caller"] == ["session": "quick-breeze-badge", "title": "Backend coder", "group": "shared"])
+  #expect(try JSONDecoder().decode(StartRequest.self, from: JSONEncoder().encode(attributed)) == attributed)
+  // An old server's start has no caller key and decodes; a start without one never sends the key.
+  let plain = try JSONDecoder().decode(StartRequest.self, from: Data(#"{"kind":"read.v1","input":{"path":"/a"}}"#.utf8))
+  #expect(plain.caller == nil)
+  #expect(try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(plain)).object?["caller"] == nil)
+  // A renamed session replaying the same start is the same invocation.
+  let renamed = StartRequest(kind: "read.v1", input: ["path": "/a"], caller: .init(session: "quick-breeze-badge", title: "Renamed", group: "shared"))
+  #expect(try attributed.canonicalData() == plain.canonicalData())
+  #expect(try attributed.canonicalData() == renamed.canonicalData())
+  #expect(try attributed.canonicalData() != StartRequest(kind: "read.v1", input: ["path": "/b"], caller: caller).canonicalData())
+}

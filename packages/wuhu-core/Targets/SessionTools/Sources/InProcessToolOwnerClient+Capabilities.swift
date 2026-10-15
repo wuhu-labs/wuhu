@@ -13,6 +13,7 @@ import struct InferenceKit.InferenceMetric
 import struct InferenceKit.Transcription
 import SessionDomain
 import SpaceCore
+import struct SpaceTools.MachineSeam
 
 extension InProcessToolOwnerClient {
   public func capabilityDocument(_ path: String) async throws -> Data? {
@@ -45,6 +46,10 @@ extension InProcessToolOwnerClient {
   }
 
   public func capabilityInput(_ raw: String, as session: SessionID, limit: Int) async throws -> Data {
+    try await MachineSeam.$caller.withValue(session) { try await capabilityBytes(raw, as: session, limit: limit) }
+  }
+
+  private func capabilityBytes(_ raw: String, as session: SessionID, limit: Int) async throws -> Data {
     let address = try await resolve(raw, as: session)
     switch address {
     case let .machine(machine, path):

@@ -5,6 +5,7 @@
 #endif
 import struct SessionDomain.SessionID
 import struct WorkerProtocol.WorkerCall
+import class WorkerProtocol.WorkerClient
 
 public struct ExecutionWorkerActivity: Codable, Sendable {
   public let session: SessionID
@@ -19,6 +20,15 @@ public struct ExecutionWorkerActivity: Codable, Sendable {
 
   public init(call: WorkerCall) throws {
     self = try ownerDecode(Self.self, call.payload)
+  }
+
+  public func publish(using client: WorkerClient) async throws {
+    let call = try call()
+    if let retained = try await client.retaining(call) {
+      let _: Bool = try await OwnerRPC(client: client).retainedCall(retained)
+    } else {
+      _ = try await client.call(call)
+    }
   }
 
   public func call() throws -> WorkerCall {

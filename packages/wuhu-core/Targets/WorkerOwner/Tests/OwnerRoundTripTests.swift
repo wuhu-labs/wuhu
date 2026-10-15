@@ -17,7 +17,7 @@ import WorkerProtocol
 
 func withOwnerRPC<Value>(owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, hello: WorkerHello = ExecutionWorkerBootstrap.hello(release: "parent-newer"), body: (WorkerClient, RemoteExecutionOwner) async throws -> Value) async throws -> Value {
   let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime)
-  let endpoint = try OwnerByteEndpoint(invoke: parent.invoke, upload: parent.upload, download: parent.stream).endpoint(token: "fixture-only", hello: hello)
+  let endpoint = try OwnerByteEndpoint(invoke: parent.invoke, upload: parent.upload, download: parent.stream, acknowledged: parent.acknowledge).endpoint(token: "fixture-only", hello: hello)
   let fetch = FetchClient { try await endpoint.handler($0) }
   let client = try WorkerClient(socket: "/tmp/fixture.sock", token: "fixture-only", control: fetch, bytes: fetch)
   _ = try await client.negotiate(ExecutionWorkerBootstrap.hello(release: "worker-newer"))

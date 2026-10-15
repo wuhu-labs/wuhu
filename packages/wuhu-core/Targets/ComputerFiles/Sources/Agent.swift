@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import Fetch
+import enum JSONValue.JSONValue
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.KindDescriptor
 import struct OperationProtocol.MachineDescription
@@ -14,6 +15,14 @@ import struct OperationProtocol.StartRequest
 import struct OperationRuntime.AnyOperationKind
 import class OperationRuntime.OperationAgent
 import typealias Serve.Handler
+
+/// One start this machine admitted, for its local audit. `caller` is the server's attribution (`StartRequest.caller`): display only, absent when no session made the call.
+public struct AdmittedStart: Sendable {
+  public let operation: UUID
+  public let kind: String
+  public let input: JSONValue
+  public let caller: StartRequest.Caller?
+}
 
 public enum ExternalDeparture: Sendable {
   case pending, drained, leaseExpired([UUID])
@@ -58,19 +67,21 @@ public actor ComputerAgent {
   var departureLoss: OperationError?
   var leaveExpired = false
   var leaveDeadline: Duration?
+  let audit: (@Sendable (AdmittedStart) -> Void)?
 
-  public init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil) throws {
-    try self.init(machine: machine, files: files, kinds: kinds, external: external, clock: .continuous)
+  /// `audit` sees every admitted start, in-process or external, once, after the machine answered 201.
+  public init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
+    try self.init(machine: machine, files: files, kinds: kinds, external: external, clock: .continuous, audit: audit)
   }
 
-  init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, clock: OperationClock) throws {
+  init(machine: String, files: ComputerFileSystem = .local, kinds: [AnyOperationKind] = [], external: ExternalKind? = nil, clock: OperationClock, audit: (@Sendable (AdmittedStart) -> Void)? = nil) throws {
     let local = fileOperationKinds(files: files) + kinds
     try OperationAgent.validate(descriptors: (external.map { [$0.descriptor] } ?? []) + local.map(\.descriptor))
     if let external, !(0 ... OperationLimits().bufferBytes).contains(external.reservation) { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
     runtime = try OperationAgent(machine: machine, kinds: local, clock: clock, authorize: { _, id in
       guard id == machine else { throw OperationError(.machineNotAuthorized) }
     })
-    self.machine = machine; self.external = external; self.clock = clock
+    self.machine = machine; self.external = external; self.clock = clock; self.audit = audit
     self.kinds = (external.map { [$0.descriptor] } ?? []) + local.map(\.descriptor)
   }
 
@@ -195,7 +206,9 @@ public actor ComputerAgent {
       pending[id] = reserve; admissionGeneration += 1
       defer { pending.removeValue(forKey: id); admissionGeneration += 1 }
       var forwarded = request; forwarded.body = try .json(start)
-      return try await (target?.handler ?? runtime.handler)(forwarded)
+      let response = try await (target?.handler ?? runtime.handler)(forwarded)
+      if response.status.code == 201 { audit?(.init(operation: id, kind: start.kind, input: start.input, caller: start.caller)) }
+      return response
     }
     if let external, await external.owns(id) { return try await external.handler(request) }
     return try await runtime.handler(request)

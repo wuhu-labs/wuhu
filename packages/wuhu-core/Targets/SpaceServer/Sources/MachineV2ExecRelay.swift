@@ -12,6 +12,7 @@ import class OperationClient.OperationClient
 import struct OperationClient.OperationOwner
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import struct OperationProtocol.WriteReceipt
 import Serve
@@ -22,6 +23,7 @@ import Synchronization
 struct MachineV2ExecRelay: Sendable {
   let record: ExecRecord
   let endpoint: ChannelEndpoint
+  let starter: ExecStarter
   let space: Space
   let tokens: ExecTokens?
   let secrets: SpaceSecretStores?
@@ -38,25 +40,51 @@ extension MachineV2Service {
     if execEndpoints[record.id.rawValue] == nil { try? await space.finishExec(record.id, .reaped) }
   }
 
-  func runCaller(_ record: ExecRecord, socket: WebSocket, space: Space, tokens: ExecTokens?, secrets: SpaceSecretStores?) async {
+  /// The actor an exec's endpoint belongs to: the session that minted it, else whoever sent its start, else whoever is attached. One
+  /// actor at a time, so no other actor can type into or read the exec; the owner may always reconnect.
+  private func holder(_ record: ExecRecord) -> ExecLeg? {
+    if let caller = record.caller { return .session(SessionID(rawValue: caller)) }
+    guard let entry = execEndpoints[record.id.rawValue] else { return nil }
+    return entry.starter.sender ?? entry.callers.values.first
+  }
+
+  func admits(_ record: ExecRecord, leg: ExecLeg) -> Bool {
+    holder(record).map { $0 == leg } ?? true
+  }
+
+  func runCaller(_ record: ExecRecord, socket: WebSocket, leg: ExecLeg, space: Space, tokens: ExecTokens?, secrets: SpaceSecretStores?) async {
     @Dependency(\.date) var date
     let key = record.id.rawValue
     for (key, entry) in execEndpoints where entry.completed.map({ date.now.timeIntervalSince($0) >= 600 }) == true {
       execEndpoints[key] = nil
       killedExecs.remove(key)
     }
+    // The route refuses another actor with 409 before upgrading; this covers the race between that check and here.
+    guard admits(record, leg: leg) else { socket.close(); return }
     let caller = UUID()
     if execEndpoints[key] == nil {
       guard execEndpoints.count < 4096 else { socket.close(); return }
-      let endpoint = ChannelEndpoint()
-      execEndpoints[key] = ExecEndpoint(endpoint: endpoint)
-      relays.continuation.yield(.caller(.init(record: record, endpoint: endpoint, space: space, tokens: tokens, secrets: secrets)))
+      let entry = ExecEndpoint(endpoint: ChannelEndpoint())
+      execEndpoints[key] = entry
+      relays.continuation.yield(.caller(.init(record: record, endpoint: entry.endpoint, starter: entry.starter, space: space, tokens: tokens, secrets: secrets)))
     }
-    let endpoint = execEndpoints[key]!.endpoint
-    execEndpoints[key]!.callers.insert(caller)
+    let entry = execEndpoints[key]!
+    execEndpoints[key]!.callers[caller] = leg
     execEndpoints[key]!.disconnected = nil
-    await endpoint.run(WebSocketTransport(socket))
-    execEndpoints[key]?.callers.remove(caller)
+    let socketLeg = WebSocketTransport(socket)
+    let (inbound, admitted) = AsyncStream<[UInt8]>.makeStream()
+    await withTaskGroup(of: Void.self) { tasks in
+      tasks.addTask {
+        for await bytes in socketLeg.inbound {
+          guard entry.starter.admits(bytes, from: leg) else { break }
+          admitted.yield(bytes)
+        }
+        admitted.finish()
+      }
+      await entry.endpoint.run(GatedLeg(inbound: inbound, base: socketLeg))
+      tasks.cancelAll()
+    }
+    execEndpoints[key]?.callers[caller] = nil
     if execEndpoints[key]?.callers.isEmpty == true { execEndpoints[key]?.disconnected = date.now }
   }
 
@@ -115,13 +143,17 @@ extension MachineV2Service {
       }
       let claimed = Mutex<UUID?>(nil)
       var reserved = false
-      if let caller = record.caller, let tokens = relay.tokens {
+      // Attribution and the session credential follow whoever sent the start, never the record alone: a person
+      // who opens a session's exec runs as themselves.
+      let sender = relay.starter.sender?.session
+      let owned = sender != nil && sender?.rawValue == record.caller
+      if owned, let caller = record.caller, let tokens = relay.tokens {
         input["sessionCredential"] = try await credential(tokens: tokens, session: SessionID(rawValue: caller), group: record.group, owner: owner, timeout: .seconds(exec.start.timeout ?? ExecTokens.longestLife))
         reserved = true
       }
       let id: UUID
       do {
-        id = try await client.start(record.machine.rawValue, request: .init(kind: "exec.v1", input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) }))), owner: owner, onClaim: { id in claimed.withLock { $0 = id } })
+        id = try await client.start(record.machine.rawValue, request: .init(kind: "exec.v1", input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) })), caller: relay.space.startCaller(sender)), owner: owner, onClaim: { id in claimed.withLock { $0 = id } })
       } catch {
         if let id = claimed.withLock({ $0 }) { _ = try? await client.stop(id, reason: "callerCancelled") }
         if reserved, let caller = record.caller { relay.tokens?.finishCredentialAttempt(session: SessionID(rawValue: caller), group: record.group, scope: owner.scope, key: owner.key, claimed: claimed.withLock { $0 != nil }) }
@@ -248,4 +280,52 @@ extension MachineV2Service {
 
 private final class RelayOutputBudget: Sendable {
   let bytes = Mutex(0)
+}
+
+extension Space {
+  /// `StartRequest.caller` for a start `session` caused: its id, title and group, read at start time.
+  /// Display-only attribution, so a session that can't be read (gone, or no session at all) leaves it out rather than failing the start.
+  func startCaller(_ session: SessionID?) async -> StartRequest.Caller? {
+    guard let session, let record = try? await sessions.record(session) else { return nil }
+    return .init(session: session.rawValue, title: record.title, group: record.group.rawValue)
+  }
+}
+
+/// Who is on an exec's caller socket: a session, a person (any persona of one account), or the --dev seat.
+public enum ExecLeg: Hashable, Sendable {
+  case session(SessionID)
+  case person(AccountID)
+  case anonymous
+
+  public init(_ actor: SpaceCore.Actor) {
+    switch actor {
+    case let .session(id): self = .session(id)
+    case let .person(_, account): self = .person(account)
+    case .anonymous: self = .anonymous
+    }
+  }
+
+  var session: SessionID? { if case let .session(id) = self { id } else { nil } }
+}
+
+/// The first leg to send an exec's start owns it. Only the owner's legs are ever attached (`MachineV2Service.admits`), so a start
+/// from any other actor is a leg that slipped in before the owner was known: it ends that leg's connection instead of reaching the endpoint.
+final class ExecStarter: Sendable {
+  private let owner = Mutex<ExecLeg?>(nil)
+  var sender: ExecLeg? { owner.withLock { $0 } }
+
+  func admits(_ bytes: [UInt8], from leg: ExecLeg) -> Bool {
+    owner.withLock { owner in
+      if let owner { return owner == leg }
+      guard let frame = try? FrameCodec.decode(bytes), frame.opcode == .execStart else { return true }
+      owner = leg; return true
+    }
+  }
+}
+
+private struct GatedLeg: FrameTransport {
+  let inbound: AsyncStream<[UInt8]>
+  let base: WebSocketTransport
+  func send(_ frame: [UInt8]) async throws { try await base.send(frame) }
+  func close() { base.close() }
 }

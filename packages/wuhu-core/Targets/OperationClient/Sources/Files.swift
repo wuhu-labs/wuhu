@@ -15,6 +15,7 @@ import enum MachineContract.VFSResult
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationSnapshot
+import struct OperationProtocol.StartRequest
 
 extension OperationClient {
   func awaitResult(_ id: UUID) async throws -> JSONValue {
@@ -31,13 +32,13 @@ extension OperationClient {
     }
   }
 
-  func stat(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil) async throws -> MachineEntry {
-    let result = try await fileCall(machine, kind: "stat.v1", input: ["path": .string(path)], owner: owner, timeout: timeout)
+  func stat(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws -> MachineEntry {
+    let result = try await fileCall(machine, kind: "stat.v1", input: ["path": .string(path)], owner: owner, timeout: timeout, caller: caller)
     return try decodeEntry(result)
   }
 
-  func list(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil) async throws -> [MachineEntry] {
-    let id = try await start(machine, request: .init(kind: "list.v1", input: ["path": .string(path)]), owner: owner, timeout: timeout)
+  func list(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws -> [MachineEntry] {
+    let id = try await start(machine, request: .init(kind: "list.v1", input: ["path": .string(path)], caller: caller), owner: owner, timeout: timeout)
     var entries: [MachineEntry] = []; var bytes = 0
     _ = try await drainFile(id, channel: "entries") { payload in
       for record in payload.records ?? [] {
@@ -49,10 +50,10 @@ extension OperationClient {
     return entries.sorted { $0.name < $1.name }
   }
 
-  func writeFile(machine: String, path: String, data: Data, ifMatch: String? = nil, owner: OperationOwner, timeout: Duration? = nil) async throws -> String {
+  func writeFile(machine: String, path: String, data: Data, ifMatch: String? = nil, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws -> String {
     var input: JSONValue = ["path": .string(path), "bytes": .string(String(data.count)), "digest": .string(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())]
     if let ifMatch, case var .object(fields) = input { fields["ifMatch"] = .string(ifMatch); input = .object(fields) }
-    let id = try await start(machine, request: .init(kind: "write.v1", input: input), owner: owner, timeout: timeout)
+    let id = try await start(machine, request: .init(kind: "write.v1", input: input, caller: caller), owner: owner, timeout: timeout)
     do {
       while true {
         try Task.checkCancellation()
@@ -79,36 +80,36 @@ extension OperationClient {
     }
   }
 
-  func mkdir(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil) async throws {
-    _ = try await fileCall(machine, kind: "mkdir.v1", input: ["path": .string(path)], owner: owner, timeout: timeout)
+  func mkdir(machine: String, path: String, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws {
+    _ = try await fileCall(machine, kind: "mkdir.v1", input: ["path": .string(path)], owner: owner, timeout: timeout, caller: caller)
   }
 
-  func remove(machine: String, path: String, ifMatch: String? = nil, owner: OperationOwner, timeout: Duration? = nil) async throws {
+  func remove(machine: String, path: String, ifMatch: String? = nil, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws {
     var input: JSONValue = ["path": .string(path)]
     if let ifMatch, case var .object(fields) = input { fields["ifMatch"] = .string(ifMatch); input = .object(fields) }
-    _ = try await fileCall(machine, kind: "remove.v1", input: input, owner: owner, timeout: timeout)
+    _ = try await fileCall(machine, kind: "remove.v1", input: input, owner: owner, timeout: timeout, caller: caller)
   }
 
-  func move(machine: String, from: String, to: String, owner: OperationOwner, timeout: Duration? = nil) async throws {
-    _ = try await fileCall(machine, kind: "move.v1", input: ["from": .string(from), "to": .string(to)], owner: owner, timeout: timeout)
+  func move(machine: String, from: String, to: String, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws {
+    _ = try await fileCall(machine, kind: "move.v1", input: ["from": .string(from), "to": .string(to)], owner: owner, timeout: timeout, caller: caller)
   }
 
-  public func vfs(machine: String, op: VFSOp, owner: OperationOwner, timeout: Duration? = nil) async throws -> VFSResult {
+  public func vfs(machine: String, op: VFSOp, owner: OperationOwner, timeout: Duration? = nil, caller: StartRequest.Caller? = nil) async throws -> VFSResult {
     do {
       if descriptions[machine] == nil { _ = try await describe(machine) }
       switch op {
-      case let .stat(path): return try await .entry(entry: stat(machine: machine, path: path, owner: owner, timeout: timeout))
-      case let .ls(path): return try await .entries(entries: list(machine: machine, path: path, owner: owner, timeout: timeout))
-      case let .write(path, data, token): return try await .written(token: writeFile(machine: machine, path: path, data: Data(data.bytes), ifMatch: token, owner: owner, timeout: timeout))
-      case let .mkdir(path): try await mkdir(machine: machine, path: path, owner: owner, timeout: timeout); return .ok
-      case let .rm(path, token): try await remove(machine: machine, path: path, ifMatch: token, owner: owner, timeout: timeout); return .ok
-      case let .mv(from, to): try await move(machine: machine, from: from, to: to, owner: owner, timeout: timeout); return .ok
+      case let .stat(path): return try await .entry(entry: stat(machine: machine, path: path, owner: owner, timeout: timeout, caller: caller))
+      case let .ls(path): return try await .entries(entries: list(machine: machine, path: path, owner: owner, timeout: timeout, caller: caller))
+      case let .write(path, data, token): return try await .written(token: writeFile(machine: machine, path: path, data: Data(data.bytes), ifMatch: token, owner: owner, timeout: timeout, caller: caller))
+      case let .mkdir(path): try await mkdir(machine: machine, path: path, owner: owner, timeout: timeout, caller: caller); return .ok
+      case let .rm(path, token): try await remove(machine: machine, path: path, ifMatch: token, owner: owner, timeout: timeout, caller: caller); return .ok
+      case let .mv(from, to): try await move(machine: machine, from: from, to: to, owner: owner, timeout: timeout, caller: caller); return .ok
       case let .read(path, offset, length):
         guard (offset ?? 0) >= 0, (length ?? 0) >= 0 else { return .error(error: .init(code: .invalidArgument, message: "Read range must not be negative")) }
         if let length, length > VFSDefaults.maxReadBytes { return .error(error: .init(code: .tooLarge, message: "Read exceeds the wire bound")) }
         var input: JSONValue = ["path": .string(path), "offset": .string(String(offset ?? 0))]
         if let length, case var .object(fields) = input { fields["length"] = .string(String(length)); input = .object(fields) }
-        let id = try await start(machine, request: .init(kind: "read.v1", input: input), owner: owner, timeout: timeout)
+        let id = try await start(machine, request: .init(kind: "read.v1", input: input, caller: caller), owner: owner, timeout: timeout)
         var bytes = Data()
         let result = try await drainFile(id, channel: "data") { payload in
           guard let chunk = payload.data, chunk.count <= VFSDefaults.maxReadBytes - bytes.count else { throw OperationError(.resultTooLarge) }
@@ -132,8 +133,8 @@ extension OperationClient {
     }
   }
 
-  private func fileCall(_ machine: String, kind: String, input: JSONValue, owner: OperationOwner, timeout: Duration?) async throws -> JSONValue {
-    let id = try await start(machine, request: .init(kind: kind, input: input), owner: owner, timeout: timeout)
+  private func fileCall(_ machine: String, kind: String, input: JSONValue, owner: OperationOwner, timeout: Duration?, caller: StartRequest.Caller?) async throws -> JSONValue {
+    let id = try await start(machine, request: .init(kind: kind, input: input, caller: caller), owner: owner, timeout: timeout)
     do { return try await awaitResult(id) }
     catch { if let record = try? await store.read(id), record.snapshot?.verdict == nil { try? await abandon(record, reason: "fileCallFailed") }; throw error }
   }

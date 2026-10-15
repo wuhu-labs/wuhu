@@ -17,11 +17,7 @@ public enum TunnelURLSession {
     do {
       try await withTaskCancellationHandler {
         try Task.checkCancellation()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-          socket.sendPing { error in
-            if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-          }
-        }
+        try await firstPong { socket.sendPing(pongReceiveHandler: $0) }
         guard (socket.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == TunnelTransport.webSocketSubprotocol else { throw TunnelError.unsupportedSubprotocol }
       } onCancel: { socket.cancel(with: .goingAway, reason: nil) }
     } catch {
@@ -43,6 +39,21 @@ public enum TunnelURLSession {
       }
     }, abort: { socket.cancel(with: .goingAway, reason: nil) })
   }
+}
+
+/// Sends one transport ping through `sendPing` and returns when its first outcome arrives.
+///
+/// URLSession can call one pong handler twice: cancelling the task while the ping is pending calls it with
+/// ECONNABORTED, and a connection reset during the teardown calls it again. The handler feeds a stream, and only the
+/// first outcome is read. Cancelling the waiting task throws CancellationError without waiting for an outcome.
+func firstPong(_ sendPing: (@escaping @Sendable ((any Error)?) -> Void) -> Void) async throws {
+  let outcomes = AsyncThrowingStream<Void, any Error> { continuation in
+    sendPing { error in
+      if let error { continuation.finish(throwing: error) } else { continuation.yield(); continuation.finish() }
+    }
+  }
+  for try await _ in outcomes { return }
+  throw CancellationError()
 }
 
 private actor Receiver {

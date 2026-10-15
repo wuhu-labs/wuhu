@@ -9,13 +9,13 @@ import struct SpaceContract.GroupID
 import struct SpaceFS.SpacePath
 
 /// A group's instruction layer: its `/AGENTS.md` and `/.agents/skills/**`. In
-/// `shared` it is the space-wide layer, and `/models.json` rides with it.
+/// `shared` it is the space-wide layer, and `/models.json` and `/machine-v2-upgrade.json` ride with it.
 public enum GroupLayer {
   public static func covers(_ path: SpacePath, in group: GroupID) -> Bool {
     let components = path.components
     if components == ["AGENTS.md"] { return true }
     if components.first == ".agents", components.count == 1 || components[1] == "skills" { return true }
-    return group == .shared && components == ["models.json"]
+    return group == .shared && (components == ["models.json"] || components == ["machine-v2-upgrade.json"])
   }
 
   static func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, in db: Database) throws {

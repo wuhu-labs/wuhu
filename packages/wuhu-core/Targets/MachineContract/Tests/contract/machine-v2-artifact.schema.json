@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineV2Artifact","type":"object","properties":{"platform":{"type":"string"},"url":{"type":"string"},"sha256":{"type":"string"}},"required":["platform","url","sha256"],"additionalProperties":false}

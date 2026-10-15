@@ -141,4 +141,8 @@ Normal routing contract tests exercise v2 file/search adapters, traversal-order 
 
 Script launch awaits the optional parent lifecycle registration before inserting the local execution or starting its JavaScript/answer timeout. Cancellation during registration releases an acknowledged registration without launching code; normal exit releases it once.
 
+Remote handler invocation identity is the persisted subscription attempt UUID. `ScriptHandlerResult.acknowledge()` is idempotent; subscription firing calls it only after guarded success commit or when discarding a returned result after cancellation/failure. In-process results use a no-op acknowledgement. This lets a remote runtime retain results and pin its generation until parent consumption without moving state/wake ownership out of the parent.
+
+After acquiring a handler-result receipt, subscription firing awaits its acknowledgement on every exit after guarded commit or explicit discard, including when both the success write and fallback failure write throw. A failed persistence transaction does not retain the discarded result or pin its worker generation.
+
 Normal machine text/image reads and write/edit results retain opaque filesystem tokens instead of requiring a numeric mtime. Legacy numeric machine receipts keep their mtime representation. Overwrite guards compare opaque tokens exactly and pass the read token into the remote write, so a change between stat and write remains a conflict rather than a clobber.

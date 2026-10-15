@@ -1,22 +1,35 @@
 import struct Fetch.Body
 import enum JSONValue.JSONValue
 import struct WorkerProtocol.WorkerCall
+import class WorkerProtocol.WorkerCredentials
 import class WorkerProtocol.WorkerEndpoint
 import struct WorkerProtocol.WorkerHello
 import struct WorkerProtocol.WorkerProtocolError
+import struct WorkerProtocol.WorkerReceipt
 
 public struct OwnerByteEndpoint: Sendable {
   private let invoke: @Sendable (WorkerCall) async throws -> JSONValue
   private let replies = OwnerReplies()
+  private let journal = OwnerReceiptJournal()
+  private let acknowledged: (@Sendable (WorkerCall) async -> Void)?
   private let customUpload: (@Sendable (WorkerCall, Body) async throws -> Bool)?
   private let customDownload: (@Sendable (WorkerCall) async throws -> Body?)?
 
-  public init(invoke: @escaping @Sendable (WorkerCall) async throws -> JSONValue, upload: (@Sendable (WorkerCall, Body) async throws -> Bool)? = nil, download: (@Sendable (WorkerCall) async throws -> Body?)? = nil) {
-    self.invoke = invoke; customUpload = upload; customDownload = download
+  public init(invoke: @escaping @Sendable (WorkerCall) async throws -> JSONValue, upload: (@Sendable (WorkerCall, Body) async throws -> Bool)? = nil, download: (@Sendable (WorkerCall) async throws -> Body?)? = nil, acknowledged: (@Sendable (WorkerCall) async -> Void)? = nil) {
+    self.invoke = invoke; customUpload = upload; customDownload = download; self.acknowledged = acknowledged
   }
 
   public func endpoint(token: String, hello: WorkerHello) throws -> WorkerEndpoint {
-    try WorkerEndpoint(token: token, hello: hello, invoke: { call in
+    endpoint(credentials: try WorkerCredentials(token: token), hello: hello)
+  }
+
+  public func endpoint(credentials: WorkerCredentials, hello: WorkerHello) -> WorkerEndpoint {
+    WorkerEndpoint(credentials: credentials, hello: hello.retainingReplies(journal.identity), invoke: { call in
+      if call.operation == "owner.ack" {
+        if let admitted = try await journal.acknowledge(ownerDecode(WorkerReceipt.self, call.payload)) { await acknowledged?(admitted) }
+        return .bool(true)
+      }
+      if call.operation == "owner.receipts" { return try await ownerEncode(journal.inventory()) }
       if call.operation == "owner.cancel" {
         let request = try ownerDecode(StreamRequest.self, call.payload)
         await cancel(request.id)
@@ -25,17 +38,24 @@ public struct OwnerByteEndpoint: Sendable {
     }, upload: receive, download: send)
   }
 
-  public func cancel(_ id: UUID) async { await replies.remove(id) }
+  public func cancel(_ id: UUID) async { await journal.cancel(id); await replies.remove(id) }
+  public func shutdown() async { await journal.stop() }
 
   public func receive(_ call: WorkerCall, body: Body) async throws {
     if try await customUpload?(call, body) == true { return }
     guard call.operation == "owner.input", let operation = call.payload.stringValue else {
       throw WorkerProtocolError(.invalidMessage, message: "Invalid owner input stream")
     }
+    if call.receipt != nil {
+      let payload = try await body.json(JSONValue.self, upTo: 64 << 20)
+      let effect = WorkerCall(id: call.id, operation: operation, payload: payload, traceContext: call.traceContext, receipt: call.receipt)
+      _ = try await journal.run(effect) { try await invoke(effect) }
+      return
+    }
     try await replies.reserve(call.id, operation: operation)
     do {
       let payload = try await body.json(JSONValue.self)
-      let result = try await invoke(WorkerCall(id: call.id, operation: operation, payload: payload))
+      let result = try await invoke(WorkerCall(id: call.id, operation: operation, payload: payload, traceContext: call.traceContext))
       try Task.checkCancellation()
       await replies.complete(call.id, value: result)
     } catch {
@@ -46,6 +66,9 @@ public struct OwnerByteEndpoint: Sendable {
 
   public func send(_ call: WorkerCall) async throws -> Body {
     if let body = try await customDownload?(call) { return body }
+    if call.operation == "owner.output", call.receipt != nil {
+      return try await .json(journal.value(call))
+    }
     if call.operation == "owner.output", let operation = call.payload.stringValue {
       return try await .json(replies.take(call.id, operation: operation))
     }

@@ -60,6 +60,21 @@ func waitOutputEnd(_ agent: OperationAgent, id: UUID) async throws -> OperationS
   throw TestFailure.timeout
 }
 
+func waitStderr(_ agent: OperationAgent, id: UUID, containing expected: Data) async throws -> Data {
+  let clock = ContinuousClock(); let deadline = clock.now + .seconds(8)
+  var output = Data()
+  var after: UInt64 = 0
+  while clock.now < deadline {
+    let snapshot = try await agent.handler(execRequest(id, query: "?channel=stderr&after=\(after)")).body.json(OperationSnapshot.self)
+    if let data = snapshot.payload?.data { output.append(data) }
+    if let through = snapshot.through { after = through.rawValue }
+    if output.range(of: expected) != nil { return output }
+    try await clock.sleep(for: .milliseconds(10))
+  }
+  Issue.record("stderr did not contain \(String(decoding: expected, as: UTF8.self)) before the deadline: \(String(decoding: output, as: UTF8.self))")
+  throw TestFailure.timeout
+}
+
 enum TestFailure: Error { case timeout }
 @Suite struct ExecContractTests {
   @Test(arguments: [true, false]) func lowercaseUUIDStartAndPollAddressTheSameOperation(lowercaseStart: Bool) async throws {
@@ -95,9 +110,8 @@ enum TestFailure: Error { case timeout }
     try await withExec { agent in
       let id = UUID()
       try await startExec(agent, id: id, script: "printf stderr >&2; exec yes x")
-      try await ContinuousClock().sleep(for: .milliseconds(100))
-      let out = try await agent.handler(execRequest(id, query: "?channel=stderr&after=0")).body.json(OperationSnapshot.self)
-      #expect(out.payload?.data == Data("stderr".utf8))
+      let stderr = try await waitStderr(agent, id: id, containing: Data("stderr".utf8))
+      #expect(stderr == Data("stderr".utf8))
       _ = try await agent.handler(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "testStop"))))
       let s = try await waitExit(agent, id: id)
       #expect(s.verdict?.tag == .stopped)
@@ -119,8 +133,8 @@ enum TestFailure: Error { case timeout }
   @Test func termIgnoringGroupRequiresObservedSIGKILLAfterGrace() async throws {
     try await withExec { agent in
       let id = UUID()
-      try await startExec(agent, id: id, script: "trap '' TERM; exec sleep 100")
-      try await ContinuousClock().sleep(for: .milliseconds(100))
+      try await startExec(agent, id: id, script: "trap '' TERM; printf ready >&2; exec sleep 100")
+      _ = try await waitStderr(agent, id: id, containing: Data("ready".utf8))
       let clock = ContinuousClock(); let began = clock.now
       _ = try await agent.handler(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "ignoredTerm"))))
       let snapshot = try await waitExit(agent, id: id)

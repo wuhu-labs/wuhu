@@ -10,6 +10,7 @@
 #endif
 import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
+import struct ComputerFiles.AdmittedStart
 import class ComputerFiles.ComputerAgent
 import struct ComputerFiles.ComputerFileSystem
 import struct ComputerFiles.ExternalKind
@@ -61,9 +62,10 @@ extension ExecSupervisor {
     executable: String,
     files: ComputerFileSystem = .local,
     kinds: [AnyOperationKind] = [],
+    audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     _ body: @escaping @Sendable (ComputerAgent) async throws -> R,
   ) async throws -> R {
-    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: files, kinds: kinds) { agent, _ in try await body(agent) }
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: files, kinds: kinds, audit: audit) { agent, _ in try await body(agent) }
   }
 
   /// The composition itself; tests also get the registry to observe its run loop.
@@ -73,20 +75,31 @@ extension ExecSupervisor {
     executable: String,
     files: ComputerFileSystem,
     kinds: [AnyOperationKind],
+    audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     _ body: @escaping @Sendable (ComputerAgent, ExecSupervisorRegistry) async throws -> R,
   ) async throws -> R {
+    // A path the platform cannot bind is a typed refusal to start, before anything else happens.
+    let rendezvous = Rendezvous.socketPath(operationsDirectory: operationsDirectory)
+    try Rendezvous.validateSocketPath(rendezvous)
     let lock = exec_lock_agent(operationsDirectory)
     guard lock >= 0 else { throw OperationError(.invalidConfiguration, message: "Another agent owns this v2 home") }
-    defer { exec_close(lock) }
-    return try await withUnixHTTP { http in
+    defer {
+      _ = flock(lock, LOCK_UN)
+      exec_close(lock)
+    }
+    return try await withUnixHTTP { http, events in
       let registry = try ExecSupervisorRegistry(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: .asyncHTTPClient(http, timeout: .seconds(25)), identityFetch: .asyncHTTPClient(http, timeout: .seconds(2)), authorize: { _, id in
         guard id == machine else { throw OperationError(.machineNotAuthorized) }
       })
       try await registry.recover()
-      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: registry.external)
+      // Holding the lock entitles this agent to replace a stale ctl.sock; supervisors that outlived the last agent redial it.
+      let listener = try await Rendezvous.listen(path: rendezvous, group: events)
+      defer { _ = unlink(rendezvous) }
+      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: registry.external, audit: audit)
       return try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await registry.run() }
         group.addTask { await agent.run() }
+        group.addTask { await Rendezvous.accept(listener, registry: registry) }
         do {
           let result = try await body(agent, registry)
           await agent.shutdown(); group.cancelAll()

@@ -20,8 +20,8 @@ private struct HandlerInvocationSnapshot: Codable, Sendable {
     fireTime = invocation.fireTime; stateJSON = invocation.stateJSON
   }
 
-  func invocation() throws -> ScriptHandlerInvocation {
-    .init(path: path, session: session, rows: try rows?.value(), fireTime: fireTime, stateJSON: stateJSON)
+  func invocation(id: UUID) throws -> ScriptHandlerInvocation {
+    .init(id: id, path: path, session: session, rows: try rows?.value(), fireTime: fireTime, stateJSON: stateJSON)
   }
 }
 
@@ -45,7 +45,7 @@ public struct WorkerHandlerEndpoint: Sendable {
     return try await operations.run(call) {
       try await ownerReply {
         let request = try ownerDecode(HandlerInvocationSnapshot.self, call.payload)
-        return try await ownerEncode(HandlerResultSnapshot(handler.executeHandler(request.invocation())))
+        return try await ownerEncode(HandlerResultSnapshot(handler.executeHandler(request.invocation(id: call.id))))
       }
     }
   }
@@ -57,6 +57,11 @@ public struct RemoteHandlerExecution: HandlerExecutionClient {
   private let rpc: OwnerRPC
   public init(client: WorkerClient) { rpc = .init(client: client) }
   public func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
+    let call = WorkerCall(id: invocation.id, operation: "handler.execute", payload: try ownerEncode(HandlerInvocationSnapshot(invocation)))
+    if let retained = try await rpc.client.retaining(call) {
+      let response: HandlerResultSnapshot = try await rpc.retainedCall(retained, consume: false)
+      return ScriptHandlerResult(stateJSON: response.stateJSON, wakes: response.wakes, acknowledge: { try? await rpc.acknowledge(retained) })
+    }
     let response: HandlerResultSnapshot = try await rpc.call("handler.execute", HandlerInvocationSnapshot(invocation))
     return response.result
   }

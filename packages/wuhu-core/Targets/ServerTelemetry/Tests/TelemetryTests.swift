@@ -48,7 +48,7 @@ import Testing
   #expect(snapshot.first { $0.name == .inference }?.parentSpanID == turn.context.spanID)
   #expect(tool.parentSpanID == turn.context.spanID)
   #expect(snapshot.first { $0.name == .machine }?.parentSpanID == tool.context.spanID)
-  let exporter = try OTLPExporter(endpoint: URL(string: "http://collector:4318")!, fetch: FetchClient { request in
+  let exporter = try OTLPExporter(endpoint: URL(string: "http://collector:4318")!, serviceVersion: "0.1.0-dev.121", hostName: "ct106", fetch: FetchClient { request in
     #expect(request.url.absoluteString == "http://collector:4318/v1/traces")
     let text = try await request.body!.text()
     #expect(text.contains("wuhu-server"))
@@ -58,6 +58,32 @@ import Testing
     return .text("{}")
   })
   try await exporter.export(snapshot)
+}
+
+private struct ExportedResources: Decodable {
+  struct ResourceSpans: Decodable { let resource: Resource }
+  struct Resource: Decodable { let attributes: [Attribute] }
+  struct Attribute: Decodable { let key: String; let value: Value }
+  struct Value: Decodable { let stringValue: String }
+  let resourceSpans: [ResourceSpans]
+}
+
+private func exportedResource(hostName: String?) async throws -> [String: String] {
+  let body = Mutex<String?>(nil)
+  let exporter = try OTLPExporter(endpoint: URL(string: "http://collector:4318")!, serviceVersion: "0.1.0-dev.121", hostName: hostName, fetch: FetchClient { request in
+    let text = try await request.body!.text()
+    body.withLock { $0 = text }
+    return .text("{}")
+  })
+  try await exporter.export([])
+  let decoded = try JSONDecoder().decode(ExportedResources.self, from: Data(try #require(body.withLock { $0 }).utf8))
+  let resource = try #require(decoded.resourceSpans.first?.resource)
+  return Dictionary(uniqueKeysWithValues: resource.attributes.map { ($0.key, $0.value.stringValue) })
+}
+
+@Test func resourceNamesServiceVersionAndHost() async throws {
+  #expect(try await exportedResource(hostName: "ct106") == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121", "host.name": "ct106"])
+  #expect(try await exportedResource(hostName: nil) == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121"])
 }
 
 @Test func disabledHasNoContext() {

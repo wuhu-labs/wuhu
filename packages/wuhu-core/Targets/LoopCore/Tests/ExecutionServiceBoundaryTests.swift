@@ -1,3 +1,5 @@
+import Clocks
+import Dependencies
 import Foundation
 @testable import LoopCore
 import SessionDomain
@@ -73,6 +75,38 @@ private struct FaultingExecution: SessionExecutionClient {
     }
   }
 
+  @Test func aDelayedReminderTaskKeepsTheOriginalDeadline() async throws {
+    let clock = ReminderAdmissionClock()
+    try await withDependencies {
+      $0.continuousClock = AnyClock(clock)
+      $0.date = DateGenerator { anchor.addingTimeInterval(TestClock<Duration>.Instant().duration(to: clock.now).timeInterval) }
+    } operation: {
+      let sessions = try Space.inMemory().sessions
+      let wakes = Box<[Date]>([])
+      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let execution = FaultingExecution(base: base, wakeCall: { _ in
+        @Dependency(\.date) var date
+        wakes.withLock { $0.append(date.now) }
+      }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
+      let reminders = SessionReminders(sessions: sessions, execution: execution)
+      await reminders.scheduleBeforeTaskAdmission(.init("fixture"), at: anchor.addingTimeInterval(60), clock: clock)
+      do {
+        try await until("delayed reminder starts sleeping") { clock.sleepStarted.value }
+        await clock.base.advance(by: .seconds(29))
+        #expect(wakes.value.isEmpty)
+        await clock.base.advance(by: .seconds(1.000001))
+        try await until("original reminder deadline fires") { wakes.value.count == 1 }
+        #expect(abs(try #require(wakes.value.first).timeIntervalSince(anchor) - 60) < 0.001)
+      } catch {
+        await reminders.shutdown()
+        await base.shutdown()
+        throw error
+      }
+      await reminders.shutdown()
+      await base.shutdown()
+    }
+  }
+
   @Test func parentRemindersReplaceDeadlinesCancelAndJoinAtShutdown() async throws {
     try await withKernelDeps { time in
       let sessions = try Space.inMemory().sessions
@@ -129,5 +163,27 @@ private struct FaultingExecution: SessionExecutionClient {
       }
       await service.shutdown()
     }
+  }
+}
+
+private struct ReminderAdmissionClock: Clock {
+  let base = TestClock<Duration>()
+  let admissionDelay = Box<Duration>(.zero)
+  let sleepStarted = Box(false)
+  var now: TestClock<Duration>.Instant { base.now.advanced(by: admissionDelay.value) }
+  var minimumResolution: Duration { base.minimumResolution }
+
+  func sleep(until deadline: TestClock<Duration>.Instant, tolerance: Duration?) async throws {
+    let deadline = deadline.advanced(by: .zero - admissionDelay.value)
+    sleepStarted.withLock { $0 = true }
+    try await base.sleep(until: deadline, tolerance: tolerance)
+  }
+}
+
+private extension SessionReminders {
+  func scheduleBeforeTaskAdmission(_ id: SessionID, at due: Date, clock: ReminderAdmissionClock) {
+    schedule(id, at: due)
+    // This actor turn holds the spawned reminder task until the clock has moved.
+    clock.admissionDelay.withLock { $0 = .seconds(30) }
   }
 }

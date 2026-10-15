@@ -249,12 +249,12 @@ import WorkerProtocol
   @Test func detachedScriptWithoutExecReceivesOneLossNotificationAndIsNeverReplayed() async throws {
     try await withSessionDeps {
       let calls = Mutex(0)
-      let source = "import {writeText} from 'wuhu:space'; await writeText('/detached-entered.txt','once',{ifMatch:null}); result('detached'); await sleep(60000); await writeText('/must-not-write.txt','no',{ifMatch:null})"
+      let source = "import {writeText} from 'wuhu:space'; await writeText('/detached-entered.txt','once',{ifMatch:null}); result('detached'); await sleep(600000); await writeText('/must-not-write.txt','no',{ifMatch:null})"
       let provider = try await ServeNIOServer.bind(port: 0, handler: { request in
         _ = try await request.body?.data()
         let round = calls.withLock { $0 += 1; return $0 }
         let block: JSONValue = round == 1 ? ["type": "tool_use", "id": "detached-script", "name": "run_script", "input": [:]] : ["type": "text", "text": ""]
-        let delta: JSONValue = round == 1 ? ["type": "input_json_delta", "partial_json": .string(JSONValue.object(["source": .string(source), "timeout_seconds": 10]).jsonString())] : ["type": "text_delta", "text": "detached complete"]
+        let delta: JSONValue = round == 1 ? ["type": "input_json_delta", "partial_json": .string(JSONValue.object(["source": .string(source), "timeout_seconds": 600]).jsonString())] : ["type": "text_delta", "text": "detached complete"]
         let events: [(String, JSONValue)] = [
           ("message_start", ["message": ["usage": ["input_tokens": 10]]]),
           ("content_block_start", ["index": 0, "content_block": block]),
@@ -275,7 +275,12 @@ import WorkerProtocol
       let result: Result<Void, any Error>
       do {
         _ = try await RemoteSessionExecution(client: connection.client).enqueue(.notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("fixture"), content: .init(text: "detach script"))), to: id)
-        try await until("detached script returned but remains alive", timeout: .seconds(20)) {
+        // The flow takes about a second alone but stretches past 20 s on a pool
+        // host running the whole check. The script's sleep and timeout_seconds
+        // lie past the suite's 2 min cap, so no starvation can make the call
+        // detach into a third provider round or end the script before SIGKILL;
+        // this 90 s poll only bounds a hang.
+        try await until("detached script returned but remains alive", timeout: .seconds(90)) {
           try await space.sessions.transcript(id).items.contains { if case let .assistant(entry) = $0 { entry.content.contains(.text("detached complete")) } else { false } }
         }
         #expect(try await space.fs(.shared).read("/detached-entered.txt").1 == Data("once".utf8))

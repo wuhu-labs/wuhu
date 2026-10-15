@@ -208,6 +208,8 @@ final class FakeMachineFS: Sendable {
   let opaqueTokens: Bool
   let writes = Box<[VFSOp]>([])
   let reads = Box<[VFSOp]>([])
+  /// `MachineSeam.caller` as each vfs call saw it.
+  let callers = Box<[SessionID?]>([])
 
   init(ranges: Bool = true, opaqueTokens: Bool = false) {
     self.ranges = ranges
@@ -231,7 +233,8 @@ final class FakeMachineFS: Sendable {
   var seam: MachineSeam {
     let token: @Sendable (Double) -> String = { [opaqueTokens] in opaqueTokens ? "opaque:\($0)" : String($0) }
     return MachineSeam(
-      vfs: { [files, clockSeconds, stats, ranges, reads, writes, replacedAfterStat] _, op in
+      vfs: { [files, clockSeconds, stats, ranges, reads, writes, replacedAfterStat, callers] _, op in
+        callers.withLock { $0.append(MachineSeam.caller) }
         switch op {
         case let .read(path, offset, length):
           reads.withLock { $0.append(op) }

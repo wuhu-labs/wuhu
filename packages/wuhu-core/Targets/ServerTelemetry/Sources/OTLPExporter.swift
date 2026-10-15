@@ -8,17 +8,23 @@ import Fetch
 public struct OTLPExporter: Sendable {
   private let endpoint: URL
   private let fetch: FetchClient
+  private let resource: Resource
 
-  public init(endpoint: URL, fetch: FetchClient) throws {
+  /// `hostName` nil leaves `host.name` off the resource rather than sending an empty value.
+  public init(endpoint: URL, serviceVersion: String, hostName: String?, fetch: FetchClient) throws {
     guard ["http", "https"].contains(endpoint.scheme), endpoint.host != nil,
           endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil
     else { throw ConfigurationError.invalidEndpoint }
     self.endpoint = endpoint.path.hasSuffix("/v1/traces") ? endpoint : endpoint.appendingPathComponent("v1/traces")
     self.fetch = fetch
+    resource = Resource(attributes: [
+      .init(key: "service.name", value: .init(stringValue: "wuhu-server")),
+      .init(key: "service.version", value: .init(stringValue: serviceVersion)),
+    ] + (hostName.map { [.init(key: "host.name", value: .init(stringValue: $0))] } ?? []))
   }
 
   public func export(_ spans: [FinishedSpan]) async throws {
-    let body = Export(resourceSpans: [.init(resource: .init(attributes: [.init(key: "service.name", value: .init(stringValue: "wuhu-server"))]), scopeSpans: [.init(scope: .init(name: "wuhu-server"), spans: spans.map(WireSpan.init))])])
+    let body = Export(resourceSpans: [.init(resource: resource, scopeSpans: [.init(scope: .init(name: "wuhu-server"), spans: spans.map(WireSpan.init))])])
     let response = try await fetch(Request(url: endpoint, method: .post, body: .json(body)))
     guard (200 ..< 300).contains(response.status.code) else { throw ConfigurationError.collectorRejected }
     try await response.body.discard()

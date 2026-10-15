@@ -625,7 +625,8 @@ extension SessionActor {
       delay = raw * jitter
     }
     guard !yielding else { return false }
-    let pause = Task { [clock] in try await clock.sleep(for: .seconds(delay)) }
+    let sleep = deadlineSleep(after: .seconds(delay), clock: clock)
+    let pause = Task { try await sleep() }
     retryPause = pause
     defer { retryPause = nil }
     return await withTaskCancellationHandler {

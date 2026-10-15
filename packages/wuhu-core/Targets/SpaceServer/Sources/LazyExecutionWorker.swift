@@ -181,12 +181,21 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
 
   func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     let (id, worker) = try await selected()
-    let result: Result<ScriptHandlerResult, any Error>
-    do { result = .success(try await worker.executeHandler(invocation)) }
-    catch { result = .failure(error) }
+    do {
+      let result = try await worker.executeHandler(invocation)
+      return ScriptHandlerResult(stateJSON: result.stateJSON, wakes: result.wakes, acknowledge: {
+        await result.acknowledge()
+        await self.handlerConsumed(id)
+      })
+    } catch {
+      await handlerConsumed(id)
+      throw error
+    }
+  }
+
+  private func handlerConsumed(_ id: UUID) async {
     generations[id]?.handlers -= 1
     await retireIfReady(id)
-    return try result.get()
   }
 
   func wake(_ id: SessionID) async throws { try await perform(id) { try await $0.wake(id) } }

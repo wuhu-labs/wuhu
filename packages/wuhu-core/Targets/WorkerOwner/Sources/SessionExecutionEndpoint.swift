@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import class InferenceKit.AttemptHub
 import enum JSONValue.JSONValue
 import struct LoopCore.SessionExecution
 import protocol LoopCore.SessionExecutionClient
@@ -10,6 +11,7 @@ import enum SessionDomain.QueueInput
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
+import class SessionTools.Scripts
 import struct SpaceCore.SessionRestart
 import struct WorkerProtocol.WorkerCall
 import class WorkerProtocol.WorkerClient
@@ -18,14 +20,26 @@ import struct WorkerProtocol.WorkerProtocolError
 public struct SessionExecutionEndpoint: Sendable {
   private let execution: any SessionExecutionClient
   private let beforeShutdownReply: @Sendable () async -> Void
-  public init(execution: any SessionExecutionClient, beforeShutdownReply: @escaping @Sendable () async -> Void = {}) {
-    self.execution = execution
+  private let scripts: Scripts?
+  private let attempts: AttemptHub?
+  private let owner: WorkerClient?
+  public init(execution: any SessionExecutionClient, scripts: Scripts? = nil, attempts: AttemptHub? = nil, owner: WorkerClient? = nil, beforeShutdownReply: @escaping @Sendable () async -> Void = {}) {
+    self.execution = execution; self.scripts = scripts; self.attempts = attempts; self.owner = owner
     self.beforeShutdownReply = beforeShutdownReply
   }
 
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
     try await ownerReply {
       switch call.operation {
+      case "execution.inventory":
+        guard let execution = execution as? SessionExecution else { throw WorkerProtocolError(.unavailable, message: "Worker inventory is unavailable") }
+        let assignments = await execution.inventory()
+        let scripts = scripts?.inventory ?? [:]
+        let sessions = Set(assignments.map(\.session)).union(scripts.values)
+        var inferences: [SessionID: [UUID]] = [:]
+        for session in sessions { inferences[session] = attempts?.inFlight(session: session).map(\.key) ?? [] }
+        let pending = await owner?.pendingReceipts() ?? []
+        return try ownerEncode(WorkerExecutionInventory(assignments: assignments, scripts: scripts, inferences: inferences, pendingOwnerCalls: pending))
       case "execution.wake":
         let request = try ownerDecode(SessionIDRequest.self, call.payload)
         try await execution.wake(request.id)

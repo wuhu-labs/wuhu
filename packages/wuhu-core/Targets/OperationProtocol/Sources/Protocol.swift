@@ -249,12 +249,23 @@ public struct MachineDescription: Codable, Sendable {
 }
 
 public struct StartRequest: Codable, Equatable, Sendable {
+  /// Who asked for the start: the server fills it from the calling session so the machine's audit can name it. Display only — never an authorization input.
+  public struct Caller: Codable, Equatable, Sendable {
+    public let session: String
+    public let title: String
+    public let group: String
+    public init(session: String, title: String, group: String) { self.session = session; self.title = title; self.group = group }
+  }
+
   public let kind: String
   public let input: JSONValue
-  public init(kind: String, input: JSONValue) { self.kind = kind; self.input = input }
+  /// Absent when no session made the call (a person's CLI, the server itself) and from servers that predate attribution.
+  public let caller: Caller?
+  public init(kind: String, input: JSONValue, caller: Caller? = nil) { self.kind = kind; self.input = input; self.caller = caller }
+  /// The invocation identity, `kind` and `input` only: a replayed start whose caller title changed in between is the same invocation.
   public func canonicalData() throws -> Data {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    let normalized = try JSONDecoder().decode(Self.self, from: encoder.encode(self))
+    let normalized = try JSONDecoder().decode(Self.self, from: encoder.encode(Self(kind: kind, input: input)))
     return try encoder.encode(normalized)
   }
 }

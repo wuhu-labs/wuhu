@@ -55,3 +55,24 @@ extension MachineV2TunnelTests {
     }
   }
 }
+
+extension MachineV2TunnelTests {
+  // An app machine reads its group from its signed status, before and after a move.
+  @Test func theSignedStatusNamesTheMachinesGroupAndFollowsAMove() async throws {
+    let f = try await Fixture()
+    func group() async throws -> String? {
+      let request = try await signed(f.handler, "/v1/machine-v2/\(f.machine.id.rawValue)", method: .get, key: f.key, machine: f.machine.id)
+      guard case let .response(response) = try await f.handler(request) else { throw OperationError(.invalidResponse) }
+      #expect(response.status == .ok)
+      return try await response.body.json([String: JSONValue].self)["group"]?.stringValue
+    }
+    #expect(try await group() == f.machine.group.rawValue)
+
+    try await f.space.writer.write { db in
+      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('team', '2026-10-15T00:00:00.000Z')")
+    }
+    let moved = try await f.http("/v1/machine/\(f.machine.id.rawValue)/group", method: .put, input: ["group": "team"])
+    #expect(moved.status == .ok)
+    #expect(try await group() == "team")
+  }
+}

@@ -138,4 +138,30 @@ private func searchQuery(_ kind: String, step: String? = nil) -> SearchQuery {
     #expect(posts.value.withLock { $0 } == 1)
     await client.shutdown()
   }
+
+  @Test func unadvertisedInputIsRefusedBeforePost() async throws {
+    let posts = PostCount()
+    let client = try capabilityClient([withoutPaging(ComputerKindSchemas.remove, removing: ["ifMatch"])], posts: posts)
+    do {
+      _ = try await client.vfs(machine: "disk", op: .rm(path: "/fixture", ifMatch: "opaque"), owner: .init(scope: "compatibility", key: "remove"))
+      Issue.record("Expected unadvertised input refusal")
+    } catch let error as OperationError {
+      #expect(error.code == .kindUnavailable)
+      #expect(error.message.contains("remove.v1"))
+      #expect(error.message.contains("agent too old, upgrade"))
+      #expect(error.details == ["kind": "remove.v1", "reason": "agentTooOld", "started": false, "inputs": ["ifMatch"]])
+    }
+    #expect(posts.value.withLock { $0 } == 0)
+    await client.shutdown()
+  }
+
+  @Test func openInputSchemaIsNotGuarded() async throws {
+    let posts = PostCount()
+    let open = KindDescriptor("probe.v1", inputSchema: ["type": "object", "properties": ["path": ["type": "string"]]], resultSchema: ["type": "object"], deliveryPolicy: .boundedResult)
+    let client = try capabilityClient([open], posts: posts)
+    _ = try await client.describe("disk")
+    _ = try await client.start("disk", request: .init(kind: "probe.v1", input: ["path": "/fixture", "future": true]), owner: .init(scope: "compatibility", key: "probe"))
+    #expect(posts.value.withLock { $0 } == 1)
+    await client.shutdown()
+  }
 }

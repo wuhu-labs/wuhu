@@ -159,9 +159,15 @@ private final class WorkFlips: TransactionObserver, Sendable {
         try await until("parked") { try await sessions.settledWork(sid) && script.count == 2 }
         try await until("idle") { await service.registry.sessions[sid]?.idleSince != nil }
         try await time.asleep("parent reminder", dueIn: 60)
-        try await time.wake("reaper", after: 1)
-        try await until("parked actor evicted") { await service.registry.sessions.isEmpty }
-        await time.advance(by: 59)
+        // A queued work-signal wake can make a sweep observe an active actor.
+        try await until("parked actor evicted") {
+          if await service.registry.sessions.isEmpty { return true }
+          @Dependency(\.date) var date
+          try #require(date.now < anchor.addingTimeInterval(59), "evict before the parent reminder fires")
+          try await time.wake("reaper", after: 1)
+          return await service.registry.sessions.isEmpty
+        }
+        await time.advance(to: anchor.addingTimeInterval(60.000001))
         try await until("parent wakes a freshly hydrated actor") { try await sessions.settledWork(sid) && script.count == 4 }
         #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
       }
@@ -285,6 +291,7 @@ private final class WorkFlips: TransactionObserver, Sendable {
         await time.advance(by: 60)
         try await until("reconstructed deadline fires") { try await sessions.settledWork(sid) && second.count == 1 }
         #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
+        #expect(abs(try #require(second.attempts.value.first).at.timeIntervalSince(anchor) - 60) < 0.001)
       }
     }
   }

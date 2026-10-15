@@ -91,7 +91,10 @@ public enum ExecutionWorker {
         sockets: sockets,
         attempts: attempts,
         usage: usage,
-        eventSink: owner.attemptEvents,
+        eventSink: .init { session, event in
+          attempts.publish(session: session, event)
+          try await owner.attemptEvents.publish(session: session, event)
+        },
         synchronizeUsage: { try await mirror.synchronize() },
         receiveUsage: { await mirror.record($0, plan: $1, windows: $2, at: $3) },
         committedWarming: { session, policy in
@@ -110,7 +113,7 @@ public enum ExecutionWorker {
       allowCacheWarming: { try await owner.allowsCacheWarming($0) },
       scheduleWake: { try await owner.scheduleReminder($0, at: $1) },
       executionActivity: { id, pass, active in
-        _ = try await parent.call(ExecutionWorkerActivity(session: id, pass: pass, active: active).call())
+        try await ExecutionWorkerActivity(session: id, pass: pass, active: active).publish(using: parent)
       },
     )
     let execution = await SessionExecution(owner: owner, loopConfig: config)
@@ -118,7 +121,7 @@ public enum ExecutionWorker {
       let payload = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(spans))
       _ = try await parent.call(.init(operation: "telemetry.spans", payload: payload, traceContext: nil))
     }
-    let operations = SessionExecutionEndpoint(execution: execution, beforeShutdownReply: {
+    let operations = SessionExecutionEndpoint(execution: execution, scripts: scripts, attempts: attempts, owner: parent, beforeShutdownReply: {
       await handlers.shutdown()
       if let telemetry { await telemetry.shutdown(export: exportSpans) }
     })
@@ -142,9 +145,8 @@ public enum ExecutionWorker {
         group.addTask { await listener.run() }
         group.addTask { await sockets.run() }
         group.addTask { await scripts.run(announceRestart: false) }
-        let lease = try await parent.stream(.init(operation: "worker.lease"))
         _ = try await parent.call(.init(operation: "worker.ready", payload: .integer(Int(getpid()))))
-        for try await _ in lease.asyncBytes() {}
+        try await keepOwnerLease(parent)
       }
       outcome = .success(())
     } catch { outcome = .failure(error) }
@@ -153,5 +155,29 @@ public enum ExecutionWorker {
     if let telemetry { await telemetry.shutdown(export: exportSpans) }
     await listener.shutdown()
     try outcome.get()
+  }
+
+  static func keepOwnerLease(_ parent: WorkerClient) async throws {
+    @Dependency(\.continuousClock) var clock
+    try await keepOwnerLease(parent, clock: clock)
+  }
+
+  private static func keepOwnerLease<C: Clock<Duration>>(_ parent: WorkerClient, clock: C) async throws {
+    var delay = Duration.milliseconds(100)
+    while !Task.isCancelled {
+      let opened = clock.now
+      do {
+        let lease = try await parent.stream(.init(operation: "worker.lease"))
+        for try await _ in lease.asyncBytes() {}
+      } catch let error as WorkerProtocolError where error.code == .unavailable {}
+      if opened.duration(to: clock.now) >= .seconds(5) { delay = .milliseconds(100) }
+      while !Task.isCancelled {
+        Logger(label: "wuhu.worker-reconnect").warning("Owner lease disconnected; retrying", metadata: ["delay": "\(delay)"])
+        try await clock.sleep(for: delay)
+        delay = min(delay * 2, .seconds(5))
+        do { try await parent.reconnect(); break }
+        catch let error as WorkerProtocolError where error.code == .unavailable { continue }
+      }
+    }
   }
 }

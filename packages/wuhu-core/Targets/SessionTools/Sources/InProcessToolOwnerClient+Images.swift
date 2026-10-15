@@ -13,6 +13,7 @@ import SessionDomain
 import struct SpaceCore.SessionHome
 import enum SpaceCore.SpaceError
 import struct SpaceFS.SpacePath
+import struct SpaceTools.MachineSeam
 import Synchronization
 import SystemFiles
 
@@ -24,7 +25,7 @@ extension InProcessToolOwnerClient {
   public func refuseImageDestination(_ destination: Address, session: SessionID) async throws { try await refuseUnwritable(destination, by: session) }
   public func imageReceipt(_ session: SessionID, call: ToolCallID) async throws -> ToolResultPayload? { try await store.receipt(session, toolCallID: call) }
   public func placeImage(_ image: Data, at destination: Address, session: SessionID, call: ToolCallID?, state: ToolExecutionState?) async throws -> ToolResultPayload {
-    let payload = try await place(image, at: destination, by: session, receipt: call)
+    let payload = try await MachineSeam.$caller.withValue(session) { try await place(image, at: destination, by: session, receipt: call) }
     if case .machine = destination, let call, let state {
       try await deliverContext(session, call, touching: destination.folder, state: state)
       try await store.recordReceipt(session, toolCallID: call, payload: payload)

@@ -148,3 +148,26 @@ private final class FakeExternal: Sendable {
     #expect(try await start(agent, kind: "external.v1", input: [:]).body.json(ErrorEnvelope.self).error.code == .leaving)
   }
 }
+
+extension ComputerAgentTests {
+  @Test func auditSeesEachAdmittedStartWithItsCallerOnce() async throws {
+    let external = FakeExternal()
+    let seen = Mutex<[AdmittedStart]>([])
+    let agent = try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind())], external: external.kind, audit: { start in seen.withLock { $0.append(start) } })
+    let caller = StartRequest.Caller(session: "s1", title: "Coder", group: "shared")
+    let echo = UUID(); let outside = UUID()
+    func post(_ id: UUID, _ request: StartRequest) async throws -> Response {
+      try await agent.handler(Request(url: URL(string: base + "/operations/" + id.uuidString)!, method: .post, body: .json(request)))
+    }
+    #expect(try await post(echo, .init(kind: "echo.v1", input: ["text": "x"], caller: caller)).status.code == 201)
+    #expect(try await post(outside, .init(kind: "external.v1", input: [:])).status.code == 201)
+    #expect(try await post(echo, .init(kind: "echo.v1", input: ["text": "x"], caller: caller)).status.code == 409)
+    #expect(try await post(UUID(), .init(kind: "missing.v1", input: [:], caller: caller)).status.code == 404)
+    let starts = seen.withLock { $0 }
+    #expect(starts.map(\.operation) == [echo, outside])
+    #expect(starts.map(\.kind) == ["echo.v1", "external.v1"])
+    #expect(starts.first?.input == ["text": "x"])
+    #expect(starts.map(\.caller) == [caller, nil])
+    await agent.shutdown()
+  }
+}

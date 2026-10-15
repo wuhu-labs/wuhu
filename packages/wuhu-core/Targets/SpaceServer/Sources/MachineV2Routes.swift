@@ -17,7 +17,7 @@ import struct SpaceContract.EnrollConsumeOutput
 import struct SpaceContract.GroupID
 import SpaceCore
 
-func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
+func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub, upgrades: MachineV2Upgrades, fingerprint: String?, principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict) {
   let challenges = OneShotChallenges(prefix: "mv2_")
   @Sendable func enroll(_ input: MachineAddInput, pubkey: String, principal: Principal) async throws -> Response {
     guard let name = input.name, MachineName.normalized(name) != nil else {
@@ -117,18 +117,36 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
       return machineAuthUnavailable()
     }
   }
+  // The key-signed reads a machine makes about itself: its hello (status plus
+  // upgrade announcement) and the bare announcement.
+  @Sendable func keySignedMachine(_ request: Request, _ parameters: RouteParameters) async -> Result<MachineRecord, ResponseFailure> {
+    guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
+      return .failure(.init(errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")))
+    }
+    if let refusal = await authorizationRefusal(hub, credential, message: "Not an enrolled Machine v2 identity") { return .failure(.init(refusal)) }
+    let resolved: MachineRecord?
+    do { resolved = try await space.resolveMachine(id) } catch { return .failure(.init(machineAuthUnavailable())) }
+    guard let machine = resolved else {
+      return .failure(.init(errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not an enrolled Machine v2 identity")))
+    }
+    return .success(machine)
+  }
+  router.get("/v1/machine-v2/:id/upgrade") { request, parameters in
+    guard request.headers[MachineV2Connect.pubkeyHeader] != nil else {
+      return errorResponse(.unauthorized, code: "keyInvalid", message: "The upgrade announcement is for the machine's own key")
+    }
+    switch await keySignedMachine(request, parameters) {
+    case let .failure(failure): return failure.response
+    case let .success(machine): return try Response.json(await upgrades.announcement(for: machine.id))
+    }
+  }
   router.get("/v1/machine-v2/:id") { request, parameters in
     if request.headers[MachineV2Connect.pubkeyHeader] != nil {
-      guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
-        return errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")
+      switch await keySignedMachine(request, parameters) {
+      case let .failure(failure): return failure.response
+      case let .success(machine):
+        return try await machineV2Status(space: space, machine: machine, upgrade: upgrades.announcement(for: machine.id))
       }
-      if let refusal = await authorizationRefusal(hub, credential, message: "Not an enrolled Machine v2 identity") { return refusal }
-      let resolved: MachineRecord?
-      do { resolved = try await space.resolveMachine(id) } catch { return machineAuthUnavailable() }
-      guard let machine = resolved else {
-        return errorResponse(.unauthorized, code: "machineNotAuthorized", message: "Not an enrolled Machine v2 identity")
-      }
-      return try await machineV2Status(space: space, machine: machine)
     }
     let principal: Principal
     switch try await principalOf(request) {
@@ -191,13 +209,22 @@ private func machineAuthUnavailable() -> Response {
 private struct MachineV2Status: Encodable {
   let id: MachineID
   let name: String?
+  /// The group the machine belongs to, so an app machine can show where agents reach it.
+  let group: String
   let attached: Bool
   let state: String
   let observedAt: Date?
   let reason: String?
+  /// Only on the machine's own key-signed hello.
+  let upgrade: MachineV2Upgrade?
 }
 
-private func machineV2Status(space: Space, machine: MachineRecord) async throws -> Response {
+private struct ResponseFailure: Error {
+  let response: Response
+  init(_ response: Response) { self.response = response }
+}
+
+private func machineV2Status(space: Space, machine: MachineRecord, upgrade: MachineV2Upgrade? = nil) async throws -> Response {
   let evidence = try await space.machineV2PresenceEvidence(machine.id.rawValue, group: machine.group)
-  return try Response.json(MachineV2Status(id: machine.id, name: machine.name, attached: evidence?.state == .attached, state: evidence?.state.rawValue ?? "detached", observedAt: evidence?.observedAt, reason: evidence?.reason))
+  return try Response.json(MachineV2Status(id: machine.id, name: machine.name, group: machine.group.rawValue, attached: evidence?.state == .attached, state: evidence?.state.rawValue ?? "detached", observedAt: evidence?.observedAt, reason: evidence?.reason, upgrade: upgrade))
 }

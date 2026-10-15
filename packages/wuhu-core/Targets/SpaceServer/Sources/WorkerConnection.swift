@@ -28,6 +28,7 @@ struct WorkerConnection: Sendable {
   let processID: Int32
   let client: WorkerClient
   let lifetime: Task<Void, Never>
+  var ownerTransport: WorkerOwnerTransport? = nil
 
   static func start(
     executable: String,
@@ -43,11 +44,9 @@ struct WorkerConnection: Sendable {
     let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled)
     let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: .init(spawn: spawn))
     let (ready, continuation) = AsyncStream<Int32>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let bytes = OwnerByteEndpoint(invoke: parent.invoke)
     let hello = ExecutionWorkerBootstrap.hello(release: "parent")
     let emitSpan = ServerTracing.emitter
-    let endpoint = try WorkerEndpoint(token: bootstrap.token, hello: hello, invoke: { call in
-      if call.operation == "owner.cancel", let raw = call.payload.object?["id"]?.stringValue, let id = UUID(uuidString: raw) { await bytes.cancel(id) }
+    let bytes = OwnerByteEndpoint(invoke: { call in
       if call.operation == "telemetry.spans" {
         let spans = try JSONDecoder().decode([FinishedSpan].self, from: Data(call.payload.jsonString().utf8))
         guard spans.count <= 64 else { throw WorkerProtocolError(.capacityExceeded, message: "Telemetry batch exceeds limit") }
@@ -58,7 +57,7 @@ struct WorkerConnection: Sendable {
       }
       if call.operation == "worker.activity" {
         try await activity(ExecutionWorkerActivity(call: call))
-        return .bool(true)
+        return .object(["value": .bool(true), "fault": .null])
       }
       if call.operation == "worker.ready" {
         guard let value = call.payload.intValue, let pid = Int32(exactly: value), pid > 0 else { throw WorkerProtocolError(.invalidMessage, message: "Invalid worker admission") }
@@ -66,17 +65,15 @@ struct WorkerConnection: Sendable {
         return .bool(true)
       }
       return try await parent.invoke(call)
-    }, upload: { call, body in
-      if try await !parent.upload(call, body: body) { try await bytes.receive(call, body: body) }
-    }, download: { call in
+    }, upload: parent.upload, download: { call in
       if call.operation == "worker.lease" {
         return .stream(AsyncStream<Data> { _ in })
       }
-      if let stream = try await parent.stream(call) { return stream }
-      return try await bytes.send(call)
-    })
-    let listener: WorkerListener
-    do { listener = try await WorkerListener.bind(socket: bootstrap.parentSocket, handler: endpoint.handler) }
+      return try await parent.stream(call)
+    }, acknowledged: parent.acknowledge)
+    let endpoint = try bytes.endpoint(token: bootstrap.token, hello: hello)
+    let transport: WorkerOwnerTransport
+    do { transport = try await WorkerOwnerTransport.bind(socket: bootstrap.parentSocket, handler: endpoint.handler) }
     catch { _ = rmdir(directory); throw error }
     var configuration = HTTPClient.Configuration()
     configuration.redirectConfiguration = .disallow
@@ -87,19 +84,22 @@ struct WorkerConnection: Sendable {
     let input = try JSONEncoder().encode(bootstrap)
     let lifetime = Task {
       await withTaskGroup(of: Void.self) { group in
-        group.addTask { await listener.run() }
+        group.addTask { await transport.run() }
         group.addTask {
           var options = PlatformOptions()
           options.processGroupID = 0
           options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2))]
           _ = try? await Subprocess.run(.path(.init(executable)), arguments: ["_execution-worker"], environment: .custom([:]), platformOptions: options, input: .array(Array(input)), output: .discarded, error: .discarded)
+          await client.close()
         }
         _ = await group.next()
         group.cancelAll()
       }
       continuation.finish()
+      await client.close()
+      await bytes.shutdown()
       await parent.shutdown()
-      await listener.shutdown()
+      await transport.stop()
       try? await control.shutdown()
       try? await byteClient.shutdown()
       _ = unlink(bootstrap.workerSocket)
@@ -122,7 +122,7 @@ struct WorkerConnection: Sendable {
         return try await group.next()!
       }
       _ = try await client.negotiate(hello)
-      return Self(processID: processID, client: client, lifetime: lifetime)
+      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport)
     } catch {
       lifetime.cancel()
       await lifetime.value

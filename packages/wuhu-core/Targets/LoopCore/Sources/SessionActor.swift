@@ -350,6 +350,10 @@ actor SessionActor {
     nudges.post(())
   }
 
+  var inventory: SessionAssignmentInventory {
+    .init(session: id, passes: activityPending, effect: longRunningTask?.id, yielding: yielding, archiveReservation: archiveReservation)
+  }
+
   private var activityPending: Set<UUID> = []
   private var loopPassActive = false
 

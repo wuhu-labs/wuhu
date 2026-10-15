@@ -6,6 +6,7 @@
 import enum JSONValue.JSONValue
 import MachineContract
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.StartRequest
 
 private struct SearchCursor: Codable {
   let machine: String
@@ -15,7 +16,7 @@ private struct SearchCursor: Codable {
 }
 
 public extension OperationClient {
-  func search(machine: String, query: SearchQuery) async throws -> SearchResult {
+  func search(machine: String, query: SearchQuery, caller: StartRequest.Caller? = nil) async throws -> SearchResult {
     let canonical: SearchQuery
     let step: String?; let limit: Int; let entryLimit: Int; let channel: String; let kind: String
     var input: [String: JSONValue]
@@ -47,7 +48,7 @@ public extension OperationClient {
     else {
       throw OperationError(.kindUnavailable, message: "Machine does not support paged \(kind): agent too old, upgrade", details: ["kind": .string(kind), "reason": "agentTooOld", "started": false])
     }
-    let id = try await start(machine, request: .init(kind: kind, input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) }))), owner: .init(scope: "machine-search/" + UUID().uuidString, key: "operation"))
+    let id = try await start(machine, request: .init(kind: kind, input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) })), caller: caller), owner: .init(scope: "machine-search/" + UUID().uuidString, key: "operation"))
     var records: [JSONValue] = []; var bytes = 0
     do {
       while true {

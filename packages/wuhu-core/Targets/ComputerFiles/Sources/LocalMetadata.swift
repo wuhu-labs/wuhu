@@ -16,12 +16,12 @@ import Synchronization
 
 extension ComputerFileOperations {
   static var local: Self { local(synchronize: { fd in guard fsync(fd) == 0 else { throw diskError() } }) }
-  static func local(synchronize: @escaping @Sendable (Int32) throws -> Void) -> Self {
+  static func local(synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void = {}) -> Self {
     .init(stat: { path in try await diskIO { try metadata(path) } }, list: { path in
       let cursor = try await diskIO { _ = try metadata(path); return try MetadataDirectory(path) }
       return .init(next: { try await diskIO { try cursor.next() } }, close: { await diskIO { cursor.close() } })
     }, write: { path, token in
-      let writer = try await diskIO { try DiskWriter(path: path, token: token, synchronize: synchronize) }
+      let writer = try await diskIO { try DiskWriter(path: path, token: token, synchronize: synchronize, beforeRename: beforeRename) }
       return .init(append: { data in try await diskIO { try writer.append(data) } }, prepare: { try await diskIO { try writer.prepare() } }, commit: { try await cancellableDiskIO { check in try writer.commit(check: check) } }, close: { await diskIO { writer.close() } })
     }, mkdir: { path in
       try await cancellableDiskIO { check in
@@ -177,9 +177,10 @@ private final class DiskWriter: Sendable {
   private let temporary: String
   private let token: String?
   private let synchronize: @Sendable (Int32) throws -> Void
-  init(path: String, token: String?, synchronize: @escaping @Sendable (Int32) throws -> Void) throws {
+  private let beforeRename: @Sendable () -> Void
+  init(path: String, token: String?, synchronize: @escaping @Sendable (Int32) throws -> Void, beforeRename: @escaping @Sendable () -> Void) throws {
     let target = try parentOf(path)
-    parent = target.fd; name = target.name; self.token = token; self.synchronize = synchronize
+    parent = target.fd; name = target.name; self.token = token; self.synchronize = synchronize; self.beforeRename = beforeRename
     temporary = ".wuhu-write-" + UUID().uuidString
     do {
       try checkToken(parent, name, token)
@@ -224,14 +225,17 @@ private final class DiskWriter: Sendable {
   func commit(check: @Sendable () throws -> Void) throws -> String {
     try state.withLock { state in
       guard !state.closed, state.prepared, !state.committed else { throw OperationError(.operationEnded) }
-      try checkToken(parent, name, token)
-      _ = try writableTarget(parent, name)
-      try check()
-      guard renameat(parent, temporary, parent, name) == 0 else { throw diskError() }
-      state.committed = true
-      var value = stat()
-      guard fstat(state.fd, &value) == 0 else { preconditionFailure("committed write descriptor became invalid") }
-      return statusInfo(value).version
+      return try withLocalWriteLock(parent: parent) {
+        try checkToken(parent, name, token)
+        _ = try writableTarget(parent, name)
+        beforeRename()
+        try check()
+        guard renameat(parent, temporary, parent, name) == 0 else { throw diskError() }
+        state.committed = true
+        var value = stat()
+        guard fstat(state.fd, &value) == 0 else { preconditionFailure("committed write descriptor became invalid") }
+        return statusInfo(value).version
+      }
     }
   }
 

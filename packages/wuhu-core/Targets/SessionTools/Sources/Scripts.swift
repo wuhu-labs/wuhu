@@ -79,6 +79,11 @@ public final class Scripts: Sendable {
     running.withLock { $0[id] }.flatMap { $0.session == session ? $0 : nil }
   }
 
+  let handlerInventory = Mutex<[String: SessionID]>([:])
+  public var inventory: [String: SessionID] {
+    running.withLock { $0.mapValues(\.session) }.merging(handlerInventory.withLock { $0 }) { _, handler in handler }
+  }
+
   public func stop(_ id: String, session: SessionID) async throws -> ToolResultPayload {
     guard let execution = execution(id, of: session) else {
       throw ToolProblem("stop_script: you have no running script \(id)")

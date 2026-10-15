@@ -23,9 +23,9 @@ extension SessionActor {
     }
     if let nag { return nag }
     guard let due else { return nil }
-    let wait = Duration.seconds(max(0, due.timeIntervalSince(now)))
-    let wake = Task { [clock] in
-      guard (try? await clock.sleep(for: wait)) != nil else { return }
+    let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(now))), clock: clock)
+    let wake = Task {
+      guard (try? await sleep()) != nil else { return }
       self.parkWakeFired(at: due)
     }
     try modify { $0.parkWake = (due, wake) }

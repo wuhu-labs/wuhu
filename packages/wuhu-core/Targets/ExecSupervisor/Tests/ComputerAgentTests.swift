@@ -3,6 +3,11 @@
 #else
   import Foundation
 #endif
+#if os(Linux)
+  import Glibc
+#else
+  import Darwin
+#endif
 import CExecSupervisor
 @testable import ComputerFiles
 @testable import ExecSupervisor
@@ -17,7 +22,6 @@ import struct OperationRuntime.AnyOperationKind
 import struct OperationRuntime.OperationCancellation
 import struct OperationRuntime.OperationChannels
 import protocol OperationRuntime.OperationKind
-import class Scratch.ScratchFolder
 import Synchronization
 import Testing
 
@@ -114,9 +118,10 @@ import Testing
   }
 
   @Test func withComputerAgentServesInjectedBackendsHoldsTheLockAndUnwindsOnSuccessAndThrow() async throws {
-    let scratch = try ScratchFolder("wca")
-    defer { scratch.remove() }
-    let root = scratch.path
+    // ctl.sock lands beside the operations root, so the home must be short and private.
+    let home = try MachineHome()
+    defer { home.remove() }
+    let root = home.operations
     let statused = Mutex<[String]>([])
     let files = ComputerFileSystem(
       status: { path in statused.withLock { $0.append(path) }; throw OperationError(.fileUnavailable) },
@@ -127,10 +132,14 @@ import Testing
     for fails in [false, true] {
       let escaped = Mutex<ComputerAgent?>(nil)
       let ran = Mutex(false)
+      let retainedLock = Mutex<Int32?>(nil)
+      defer { if let descriptor = retainedLock.withLock({ $0 }) { exec_close(descriptor) } }
       do {
         let value = try await ExecSupervisor.withComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: files, kinds: [AnyOperationKind(NoteKind())]) { agent in
           ran.withLock { $0 = true }
           escaped.withLock { $0 = agent }
+          let duplicate = try retainAgentLock(root)
+          retainedLock.withLock { $0 = duplicate }
           let second = exec_lock_agent(root)
           #expect(second < 0, "the lock is held while the body runs")
           if second >= 0 { exec_close(second) }
@@ -160,9 +169,10 @@ import Testing
   }
 
   @Test func composedRegistryRunLoopLivesExactlyAsLongAsTheBody() async throws {
-    let scratch = try ScratchFolder("wca")
-    defer { scratch.remove() }
-    let root = scratch.path
+    // ctl.sock lands beside the operations root, so the home must be short and private.
+    let home = try MachineHome()
+    defer { home.remove() }
+    let root = home.operations
     // Not our child: the run loop's nonblocking reap fails ECHILD and drops it, which is how a live loop shows without spawning anything.
     let registry = try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: .local, kinds: []) { _, registry in
       await registry.track(Int32.max)
@@ -185,4 +195,18 @@ private struct NoteKind: OperationKind {
 
 extension ExecSupervisorRegistry {
   func track(_ pid: Int32) { childPIDs.insert(pid) }
+}
+
+private func retainAgentLock(_ root: String) throws -> Int32 {
+  var target = stat()
+  try #require(stat(root + "/.agent.lock", &target) == 0)
+  for entry in try FileManager.default.contentsOfDirectory(atPath: "/dev/fd") {
+    guard let descriptor = Int32(entry) else { continue }
+    var info = stat()
+    guard fstat(descriptor, &info) == 0, info.st_dev == target.st_dev, info.st_ino == target.st_ino else { continue }
+    let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+    try #require(duplicate >= 0)
+    return duplicate
+  }
+  throw OperationError(.invalidConfiguration, message: "agent lock descriptor not found")
 }

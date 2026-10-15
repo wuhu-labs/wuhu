@@ -339,40 +339,47 @@ public struct SubscriptionFiring: Sendable {
         subscriptionID: subscription.slot.id, content: .init(text: text),
       )
     }
+    var received: ScriptHandlerResult?
+    let outcome: Result<Bool, any Error>
     do {
-      guard let handler else {
-        throw ScriptError("subscription handlers are not configured in this runtime")
+      do {
+        guard let handler else {
+          throw ScriptError("subscription handlers are not configured in this runtime")
+        }
+        let result = try await handler.executeHandler(.init(
+          id: attempt.attemptID, path: path, session: subscription.session, rows: rows, fireTime: fireTime,
+          stateJSON: attempt.stateJSON,
+        ))
+        received = result
+        try Task.checkCancellation()
+        var wakes = result.wakes.map(notification)
+        if advance == .retire {
+          for index in wakes.indices { wakes[index].endsSubscription = true }
+        }
+        guard try await space.sessions.finishSubscriptionHandler(
+          attempt, result: .success(stateJSON: result.stateJSON, advance: advance, wakes: wakes),
+        ) else { throw CancellationError() }
+        outcome = .success(true)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        let retry: SessionStore.SubscriptionAdvance?
+        switch subscription.slot.kind {
+        case .timer(.oneShot, _): retry = .reschedule(date.now.addingTimeInterval(30))
+        case let .timer(.cron(expression), _):
+          retry = nextCronFire(expression, max(date.now, fireTime ?? date.now)).map(SessionStore.SubscriptionAdvance.reschedule)
+        default: retry = nil
+        }
+        guard try await space.sessions.finishSubscriptionHandler(
+          attempt, result: .failure(
+            error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"), advance: retry,
+          ),
+        ) else { throw CancellationError() }
+        outcome = .success(false)
       }
-      let result = try await handler.executeHandler(.init(
-        path: path, session: subscription.session, rows: rows, fireTime: fireTime,
-        stateJSON: attempt.stateJSON,
-      ))
-      try Task.checkCancellation()
-      var wakes = result.wakes.map(notification)
-      if advance == .retire {
-        for index in wakes.indices { wakes[index].endsSubscription = true }
-      }
-      guard try await space.sessions.finishSubscriptionHandler(
-        attempt, result: .success(stateJSON: result.stateJSON, advance: advance, wakes: wakes),
-      ) else { throw CancellationError() }
-      return true
-    } catch is CancellationError {
-      throw CancellationError()
-    } catch {
-      let retry: SessionStore.SubscriptionAdvance?
-      switch subscription.slot.kind {
-      case .timer(.oneShot, _): retry = .reschedule(date.now.addingTimeInterval(30))
-      case let .timer(.cron(expression), _):
-        retry = nextCronFire(expression, max(date.now, fireTime ?? date.now)).map(SessionStore.SubscriptionAdvance.reschedule)
-      default: retry = nil
-      }
-      guard try await space.sessions.finishSubscriptionHandler(
-        attempt, result: .failure(
-          error: "\(error)", notification: notification("handler \(path) for \(subscription.slot.id.rawValue) failed: \(error)"), advance: retry,
-        ),
-      ) else { throw CancellationError() }
-      return false
-    }
+    } catch { outcome = .failure(error) }
+    await received?.acknowledge()
+    return try outcome.get()
   }
 
   private func sleep(until due: Date?) async throws {

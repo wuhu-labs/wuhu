@@ -95,33 +95,101 @@ private actor SupervisorFixture {
   }
 
   nonisolated var files: SupervisorFiles { .init(create: { await self.create($0, $1) }, load: { try await self.load($0) }, list: { _ in await self.directories() }) }
+  /// A launched version-2 supervisor dials the agent; the fixture answers its operation over that link.
   nonisolated func registry(probe: Bool = false, clock: OperationClock = .continuous, root: String = "/tmp/ops") throws -> ExecSupervisorRegistry {
-    try .init(machine: "test", operationsDirectory: root, executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, _ in if probe { return try await self.launchProbe() }; await self.launch(); return nil })
+    let launched = RegistryHolder()
+    let registry = try ExecSupervisorRegistry(machine: "test", operationsDirectory: root, executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, directory in
+      let pid = probe ? try await self.launchProbe() : nil
+      if !probe { await self.launch() }
+      if let registry = launched.registry.withLock({ $0 }) { try await self.dial(registry, directory: directory) }
+      return pid
+    })
+    launched.registry.withLock { $0 = registry }
+    return registry
+  }
+
+  /// A restarted agent: recovers the manifests, then every surviving version-2 supervisor redials it.
+  nonisolated func recovered(root: String = "/tmp/ops") async throws -> ExecSupervisorRegistry {
+    let registry = try registry(root: root)
+    try await registry.recover()
+    for directory in await Array(manifests.keys) { try? await dial(registry, directory: directory) }
+    return registry
+  }
+
+  func dial(_ registry: ExecSupervisorRegistry, directory: String) async throws {
+    guard let manifest = manifests[directory], manifest.version == 2 else { return }
+    let hello = Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: manifest.machine, operation: manifest.operation, nonce: manifest.nonce)
+    _ = try await registry.link(hello, client: FetchClient { try await self.fetch($0) }, abort: {})
   }
 }
 
+private final class RegistryHolder: Sendable { let registry = Mutex<ExecSupervisorRegistry?>(nil) }
+private final class RegistryAborted: Sendable { let value = Mutex(false) }
+
 @Suite struct RegistryContractTests {
-  @Test func normalMacHomeStartsWithCompactSocketAndRecovers() async throws {
+  @Test func newStartsNameTheMachineRendezvousSocketAndReattachAfterRestart() async throws {
     let root = "/Users/someone/.wuhu/machine-v2/mc_fixture01/operations"
     let effects = SupervisorFixture(); let registry = try effects.registry(root: root); let id = UUID()
     let response = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
     #expect(response.status.code == 200)
     let directory = root + "/" + id.uuidString
     let manifest = try await effects.load(directory)
-    #expect((directory + "/control.sock").utf8.count == 105)
-    #expect(manifest.socket == directory + "/s")
-    #expect(manifest.socket.utf8.count == 94)
-    let recovered = try effects.registry(root: root)
-    try await recovered.recover()
+    #expect(manifest.version == 2)
+    #expect(manifest.socket == "/Users/someone/.wuhu/machine-v2/mc_fixture01/ctl.sock")
+    #expect(!manifest.socket.hasPrefix(directory), "no per-operation socket")
+    let requests = await effects.requests
+    #expect(requests.allSatisfy { $0.url.absoluteString.hasPrefix("http://localhost/") }, "version 2 goes over the link, never a Unix URL")
+    let recovered = try await effects.recovered(root: root)
     #expect(try await recovered.handler(execRequest(id)).status.code == 200)
     #expect(await effects.launches == 1)
   }
 
-  @Test func shortOperationsRootRetainsLegacySocket() async throws {
+  @Test func unlinkedVersionTwoSupervisorIsTypedUnavailableNeverRelaunched() async throws {
+    let effects = SupervisorFixture(); let first = try effects.registry(); let id = UUID()
+    _ = try await first.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    let recovered = try effects.registry(); try await recovered.recover()
+    let clock = ContinuousClock(); let began = clock.now
+    let failure = try await recovered.handler(execRequest(id)).body.json(ErrorEnvelope.self).error
+    #expect(failure.code == .supervisorUnavailable)
+    #expect(failure.message == "supervisorNotConnected")
+    #expect(clock.now - began < .seconds(4))
+    #expect(await effects.launches == 1)
+    #expect(await effects.requests.filter { $0.method == .post }.count == 1)
+  }
+
+  @Test func rendezvousAdmitsOnlyAKnownVersionTwoOperationWithItsNonce() async throws {
     let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
-    #expect(try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))).status.code == 200)
-    let directory = "/tmp/ops/" + id.uuidString
-    #expect(try await effects.load(directory).socket == directory + "/control.sock")
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    let manifest = try await effects.load("/tmp/ops/" + id.uuidString)
+    let legacy = UUID(); let legacyDirectory = "/tmp/ops/" + legacy.uuidString
+    let legacyManifest = SupervisorManifest(version: 1, machine: "test", operation: legacy, nonce: UUID().uuidString + UUID().uuidString, socket: legacyDirectory + "/control.sock")
+    await effects.create(legacyDirectory, legacyManifest)
+    let recovered = try effects.registry(); try await recovered.recover()
+    func hello(_ edit: (inout Rendezvous.Hello) -> Void = { _ in }) -> Rendezvous.Hello {
+      var value = Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: "test", operation: id, nonce: manifest.nonce); edit(&value); return value
+    }
+    let cases: [(Rendezvous.Hello, Rendezvous.Refusal)] = [
+      (hello { $0.nonce = UUID().uuidString + UUID().uuidString }, .nonceMismatch),
+      (hello { $0.nonce = String(manifest.nonce.dropLast()) }, .nonceMismatch),
+      (hello { $0.operation = UUID() }, .unknownOperation),
+      (hello { $0.machine = "other" }, .machineMismatch),
+      (hello { $0.protocol = "wuhu-supervisor-rendezvous.v0" }, .unsupportedProtocol),
+      (hello { $0.operation = legacy; $0.nonce = legacyManifest.nonce }, .manifestVersion),
+    ]
+    for (hello, refusal) in cases {
+      do { _ = try await recovered.link(hello, client: FetchClient { _ in throw OperationError(.invalidResponse) }, abort: {}); Issue.record("admitted \(hello)") }
+      catch { #expect(error == refusal) }
+    }
+    #expect(await recovered.links.isEmpty)
+    #expect(!Rendezvous.peerAllowed(UInt32(getuid()) &+ 1))
+    #expect(Rendezvous.peerAllowed(UInt32(getuid())))
+    let aborted = RegistryAborted()
+    let first = try await recovered.link(hello(), client: FetchClient { _ in throw OperationError(.invalidResponse) }, abort: { aborted.value.withLock { $0 = true } })
+    let second = try await recovered.link(hello(), client: FetchClient { try await effects.fetch($0) }, abort: {})
+    #expect(second > first)
+    #expect(aborted.value.withLock { $0 }, "a redial replaces and closes the older link")
+    await recovered.unlink(id, generation: first)
+    #expect(try await recovered.handler(execRequest(id)).status.code == 200, "the newest link wins and a stale unlink leaves it")
   }
 
   @Test func legacyControlSocketManifestRecoversWithoutRelaunch() async throws {
@@ -155,6 +223,12 @@ private actor SupervisorFixture {
       if count == 103 { try validateManifest(manifest, directory: padded) }
       else { #expect(throws: OperationError.self) { try validateManifest(manifest, directory: padded) } }
     }
+    let machine = "/home/someone/.wuhu/machine-v2/mc_fixture01"; let modern = machine + "/operations/" + id.uuidString
+    try validateManifest(SupervisorManifest(version: 2, machine: "test", operation: id, nonce: nonce, socket: machine + "/ctl.sock"), directory: modern)
+    for socket in [modern + "/control.sock", modern + "/s", machine + "/operations/ctl.sock", "/tmp/ctl.sock"] {
+      #expect(throws: OperationError.self) { try validateManifest(SupervisorManifest(version: 2, machine: "test", operation: id, nonce: nonce, socket: socket), directory: modern) }
+    }
+    #expect(throws: OperationError.self) { try validateManifest(SupervisorManifest(version: 3, machine: "test", operation: id, nonce: nonce, socket: machine + "/ctl.sock"), directory: modern) }
   }
 
   @Test func explicitLegacy404DrainsThroughExistingOperationStopAndRetainedReceipt() async throws {
@@ -316,7 +390,7 @@ private actor SupervisorFixture {
       _ = try await first.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
     }
     await effects.changeMachine(changed)
-    let recovered = try effects.registry(); try await recovered.recover()
+    let recovered = try await effects.recovered()
     #expect(try await recovered.handler(execRequest(healthy)).status.code == 200)
     let failure = try await recovered.handler(execRequest(changed)).body.json(ErrorEnvelope.self).error
     #expect(failure.code == .supervisorIdentityMismatch)
@@ -357,8 +431,7 @@ private actor SupervisorFixture {
     let effects = SupervisorFixture(); let first = try effects.registry(); let healthy = UUID(); let torn = UUID()
     _ = try await first.handler(execRequest(healthy, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
     await effects.addTorn(torn)
-    let recovered = try effects.registry()
-    try await recovered.recover()
+    let recovered = try await effects.recovered()
     #expect(try await recovered.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!)).status.code == 200)
     #expect(try await recovered.handler(execRequest(healthy)).status.code == 200)
     let response = try await recovered.handler(execRequest(torn))
@@ -384,7 +457,7 @@ private actor SupervisorFixture {
     #expect(try await registry.handler(execRequest(id, suffix: "/inputs/stdin", method: .put, body: .json(["offset": "0"]))).status.code == 200)
     #expect(await effects.launches == 1)
     #expect(await effects.requests.filter { $0.method == .post }.count == 1)
-    let recovered = try effects.registry(); try await recovered.recover()
+    let recovered = try await effects.recovered()
     #expect(try await recovered.handler(execRequest(id)).status.code == 200)
     #expect(await effects.launches == 1)
     #expect(await effects.requests.filter { $0.method == .post }.count == 1)
@@ -406,7 +479,7 @@ private actor SupervisorFixture {
     let effects = SupervisorFixture(); let first = try effects.registry(); let id = UUID()
     _ = try await first.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
     await effects.mismatch()
-    let recovered = try effects.registry(); try await recovered.recover()
+    let recovered = try await effects.recovered()
     #expect(try await recovered.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!)).status.code == 200)
     let response = try await recovered.handler(execRequest(id))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .supervisorIdentityMismatch)

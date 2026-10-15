@@ -3,6 +3,11 @@
 #else
   import Foundation
 #endif
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 import AsyncHTTPClient
 import FetchAsyncHTTPClient
 import ServerTelemetry
@@ -12,7 +17,7 @@ struct ServerTelemetryRuntime: Sendable {
   let exporter: OTLPExporter
   let client: HTTPClient
 
-  init(endpoint: URL) throws {
+  init(endpoint: URL, version: String) throws {
     guard ["http", "https"].contains(endpoint.scheme), endpoint.host != nil,
           endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil
     else { throw OTLPExporter.ConfigurationError.invalidEndpoint }
@@ -21,7 +26,7 @@ struct ServerTelemetryRuntime: Sendable {
     configuration.timeout.connect = .seconds(2)
     configuration.timeout.read = .seconds(2)
     client = HTTPClient(configuration: configuration)
-    exporter = try OTLPExporter(endpoint: endpoint, fetch: .asyncHTTPClient(client, timeout: .seconds(2)))
+    exporter = try OTLPExporter(endpoint: endpoint, serviceVersion: version, hostName: hostName(), fetch: .asyncHTTPClient(client, timeout: .seconds(2)))
     ServerTracing.install { [buffer] in buffer.append($0) }
   }
 
@@ -33,5 +38,14 @@ struct ServerTelemetryRuntime: Sendable {
     ServerTracing.install(nil)
     await buffer.shutdown(export: exporter.export)
     try? await client.shutdown()
+  }
+}
+
+private func hostName() -> String? {
+  var buffer = [CChar](repeating: 0, count: 256)
+  return buffer.withUnsafeMutableBufferPointer { pointer -> String? in
+    guard gethostname(pointer.baseAddress!, pointer.count - 1) == 0 else { return nil }
+    let name = String(cString: pointer.baseAddress!)
+    return name.isEmpty ? nil : name
   }
 }

@@ -25,7 +25,9 @@ import WorkerProtocol
       let oldWakes = Mutex(0)
       let worker = LazyExecutionWorker(executable: "unused", sessions: space.sessions, owner: InProcessExecutionOwnerClient(space: space), spawn: { _, _, _ in throw CancellationError() }, startConnection: { _, _ in
         let generation = starts.withLock { $0 += 1; return $0 }
-        let endpoint = try WorkerEndpoint(token: "fixture", hello: ExecutionWorkerBootstrap.hello(release: "fixture"), invoke: { _ in .null }, upload: { _, body in try await body.discard() }, download: { call in
+        let bootstrap = ExecutionWorkerBootstrap.hello(release: "fixture")
+        let legacyHello = WorkerHello(capabilities: bootstrap.capabilities.subtracting(["owner.continuity.v1"]), required: bootstrap.required, release: "fixture")
+        let endpoint = try WorkerEndpoint(token: "fixture", hello: legacyHello, invoke: { _ in .null }, upload: { _, body in try await body.discard() }, download: { call in
           if call.operation == "execution.yield-assignment" {
             let count = yields.withLock { $0 += 1; return $0 }
             if failYield, count <= 4 { throw WorkerProtocolError(.remoteFailure, message: "owner temporarily unavailable") }

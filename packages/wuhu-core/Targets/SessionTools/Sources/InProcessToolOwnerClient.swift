@@ -24,7 +24,10 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
   let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
   let identityConfigurationProvider = InProcessIdentityConfiguration()
   let executionOwner: any ExecutionOwnerClient
-  public func scriptMachines(for session: SessionID) -> ScriptMachineAccess? { scriptMachines }
+  public func scriptMachines(for session: SessionID) -> ScriptMachineAccess? {
+    scriptMachines.map { .init(files: $0.files.attributed(to: session), exec: $0.exec) }
+  }
+
   public let scriptMachines: ScriptMachineAccess?
   let space: Space
   let secrets: SpaceSecretStores?
@@ -66,11 +69,17 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
 
   var store: SessionStore { space.sessions }
 
+  // The owner binds the machine caller itself, at each entry that can reach a machine file: under an execution
+  // worker these run in the parent's RPC task, where the worker's task-locals never arrive.
   public func execute(
     session: SessionID,
     call: ToolCall,
     state: ToolExecutionState,
   ) async throws -> ToolResultPayload {
+    try await MachineSeam.$caller.withValue(session) { try await dispatch(session: session, call: call, state: state) }
+  }
+
+  private func dispatch(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
     guard let tool = RosterTool(rawValue: call.name) else {
       return .failure(.init(message: "unknown tool: \(call.name)"))
     }

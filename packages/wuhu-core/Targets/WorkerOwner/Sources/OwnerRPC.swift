@@ -13,6 +13,7 @@ struct OwnerRPC: Sendable {
   let client: WorkerClient
   func call<Request: Encodable & Sendable, Result: Decodable & Sendable>(_ operation: String, _ request: Request) async throws -> Result {
     let call = WorkerCall(operation: operation, payload: try ownerEncode(request))
+    if let retained = try await client.retaining(call) { return try await retainedCall(retained) }
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       return try await perform(call)
@@ -45,8 +46,8 @@ struct OwnerRPC: Sendable {
     if metadata.count <= 12 << 10 {
       body = try await client.stream(call)
     } else {
-      try await client.upload(WorkerCall(id: call.id, operation: "owner.input", payload: .string(call.operation)), body: .json(call.payload))
-      body = try await client.stream(WorkerCall(id: call.id, operation: "owner.output", payload: .string(call.operation)))
+      try await client.upload(WorkerCall(id: call.id, operation: "owner.input", payload: .string(call.operation), traceContext: call.traceContext), body: .json(call.payload))
+      body = try await client.stream(WorkerCall(id: call.id, operation: "owner.output", payload: .string(call.operation), traceContext: call.traceContext))
     }
     let envelope: OwnerEnvelope
     do { envelope = try await body.json(OwnerEnvelope.self) }

@@ -104,7 +104,7 @@ import Testing
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await server.hub.run() }
       group.addTask { await server.hub.runMachineSession(machine, pubkey: key.pubkeyLabel, capabilities: [], socket: firstMachineLeg) }
-      group.addTask { await server.hub.runCallerSession(liveRecord, socket: blocked.socket) }
+      group.addTask { await server.hub.runCallerSession(liveRecord, socket: blocked.socket, leg: .anonymous) }
       #expect(try await realPollUntil { await server.hub.attachedMachines().contains(machine) })
       try await firstCaller.send(.binary(FrameCodec.encode(
         Frame(streamID: 1, opcode: .execStart, payload: makeExecStart(exec, command: ["true"])),
@@ -132,7 +132,7 @@ import Testing
         }
         currentLog.finish()
       }
-      group.addTask { await server.hub.runCallerSession(liveRecord, socket: currentCallerLeg) }
+      group.addTask { await server.hub.runCallerSession(liveRecord, socket: currentCallerLeg, leg: .anonymous) }
       #expect(try await realPollUntil { currentLog.finished() })
       #expect(try await space.execRecord(exec)?.terminal == .machineLost)
       try await time.control.asleep("blocked loss send", dueIn: 0.1)
@@ -160,8 +160,8 @@ import Testing
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await server.hub.run() }
       group.addTask { await server.hub.runMachineSession(machine, pubkey: key.pubkeyLabel, capabilities: [], socket: machineLeg) }
-      group.addTask { await server.hub.runCallerSession(blockedRecord, socket: blocked.socket) }
-      group.addTask { await server.hub.runCallerSession(otherRecord, socket: otherLeg) }
+      group.addTask { await server.hub.runCallerSession(blockedRecord, socket: blocked.socket, leg: .anonymous) }
+      group.addTask { await server.hub.runCallerSession(otherRecord, socket: otherLeg, leg: .anonymous) }
       group.addTask {
         for await message in otherCaller.inbound {
           if case let .binary(bytes) = message, let frame = try? FrameCodec.decode(bytes) { otherLog.append(frame) }
@@ -210,7 +210,7 @@ import Testing
       #expect(try await realPollUntil { await server.hub.attachedMachines().contains(machine) })
       try await time.control.asleep("machine silence", dueIn: 60)
       await time.advance(to: 40)
-      group.addTask { await server.hub.runCallerSession(record, socket: callerLeg) }
+      group.addTask { await server.hub.runCallerSession(record, socket: callerLeg, leg: .anonymous) }
       group.addTask {
         for await message in caller.inbound {
           guard case let .binary(bytes) = message, let frame = try? FrameCodec.decode(bytes) else { continue }

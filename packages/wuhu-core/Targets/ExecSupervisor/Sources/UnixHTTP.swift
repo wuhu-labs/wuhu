@@ -1,13 +1,14 @@
 import class AsyncHTTPClient.HTTPClient
 import class NIOPosix.MultiThreadedEventLoopGroup
 
-func withUnixHTTP<R: Sendable>(_ body: @Sendable (HTTPClient) async throws -> R) async throws -> R {
+/// One explicit one-thread NIOPosix group carrying both the legacy per-operation HTTP client and the rendezvous socket.
+func withUnixHTTP<R: Sendable>(_ body: @Sendable (HTTPClient, MultiThreadedEventLoopGroup) async throws -> R) async throws -> R {
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
   var configuration = HTTPClient.Configuration()
   configuration.redirectConfiguration = .disallow
   let client = HTTPClient(eventLoopGroupProvider: .shared(group), configuration: configuration)
   let result: Result<R, any Error>
-  do { result = .success(try await body(client)) }
+  do { result = .success(try await body(client, group)) }
   catch { result = .failure(error) }
   var teardownFailure: (any Error)?
   do { try await client.shutdown() } catch { teardownFailure = error }

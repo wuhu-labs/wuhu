@@ -1,0 +1,3 @@
+# CProcessIdentity
+
+`process_birth_identity(pid, output, capacity)` writes a NUL-terminated OS birth identity and returns zero, or returns a nonzero errno-style failure. The buffer must contain at least 128 bytes. The identity combines Linux's boot UUID and `/proc/<pid>/stat` start ticks, or macOS's boot-session UUID and `PROC_PIDTBSDINFO` start seconds/microseconds. Linux process names containing spaces or parentheses do not change field parsing. Invalid or inaccessible PIDs fail closed. This is a probe, not authentication: callers must combine it with private socket ownership and incarnation credentials, and re-probe after authentication to detect PID replacement during admission.

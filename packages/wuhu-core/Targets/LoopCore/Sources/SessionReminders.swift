@@ -1,3 +1,4 @@
+import Clocks
 import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -31,11 +32,11 @@ actor SessionReminders {
     if let token = pending.removeValue(forKey: id) { tasks[token]?.cancel() }
     guard !stopped, let due else { return }
     let token = UUID()
-    let wait = Duration.seconds(max(0, due.timeIntervalSince(date())))
-    let task = Task { [clock] in
+    let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(date()))), clock: clock)
+    let task = Task {
       defer { tasks[token] = nil }
       do {
-        try await clock.sleep(for: wait)
+        try await sleep()
         try Task.checkCancellation()
         await fire(id, token: token)
       } catch {}
@@ -78,4 +79,10 @@ actor SessionReminders {
     tasks.removeAll()
     execution = nil
   }
+}
+
+func deadlineSleep(after delay: Duration, clock: any Clock<Duration>) -> @Sendable () async throws -> Void {
+  let clock = AnyClock(clock)
+  let deadline = clock.now.advanced(by: delay)
+  return { try await clock.sleep(until: deadline, tolerance: nil) }
 }

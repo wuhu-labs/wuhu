@@ -22,6 +22,7 @@ import SpaceCore
 import Synchronization
 import Testing
 import WorkerOwner
+import WorkerProtocol
 
 @Suite(.timeLimit(.minutes(2))) struct ExecutionWorkerHandoffTests {
   private func binary() throws -> String {
@@ -61,6 +62,90 @@ import WorkerOwner
     ]
     let sse = events.map { "event: \($0.0)\ndata: \($0.1.jsonString())\n\n" }.joined()
     return .init(status: .ok, body: .bytes(Data(sse.utf8), contentType: "text/event-stream"))
+  }
+
+  @Test func ownerTransportReconnectPreservesInferenceAndInventoryInSameChild() async throws {
+    try await withSessionDeps {
+      let requests = Mutex(0)
+      let release = AsyncStream<Void>.makeStream()
+      let gate = Task { for await _ in release.stream { break } }
+      defer { release.continuation.finish(); gate.cancel() }
+      let provider = try await ServeNIOServer.bind(port: 0, handler: { request in
+        _ = try await request.body?.data()
+        requests.withLock { $0 += 1 }
+        await gate.value
+        return reply()
+      })
+      let space = try Space.inMemory()
+      try await models(space, port: #require(provider.localAddress?.port))
+      let owner = InProcessExecutionOwnerClient(space: space, credentials: .init { _ in .apiKey("fixture") })
+      let exits = Mutex(0)
+      let connection = try await WorkerConnection.start(executable: binary(), owner: owner, spawn: { _, _, _ in throw CancellationError() }, runtime: runtime(), activity: { _ in }, exited: { exits.withLock { $0 += 1 } })
+      let worker = RemoteSessionExecution(client: connection.client)
+      let service = SessionService(sessions: space.sessions, execution: worker, archiveGrace: .seconds(60))
+      let result: Result<Void, any Error>
+      do {
+        let id = try await session(space)
+        _ = try await service.enqueue(item: input("continuity"), to: id)
+        try await until("inference admitted", timeout: .seconds(40)) { requests.withLock { $0 } == 1 }
+        let before = try await worker.inventory()
+        #expect(before.assignments.contains { $0.session == id && !$0.passes.isEmpty })
+        #expect(before.inferences[id]?.count == 1)
+        await connection.ownerTransport?.detach()
+        let during = try await worker.inventory()
+        #expect(during.inferences[id] == before.inferences[id])
+        #expect(kill(connection.processID, 0) == 0)
+        #expect(exits.withLock { $0 } == 0)
+        release.continuation.yield(())
+        try await until("original inference commits after reconnect", timeout: .seconds(40)) { try await space.sessions.transcript(id).items.contains { if case .assistant = $0 { true } else { false } } }
+        #expect(requests.withLock { $0 } == 1)
+        #expect(try await space.sessions.record(id).work != .errored)
+        result = .success(())
+      } catch { result = .failure(error) }
+      release.continuation.finish()
+      await connection.stop(); await provider.shutdown()
+      try result.get()
+    }
+  }
+
+  @Test func ownerTransportReconnectKeepsAdmittedHandlerObserveAndReturnedReceipt() async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      let id = try await session(space)
+      let source = """
+      import {observe,writeText} from 'wuhu:space';
+      export default async ({state,wake}) => {
+        await writeText('/continuity-started.txt','yes',{ifMatch:null});
+        for await (const rows of observe("SELECT title FROM sessions WHERE id = '\(id.rawValue)'")) {
+          if (rows[0]?.title === 'release') { wake('once'); return {previous:state,done:true}; }
+        }
+      }
+      """
+      _ = try await space.fs(.shared).write("/continuity.js", Data(source.utf8), ifMatch: nil)
+      let owner = InProcessToolOwnerClient(space: space)
+      let connection = try await WorkerConnection.start(executable: binary(), owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtime(), activity: { _ in }, exited: {})
+      let firing = UUID()
+      let handler = Task { try await RemoteHandlerExecution(client: connection.client).executeHandler(.init(id: firing, path: "/continuity.js", session: id, stateJSON: "{\"before\":1}")) }
+      let outcome: Result<Void, any Error>
+      do {
+        try await until("handler admitted", timeout: .seconds(40)) { (try? await space.fs(.shared).read("/continuity-started.txt").1) != nil }
+        let before = try await RemoteSessionExecution(client: connection.client).inventory()
+        #expect(!before.scripts.isEmpty)
+        await connection.ownerTransport?.detach()
+        _ = try await space.sessions.setTitle(id, to: "release")
+        let result = try await handler.value
+        #expect(result.wakes == ["once"])
+        #expect(JSONValue.parse(result.stateJSON) == ["previous": ["before": 1], "done": true])
+        #expect(kill(connection.processID, 0) == 0)
+        let receipts = try JSONDecoder().decode([WorkerCallInventory].self, from: Data(try await connection.client.call(.init(operation: "owner.receipts")).jsonString().utf8))
+        #expect(receipts.contains { $0.id == firing && $0.terminal })
+        await result.acknowledge()
+        outcome = .success(())
+      } catch { outcome = .failure(error) }
+      handler.cancel(); _ = await handler.result
+      await connection.stop()
+      try outcome.get()
+    }
   }
 
   @Test func newAssignmentsUseNewChildWhileOldInferenceCommitsAndThenYields() async throws {
@@ -228,6 +313,7 @@ import WorkerOwner
         try await worker.replaceGeneration()
         let next = try await worker.executeHandler(.init(path: "/healthy.js", session: id))
         #expect(JSONValue.parse(next.stateJSON) == ["replacement": true])
+        await next.acknowledge()
         #expect(await worker.processID != oldPID)
         #expect(await worker.generationCount == 2)
         #expect(kill(oldPID, 0) == 0)
@@ -235,6 +321,8 @@ import WorkerOwner
         let previous = try await handler.value
         #expect(previous.wakes == ["old finished"])
         #expect(JSONValue.parse(previous.stateJSON) == ["previous": ["before": 1], "done": true])
+        #expect(await worker.generationCount == 2)
+        await previous.acknowledge()
         try await until("old handler generation retires", timeout: .seconds(40)) { await worker.generationCount == 1 }
         result = .success(())
       } catch { result = .failure(error) }

@@ -14,7 +14,7 @@ exec "$PWD/%(deno)s" run \
   --allow-write \
   --allow-env \
   --allow-sys=userInfo,uid,gid \
-  --allow-run=/usr/bin/xcrun,/usr/bin/xcode-select,/bin/cp,/usr/bin/unzip,/usr/bin/plutil,/usr/bin/codesign \
+  --allow-run=/usr/bin/xcrun,/usr/bin/xcode-select,/bin/cp,/usr/bin/unzip,/usr/bin/plutil,/usr/bin/codesign,/usr/bin/caffeinate \
   "$PWD/%(runner)s" \
   --lane "%(lane)s" \
   --platform-dir "%(platform_dir)s" \

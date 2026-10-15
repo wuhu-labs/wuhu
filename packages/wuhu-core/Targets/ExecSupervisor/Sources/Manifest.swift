@@ -54,11 +54,20 @@ struct SupervisorFiles: Sendable {
   })
 }
 
+/// Version 2 names the machine's rendezvous socket the supervisor dials. Version 1 names the supervisor's own listening socket,
+/// `control.sock` or #607's compact `s`; only supervisors an older agent started carry it.
 func validateManifest(_ manifest: SupervisorManifest, directory: String) throws {
-  guard manifest.version == 1, !manifest.machine.isEmpty, manifest.nonce.count == 72,
-        (manifest.socket == directory + "/control.sock" || manifest.socket == directory + "/s"), manifest.socket.utf8.count < 104,
-        directory.hasSuffix("/" + manifest.operation.uuidString)
-  else {
-    throw OperationError(.invalidConfiguration, message: "Unsupported supervisor manifest or Unix socket path (maximum 103 bytes)")
+  let socket: Bool
+  switch manifest.version {
+  case 1:
+    socket = (manifest.socket == directory + "/control.sock" || manifest.socket == directory + "/s") && manifest.socket.utf8.count < 104
+  case 2:
+    let root = String(directory[..<(directory.lastIndex(of: "/") ?? directory.startIndex)])
+    socket = manifest.socket == Rendezvous.socketPath(operationsDirectory: root) && manifest.socket.utf8.count <= Rendezvous.maximumSocketPathBytes
+  default:
+    socket = false
+  }
+  guard socket, !manifest.machine.isEmpty, manifest.nonce.count == 72, directory.hasSuffix("/" + manifest.operation.uuidString) else {
+    throw OperationError(.invalidConfiguration, message: "Unsupported supervisor manifest or Unix socket path")
   }
 }

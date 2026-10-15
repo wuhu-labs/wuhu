@@ -13,6 +13,7 @@ import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import Serve
 import ServeRouting
+import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import SpaceCore
 
@@ -248,7 +249,7 @@ func addMachineRoutes(
 
   // An exec on a machine the principal may not use, or homed in a group it
   // does not read, is no exec at all.
-  @Sendable func usableExec(_ request: Request, _ parameters: RouteParameters) async throws -> Admission<ExecRecord> {
+  @Sendable func usableExec(_ request: Request, _ parameters: RouteParameters) async throws -> Admission<(record: ExecRecord, principal: Principal)> {
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
@@ -258,7 +259,7 @@ func addMachineRoutes(
           try await space.reads(principal.group).contains(record.group),
           try await space.resolveMachine(record.machine.rawValue, usableFrom: principal.group) != nil
     else { return .failure(unknownExec(parameters)) }
-    return .success(record)
+    return .success((record, principal))
   }
 
   router.get("/v1/exec") { request, _ in
@@ -276,7 +277,7 @@ func addMachineRoutes(
 
   router.get("/v1/exec/:id") { request, parameters in
     switch try await usableExec(request, parameters) {
-    case let .success(record): return try Response.json(execStatus(of: record))
+    case let .success(admitted): return try Response.json(execStatus(of: admitted.record))
     case let .failure(response): return response
     }
   }
@@ -285,7 +286,7 @@ func addMachineRoutes(
     try request.requireNoBody()
     let id: ExecID
     switch try await usableExec(request, parameters) {
-    case let .success(record): id = record.id
+    case let .success(admitted): id = admitted.record.id
     case let .failure(response): return response
     }
     do {
@@ -297,13 +298,17 @@ func addMachineRoutes(
   }
 
   router.webSocket("/v1/exec/:id") { request, parameters in
-    let record: ExecRecord
+    let admitted: (record: ExecRecord, principal: Principal)
     switch try await usableExec(request, parameters) {
-    case let .success(resolved): record = resolved
+    case let .success(resolved): admitted = resolved
     case let .failure(response): return .response(response)
     }
+    let leg = ExecLeg(admitted.principal.actor)
+    guard await hub.admitsCaller(admitted.record, leg: leg) else {
+      return .response(errorResponse(.conflict, code: "execAttached", message: "exec \(admitted.record.id.rawValue) belongs to another caller"))
+    }
     return .webSocket { socket in
-      await hub.runCallerSession(record, socket: socket)
+      await hub.runCallerSession(admitted.record, socket: socket, leg: leg)
     }
   }
 }

@@ -52,6 +52,15 @@ actor ExecSupervisorRegistry {
   var tombstones: [UUID: OperationError] = [:]
   var malformedDirectories: Set<String> = []
   var childPIDs: Set<Int32> = []
+  /// Live rendezvous links from version-2 supervisors, newest per operation.
+  struct Link {
+    var client: FetchClient
+    var generation: UInt64
+    var abort: @Sendable () -> Void
+  }
+
+  var links: [UUID: Link] = [:]
+  var linkGenerations: UInt64 = 0
 
   init(
     machine: String,
@@ -89,7 +98,7 @@ actor ExecSupervisorRegistry {
     for manifest in manifests.values {
       if legacyDepartures[manifest.operation] != nil { continue }
       let request = Request(url: URL(string: "http://supervisor/leave")!, method: .put)
-      let response = try await identityFetch(localRequest(request, manifest: manifest))
+      let response = try await send(request, to: manifest, identity: true)
       if response.status.code == 404 {
         let error = try await response.body.json(ErrorEnvelope.self, upTo: 8192).error
         guard error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
@@ -159,7 +168,7 @@ actor ExecSupervisorRegistry {
     for manifest in manifests.values {
       if legacyDepartures[manifest.operation] == nil {
         let request = Request(url: URL(string: "http://supervisor/departure")!)
-        let response = try await identityFetch(localRequest(request, manifest: manifest))
+        let response = try await send(request, to: manifest, identity: true)
         if response.status.code == 404 {
           guard try await response.body.json(ErrorEnvelope.self, upTo: 8192).error.code == .unknownOperation else { throw OperationError(.invalidResponse) }
           try await leaveLegacy(manifest)
@@ -223,12 +232,49 @@ actor ExecSupervisorRegistry {
       }
       terminalAcknowledgements.removeValue(forKey: id)
       tombstones.removeValue(forKey: id); manifests.removeValue(forKey: id); active.remove(id); reservations.removeValue(forKey: id); recoveryFailures.remove(id); legacyDepartures.removeValue(forKey: id)
+      links.removeValue(forKey: id)?.abort()
+    }
+  }
+
+  /// Admits a supervisor that dialed the rendezvous socket: a known version-2 operation of this machine whose manifest nonce it knows.
+  /// A newer link for the same operation replaces the older one.
+  func link(_ hello: Rendezvous.Hello, client: FetchClient, abort: @escaping @Sendable () -> Void) throws(Rendezvous.Refusal) -> UInt64 {
+    guard hello.protocol == Rendezvous.protocolName else { throw .unsupportedProtocol }
+    guard let manifest = manifests[hello.operation] else { throw .unknownOperation }
+    guard manifest.version == 2 else { throw .manifestVersion }
+    guard hello.machine == manifest.machine, manifest.machine == machine else { throw .machineMismatch }
+    guard Rendezvous.noncesMatch(hello.nonce, manifest.nonce) else { throw .nonceMismatch }
+    linkGenerations += 1
+    links[hello.operation]?.abort()
+    links[hello.operation] = Link(client: client, generation: linkGenerations, abort: abort)
+    return linkGenerations
+  }
+
+  func unlink(_ operation: UUID, generation: UInt64) {
+    if links[operation]?.generation == generation { links.removeValue(forKey: operation) }
+  }
+
+  /// Version 1 supervisors answer on their own socket; version 2 supervisors answer over their rendezvous link, which a supervisor
+  /// redials within a second of the agent coming back.
+  func send(_ request: Request, to manifest: SupervisorManifest, identity: Bool) async throws -> Response {
+    let local = try localRequest(request, manifest: manifest)
+    guard manifest.version == 2 else { return try await (identity ? identityFetch : fetch)(local) }
+    let clock = ContinuousClock()
+    let connected = clock.now + Rendezvous.handshakeTimeout
+    while links[manifest.operation] == nil {
+      guard clock.now < connected else { throw OperationError(.supervisorUnavailable, message: "supervisorNotConnected", operation: manifest.operation) }
+      try await clock.sleep(for: .milliseconds(20))
+    }
+    let client = links[manifest.operation]!.client
+    return try await withDeadline(identity ? .seconds(2) : .seconds(25), operation: manifest.operation) {
+      let response = try await client(local)
+      let bytes = try await response.body.bytes(upTo: OperationLimits.responseBytes)
+      return Response(status: response.status, headers: response.headers, body: .bytes(bytes, contentType: response.body.contentType))
     }
   }
 
   func identify(_ manifest: SupervisorManifest) async throws {
-    let request = try localRequest(Request(url: URL(string: "http://supervisor/identity")!), manifest: manifest)
-    let response = try await identityFetch(request)
+    let response = try await send(Request(url: URL(string: "http://supervisor/identity")!), to: manifest, identity: true)
     guard response.status.code == 200,
           try await response.body.json(SupervisorManifest.self, upTo: 4096) == manifest else { throw OperationError(.supervisorIdentityMismatch, message: "identity status \(response.status.code)") }
     if response.headers[.init("X-Wuhu-Supervisor-Active")!] == "0" { active.remove(manifest.operation) }
@@ -236,8 +282,9 @@ actor ExecSupervisorRegistry {
   }
 
   func localRequest(_ request: Request, manifest: SupervisorManifest) throws -> Request {
-    guard let encoded = manifest.socket.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
-          let url = URL(string: "http+unix://" + encoded + request.url.path + (request.url.query.map { "?" + $0 } ?? "")) else { throw OperationError(.invalidConfiguration) }
+    let query = request.url.query.map { "?" + $0 } ?? ""
+    let address = manifest.version == 2 ? "http://localhost" : manifest.socket.addingPercentEncoding(withAllowedCharacters: .alphanumerics).map { "http+unix://" + $0 }
+    guard let address, let url = URL(string: address + request.url.path + query) else { throw OperationError(.invalidConfiguration) }
     var copy = request; copy.url = url
     copy.headers["Host"] = "localhost"
     copy.headers["X-Wuhu-Supervisor-Nonce"] = manifest.nonce
@@ -259,7 +306,7 @@ actor ExecSupervisorRegistry {
   }
 
   func forward(_ request: Request, manifest: SupervisorManifest) async throws -> Response {
-    let response = try await fetch(localRequest(request, manifest: manifest))
+    let response = try await send(request, to: manifest, identity: false)
     let data = try await response.body.bytes(upTo: OperationLimits.responseBytes)
     if (response.status.code == 200 || response.status.code == 201) && !request.url.path.contains("/inputs/") {
       let snapshot = try JSONDecoder().decode(OperationSnapshot.self, from: data)
@@ -305,9 +352,7 @@ actor ExecSupervisorRegistry {
       guard manifests.count + tombstones.count + malformedDirectories.count < OperationLimits().receipts, active.count < OperationLimits().activeOperations,
             reservations.values.reduce(0, +) + Self.fullReservation <= OperationLimits().bufferBytes else { throw OperationError(.capacityExceeded) }
       let directory = root + "/" + id.uuidString
-      let legacySocket = directory + "/control.sock"
-      let socket = legacySocket.utf8.count < 104 ? legacySocket : directory + "/s"
-      let manifest = SupervisorManifest(version: 1, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: socket)
+      let manifest = SupervisorManifest(version: 2, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: Rendezvous.socketPath(operationsDirectory: root))
       try validateManifest(manifest, directory: directory)
       manifests[id] = manifest
       active.insert(id); reservations[id] = Self.fullReservation
@@ -331,6 +376,18 @@ actor ExecSupervisorRegistry {
     guard let manifest = manifests[id] else { throw OperationError(.unknownOperation) }
     if recoveryFailures.contains(id) { try await identify(manifest); recoveryFailures.remove(id) }
     return try await forward(request, manifest: manifest)
+  }
+}
+
+/// Bounds one rendezvous exchange, the way the legacy HTTP client's timeouts bound a per-operation socket.
+private func withDeadline<R: Sendable>(_ duration: Duration, operation: UUID, _ body: @escaping @Sendable () async throws -> R) async throws -> R {
+  let work = Task { try await body() }
+  let expired = Task { try await ContinuousClock().sleep(for: duration); work.cancel() }
+  defer { expired.cancel() }
+  do { return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
+  catch {
+    if work.isCancelled, !Task.isCancelled { throw OperationError(.supervisorUnavailable, message: "supervisorTimeout", operation: operation) }
+    throw error
   }
 }
 

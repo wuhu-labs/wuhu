@@ -56,6 +56,8 @@ public struct ParentExecutionEndpoint: Sendable {
     return true
   }
 
+  public func acknowledge(_ call: WorkerCall) async { await streams.acknowledge(call) }
+
   public func shutdown() async { await operations.stop(); await machines.stop(); await streams.stop(); await identity.stop(); await traces.stop(); await runtime.stop() }
 
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
@@ -84,6 +86,13 @@ public struct ParentExecutionEndpoint: Sendable {
         return try await ownerReply {
           let request = try ownerDecode(StreamRequest.self, call.payload)
           return try ownerEncode(await identity.metadata(request.id))
+        }
+      }
+      if call.operation == "script.stream-inventory" { return try await ownerReply { try ownerEncode(await streams.inventory()) } }
+      if call.operation == "script.stream-next" {
+        return try await ownerReply {
+          let request = try ownerDecode(StreamRequest.self, call.payload)
+          return try await ownerEncode(streams.next(request.id, call: call.id))
         }
       }
       if call.operation == "script.observe-open" || call.operation == "script.watch-open" {

@@ -1,0 +1,54 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+import CProcessIdentity
+import struct WorkerProtocol.WorkerProtocolError
+
+struct ExecutionWorkerManifest: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+  var description: String { "ExecutionWorkerManifest(redacted)" }
+  var debugDescription: String { description }
+  struct Credentials: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    var description: String { "ExecutionWorkerCredentials(redacted)" }
+    var debugDescription: String { description }
+    let current: String
+    var successor: String?
+  }
+
+  let version: Int
+  let space: String
+  let generation: UUID
+  let incarnation: UUID
+  let processID: Int32
+  let birth: String
+  var credentials: Credentials
+
+  func validate() throws {
+    let tokens = [credentials.current] + (credentials.successor.map { [$0] } ?? [])
+    guard version == 1, !space.isEmpty, processID > 0,
+          birth.utf8.count >= 16, birth.utf8.count <= 128,
+          tokens.allSatisfy({ $0.utf8.count >= 64 && $0.utf8.count <= 128 && $0.utf8.allSatisfy { $0 > 32 && $0 < 127 } }),
+          credentials.successor != credentials.current
+    else { throw WorkerProtocolError(.invalidConfiguration, message: "Invalid execution worker manifest") }
+  }
+
+  func validate(directory: String, space expectedSpace: String) throws {
+    try validate()
+    guard space == expectedSpace, directory.hasPrefix("/"), (directory + "/worker.sock").utf8.count < 104 else {
+      throw WorkerProtocolError(.invalidConfiguration, message: "Invalid execution worker manifest location")
+    }
+  }
+
+  func verifyProcess(probe: @Sendable (Int32) throws -> String = processBirthIdentity) throws {
+    guard try probe(processID) == birth else { throw WorkerProtocolError(.unauthorized, message: "Execution worker process identity changed") }
+  }
+}
+
+func processBirthIdentity(_ processID: Int32) throws -> String {
+  var output = [CChar](repeating: 0, count: 256)
+  guard process_birth_identity(processID, &output, output.count) == 0 else {
+    throw WorkerProtocolError(.unavailable, message: "Cannot establish execution worker process identity")
+  }
+  return String(decoding: output.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+}

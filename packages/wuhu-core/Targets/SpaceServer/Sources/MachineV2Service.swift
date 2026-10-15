@@ -18,7 +18,8 @@ import class SpaceCore.Space
 actor MachineV2Service {
   struct ExecEndpoint {
     let endpoint: ChannelEndpoint
-    var callers: Set<UUID> = []
+    let starter = ExecStarter()
+    var callers: [UUID: ExecLeg] = [:]
     var disconnected: Date?
     var completed: Date?
   }

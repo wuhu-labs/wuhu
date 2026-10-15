@@ -13,6 +13,7 @@ import CExecSupervisor
 import class ComputerFiles.ComputerAgent
 import Fetch
 import FetchAsyncHTTPClient
+import class NIOPosix.MultiThreadedEventLoopGroup
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
@@ -28,35 +29,18 @@ public enum ExecSupervisor {
     var state = stat()
     let parent = URL(fileURLWithPath: socket).deletingLastPathComponent().path
     guard lstat(parent, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700 else { throw OperationError(.invalidConfiguration) }
-    let lock = exec_lock_agent(operationsDirectory)
-    guard lock >= 0 else { throw OperationError(.invalidConfiguration, message: "Another agent owns this operations directory or its lock is not private") }
-    defer { exec_close(lock) }
-    if lstat(socket, &state) == 0 {
-      guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK else { throw OperationError(.invalidConfiguration) }
-      guard unlink(socket) == 0 else { throw OperationError(.invalidConfiguration) }
-    }
-    try await withUnixHTTP { http in
-      let registry = try ExecSupervisorRegistry(
-        machine: machine,
-        operationsDirectory: operationsDirectory,
-        executable: executable,
-        fetch: .asyncHTTPClient(http, timeout: .seconds(25)),
-        identityFetch: .asyncHTTPClient(http, timeout: .seconds(2)),
-        authorize: { _, _ in },
-      )
-      try await registry.recover()
-      let agent = try ComputerAgent(machine: machine, external: registry.external)
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: []) { agent, _ in
+      var state = stat()
+      if lstat(socket, &state) == 0 {
+        guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK else { throw OperationError(.invalidConfiguration) }
+        guard unlink(socket) == 0 else { throw OperationError(.invalidConfiguration) }
+      }
       let server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, handler: { request in
         if request.url.path == "/leave" { return try await agent.controlHandler(request) }
         return try await agent.handler(request)
       })
       guard chmod(socket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
-      await withTaskGroup(of: Void.self) { group in
-        group.addTask { await registry.run() }
-        group.addTask { await agent.run() }
-        await server.runUntilCancelled()
-        await agent.shutdown(); group.cancelAll()
-      }
+      await server.runUntilCancelled()
     }
   }
 
@@ -70,15 +54,21 @@ public enum ExecSupervisor {
       guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { throw OperationError(.machineNotAuthorized) }
     })
     defer {
-      _ = unlink(manifest.socket)
+      if manifest.version == 1 { _ = unlink(manifest.socket) }
       _ = unlink(directory + "/manifest.json")
       _ = rmdir(directory)
     }
     let gate = SupervisorGate(manifest: manifest, agent: agent)
-    let server = try await ServeNIOServer.bind(unixDomainSocketPath: manifest.socket, handler: gate.handler)
-    guard chmod(manifest.socket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
+    // Version 2 dials the machine's rendezvous socket and creates no socket of its own. Version 1 manifests come only from an older
+    // agent that launched this executable; they keep their own listening socket so that agent can still reach them.
+    let server = manifest.version == 1 ? try await ServeNIOServer.bind(unixDomainSocketPath: manifest.socket, handler: gate.handler) : nil
+    if let server, chmod(manifest.socket, 0o600) != 0 { await server.shutdown(); throw OperationError(.invalidConfiguration) }
+    let hello = Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: manifest.machine, operation: manifest.operation, nonce: manifest.nonce)
+    let events = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
+      // The redial loop returns only once cancelled.
+      if server == nil { group.addTask { await Rendezvous.redial(path: manifest.socket, hello: hello, group: events, handler: gate.handler) } }
       group.addTask {
         while !Task.isCancelled {
           do { try await clock.sleep(.seconds(1)) } catch { return }
@@ -87,8 +77,9 @@ public enum ExecSupervisor {
         }
       }
       _ = await group.next()
-      await agent.shutdown(); await server.shutdown(); group.cancelAll()
+      await agent.shutdown(); await server?.shutdown(); group.cancelAll()
     }
+    try? await events.shutdownGracefully()
   }
 }
 

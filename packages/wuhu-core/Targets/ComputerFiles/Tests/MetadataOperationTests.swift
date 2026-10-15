@@ -166,6 +166,76 @@ extension MetadataOperationTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path) == ["file"])
   }
 
+  @Test(arguments: ["same", "parent", "case", "unicode"])
+  func concurrentLocalWritersCompareAndCommitOnceThroughAliases(_ alias: String) async throws {
+    #if !os(macOS)
+      if alias == "case" || alias == "unicode" { return }
+    #endif
+    let folder = try ScratchFolder("metadata-concurrent-commit")
+    let name = alias == "case" ? "File" : alias == "unicode" ? "Café" : "file"
+    let otherName = alias == "case" ? "file" : alias == "unicode" ? "Cafe\u{301}" : name
+    let path = folder.url.appending(path: name).path
+    let link = folder.url.appending(path: "alias")
+    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: folder.url.path)
+    let other = alias == "parent" ? link.appendingPathComponent(name).path : folder.url.appending(path: otherName).path
+    try Data("original".utf8).write(to: URL(fileURLWithPath: path))
+    let token = try await ComputerFileSystem.local.status(path).version
+    #expect(try await ComputerFileSystem.local.status(other).version == token)
+    let compared = DispatchGroup()
+    compared.enter(); compared.enter()
+    let beforeRename: @Sendable () -> Void = {
+      compared.leave()
+      _ = compared.wait(timeout: .now() + .seconds(1))
+    }
+    let first = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(path, token)
+    let second = try await ComputerFileOperations.local(synchronize: { _ in }, beforeRename: beforeRename).write(other, token)
+    try await first.append(Data("first".utf8)); try await second.append(Data("second".utf8))
+    try await first.prepare(); try await second.prepare()
+    let results = await withTaskGroup(of: Result<String, OperationError>.self, returning: [Result<String, OperationError>].self) { group in
+      for writer in [first, second] {
+        group.addTask {
+          do { return .success(try await writer.commit()) }
+          catch { return .failure(error as? OperationError ?? .init(.invalidResponse)) }
+        }
+      }
+      var results: [Result<String, OperationError>] = []
+      for await result in group { results.append(result) }
+      return results
+    }
+    await first.close(); await second.close()
+    let receipts = results.compactMap { try? $0.get() }
+    let errors = results.compactMap { if case let .failure(error) = $0 { error.code } else { nil } }
+    #expect(receipts.count == 1)
+    #expect(errors == [.fileChanged])
+    #expect(receipts.first == (try await ComputerFileSystem.local.status(path).version))
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    #expect(data == Data("first".utf8) || data == Data("second".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: folder.url.path).count == 2)
+  }
+
+  @Test func localCommitsInDifferentDirectoriesRemainConcurrent() async throws {
+    let firstFolder = try ScratchFolder("metadata-directory-first")
+    let secondFolder = try ScratchFolder("metadata-directory-second")
+    let compared = DispatchGroup(); compared.enter(); compared.enter()
+    let waits = Mutex<[Bool]>([])
+    let operations = ComputerFileOperations.local(synchronize: { _ in }, beforeRename: {
+      compared.leave()
+      let concurrent = compared.wait(timeout: .now() + .seconds(2)) == .success
+      waits.withLock { $0.append(concurrent) }
+    })
+    let first = try await operations.write(firstFolder.url.appending(path: "file").path, nil)
+    let second = try await operations.write(secondFolder.url.appending(path: "file").path, nil)
+    try await first.append(Data("first".utf8)); try await second.append(Data("second".utf8))
+    try await first.prepare(); try await second.prepare()
+    try await withThrowingTaskGroup(of: String.self) { group in
+      group.addTask { try await first.commit() }
+      group.addTask { try await second.commit() }
+      for try await _ in group {}
+    }
+    await first.close(); await second.close()
+    #expect(waits.withLock { $0 } == [true, true])
+  }
+
   @Test func writerRechecksTokenAtCommitAndEmptyWriteWorks() async throws {
     let folder = try ScratchFolder("metadata-write-check")
     let path = folder.url.appending(path: "file").path

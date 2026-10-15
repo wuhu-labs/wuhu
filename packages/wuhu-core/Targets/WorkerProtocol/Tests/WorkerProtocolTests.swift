@@ -238,3 +238,18 @@ private struct PrivateFailure: Error, CustomStringConvertible {
   }
   #expect(ServerTracing.context == nil)
 }
+
+@Test(arguments: ["/worker/hello", "/worker/call", "/worker/upload"])
+func serverShutdownResponseIsUnavailableRatherThanMalformedProtocol(route: String) async throws {
+  let fetch = FetchClient { request in
+    if request.url.path == route { return .text("500 Internal Server Error\n", status: .internalServerError) }
+    return try .json(WorkerHello(release: "parent"))
+  }
+  let client = try WorkerClient(socket: "/private/test.sock", token: "token", control: fetch, bytes: fetch)
+  do {
+    _ = try await client.negotiate(.init(release: "worker"))
+    if route == "/worker/call" { _ = try await client.call(.init(operation: "call")) }
+    if route == "/worker/upload" { try await client.upload(.init(operation: "upload"), body: .empty) }
+    Issue.record("Server shutdown response was accepted")
+  } catch let error as WorkerProtocolError { #expect(error.code == .unavailable) }
+}

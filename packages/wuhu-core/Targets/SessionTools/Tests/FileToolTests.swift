@@ -4,6 +4,7 @@ import JSONValue
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+import struct SpaceTools.MachineSeam
 import Testing
 import struct WuhuAI.ToolArguments
 
@@ -95,6 +96,10 @@ import struct WuhuAI.ToolArguments
       machineFS.put("/home/dev/notes.txt", "foreign", mtime: 9999)
       let stale = try await world.run("write", .object(["path": path, "content": "late"]))
       #expect(try failureMessage(stale).contains("re-read"))
+      // Every machine call a tool makes carries the calling session for the start's caller attribution.
+      let callers = machineFS.callers.withLock { $0 }
+      #expect(!callers.isEmpty); #expect(callers.allSatisfy { $0 == world.session })
+      #expect(MachineSeam.caller == nil)
     }
   }
 

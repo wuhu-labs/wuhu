@@ -8,10 +8,19 @@ import enum JSONValue.JSONValue
 
 public actor WorkerClient {
   let base: URL
-  let token: String
+  let credentials: WorkerCredentials
   let control: FetchClient
   let bytes: FetchClient
   var agreement: WorkerAgreement?
+  private var closed = false
+  public var isClosed: Bool { closed }
+  public func close() { closed = true }
+
+  private var localHello: WorkerHello?
+  private var continuityID: UUID?
+  private let receiptClient = UUID()
+  private var receiptSequence = 0
+  private var retainedCalls: [UUID: WorkerCallInventory] = [:]
 
   public init(socket: String, token: String, control: FetchClient, bytes: FetchClient) throws {
     guard socket.hasPrefix("/"), !socket.utf8.contains(0), socket.utf8.count < 104,
@@ -20,15 +29,65 @@ public actor WorkerClient {
     else {
       throw WorkerProtocolError(.invalidConfiguration, message: "Worker socket must be an absolute private Unix path shorter than 104 bytes; token is required")
     }
-    self.base = base; self.token = token; self.control = control; self.bytes = bytes
+    self.base = base; credentials = try WorkerCredentials(token: token); self.control = control; self.bytes = bytes
+  }
+
+  public init(socket: String, credentials: WorkerCredentials, control: FetchClient, bytes: FetchClient) throws {
+    guard socket.hasPrefix("/"), !socket.utf8.contains(0), socket.utf8.count < 104,
+          let encoded = socket.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+          let base = URL(string: "http+unix://" + encoded)
+    else { throw WorkerProtocolError(.invalidConfiguration, message: "Invalid private worker socket path") }
+    self.base = base; self.credentials = credentials; self.control = control; self.bytes = bytes
+  }
+
+  public func stagePeerCredential(successor: String, authenticatingWith token: String) async throws {
+    try requireCapability("worker.credential-rotation.v1")
+    let response = try await fetch(control, path: "/worker/credentials/stage", body: .json(WorkerCredentialStage(successor: successor)), authenticatingWith: token)
+    guard try await decode(Bool.self, response: response) else { throw WorkerProtocolError(.invalidMessage, message: "Worker credential staging was refused") }
+  }
+
+  public func confirmPeerCredential(authenticatingWith token: String) async throws {
+    try requireCapability("worker.credential-rotation.v1")
+    let response = try await fetch(control, path: "/worker/credentials/confirm", body: .empty, authenticatingWith: token)
+    guard try await decode(Bool.self, response: response) else { throw WorkerProtocolError(.invalidMessage, message: "Worker credential confirmation was refused") }
   }
 
   public func negotiate(_ hello: WorkerHello) async throws -> WorkerAgreement {
+    guard !closed else { throw WorkerProtocolError(.unavailable, message: "Worker connection is permanently closed") }
     let response = try await fetch(control, path: "/worker/hello", body: .json(hello))
     let peer = try await decode(WorkerHello.self, response: response)
     let agreed = try hello.negotiate(with: peer)
+    if let continuityID, peer.continuityID != continuityID {
+      throw WorkerProtocolError(.unknownOutcome, message: "Owner receipt journal changed; reconcile pending effects before reconnecting")
+    }
+    if agreed.capabilities.contains("owner.continuity.v1") {
+      guard let id = peer.continuityID else { throw WorkerProtocolError(.invalidMessage, message: "Owner continuity identity is missing") }
+      continuityID = id
+    }
+    localHello = hello
     agreement = agreed
     return agreed
+  }
+
+  public var retainsReplies: Bool { continuityID != nil && agreement?.capabilities.contains("owner.continuity.v1") == true }
+
+  public func retaining(_ call: WorkerCall) throws -> WorkerCall? {
+    guard !closed else { throw WorkerProtocolError(.unavailable, message: "Worker connection is permanently closed") }
+    guard let continuityID, agreement?.capabilities.contains("owner.continuity.v1") == true else { return nil }
+    guard retainedCalls.count < 1024 else { throw WorkerProtocolError(.capacityExceeded, message: "Too many unacknowledged owner calls") }
+    guard receiptSequence < Int.max else { throw WorkerProtocolError(.capacityExceeded, message: "Owner receipt sequence exhausted") }
+    receiptSequence += 1
+    let retained = WorkerCall(abi: call.abi, id: call.id, operation: call.operation, payload: call.payload, traceContext: call.traceContext, receipt: .init(endpoint: continuityID, client: receiptClient, sequence: receiptSequence))
+    retainedCalls[call.id] = WorkerCallInventory(retained)
+    return retained
+  }
+
+  public func pendingReceipts() -> [WorkerCallInventory] { Array(retainedCalls.values) }
+  public func consumed(_ call: WorkerCall) { retainedCalls[call.id] = nil }
+
+  public func reconnect() async throws {
+    guard let localHello, continuityID != nil else { throw WorkerProtocolError(.missingCapability, message: "Owner reconnect requires retained replies") }
+    _ = try await negotiate(localHello)
   }
 
   public func requireCapability(_ capability: String) throws {
@@ -80,7 +139,9 @@ public actor WorkerClient {
     try call.validate()
   }
 
-  func fetch(_ client: FetchClient, path: String, body: Body, metadata: String? = nil) async throws -> Response {
+  func fetch(_ client: FetchClient, path: String, body: Body, metadata: String? = nil, authenticatingWith explicitToken: String? = nil) async throws -> Response {
+    guard !closed else { throw WorkerProtocolError(.unavailable, message: "Worker connection is permanently closed") }
+    let token = if let explicitToken { explicitToken } else { await credentials.outgoingToken }
     var headers = RequestHeaders()
     headers.setSensitive("Authorization", "Bearer " + token)
     headers["Host"] = "localhost"
@@ -90,10 +151,17 @@ public actor WorkerClient {
     catch is CancellationError { throw CancellationError() }
     catch let error as WorkerProtocolError { throw error }
     catch { throw WorkerProtocolError(.unavailable, message: "Worker owner connection failed") }
+    guard !(500 ... 599).contains(response.status.code) else {
+      throw WorkerProtocolError(.unavailable, message: "Worker owner transport is unavailable")
+    }
     var mapped = response
     mapped.body = .stream(length: response.body.contentLength, contentType: response.body.contentType, WorkerResponseBytes(body: response.body))
     guard mapped.status.code == 200 else {
-      throw try await decode(WorkerProtocolError.self, response: mapped)
+      let failure = try await decode(WorkerProtocolError.self, response: mapped)
+      if failure.code == .unauthorized, explicitToken == nil, token != (await credentials.outgoingToken) {
+        throw WorkerProtocolError(.unavailable, message: "Worker credential changed before admission; reconnect required")
+      }
+      throw failure
     }
     return mapped
   }

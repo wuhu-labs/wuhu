@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - Dependencies
   - ExecutionOwner
   - WorkerProtocol
   - LoopCore
@@ -27,6 +28,8 @@ dependencies:
   - Logging
 tests:
   dependencies:
+    - Dependencies
+    - ServerTelemetry
     - SessionToolsTestSupport
     - Scratch
     - ExecutionOwner

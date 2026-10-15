@@ -187,6 +187,12 @@ import Testing
     await #expect(throws: SpaceError.layerForbidden(path: "/models.json", group: "shared")) {
       try await rig.space.refuseLayerWrite(models, in: .shared, by: .session(rig.p))
     }
+    let upgrade = try path("/machine-v2-upgrade.json")
+    await #expect(throws: SpaceError.layerForbidden(path: "/machine-v2-upgrade.json", group: "shared")) {
+      try await rig.space.refuseLayerWrite(upgrade, in: .shared, by: .session(child))
+    }
+    try await rig.space.refuseLayerWrite(upgrade, in: .shared, by: .session(rig.s))
+    try await rig.space.refuseLayerWrite(upgrade, in: Self.alice, by: .session(rig.p))
     try await rig.space.refuseLayerWrite(skill, in: .shared, by: .session(rig.s))
     try await rig.space.refuseLayerWrite(agents, in: Self.alice, by: .session(rig.p))
     try await rig.space.refuseLayerWrite(models, in: Self.alice, by: .session(rig.p))

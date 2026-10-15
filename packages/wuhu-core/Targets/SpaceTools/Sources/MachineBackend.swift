@@ -1,6 +1,7 @@
 import struct Foundation.Data
 import struct Foundation.Date
 import MachineContract
+import struct SessionDomain.SessionID
 import SpaceFS
 
 public struct MachineSeam: Sendable {
@@ -16,6 +17,19 @@ public struct MachineSeam: Sendable {
     self.vfs = vfs
     self.search = search
     self.attached = attached
+  }
+
+  /// The session a machine call is made for, so the server can attribute the machine start (`StartRequest.caller`).
+  /// Set by the tool executor around each tool call and by `attributed(to:)`; nil for calls no session made.
+  @TaskLocal public static var caller: SessionID?
+
+  /// This seam with every file and search call attributed to `session`, however many wrappers sit underneath.
+  public func attributed(to session: SessionID) -> MachineSeam {
+    MachineSeam(
+      vfs: { machine, op in try await Self.$caller.withValue(session) { try await vfs(machine, op) } },
+      search: { machine, query in try await Self.$caller.withValue(session) { try await search(machine, query) } },
+      attached: attached,
+    )
   }
 }
 

@@ -1,4 +1,3 @@
-import Dependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -15,17 +14,33 @@ import Synchronization
 public struct ScriptHandlerResult: Sendable {
   public var stateJSON: String
   public var wakes: [String]
-  public init(stateJSON: String, wakes: [String]) { self.stateJSON = stateJSON; self.wakes = wakes }
+  private let receipt: HandlerResultReceipt
+  public init(stateJSON: String, wakes: [String], acknowledge: @escaping @Sendable () async -> Void = {}) {
+    self.stateJSON = stateJSON; self.wakes = wakes; receipt = HandlerResultReceipt(acknowledge)
+  }
+
+  public func acknowledge() async { await receipt.consume() }
+}
+
+private actor HandlerResultReceipt {
+  let acknowledge: @Sendable () async -> Void
+  var task: Task<Void, Never>?
+  init(_ acknowledge: @escaping @Sendable () async -> Void) { self.acknowledge = acknowledge }
+  func consume() async {
+    if task == nil { task = Task { await acknowledge() } }
+    await task?.value
+  }
 }
 
 public struct ScriptHandlerInvocation: Sendable {
+  public var id: UUID
   public var path: String
   public var session: SessionID
   public var rows: Rows?
   public var fireTime: Date?
   public var stateJSON: String?
-  public init(path: String, session: SessionID, rows: Rows? = nil, fireTime: Date? = nil, stateJSON: String? = nil) {
-    self.path = path; self.session = session; self.rows = rows; self.fireTime = fireTime; self.stateJSON = stateJSON
+  public init(id: UUID = UUID(), path: String, session: SessionID, rows: Rows? = nil, fireTime: Date? = nil, stateJSON: String? = nil) {
+    self.id = id; self.path = path; self.session = session; self.rows = rows; self.fireTime = fireTime; self.stateJSON = stateJSON
   }
 }
 
@@ -39,6 +54,7 @@ public struct ScriptHandlerExecutor: HandlerExecutionClient {
   public init(scripts: Scripts, tools: ToolExecutor) { self.scripts = scripts; self.tools = tools }
   public func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     let result = try await scripts.runHandler(
+      id: invocation.id,
       path: invocation.path,
       session: invocation.session,
       rows: invocation.rows,
@@ -124,6 +140,7 @@ final class ScriptHandlerContext: Sendable {
 
 extension Scripts {
   func runHandler(
+    id: UUID = UUID(),
     path: String,
     session: SessionID,
     rows: Rows? = nil,
@@ -131,12 +148,11 @@ extension Scripts {
     stateJSON: String? = nil,
     tools: ToolExecutor,
   ) async throws -> (stateJSON: String, wakes: [String]) {
-    @Dependency(\.uuid) var uuid
     let context = try ScriptHandlerContext(rows: rows, fireTime: fireTime, stateJSON: stateJSON)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
     let execution = ScriptExecution(
-      id: "handler-" + uuid().uuidString.lowercased(),
+      id: "handler-" + id.uuidString.lowercased(),
       session: session,
       source: "import handler from \(quoted); await __handler_invoke(handler); delete globalThis.__handler_invoke;",
       lifetime: .seconds(60),
@@ -145,6 +161,8 @@ extension Scripts {
       machines: owner.scriptMachines(for: session),
       handler: context,
     )
+    handlerInventory.withLock { $0[execution.id] = session }
+    defer { handlerInventory.withLock { $0[execution.id] = nil } }
     await withTaskCancellationHandler {
       await execution.run(owner: owner, lifecycle: lifecycle)
     } onCancel: {

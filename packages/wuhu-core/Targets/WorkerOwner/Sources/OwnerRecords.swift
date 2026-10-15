@@ -12,6 +12,11 @@ struct OwnerRecord: Codable, Sendable {
   let value: JSONValue?
   let fault: OwnerFault?
   let ended: Bool
+  let suspended: Bool?
+
+  init(value: JSONValue?, fault: OwnerFault?, ended: Bool, suspended: Bool? = nil) {
+    self.value = value; self.fault = fault; self.ended = ended; self.suspended = suspended
+  }
 }
 
 struct OwnerRecordSequence<Value: Encodable & Sendable>: AsyncSequence, Sendable {

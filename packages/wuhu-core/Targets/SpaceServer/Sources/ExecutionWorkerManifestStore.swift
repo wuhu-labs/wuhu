@@ -1,0 +1,144 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
+#if os(Linux)
+  import Glibc
+#else
+  import Darwin
+#endif
+import struct WorkerProtocol.WorkerProtocolError
+
+actor ExecutionWorkerManifestStore {
+  private let directory: String
+  private let space: String
+  private let descriptor: Int32
+  private let device: dev_t
+  private let inode: ino_t
+  private static let maximumBytes = 8192
+
+  private init(directory: String, space: String, descriptor: Int32, state: stat) {
+    self.directory = directory; self.space = space; self.descriptor = descriptor
+    device = state.st_dev; inode = state.st_ino
+  }
+
+  deinit { _ = close(descriptor) }
+
+  static func open(directory: String, space: String) async throws -> ExecutionWorkerManifestStore {
+    let descriptor = try openDirectory(directory)
+    var state = stat()
+    guard fstat(descriptor, &state) == 0 else { _ = close(descriptor); throw unsafeStorage() }
+    return Self(directory: directory, space: space, descriptor: descriptor, state: state)
+  }
+
+  func load() async throws -> ExecutionWorkerManifest? {
+    try verifyDirectory()
+    let file = openat(descriptor, "manifest.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+    guard file >= 0 else {
+      if errno == ENOENT { return nil }
+      throw Self.unsafeStorage()
+    }
+    defer { _ = close(file) }
+    let state = try Self.validateFile(file)
+    var bytes = [UInt8](repeating: 0, count: Int(state.st_size))
+    var offset = 0
+    while offset < bytes.count {
+      let count = bytes.withUnsafeMutableBytes { read(file, $0.baseAddress!.advanced(by: offset), $0.count - offset) }
+      if count < 0, errno == EINTR { continue }
+      guard count > 0 else { throw Self.unsafeStorage() }
+      offset += count
+    }
+    var extra: UInt8 = 0
+    guard read(file, &extra, 1) == 0 else { throw Self.unsafeStorage() }
+    let manifest: ExecutionWorkerManifest
+    do { manifest = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: Data(bytes)) }
+    catch { throw Self.unsafeStorage() }
+    try manifest.validate(directory: directory, space: space)
+    return manifest
+  }
+
+  func save(_ manifest: ExecutionWorkerManifest) async throws {
+    try manifest.validate(directory: directory, space: space)
+    try verifyDirectory()
+    try validateExistingFile()
+    let bytes = try JSONEncoder().encode(manifest)
+    guard bytes.count <= Self.maximumBytes else { throw Self.unsafeStorage() }
+    let temporary = ".manifest-" + UUID().uuidString
+    let file = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0o600)
+    guard file >= 0 else { throw Self.unsafeStorage() }
+    defer { _ = close(file); _ = unlinkat(descriptor, temporary, 0) }
+    var offset = 0
+    while offset < bytes.count {
+      let count = bytes.withUnsafeBytes { write(file, $0.baseAddress!.advanced(by: offset), $0.count - offset) }
+      if count < 0, errno == EINTR { continue }
+      guard count > 0 else { throw Self.unsafeStorage() }
+      offset += count
+    }
+    _ = try Self.validateFile(file)
+    guard fsync(file) == 0 else { throw Self.unsafeStorage() }
+    try verifyDirectory()
+    try validateExistingFile()
+    guard renameat(descriptor, temporary, descriptor, "manifest.json") == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+  }
+
+  func remove() async throws {
+    try verifyDirectory()
+    try validateExistingFile()
+    guard unlinkat(descriptor, "manifest.json", 0) == 0 || errno == ENOENT else { throw Self.unsafeStorage() }
+    guard fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+  }
+
+  private func verifyDirectory() throws {
+    let current = try Self.openDirectory(directory)
+    defer { _ = close(current) }
+    var state = stat()
+    guard fstat(current, &state) == 0, state.st_dev == device, state.st_ino == inode else { throw Self.unsafeStorage() }
+  }
+
+  private func validateExistingFile() throws {
+    let file = openat(descriptor, "manifest.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+    guard file >= 0 else {
+      if errno == ENOENT { return }
+      throw Self.unsafeStorage()
+    }
+    defer { _ = close(file) }
+    _ = try Self.validateFile(file)
+  }
+
+  private static func validateFile(_ descriptor: Int32) throws -> stat {
+    var state = stat()
+    guard fstat(descriptor, &state) == 0, state.st_uid == geteuid(), state.st_mode & 0o7777 == 0o600,
+          state.st_mode & S_IFMT == S_IFREG, state.st_nlink == 1, state.st_size > 0, state.st_size <= maximumBytes
+    else { throw unsafeStorage() }
+    return state
+  }
+
+  private static func openDirectory(_ path: String) throws -> Int32 {
+    guard path.hasPrefix("/"), !path.utf8.contains(0), !path.hasSuffix("/") else { throw unsafeStorage() }
+    let components = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
+    guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { throw unsafeStorage() }
+    #if os(Linux)
+      var descriptor = Glibc.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    #else
+      var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    #endif
+    guard descriptor >= 0 else { throw unsafeStorage() }
+    for component in components {
+      let child = openat(descriptor, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+      _ = close(descriptor)
+      guard child >= 0 else { throw unsafeStorage() }
+      descriptor = child
+    }
+    var state = stat()
+    guard fstat(descriptor, &state) == 0, state.st_uid == geteuid(), state.st_mode & S_IFMT == S_IFDIR, state.st_mode & 0o7777 == 0o700 else {
+      _ = close(descriptor)
+      throw unsafeStorage()
+    }
+    return descriptor
+  }
+
+  private static func unsafeStorage() -> WorkerProtocolError {
+    .init(.invalidConfiguration, message: "Execution worker manifest storage must be owner-private and intact")
+  }
+}
