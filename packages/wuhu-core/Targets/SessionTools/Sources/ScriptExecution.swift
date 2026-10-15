@@ -245,8 +245,8 @@ final class ScriptExecution: Sendable {
 
   // MARK: The engine's side
 
-  func run(owner: any ScriptOwnerClient, lifecycle: ScriptLifecycle? = nil) async {
-    do { try await lifecycle?.started(session, id) }
+  func run(owner: any ScriptOwnerClient, lifecycle: ScriptLifecycle? = nil, registered: Bool = false) async {
+    do { if !registered { try await lifecycle?.started(session, id) } }
     catch {
       finish(.failed("execution registration failed"))
       await deliver(to: owner)

@@ -56,6 +56,11 @@ public struct RemoteSessionExecution: SessionExecutionClient {
     return try result.restart()
   }
 
+  public func yieldAssignment(_ id: SessionID) async throws {
+    try await rpc.client.requireCapability(ExecutionWorkerBootstrap.handoffCapability)
+    let _: Bool = try await rpc.call("execution.yield-assignment", SessionIDRequest(id: id))
+  }
+
   public func discard(_ id: SessionID) async {
     _ = try? await rpc.call("execution.discard", SessionIDRequest(id: id)) as Bool
   }

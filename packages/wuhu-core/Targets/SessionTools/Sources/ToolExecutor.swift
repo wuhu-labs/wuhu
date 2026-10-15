@@ -81,17 +81,20 @@ public struct ToolExecutor: Sendable {
   let credentials: CredentialResolver
   let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
   let scripts: Scripts?
+  let routedScriptStop: (@Sendable (SessionID, String) async throws -> ToolResultPayload)?
 
   public init(
     owner: any ToolOwnerClient,
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
     scripts: Scripts? = nil,
+    stopScript: (@Sendable (SessionID, String) async throws -> ToolResultPayload)? = nil,
   ) {
     self.owner = owner
     self.credentials = credentials
     self.completionCatalog = completionCatalog
     self.scripts = scripts
+    routedScriptStop = stopScript
   }
 
   public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {

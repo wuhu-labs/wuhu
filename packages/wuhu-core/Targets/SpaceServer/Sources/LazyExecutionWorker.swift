@@ -13,7 +13,6 @@ import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
 import struct SessionDomain.ToolCallID
-import enum SessionDomain.TranscriptItem
 import protocol SessionTools.HandlerExecutionClient
 import struct SessionTools.ScriptHandlerInvocation
 import struct SessionTools.ScriptHandlerResult
@@ -21,268 +20,194 @@ import struct SessionTools.Spawned
 import struct SessionTools.SpawnOrder
 import struct SpaceCore.SessionRestart
 import struct SpaceCore.SessionStore
-import struct WorkerOwner.ExecutionWorkerActivity
-import struct WorkerOwner.RemoteHandlerExecution
-import struct WorkerOwner.RemoteSessionExecution
 import struct WorkerOwner.WorkerRuntimeOwner
-import struct WorkerProtocol.WorkerProtocolError
 
 actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
-  typealias Starter = @Sendable (@escaping @Sendable (ExecutionWorkerActivity) async throws -> Void, @escaping @Sendable () async -> Void) async throws -> WorkerConnection
-  private let startConnection: Starter
-  private let owner: any ExecutionOwnerClient
-  private var incarnation: UUID?
-  private var recoveryBlocked: Set<SessionID> = []
-  private var activePasses: [SessionID: Set<UUID>] = [:]
-  private var connection: WorkerConnection?
-  private var starting: Task<WorkerConnection, any Error>?
-  private var retirement: Task<Void, Never>?
-  private var stopping: Task<Void, Never>?
+  typealias Starter = ExecutionWorkerGeneration.Starter
+  private struct Generation {
+    let worker: ExecutionWorkerGeneration
+    var handlers = 0
+  }
+
+  private let makeGeneration: @Sendable (UUID, Bool) -> ExecutionWorkerGeneration
+  private let scripts: WorkerScriptDirectory
+  private var current: UUID
+  private var generations: [UUID: Generation]
+  private var assignments: [SessionID: UUID] = [:]
+  private var handoffs: [UUID: Task<Void, Never>] = [:]
+  private var sessionHandoffs: [SessionID: UUID] = [:]
+  private var scriptChanges: Task<Void, Never>?
   private var stopped = false
-  private let sessions: SessionStore
-  private var preparation: Task<Void, any Error>?
-  private let log = Logger(label: "wuhu.execution-worker")
-  var processID: Int32? { connection?.processID }
-  var activeSessions: Set<SessionID> { Set(activePasses.keys) }
+  private var stopping: Task<Void, Never>?
+  private let log = Logger(label: "wuhu.execution-directory")
 
   init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil) {
-    self.sessions = sessions; self.owner = owner
-    self.startConnection = startConnection ?? { activity, exited in
-      try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtime, machines: machines, activity: activity, exited: exited)
+    let scripts = WorkerScriptDirectory()
+    self.scripts = scripts
+    let make: @Sendable (UUID, Bool) -> ExecutionWorkerGeneration = { generation, recoverStartupLoss in
+      var runtime = runtime
+      runtime?.scriptStarted = { session, script in try await scripts.started(script, session: session, generation: generation) }
+      runtime?.scriptEnded = { session, script in await scripts.ended(script, session: session, generation: generation) }
+      runtime?.stopScript = { session, script in try await scripts.stop(script, session: session) }
+      let runtimeOwner = runtime
+      return ExecutionWorkerGeneration(executable: executable, sessions: sessions, owner: owner, spawn: spawn, startConnection: { activity, exited in
+        let lost: @Sendable () async -> Void = {
+          await scripts.lost(generation)
+          await exited()
+        }
+        if let startConnection { return try await startConnection(activity, lost) }
+        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, activity: activity, exited: lost)
+      }, recoverStartupLoss: recoverStartupLoss)
     }
+    makeGeneration = make
+    let id = UUID()
+    current = id
+    generations = [id: Generation(worker: make(id, true))]
+  }
+
+  var processID: Int32? { get async { await generations[current]?.worker.processID } }
+  var generationCount: Int { generations.count }
+  func runningScripts(_ id: SessionID) async -> [String] { await scripts.scripts(for: id) }
+  var activeSessions: Set<SessionID> {
+    get async {
+      var result: Set<SessionID> = []
+      for generation in generations.values { result.formUnion(await generation.worker.activeSessions) }
+      return result
+    }
+  }
+
+  private func selected(_ id: SessionID? = nil) async throws -> (UUID, ExecutionWorkerGeneration) {
+    guard !stopped else { throw SessionExecutionRetired() }
+    if scriptChanges == nil {
+      scriptChanges = Task {
+        for await _ in scripts.changes {
+          for generation in await scripts.takeChanges() { await retireIfReady(generation) }
+        }
+      }
+    }
+    let selected: UUID
+    if let id {
+      selected = assignments[id] ?? current
+      assignments[id] = selected
+    } else {
+      selected = current
+      generations[selected]!.handlers += 1
+    }
+    let worker = generations[selected]!.worker
+    await worker.configureRecovery { id in await self.admitRecovery(id, generation: selected) }
+    await scripts.bind(selected) { script, session in try await worker.stopScript(script, session: session) }
+    if let id { await worker.assign(id) }
+    return (selected, worker)
+  }
+
+  private func admitRecovery(_ id: SessionID, generation: UUID) -> Bool {
+    guard !stopped, generation == current, assignments[id] == nil || assignments[id] == generation else { return false }
+    assignments[id] = generation
+    return true
+  }
+
+  private func perform<Value: Sendable>(_ id: SessionID, _ body: (ExecutionWorkerGeneration) async throws -> Value) async throws -> Value {
+    let (generation, worker) = try await selected(id)
+    do { return try await body(worker) }
+    catch is SessionExecutionRetired {
+      guard generation != current, let token = sessionHandoffs[id], let handoff = handoffs[token] else { throw SessionExecutionRetired() }
+      await handoff.value
+      guard assignments[id] != generation else { throw SessionExecutionRetired() }
+      let (_, next) = try await selected(id)
+      return try await body(next)
+    }
+  }
+
+  func replaceGeneration() async throws {
+    guard !stopped else { throw SessionExecutionRetired() }
+    let old = current
+    let worker = generations[old]!.worker
+    try await worker.requireHandoff()
+    guard !stopped, old == current else { throw SessionExecutionRetired() }
+    let next = UUID()
+    generations[next] = Generation(worker: makeGeneration(next, false))
+    current = next
+    for (session, generation) in assignments where generation == old {
+      let token = UUID()
+      sessionHandoffs[session] = token
+      handoffs[token] = Task {
+        do {
+          try await self.yieldAssignment(session, worker: worker)
+          try await self.released(session, generation: old)
+        } catch {
+          self.log.error("execution assignment handoff failed", metadata: ["session": "\(session.rawValue)", "error": "\(error)"])
+        }
+        self.handoffs[token] = nil
+        if self.sessionHandoffs[session] == token { self.sessionHandoffs[session] = nil }
+      }
+    }
+    await retireIfReady(old)
+  }
+
+  private func yieldAssignment(_ id: SessionID, worker: ExecutionWorkerGeneration) async throws {
+    try await retryHandoff(id) { try await worker.yieldAssignment(id) }
+  }
+
+  private func retryHandoff(_ id: SessionID, _ operation: () async throws -> Void) async throws {
+    @Dependency(\.continuousClock) var clock
+    var reported = false
+    while !stopped, !Task.isCancelled {
+      do { try await operation(); return }
+      catch {
+        guard !stopped, !Task.isCancelled else { throw error }
+        if !reported {
+          log.warning("execution handoff waiting for owner recovery", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
+          reported = true
+        }
+        try await clock.sleep(for: .milliseconds(100))
+      }
+    }
+    throw SessionExecutionRetired()
+  }
+
+  private func released(_ id: SessionID, generation: UUID) async throws {
+    guard !stopped, assignments[id] == generation else { return }
+    assignments[id] = nil
+    try await retryHandoff(id) { try await self.perform(id) { try await $0.wake(id) } }
+    await retireIfReady(generation)
+  }
+
+  private func retireIfReady(_ id: UUID) async {
+    guard id != current, !assignments.values.contains(id), let generation = generations[id], generation.handlers == 0, await !scripts.contains(id) else { return }
+    generations[id] = nil
+    await generation.worker.shutdown()
+    await scripts.remove(id)
   }
 
   func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    let connection = try await connect()
-    return try await RemoteHandlerExecution(client: connection.client).executeHandler(invocation)
+    let (id, worker) = try await selected()
+    let result: Result<ScriptHandlerResult, any Error>
+    do { result = .success(try await worker.executeHandler(invocation)) }
+    catch { result = .failure(error) }
+    generations[id]?.handlers -= 1
+    await retireIfReady(id)
+    return try result.get()
   }
 
-  private func remote() async throws -> RemoteSessionExecution {
-    try await prepare()
-    if let retirement { await retirement.value }
-    return try await RemoteSessionExecution(client: connect().client)
+  func wake(_ id: SessionID) async throws { try await perform(id) { try await $0.wake(id) } }
+  func enqueue(_ item: QueueInput, to id: SessionID) async throws -> Int { try await perform(id) { try await $0.enqueue(item, to: id) } }
+  func interrupt(_ id: SessionID) async throws { try await perform(id) { try await $0.interrupt(id) } }
+  func resume(_ id: SessionID) async throws { try await perform(id) { try await $0.resume(id) } }
+  func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool { try await perform(id) { try await $0.prepareArchive(id, reservation: reservation) } }
+  func releaseArchive(_ id: SessionID, reservation: UUID) async throws { try await perform(id) { try await $0.releaseArchive(id, reservation: reservation) } }
+  func archive(_ id: SessionID, reservation: UUID) async throws {
+    try await perform(id) { try await $0.archive(id, reservation: reservation) }
+    try await scripts.stopAll(id)
   }
 
-  private func connect() async throws -> WorkerConnection {
-    guard !stopped else { throw SessionExecutionRetired() }
-    if let connection { return connection }
-    let id: UUID
-    let start: Task<WorkerConnection, any Error>
-    if let starting, let incarnation { id = incarnation; start = starting }
-    else {
-      id = UUID()
-      incarnation = id
-      start = Task {
-        try await startConnection({ activity in
-          try await self.activity(activity, incarnation: id)
-        }, { await self.exited(id) })
-      }
-      starting = start
-    }
-    do {
-      let connection = try await start.value
-      guard !stopped, incarnation == id else {
-        await connection.stop()
-        throw SessionExecutionRetired()
-      }
-      self.connection = connection
-      starting = nil
-      return connection
-    } catch {
-      if incarnation == id { starting = nil; incarnation = nil }
-      if let error = error as? WorkerProtocolError, error.code == .unavailable { throw SessionExecutionRetired() }
-      throw error
-    }
-  }
-
-  private func activity(_ activity: ExecutionWorkerActivity, incarnation: UUID) async throws {
-    guard self.incarnation == incarnation else { throw SessionExecutionRetired() }
-    if activity.active {
-      activePasses[activity.session, default: []].insert(activity.pass)
-      try await sessions.setWorkerActivity(activity.session, incarnation: incarnation, active: true)
-    } else {
-      activePasses[activity.session]?.remove(activity.pass)
-      guard activePasses[activity.session]?.isEmpty == true else { return }
-      activePasses[activity.session] = nil
-      try await sessions.setWorkerActivity(activity.session, incarnation: incarnation, active: false)
-    }
-  }
-
-  private func prepare() async throws {
-    if let preparation { return try await preparation.value }
-    let task = Task {
-      let lost = try await sessions.recordWorkerLoss()
-      await self.recoverLost(lost)
-    }
-    preparation = task
-    try await task.value
-  }
-
-  private func exited(_ id: UUID) async {
-    guard !stopped, incarnation == id else { return }
-    let admitted = connection != nil || !activePasses.isEmpty
-    connection = nil
-    starting = nil
-    incarnation = nil
-    activePasses = [:]
-    guard admitted else { return }
-    let previous = retirement
-    let recoveryID = UUID()
-    let retirement = Task {
-      await previous?.value
-      await self.recover(id)
-      self.finishRecovery(recoveryID)
-    }
-    recoveryIncarnation = recoveryID
-    self.retirement = retirement
-  }
-
-  private var recoveryIncarnation: UUID?
-
-  private func finishRecovery(_ id: UUID) {
-    if recoveryIncarnation == id { retirement = nil; recoveryIncarnation = nil }
-  }
-
-  private func recover(_ incarnation: UUID) async {
-    guard !stopped else { return }
-    do {
-      let lost = try await sessions.recordWorkerLoss(incarnation: incarnation)
-      await recoverLost(lost)
-      let pending = try await sessions.bootSessions { [log] id, error in
-        log.error("worker recovery eligibility failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-      }
-      for id in pending {
-        guard !stopped else { return }
-        do {
-          let record = try await owner.record(id)
-          guard !record.executor.isRemoved, record.work != .errored else { continue }
-          if try await sessions.workerCrashFenced(id) {
-            try await owner.markErrored(id, message: ExecutionWorkerCrashLoop(session: id).description)
-            continue
-          }
-          guard !recoveryBlocked.contains(id) else { continue }
-          try await retryRecovery {
-            guard !self.recoveryBlocked.contains(id), try await self.owner.record(id).work != .errored else { return }
-            let connection = try await self.connect()
-            do { try await RemoteSessionExecution(client: connection.client).wake(id) }
-            catch let error as WorkerProtocolError where error.code == .unavailable {
-              await connection.stop()
-              let lost = try await self.sessions.recordWorkerLoss()
-              await self.recoverLost(lost)
-              throw SessionExecutionRetired()
-            }
-          }
-        } catch {
-          log.error("execution worker session recovery failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-        }
-      }
-    } catch {
-      log.error("execution worker crash recovery failed", metadata: ["error": "\(error)"])
-    }
-  }
-
-  private func retryRecovery<Value: Sendable>(_ operation: () async throws -> Value) async throws -> Value {
-    @Dependency(\.continuousClock) var clock
-    for attempt in 0 ..< 3 {
-      guard !stopped else { throw SessionExecutionRetired() }
-      do { return try await operation() }
-      catch {
-        guard attempt < 2, !stopped else { throw error }
-        try await clock.sleep(for: .milliseconds(100 * (attempt + 1)))
-      }
-    }
-    preconditionFailure("unreachable")
-  }
-
-  private func recoverLost(_ lost: [SessionID: Bool]) async {
-    recoveryBlocked.formUnion(lost.keys)
-    for (id, fenced) in lost {
-      do {
-        try await retryRecovery { try await self.recoverInterruptedTools(id) }
-        recoveryBlocked.remove(id)
-      } catch {
-        log.error("execution worker lost session recovery failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-        do {
-          try await retryRecovery { try await self.owner.markErrored(id, message: "executionWorkerRecoveryFailed: interrupted tool results could not be committed; automatic execution is blocked") }
-        } catch {
-          log.error("execution worker recovery fencing failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-        }
-      }
-      if fenced {
-        do { try await retryRecovery { try await self.owner.markErrored(id, message: ExecutionWorkerCrashLoop(session: id).description) } }
-        catch { log.error("execution worker crash fencing failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"]) }
-      }
-    }
-  }
-
-  private func recoverInterruptedTools(_ id: SessionID) async throws {
-    let hydration = try await owner.hydrate(id)
-    var transcript = switch hydration.transcript { case let .kernel(value): value }
-    @Dependency(\.uuid) var uuid
-    @Dependency(\.date) var date
-    let items = transcript.pendingToolCallIDs.map { call in
-      TranscriptItem.toolResult(.init(id: uuid(), timestamp: date.now, provenance: .toolCall(call), payload: .failure(.init(message: "Execution worker crashed during tool execution. Its effects are unknown; it will not be retried automatically.", code: "executionWorkerRestart"))))
-    }
-    guard !items.isEmpty else { return }
-    transcript.items.append(contentsOf: items)
-    try await owner.append(id, items: items, transcript: transcript, completingCompactRequest: nil)
-  }
-
-  func wake(_ id: SessionID) async throws {
-    try await prepare()
-    if try await sessions.workerCrashFenced(id) {
-      await recoverLost([id: true])
-      return
-    }
-    if let retirement { await retirement.value }
-    guard !recoveryBlocked.contains(id) else { throw SessionExecutionRetired() }
-    let connection = try await connect()
-    do {
-      try await RemoteSessionExecution(client: connection.client).wake(id)
-    } catch let error as WorkerProtocolError where error.code == .unavailable {
-      await connection.stop()
-      if let retirement { await retirement.value }
-      throw SessionExecutionRetired()
-    }
-  }
-
-  func enqueue(_ item: QueueInput, to id: SessionID) async throws -> Int {
-    try await remote().enqueue(item, to: id)
-  }
-
-  func interrupt(_ id: SessionID) async throws -> Void {
-    try await remote().interrupt(id)
-  }
-
-  func resume(_ id: SessionID) async throws -> Void {
-    try await remote().resume(id)
-  }
-
-  func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
-    try await remote().prepareArchive(id, reservation: reservation)
-  }
-
-  func releaseArchive(_ id: SessionID, reservation: UUID) async throws -> Void {
-    try await remote().releaseArchive(id, reservation: reservation)
-  }
-
-  func archive(_ id: SessionID, reservation: UUID) async throws -> Void {
-    try await remote().archive(id, reservation: reservation)
-  }
-
-  func unarchive(_ id: SessionID) async throws -> Void {
-    try await remote().unarchive(id)
-  }
-
+  func unarchive(_ id: SessionID) async throws { try await perform(id) { try await $0.unarchive(id) } }
   func restart(_ id: SessionID, executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
-    let result = try await remote().restart(id, executor: executor, note: note, modelRoute: modelRoute)
-    recoveryBlocked.remove(id)
-    return result
+    try await perform(id) { try await $0.restart(id, executor: executor, note: note, modelRoute: modelRoute) }
   }
 
   func discard(_ id: SessionID) async {
-    guard let connection else { return }
-    await RemoteSessionExecution(client: connection.client).discard(id)
+    guard let generation = assignments[id], let worker = generations[generation]?.worker else { return }
+    await worker.discard(id)
   }
 
   func drain() async {
@@ -295,18 +220,20 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   func shutdown() async {
     if let stopping { await stopping.value; return }
     stopped = true
-    let connection = self.connection
-    self.connection = nil
-    let starting = self.starting
-    self.starting = nil
-    let retirement = self.retirement
-    let preparation = self.preparation
+    let generations = Array(generations.values)
+    self.generations.removeAll()
+    let handoffs = Array(handoffs.values)
+    self.handoffs.removeAll()
+    sessionHandoffs.removeAll()
+    scriptChanges?.cancel()
+    let watcher = scriptChanges
+    scriptChanges = nil
     let stopping = Task {
-      starting?.cancel()
-      if let starting, case let .success(started) = await starting.result { await started.stop() }
-      if let connection { await connection.stop() }
-      await retirement?.value
-      if let preparation { _ = await preparation.result }
+      for handoff in handoffs { handoff.cancel() }
+      for generation in generations { await generation.worker.shutdown() }
+      for handoff in handoffs { await handoff.value }
+      await scripts.shutdown()
+      await watcher?.value
     }
     self.stopping = stopping
     await stopping.value

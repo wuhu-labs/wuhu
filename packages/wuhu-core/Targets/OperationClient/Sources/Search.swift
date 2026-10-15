@@ -40,7 +40,13 @@ public extension OperationClient {
       input["resumeEntries"] = .integer(cursor.entry); input["resumeLine"] = .integer(cursor.line)
     }
     input["matchLimit"] = .integer(limit); input["entryLimit"] = .integer(entryLimit)
-    _ = try await describe(machine)
+    let description = try await describe(machine)
+    guard let descriptor = description.kinds.first(where: { $0.name == kind }),
+          let properties = descriptor.inputSchema.object?["properties"]?.object,
+          ["matchLimit", "resumeEntries", "resumeLine"].allSatisfy({ properties[$0] != nil })
+    else {
+      throw OperationError(.kindUnavailable, message: "Machine does not support paged \(kind): agent too old, upgrade", details: ["kind": .string(kind), "reason": "agentTooOld", "started": false])
+    }
     let id = try await start(machine, request: .init(kind: kind, input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) }))), owner: .init(scope: "machine-search/" + UUID().uuidString, key: "operation"))
     var records: [JSONValue] = []; var bytes = 0
     do {

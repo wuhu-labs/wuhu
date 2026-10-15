@@ -79,7 +79,7 @@ public enum ExecutionWorker {
     let providerCatalog: @Sendable () async throws -> ProviderCatalog = { try await catalogs(false) }
     let scripts = Scripts(owner: owner, lifecycle: owner.scriptLifecycle)
     scripts.configureDiscovery(toolRosters: sessionToolRosters())
-    let tools = ToolExecutor(owner: owner, credentials: CredentialResolver.bound { try await owner.providerCredentialBinding($0) }, completionCatalog: catalog, scripts: scripts)
+    let tools = ToolExecutor(owner: owner, credentials: CredentialResolver.bound { try await owner.providerCredentialBinding($0) }, completionCatalog: catalog, scripts: scripts, stopScript: { try await owner.stopRuntimeScript($0, script: $1) })
     let handlers = WorkerHandlerEndpoint(handler: ScriptHandlerExecutor(scripts: scripts, tools: tools))
     let budget = budgetResolver(owner: owner)
     let config = LoopConfig(
@@ -124,6 +124,9 @@ public enum ExecutionWorker {
     })
     let endpoint = try OwnerByteEndpoint(invoke: { call in
       if call.operation == "handler.execute" || call.operation == "owner.cancel" { return try await handlers.invoke(call) }
+      if call.operation == "execution.stop-script" {
+        return try await WorkerScriptControl.invoke(call, scripts: scripts)
+      }
       return try await operations.invoke(call)
     }).endpoint(token: bootstrap.token, hello: hello)
     let listener = try await WorkerListener.bind(socket: bootstrap.workerSocket, handler: endpoint.handler)

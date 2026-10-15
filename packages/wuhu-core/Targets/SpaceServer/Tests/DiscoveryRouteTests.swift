@@ -16,7 +16,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
   return try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await scripts.run() }
     defer { group.cancelAll() }
-    let execution = scripts.start(source, session: session, lifetime: .seconds(30), tools: tools)
+    let execution = try await scripts.start(source, session: session, lifetime: .seconds(30), tools: tools)
     let answer = try await execution.answer(within: .seconds(30), onTimeout: .kill)
     guard case let .result(text) = answer else {
       Issue.record("Discovery script failed: \(answer)")

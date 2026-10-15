@@ -32,8 +32,10 @@ Only `vfs` is the public filesystem compatibility entry point; the typed impleme
 
 The notFound compatibility category requires an explicit failed-lookup marker, never ENOENT alone: missing destination parents for write/move remain io. Read/list first establish metadata existence; missing/inaccessible metadata lookups are notFound, while failed data/directory opens after a successful lookup remain io.
 
-Start refuses unknownKind locally only when the stored description neither lists the kind nor names it in `availability`; a gated or known-but-unlinked kind is sent so the machine, which owns the gate, answers kindUnavailable or permissionDenied.
+Start refuses unknownKind locally only when the stored description neither lists the kind nor names it in `availability`; missing filesystem kinds retain unknownKind and the kind name with an explicit `agent too old, upgrade` message before any start dispatch. A gated or known-but-unlinked kind is sent so the machine, which owns the gate, answers kindUnavailable or permissionDenied.
 
 ## Normal machine tool adapters
 
 `search(machine:query:)` maps normal find/grep requests onto record channels, preserving SearchResult shapes and bounded pages. Opaque cursors bind machine identity and query; paging follows traversal order, not sorted order. Concurrent edits may skip/repeat entries. Invalid or foreign cursors return invalidArgument. Optional matchLimit/resumeEntries/resumeLine kind inputs provide completed page results with nextEntry/nextLine, while unpaged entry-limit operations keep their stopped verdict.
+
+Normal search requires the advertised find/grep input schema to include matchLimit, resumeEntries and resumeLine, even on the first page. An older descriptor (including dev119) or missing search kind throws kindUnavailable with `reason:agentTooOld`, `started:false` and an explicit `agent too old, upgrade` message before claiming or dispatching a start. There is no v1 fallback or unpaged substitution. Current descriptors retain paged behavior.

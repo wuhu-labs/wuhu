@@ -57,6 +57,19 @@ private let pngHeader: [UInt8] = [
     }
   }
 
+  @Test func machineImagesRetainOpaqueReceipts() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let fs = FakeMachineFS(opaqueTokens: true)
+      fs.put("/shot.png", bytes: pngHeader, mtime: 100)
+      var world = ToolWorld(executor: ToolExecutor(space: space, machines: fs.seam), session: try await makeSession(space))
+      guard case let .read(read) = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/shot.png")])) else { throw Mismatch("opaque image read failed") }
+      #expect(read.revision == .machine("opaque:100.0"))
+      #expect(read.image?.pixels != nil)
+      #expect(try await space.imageBytes(try #require(read.image)) == Data(pngHeader))
+    }
+  }
+
   @Test func imagesRecordTheirPixelSize() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

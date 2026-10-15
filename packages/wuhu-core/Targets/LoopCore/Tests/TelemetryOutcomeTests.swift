@@ -22,7 +22,7 @@ import WuhuAI
       ]
       let inference = InferenceScript([Fix.replying("", calls: calls), Fix.replying("done")])
       var config = makeConfig(executeTool: { _ in throw UnexpectedCall("secret failure") }, inference: { try await inference($0) })
-      config.prepareCompaction = { _, _ in throw UnexpectedCall("secret compaction failure") }
+      config.prepareCompaction = { _, _, _ in throw UnexpectedCall("secret compaction failure") }
       try await runService(sessions, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: id)
         try await until("five failed tools") { spans.value.filter { $0.name == .tool }.count == 5 }

@@ -305,7 +305,9 @@ actor ExecSupervisorRegistry {
       guard manifests.count + tombstones.count + malformedDirectories.count < OperationLimits().receipts, active.count < OperationLimits().activeOperations,
             reservations.values.reduce(0, +) + Self.fullReservation <= OperationLimits().bufferBytes else { throw OperationError(.capacityExceeded) }
       let directory = root + "/" + id.uuidString
-      let manifest = SupervisorManifest(version: 1, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: directory + "/control.sock")
+      let legacySocket = directory + "/control.sock"
+      let socket = legacySocket.utf8.count < 104 ? legacySocket : directory + "/s"
+      let manifest = SupervisorManifest(version: 1, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: socket)
       try validateManifest(manifest, directory: directory)
       manifests[id] = manifest
       active.insert(id); reservations[id] = Self.fullReservation

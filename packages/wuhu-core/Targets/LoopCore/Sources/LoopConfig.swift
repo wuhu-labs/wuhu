@@ -112,7 +112,9 @@ public struct LoopConfig: Sendable {
   public var executeTool: @Sendable (ToolInvocation) async throws -> ToolResultPayload
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
   public var compact: @Sendable (SessionID, Transcript) async throws -> CompactionResult
-  public var prepareCompaction: @Sendable (SessionID, Transcript) async throws -> ModelRouteTransition?
+  // The compacted transcript and the target a compact call named, if any. A
+  // throw with a target is the model's refusal: nothing folds.
+  public var prepareCompaction: @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition?
   public var budget: @Sendable (SessionID) async -> ContextBudget
   // Fired when an interrupt cancels a mid-flight tool: the composition root
   // propagates the kill to the effector (a crash-shaped cancellation never
@@ -131,7 +133,7 @@ public struct LoopConfig: Sendable {
     inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply,
     compact: @escaping @Sendable (SessionID, Transcript) async throws -> CompactionResult,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
-    prepareCompaction: @escaping @Sendable (SessionID, Transcript) async throws -> ModelRouteTransition? = { _, _ in nil },
+    prepareCompaction: @escaping @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },

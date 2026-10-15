@@ -68,7 +68,7 @@ extension InProcessScriptOwnerContractTests {
       })
       let scripts = Scripts(owner: owner)
       let tools = ToolExecutor(owner: owner, scripts: scripts)
-      let execution = scripts.start("try { await fetch('https://identity.test', {identity:true}) } catch(e) { result(e.message) }", session: session, lifetime: .seconds(10), tools: tools)
+      let execution = try await scripts.start("try { await fetch('https://identity.test', {identity:true}) } catch(e) { result(e.message) }", session: session, lifetime: .seconds(10), tools: tools)
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
         let answer = try? await execution.answer(within: .seconds(10), onTimeout: .kill)

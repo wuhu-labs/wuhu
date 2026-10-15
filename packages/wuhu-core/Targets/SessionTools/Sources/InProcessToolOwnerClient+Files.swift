@@ -1,4 +1,8 @@
-import Foundation
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import struct MachineContract.Base64Data
 import struct MachineContract.MachineEntry
 import struct MachineContract.MachineID
@@ -96,7 +100,7 @@ extension InProcessToolOwnerClient {
       )
     case let .machine(machine, path):
       try await guardMachineFile(machine, path: path, address: address, logged: logged)
-      let revision = try await machineWrite(machine, path: path, bytes: Array(arguments.content.utf8))
+      let revision = try await machineWrite(machine, path: path, bytes: Array(arguments.content.utf8), ifMatch: logged)
       let payload = ToolResultPayload.write(.init(path: address.rendered, revision: revision))
       try await deliverContext(session, callID, touching: address.folder, state: state)
       try await store.recordReceipt(session, toolCallID: callID, payload: payload)
@@ -133,7 +137,7 @@ extension InProcessToolOwnerClient {
         payload: { .edit(.init(path: address.rendered, revision: .journal($0))) },
       )
     case let .machine(machine, path):
-      let revision = try await machineWrite(machine, path: path, bytes: Array(edited.utf8))
+      let revision = try await machineWrite(machine, path: path, bytes: Array(edited.utf8), ifMatch: current)
       let payload = ToolResultPayload.edit(.init(path: address.rendered, revision: revision))
       try await deliverContext(session, callID, touching: address.folder, state: state)
       try await store.recordReceipt(session, toolCallID: callID, payload: payload)
@@ -151,9 +155,9 @@ extension InProcessToolOwnerClient {
   ) throws(ToolProblem) -> FileRevision? {
     guard let logged = state.fileAccessLog[address.rendered] else { return nil }
     switch (address, logged) {
-    case (.space, .journal), (.machine, .mtime), (.system, .journal):
+    case (.space, .journal), (.machine, .mtime), (.machine, .machine), (.system, .journal):
       return logged
-    case (.space, .mtime), (.machine, .journal), (.system, .mtime):
+    case (.space, .mtime), (.space, .machine), (.machine, .journal), (.system, .mtime), (.system, .machine):
       throw ToolProblem("internal: logged revision kind does not match the backend of \(address.rendered)")
     }
   }
@@ -184,7 +188,7 @@ extension InProcessToolOwnerClient {
   ) async throws -> ToolResultPayload {
     let ifMatchRev: Int64? = switch logged {
     case let .journal(rev): rev
-    case .mtime, nil: nil
+    case .mtime, .machine, nil: nil
     }
     do {
       let recorded = try await store.recordedSpaceWrite(
@@ -222,6 +226,8 @@ extension InProcessToolOwnerClient {
       throw staleProblem(address)
     case let (.mtime(read)?, entry?):
       guard Date(timeIntervalSince1970: entry.mtime) == read else { throw staleProblem(address) }
+    case let (.machine(token)?, entry?):
+      guard entry.token == token else { throw staleProblem(address) }
     case (.journal?, _):
       throw ToolProblem("internal: journal revision logged for machine path \(address.rendered)")
     }
@@ -247,11 +253,8 @@ extension InProcessToolOwnerClient {
       throw ToolProblem("\(address.rendered) is not a file on that machine")
     }
     guard entry.size <= ImageMedia.maxReadBytes else { throw tooLarge(entry.size) }
-    guard let mtime = Double(entry.token) else {
-      throw ToolProblem("machine minted a non-mtime token for \(path)")
-    }
     let bytes = try await machineFile(machine, path: path, entry: entry, reference: address.rendered)
-    return (.mtime(Date(timeIntervalSince1970: mtime)), Data(bytes))
+    return (machineRevision(entry.token), Data(bytes))
   }
 
   func readRaw(_ address: Address) async throws -> (FileRevision, Data) {
@@ -265,10 +268,7 @@ extension InProcessToolOwnerClient {
     case let .machine(machine, path):
       switch try await machineVFS(machine, .read(path: path)) {
       case let .file(token, data):
-        guard let mtime = Double(token) else {
-          throw ToolProblem("machine minted a non-mtime token for \(path)")
-        }
-        return (.mtime(Date(timeIntervalSince1970: mtime)), Data(data.bytes))
+        return (machineRevision(token), Data(data.bytes))
       case let .error(error):
         throw ToolProblem(error.message)
       default:
@@ -281,7 +281,7 @@ extension InProcessToolOwnerClient {
     }
   }
 
-  func machineWrite(_ machine: MachineID, path: String, bytes: [UInt8]) async throws -> FileRevision {
+  func machineWrite(_ machine: MachineID, path: String, bytes: [UInt8], ifMatch: FileRevision? = nil) async throws -> FileRevision {
     if let parent = parent(of: path), parent != "/" {
       switch try await machineVFS(machine, .mkdir(path: parent)) {
       case .ok, .error:
@@ -290,17 +290,24 @@ extension InProcessToolOwnerClient {
         throw ToolProblem("machine returned an unexpected mkdir result for \(parent)")
       }
     }
-    switch try await machineVFS(machine, .write(path: path, data: Base64Data(bytes), ifMatch: nil)) {
+    let token: String? = switch ifMatch {
+    case let .machine(token): token
+    case let .mtime(date): String(date.timeIntervalSince1970)
+    case .journal, nil: nil
+    }
+    switch try await machineVFS(machine, .write(path: path, data: Base64Data(bytes), ifMatch: token)) {
     case let .written(token):
-      guard let mtime = Double(token) else {
-        throw ToolProblem("machine minted a non-mtime token for \(path)")
-      }
-      return .mtime(Date(timeIntervalSince1970: mtime))
+      return machineRevision(token)
     case let .error(error):
       throw ToolProblem(error.message)
     default:
       throw ToolProblem("machine returned an unexpected write result for \(path)")
     }
+  }
+
+  private func machineRevision(_ token: String) -> FileRevision {
+    if let mtime = Double(token), mtime.isFinite { return .mtime(Date(timeIntervalSince1970: mtime)) }
+    return .machine(token)
   }
 
   func machineStat(_ machine: MachineID, path: String) async throws -> MachineEntry? {

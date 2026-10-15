@@ -28,7 +28,7 @@ public enum KernelToolset {
     ),
     Tool(
       name: KernelTool.compact.rawValue,
-      description: "Compact the conversation: everything before the cut is replaced by your summary. Name a bookmark to keep the transcript after it; omit it to fold everything. List files to re-read so the next generation re-establishes its working context.",
+      description: "Compact the conversation: everything before the cut is replaced by your summary. Name a bookmark to keep the transcript after it; omit it to fold everything. List files to re-read so the next generation re-establishes its working context. Name a model to continue on it from the summary: the target is checked first, and a refused one folds nothing.",
       parameters: .object([
         "type": .string("object"),
         "properties": .object([
@@ -39,6 +39,8 @@ public enum KernelToolset {
             "items": .object(["type": .string("string")]),
           ]),
           "bookmark": .object(["type": .string("string"), "description": .string("Keep the transcript after this bookmark.")]),
+          "model": .object(["type": .string("string"), "description": .string("Continue on this target after the compaction: provider/model or a model group id from /model-groups.json. Omit to stay on the current one.")]),
+          "effort": .object(["type": .string("string"), "description": .string("Reasoning effort for model; defaults to the current effort when model names the current target, else the target's default.")]),
         ]),
         "required": .array([.string("summary")]),
         "additionalProperties": .bool(false),
@@ -55,12 +57,18 @@ struct CompactArguments: Codable {
   var summary: String
   var preReads: [String]?
   var bookmark: String?
+  var model: String?
+  var effort: String?
 
   enum CodingKeys: String, CodingKey {
     case summary
     case preReads = "pre_reads"
     case bookmark
+    case model
+    case effort
   }
+
+  var target: CompactionTarget? { model.map { CompactionTarget(model: $0, effort: effort) } }
 
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -68,15 +76,23 @@ struct CompactArguments: Codable {
     guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CompactArgumentsError.emptySummary }
     preReads = try container.decodeIfPresent([String].self, forKey: .preReads)
     bookmark = try container.decodeIfPresent(String.self, forKey: .bookmark)
+    model = try container.decodeIfPresent(String.self, forKey: .model)
+    effort = try container.decodeIfPresent(String.self, forKey: .effort)
+    if let model, model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw CompactArgumentsError.emptyModel }
+    if effort != nil, model == nil { throw CompactArgumentsError.effortWithoutModel }
   }
 }
 
 enum CompactArgumentsError: Error, Equatable, CustomStringConvertible {
   case emptySummary
+  case emptyModel
+  case effortWithoutModel
 
   var description: String {
     switch self {
     case .emptySummary: "emptySummary: compact requires a non-empty summary"
+    case .emptyModel: "emptyModel: model names provider/model or a model group id; omit it to stay on the current target"
+    case .effortWithoutModel: "effortWithoutModel: effort applies to a model target; name model too"
     }
   }
 }

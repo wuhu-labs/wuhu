@@ -59,6 +59,7 @@ public struct CompactResult: Hashable, Sendable, Codable {
 public enum FileRevision: Hashable, Sendable, Codable {
   case journal(Int64)
   case mtime(Date)
+  case machine(String)
 }
 
 public struct ScopeContext: Hashable, Sendable, Codable {

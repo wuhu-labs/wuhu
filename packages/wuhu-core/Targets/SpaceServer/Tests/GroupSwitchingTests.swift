@@ -112,10 +112,10 @@ import WuhuAI
       let head = GenerationHead(id: UUID(), timestamp: Date(), summary: String(repeating: "important summary ", count: 50), snapshot: .init(preReads: ["/task.md"]))
       let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
       let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
-      #expect(try await prepare(id, compacted) == nil)
+      #expect(try await prepare(id, compacted, nil) == nil)
       harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
       harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
-      let transition = try #require(await prepare(id, compacted))
+      let transition = try #require(await prepare(id, compacted, nil))
       #expect(transition.route.member == "b")
       #expect(transition.route.reason == .compaction)
       guard case let .generationHead(portableHead) = transition.transcript.items[0] else { Issue.record("missing head"); return }
@@ -125,7 +125,7 @@ import WuhuAI
       #expect(try await owner.modelRoute(id) == transition.route)
       #expect(try await harness.store.modelRouteHistory(id) == [old, transition.route])
       #expect(try await harness.store.transcript(id).replayBinding?.epoch == transition.route.epoch)
-      #expect(try await prepare(id, transition.transcript) == nil)
+      #expect(try await prepare(id, transition.transcript, nil) == nil)
     }
   }
 
@@ -376,7 +376,7 @@ extension GroupSwitchingTests {
       let ready = quota
       let transcript = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "summary", snapshot: .init()), kept: nil)
       let prepare = compactionPlacement(owner: owner, catalog: { ready }, usage: harness.runtime.usage)
-      #expect(try await prepare(id, transcript) == nil)
+      #expect(try await prepare(id, transcript, nil) == nil)
       var missing = source
       missing.credentials = .bound { provider in
         if provider == "alternate" { return nil }
@@ -384,7 +384,7 @@ extension GroupSwitchingTests {
       }
       let unavailable = missing
       let invalid = compactionPlacement(owner: owner, catalog: { unavailable }, usage: harness.runtime.usage)
-      await #expect(throws: CatalogError.groupMember(group: "work", member: "b", reason: .missingCredential(provider: "alternate"))) { try await invalid(id, transcript) }
+      await #expect(throws: CatalogError.groupMember(group: "work", member: "b", reason: .missingCredential(provider: "alternate"))) { try await invalid(id, transcript, nil) }
     }
   }
 }
@@ -469,7 +469,7 @@ extension GroupSwitchingTests {
         let kept = 1 ..< source.items.count
         let compacted = source.compacted(head: head, kept: kept)
         let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
-        let transition = try #require(await prepare(id, compacted))
+        let transition = try #require(await prepare(id, compacted, nil))
         #expect(transition.route.member == "b")
         #expect(transition.route.switchCause == nil)
         let committed = try await owner.writeCompaction(id, closing: nil, head: head, kept: kept, completingCompactRequest: nil, transition: transition)

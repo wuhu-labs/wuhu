@@ -7,12 +7,16 @@ import struct InferenceKit.AttemptEventSink
 import class InferenceKit.AttemptHub
 import enum JSONValue.JSONValue
 import struct SessionDomain.SessionID
+import enum SessionDomain.ToolResultPayload
 import struct SessionTools.ScriptLifecycle
 import struct SpaceContract.ProviderUsage
 import struct WorkerProtocol.WorkerCall
 import struct WorkerProtocol.WorkerProtocolError
 
 public struct WorkerRuntimeOwner: Sendable {
+  public var scriptStarted: @Sendable (SessionID, String) async throws -> Void = { _, _ in }
+  public var scriptEnded: @Sendable (SessionID, String) async -> Void = { _, _ in }
+  public var stopScript: @Sendable (SessionID, String) async throws -> ToolResultPayload = { _, _ in throw WorkerProtocolError(.unavailable, message: "Cross-worker script control is unavailable") }
   let scriptLost: @Sendable (SessionID, String) async -> Void
   let attempts: AttemptHub
   let usage: @Sendable () async throws -> [String: ProviderUsage]
@@ -53,13 +57,18 @@ actor ParentWorkerRuntime {
       case "runtime.script-started":
         let request = try ownerDecode(ScriptActivity.self, call.payload)
         guard scripts[request.script] == nil, scripts.count < 1024 else { throw WorkerProtocolError(.capacityExceeded, message: "Too many worker scripts") }
+        try await owner.scriptStarted(request.session, request.script)
         scripts[request.script] = request.session
         return .bool(true)
       case "runtime.script-ended":
         let request = try ownerDecode(ScriptActivity.self, call.payload)
         guard scripts[request.script] == request.session else { throw WorkerProtocolError(.invalidMessage, message: "Unknown worker script") }
         scripts.removeValue(forKey: request.script)
+        await owner.scriptEnded(request.session, request.script)
         return .bool(true)
+      case "runtime.stop-script":
+        let request = try ownerDecode(ScriptActivity.self, call.payload)
+        return try await ownerEncode(owner.stopScript(request.session, request.script))
       case "runtime.attempt":
         let request = try ownerDecode(AttemptPublication.self, call.payload)
         let event = request.event.event
@@ -111,6 +120,11 @@ extension RemoteExecutionOwner {
     }, ended: { [rpc] session, script in
       await Task { let _: Bool? = try? await rpc.call("runtime.script-ended", ScriptActivity(session: session, script: script)) }.value
     })
+  }
+
+  public func stopRuntimeScript(_ session: SessionID, script: String) async throws -> ToolResultPayload {
+    try await rpc.client.requireCapability(ExecutionWorkerBootstrap.handoffCapability)
+    return try await rpc.call("runtime.stop-script", ScriptActivity(session: session, script: script))
   }
 
   public var attemptEvents: AttemptEventSink {

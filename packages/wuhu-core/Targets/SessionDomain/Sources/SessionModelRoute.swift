@@ -110,7 +110,29 @@ public struct ModelRouteTransition: Sendable {
   }
 }
 
+/// The model a `compact` call asked to continue on: `provider/model` or a
+/// model-group id, with an optional effort. The switch commits with the
+/// compaction or not at all.
+public struct CompactionTarget: Hashable, Sendable {
+  public var model: String
+  public var effort: String?
+
+  public init(model: String, effort: String? = nil) {
+    self.model = model
+    self.effort = effort
+  }
+}
+
 extension Transcript {
+  /// The notice for a switch the session asked for at its own compaction
+  /// when it leaves or changes its group: `from`/`to` are `provider/model`
+  /// for a concrete target and `group:member` for a group placement.
+  public mutating func appendRequestedSwitchNotice(from: String, to: String) {
+    @Dependency(\.uuid) var uuid
+    @Dependency(\.date.now) var now
+    append(.notification(.init(id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("model-route"), content: .init(text: "Model switched \(from) → \(to) (requested at compaction). Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read material if needed."))))
+  }
+
   public mutating func appendRouteNotice(group: String, from: String, to: String, reason: String) {
     @Dependency(\.uuid) var uuid
     @Dependency(\.date.now) var now

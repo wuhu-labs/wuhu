@@ -96,9 +96,13 @@ struct ClientServerFaithfulnessTests {
   }
 
   @Test func observeGlobOncePrintsFirstDeltaWithoutCursor() async throws {
-    let harness = try ServerHarness()
+    let (started, continuation) = AsyncStream<Void>.makeStream()
+    let harness = try ServerHarness(onObservationResponse: {
+      continuation.yield(())
+      continuation.finish()
+    })
     async let observed: Int32 = harness.run(["observe", "--glob", "/**", "--once"])
-    await Task.yield()
+    for await _ in started {}
     #expect(await harness.run(["write", "--force", "/g.md", "--body", "x"]) == 0)
     #expect(await observed == 0)
     let output = await harness.stdout.text
@@ -113,7 +117,7 @@ private struct ServerHarness {
   let stderr: ServerSink
   let bytes = ServerByteSink()
 
-  init(space: String = "space") throws {
+  init(space: String = "space", onObservationResponse: @escaping @Sendable () -> Void = {}) throws {
     self.temp = try ServerTemp(space: space)
     let (createdSpace, hub) = try withDependencies {
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
@@ -130,7 +134,11 @@ private struct ServerHarness {
     self.stderr = stderr
     self.runner = CommandRunner(
       fetch: client,
-      observeFetch: client,
+      observeFetch: FetchClient { request in
+        let response = try await client(request)
+        onObservationResponse()
+        return response
+      },
       stdin: { "" },
       stdout: { text in await stdout.append(text) },
       stderr: { text in await stderr.append(text) },

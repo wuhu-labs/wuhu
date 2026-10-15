@@ -205,10 +205,13 @@ final class FakeMachineFS: Sendable {
 
   let files = Box<[String: File]>([:])
   let ranges: Bool
+  let opaqueTokens: Bool
+  let writes = Box<[VFSOp]>([])
   let reads = Box<[VFSOp]>([])
 
-  init(ranges: Bool = true) {
+  init(ranges: Bool = true, opaqueTokens: Bool = false) {
     self.ranges = ranges
+    self.opaqueTokens = opaqueTokens
   }
 
   // A file here replaces the one at its path right after that path's next stat.
@@ -226,8 +229,9 @@ final class FakeMachineFS: Sendable {
   }
 
   var seam: MachineSeam {
-    MachineSeam(
-      vfs: { [files, clockSeconds, stats, ranges, reads, replacedAfterStat] _, op in
+    let token: @Sendable (Double) -> String = { [opaqueTokens] in opaqueTokens ? "opaque:\($0)" : String($0) }
+    return MachineSeam(
+      vfs: { [files, clockSeconds, stats, ranges, reads, writes, replacedAfterStat] _, op in
         switch op {
         case let .read(path, offset, length):
           reads.withLock { $0.append(op) }
@@ -238,11 +242,11 @@ final class FakeMachineFS: Sendable {
             guard file.content.count <= VFSDefaults.maxReadBytes else {
               return .error(error: .init(code: .tooLarge, message: "read of \(path) exceeds the wire bound"))
             }
-            return .file(token: String(file.mtime), data: .init(file.content))
+            return .file(token: token(file.mtime), data: .init(file.content))
           }
           let start = min(offset ?? 0, file.content.count)
           let end = min(start + (length ?? file.content.count), file.content.count)
-          return .file(token: String(file.mtime), data: .init(Array(file.content[start ..< end])))
+          return .file(token: token(file.mtime), data: .init(Array(file.content[start ..< end])))
         case let .stat(path):
           stats.withLock { $0 += 1 }
           let name = String(path.split(separator: "/").last ?? "")
@@ -254,7 +258,7 @@ final class FakeMachineFS: Sendable {
               name: name,
               kind: .file,
               size: file.content.count,
-              token: String(file.mtime),
+              token: token(file.mtime),
               mtime: file.mtime,
             ))
           }
@@ -262,13 +266,17 @@ final class FakeMachineFS: Sendable {
             return .error(error: .init(code: .notFound, message: "not found: \(path)"))
           }
           return .entry(entry: .init(name: name, kind: .directory, size: 0, token: "", mtime: 0))
-        case let .write(path, data, _):
+        case let .write(path, data, ifMatch):
+          writes.withLock { $0.append(op) }
+          if let ifMatch, files.withLock({ $0[path].map { token($0.mtime) } }) != ifMatch {
+            return .error(error: .init(code: .conflict, message: "stale token; re-read"))
+          }
           let mtime = clockSeconds.withLock { seconds -> Double in
             seconds += 1
             return seconds
           }
           files.withLock { $0[path] = File(mtime: mtime, content: data.bytes) }
-          return .written(token: String(mtime))
+          return .written(token: token(mtime))
         case .mkdir:
           return .ok
         case let .ls(path):
@@ -284,7 +292,7 @@ final class FakeMachineFS: Sendable {
                   name: name,
                   kind: .file,
                   size: file.content.count,
-                  token: String(file.mtime),
+                  token: token(file.mtime),
                   mtime: file.mtime,
                 )
             }

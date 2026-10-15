@@ -165,7 +165,15 @@ public actor OperationClient {
       ])
     }
     guard d.acceptingStarts else { throw OperationError(.leaving, details: ["started": false]) }
-    guard d.kinds.contains(where: { $0.name == start.kind }) || d.availability?[start.kind] != nil else { throw OperationError(.unknownKind, message: "Machine does not support \(start.kind)", details: ["kind": .string(start.kind)]) }
+    guard d.kinds.contains(where: { $0.name == start.kind }) || d.availability?[start.kind] != nil else {
+      let message: String
+      switch start.kind {
+      case "stat.v1", "list.v1", "read.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1":
+        message = "Machine does not support \(start.kind): agent too old, upgrade"
+      default: message = "Machine does not support \(start.kind)"
+      }
+      throw OperationError(.unknownKind, message: message, details: ["kind": .string(start.kind)])
+    }
     let body = try Body.json(start)
     guard (body.contentLength ?? 0) <= d.limits.inputBytes else { throw OperationError(.inputTooLarge) }
     var proposed = ClientRecord(id: ids(), correlation: ids(), machine: machine, start: start, description: d)

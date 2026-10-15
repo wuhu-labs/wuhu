@@ -27,7 +27,7 @@ public final class Scripts: Sendable {
     await withDiscardingTaskGroup { group in
       for await execution in launches {
         group.addTask {
-          await execution.run(owner: self.owner, lifecycle: self.lifecycle)
+          await execution.run(owner: self.owner, lifecycle: self.lifecycle, registered: true)
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
@@ -55,7 +55,7 @@ public final class Scripts: Sendable {
     }
   }
 
-  func start(_ source: String, session: SessionID, lifetime: Duration, tools: ToolExecutor) -> ScriptExecution {
+  func start(_ source: String, session: SessionID, lifetime: Duration, tools: ToolExecutor) async throws -> ScriptExecution {
     @Dependency(\.uuid) var uuid
     let id = String(uuid().uuidString.lowercased().prefix(8))
     let execution = ScriptExecution(
@@ -67,6 +67,9 @@ public final class Scripts: Sendable {
       tools: tools,
       machines: owner.scriptMachines(for: session),
     )
+    try await lifecycle?.started(session, id)
+    do { try Task.checkCancellation() }
+    catch { await lifecycle?.ended(session, id); throw error }
     running.withLock { $0[id] = execution }
     launch.yield(execution)
     return execution
@@ -74,6 +77,17 @@ public final class Scripts: Sendable {
 
   func execution(_ id: String, of session: SessionID) -> ScriptExecution? {
     running.withLock { $0[id] }.flatMap { $0.session == session ? $0 : nil }
+  }
+
+  public func stop(_ id: String, session: SessionID) async throws -> ToolResultPayload {
+    guard let execution = execution(id, of: session) else {
+      throw ToolProblem("stop_script: you have no running script \(id)")
+    }
+    let output = switch await execution.stop() {
+    case let .killed(stop): "script \(execution.id) was killed: \(stop.killReason)"
+    case .released, .failed: "script \(execution.id) stopped"
+    }
+    return .script(.init(output: output))
   }
 
   var isIdle: Bool {
@@ -107,7 +121,7 @@ extension ToolExecutor {
     guard timeout > 0, lifetime > 0 else {
       throw ToolProblem("run_script: timeout_seconds and max_lifetime_seconds must be positive")
     }
-    let execution = scripts.start(arguments.source, session: session, lifetime: .seconds(lifetime), tools: self)
+    let execution = try await scripts.start(arguments.source, session: session, lifetime: .seconds(lifetime), tools: self)
     switch try await execution.answer(within: .seconds(timeout), onTimeout: arguments.onTimeout ?? .detach) {
     case let .result(text):
       let note = "\n\n[script \(execution.id): any update() after this arrives as a message; stop_script ends it while it runs.]"
@@ -123,14 +137,10 @@ extension ToolExecutor {
   }
 
   func stopScript(_ session: SessionID, _ arguments: StopScriptArguments) async throws -> ToolResultPayload {
-    guard let execution = scripts?.execution(arguments.id, of: session) else {
-      throw ToolProblem("stop_script: you have no running script \(arguments.id)")
-    }
-    let output = switch await execution.stop() {
-    case let .killed(stop): "script \(execution.id) was killed: \(stop.killReason)"
-    case .released, .failed: "script \(execution.id) stopped"
-    }
-    return .script(.init(output: output))
+    if let scripts, scripts.execution(arguments.id, of: session) != nil { return try await scripts.stop(arguments.id, session: session) }
+    if let stopScript = routedScriptStop { return try await stopScript(session, arguments.id) }
+    guard let scripts else { throw ToolProblem("stop_script is not available here") }
+    return try await scripts.stop(arguments.id, session: session)
   }
 }
 

@@ -90,3 +90,9 @@ A run passes when every `required` deterministic check passes **and** the judge 
 ## 13. model-route-handoff
 
 _Text-only smoke:_ a last-resort quota route notice with an outstanding request. The agent explains its next action in one sentence without writing files. The judge requires continuing the outstanding request, re-reading material when needed, and respecting already committed tool receipts; a route change does not complete a request or permit replaying the former account's signatures.
+
+## 14. compact-to-model
+
+_Prompt:_ "Compact your context now and continue on the named model group bench-deepseek: pass that group as the compact tool’s target model, not the concrete DeepSeek provider/model behind it. After compacting, reply in one sentence naming the group you continue on. Do not create or edit files or message anyone else."
+
+_Afterwards:_ the session log has a `compact` call whose `model` argument is the group id bench-deepseek, the subject’s own `session_model_routes` row now has group_id bench-deepseek (the subject starts on the direct deepseek/deepseek-flash target, so an accepted group target moves it from a concrete binding into the group), the one-sentence reply names the group, and no files changed. Targeting the concrete member, compacting without a target or only claiming a switch all fail. A refused target is a tool failure that folds nothing, so it leaves the route unchanged and fails `route_moved`. Scored runs need a release with targeted compaction.

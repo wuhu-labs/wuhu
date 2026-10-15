@@ -181,7 +181,7 @@ extension PortableThinkingTests {
         } else {
           let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init())
           let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
-          let transition = try #require(await compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)(id, compacted))
+          let transition = try #require(await compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)(id, compacted, nil))
           _ = try await owner.writeCompaction(id, closing: nil, head: head, kept: 0 ..< source.items.count, completingCompactRequest: nil, transition: transition)
         }
         #expect(try await owner.modelRoute(id)?.member == "b")

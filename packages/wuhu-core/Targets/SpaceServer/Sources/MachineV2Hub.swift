@@ -24,9 +24,14 @@ actor MachineV2Hub {
   }
 
   let space: Space
+  /// Runs between a self-revoke's verified handshake and its transaction; tests park a revoke here.
+  let revocationGate: @Sendable (MachineID) async -> Void
   var routes: [String: Route] = [:]
   private var failure: OperationError?
-  init(space: Space) { self.space = space }
+  init(space: Space, revocationGate: @escaping @Sendable (MachineID) async -> Void = { _ in }) {
+    self.space = space
+    self.revocationGate = revocationGate
+  }
 
   func fail(_ error: OperationError) {
     failure = error

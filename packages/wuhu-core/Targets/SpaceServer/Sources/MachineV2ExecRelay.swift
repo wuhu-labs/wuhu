@@ -13,6 +13,7 @@ import struct OperationClient.OperationOwner
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.Verdict
+import struct OperationProtocol.WriteReceipt
 import Serve
 import struct SessionDomain.SessionID
 import SpaceCore
@@ -212,9 +213,13 @@ extension MachineV2Service {
                 _ = try await client.stop(id, reason: "outputLimit")
               }
             }
-            if snapshot.channelEnd {
+            if snapshot.channelEnd, let verdict = snapshot.verdict {
               _ = try await client.poll(id, channel: channel, terminalAck: true)
-              return snapshot.verdict
+              return verdict
+            }
+            if snapshot.channelEnd {
+              @Dependency(\.continuousClock) var clock
+              try await clock.sleep(for: .milliseconds(100))
             }
           }
         }
@@ -232,7 +237,9 @@ extension MachineV2Service {
   private func input(_ client: OperationClient, id: UUID, bytes: Data, end: Bool) async throws {
     @Dependency(\.continuousClock) var clock
     while true {
-      let receipt = try await client.write(id, channel: "stdin", payload: ChannelPayload(data: bytes), end: end)
+      let receipt: WriteReceipt
+      do { receipt = try await client.write(id, channel: "stdin", payload: ChannelPayload(data: bytes), end: end) }
+      catch let error as OperationError where error.code == .operationEnded { return }
       if !receipt.blocked { return }
       try await clock.sleep(for: .milliseconds(10))
     }

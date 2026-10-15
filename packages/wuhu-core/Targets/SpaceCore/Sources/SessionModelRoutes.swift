@@ -189,15 +189,30 @@ extension Sessions {
     guard let row = try SessionModelRouteRow.where({ $0.sessionID.eq(key) }).fetchOne(db), row.routeEpoch == transition.expectedEpoch else { throw PortableHandoffConflict.routeChanged }
     let old = try decode(SessionModelRoute.self, from: row.payload)
     let route = transition.route
-    guard old.group != nil, old.group == route.group, route.member != old.member, route.epoch != old.epoch, route.failure == nil,
-          transition.transcript.replayBinding?.epoch == route.epoch, transition.transcript.pendingToolCallIDs.isEmpty else { throw PortableHandoffConflict.routeChanged }
+    guard route.failure == nil, (route.group == nil) == (route.member == nil), transition.transcript.pendingToolCallIDs.isEmpty else { throw PortableHandoffConflict.routeChanged }
+    let config = SessionExecutor.kernel(route.specifier).configJSON
+    if route.epoch == old.epoch {
+      // Effort only: same group intent, member, model and binding, so the
+      // transcript replays as it is and history keeps the one decision.
+      var unchanged = route
+      unchanged.specifier.effort = old.specifier.effort
+      unchanged.failure = old.failure
+      guard unchanged == old, route.specifier.effort != old.specifier.effort else { throw PortableHandoffConflict.routeChanged }
+      try RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config }.execute(db)
+      let payload = try encode(route)
+      try SessionModelRouteRow.where { $0.sessionID.eq(key) }.update { $0.payload = payload; $0.phase = route.group == nil ? "bound" : "pinned" }.execute(db)
+      return
+    }
+    // A server placement moves within the held group; a requested switch may
+    // leave it, join another, or bind to a concrete model.
+    guard route.group != old.group || route.member != old.member || route.specifier != old.specifier,
+          transition.transcript.replayBinding?.epoch == route.epoch else { throw PortableHandoffConflict.routeChanged }
     guard !transition.transcript.items.contains(where: { item in
       guard case let .assistant(entry) = item else { return false }
       return entry.content.contains { block in
         switch block { case .reasoning(.encrypted), .hostedTool: true; default: false }
       }
     }) else { throw PortableHandoffConflict.routeChanged }
-    let config = SessionExecutor.kernel(route.specifier).configJSON
     try RouteExecutorRow.where { $0.id.eq(key) }.update { $0.executorConfig = config }.execute(db)
     try writeModelRoute(key, route: route, in: db)
   }

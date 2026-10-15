@@ -95,12 +95,68 @@ private actor SupervisorFixture {
   }
 
   nonisolated var files: SupervisorFiles { .init(create: { await self.create($0, $1) }, load: { try await self.load($0) }, list: { _ in await self.directories() }) }
-  nonisolated func registry(probe: Bool = false, clock: OperationClock = .continuous) throws -> ExecSupervisorRegistry {
-    try .init(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, _ in if probe { return try await self.launchProbe() }; await self.launch(); return nil })
+  nonisolated func registry(probe: Bool = false, clock: OperationClock = .continuous, root: String = "/tmp/ops") throws -> ExecSupervisorRegistry {
+    try .init(machine: "test", operationsDirectory: root, executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, _ in if probe { return try await self.launchProbe() }; await self.launch(); return nil })
   }
 }
 
 @Suite struct RegistryContractTests {
+  @Test func normalMacHomeStartsWithCompactSocketAndRecovers() async throws {
+    let root = "/Users/someone/.wuhu/machine-v2/mc_fixture01/operations"
+    let effects = SupervisorFixture(); let registry = try effects.registry(root: root); let id = UUID()
+    let response = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))
+    #expect(response.status.code == 200)
+    let directory = root + "/" + id.uuidString
+    let manifest = try await effects.load(directory)
+    #expect((directory + "/control.sock").utf8.count == 105)
+    #expect(manifest.socket == directory + "/s")
+    #expect(manifest.socket.utf8.count == 94)
+    let recovered = try effects.registry(root: root)
+    try await recovered.recover()
+    #expect(try await recovered.handler(execRequest(id)).status.code == 200)
+    #expect(await effects.launches == 1)
+  }
+
+  @Test func shortOperationsRootRetainsLegacySocket() async throws {
+    let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
+    #expect(try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))).status.code == 200)
+    let directory = "/tmp/ops/" + id.uuidString
+    #expect(try await effects.load(directory).socket == directory + "/control.sock")
+  }
+
+  @Test func legacyControlSocketManifestRecoversWithoutRelaunch() async throws {
+    let effects = SupervisorFixture(); let id = UUID(); let directory = "/tmp/ops/" + id.uuidString
+    let manifest = SupervisorManifest(version: 1, machine: "test", operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: directory + "/control.sock")
+    await effects.create(directory, manifest)
+    let recovered = try effects.registry()
+    try await recovered.recover()
+    #expect(try await recovered.handler(execRequest(id)).status.code == 200)
+    #expect(await effects.launches == 0)
+    let requests = await effects.requests
+    #expect(requests.contains { $0.url.path == "/identity" })
+    #expect(requests.allSatisfy { $0.url.host?.removingPercentEncoding == manifest.socket })
+    try await recovered.leave()
+    #expect(try await recovered.departureSettled())
+  }
+
+  @Test func manifestSocketValidationAcceptsOnlyExactBoundedBasenames() throws {
+    let id = UUID(); let nonce = UUID().uuidString + UUID().uuidString
+    let directory = "/tmp/ops/" + id.uuidString
+    for suffix in ["/s", "/control.sock"] {
+      try validateManifest(SupervisorManifest(version: 1, machine: "test", operation: id, nonce: nonce, socket: directory + suffix), directory: directory)
+    }
+    for socket in [directory + "/other", directory + "/../s", "/tmp/s"] {
+      #expect(throws: OperationError.self) { try validateManifest(SupervisorManifest(version: 1, machine: "test", operation: id, nonce: nonce, socket: socket), directory: directory) }
+    }
+    for count in [103, 104] {
+      let padded = "/" + String(repeating: "x", count: count - 40) + "/" + id.uuidString
+      let manifest = SupervisorManifest(version: 1, machine: "test", operation: id, nonce: nonce, socket: padded + "/s")
+      #expect(manifest.socket.utf8.count == count)
+      if count == 103 { try validateManifest(manifest, directory: padded) }
+      else { #expect(throws: OperationError.self) { try validateManifest(manifest, directory: padded) } }
+    }
+  }
+
   @Test func explicitLegacy404DrainsThroughExistingOperationStopAndRetainedReceipt() async throws {
     let effects = SupervisorFixture(); let registry = try effects.registry(); let id = UUID()
     _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false]))))

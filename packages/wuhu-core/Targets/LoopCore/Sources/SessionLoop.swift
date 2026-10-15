@@ -65,12 +65,14 @@ extension SessionActor {
       case .healthy:
         break
       }
+      guard !yielding else { return }
 
       if (try live).transcript.hasPendingCacheWarming, try await !loopConfig.allowCacheWarming(id) {
         let transcript = try await repo.discardPendingCacheWarming()
         try modify { $0.transcript = transcript }
       }
       guard try await refreshRegisteredSubscriptions() else { return }
+      guard !yielding else { return }
       if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
@@ -79,6 +81,7 @@ extension SessionActor {
       let fullness = try live.transcript.contextFullness(budget: budget)
       try Task.checkCancellation()
       guard !(try live).archiving else { return }
+      guard !yielding else { return }
       if fullness >= loopConfig.thresholds.hard {
         try await runInference(mode: .forcedCompact)
       } else if (try live).queueHead > (try live).queueTail {
@@ -326,7 +329,20 @@ extension SessionActor {
       provenance: .toolCall(callID),
       payload: .compact(.init(summary: arguments.summary)),
     )
-    let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept))
+    let transition: ModelRouteTransition?
+    if let target = arguments.target {
+      do {
+        transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), target)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        let payload = ToolResultPayload.failure(.init(message: "compact target \"\(target.model)\" refused, nothing was folded: \(error)"))
+        try await writeToolResult(.toolCall(callID), payload)
+        return payload
+      }
+    } else {
+      transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), nil)
+    }
     let compacted = try await repo.writeCompaction(closing: closing, head: head, kept: kept, transition: transition)
     try modify {
       $0.transcript = compacted
@@ -367,6 +383,7 @@ extension SessionActor {
     var idleTimeouts = 0
     var boundedFailures = 0
     while true {
+      guard try !yielding || live.compactRequestClaim != nil else { return }
       if case .interrupting = (try live).sessionStatus { return }
       guard try await refreshRegisteredSubscriptions() else { return }
 
@@ -438,6 +455,7 @@ extension SessionActor {
         guard await backoff(attempt: 1, until: waiting.retryAt) else { return }
 
       case .failure(let error):
+        if yielding, (try live).compactRequestClaim == nil { return }
         switch classify(error) {
         case .cancelled:
           return
@@ -578,7 +596,7 @@ extension SessionActor {
         snapshot: .init(subscriptions: environment.tools.subscriptions, preReads: outcome.preReads),
         settle: environment.settle,
       )
-      let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept))
+      let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept), nil)
       let compacted = try await repo.writeCompaction(closing: nil, head: head, kept: outcome.kept, completingCompactRequest: compactClaim, transition: transition)
       try modify {
         $0.transcript = compacted
@@ -606,11 +624,14 @@ extension SessionActor {
       }
       delay = raw * jitter
     }
-    let result = await runLongRunningTask { [clock] in
-      try await clock.sleep(for: .seconds(delay))
-    }
-    if case .failure = result { return false }
-    return true
+    guard !yielding else { return false }
+    let pause = Task { [clock] in try await clock.sleep(for: .seconds(delay)) }
+    retryPause = pause
+    defer { retryPause = nil }
+    return await withTaskCancellationHandler {
+      if case .failure = await pause.result { return false }
+      return !yielding && !Task.isCancelled
+    } onCancel: { pause.cancel() }
   }
 
   func writeToolResult(

@@ -70,23 +70,99 @@ private func resolvedPlacement(_ held: SessionModelRoute, session: SessionID, ca
   }
 }
 
-func compactionPlacement(owner: any ExecutionOwnerClient, catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript) async throws -> ModelRouteTransition? {
-  { id, transcript in
+func compactionPlacement(owner: any ExecutionOwnerClient, catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
+  { id, transcript, target in
+    if let target { return try await requestedTransition(target, session: id, transcript: transcript, owner: owner, catalog: catalog(), usage: usage) }
     guard let held = try await owner.modelRoute(id), let group = held.group else { return nil }
     let catalog = try await catalog()
     _ = try catalog.validateRoute(held, group: group, effort: held.specifier.effort)
     guard let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
     guard let (next, resolved) = try await resolvedPlacement(held, session: id, catalog: catalog, usage: usage, excludingHeld: false) else { return nil }
-    var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget)
-    if case let .generationHead(source)? = transcript.items.first, case var .generationHead(head) = portable.items[0] {
-      head.summary = source.summary
-      head.snapshot = source.snapshot
-      portable.items[0] = .generationHead(head)
-    }
+    var portable = try compactedHandoff(transcript, to: next, resolved: resolved)
     portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.decisionReason)
     guard portable.estimatedContextTokens(images: resolved.budget.images) <= resolved.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
     return .init(expectedEpoch: held.epoch, route: next, transcript: portable)
   }
+}
+
+// The compacted generation projected onto a new binding, keeping the summary
+// and pre-reads the compaction produced.
+private func compactedHandoff(_ transcript: Transcript, to next: SessionModelRoute, resolved: ResolvedModel) throws -> Transcript {
+  var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget)
+  if case let .generationHead(source)? = transcript.items.first, case var .generationHead(head) = portable.items[0] {
+    head.summary = source.summary
+    head.snapshot = source.snapshot
+    portable.items[0] = .generationHead(head)
+  }
+  return portable
+}
+
+struct CompactionTargetRefused: Error, CustomStringConvertible {
+  var description: String
+}
+
+/// The switch a `compact` call asked for. `provider/model` binds the session
+/// to that model (leaving any group); a group id places within that group
+/// (re-placing when it is the session's own). An exact group id wins over the
+/// provider/model reading, so a group id may itself contain a slash. The target is checked against
+/// the catalog and credential readiness before anything folds; a throw is the
+/// tool's refusal. Nil when the target is where the session already is.
+func requestedTransition(_ target: CompactionTarget, session id: SessionID, transcript: Transcript, owner: any ExecutionOwnerClient, catalog: ProviderCatalog, usage: UsageBoard) async throws -> ModelRouteTransition? {
+  guard let held = try await owner.modelRoute(id) else { throw CompactionTargetRefused(description: "this session has no model route yet") }
+  let name = target.model.trimmingCharacters(in: .whitespacesAndNewlines)
+  @Dependency(\.date.now) var now
+  @Dependency(\.uuid) var uuid
+  let next: SessionModelRoute
+  let resolved: ResolvedModel
+  if catalog.document.groups[name] == nil, let slash = name.firstIndex(of: "/") {
+    let provider = String(name[..<slash])
+    let model = String(name[name.index(after: slash)...])
+    let sameModel = held.specifier.provider == provider && held.specifier.model == model
+    let specifier = if let effort = target.effort ?? (sameModel ? held.specifier.effort : nil) {
+      ModelSpecifier(provider: provider, model: model, effort: effort)
+    } else {
+      try catalog.defaultSpecifier(provider: provider, model: model)
+    }
+    try await catalog.validateReadiness(specifier)
+    if held.group == nil, sameModel {
+      return specifier == held.specifier ? nil : effortOnly(held, effort: specifier.effort, transcript: transcript)
+    }
+    next = SessionModelRoute(group: nil, member: nil, specifier: specifier, bindingFingerprint: catalog.document.providers[provider]!.routeFingerprint, epoch: uuid().uuidString.lowercased(), reason: .compaction, placedAt: now, evidence: [])
+    resolved = try await catalog.resolve(specifier, session: id, routeEpoch: next.epoch)
+  } else {
+    let effort = try catalog.validateGroup(name, effort: target.effort ?? (held.group == name ? held.specifier.effort : nil))
+    var seed = held
+    seed.group = name
+    seed.specifier.effort = effort
+    if held.group != name { seed.member = nil }
+    guard let (placed, model) = try await resolvedPlacement(seed, session: id, catalog: catalog, usage: usage, excludingHeld: false) else {
+      return effort == held.specifier.effort ? nil : effortOnly(held, effort: effort, transcript: transcript)
+    }
+    next = placed
+    resolved = model
+  }
+  var portable = try compactedHandoff(transcript, to: next, resolved: resolved)
+  if let group = next.group, group == held.group {
+    portable.appendRouteNotice(group: group, from: held.member!, to: next.member!, reason: next.decisionReason)
+  } else {
+    portable.appendRequestedSwitchNotice(from: routeLabel(held), to: routeLabel(next))
+  }
+  guard portable.estimatedContextTokens(images: resolved.budget.images) <= resolved.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
+  return .init(expectedEpoch: held.epoch, route: next, transcript: portable)
+}
+
+// Same model, same account: the compacted transcript replays as it is and
+// only the effort on the held route changes.
+private func effortOnly(_ held: SessionModelRoute, effort: String, transcript: Transcript) -> ModelRouteTransition {
+  var route = held
+  route.specifier.effort = effort
+  route.failure = nil
+  return .init(expectedEpoch: held.epoch, route: route, transcript: transcript)
+}
+
+private func routeLabel(_ route: SessionModelRoute) -> String {
+  if let group = route.group, let member = route.member { return "\(group):\(member)" }
+  return "\(route.specifier.provider)/\(route.specifier.model)"
 }
 
 func routeWaitOrSwitch(_ route: SessionModelRoute, session: SessionID, catalog: ProviderCatalog, usage: UsageBoard) async throws {

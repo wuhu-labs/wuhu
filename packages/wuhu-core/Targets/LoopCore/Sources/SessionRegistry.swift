@@ -13,6 +13,8 @@ actor SessionRegistry {
 
   private(set) var sessions: [SessionID: SessionActor] = [:]
   private var stopped = false
+  private var yielded: Set<SessionID> = []
+  private var handoffs: [SessionID: Task<Void, Never>] = [:]
   private var reaper: Task<Void, Never>?
 
   @Dependency(\.continuousClock) private var clock
@@ -34,7 +36,10 @@ actor SessionRegistry {
   }
 
   func post(_ action: SessionActor.ExternalAction, to id: SessionID) async {
-    guard !stopped else { return }
+    guard !stopped, !yielded.contains(id) || sessions[id] != nil else {
+      SessionActor.rejectRetired(action)
+      return
+    }
     let session: SessionActor
     if let existing = sessions[id] {
       session = existing
@@ -46,7 +51,18 @@ actor SessionRegistry {
       await session.activate()
     }
     guard !stopped else { return }
-    session.post(action)
+    await session.accept(action)
+  }
+
+  func yieldAssignment(_ id: SessionID) async {
+    yielded.insert(id)
+    if let handoff = handoffs[id] { await handoff.value; return }
+    guard let session = sessions[id] else { return }
+    let handoff = Task { await session.yieldAssignment() }
+    handoffs[id] = handoff
+    await handoff.value
+    if sessions[id] === session { sessions[id] = nil }
+    handoffs[id] = nil
   }
 
   func existing(_ id: SessionID) -> SessionActor? {

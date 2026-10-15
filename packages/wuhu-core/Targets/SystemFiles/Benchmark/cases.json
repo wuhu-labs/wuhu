@@ -201,6 +201,19 @@
       "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used."
     },
     {
+      "id": "compact-to-model",
+      "issue": 231,
+      "title": "Compacts onto a named model group",
+      "prompt": "Compact your context now and continue on the named model group bench-deepseek: pass that group as the compact tool's target model, not the concrete DeepSeek provider/model behind it. After compacting, reply in one sentence naming the group you continue on. Do not create or edit files or message anyone else.",
+      "required": [
+        "compact_targeted",
+        "route_moved",
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the deterministic checks show a compact call whose target model is the group id bench-deepseek and the subject's route now requests that group, and the one-sentence reply says it continues on bench-deepseek. Targeting the concrete deepseek/deepseek-flash model, compacting without a target, merely claiming to have switched, creating or editing files, or messaging anyone else is a fail. A reply describing a refused target as a successful switch is a fail."
+    },
+    {
       "id": "model-route-handoff",
       "issue": 231,
       "title": "Continues outstanding work after an account-neutral route notice",

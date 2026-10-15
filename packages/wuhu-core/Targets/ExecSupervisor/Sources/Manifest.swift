@@ -56,7 +56,7 @@ struct SupervisorFiles: Sendable {
 
 func validateManifest(_ manifest: SupervisorManifest, directory: String) throws {
   guard manifest.version == 1, !manifest.machine.isEmpty, manifest.nonce.count == 72,
-        manifest.socket == directory + "/control.sock", manifest.socket.utf8.count < 104,
+        (manifest.socket == directory + "/control.sock" || manifest.socket == directory + "/s"), manifest.socket.utf8.count < 104,
         directory.hasSuffix("/" + manifest.operation.uuidString)
   else {
     throw OperationError(.invalidConfiguration, message: "Unsupported supervisor manifest or Unix socket path (maximum 103 bytes)")

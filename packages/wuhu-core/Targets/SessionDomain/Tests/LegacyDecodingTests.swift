@@ -9,6 +9,12 @@ import Testing
     return try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: object))
   }
 
+  @Test func opaqueAndLegacyMachineReceiptsRoundTrip() throws {
+    for value in [.machine("dev:inode:size:mtime:ctime"), .mtime(Date(timeIntervalSince1970: 100)), .journal(3)] as [FileRevision] {
+      #expect(try JSONDecoder().decode(FileRevision.self, from: JSONEncoder().encode(value)) == value)
+    }
+  }
+
   @Test func `a stored tool state from before repository context decodes with no folders`() throws {
     let stored = ToolExecutionState(fileAccessLog: ["/a.md": .journal(3)], folderRoots: ["machines://m1/repo": nil])
     let decoded = try reshaped(stored) {

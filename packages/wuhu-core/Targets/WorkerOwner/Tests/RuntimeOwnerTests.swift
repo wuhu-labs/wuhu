@@ -74,4 +74,43 @@ import WuhuAI
       await #expect(throws: expected) { try await remote.scheduleReminder(.init("task"), at: nil) }
     }
   }
+
+  @Test func scriptDirectoryCallbacksAndCrossWorkerStopAreRecordedParentEffects() async throws {
+    let space = try Space.inMemory()
+    let effects = Mutex<[String]>([])
+    let session = SessionID("owner")
+    var runtime = WorkerRuntimeOwner(attempts: .init(), usage: { [:] }, receiveUsage: { _, _ in }, allowsWarming: { _ in false }, scheduleWarming: { _, _ in })
+    runtime.scriptStarted = { caller, script in
+      #expect(caller == session)
+      effects.withLock { $0.append("started:" + script) }
+    }
+    runtime.scriptEnded = { caller, script in
+      #expect(caller == session)
+      effects.withLock { $0.append("ended:" + script) }
+    }
+    runtime.stopScript = { caller, script in
+      #expect(caller == session)
+      effects.withLock { $0.append("stop:" + script) }
+      return .script(.init(output: "script stopped"))
+    }
+    try await withOwnerRPC(owner: InProcessExecutionOwnerClient(space: space), runtime: runtime) { _, remote in
+      let _: Bool = try await remote.rpc.call("runtime.script-started", ScriptActivity(session: session, script: "script"))
+      let output = try await remote.stopRuntimeScript(session, script: "script")
+      #expect(output == .script(.init(output: "script stopped")))
+      let _: Bool = try await remote.rpc.call("runtime.script-ended", ScriptActivity(session: session, script: "script"))
+    }
+    #expect(effects.withLock { $0 } == ["started:script", "stop:script", "ended:script"])
+  }
+
+  @Test func olderPeerRefusesAssignmentAndScriptHandoffBeforeSendingAnEffect() async throws {
+    let space = try Space.inMemory()
+    let current = ExecutionWorkerBootstrap.hello(release: "current")
+    let older = WorkerHello(capabilities: current.capabilities.subtracting([ExecutionWorkerBootstrap.handoffCapability]), required: current.required, release: "older")
+    try await withOwnerRPC(owner: InProcessExecutionOwnerClient(space: space), hello: older) { client, remote in
+      let expected = WorkerProtocolError(.missingCapability, message: "Missing execution capability: " + ExecutionWorkerBootstrap.handoffCapability)
+      await #expect(throws: expected) { try await RemoteSessionExecution(client: client).yieldAssignment(.init("owner")) }
+      await #expect(throws: expected) { try await WorkerScriptControl(client: client).stop("script", session: .init("owner")) }
+      await #expect(throws: expected) { try await remote.stopRuntimeScript(.init("owner"), script: "script") }
+    }
+  }
 }

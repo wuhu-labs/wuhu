@@ -89,6 +89,7 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     guard let credential = machineV2Credential(request, challenges: challenges), let id = parameters["id"], credential.machines == [id] else {
       return errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected")
     }
+    await hub.revocationGate(MachineID(rawValue: id))
     let revoked: Bool
     do { revoked = try await space.revokeMachine(MachineID(rawValue: id), presenting: credential.pubkey) } catch { return machineAuthUnavailable() }
     guard revoked else {

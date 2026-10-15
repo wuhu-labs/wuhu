@@ -97,6 +97,28 @@ import struct WuhuAI.ToolArguments
       #expect(try failureMessage(stale).contains("re-read"))
     }
   }
+
+  @Test func opaqueMachineReceiptsGuardReadsWritesEditsAndConcurrentChanges() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let fs = FakeMachineFS(opaqueTokens: true)
+      fs.put("/notes.txt", "hello", mtime: 100)
+      var world = ToolWorld(executor: ToolExecutor(space: space, machines: fs.seam), session: try await makeSession(space))
+      let path = JSONValue.string("machines://\(machineA.rawValue)/notes.txt")
+      guard case let .read(read) = try await world.run("read", .object(["path": path])) else { throw Mismatch("opaque read failed") }
+      #expect(read.revision == .machine("opaque:100.0"))
+      guard case let .write(written) = try await world.run("write", .object(["path": path, "content": "updated"])) else { throw Mismatch("opaque write failed") }
+      #expect(written.revision == .machine("opaque:1001.0"))
+      #expect(fs.writes.value.last == .write(path: "/notes.txt", data: .init(Array("updated".utf8)), ifMatch: "opaque:100.0"))
+      guard case .edit = try await world.run("edit", .object(["path": path, "edits": [["old": "updated", "new": "edited"]]])) else { throw Mismatch("opaque edit failed") }
+      fs.put("/notes.txt", "foreign", mtime: 2000)
+      #expect(try failureMessage(await world.run("write", .object(["path": path, "content": "stale"]))).contains("re-read"))
+      _ = try await world.run("read", .object(["path": path]))
+      fs.replacedAfterStat.withLock { $0["/notes.txt"] = .init(mtime: 3000, content: Array("raced".utf8)) }
+      #expect(try failureMessage(await world.run("write", .object(["path": path, "content": "racing"]))).contains("re-read"))
+      #expect(fs.files.value["/notes.txt"]?.content == Array("raced".utf8))
+    }
+  }
 }
 
 @Suite struct PathTests {

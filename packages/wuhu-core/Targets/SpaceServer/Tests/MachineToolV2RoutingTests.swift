@@ -5,6 +5,7 @@
 #endif
 import ComputerFiles
 import Crypto
+@testable import ExecSupervisor
 import Fetch
 import enum JSONValue.JSONValue
 import MachineContract
@@ -118,29 +119,55 @@ import Testing
 import MachineChannel
 
 private struct RoutedEcho: OperationKind {
+  var fastExit = false
   struct Input: Decodable, Sendable { let argv: [String]; let cwd: String; let stdin: Bool }
   let descriptor = ComputerKindSchemas.exec
   func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
     #expect(input.argv == ["echo-test"]); #expect(input.cwd == "/tmp"); #expect(input.stdin)
-    while let payload = try await channels.read("stdin", upTo: 65536) { try await channels.send(payload, to: "stdout") }
+    if fastExit { try await channels.send(.init(data: Data("fast".utf8)), to: "stdout") }
+    else { while let payload = try await channels.read("stdin", upTo: 65536) { try await channels.send(payload, to: "stdout") } }
     try await channels.send(.init(data: Data("stderr".utf8)), to: "stderr")
     return ["termination": ["tag": "exit", "code": 7]]
   }
 }
 
 extension MachineToolV2RoutingTests {
-  @Test func normalExecBackendBridgesStdinBothOutputsAndExit() async throws {
+  @Test(arguments: ["echo", "fast", "early-eof"])
+  func normalExecBackendBridgesStdinBothOutputsAndExit(mode: String) async throws {
+    let fastExit = mode == "fast"
+    let native = mode == "early-eof"
+    let earlyEOF = Mutex<Set<String>>([])
+    let folder = try ScratchFolder("exec-early-eof")
+    let exitGate = folder.url.appending(path: "exit")
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "exec-v2", group: .shared)
-    let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(RoutedEcho())], authorize: { _, _ in })
+    let agent = try OperationAgent(machine: record.id.rawValue, kinds: [native ? .init(ExecKind()) : .init(RoutedEcho(fastExit: fastExit))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
-    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { try await agent.handler($0) } }, abort: { _, _ in })
+    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { request in
+      if fastExit, request.method == .put, request.url.path.hasSuffix("/inputs/stdin") {
+        var response = try Response.json(ErrorEnvelope(OperationError(.operationEnded)), status: .conflict)
+        response.headers[.init("X-Wuhu-Request-ID")!] = request.headers["X-Wuhu-Request-ID"]
+        response.headers[.init("X-Wuhu-Correlation-ID")!] = request.headers["X-Wuhu-Correlation-ID"]
+        response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+        return response
+      }
+      let response = try await agent.handler(request)
+      if native, request.method == .get, request.url.query?.contains("channel=") == true {
+        let snapshot = try await response.body.json(OperationSnapshot.self)
+        if snapshot.channelEnd, snapshot.verdict == nil, let channel = snapshot.channel {
+          let ready = earlyEOF.withLock { value in value.insert(channel); return value.count == 2 }
+          if ready { try Data().write(to: exitGate) }
+        }
+        return try Response(status: response.status, headers: response.headers, body: .json(snapshot))
+      }
+      return response
+    } }, abort: { _, _ in })
     try await coordinator.prepare()
     let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
     await hub.configureV2(service)
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     let endpoint = ChannelEndpoint()
-    let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["echo-test"]))
+    let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: native ? ["/bin/sh", "-c", "printf hi; printf stderr >&2; exec 1>&- 2>&-; while [ ! -f '\(exitGate.path)' ]; do sleep .01; done; exit 7"] : ["echo-test"], timeout: 15))
     let backend = execBackend(space: space, hub: hub)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
@@ -148,7 +175,7 @@ extension MachineToolV2RoutingTests {
       let transport = try await backend.connect(minted.id)
       tasks.addTask { await endpoint.run(transport) }
       defer { tasks.cancelAll() }
-      try await outgoing.sendStdin(Array("input".utf8)); await outgoing.closeStdin()
+      if !fastExit, !native { try await outgoing.sendStdin(Array("input".utf8)) }; await outgoing.closeStdin()
       var stdout = Data(); var stderr = Data(); var status: MachineContract.ExitStatus?
       for try await event in outgoing.events {
         switch event {
@@ -159,8 +186,9 @@ extension MachineToolV2RoutingTests {
         case .truncated: Issue.record("normal exec truncated")
         }
       }
-      #expect(stdout == Data("input".utf8)); #expect(stderr == Data("stderr".utf8)); #expect(status == .exited(code: 7))
+      #expect(stdout == Data((native ? "hi" : fastExit ? "fast" : "input").utf8)); #expect(stderr == Data("stderr".utf8)); #expect(status == .exited(code: 7))
       #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 7))
+      if native { #expect(earlyEOF.withLock { $0 } == ["stdout", "stderr"]) }
       await agent.shutdown(); await service.shutdown()
     }
   }

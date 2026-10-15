@@ -79,6 +79,7 @@ tests:
     - OperationClient
     - OperationProtocol
     - OperationRuntime
+    - ExecSupervisor
     - MachineChannel
     - MachineAgent
     - ComputerFiles

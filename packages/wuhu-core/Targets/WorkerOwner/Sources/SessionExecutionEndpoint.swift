@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import enum JSONValue.JSONValue
+import struct LoopCore.SessionExecution
 import protocol LoopCore.SessionExecutionClient
 import enum SessionDomain.QueueInput
 import enum SessionDomain.SessionExecutor
@@ -61,6 +62,11 @@ public struct SessionExecutionEndpoint: Sendable {
       case "execution.discard":
         let request = try ownerDecode(SessionIDRequest.self, call.payload)
         await execution.discard(request.id)
+        return .bool(true)
+      case "execution.yield-assignment":
+        guard let execution = execution as? SessionExecution else { throw WorkerProtocolError(.unavailable, message: "Assignment handoff is unavailable") }
+        let request = try ownerDecode(SessionIDRequest.self, call.payload)
+        await execution.yieldAssignment(request.id)
         return .bool(true)
       case "execution.shutdown":
         await execution.shutdown()

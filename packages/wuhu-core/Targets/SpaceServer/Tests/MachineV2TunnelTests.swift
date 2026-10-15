@@ -278,19 +278,27 @@ extension MachineV2TunnelTests {
     #expect(try await f.space.machine(pubkey: stranger.pubkeyLabel) != nil)
   }
 
-  @Test func aRevokeSignedBeforeARotationNeverDeletesTheReplacementKey() async throws {
-    let f = try await Fixture()
-    let path = "/v1/machine-v2/\(f.machine.id.rawValue)/revoke"
-    let signedBeforeRotation = try await signed(f.handler, path, key: f.key, machine: f.machine.id)
-    _ = try await f.space.resetCredentials(account: f.machine.account)
+  @Test func aRotationCommittingDuringAnAuthenticatedRevokeKeepsTheReplacementKey() async throws {
+    let parked = AsyncStream<Void>.makeStream()
+    let resume = AsyncStream<Void>.makeStream()
+    let space = try Space.inMemory()
+    let hub = MachineV2Hub(space: space) { _ in
+      parked.continuation.yield()
+      for await _ in resume.stream { return }
+    }
+    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, webApp: nil, machineV2Hub: hub)
+    let key = Curve25519.Signing.PrivateKey()
+    let enrolled = try await space.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
+    let machine = enrolled.machine
+    let revoke = try await signed(handler, "/v1/machine-v2/\(machine.id.rawValue)/revoke", key: key, machine: machine.id)
+    let inFlight = Task { try await handler(revoke) }
+    for await _ in parked.stream { break }
+    _ = try await space.resetCredentials(account: machine.account)
     let replacement = Curve25519.Signing.PrivateKey()
-    _ = try await f.space.addKey(replacement.pubkeyLabel, account: f.machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
-    guard case let .response(stale) = try await f.handler(signedBeforeRotation) else { Issue.record("revoke should be HTTP"); return }
+    _ = try await space.addKey(replacement.pubkeyLabel, account: machine.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    resume.continuation.yield()
+    guard case let .response(stale) = try await inFlight.value else { Issue.record("revoke should be HTTP"); return }
     #expect(stale.status == .unauthorized)
-    #expect(try await f.space.machine(pubkey: replacement.pubkeyLabel) == f.machine.id)
-
-    guard case let .response(current) = try await f.handler(try await signed(f.handler, path, key: replacement, machine: f.machine.id)) else { Issue.record("revoke should be HTTP"); return }
-    #expect(current.status == .ok)
-    #expect(try await f.space.machine(pubkey: replacement.pubkeyLabel) == nil)
+    #expect(try await space.machine(pubkey: replacement.pubkeyLabel) == machine.id)
   }
 }
