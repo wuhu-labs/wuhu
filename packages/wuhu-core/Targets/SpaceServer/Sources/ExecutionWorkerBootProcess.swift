@@ -37,7 +37,7 @@ struct ExecutionWorkerBootProcess: Sendable {
     guard case .matching = Self.inspect(manifest) else { return Self.gone(manifest) ? .exited : .unconfirmed }
     for token in [manifest.credentials.successor, manifest.credentials.current].compactMap({ $0 }) {
       let client: WorkerClient
-      do { client = try WorkerClient(socket: directory + "/worker.sock", token: token, control: fetch, bytes: fetch) }
+      do { client = try WorkerClient(socket: manifest.workerSocket(directory: directory), token: token, control: fetch, bytes: fetch) }
       catch { return .unconfirmed }
       do {
         _ = try await client.negotiate(ExecutionWorkerBootstrap.hello(release: "parent-fence"))

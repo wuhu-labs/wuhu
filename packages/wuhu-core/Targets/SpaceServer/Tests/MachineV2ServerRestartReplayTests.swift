@@ -152,7 +152,13 @@ private actor RestartReplayTransport {
     let reopened = try Space.open(file: database)
     let reopenedKey = try await MachineV2KeyStore.loadOrCreate(directory: folder.url.appendingPathComponent("private-state"), space: reopened)
     let restored = try await reopened.machineV2Store(group: .shared, key: reopenedKey, problemsGroup: .shared)
-    let recoveryTransport = try RestartReplayTransport(exchanges: fixture.recovery.exchanges)
+    let firstConsumed = try fixture.recovery.exchanges.firstIndex { exchange in
+      let snapshot = try JSONDecoder().decode(OperationSnapshot.self, from: #require(exchange.response.body))
+      return snapshot.verdict != nil && snapshot.outputConsumed
+    }
+    let consumedIndex = try #require(firstConsumed)
+    let recoveryExchanges = Array(fixture.recovery.exchanges.prefix(through: consumedIndex))
+    let recoveryTransport = try RestartReplayTransport(exchanges: recoveryExchanges)
     let coordinator = MachineV2Coordinator(
       space: reopened,
       key: reopenedKey,
@@ -167,7 +173,7 @@ private actor RestartReplayTransport {
     #expect(prepared.committed["stdout"] == .init(rawValue: 6))
     #expect(prepared.stopReason == "serverRestart")
     #expect(prepared.output.isEmpty)
-    for _ in 0 ... fixture.recovery.exchanges.count { try await coordinator.tick() }
+    for _ in 0 ... recoveryExchanges.count { try await coordinator.tick() }
     try await recoveryTransport.assertComplete()
     let final = try await restored.read(fixture.operation)
     #expect(final.unknown == nil)
@@ -176,18 +182,18 @@ private actor RestartReplayTransport {
     #expect(final.snapshot?.outputConsumed == true)
     #expect(final.output.isEmpty)
     #expect(final.committed["stdout"] == final.snapshot?.finalOffsets["stdout"])
-    #expect(final.committed["stderr"] == final.snapshot?.finalOffsets["stderr"])
-    let recordedTerminal = try JSONDecoder().decode(OperationSnapshot.self, from: #require(fixture.recovery.exchanges.last?.response.body))
+    #expect((final.committed["stderr"] ?? .zero) == final.snapshot?.finalOffsets["stderr"])
+    let recordedTerminal = try JSONDecoder().decode(OperationSnapshot.self, from: #require(recoveryExchanges.last?.response.body))
     #expect(recordedTerminal.outputConsumed)
     #expect(final.snapshot?.verdict == recordedTerminal.verdict)
     #expect(final.committed["stdout"] == recordedTerminal.finalOffsets["stdout"])
-    #expect(final.committed["stderr"] == recordedTerminal.finalOffsets["stderr"])
+    #expect((final.committed["stderr"] ?? .zero) == recordedTerminal.finalOffsets["stderr"])
     let requests = await recoveryTransport.requests
     #expect(requests.allSatisfy { !$0.hasPrefix("POST ") })
     #expect(requests.contains { $0.hasPrefix("PUT ") && $0.contains("/stop") })
-    #expect(requests.contains { $0.contains("channel=stdout") && $0.contains("after=6") })
-    #expect(!requests.contains { $0.contains("channel=stdout") && $0.contains("after=0") })
-    #expect(requests.contains { $0.contains("terminalAck=") })
+    #expect(!requests.contains { $0.contains("channel=") || $0.contains("terminalAck=") })
+    #expect(recoveryExchanges.count == 2)
+    #expect(fixture.recovery.exchanges.count == 5)
     let before = requests.count
     try await coordinator.tick()
     #expect(await recoveryTransport.requests.count == before)

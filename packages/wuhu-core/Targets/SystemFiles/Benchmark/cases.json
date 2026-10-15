@@ -192,13 +192,13 @@
       "id": "machine-v2-parity",
       "issue": 96,
       "title": "Uses normal tools for a v2 machine registration without fallback",
-      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. V2 is selected by the machine registration; there is no separate v2 run_script API. Keep the answer compact.",
+      "prompt": "This is a text-only API smoke; do not run tools or write files. Show the normal grep tool arguments to search /tmp/project on box-v2 for regex ^item[0-9]+$. Explain how to continue a paginated search and what to do if exec on box-v2 reports unknownKind for exec.v1 or credentialExpired. Also explain capacityExceeded with details.reason exchangeLimit. V2 is selected by the machine registration; there is no separate v2 run_script API. Also explain why a headless installed macOS box-agent exec can return EPERM for Desktop while the Direct app still prompts: the installed agent disclaims child TCC responsibility when supported; Direct deliberately keeps interactive consent. Do not propose bypassing privacy controls. Keep the answer compact.",
       "required": [
         "regex_example",
         "explicit_expiry",
         "no_files_written"
       ],
-      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used."
+      "judge": "PASS only if the answer uses normal grep with pattern ^item[0-9]+$ and path machines://box-v2/tmp/project, continues with the returned step cursor (v2 traversal order, not sorted), treats unknownKind and credentialExpired as typed failures and never switches to v1, anonymous access or a wallet identity. It must identify exchangeLimit as local exchange saturation: wait/back off and retry the refused call without assuming machine detachment or changing transport/identity. It must not use the removed dedicated v2 script API or claim credentials renew. No tools or files should be used. It must distinguish installed macOS box agents' disclaimed exec-child responsibility from Direct's intentional interactive prompts, treat EPERM as a permission refusal rather than transport failure, and never propose bypassing privacy controls."
     },
     {
       "id": "compact-to-model",

@@ -96,9 +96,9 @@ private actor SupervisorFixture {
 
   nonisolated var files: SupervisorFiles { .init(create: { await self.create($0, $1) }, load: { try await self.load($0) }, list: { _ in await self.directories() }) }
   /// A launched version-2 supervisor dials the agent; the fixture answers its operation over that link.
-  nonisolated func registry(probe: Bool = false, clock: OperationClock = .continuous, root: String = "/tmp/ops") throws -> ExecSupervisorRegistry {
+  nonisolated func registry(disclaimResponsibility: Bool = false, probe: Bool = false, clock: OperationClock = .continuous, root: String = "/tmp/ops") throws -> ExecSupervisorRegistry {
     let launched = RegistryHolder()
-    let registry = try ExecSupervisorRegistry(machine: "test", operationsDirectory: root, executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, launch: { _, directory in
+    let registry = try ExecSupervisorRegistry(machine: "test", operationsDirectory: root, executable: "/tmp/wuhu", fetch: FetchClient { try await self.fetch($0) }, authorize: { _, _ in }, files: files, clock: clock, disclaimResponsibility: disclaimResponsibility, launch: { _, directory in
       let pid = probe ? try await self.launchProbe() : nil
       if !probe { await self.launch() }
       if let registry = launched.registry.withLock({ $0 }) { try await self.dial(registry, directory: directory) }
@@ -127,6 +127,29 @@ private final class RegistryHolder: Sendable { let registry = Mutex<ExecSupervis
 private final class RegistryAborted: Sendable { let value = Mutex(false) }
 
 @Suite struct RegistryContractTests {
+  @Test(arguments: [false, true]) func responsibilityPolicyPersistsInThePrivateManifest(disclaim: Bool) async throws {
+    let effects = SupervisorFixture()
+    let registry = try effects.registry(disclaimResponsibility: disclaim)
+    let id = UUID()
+    let response = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false, "disclaimResponsibility": .bool(!disclaim)]))))
+    #expect(response.status.code == 200)
+    let manifest = try await effects.load("/tmp/ops/" + id.uuidString)
+    #expect(manifest.disclaimResponsibility == (disclaim ? true : nil))
+    let recovered = try JSONDecoder().decode(SupervisorManifest.self, from: JSONEncoder().encode(manifest))
+    #expect(recovered == manifest)
+    #expect(try await effects.recovered().handler(execRequest(id)).status.code == 200)
+  }
+
+  @Test func legacyManifestKeepsInheritedResponsibility() throws {
+    let id = UUID()
+    let bytes = Data("""
+    {"version":2,"machine":"test","operation":"\(id)","nonce":"\(String(repeating: "n", count: 72))","socket":"/tmp/ctl.sock"}
+    """.utf8)
+    let manifest = try JSONDecoder().decode(SupervisorManifest.self, from: bytes)
+    try validateManifest(manifest, directory: "/tmp/ops/" + id.uuidString)
+    #expect(manifest.disclaimResponsibility == nil)
+  }
+
   @Test func newStartsNameTheMachineRendezvousSocketAndReattachAfterRestart() async throws {
     let root = "/Users/someone/.wuhu/machine-v2/mc_fixture01/operations"
     let effects = SupervisorFixture(); let registry = try effects.registry(root: root); let id = UUID()

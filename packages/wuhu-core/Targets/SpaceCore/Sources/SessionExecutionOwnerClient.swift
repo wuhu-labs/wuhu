@@ -23,6 +23,7 @@ public protocol SessionExecutionOwnerClient: Sendable {
   func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?, transition: ModelRouteTransition?) async throws -> Transcript
   func markInterrupted(_ id: SessionID) async throws
   func markResumed(_ id: SessionID) async throws
+  func markCompacting(_ id: SessionID, active: Bool) async throws
   func markErrored(_ id: SessionID, message: String) async throws
   func archive(_ id: SessionID, grace: Duration) async throws -> Date
   func unarchive(_ id: SessionID) async throws

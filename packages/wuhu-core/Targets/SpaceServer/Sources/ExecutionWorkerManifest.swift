@@ -23,22 +23,26 @@ struct ExecutionWorkerManifest: Codable, Equatable, Sendable, CustomStringConver
   let processID: Int32
   let birth: String
   var credentials: Credentials
+  var sockets: ExecutionWorkerSocketLocation? = nil
 
   func validate() throws {
     let tokens = [credentials.current] + (credentials.successor.map { [$0] } ?? [])
-    guard version == 1, !space.isEmpty, processID > 0,
+    guard (version == 1 && sockets == nil || version == 2 && sockets != nil), !space.isEmpty, processID > 0,
           birth.utf8.count >= 16, birth.utf8.count <= 128,
           tokens.allSatisfy({ $0.utf8.count >= 64 && $0.utf8.count <= 128 && $0.utf8.allSatisfy { $0 > 32 && $0 < 127 } }),
           credentials.successor != credentials.current
     else { throw WorkerProtocolError(.invalidConfiguration, message: "Invalid execution worker manifest") }
   }
 
-  func validate(directory: String, space expectedSpace: String) throws {
+  func validate(directory: String, space expectedSpace: String, runtimeRoot: String = ExecutionWorkerSocketLocation.runtimeRoot) throws {
     try validate()
-    guard space == expectedSpace, directory.hasPrefix("/"), (directory + "/worker.sock").utf8.count < 104 else {
+    guard space == expectedSpace, directory.hasPrefix("/"), sockets != nil || (directory + "/worker.sock").utf8.count < 104 else {
       throw WorkerProtocolError(.invalidConfiguration, message: "Invalid execution worker manifest location")
     }
+    try sockets?.validate(space: space, generation: generation, runtimeRoot: runtimeRoot)
   }
+
+  func workerSocket(directory: String) -> String { sockets?.worker ?? directory + "/worker.sock" }
 
   func verifyProcess(probe: @Sendable (Int32) throws -> String = processBirthIdentity) throws {
     guard try probe(processID) == birth else { throw WorkerProtocolError(.unauthorized, message: "Execution worker process identity changed") }

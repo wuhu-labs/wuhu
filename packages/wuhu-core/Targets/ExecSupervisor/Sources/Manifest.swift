@@ -16,6 +16,7 @@ struct SupervisorManifest: Codable, Equatable, Sendable {
   let operation: UUID
   let nonce: String
   let socket: String
+  var disclaimResponsibility: Bool? = nil
 }
 
 struct SupervisorFiles: Sendable {

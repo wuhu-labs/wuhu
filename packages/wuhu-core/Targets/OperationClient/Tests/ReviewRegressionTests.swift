@@ -398,3 +398,68 @@ private struct SlashKind: OperationKind {
   }
   await client.shutdown()
 }
+
+extension ClientReviewRegressionTests {
+  @Test(arguments: ["poll", "consume", "write"])
+  func concurrentOperationRefusalsHaveReasonsAndAreTraced(action: String) async throws {
+    let time = LocalTime(); let agent = try machine(time); let store = PausedReadStore()
+    let traces = Mutex<[OperationTrace]>([])
+    let client = try OperationClient(origin: URL(string: "https://memory.invalid")!, fetch: .init(fetch: agent.handler), clock: time.clock, store: store, abort: { _ in }, trace: { trace in traces.withLock { $0.append(trace) } })
+    _ = try await client.describe("phone"); let id = try await start(client)
+    let gate = Pause(); await store.pause(gate)
+    let first = Task { try await Self.perform(action, client: client, id: id) }
+    await gate.arrival()
+    do {
+      try await Self.perform(action, client: client, id: id)
+      Issue.record("Concurrent operation was admitted")
+    } catch let error as OperationError {
+      #expect(error.code == .capacityExceeded)
+      #expect(error.operation == id)
+      #expect(error.message.contains("already busy"))
+      #expect(error.details?.object?["reason"]?.stringValue?.hasPrefix("concurrent") == true)
+    }
+    #expect(traces.withLock { $0.filter { $0.event == .failure && $0.error == .capacityExceeded }.count } == 1)
+    gate.release(); try await first.value
+    await client.shutdown()
+  }
+
+  private static func perform(_ action: String, client: OperationClient, id: UUID) async throws {
+    switch action {
+    case "poll": _ = try await client.poll(id, channel: "out")
+    case "consume": _ = try await client.takeOutput(id, channel: "out")
+    default: _ = try await client.write(id, channel: "in", payload: .init(data: Data([65])))
+    }
+  }
+
+  @Test func exchangeAdmissionRefusalHasAReasonAndTraceWithoutDispatch() async throws {
+    let gate = Pause(); let traces = Mutex<[OperationTrace]>([])
+    let ledger = ExchangeLedger(fetch: .init { request in
+      await gate.wait()
+      var response = Response.text("ok")
+      for name in ["X-Wuhu-Correlation-ID", "X-Wuhu-Request-ID"] { response.headers[.init(name)!] = request.headers[name] }
+      response.headers[.init("X-Wuhu-Agent-Instance")!] = UUID().uuidString
+      return response
+    }, clock: .continuous, capacity: 1, abort: { _ in }, trace: { trace in traces.withLock { $0.append(trace) } })
+    var request = Request(url: URL(string: "https://memory.invalid/machine/v2/machines/phone")!)
+    request.headers["X-Wuhu-Correlation-ID"] = UUID().uuidString
+    request.headers["X-Wuhu-Request-ID"] = UUID().uuidString
+    let firstRequest = request
+    let first = Task { try await ledger.exchange(firstRequest, id: UUID(), timeout: .seconds(30), limit: 1024) }
+    await gate.arrival()
+    let refused = UUID()
+    do {
+      _ = try await ledger.exchange(request, id: refused, timeout: .seconds(30), limit: 1024)
+      Issue.record("Saturated ledger admitted an exchange")
+    } catch let error as OperationError {
+      #expect(error.code == .capacityExceeded)
+      #expect(error.message == "Exchange limit reached (1 outstanding requests)")
+      #expect(error.details == ["reason": "exchangeLimit"])
+    }
+    let refusal = traces.withLock { $0.filter { $0.request == refused } }
+    #expect(refusal.count == 1)
+    #expect(refusal.first?.event == .failure)
+    #expect(refusal.first?.error == .capacityExceeded)
+    gate.release(); _ = try await first.value
+    await ledger.shutdown()
+  }
+}

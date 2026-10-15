@@ -154,8 +154,8 @@ enum MachineV2AutoUpgrade {
       do { try home.saveUpgradeState(state) } catch { home.logUpgrade("cannot record the outcome of \(target): \(error)") }
     }
     do { try await installer.install(candidate: candidate) }
-    catch let error as MachineV2InstallError where error.code == .busy {
-      home.logUpgrade("installation busy; \(target) waits for the next check")
+    catch let error as MachineV2InstallError where error.code == .busy || (error.code == .preflightFailed && installer.platform == .linux) {
+      home.logUpgrade("\(error); \(target) waits for the next check")
       finish { _ in }
       return
     } catch {

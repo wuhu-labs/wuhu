@@ -81,6 +81,10 @@ struct SessionRepo: Sendable {
     try await owner.markResumed(id)
   }
 
+  func markCompacting(_ active: Bool) async throws {
+    try await owner.markCompacting(id, active: active)
+  }
+
   func markErrored(errorDescription: String) async throws {
     try await owner.markErrored(id, message: errorDescription)
   }

@@ -388,6 +388,24 @@ WUHU_HMR_COPTS = select({
     "//conditions:default": [],
 })
 
+# Opaque type erasure (Xcode's SWIFT_ENABLE_OPAQUE_TYPE_ERASURE) compiles every
+# `some View` (each `body`, each helper) as SwiftUI's `DebugReplaceableView`.
+# A hot patch swaps a body getter but not the conformance's `Body` type the app
+# was compiled with, so without erasure an edit that changes the body's type
+# (an added modifier, another container) hands SwiftUI a value laid out as the
+# new type under the old type's metadata and crashes. Erased, `Body` is the
+# same type before and after every patch. HMR builds give it to every Swift
+# library and the HMR app shells (WUHU_HMR_VIEW_COPTS); HMR-only code such as
+# the injection-next lab takes it unconditionally. The patch compiler refuses
+# a library whose params lack it. Erasure alone is not enough: HMRRuntime also
+# unmounts hot roots while it patches (see packages/hmr/Targets/HMRRuntime/SPEC.md).
+WUHU_OPAQUE_TYPE_ERASURE_COPTS = ["-enable-experimental-feature", "OpaqueTypeErasure"]
+
+WUHU_HMR_VIEW_COPTS = select({
+    "//bazel/rules:hmr_enabled": WUHU_OPAQUE_TYPE_ERASURE_COPTS,
+    "//conditions:default": [],
+})
+
 def _swift_6_copts(kwargs):
     return WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_CONTROLLABLE_CLOCK_COPTS + kwargs.pop("copts", [])
 
@@ -401,7 +419,7 @@ def wuhu_swift_library(name, srcs, deps, package_name, copy_resources = None, pr
     swift_library(
         name = name,
         srcs = srcs + resource_srcs + embedded_srcs,
-        copts = _swift_6_copts(kwargs),
+        copts = _swift_6_copts(kwargs) + WUHU_HMR_VIEW_COPTS,
         data = data,
         deps = deps + embedded_deps,
         module_name = name,

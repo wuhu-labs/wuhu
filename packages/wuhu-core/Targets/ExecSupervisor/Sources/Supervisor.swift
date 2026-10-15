@@ -50,7 +50,7 @@ public enum ExecSupervisor {
     _ = signal(SIGPIPE, SIG_IGN)
     let clock = OperationClock.continuous
     let limits = OperationLimits()
-    let agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock))], clock: clock, limits: limits, authorize: { request, _ in
+    let agent = try OperationAgent(machine: manifest.machine, kinds: [AnyOperationKind(ExecKind(clock: clock, disclaimResponsibility: manifest.disclaimResponsibility == true))], clock: clock, limits: limits, authorize: { request, _ in
       guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { throw OperationError(.machineNotAuthorized) }
     })
     defer {

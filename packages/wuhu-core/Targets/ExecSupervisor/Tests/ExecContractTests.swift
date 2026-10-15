@@ -26,8 +26,8 @@ func execRequest(_ id: UUID, query: String = "", suffix: String = "", method: Fe
   Request(url: URL(string: "http://memory/machine/v2/machines/test/operations/\(id)\(suffix)\(query)")!, method: method, body: body)
 }
 
-func withExec(limits: OperationLimits = .init(), _ action: (OperationAgent) async throws -> Void) async throws {
-  let agent = try OperationAgent(machine: "test", kinds: [AnyOperationKind(ExecKind())], limits: limits, authorize: { _, _ in })
+func withExec(limits: OperationLimits = .init(), disclaimResponsibility: Bool = false, _ action: (OperationAgent) async throws -> Void) async throws {
+  let agent = try OperationAgent(machine: "test", kinds: [AnyOperationKind(ExecKind(disclaimResponsibility: disclaimResponsibility))], limits: limits, authorize: { _, _ in })
   try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { await agent.run() }
     do { try await action(agent) } catch { await agent.shutdown(); group.cancelAll(); throw error }

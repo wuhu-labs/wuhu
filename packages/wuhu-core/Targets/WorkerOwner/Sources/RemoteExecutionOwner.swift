@@ -134,6 +134,17 @@ public struct RemoteExecutionOwner: WorkerOwnerClient {
     let _: Bool = try await rpc.call("session.mark-errored", ErrorRequest(id: id, message: message))
   }
 
+  // Run state is advisory: a parent from before it (a running old server
+  // spawning a worker from the binary already replaced on disk) is skipped.
+  public func markCompacting(_ id: SessionID, active: Bool) async throws -> Void {
+    do {
+      try await rpc.client.requireCapability(ExecutionWorkerBootstrap.runStateCapability)
+    } catch let error as WorkerProtocolError where error.code == .missingCapability {
+      return
+    }
+    let _: Bool = try await rpc.call("session.mark-compacting", CompactingRequest(id: id, active: active))
+  }
+
   public func archive(_ id: SessionID, grace: Duration) async throws -> Date {
     let result: Date = try await rpc.call("session.archive", ArchiveRequest(id: id, grace: .init(grace)))
     return result

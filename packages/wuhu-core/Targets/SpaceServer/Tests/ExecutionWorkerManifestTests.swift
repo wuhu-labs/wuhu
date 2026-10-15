@@ -128,3 +128,16 @@ func workerManifestRefusesHostileFiles(kind: String) async throws {
     #expect(!rendered.contains(try #require(manifest.credentials.successor)))
   }
 }
+
+@Test func workerManifestStillReadsTheOriginalVersionOneWireShape() throws {
+  let fixture = try ManifestFixture()
+  defer { fixture.clean() }
+  let original = fixture.manifest
+  let json = "{\"version\":1,\"space\":\"space\",\"generation\":\"" + original.generation.uuidString + "\",\"incarnation\":\"" + original.incarnation.uuidString + "\",\"processID\":" + String(original.processID) + ",\"birth\":\"" + original.birth + "\",\"credentials\":{\"current\":\"" + original.credentials.current + "\"}}"
+  let decoded = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: Data(json.utf8))
+  #expect(decoded == original)
+  #expect(decoded.sockets == nil)
+  #expect(decoded.workerSocket(directory: fixture.directory) == fixture.directory + "/worker.sock")
+  try decoded.validate(directory: fixture.directory, space: "space")
+  #expect(throws: WorkerProtocolError.self) { try decoded.validate(directory: "/" + String(repeating: "long-path/", count: 20), space: "space") }
+}

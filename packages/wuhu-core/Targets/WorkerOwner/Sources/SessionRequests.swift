@@ -38,6 +38,7 @@ struct ClaimRequest: Codable, Sendable { let id: SessionID; let generation: Int 
 struct HandoffRequest: Codable, Sendable { let id: SessionID; let expectedGeneration: Int; let source: TranscriptSnapshot; let transcript: TranscriptSnapshot; let transition: RouteTransitionSnapshot? }
 struct CompactionRequest: Codable, Sendable { let id: SessionID; let closing: ToolResultItem?; let head: GenerationHead; let kept: Range<Int>?; let claim: String?; let transition: RouteTransitionSnapshot? }
 struct ErrorRequest: Codable, Sendable { let id: SessionID; let message: String }
+struct CompactingRequest: Codable, Sendable { let id: SessionID; let active: Bool }
 struct ArchiveRequest: Codable, Sendable { let id: SessionID; let grace: DurationSnapshot }
 struct RestartRequest: Codable, Sendable { let id: SessionID; let executor: ExecutorSnapshot?; let note: String?; let modelRoute: SessionModelRoute? }
 struct SubscriptionsSnapshot: Codable, Sendable {

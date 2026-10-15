@@ -4087,7 +4087,9 @@ export function generateAppBuildBazel(
 ): string {
   const embedsViewPilot = appEmbedsViewPilot(app)
   const coptsSymbols = [
-    ...(app.hmr ? ['WUHU_HMR_COPTS', 'wuhu_hmr_app'] : []),
+    ...(app.hmr
+      ? ['WUHU_HMR_COPTS', 'WUHU_HMR_VIEW_COPTS', 'wuhu_hmr_app']
+      : []),
     ...new Set([
       'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
       ...(embedsViewPilot ? ['WUHU_UI_CONTROL_COPTS'] : []),
@@ -4227,7 +4229,7 @@ export function generateAppBuildBazel(
     const coptsExpr = [
       ...new Set([
         'WUHU_SWIFT_LANGUAGE_MODE_COPTS',
-        ...(embedsHMR ? ['WUHU_HMR_COPTS'] : []),
+        ...(embedsHMR ? ['WUHU_HMR_COPTS', 'WUHU_HMR_VIEW_COPTS'] : []),
         ...(appBundles(app).some((target) =>
             bundleEmbedsViewPilot(app, target) &&
             reachesLibrary(

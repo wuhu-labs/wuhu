@@ -152,6 +152,7 @@ extension SessionStore {
       )
       try Sessions.markDrained(key, through: Int64(lastID), now: now, in: db)
       try Sessions.markHasWork(key, now: now, in: db)
+      try Sessions.markInferenceOwed(key, now: now, in: db)
       return QueueDrain(items: items, queueTail: lastID)
     }
   }
@@ -311,6 +312,10 @@ extension SessionStore {
       )
       if record.work == .errored {
         try db.execute(sql: "UPDATE sessions SET work = 'no_work' WHERE id = ?", arguments: [key])
+      }
+      // Resuming re-derives both the work flag (after an error) and what the
+      // loop is about to do (after an interrupt).
+      if record.work == .errored || record.hold == .interrupted {
         let transcript = switch record.executor {
         case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
         case .claudeCode: Transcript()
@@ -320,6 +325,24 @@ extension SessionStore {
       return false
     }
     if reminderQueued { signals.post(id) }
+  }
+
+  /// A forced compaction is an inference the transcript does not owe: it can
+  /// start from a settled turn. `active` shows it as `inference`; ending it
+  /// re-derives the run state from the transcript.
+  public func markCompacting(_ id: SessionID, active: Bool) async throws {
+    let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    try await writer.write { db in
+      let record = try Sessions.record(key, in: db)
+      guard record.work != .errored else { return }
+      if active {
+        guard record.hold == .normal, case .live = record.lifecycle else { return }
+        try Sessions.setRunState(key, .inference, now: now, in: db)
+      } else {
+        try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
+      }
+    }
   }
 
   public func markErrored(_ id: SessionID, message: String) async throws {
@@ -333,7 +356,11 @@ extension SessionStore {
         record = nil
       }
       try db.execute(
-        sql: "UPDATE sessions SET work = 'errored', error_message = ?, last_activity_at = ? WHERE id = ?",
+        sql: """
+        UPDATE sessions SET work = 'errored', error_message = ?, last_activity_at = ?,
+            run_state = 'no_run', run_progress_at = NULL
+        WHERE id = ?
+        """,
         arguments: [message, now, key],
       )
       let parent: SessionID?
@@ -373,7 +400,11 @@ extension SessionStore {
         $0.payload = #sql("json_remove(\($0.payload), '$.handlerAttemptID')", as: String.self)
       }.where { $0.sessionID.eq(key) }.execute(db)
       try db.execute(
-        sql: "UPDATE sessions SET lifecycle = 'archived', grace_expires_at = ?, last_activity_at = ? WHERE id = ?",
+        sql: """
+        UPDATE sessions SET lifecycle = 'archived', grace_expires_at = ?, last_activity_at = ?,
+            run_state = 'no_run', run_progress_at = NULL
+        WHERE id = ?
+        """,
         arguments: [SQLiteDateFormat.string(from: deadline), SQLiteDateFormat.string(from: nowDate), key],
       )
     }
@@ -429,6 +460,7 @@ extension SessionStore {
         sql: "UPDATE sessions SET hold = ?, last_activity_at = ? WHERE id = ?",
         arguments: [hold.rawValue, now, key],
       )
+      if hold == .interrupted { try Sessions.setRunState(key, .noRun, now: now, in: db) }
     }
   }
 }

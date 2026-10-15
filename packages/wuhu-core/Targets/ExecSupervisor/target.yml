@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - Logging
   - ComputerFiles
   - CExecSupervisor
   - OperationProtocol

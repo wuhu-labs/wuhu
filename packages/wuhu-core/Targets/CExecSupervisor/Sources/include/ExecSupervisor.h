@@ -2,8 +2,12 @@
 #define EXEC_SUPERVISOR_H
 #include <stdint.h>
 #include <stddef.h>
+#include <spawn.h>
 typedef struct { int pid; int input; int output; int error; } exec_child;
-int exec_spawn(char *const argv[], char *const env[], const char *cwd, exec_child *child);
+int exec_disclaim_responsibility_available(void);
+int exec_spawn(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_child *child);
+typedef int (*exec_disclaim_setter)(posix_spawnattr_t *, int);
+int exec_spawn_with_disclaimer(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_disclaim_setter setter, exec_child *child);
 int exec_observe(int pid, int *tag, int *value);
 int exec_reap(int pid);
 int exec_reap_nonblocking(int pid);

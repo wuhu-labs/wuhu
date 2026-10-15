@@ -92,6 +92,10 @@ struct ParentSessionEndpoint: Sendable {
         let request = try ownerDecode(SessionIDRequest.self, call.payload)
         try await owner.markResumed(request.id)
         return .bool(true)
+      case "session.mark-compacting":
+        let request = try ownerDecode(CompactingRequest.self, call.payload)
+        try await owner.markCompacting(request.id, active: request.active)
+        return .bool(true)
       case "session.mark-errored":
         let request = try ownerDecode(ErrorRequest.self, call.payload)
         try await owner.markErrored(request.id, message: request.message)

@@ -270,7 +270,7 @@ public actor OperationClient {
 
   public func poll(_ id: UUID, channel: String? = nil, holdMs: Int = 0, terminalAck: Bool = false) async throws -> OperationSnapshot {
     let key = "\(id)/output/\(channel ?? "state")"
-    guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
+    guard busy.insert(key).inserted else { throw try await busyError(id, reason: "concurrentPoll") }; defer { busy.remove(key) }
     let r = try await active(id)
     var reservation = 0
     if let channel {
@@ -357,16 +357,26 @@ public actor OperationClient {
     return s
   }
 
+  private func busyError(_ id: UUID, reason: String) async throws -> OperationError {
+    let record = try await store.read(id)
+    let requestID = ids()
+    var request = Request(url: address(record.machine, operation: id))
+    request.headers["X-Wuhu-Request-ID"] = requestID.uuidString
+    request.headers["X-Wuhu-Correlation-ID"] = record.correlation.uuidString
+    try await ledger.record(request, id: requestID, began: clock.now(), event: .failure, error: .capacityExceeded)
+    return OperationError(.capacityExceeded, message: "Operation is already busy: \(reason)", operation: id, details: ["reason": .string(reason)])
+  }
+
   public func takeOutput(_ id: UUID, channel: String) async throws -> [ChannelPayload] {
     let key = "\(id)/consume/\(channel)"
-    guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
+    guard busy.insert(key).inserted else { throw try await busyError(id, reason: "concurrentConsume") }; defer { busy.remove(key) }
     let record = try await store.read(id); let output = record.output[channel] ?? []
     _ = try await store.transaction(id) { $0.output[channel]?.removeFirst(output.count) }; return output
   }
 
   public func write(_ id: UUID, channel: String, payload: ChannelPayload, end: Bool = false) async throws -> WriteReceipt {
     let key = "\(id)/input/\(channel)"
-    guard busy.insert(key).inserted else { throw OperationError(.capacityExceeded) }; defer { busy.remove(key) }
+    guard busy.insert(key).inserted else { throw try await busyError(id, reason: "concurrentWrite") }; defer { busy.remove(key) }
     let r = try await active(id)
     guard let descriptor = r.description.kinds.first(where: { $0.name == r.start.kind })?.inputChannels.first(where: { $0.name == channel }) else { throw OperationError(.unknownChannel) }
     guard payload.byteCount <= min(descriptor.windowBytes, 64 * 1024) else { throw OperationError(.inputTooLarge) }

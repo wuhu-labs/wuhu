@@ -53,7 +53,8 @@ struct ExecInput: Codable, Sendable {
 
 struct ExecKind: OperationKind {
   let clock: OperationClock
-  init(clock: OperationClock = .continuous) { self.clock = clock }
+  let disclaimResponsibility: Bool
+  init(clock: OperationClock = .continuous, disclaimResponsibility: Bool = false) { self.clock = clock; self.disclaimResponsibility = disclaimResponsibility }
   let descriptor = ComputerKindSchemas.exec
   func validate(_ input: ExecInput) throws { try input.validate() }
   func run(_ input: ExecInput, channels: OperationChannels, cancellation: OperationCancellation) async throws -> JSONValue {
@@ -62,7 +63,7 @@ struct ExecKind: OperationKind {
     var child = exec_child()
     let failure = withCStringArray(input.argv) { argv in
       withCStringArray(input.environment) { environment in
-        exec_spawn(argv, environment, input.cwd, &child)
+        exec_spawn(argv, environment, input.cwd, disclaimResponsibility ? 1 : 0, &child)
       }
     }
     guard failure == 0 else { throw OperationError(.spawnFailed, details: ["errno": .number(Double(failure))]) }

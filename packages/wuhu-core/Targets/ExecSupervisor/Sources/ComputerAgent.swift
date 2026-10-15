@@ -16,6 +16,7 @@ import struct ComputerFiles.ComputerFileSystem
 import struct ComputerFiles.ExternalKind
 import Fetch
 import FetchAsyncHTTPClient
+import struct Logging.Logger
 import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
@@ -35,7 +36,7 @@ extension ExecSupervisor {
     var state = stat()
     let parent = URL(fileURLWithPath: controlSocket).deletingLastPathComponent().path
     guard lstat(parent, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700 else { throw OperationError(.invalidConfiguration) }
-    try await withComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable) { agent in
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, _ in
       var state = stat()
       if lstat(controlSocket, &state) == 0 {
         guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK, unlink(controlSocket) == 0 else { throw OperationError(.invalidConfiguration) }
@@ -76,6 +77,7 @@ extension ExecSupervisor {
     files: ComputerFileSystem,
     kinds: [AnyOperationKind],
     audit: (@Sendable (AdmittedStart) -> Void)? = nil,
+    disclaimResponsibility: Bool = false,
     _ body: @escaping @Sendable (ComputerAgent, ExecSupervisorRegistry) async throws -> R,
   ) async throws -> R {
     // A path the platform cannot bind is a typed refusal to start, before anything else happens.
@@ -88,7 +90,7 @@ extension ExecSupervisor {
       exec_close(lock)
     }
     return try await withUnixHTTP { http, events in
-      let registry = try ExecSupervisorRegistry(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: .asyncHTTPClient(http, timeout: .seconds(25)), identityFetch: .asyncHTTPClient(http, timeout: .seconds(2)), authorize: { _, id in
+      let registry = try ExecSupervisorRegistry(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: .asyncHTTPClient(http, timeout: .seconds(25)), identityFetch: .asyncHTTPClient(http, timeout: .seconds(2)), disclaimResponsibility: disclaimResponsibility, authorize: { _, id in
         guard id == machine else { throw OperationError(.machineNotAuthorized) }
       })
       try await registry.recover()
@@ -137,4 +139,16 @@ extension ComputerAgent {
       }
     }
   }
+}
+
+func boxAgentDisclaimsResponsibility(
+  available: Bool = exec_disclaim_responsibility_available() != 0,
+  reportUnavailable: () -> Void = { Logger(label: "machine-v2").warning("tccDisclaim: unavailable; exec children inherit TCC responsibility") },
+) -> Bool {
+  #if os(macOS)
+    if !available { reportUnavailable() }
+    return available
+  #else
+    return false
+  #endif
 }

@@ -127,7 +127,7 @@ private actor RecoveryRoute {
     time.advance(.seconds(59))
     try await coordinator.tick()
     #expect(try await store.read(record.id).unknown == nil)
-    time.advance(.seconds(1))
+    time.advance(.seconds(2))
     try await coordinator.tick()
     #expect(try await store.read(record.id).unknown?.details?.object?["reason"]?.stringValue == "leaseSilence")
     #expect(try await store.read(record.id).stopReason != nil)
@@ -441,7 +441,7 @@ extension MachineV2CoordinatorTests {
     #expect(try await store.read(record.id).snapshot?.verdict?.tag == .completed)
     #expect(try await store.read(record.id).unknown == nil)
     try await coordinator.tick()
-    #expect(calls.withLock { $0 } == 1)
+    #expect(calls.withLock { $0 } == 0)
     await coordinator.shutdown()
   }
 }

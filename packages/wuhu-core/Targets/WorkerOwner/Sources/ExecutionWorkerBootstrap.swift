@@ -21,9 +21,10 @@ public struct ExecutionWorkerBootstrap: Codable, Sendable {
   static let handoffCapability = "execution.handoff.v1"
   static let remindersCapability = "owner.reminders.v1"
   static let routeTransitionsCapability = "owner.route-transitions.v1"
+  static let runStateCapability = "owner.run-state.v1"
 
   public static func hello(release: String) -> WorkerHello {
     let capabilities = WorkerHello.baseline.union(["owner.session.v1", "owner.inference.v1", "owner.spawn.v1", "execution.registry.v1", "owner.tools.v1", "owner.scripts.v1", "owner.runtime.v1", "execution.handlers.v1"])
-    return WorkerHello(capabilities: capabilities.union([routeTransitionsCapability, remindersCapability, handoffCapability, "telemetry.spans.v1", "owner.continuity.v1", "owner.reader-suspension.v1"]), required: capabilities, release: release)
+    return WorkerHello(capabilities: capabilities.union([routeTransitionsCapability, remindersCapability, handoffCapability, runStateCapability, "telemetry.spans.v1", "owner.continuity.v1", "owner.reader-suspension.v1"]), required: capabilities, release: release)
   }
 }

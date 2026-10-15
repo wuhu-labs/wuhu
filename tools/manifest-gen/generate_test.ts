@@ -3196,6 +3196,13 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
     build.indexOf('ios_application(', build.indexOf('name = "WidgetLibrary"')),
   )
   assertEquals(widget.includes('HMRRuntime'), false)
+  assertEquals(widget.includes('WUHU_HMR_VIEW_COPTS'), false)
+  // Shell views erase their opaque body types like every wuhu_swift_library,
+  // so a type-changing patch to a shell source keeps a stable `Body`.
+  assertIncludes(
+    build,
+    'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_HMR_COPTS + WUHU_HMR_VIEW_COPTS,',
+  )
   assertEquals(
     generateAppBuildBazel({ ...app, hmr: false }).includes('HMRRuntime'),
     false,

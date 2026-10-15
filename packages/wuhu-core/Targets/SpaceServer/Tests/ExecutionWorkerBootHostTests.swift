@@ -16,7 +16,7 @@ import Testing
 private struct BootHostFixture {
   let base: URL
   var folder: URL { base.appendingPathComponent("space") }
-  var config: URL { base.appendingPathComponent("config") }
+  var config: URL { base.appendingPathComponent("deliberately-long-config-directory-for-canonical-worker-manifests") }
   let space: Space
   let id: String
   let generation = UUID()
@@ -33,7 +33,10 @@ private struct BootHostFixture {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
   }
 
-  func clean() { try? FileManager.default.removeItem(at: base) }
+  func clean() {
+    try? FileManager.default.removeItem(atPath: ExecutionWorkerSocketLocation(space: id, generation: generation).directory)
+    try? FileManager.default.removeItem(at: base)
+  }
 
   func put(_ name: String, _ text: String, mode: mode_t = 0o600) throws {
     let file = open(directory.appendingPathComponent(name).path, O_WRONLY | O_CREAT | O_EXCL, mode)
@@ -45,10 +48,6 @@ private struct BootHostFixture {
 
   func openHost(worker: Bool) async throws -> SpaceHost {
     try await SpaceHost.open(folder: folder, deployment: DeploymentRecord(origin: "https://boot-fence.test", tlsFingerprint: "test", certificate: .provided), configDirectory: config, allowEnvironmentCredentials: false, executionPlacement: worker ? .worker(executable: URL(fileURLWithPath: "/not-a-worker")) : .inProcess, webApp: nil)
-  }
-
-  func openHost(worker: Bool, reconcileWorkers: @escaping @Sendable () async -> ExecutionWorkerBootFence.Result) async throws -> SpaceHost {
-    try await SpaceHost.open(folder: folder, deployment: DeploymentRecord(origin: "https://boot-fence.test", tlsFingerprint: "test", certificate: .provided), configDirectory: config, allowEnvironmentCredentials: false, executionPlacement: worker ? .worker(executable: URL(fileURLWithPath: "/not-a-worker")) : .inProcess, webApp: nil, reconcileWorkers: reconcileWorkers)
   }
 }
 
@@ -69,11 +68,12 @@ private struct BootHostFixture {
       try await store.setWorkerActivity(blocked, incarnation: incarnation, active: true)
       let machine = try await fixture.space.addMachine(name: "fixture").id
       _ = try await fixture.space.mintScriptExec(machine: machine, session: safe.rawValue, script: "safe-script")
-      let manifest = ExecutionWorkerManifest(version: 1, space: fixture.id, generation: fixture.generation, incarnation: incarnation, processID: getpid(), birth: try processBirthIdentity(getpid()), credentials: .init(current: String(repeating: "a", count: 72)))
+      let location = try await ExecutionWorkerSocketDirectory.create(space: fixture.id, generation: fixture.generation)
+      #expect((fixture.directory.path + "/worker.sock").utf8.count >= 104)
+      #expect(location.worker.utf8.count < 104)
+      let manifest = ExecutionWorkerManifest(version: 2, space: fixture.id, generation: fixture.generation, incarnation: incarnation, processID: getpid(), birth: try processBirthIdentity(getpid()), credentials: .init(current: String(repeating: "a", count: 72)), sockets: location)
       try fixture.put("manifest.json", String(decoding: JSONEncoder().encode(manifest), as: UTF8.self))
-      let host = try await fixture.openHost(worker: worker, reconcileWorkers: {
-        .init(unresolved: [incarnation], unresolvedWorkers: [.init(manifest: manifest, directory: fixture.directory.path, reason: .unconfirmed)], credentials: .init())
-      })
+      let host = try await fixture.openHost(worker: worker)
       let running = Task { await host.run() }
       do {
         try await until("safe startup script is announced") { try await store.undrainedInputs(safe).count == 1 }

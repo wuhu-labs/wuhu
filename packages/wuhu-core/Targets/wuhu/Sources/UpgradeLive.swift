@@ -4,7 +4,6 @@ import struct Fetch.FetchClient
 import struct Fetch.Response
 import FetchAsyncHTTPClient
 import Foundation
-import Synchronization
 
 extension UpgradeEnvironment {
   static var live: UpgradeEnvironment {
@@ -33,58 +32,5 @@ extension UpgradeEnvironment {
         #endif
       },
     )
-  }
-}
-
-// Draining while the child runs keeps a chatty process from blocking on a
-// full pipe and never reaching the termination handler.
-private final class DrainedPipe: Sendable {
-  private let buffer = Mutex(Data())
-
-  init(_ pipe: Pipe) {
-    pipe.fileHandleForReading.readabilityHandler = { handle in
-      let data = handle.availableData
-      if data.isEmpty {
-        handle.readabilityHandler = nil
-      } else {
-        self.buffer.withLock { $0.append(data) }
-      }
-    }
-  }
-
-  func settle(_ pipe: Pipe) -> String {
-    pipe.fileHandleForReading.readabilityHandler = nil
-    let tail = (try? pipe.fileHandleForReading.readToEnd()) ?? Data()
-    return self.buffer.withLock { String(decoding: $0 + tail, as: UTF8.self) }
-  }
-}
-
-func capturedProcessOutput(_ command: [String]) async throws -> String {
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: command[0])
-  process.arguments = Array(command.dropFirst())
-  let stdout = Pipe()
-  let stderr = Pipe()
-  process.standardOutput = stdout
-  process.standardError = stderr
-  process.standardInput = FileHandle.nullDevice
-  let stdoutBuffer = DrainedPipe(stdout)
-  let stderrBuffer = DrainedPipe(stderr)
-  return try await withCheckedThrowingContinuation { continuation in
-    process.terminationHandler = { process in
-      let output = stdoutBuffer.settle(stdout)
-      let errors = stderrBuffer.settle(stderr)
-      if process.terminationStatus == 0 {
-        continuation.resume(returning: output)
-      } else {
-        continuation.resume(throwing: CommandFailure(command: command, status: process.terminationStatus, stderr: errors.trimmingCharacters(in: .whitespacesAndNewlines)))
-      }
-    }
-    do {
-      try process.run()
-    } catch {
-      process.terminationHandler = nil
-      continuation.resume(throwing: error)
-    }
   }
 }

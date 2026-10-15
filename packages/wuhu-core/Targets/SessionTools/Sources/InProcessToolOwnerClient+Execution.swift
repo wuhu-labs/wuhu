@@ -89,6 +89,10 @@ extension InProcessToolOwnerClient {
     try await executionOwner.markErrored(id, message: message)
   }
 
+  public func markCompacting(_ id: SessionID, active: Bool) async throws {
+    try await executionOwner.markCompacting(id, active: active)
+  }
+
   public func archive(_ id: SessionID, grace: Duration) async throws -> Date {
     try await executionOwner.archive(id, grace: grace)
   }

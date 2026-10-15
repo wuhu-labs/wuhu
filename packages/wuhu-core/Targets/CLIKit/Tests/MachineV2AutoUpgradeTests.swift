@@ -431,6 +431,45 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: launch[4]))
   }
 
+  @Test func aLinuxHostPreflightFailureIsRetriedAtTheNextCheck() async throws {
+    let box = try Box(Self.ready("0.2.0"))
+    defer { box.scratch.remove() }
+    await box.upgrader().check()
+    let launch = try #require(box.launches.withLock { $0 }.first)
+    let installer = MachineV2Installer(home: box.installer.home, machine: box.installer.machine, platform: .linux, userID: 501, command: { _ in "" })
+    await withDependencies { $0.continuousClock = ImmediateClock() } operation: { await box.apply(launch, installer: installer) }
+    #expect(box.state == MachineV2UpgradeState())
+    #expect(box.binary == "0.1.0")
+    #expect(!FileManager.default.fileExists(atPath: launch[4]))
+    await box.upgrader().check()
+    #expect(box.downloads.withLock { $0 }.count == 2)
+    #expect(box.launches.withLock { $0 }.count == 2)
+  }
+
+  @Test func aMacPreflightFailureRecordsTheTargetAsFailed() async throws {
+    let box = try Box(Self.ready("0.2.0"))
+    defer { box.scratch.remove() }
+    await box.upgrader().check()
+    let launch = try #require(box.launches.withLock { $0 }.first)
+    let installer = MachineV2Installer(home: box.installer.home, machine: box.installer.machine, platform: .macOS, userID: 501, command: { arguments in
+      if arguments.count > 1, arguments[1] == "print" { throw CommandFailure(command: arguments, status: 113, stderr: "Could not find service") }
+      if arguments.count > 1, arguments[1] == "bootstrap", let plist = arguments.last, plist.hasSuffix(".preflight.plist") {
+        let definition = try String(contentsOf: URL(fileURLWithPath: plist), encoding: .utf8)
+        let receipt = try #require(definition.split(separator: "<string>").map { String($0.prefix { $0 != "<" }) }.first { $0.hasSuffix(".json") })
+        try Data(#"{"ok":false,"message":"the candidate crashed"}"#.utf8).write(to: URL(fileURLWithPath: receipt))
+      }
+      return ""
+    })
+    await withDependencies { $0.continuousClock = ImmediateClock() } operation: { await box.apply(launch, installer: installer) }
+    #expect(box.state.trial == nil)
+    #expect(box.state.failed?.version == "0.2.0")
+    #expect(box.state.failed?.reason == "installFailed")
+    #expect(box.binary == "0.1.0")
+    await box.upgrader().check()
+    #expect(box.downloads.withLock { $0 }.count == 1)
+    #expect(box.launches.withLock { $0 }.count == 1)
+  }
+
   @Test(arguments: [false, true])
   func aBusyInstallerClearsOnlyItsOwnTrial(_ replaced: Bool) async throws {
     let box = try Box(Self.ready("0.2.0"))

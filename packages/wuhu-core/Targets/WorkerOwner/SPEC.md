@@ -18,6 +18,8 @@ Attempt trace bytes are appended to parent-owned sinks with backpressure; closin
 
 The optional `owner.route-transitions.v1` capability is advertised independently of the ABI-1 baseline. Route-failure updates and non-nil compaction/handoff transitions require it before any request or upload is sent; an older peer receives no partial effect and the caller gets typed `missingCapability`. Transition-free requests remain compatible. Route-failure updates retain the expected epoch and typed failure episode. Compaction and portable-handoff requests carry an explicit route-transition snapshot, including its full transient-aware transcript snapshot, and commit through the parent atomic store operation. Route/generation/transcript conflicts and recognized credential-refresh, authentication and service-refusal types retain their semantic error classifications. Worker compaction uses the same placement preparation as local execution.
 
+The optional `owner.run-state.v1` capability carries `session.mark-compacting`, which tells the parent a forced compaction began or ended so the sessions row's `run_state` reads `inference` during it. Run state is advisory: a worker attached to a parent without the capability skips the call, so it never fails a session.
+
 
 ## Tools, scripts and runtime effects
 

@@ -9,6 +9,17 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 extern char **environ;
+#ifdef __APPLE__
+extern int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *, int) __attribute__((weak_import));
+#endif
+
+int exec_disclaim_responsibility_available(void) {
+#ifdef __APPLE__
+    return responsibility_spawnattrs_setdisclaim != NULL;
+#else
+    return 0;
+#endif
+}
 
 static int make_pipe(int p[2]) {
     if (pipe(p)) return errno;
@@ -27,7 +38,15 @@ static int close_inherited(posix_spawn_file_actions_t *actions, short *flags) {
 #endif
 }
 static void nonblocking(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK); }
-int exec_spawn(char *const argv[], char *const env[], const char *cwd, exec_child *child) {
+int exec_spawn(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_child *child) {
+#ifdef __APPLE__
+    exec_disclaim_setter setter=responsibility_spawnattrs_setdisclaim;
+#else
+    exec_disclaim_setter setter=NULL;
+#endif
+    return exec_spawn_with_disclaimer(argv,env,cwd,disclaim_responsibility,setter,child);
+}
+int exec_spawn_with_disclaimer(char *const argv[], char *const env[], const char *cwd, int disclaim_responsibility, exec_disclaim_setter setter, exec_child *child) {
     int a[2]={-1,-1},b[2]={-1,-1},c[2]={-1,-1};
     int r=make_pipe(a); if(!r) r=make_pipe(b); if(!r) r=make_pipe(c);
     if(r) { close_pipe(a);close_pipe(b);close_pipe(c);return r; }
@@ -50,6 +69,14 @@ int exec_spawn(char *const argv[], char *const env[], const char *cwd, exec_chil
     short flags=POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF|POSIX_SPAWN_SETSIGMASK;
     if(!r) r=close_inherited(&actions,&flags);
     if(!r) r=posix_spawnattr_setflags(&attr,flags);
+#ifdef __APPLE__
+    if(!r && disclaim_responsibility && setter) {
+        r=setter(&attr,1);
+    }
+#else
+    (void)disclaim_responsibility;
+    (void)setter;
+#endif
     pid_t pid;
     if(!r) r=posix_spawnp(&pid,argv[0],&actions,&attr,argv,env);
     posix_spawn_file_actions_destroy(&actions);posix_spawnattr_destroy(&attr);

@@ -117,6 +117,10 @@ public struct InProcessExecutionOwnerClient: ExecutionOwnerClient {
     try await sessions.markErrored(id, message: message)
   }
 
+  public func markCompacting(_ id: SessionID, active: Bool) async throws {
+    try await sessions.markCompacting(id, active: active)
+  }
+
   public func archive(_ id: SessionID, grace: Duration) async throws -> Date {
     try await sessions.archive(id, grace: grace)
   }

@@ -29,7 +29,10 @@ actor ExchangeLedger {
   }
 
   func exchange(_ request: Request, id: UUID, timeout: Duration, limit: Int) async throws -> Data {
-    guard entries.count < capacity else { throw OperationError(.capacityExceeded) }
+    guard entries.count < capacity else {
+      try record(request, id: id, began: clock.now(), event: .failure, error: .capacityExceeded)
+      throw OperationError(.capacityExceeded, message: "Exchange limit reached (\(capacity) outstanding requests)", details: ["reason": "exchangeLimit"])
+    }
     let (stream, waiter) = AsyncStream<Result<Data, OperationError>>.makeStream(bufferingPolicy: .bufferingOldest(1))
     let began = clock.now()
     try record(request, id: id, began: began, event: .dispatch)

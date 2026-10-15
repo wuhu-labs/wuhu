@@ -24,6 +24,7 @@ actor ExecSupervisorRegistry {
   let machine: String
   let root: String
   let executable: String
+  let disclaimResponsibility: Bool
   let clock: OperationClock
   let fetch: FetchClient
   let identityFetch: FetchClient
@@ -68,9 +69,10 @@ actor ExecSupervisorRegistry {
     executable: String,
     fetch: FetchClient,
     identityFetch: FetchClient? = nil,
+    disclaimResponsibility: Bool = false,
     authorize: @escaping @Sendable (Request, String) async throws -> Void,
   ) throws {
-    try self.init(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: fetch, authorize: authorize, files: .live, clock: .continuous, identityFetch: identityFetch, launch: { executable, directory in
+    try self.init(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: fetch, authorize: authorize, files: .live, clock: .continuous, identityFetch: identityFetch, disclaimResponsibility: disclaimResponsibility, launch: { executable, directory in
       var pid: Int32 = 0
       let code = exec_launch_supervisor(executable, directory, &pid)
       guard code == 0 else { throw OperationError(.spawnFailed, details: ["errno": .number(Double(code))]) }
@@ -78,9 +80,10 @@ actor ExecSupervisorRegistry {
     })
   }
 
-  init(machine: String, operationsDirectory: String, executable: String, fetch: FetchClient, authorize: @escaping @Sendable (Request, String) async throws -> Void, files: SupervisorFiles, clock: OperationClock, identityFetch: FetchClient? = nil, launch: @escaping @Sendable (String, String) async throws -> Int32?) throws {
+  init(machine: String, operationsDirectory: String, executable: String, fetch: FetchClient, authorize: @escaping @Sendable (Request, String) async throws -> Void, files: SupervisorFiles, clock: OperationClock, identityFetch: FetchClient? = nil, disclaimResponsibility: Bool = false, launch: @escaping @Sendable (String, String) async throws -> Int32?) throws {
     guard !machine.isEmpty, !machine.contains("/"), operationsDirectory.hasPrefix("/"), executable.hasPrefix("/") else { throw OperationError(.invalidConfiguration) }
     self.machine = machine; root = operationsDirectory; self.executable = executable; self.fetch = fetch; self.authorize = authorize
+    self.disclaimResponsibility = disclaimResponsibility
     self.files = files; self.clock = clock; self.launch = launch; self.identityFetch = identityFetch ?? fetch
   }
 
@@ -352,7 +355,7 @@ actor ExecSupervisorRegistry {
       guard manifests.count + tombstones.count + malformedDirectories.count < OperationLimits().receipts, active.count < OperationLimits().activeOperations,
             reservations.values.reduce(0, +) + Self.fullReservation <= OperationLimits().bufferBytes else { throw OperationError(.capacityExceeded) }
       let directory = root + "/" + id.uuidString
-      let manifest = SupervisorManifest(version: 2, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: Rendezvous.socketPath(operationsDirectory: root))
+      let manifest = SupervisorManifest(version: 2, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: Rendezvous.socketPath(operationsDirectory: root), disclaimResponsibility: disclaimResponsibility ? true : nil)
       try validateManifest(manifest, directory: directory)
       manifests[id] = manifest
       active.insert(id); reservations[id] = Self.fullReservation

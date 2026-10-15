@@ -83,7 +83,7 @@ extension SessionActor {
       guard !(try live).archiving else { return }
       guard !yielding else { return }
       if fullness >= loopConfig.thresholds.hard {
-        try await runInference(mode: .forcedCompact)
+        try await runForcedCompaction()
       } else if (try live).queueHead > (try live).queueTail {
         try await drainQueue()
       } else {
@@ -93,7 +93,7 @@ extension SessionActor {
         try Task.checkCancellation()
         guard !(try live).archiving else { return }
         if forced {
-          try await runInference(mode: .forcedCompact)
+          try await runForcedCompaction()
         } else if (try live).transcript.hasWork {
           try await runInference(mode: .normal)
         } else if let nag = try await idleNag() {
@@ -103,6 +103,28 @@ extension SessionActor {
         }
       }
     }
+  }
+
+  // A forced compaction can start from a settled turn, so the transcript
+  // alone would show no run; the row is told, and every exit re-derives it.
+  // Run state is advisory: failing to write it never stops the compaction.
+  private func runForcedCompaction() async throws {
+    try? await repo.markCompacting(true)
+    do {
+      try await runInference(mode: .forcedCompact)
+    } catch {
+      await settleCompacting()
+      throw error
+    }
+    await settleCompacting()
+  }
+
+  // The loop may end here cancelled (shutdown, a yielded assignment), and a
+  // cancelled owner call never leaves; a detached task does not inherit the
+  // cancellation, so the re-derive still lands.
+  private func settleCompacting() async {
+    let repo = repo
+    await Task.detached { try? await repo.markCompacting(false) }.value
   }
 
   // The operator-facing compact verb, the kernel's counterpart to Claude
