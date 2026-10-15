@@ -14,15 +14,6 @@ import OperationProtocol
 import Synchronization
 import Testing
 
-private final class RecoveryClock: Sendable {
-  let time = Mutex<Duration>(.zero)
-  var clock: OperationClock {
-    .init(now: { self.time.withLock { $0 } }, sleep: { try await ContinuousClock().sleep(for: $0) })
-  }
-
-  func advance(_ duration: Duration) { time.withLock { $0 += duration } }
-}
-
 private actor RecoveryRoute {
   let id: UUID
   let token = UUID()
@@ -68,7 +59,7 @@ private actor RecoveryRoute {
   }
 }
 
-@Suite struct MachineV2CoordinatorTests {
+@Suite(.timeLimit(.minutes(1))) struct MachineV2CoordinatorTests {
   @Test(arguments: [false, true]) func unresolvedWorkerOperationsKeepTheirStoredStateAndAreNeverRecovered(legacyCaller: Bool) async throws {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
@@ -119,15 +110,15 @@ private actor RecoveryRoute {
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = Self.record()
     _ = try await store.claim(.init(scope: "dead-script", key: "one"), record: record)
-    let route = RecoveryRoute(id: record.id); let time = RecoveryClock()
+    let route = RecoveryRoute(id: record.id); let time = MachineRecoveryTestClock()
     let coordinator = Self.coordinator(space: space, key: key, route: route, clock: time.clock)
     try await coordinator.prepare()
     try await coordinator.tick()
     #expect(try await store.read(record.id).unknown == nil)
-    time.advance(.seconds(59))
+    await time.advance(.seconds(59))
     try await coordinator.tick()
     #expect(try await store.read(record.id).unknown == nil)
-    time.advance(.seconds(2))
+    await time.advance(.seconds(2))
     try await coordinator.tick()
     #expect(try await store.read(record.id).unknown?.details?.object?["reason"]?.stringValue == "leaseSilence")
     #expect(try await store.read(record.id).stopReason != nil)
@@ -152,7 +143,7 @@ private actor RecoveryRoute {
     let record = Self.record()
     _ = try await store.claim(.init(scope: "died-before-dispatch", key: "one"), record: record)
     let calls = Mutex<[String]>([])
-    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, fetch: { _ in
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, clock: MachineRecoveryTestClock().clock, fetch: { _ in
       FetchClient { request in
         calls.withLock { $0.append(request.method.rawValue) }
         return recoveryReply(try .json(ErrorEnvelope(.init(.unknownOperation)), status: .notFound), to: request)
@@ -172,7 +163,7 @@ private actor RecoveryRoute {
     return .init(id: UUID(), correlation: UUID(), machine: "test", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [descriptor]))
   }
 
-  private static func coordinator(space: Space, key: SymmetricKey, route: RecoveryRoute, clock: OperationClock = .continuous) -> MachineV2Coordinator {
+  private static func coordinator(space: Space, key: SymmetricKey, route: RecoveryRoute, clock: OperationClock = MachineRecoveryTestClock().clock) -> MachineV2Coordinator {
     MachineV2Coordinator(
       space: space,
       key: key,
@@ -206,7 +197,7 @@ extension MachineV2CoordinatorTests {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
     let machine = try await space.addMachine(name: "leave-test")
     try await space.registerMachineV2(machine.id.rawValue, group: .shared)
-    let route = LeaveRoute(); let time = RecoveryClock()
+    let route = LeaveRoute(); let time = MachineRecoveryTestClock()
     let coordinator = MachineV2Coordinator(
       space: space,
       key: key,
@@ -219,7 +210,7 @@ extension MachineV2CoordinatorTests {
     try await coordinator.prepare(); try await coordinator.tick()
     let lost = try await Self.presenceRows(space)
     #expect(lost == [[machine.id.rawValue, "lost", "leaveHandshakeFailed"]])
-    await route.allowAcknowledgement(); time.advance(.seconds(20))
+    await route.allowAcknowledgement(); await time.advance(.seconds(20))
     try await coordinator.tick()
     let settled = try await Self.presenceRows(space)
     #expect(settled == [[machine.id.rawValue, "detached", "leaving"]])
@@ -239,6 +230,7 @@ extension MachineV2CoordinatorTests {
       key: key,
       problemsGroup: .shared,
       origin: URL(string: "http://test.invalid")!,
+      clock: MachineRecoveryTestClock().clock,
       fetch: { _ in FetchClient { try await route.fetch($0) } },
       abort: { _, _ in },
     )
@@ -352,7 +344,7 @@ extension MachineV2CoordinatorTests {
     let machine = try await space.addMachine(name: "prior-goodbye")
     try await space.registerMachineV2(machine.id.rawValue, group: .shared)
     try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .detached, reason: "leaving")
-    let time = RecoveryClock(); let attached = Mutex(false)
+    let time = MachineRecoveryTestClock(); let attached = Mutex(false)
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, clock: time.clock, fetch: { _ in
       FetchClient { request in
         guard attached.withLock({ $0 }) else { throw OperationError(.transport) }
@@ -360,11 +352,12 @@ extension MachineV2CoordinatorTests {
       }
     }, abort: { _, _ in })
     try await coordinator.prepare(); try await coordinator.tick()
-    time.advance(.seconds(60)); try await coordinator.tick()
+    await time.advance(.seconds(60)); try await coordinator.tick()
     #expect(try await space.machineV2DetachedMembers(group: .shared) == [machine.id.rawValue])
     #expect(try await Self.presenceRows(space) == [[machine.id.rawValue, "detached", "leaving"]])
-    attached.withLock { $0 = true }; time.advance(.seconds(20)); try await coordinator.tick()
+    attached.withLock { $0 = true }; await time.advance(.seconds(20)); try await coordinator.tick()
     #expect(try await space.machineV2DetachedMembers(group: .shared).isEmpty)
+    #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.state == .attached)
     await coordinator.shutdown()
   }
 }
@@ -384,7 +377,7 @@ extension MachineV2CoordinatorTests {
     let revoked = Self.record(); let healthy = Self.record()
     _ = try await store.claim(.init(scope: "dead-script", key: "revoked"), record: revoked)
     _ = try await store.claim(.init(scope: "dead-script", key: "healthy"), record: healthy)
-    let route = RecoveryRoute(id: healthy.id); await route.attach(); let time = RecoveryClock()
+    let route = RecoveryRoute(id: healthy.id); await route.attach(); let time = MachineRecoveryTestClock()
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, clock: time.clock, fetch: { _ in
       FetchClient { request in
         if request.url.path.contains(revoked.id.uuidString) {
@@ -397,9 +390,9 @@ extension MachineV2CoordinatorTests {
     for _ in 0 ..< 3 { try await coordinator.tick() }
     #expect(try await store.read(healthy.id).snapshot?.outputConsumed == true)
     #expect(try await store.read(revoked.id).unknown == nil)
-    time.advance(.seconds(59)); try await coordinator.tick()
+    await time.advance(.seconds(59)); try await coordinator.tick()
     #expect(try await store.read(revoked.id).unknown == nil)
-    time.advance(.seconds(1)); try await coordinator.tick()
+    await time.advance(.seconds(1)); try await coordinator.tick()
     #expect(try await store.read(revoked.id).unknown?.details?.object?["reason"]?.stringValue == "leaseSilence")
     #expect(try await store.read(revoked.id).stopReason != nil)
     await coordinator.shutdown()
@@ -410,7 +403,7 @@ extension MachineV2CoordinatorTests {
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = Self.record()
     _ = try await store.claim(.init(scope: "dead-script", key: "one"), record: record)
-    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, fetch: { _ in
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, clock: MachineRecoveryTestClock().clock, fetch: { _ in
       FetchClient { _ in throw OperationError(.traceUnavailable) }
     }, abort: { _, _ in })
     try await coordinator.prepare()
@@ -430,7 +423,7 @@ extension MachineV2CoordinatorTests {
       $0.snapshot = .init(operation: record.id, verdict: .init(.completed, result: .bool(true)), terminalToken: UUID(), finalOffsets: ["out": .zero], outputConsumed: true)
     }
     let calls = Mutex(0)
-    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, fetch: { _ in
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, clock: MachineRecoveryTestClock().clock, fetch: { _ in
       FetchClient { request in
         calls.withLock { $0 += 1 }
         #expect(request.method == .get)

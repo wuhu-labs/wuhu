@@ -214,6 +214,23 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self):
         parsed = urlparse(self.path)
 
+        if parsed.path == "/early-error":
+            self.send_response(400)
+            self.send_header("Content-Length", "1")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.flush()
+            time.sleep(0.01)
+            self.connection.settimeout(1)
+            try:
+                self._read_body()
+            except (TimeoutError, ConnectionError):
+                pass
+            self.wfile.write(b"!")
+            self.wfile.flush()
+            self.close_connection = True
+            return
+
         if parsed.path == "/echo":
             body = self._read_body()
             payload = {

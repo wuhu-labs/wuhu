@@ -28,7 +28,7 @@ struct WorkerConnection: Sendable {
   let client: WorkerClient
   let lifetime: Task<Void, Never>
   var ownerTransport: WorkerOwnerTransport? = nil
-  var ownerHandoff: ParentExecutionHandoff? = nil
+  var parentBinding: WorkerParentBinding? = nil
 
   static func start(
     executable: String,
@@ -89,6 +89,7 @@ struct WorkerConnection: Sendable {
       try? await storage?.cleanup()
       throw error
     }
+    let binding = WorkerParentBinding(handoff: handoff, transport: transport, credentials: credentials, hello: hello)
     var configuration = HTTPClient.Configuration()
     configuration.redirectConfiguration = .disallow
     configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit = 4096
@@ -123,7 +124,7 @@ struct WorkerConnection: Sendable {
       }
       continuation.finish()
       await client.close()
-      await handoff.shutdown()
+      await binding.shutdown()
       await transport.stop()
       try? await control.shutdown()
       try? await byteClient.shutdown()
@@ -150,9 +151,10 @@ struct WorkerConnection: Sendable {
         return try await group.next()!
       }
       try await storage?.admit(processID: processID)
+      if let storage { try await binding.bindIdentity(storage.checkpointIdentity()) }
       _ = try await client.negotiate(hello)
       admission.yield(true)
-      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport, ownerHandoff: handoff)
+      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport, parentBinding: binding)
     } catch {
       admission.finish()
       lifetime.cancel()

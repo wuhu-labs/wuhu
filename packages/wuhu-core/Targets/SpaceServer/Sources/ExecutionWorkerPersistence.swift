@@ -8,6 +8,7 @@
 #else
   import Darwin
 #endif
+import struct WorkerOwner.ParentExecutionIdentity
 import struct WorkerProtocol.WorkerProtocolError
 
 struct ExecutionWorkerPersistence: Sendable {
@@ -75,6 +76,12 @@ actor ExecutionWorkerRuntimeStorage {
     guard durable, let manifest, manifest.processID == processID else { throw WorkerProtocolError(.unauthorized, message: "Execution worker admission identity mismatch") }
     try manifest.verifyProcess()
     try await pinEndpoints()
+  }
+
+  func checkpointIdentity() throws -> ParentExecutionIdentity {
+    guard durable, let manifest else { throw WorkerProtocolError(.unavailable, message: "Execution worker identity is unavailable") }
+    try manifest.verifyProcess()
+    return .init(space: manifest.space, generation: manifest.generation, incarnation: manifest.incarnation, processID: manifest.processID, birth: manifest.birth)
   }
 
   func cleanup() async throws {

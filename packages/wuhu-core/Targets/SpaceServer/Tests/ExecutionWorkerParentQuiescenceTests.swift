@@ -43,7 +43,7 @@ import WorkerProtocol
       let connection = try await WorkerConnection.start(executable: executable, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtime, activity: { _ in }, exited: { exits.withLock { $0 += 1 } })
       let result: Result<Void, any Error>
       do {
-        let handoff = try #require(connection.ownerHandoff)
+        let handoff = try #require(connection.parentBinding)
         let handlers = RemoteHandlerExecution(client: connection.client)
         let first = try await handlers.executeHandler(.init(path: "/effect.js", session: id))
         #expect(JSONValue.parse(first.stateJSON) == ["value": 1])

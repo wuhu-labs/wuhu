@@ -55,6 +55,19 @@ import Testing
     #expect(base.sensitiveValues == ["x-api-key": "secret"])
   }
 
+  @Test func bufferedBodyClassificationDoesNotConsumeOrResolveStreams() async throws {
+    let buffered = Body.chunks([Data("one".utf8), Data("two".utf8)])
+    #expect(buffered.isBuffered)
+    #expect(Body.empty.isBuffered)
+    let pair = AsyncStream<Data>.makeStream()
+    defer { pair.continuation.finish() }
+    let streamed = Body.stream(length: 3, pair.stream)
+    #expect(!streamed.isBuffered)
+    #expect(!Body.stream(length: 3, replaying: { pair.stream }).isBuffered)
+    #expect(await !streamed.isResolved)
+    #expect(try await buffered.text() == "onetwo")
+  }
+
   @Test func requestStringBody() async throws {
     let body = Body.string("hello")
     let response = Response(status: .ok, body: body)

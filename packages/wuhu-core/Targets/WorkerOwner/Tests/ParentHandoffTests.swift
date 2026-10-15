@@ -54,7 +54,7 @@ import WorkerProtocol
     await final.shutdown()
   }
 
-  @Test(arguments: [false, true]) func stagedLogicalReaderReplyTransfersWithItsAcknowledgement(watch: Bool) async throws {
+  @Test(arguments: [false, true], [false, true]) func stagedLogicalReaderReplyTransfersWithItsAcknowledgement(watch: Bool, serialized: Bool) async throws {
     let space = try Space.inMemory()
     let session = try await space.sessions.createSession(group: .shared, title: "reader", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: "small", effort: "none"))
     let owner = InProcessToolOwnerClient(space: space)
@@ -71,8 +71,13 @@ import WorkerProtocol
     let output = WorkerCall(id: pull.id, operation: "owner.output", payload: .string(pull.operation), receipt: pull.receipt)
     let original = try await source.bytes.send(output).json(WorkerReply.self)
     try await source.prepare()
-    let restored = try await source.transfer(to: owner)
-    try await restored.resume()
+    let restored: ParentExecutionHandoff
+    if serialized {
+      restored = try await source.restoreSerialized(identity: .init(space: "fixture", generation: UUID(), incarnation: UUID(), processID: 42, birth: "fixture-birth-identity"), to: owner, install: { _ in })
+    } else {
+      restored = try await source.transfer(to: owner)
+      try await restored.resume()
+    }
     let replay = try await restored.bytes.send(output).json(WorkerReply.self)
     #expect(replay == original)
     let destination = try await self.client(restored)

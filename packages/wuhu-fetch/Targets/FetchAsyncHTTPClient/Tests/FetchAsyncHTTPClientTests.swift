@@ -51,6 +51,49 @@ import Testing
     }
   }
 
+  @Test func bufferedBodiesSurviveAnEarlyErrorBeforeRequestStreamCompletion() async throws {
+    let server = try IntegrationServer.start()
+    defer { server.stop() }
+    try await withHTTPClient { client in
+      let fetch = FetchClient.asyncHTTPClient(client)
+      for _ in 0 ..< 100 {
+        for body in [Body.empty, try Body.json(["value": "refused"]), Body.chunks([Data("one".utf8), Data("two".utf8)])] {
+          let response = try await fetch(Request(url: server.baseURL.appendingPathComponent("early-error"), method: .post, body: body))
+          #expect(response.status.code == 400)
+          #expect(try await response.text() == "!")
+          #expect(await body.isResolved)
+        }
+      }
+    }
+  }
+
+  @Test func largeBufferedBodiesSurviveAnEarlyErrorWithoutBecomingStreams() async throws {
+    let server = try IntegrationServer.start()
+    defer { server.stop() }
+    try await withHTTPClient { client in
+      let fetch = FetchClient.asyncHTTPClient(client)
+      for _ in 0 ..< 10 {
+        let body = Body.bytes(Data(repeating: 0x61, count: 4 * 1024 * 1024 + 1))
+        let response = try await fetch(Request(url: server.baseURL.appendingPathComponent("early-error"), method: .post, body: body))
+        #expect(response.status.code == 400)
+        #expect(try await response.text() == "!")
+        #expect(await body.isResolved)
+      }
+    }
+  }
+
+  @Test func bufferedBodiesStillValidateDeclaredLength() async throws {
+    let server = try IntegrationServer.start()
+    defer { server.stop() }
+    try await withHTTPClient { client in
+      var body = Body.string("short")
+      body.contentLength = 99
+      await #expect(throws: HTTPClientError.bodyLengthMismatch) {
+        try await FetchClient.asyncHTTPClient(client)(Request(url: server.baseURL.appendingPathComponent("echo"), method: .post, body: body))
+      }
+    }
+  }
+
   @Test func acceptsNoTimeout() async throws {
     let server = try IntegrationServer.start()
     defer { server.stop() }

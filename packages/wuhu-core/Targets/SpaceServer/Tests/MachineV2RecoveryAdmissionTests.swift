@@ -46,7 +46,7 @@ private final class RecoveryBacklog: Sendable {
   func release() { state.withLock { $0.released = true; return $0.releases }.forEach { $0.finish() }; entrance.finish() }
 }
 
-@Suite struct MachineV2RecoveryAdmissionTests {
+@Suite(.timeLimit(.minutes(1))) struct MachineV2RecoveryAdmissionTests {
   @Test(arguments: [false, true])
   func expiredOutputIsTerminalForRecoveryAndRetainsKnownVerdictAcrossRestart(terminal: Bool) async throws {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
@@ -132,7 +132,7 @@ private final class RecoveryBacklog: Sendable {
     try await space.recordMachineV2Presence(machine.id.rawValue, group: .shared, state: .detached, reason: "leaving")
     let record = Self.record(machine: machine.id.rawValue)
     _ = try await store.claim(.init(scope: "dead", key: "one"), record: record)
-    let time = AdmissionTime(); let attached = Mutex(false); let operationCalls = Mutex(0)
+    let time = MachineRecoveryTestClock(); let attached = Mutex(false); let operationCalls = Mutex(0)
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
       FetchClient { request in
         if request.url.path.contains("/operations/") {
@@ -144,10 +144,12 @@ private final class RecoveryBacklog: Sendable {
       }
     }, abort: { _, _ in })
     try await coordinator.prepare(); try await coordinator.tick()
-    time.advance(.seconds(60)); try await coordinator.tick()
+    await time.advance(.seconds(60)); try await coordinator.tick()
     #expect(operationCalls.withLock { $0 } == 0)
-    attached.withLock { $0 = true }; time.advance(.seconds(20)); try await coordinator.tick()
-    time.advance(.seconds(4)); try await coordinator.tick()
+    attached.withLock { $0 = true }; await time.advance(.seconds(20)); try await coordinator.tick()
+    #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.state == .attached)
+    #expect(try await space.machineV2DetachedMembers(group: .shared).isEmpty)
+    try await coordinator.tick()
     #expect(operationCalls.withLock { $0 } > 0)
     await coordinator.shutdown()
   }
@@ -163,7 +165,7 @@ private final class RecoveryBacklog: Sendable {
     _ = try await store.claim(.init(scope: "terminal", key: "one"), record: record)
     let terminal = OperationSnapshot(operation: record.id, verdict: .init(.completed, result: .bool(true)), terminalToken: UUID(), finalOffsets: ["out": .zero], outputConsumed: false)
     _ = try await store.transaction(record.id) { $0.snapshot = terminal }
-    let time = AdmissionTime(); let attached = Mutex(false); let operationCalls = Mutex(0)
+    let time = MachineRecoveryTestClock(); let attached = Mutex(false); let operationCalls = Mutex(0)
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
       FetchClient { request in
         guard attached.withLock({ $0 }) else { throw OperationError(.machineUnavailable) }
@@ -178,11 +180,13 @@ private final class RecoveryBacklog: Sendable {
     }, abort: { _, _ in })
     try await coordinator.prepare(); try await coordinator.tick()
     for delay in [1, 2, 4, 8, 16, 32, 64] {
-      time.advance(.seconds(delay)); try await coordinator.tick()
+      await time.advance(.seconds(delay)); try await coordinator.tick()
     }
     #expect(try await store.read(record.id).snapshot?.outputConsumed == false)
-    attached.withLock { $0 = true }; time.advance(.seconds(20)); try await coordinator.tick()
-    time.advance(.seconds(1)); try await coordinator.tick()
+    attached.withLock { $0 = true }; await time.advance(.seconds(20)); try await coordinator.tick()
+    #expect(try await space.machineV2PresenceEvidence(machine.id.rawValue, group: .shared)?.state == .attached)
+    #expect(try await space.machineV2DetachedMembers(group: .shared).isEmpty)
+    try await coordinator.tick()
     #expect(operationCalls.withLock { $0 } > 0)
     #expect(try await store.read(record.id).snapshot?.outputConsumed == true)
     let drainedCalls = operationCalls.withLock { $0 }

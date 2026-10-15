@@ -33,10 +33,16 @@ extension FetchClient {
           clientRequest.headers.add(name: "content-type", value: contentType)
         }
 
-        clientRequest.body = .stream(
-          RequestBodySequence(stream: body.asyncBytes()),
-          length: body.contentLength.map(HTTPClientRequest.Body.Length.known) ?? .unknown,
-        )
+        if body.isBuffered {
+          let bytes = try await body.bytes()
+          if let length = body.contentLength, length != bytes.count { throw HTTPClientError.bodyLengthMismatch }
+          clientRequest.body = .bytes(ByteBuffer(bytes: bytes))
+        } else {
+          clientRequest.body = .stream(
+            RequestBodySequence(stream: body.asyncBytes()),
+            length: body.contentLength.map(HTTPClientRequest.Body.Length.known) ?? .unknown,
+          )
+        }
       }
 
       let response: HTTPClientResponse

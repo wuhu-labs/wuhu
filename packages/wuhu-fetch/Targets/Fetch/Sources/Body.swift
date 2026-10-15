@@ -23,6 +23,10 @@ public struct Body: Sendable {
     self.replayFactory = replayFactory
   }
 
+  public var isBuffered: Bool {
+    if case .buffered = self.storage.backing { true } else { false }
+  }
+
   public var isReplayable: Bool {
     self.replayFactory != nil
   }

@@ -9,12 +9,14 @@
   import Glibc
 #else
   import Darwin
+  import Foundation
 #endif
 import Fetch
 import enum JSONValue.JSONValue
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
+import Synchronization
 import Testing
 
 /// Retirement against real supervisor processes: the `wuhu` executable answers `machine-v2 supervise`.
@@ -24,8 +26,59 @@ import Testing
     return cli.hasPrefix("/") ? cli : FileManager.default.currentDirectoryPath + "/" + cli
   }
 
+  /// Every supervisor the body started is gone when it returns or throws: supervisors outlive their agent by design.
   func compose<R: Sendable>(_ home: MachineHome, forgets: Bool = true, _ body: @escaping @Sendable (ComputerAgent, ExecSupervisorRegistry) async throws -> R) async throws -> R {
-    try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: try executable(), files: .local, kinds: [], forgetsRevokedMachine: forgets, body)
+    try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: try executable(), files: .local, kinds: [], forgetsRevokedMachine: forgets) { agent, registry in
+      let value: R
+      do { value = try await body(agent, registry) } catch {
+        await tearDown(registry, failed: true)
+        throw error
+      }
+      await tearDown(registry, failed: false)
+      return value
+    }
+  }
+
+  /// A body that threw is retired here; whatever still runs afterwards is killed with its execs. A body that returned
+  /// normally must have retired its supervisors itself, so one still running fails the test.
+  func tearDown(_ registry: ExecSupervisorRegistry, failed: Bool) async {
+    if failed, !(await registry.childPIDs).isEmpty { _ = await registry.retire(.turnedOff, deadline: .seconds(3)) }
+    var running = await registry.childPIDs
+    let clock = ContinuousClock(); let deadline = clock.now + .seconds(5)
+    while true {
+      running = running.filter { pid in
+        var status: Int32 = 0
+        return waitpid(pid, &status, WNOHANG) == 0
+      }
+      guard !running.isEmpty, clock.now < deadline else { break }
+      try? await clock.sleep(for: .milliseconds(20))
+    }
+    guard !running.isEmpty else { return }
+    if !failed { Issue.record("supervisors outlived the test: \(running)") }
+    killWithDescendants(running)
+  }
+
+  /// A supervisor kills and reaps its exec's process group on its way out, which a SIGKILL skips; so its descendants
+  /// and the process groups they lead are killed here too. The supervisors are frozen first so the tree holds still.
+  func killWithDescendants(_ supervisors: Set<Int32>) {
+    for pid in supervisors { kill(pid, SIGSTOP) }
+    let table = processTable()
+    var tree = supervisors
+    var grew = true
+    while grew {
+      grew = false
+      for entry in table where tree.contains(entry.ppid) && !tree.contains(entry.pid) {
+        tree.insert(entry.pid)
+        grew = true
+      }
+    }
+    let own = getpgrp()
+    for entry in table where tree.contains(entry.pid) && entry.pid == entry.pgid && entry.pgid != own { killpg(entry.pgid, SIGKILL) }
+    for pid in tree { kill(pid, SIGKILL) }
+    for pid in supervisors {
+      var status: Int32 = 0
+      waitpid(pid, &status, 0)
+    }
   }
 
   func start(_ agent: ComputerAgent, _ argv: [String]) async throws -> UUID {
@@ -79,8 +132,8 @@ import Testing
 
   func expectGone(_ pid: Int32) async throws {
     let clock = ContinuousClock(); let deadline = clock.now + .seconds(5)
-    while kill(pid, 0) == 0, clock.now < deadline { try await clock.sleep(for: .milliseconds(20)) }
-    #expect(kill(pid, 0) != 0 && errno == ESRCH, "the busy exec \(pid) outlived its retired supervisor")
+    while alive(pid), clock.now < deadline { try await clock.sleep(for: .milliseconds(20)) }
+    #expect(!alive(pid), "the busy exec \(pid) outlived its retired supervisor")
   }
 
   func retire(_ outcome: SupervisorRetirement, _ home: MachineHome, forgets: Bool = true) async throws -> (supervisors: Set<Int32>, child: Int32) {
@@ -131,10 +184,16 @@ import Testing
     var state = stat()
     #expect(lstat(home.operations, &state) == 0 && state.st_mode & S_IFMT == S_IFDIR, "a turned-off machine keeps its directory")
     // Turning the machine back on resumes in the same directory.
-    try await compose(home) { agent, _ in
+    let resumed = try await compose(home) { agent, registry in
       let id = try await start(agent, ["/bin/sh", "-c", "exit 4"])
       #expect(try await verdict(agent, id).verdict?.result == ["termination": ["tag": "exit", "code": 4]])
+      // Its supervisor holds the receipt until retired; left alone it would outlive the test.
+      let supervisors = await registry.childPIDs
+      #expect(supervisors.count == 1)
+      #expect(await registry.retire(.turnedOff).isEmpty)
+      return supervisors
     }
+    try await expectExited(resumed)
   }
 
   @Test func aRetireWithoutTheSupervisorsNonceIsRefusedAndTheExecKeepsRunning() async throws {
@@ -175,4 +234,67 @@ import Testing
       #expect(operationDirectories(home) == [manifest.operation.uuidString], "the agent never removes a supervisor's directory itself")
     }
   }
+
+  /// The hard fallback: a supervisor that neither answers nor exits (here: stopped) when a test fails is killed, and so
+  /// is the exec it would have killed on its way out.
+  @Test func aFailingTestKillsAStoppedSupervisorAndItsExec() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let started = Mutex<(supervisors: Set<Int32>, child: Int32)>(([], 0))
+    await #expect(throws: Abandoned.self) {
+      try await compose(home) { agent, registry in
+        let (busy, child) = try await busy(agent, home)
+        try await waitForLink(registry, busy)
+        let supervisors = await registry.childPIDs
+        started.withLock { $0 = (supervisors, child) }
+        for pid in supervisors { kill(pid, SIGSTOP) }
+        throw Abandoned()
+      }
+    }
+    let (supervisors, child) = started.withLock { $0 }
+    #expect(supervisors.count == 1)
+    for pid in supervisors { #expect(!alive(pid), "the stopped supervisor \(pid) was killed") }
+    try await expectGone(child)
+  }
+}
+
+struct Abandoned: Error {}
+
+struct ProcessEntry { let pid, ppid, pgid: Int32 }
+
+/// Every process's parent and process group.
+func processTable() -> [ProcessEntry] {
+  #if os(Linux)
+    let pids = ((try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? []).compactMap { Int32($0) }
+    return pids.compactMap { pid in
+      // After the parenthesised command: state, ppid, pgrp.
+      guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let close = stat.lastIndex(of: ")") else { return nil }
+      let fields = stat[stat.index(after: close)...].split(separator: " ")
+      guard fields.count > 2, let ppid = Int32(fields[1]), let pgid = Int32(fields[2]) else { return nil }
+      return ProcessEntry(pid: pid, ppid: ppid, pgid: pgid)
+    }
+  #else
+    let ps = Process()
+    ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+    ps.arguments = ["-A", "-o", "pid=,ppid=,pgid="]
+    let pipe = Pipe()
+    ps.standardOutput = pipe
+    guard (try? ps.run()) != nil else { return [] }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    ps.waitUntilExit()
+    return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
+      let fields = line.split(separator: " ").compactMap { Int32($0) }
+      return fields.count == 3 ? ProcessEntry(pid: fields[0], ppid: fields[1], pgid: fields[2]) : nil
+    }
+  #endif
+}
+
+/// Running, not merely unreaped: an orphan's zombie lingers until its new parent reaps it.
+func alive(_ pid: Int32) -> Bool {
+  guard kill(pid, 0) == 0 else { return false }
+  #if os(Linux)
+    guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let close = stat.lastIndex(of: ")") else { return false }
+    return !stat[stat.index(after: close)...].hasPrefix(" Z")
+  #else
+    return true
+  #endif
 }

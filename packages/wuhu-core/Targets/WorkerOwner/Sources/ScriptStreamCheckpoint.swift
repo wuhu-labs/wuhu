@@ -44,7 +44,7 @@ struct ScriptStreamCheckpoint: Codable, Sendable {
     else { throw WorkerProtocolError(.invalidMessage, message: "Invalid logical reader cursor") }
     if definition.operation == "script.watch-open" {
       _ = try ownerDecode(WatchRequest.self, definition.payload)
-      guard let revision = cursor.revision,
+      guard let revision = cursor.revision, cursor.marker == cursor.acknowledgedInRevision.last,
             cursor.acknowledgedInRevision.allSatisfy({ $0.object?["rev"]?.intValue == revision })
       else { throw WorkerProtocolError(.invalidMessage, message: "Invalid watch acknowledgement cursor") }
     } else {
