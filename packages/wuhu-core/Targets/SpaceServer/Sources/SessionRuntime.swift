@@ -79,6 +79,7 @@ public struct SessionRuntime: Sendable {
     scripts: Scripts?,
     handler: any HandlerExecutionClient,
     startup: (@Sendable () async -> Void)? = nil,
+    startupExcludedSessions: Set<SessionID> = [],
     owner: any ExecutionOwnerClient,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
   ) {
@@ -89,13 +90,13 @@ public struct SessionRuntime: Sendable {
     self.usage = usage
     self.sockets = sockets
     self.refresher = refresher
-    warmer = CacheWarmer(space: space, usage: usage)
+    warmer = CacheWarmer(space: space, usage: usage, startupExcludedSessions: startupExcludedSessions)
     discoveryOwner = owner as? InProcessToolOwnerClient
     resolveModelExecutor = modelExecutorResolver(owner: owner)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, handler: handler)
+    firing = SubscriptionFiring(space: space, handler: handler, startupExcludedSessions: startupExcludedSessions)
     self.scripts = scripts
   }
 
@@ -117,7 +118,7 @@ public struct SessionRuntime: Sendable {
       }
       group.addTask { await firing.run() }
       group.addTask { await warmer.run() }
-      if let scripts { group.addTask { await scripts.run() } }
+      if let scripts { group.addTask { await scripts.run(announceRestart: startup == nil) } }
       if let sockets { group.addTask { await sockets.run() } }
       if let refresher {
         group.addTask { await refresher.run() }
@@ -152,11 +153,14 @@ extension SessionRuntime {
     secrets: SpaceSecretStores?,
     usage: UsageBoard,
     executionPlacement: ExecutionPlacement = .inProcess,
+    credentialFence: ExecutionWorkerCredentialFence? = nil,
+    startupFence: ExecutionWorkerBootFence.Result? = nil,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
+    let blocked = startupFence?.blockedSessions ?? []
     let attempts = AttemptHub()
     let executionOwner = InProcessExecutionOwnerClient(
       space: space, metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
@@ -201,17 +205,23 @@ extension SessionRuntime {
       completionMetrics: executionMetrics,
       control: sessionControl { serviceSlot.service },
     )
+    let startup: @Sendable () async -> Void = {
+      do {
+        let owners = try await space.takeScriptExecOwners(excluding: blocked)
+        await Scripts.announceRestart(owner: owner, owners: owners)
+      } catch { Logger(label: "wuhu.execution-boot").error("Could not read restart script owners") }
+    }
     if let executable = executionPlacement.executable {
       let runtimeOwner = WorkerRuntimeOwner(attempts: attempts, scriptLost: lostWorkerScript(owner: owner), usage: { usage.snapshot() }, receiveUsage: { provider, value in
         usage.record(provider, plan: value.plan, windows: value.windows, at: Date(timeIntervalSince1970: value.observedAt))
-      }, allowsWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) }, scheduleReminder: { session, due in
+      }, allowsWarming: { try await CacheWarmer(space: space, usage: usage, startupExcludedSessions: blocked).allows($0) }, scheduleReminder: { session, due in
         guard let service = serviceSlot.service else { throw SessionExecutionRetired() }
         await service.scheduleWake(session, at: due)
       }, scheduleWarming: { session, interval in
         try await space.sessions.scheduleCacheWarming(session, intervalSeconds: interval)
       })
-      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true)
-      let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: .seconds(24 * 3600))
+      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true, credentialFence: credentialFence, startupExcludedIncarnations: startupFence?.unresolved ?? [], startupExcludedSessions: blocked)
+      let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: .seconds(24 * 3600), deferredSessions: blocked)
       serviceSlot.bind(service)
       return SessionRuntime(
         space: space,
@@ -222,7 +232,8 @@ extension SessionRuntime {
         refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
         scripts: nil,
         handler: execution,
-        startup: { await Scripts.announceRestart(owner: owner) },
+        startup: startup,
+        startupExcludedSessions: blocked,
         owner: owner,
         catalog: catalog,
       )
@@ -236,7 +247,7 @@ extension SessionRuntime {
       completionCatalog: catalog, scripts: scripts,
     )
 
-    let config = LoopConfig(
+    var config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
       },
@@ -261,11 +272,13 @@ extension SessionRuntime {
         )
       },
       invalidateInference: { await sockets.invalidate($0) },
-      allowCacheWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) },
+      allowCacheWarming: { try await CacheWarmer(space: space, usage: usage, startupExcludedSessions: blocked).allows($0) },
       thresholds: thresholds,
     )
 
-    let service = await SessionService(sessions: space.sessions, owner: owner, loopConfig: config)
+    config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
+    let execution = await SessionExecution(owner: owner, loopConfig: config)
+    let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace, deferredSessions: blocked)
     serviceSlot.bind(service)
     return SessionRuntime(
       space: space,
@@ -276,6 +289,8 @@ extension SessionRuntime {
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
       scripts: scripts,
       handler: ScriptHandlerExecutor(scripts: scripts, tools: executor),
+      startup: startup,
+      startupExcludedSessions: blocked,
       owner: owner, catalog: catalog,
     )
   }
@@ -336,6 +351,8 @@ func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> Ses
       case .archive: try await service.archive(id, force: force)
       case .unarchive: try await service.unarchive(id)
       }
+    } catch let error as SessionExecutionDeferred {
+      throw SessionControlRefusal(error.description)
     } catch let busy as SubtreeArchiveBusy {
       throw SessionControlRefusal(busy.message, reason: busy.sessions.contains { $0.id == id } ? .busy : .other)
     } catch let SessionError.unreadableData(id) {

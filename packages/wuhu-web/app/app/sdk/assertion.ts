@@ -73,12 +73,20 @@ export async function signBytes(
   )
 }
 
+// Times are the server's, in Unix seconds: the server checks nbf and exp by
+// its own clock with no leeway.
 export async function mintAssertion(
   key: DeviceKey,
   space: string,
+  notBefore: number,
   expiresAt: number,
 ): Promise<string> {
-  const payload = { key: key.label, space, exp: Math.floor(expiresAt) }
+  const payload = {
+    key: key.label,
+    space,
+    nbf: Math.floor(notBefore),
+    exp: Math.floor(expiresAt),
+  }
   const signingInput = `${assertionHeaders[key.algorithm]}.${
     base64Url(encoder.encode(JSON.stringify(payload)))
   }`

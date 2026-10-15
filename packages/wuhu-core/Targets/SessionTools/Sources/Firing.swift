@@ -22,8 +22,10 @@ public struct SubscriptionFiring: Sendable {
   }
 
   let handler: (any HandlerExecutionClient)?
+  private let startupExcludedSessions: Set<SessionID>
 
-  public init(space: Space, handler: (any HandlerExecutionClient)?) {
+  public init(space: Space, handler: (any HandlerExecutionClient)?, startupExcludedSessions: Set<SessionID> = []) {
+    self.startupExcludedSessions = startupExcludedSessions
     self.space = space
     self.handler = handler
   }
@@ -84,7 +86,7 @@ public struct SubscriptionFiring: Sendable {
             throw error
           }
           let registrations = try await space.sessions.subscriptionRegistrations()
-          let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID, archived: $0.archived), $0.subscription) }
+          let current = registrations.filter { !startupExcludedSessions.contains($0.subscription.session) }.map { (Arming($0.subscription, callbackID: $0.callbackID, archived: $0.archived), $0.subscription) }
           let keys = Set(current.map(\.0))
           stopped.formIntersection(keys)
           retries = retries.filter { keys.contains($0.key) }

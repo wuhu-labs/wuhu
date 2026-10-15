@@ -107,7 +107,10 @@ actor ParentWorkerRuntime {
   func stop() async {
     let lost = scripts
     scripts.removeAll()
-    for (id, session) in lost { await owner?.scriptLost(session, id) }
+    for (id, session) in lost {
+      await owner?.scriptLost(session, id)
+      await owner?.scriptEnded(session, id)
+    }
     for (id, session) in active { owner?.attempts.publish(session: session, .finished(attemptID: id, outcome: .failed(reason: "Execution worker exited"))) }
     active.removeAll()
   }

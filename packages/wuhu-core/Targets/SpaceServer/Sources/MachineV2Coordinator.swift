@@ -5,10 +5,12 @@
 #endif
 import Crypto
 import struct Fetch.FetchClient
+import struct MachineContract.ExecID
 import class OperationClient.OperationClient
 import struct OperationClient.OperationOwner
 import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
+import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import class SpaceCore.Space
 
@@ -19,6 +21,7 @@ actor MachineV2Coordinator {
   private let origin: URL
   private let clock: OperationClock
   private let fetch: @Sendable (GroupID) -> FetchClient
+  private let startupExcludedSessions: Set<SessionID>
   private let abort: @Sendable (GroupID, UUID) -> Void
   private var clients: [GroupID: OperationClient] = [:]
   private var recovery: [GroupID: Set<UUID>] = [:]
@@ -37,10 +40,12 @@ actor MachineV2Coordinator {
     problemsGroup: GroupID,
     origin: URL,
     clock: OperationClock = .continuous,
+    startupExcludedSessions: Set<SessionID> = [],
     fetch: @escaping @Sendable (GroupID) -> FetchClient,
     abort: @escaping @Sendable (GroupID, UUID) -> Void,
   ) {
     self.space = space; self.key = key; self.problemsGroup = problemsGroup; self.origin = origin
+    self.startupExcludedSessions = startupExcludedSessions
     self.clock = clock; self.fetch = fetch; self.abort = abort
   }
 
@@ -84,6 +89,10 @@ actor MachineV2Coordinator {
       let store = try await space.machineV2Store(group: group, key: key, problemsGroup: problemsGroup)
       let records = try await space.machineV2Recovery(group: group, key: key)
       for operation in records {
+        if let caller = operation.record.start.caller, startupExcludedSessions.contains(SessionID(caller.session)) { continue }
+        if operation.owner.scope == "exec/" + operation.owner.key,
+           let record = try await space.execRecord(ExecID(rawValue: operation.owner.key)),
+           let caller = record.caller, startupExcludedSessions.contains(SessionID(caller)) { continue }
         _ = try await store.transaction(operation.record.id) {
           $0.stopReason = $0.stopReason ?? "serverRestart"
           $0.callerRemainingMs = 0

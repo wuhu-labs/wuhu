@@ -31,6 +31,7 @@ export interface WorkNotice {
   kind: string
   text: string
   conversations: string[]
+  subscriptionID: string | null
 }
 
 export interface WorkToolCall {
@@ -224,6 +225,7 @@ function itemEvents(
           kind: notice.kind,
           text: notice.content.text,
           conversations: notice.conversations,
+          subscriptionID: notice.subscriptionID ?? null,
         },
       })]
     }

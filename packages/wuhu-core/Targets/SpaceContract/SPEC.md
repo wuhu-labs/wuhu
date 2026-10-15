@@ -86,6 +86,19 @@ changes here are contract changes.
 - **`ToolError.token`**: a conflict's current version token, when the verb
   knows it, so a client retries without a second read.
 
+- **`ToolError.reason`**: optional, present only on a 401 that refused a
+  valid key's bearer assertion for its times: `assertionExpired` (past `exp`)
+  or `assertionNotYetValid` (before `nbf`). The code stays `unauthorized` and
+  the message keeps its old bytes, so an older client reads the same refusal;
+  a newer one re-signs by `ServerInfo.now` and sends again instead of signing
+  the person out. Any other 401, with no `reason`, means the credential is
+  gone.
+
+- **`ServerInfo.now`**: the server's clock at the answer, Unix seconds
+  (fractional). Clients sign bearer assertion times (`nbf`, `exp`) by it, not
+  by their own clock. `GET /v1/server` sends it with `Cache-Control: no-store`
+  and an HTTP-date `Date` header of the same instant; older servers omit it.
+
 - **Typed query cells** (`/_/space/query`, `/_/space/observe`, `wuhu:space`):
   a cell is a JSON scalar, `{"blob": base64}` or `{"json": value}`. A BOOLEAN
   column is `true`/`false` and a JSON column `{"json": value}`; bound

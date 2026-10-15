@@ -48,7 +48,10 @@ function message(
 }
 
 function notice(kind: string): Wake {
-  return wake({ kind: 'notice', notice: { kind, text: '', conversations: [] } })
+  return wake({
+    kind: 'notice',
+    notice: { kind, text: '', conversations: [], subscriptionID: null },
+  })
 }
 
 Deno.test('a message is labelled with its sender', () => {

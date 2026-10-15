@@ -30,6 +30,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   }
 
   private let makeGeneration: @Sendable (UUID, Bool) -> ExecutionWorkerGeneration
+  private let startupExcludedSessions: Set<SessionID>
   private let scripts: WorkerScriptDirectory
   private var current: UUID
   private var generations: [UUID: Generation]
@@ -41,23 +42,31 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   private var stopping: Task<Void, Never>?
   private let log = Logger(label: "wuhu.execution-directory")
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, credentialFence: ExecutionWorkerCredentialFence? = nil, startupExcludedIncarnations: Set<UUID> = [], startupExcludedSessions: Set<SessionID> = []) {
+    self.startupExcludedSessions = startupExcludedSessions
     let scripts = WorkerScriptDirectory()
     self.scripts = scripts
     let make: @Sendable (UUID, Bool) -> ExecutionWorkerGeneration = { generation, recoverStartupLoss in
-      var runtime = runtime
-      runtime?.scriptStarted = { session, script in try await scripts.started(script, session: session, generation: generation) }
-      runtime?.scriptEnded = { session, script in await scripts.ended(script, session: session, generation: generation) }
-      runtime?.stopScript = { session, script in try await scripts.stop(script, session: session) }
-      let runtimeOwner = runtime
-      return ExecutionWorkerGeneration(executable: executable, sessions: sessions, owner: owner, spawn: spawn, startConnection: { activity, exited in
+      return ExecutionWorkerGeneration(executable: executable, sessions: sessions, owner: owner, spawn: spawn, startConnection: { incarnation, activity, exited in
+        var runtimeOwner = runtime
+        runtimeOwner?.scriptStarted = { session, script in
+          guard !startupExcludedSessions.contains(session) else { throw ExecutionWorkerFencePending(session: session) }
+          try await sessions.registerWorkerScript(script, session: session, incarnation: incarnation)
+          do { try await scripts.started(script, session: session, generation: generation) }
+          catch { try? await sessions.releaseWorkerScript(script, session: session, incarnation: incarnation); throw error }
+        }
+        runtimeOwner?.scriptEnded = { session, script in
+          try? await sessions.releaseWorkerScript(script, session: session, incarnation: incarnation)
+          await scripts.ended(script, session: session, generation: generation)
+        }
+        runtimeOwner?.stopScript = { session, script in try await scripts.stop(script, session: session) }
         let lost: @Sendable () async -> Void = {
           await scripts.lost(generation)
           await exited()
         }
-        if let startConnection { return try await startConnection(activity, lost) }
-        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, activity: activity, exited: lost)
-      }, recoverStartupLoss: recoverStartupLoss)
+        if let startConnection { return try await startConnection(incarnation, activity, lost) }
+        return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, credentialFence: credentialFence, activity: activity, exited: lost)
+      }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations)
     }
     makeGeneration = make
     let id = UUID()
@@ -87,6 +96,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
     }
     let selected: UUID
     if let id {
+      if startupExcludedSessions.contains(id) { throw ExecutionWorkerFencePending(session: id) }
       selected = assignments[id] ?? current
       assignments[id] = selected
     } else {
@@ -96,12 +106,12 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
     let worker = generations[selected]!.worker
     await worker.configureRecovery { id in await self.admitRecovery(id, generation: selected) }
     await scripts.bind(selected) { script, session in try await worker.stopScript(script, session: session) }
-    if let id { await worker.assign(id) }
+    if let id { try await worker.assign(id) }
     return (selected, worker)
   }
 
   private func admitRecovery(_ id: SessionID, generation: UUID) -> Bool {
-    guard !stopped, generation == current, assignments[id] == nil || assignments[id] == generation else { return false }
+    guard !stopped, !startupExcludedSessions.contains(id), generation == current, assignments[id] == nil || assignments[id] == generation else { return false }
     assignments[id] = generation
     return true
   }
@@ -180,6 +190,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   }
 
   func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
+    if startupExcludedSessions.contains(invocation.session) { throw ExecutionWorkerFencePending(session: invocation.session) }
     let (id, worker) = try await selected()
     do {
       let result = try await worker.executeHandler(invocation)

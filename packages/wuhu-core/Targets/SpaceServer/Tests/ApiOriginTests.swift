@@ -1,5 +1,6 @@
 import Fetch
 import Foundation
+import HTTPTypes
 import JSONValue
 import SpaceContract
 @testable import SpaceServer
@@ -135,6 +136,12 @@ import Testing
     }
   }
 
+  @Test func httpDatesAreIMFFixdate() {
+    #expect(httpDate(Date(timeIntervalSince1970: 0)) == "Thu, 01 Jan 1970 00:00:00 GMT")
+    #expect(httpDate(Date(timeIntervalSince1970: 951_868_799.9)) == "Tue, 29 Feb 2000 23:59:59 GMT")
+    #expect(httpDate(Date(timeIntervalSince1970: 4_102_444_800)) == "Fri, 01 Jan 2100 00:00:00 GMT")
+  }
+
   @Test func theDefaultContentHostIsLocalhost() throws {
     let host = try #require(ContentHost(origin: "https://localhost:5530"))
     #expect(host.base == "localhost:5530")
@@ -150,6 +157,9 @@ import Testing
     let info = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(response))
     #expect(info.space == (try await harness.space.identity().rawValue))
     #expect(info.origin == "https://api.wuhu.example:5530")
+    #expect(info.now == fixedDate.timeIntervalSince1970)
+    #expect(response.headers[.date] == "Tue, 14 Nov 2023 22:13:20 GMT")
+    #expect(response.headers[.cacheControl] == "no-store")
 
     let bare = try Harness()
     let none = try JSONValueDecoder().decode(ServerInfo.self, from: try await json(try await bare.get(bare.api, "/v1/server")))

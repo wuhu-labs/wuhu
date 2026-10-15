@@ -107,6 +107,32 @@ private struct FaultingExecution: SessionExecutionClient {
     }
   }
 
+  @Test func deferredReminderDeadlineNeverReachesExecutionOrChangesSession() async throws {
+    try await withKernelDeps { time in
+      let sessions = try Space.inMemory().sessions
+      let blocked = try await sessions.createSession(group: .shared, title: "deferred", kind: .task, createdBy: "morgan", model: .test)
+      let safe = try await sessions.createSession(group: .shared, title: "safe", kind: .task, createdBy: "morgan", model: .test)
+      let wakes = Box<[SessionID]>([])
+      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let execution = FaultingExecution(base: base, wakeCall: { id in
+        wakes.withLock { $0.append(id) }
+        if id == blocked { throw ReplyLost() }
+      }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
+      let service = SessionService(sessions: sessions, execution: execution, archiveGrace: .seconds(60), deferredSessions: [blocked])
+      let before = try await sessions.record(blocked)
+      await service.scheduleWake(blocked, at: anchor.addingTimeInterval(10))
+      await service.scheduleWake(safe, at: anchor.addingTimeInterval(10))
+      try await time.asleep("safe reminder deadline", dueIn: 10)
+      await time.advance(by: 10)
+      try await until("safe reminder fires") { wakes.value.contains(safe) }
+      await time.advance(by: 30)
+      try await holds("deferred reminder never fires or retries") { wakes.value == [safe] }
+      #expect(try await sessions.record(blocked) == before)
+      #expect(try await sessions.undrainedInputs(blocked).isEmpty)
+      await service.shutdown()
+    }
+  }
+
   @Test func parentRemindersReplaceDeadlinesCancelAndJoinAtShutdown() async throws {
     try await withKernelDeps { time in
       let sessions = try Space.inMemory().sessions

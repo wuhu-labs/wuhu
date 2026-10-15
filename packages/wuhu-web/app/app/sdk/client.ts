@@ -1,5 +1,4 @@
-import { authHeaders } from './auth'
-import { api, inGroup, post } from './http'
+import { api, inGroup, post, withAssertion } from './http'
 import type { ViewerCache, ViewerCaches } from './open-cache'
 import type {
   Entry,
@@ -139,17 +138,18 @@ export class SpaceClient {
 
   // False when the request never reached the server.
   private async mintContentSession(origin: string): Promise<boolean> {
-    const headers = await authHeaders()
-    let response: Response
-    try {
-      response = await fetch(`${origin}/_/session`, {
+    let reached = true
+    const response = await withAssertion((headers) =>
+      fetch(`${origin}/_/session`, {
         method: 'POST',
         credentials: 'include',
         headers,
+      }).catch(() => {
+        reached = false
+        return Response.error()
       })
-    } catch {
-      return false
-    }
+    )
+    if (!reached) return false
     if (!response.ok) {
       throw new Error(
         `content session bootstrap failed: HTTP ${response.status}`,

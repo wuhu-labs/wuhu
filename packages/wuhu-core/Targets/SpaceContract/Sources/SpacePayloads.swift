@@ -156,6 +156,8 @@ public struct ServerInfo: Codable, Equatable, Sendable {
   public let aiDisclosure: AIDisclosure?
   /// The group the caller acts in: its `Wuhu-Group` header, else the server's default for it.
   public let group: String?
+  /// The server's clock when it answered, Unix epoch seconds: the time a client signs its assertions by.
+  public let now: Double?
 }
 
 @Contract

@@ -34,6 +34,35 @@ private func withHandlerFiring(
 }
 
 @Suite struct HandlerTests {
+  @Test func unresolvedWorkerLeavesArchivedTimersAndObserversUnarmedWhileSafeTimerFires() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let blocked = try await makeSession(space)
+      let safe = try await makeSession(space)
+      _ = try await space.fs(.shared).write("/must-not-run.js", Data("export default async () => { wake('bad'); return {bad:true}; };".utf8), ifMatch: nil)
+      var world = ToolWorld(executor: ToolExecutor(space: space), session: blocked)
+      for handler in [false, true] {
+        var timer: [String: JSONValue] = ["message": "bad", "in_seconds": 1]
+        var observer: [String: JSONValue] = ["sql": "SELECT 1", "throttle_seconds": 1]
+        if handler { timer["handler"] = "/must-not-run.js"; observer["handler"] = "/must-not-run.js" }
+        _ = try await world.run("timer", .object(.init(uniqueKeysWithValues: timer.sorted { $0.key < $1.key })))
+        _ = try await world.run("observe", .object(.init(uniqueKeysWithValues: observer.sorted { $0.key < $1.key })))
+      }
+      _ = try await space.sessions.archive(blocked, grace: .seconds(100))
+      let before = try await space.sessions.armedSubscriptions(blocked)
+      var safeWorld = ToolWorld(executor: ToolExecutor(space: space), session: safe)
+      _ = try await safeWorld.run("timer", .object(["message": "safe", "in_seconds": 1]))
+      let firing = SubscriptionFiring(space: space, handler: nil, startupExcludedSessions: [blocked])
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        tasks.addTask { await firing.run() }
+        defer { tasks.cancelAll() }
+        try await untilAdvancing("safe timer fires", time) { try await handlerNotifications(space, safe).count == 1 }
+        #expect(try await space.sessions.armedSubscriptions(blocked) == before)
+        #expect(try await handlerNotifications(space, blocked).isEmpty)
+      }
+    }
+  }
+
   @Test func oneObservationSerializesFiringsAcrossInFlightChanges() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()

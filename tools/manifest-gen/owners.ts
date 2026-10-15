@@ -235,9 +235,11 @@ export async function discoverOwnedPackages(
     const members = (manifest.workspace ?? []).map((member) =>
       normalize(join(dir, member))
     )
+    const fragment = await readTextIfPresent(join(dir, packageModuleFragment))
     packages.push({
       dir,
       owner: manifest.owner,
+      repos: fragment === undefined ? [] : moduleFragmentRepos(fragment),
       references: [
         ...(root ? [root] : []),
         ...members,

@@ -41,11 +41,11 @@ actor MachineV2Service {
     self.hub = hub; self.coordinator = coordinator; self.failure = failure
   }
 
-  static func open(space: Space, hub: MachineV2Hub, directory: URL) async -> MachineV2Service {
+  static func open(space: Space, hub: MachineV2Hub, directory: URL, startupExcludedSessions: Set<SessionID> = []) async -> MachineV2Service {
     var coordinator: MachineV2Coordinator?
     do {
       let key = try await MachineV2KeyStore.loadOrCreate(directory: directory, space: space)
-      let prepared = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "https://machine-v2.internal")!, fetch: { group in
+      let prepared = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "https://machine-v2.internal")!, startupExcludedSessions: startupExcludedSessions, fetch: { group in
         FetchClient { request in try await hub.fetch(request, usableFrom: group) }
       }, abort: { _, _ in })
       coordinator = prepared

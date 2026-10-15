@@ -12,6 +12,7 @@ int exec_pending(int fd);
 int exec_read(int fd, void *bytes, size_t count);
 int exec_write(int fd, const void *bytes, size_t count);
 void exec_close(int fd);
+int exec_launch_detached(char *const argv[], int *pid);
 int exec_launch_supervisor(const char *executable, const char *directory, int *pid);
 int exec_lock_agent(const char *directory);
 #endif

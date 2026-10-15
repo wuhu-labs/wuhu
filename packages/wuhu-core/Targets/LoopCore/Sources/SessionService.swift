@@ -20,6 +20,7 @@ public struct SessionService: Sendable {
   }
 
   let sessions: SessionStore
+  private let deferredSessions: Set<SessionID>
   let archiveGrace: Duration
   private let reminders: SessionReminders
   private let archives = ArchiveCoordinator()
@@ -34,6 +35,7 @@ public struct SessionService: Sendable {
   }
 
   init(sessions: SessionStore, loopConfig: LoopConfig, log: Logger = Logger(label: "wuhu.session-service"), makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
+    deferredSessions = []
     self.sessions = sessions
     self.log = log
     archiveGrace = loopConfig.archiveGrace
@@ -47,7 +49,8 @@ public struct SessionService: Sendable {
     localExecution = execution
   }
 
-  public init(sessions: SessionStore, execution: any SessionExecutionClient, archiveGrace: Duration) {
+  public init(sessions: SessionStore, execution: any SessionExecutionClient, archiveGrace: Duration, deferredSessions: Set<SessionID> = []) {
+    self.deferredSessions = deferredSessions
     self.sessions = sessions
     self.execution = execution
     reminders = SessionReminders(sessions: sessions, execution: execution)
@@ -57,6 +60,7 @@ public struct SessionService: Sendable {
   }
 
   public func scheduleWake(_ id: SessionID, at due: Date?) async {
+    guard !deferredSessions.contains(id) else { return }
     await reminders.schedule(id, at: due)
   }
 
@@ -166,6 +170,7 @@ public struct SessionService: Sendable {
   }
 
   private func failSession(_ id: SessionID, error: any Error, phase: String) async {
+    guard !deferredSessions.contains(id) else { return }
     log.error("\(phase) failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     await execution.discard(id)
     do {
@@ -185,6 +190,10 @@ public struct SessionService: Sendable {
     }
   }
 
+  private func requireAdmission(_ id: SessionID) throws {
+    if deferredSessions.contains(id) { throw SessionExecutionDeferred(session: id) }
+  }
+
   private func inactiveExecutorRecord(_ sessionID: SessionID) async throws -> SessionRecord? {
     let record = try await sessions.record(sessionID)
     guard record.executor.isRemoved else { return nil }
@@ -192,6 +201,7 @@ public struct SessionService: Sendable {
   }
 
   public func wake(_ sessionID: SessionID) async throws {
+    guard !deferredSessions.contains(sessionID) else { return }
     guard !sessions.isReservedForArchive(sessionID) else { return }
     let record = try await sessions.record(sessionID)
     if case .claudeCode = record.executor {
@@ -214,6 +224,7 @@ public struct SessionService: Sendable {
   }
 
   public func interrupt(_ sessionID: SessionID) async throws {
+    try requireAdmission(sessionID)
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await inactiveExecutorRecord(sessionID) != nil {
       if case .claudeCode = try await sessions.record(sessionID).executor { return }
@@ -227,6 +238,7 @@ public struct SessionService: Sendable {
   }
 
   public func resume(_ sessionID: SessionID) async throws {
+    try requireAdmission(sessionID)
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     do {
       if try await inactiveExecutorRecord(sessionID) != nil {
@@ -248,6 +260,7 @@ public struct SessionService: Sendable {
 
   private func archiveSubtree(_ sessionID: SessionID, force: Bool) async throws {
     var subtree = try await sessions.archiveSubtree(sessionID)
+    for member in subtree { try requireAdmission(member.id) }
     let reservation = UUID()
     var prepared: [SessionID] = []
     var busy: [ArchiveBusySession] = []
@@ -294,6 +307,7 @@ public struct SessionService: Sendable {
   }
 
   private func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
+    try requireAdmission(id)
     if try await inactiveExecutorRecord(id) != nil { return true }
     return try await retryingEviction {
       try await execution.prepareArchive(id, reservation: reservation)
@@ -314,6 +328,7 @@ public struct SessionService: Sendable {
     note: String?,
     modelRoute: SessionModelRoute? = nil,
   ) async throws -> SessionRestart {
+    try requireAdmission(sessionID)
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await inactiveExecutorRecord(sessionID) != nil {
       return try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
@@ -326,6 +341,7 @@ public struct SessionService: Sendable {
   }
 
   public func unarchive(_ sessionID: SessionID) async throws {
+    try requireAdmission(sessionID)
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await inactiveExecutorRecord(sessionID) != nil {
       try await sessions.unarchive(sessionID)
@@ -416,4 +432,10 @@ private actor ArchiveCoordinator {
 
 private final class PendingWakes: Sendable {
   let state = Mutex<[SessionID: Bool]>([:])
+}
+
+public struct SessionExecutionDeferred: Error, CustomStringConvertible {
+  public let session: SessionID
+  public var description: String { "sessionExecutionDeferred: session \(session.rawValue) is still owned by another execution host; resolve its boot fence and reopen the space" }
+  public init(session: SessionID) { self.session = session }
 }

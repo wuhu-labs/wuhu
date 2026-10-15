@@ -78,3 +78,7 @@ A strict `StaleCompactClaim` is command supersession, not a terminal session err
 ## Execution assignment handoff
 
 `SessionExecution.yieldAssignment` closes admission for that session on this execution owner and waits until the current inference, tool or compaction operation and its durable writes finish. It does not cancel that work or start the next loop operation. Queued external lifecycle actions finish first; an archive reservation keeps the old assignment until released. End-of-pass owner activity must be acknowledged before release. Once released, later verbs are rejected as `SessionExecutionRetired` before any effect, rather than lazily rehydrating on the old execution owner. Cancelling a handoff waiter does not release a still-running assignment. Ordinary eviction remains independent of handoff.
+
+## Deferred execution ownership
+
+`SessionService(sessions:execution:archiveGrace:deferredSessions:)` may defer a fixed set of sessions until the space is reopened after another host is fenced. Wake and reminder scheduling are no-ops for those sessions; enqueue still persists ordinary input. Startup eligibility failures cannot mark them errored. Interrupt, resume, restart, unarchive and archive reject with `SessionExecutionDeferred` before execution or state mutation; archive preflights every descendant before reservations, so a deferred child cannot partially archive its parent subtree. Other sessions retain ordinary behavior.

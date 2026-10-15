@@ -39,13 +39,14 @@ extension SessionStore {
   }
 
   /// Nil finalizes active leases left by a previous parent; a specific incarnation finalizes only that child's leases.
-  public func recordWorkerLoss(incarnation: UUID? = nil) async throws -> [SessionID: Bool] {
+  public func recordWorkerLoss(incarnation: UUID? = nil, excluding: Set<UUID> = []) async throws -> [SessionID: Bool] {
     let incarnation = incarnation?.uuidString
+    let excluding = Set(excluding.map(\.uuidString))
     let now = dateGen.now.timeIntervalSince1970
     return try await writer.write { db in
       try SessionWorkerIncarnationRow.where { $0.diedAt.lt(#bind(Optional(now - 600))) }.delete().execute(db)
       let active = try SessionWorkerIncarnationRow.where { $0.diedAt.is(nil) }.fetchAll(db)
-        .filter { incarnation == nil || $0.incarnation == incarnation }
+        .filter { !excluding.contains($0.incarnation) && (incarnation == nil || $0.incarnation == incarnation) }
       for row in active {
         try SessionWorkerIncarnationRow.where { $0.sessionID.eq(row.sessionID) && $0.incarnation.eq(row.incarnation) }
           .update { $0.diedAt = #bind(now) }.execute(db)

@@ -53,7 +53,12 @@ async function verifies(algorithm: KeyAlgorithm): Promise<void> {
   )
   assertEquals(rawPublic.length, algorithm === 'ed25519' ? 32 : 65)
 
-  const assertion = await mintAssertion(key, space, 4102444800.7)
+  const assertion = await mintAssertion(
+    key,
+    space,
+    4102444500.2,
+    4102444800.7,
+  )
   const parts = assertion.split('.')
   assertEquals(parts.length, 3)
   assert(
@@ -64,7 +69,12 @@ async function verifies(algorithm: KeyAlgorithm): Promise<void> {
   const payload = JSON.parse(
     new TextDecoder().decode(base64UrlDecoded(parts[1]!)),
   ) as Record<string, unknown>
-  assertEquals(payload, { key: key.label, space, exp: 4102444800 })
+  assertEquals(payload, {
+    key: key.label,
+    space,
+    nbf: 4102444500,
+    exp: 4102444800,
+  })
   const signature = base64UrlDecoded(parts[2]!)
   assertEquals(signature.length, 64)
 

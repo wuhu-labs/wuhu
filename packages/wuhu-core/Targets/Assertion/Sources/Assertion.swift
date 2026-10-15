@@ -7,19 +7,33 @@
 import Crypto
 import JSONValue
 
+public enum AssertionValidity: Sendable {
+  case live
+  case notYetValid
+  case expired
+}
+
 public struct AssertionClaims: Hashable, Sendable {
   public var key: String
   public var space: String
+  public var notBefore: Date?
   public var expiresAt: Date
 
-  public init(key: String, space: String, expiresAt: Date) {
+  public init(key: String, space: String, notBefore: Date? = nil, expiresAt: Date) {
     self.key = key
     self.space = space
+    self.notBefore = notBefore
     self.expiresAt = expiresAt
   }
 
+  public func validity(at now: Date) -> AssertionValidity {
+    if now >= self.expiresAt { return .expired }
+    if let notBefore = self.notBefore, now < notBefore { return .notYetValid }
+    return .live
+  }
+
   public func isLive(at now: Date) -> Bool {
-    now < self.expiresAt
+    self.validity(at: now) == .live
   }
 
   public func signed(by key: Curve25519.Signing.PrivateKey) throws -> SignedAssertion {
@@ -31,8 +45,12 @@ public struct AssertionClaims: Hashable, Sendable {
   }
 
   private func signed(header: String, sign: (Data) throws -> Data) throws -> SignedAssertion {
-    let exp = Int(self.expiresAt.timeIntervalSince1970)
-    let payload: JSONValue = ["key": .string(self.key), "space": .string(self.space), "exp": .integer(exp)]
+    let exp = JSONValue.integer(Int(self.expiresAt.timeIntervalSince1970))
+    let payload: JSONValue = if let notBefore = self.notBefore {
+      ["key": .string(self.key), "space": .string(self.space), "nbf": .integer(Int(notBefore.timeIntervalSince1970)), "exp": exp]
+    } else {
+      ["key": .string(self.key), "space": .string(self.space), "exp": exp]
+    }
     let signingInput = header + "." + base64URL(Data(payload.jsonString().utf8))
     let signature = try sign(Data(signingInput.utf8))
     guard let assertion = SignedAssertion(rawValue: signingInput + "." + base64URL(signature)) else {
@@ -63,6 +81,7 @@ public struct SignedAssertion: Hashable, Sendable {
     self.claims = AssertionClaims(
       key: wire.key,
       space: wire.space,
+      notBefore: wire.nbf.map { Date(timeIntervalSince1970: TimeInterval($0)) },
       expiresAt: Date(timeIntervalSince1970: TimeInterval(wire.exp)),
     )
     self.rawValue = rawValue
@@ -84,6 +103,7 @@ public struct SignedAssertion: Hashable, Sendable {
 private struct WireClaims: Decodable {
   var key: String
   var space: String
+  var nbf: Int?
   var exp: Int
 }
 

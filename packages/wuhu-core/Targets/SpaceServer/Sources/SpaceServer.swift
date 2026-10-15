@@ -179,7 +179,9 @@ public enum SpaceServer {
       if let aiDisclosure {
         info["aiDisclosure"] = aiDisclosureJSON(aiDisclosure)
       }
-      return jsonResponse(.object(info))
+      let now = clock.now
+      info["now"] = .number(now.timeIntervalSince1970)
+      return clockReading(jsonResponse(.object(info)), now: now)
     }
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
     sessions?.configureDiscovery(contentHost: discoveryContentHost)

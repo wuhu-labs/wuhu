@@ -1,8 +1,6 @@
 import {
   routeFailureOf,
   routeNote,
-  routeNotice,
-  routeNoticeLine,
   routeRows,
   type SessionRoute,
   stillRecovered,
@@ -127,24 +125,6 @@ Deno.test('recovery is live only: waiting then pinned on the same epoch', () => 
     text: 'fleet → primary · recovered',
     tone: 'live',
   })
-})
-
-Deno.test('a route notice keeps an unknown reason and drops a missing portability line', () => {
-  const notice = routeNotice(
-    'Model group fleet moved primary → backup (novelPlacement).',
-  )
-  assertEquals(notice, {
-    group: 'fleet',
-    from: 'primary',
-    to: 'backup',
-    reason: 'novelPlacement',
-    portable: false,
-  })
-  assertEquals(
-    routeNoticeLine(notice!),
-    'fleet: primary → backup · novelPlacement',
-  )
-  assertEquals(routeNotice('Context updated'), null)
 })
 
 Deno.test('known reasons pin, last resorts switch, other reasons render verbatim', () => {

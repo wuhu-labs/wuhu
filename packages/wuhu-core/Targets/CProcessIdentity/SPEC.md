@@ -1,3 +1,8 @@
 # CProcessIdentity
 
 `process_birth_identity(pid, output, capacity)` writes a NUL-terminated OS birth identity and returns zero, or returns a nonzero errno-style failure. The buffer must contain at least 128 bytes. The identity combines Linux's boot UUID and `/proc/<pid>/stat` start ticks, or macOS's boot-session UUID and `PROC_PIDTBSDINFO` start seconds/microseconds. Linux process names containing spaces or parentheses do not change field parsing. Invalid or inaccessible PIDs fail closed. This is a probe, not authentication: callers must combine it with private socket ownership and incarnation credentials, and re-probe after authentication to detect PID replacement during admission.
+
+
+`process_open_handle(pid)` returns a Linux pidfd or negative errno and refuses nonpositive/self PIDs. `process_signal_handle(fd, signal)` returns zero or positive errno; `process_handle_exited(fd)` returns one for terminal pidfd readiness, zero while unconfirmed, or negative errno for poll failure. The caller owns and closes the descriptor. These functions return ENOTSUP (with the documented sign) on macOS; they never emulate safe handles by signalling numeric PIDs.
+
+`process_matches_worker(pid, executable)` returns one only when Linux `/proc` proves the process has the caller's effective uid, the same executable inode/device as the supplied path and `_execution-worker` as its first argument. Self/nonpositive PIDs and mismatches return zero; probe failures return negative errno, and macOS returns negative ENOTSUP. This supplements, never replaces, birth and private-credential verification; callers pin the handle first and recheck birth before signalling. The bounded command-line probe never emits command data.

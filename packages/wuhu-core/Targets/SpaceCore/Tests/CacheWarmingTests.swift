@@ -24,6 +24,22 @@ private final class WarmingTime: Sendable {
     try await store.enqueueCacheWarming(id, maxPings: max, contextTokens: tokens, offerThreshold: 100_000, offerGrowth: 50000, quotaLow: quotaLow)
   }
 
+  @Test func overdueDeferralLeavesUnresolvedWorkerScheduleUnchanged() async throws {
+    let time = WarmingTime()
+    try await withSessionDeps {
+      try await withDependencies { $0.date = DateGenerator { time.now } } operation: {
+        let space = try Space.inMemory()
+        let blocked = try await space.sessions.createSession(group: .shared, title: "blocked", kind: .agent, createdBy: "owner", model: .test)
+        let safe = try await space.sessions.createSession(group: .shared, title: "safe", kind: .agent, createdBy: "owner", model: .test)
+        for id in [blocked, safe] { try await settle(space.sessions, id) }
+        time.advance()
+        try await space.sessions.deferOverdueCacheWarming(excluding: [blocked])
+        #expect(try await ping(space.sessions, blocked))
+        #expect(try await ping(space.sessions, safe) == false)
+      }
+    }
+  }
+
   @Test func twentyPingsThenStopAndRealInputsResetWithoutRepeatingOffers() async throws {
     let time = WarmingTime()
     try await withSessionDeps {

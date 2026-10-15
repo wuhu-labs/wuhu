@@ -19,6 +19,7 @@ interface FixtureEvent {
   output?: unknown
   failed?: boolean
   noticeKind?: string
+  subscriptionID?: string
   origin?: { callID: string; name: string; arguments: unknown }
 }
 export const semanticFixtures: {
@@ -92,6 +93,7 @@ export function fixtureEvent(event: FixtureEvent): WorkEvent {
           kind: event.noticeKind ?? '',
           text: event.text ?? '',
           conversations: [],
+          subscriptionID: event.subscriptionID ?? null,
         },
       }
       break

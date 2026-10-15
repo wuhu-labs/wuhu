@@ -69,6 +69,27 @@ private actor RecoveryRoute {
 }
 
 @Suite struct MachineV2CoordinatorTests {
+  @Test(arguments: [false, true]) func unresolvedWorkerOperationsKeepTheirStoredStateAndAreNeverRecovered(legacyCaller: Bool) async throws {
+    let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
+    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let original = Self.record()
+    let machine = try await space.addMachine(name: "blocked-fixture").id
+    let exec = try await space.mintExec(machine: machine, caller: "blocked-session")
+    let blocked = ClientRecord(id: original.id, correlation: original.correlation, machine: original.machine, start: .init(kind: original.start.kind, input: original.start.input, caller: legacyCaller ? nil : .init(session: "blocked-session", title: "blocked", group: "shared")), description: original.description)
+    _ = try await store.claim(legacyCaller ? .init(scope: "exec/" + exec.id.rawValue, key: exec.id.rawValue) : .init(scope: "blocked-script", key: "one"), record: blocked)
+    _ = try await store.transaction(blocked.id) { $0.callerRemainingMs = 123; $0.output["out"] = [.init(data: Data([1, 2, 3]))] }
+    let route = RecoveryRoute(id: blocked.id)
+    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "http://test.invalid")!, startupExcludedSessions: [.init("blocked-session")], fetch: { _ in FetchClient { try await route.fetch($0) } }, abort: { _, _ in })
+    try await coordinator.prepare()
+    try await coordinator.tick()
+    let retained = try await store.read(blocked.id)
+    #expect(retained.stopReason == nil)
+    #expect(retained.callerRemainingMs == 123)
+    #expect(retained.output["out"]?.first?.data == Data([1, 2, 3]))
+    #expect(await route.calls.isEmpty)
+    await coordinator.shutdown()
+  }
+
   @Test func networkFreePreparePersistsAllStopIntentsAndSharedClientIdentity() async throws {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)

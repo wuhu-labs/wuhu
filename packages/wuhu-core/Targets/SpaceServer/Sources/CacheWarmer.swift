@@ -12,11 +12,12 @@ import SpaceCore
 struct CacheWarmer: Sendable {
   let space: Space
   let usage: UsageBoard
+  var startupExcludedSessions: Set<SessionID> = []
 
   func run() async {
     @Dependency(\.continuousClock) var clock
     do {
-      try await space.sessions.deferOverdueCacheWarming()
+      try await space.sessions.deferOverdueCacheWarming(excluding: startupExcludedSessions)
       while !Task.isCancelled {
         await tick()
         try await clock.sleep(for: .seconds(60))
@@ -29,7 +30,7 @@ struct CacheWarmer: Sendable {
 
   func tick() async {
     do {
-      for id in try await space.sessions.cacheWarmingAgents() {
+      for id in try await space.sessions.cacheWarmingAgents() where !startupExcludedSessions.contains(id) {
         do {
           let record = try await space.sessions.record(id)
           guard record.work == .noWork, record.hold == .normal,
@@ -54,6 +55,7 @@ struct CacheWarmer: Sendable {
   }
 
   func allows(_ id: SessionID) async throws -> Bool {
+    guard !startupExcludedSessions.contains(id) else { return false }
     let record = try await space.sessions.record(id)
     guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, let (model, _, entry) = try await configuration(record) else { return false }
     guard let policy = entry.cacheWarming else { return false }

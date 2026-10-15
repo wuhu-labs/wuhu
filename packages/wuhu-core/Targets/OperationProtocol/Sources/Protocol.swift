@@ -243,9 +243,23 @@ public struct MachineDescription: Codable, Sendable {
   public let limits: OperationLimits
   public let kinds: [KindDescriptor]
   public let availability: [String: KindAvailability]?
-  public init(instance: UUID, acceptingStarts: Bool, limits: OperationLimits, kinds: [KindDescriptor], availability: [String: KindAvailability]? = nil) {
-    version = 2; self.instance = instance; self.acceptingStarts = acceptingStarts; self.limits = limits; self.kinds = kinds; self.availability = availability
+  public let upgrade: MachineUpgradeReport?
+  public init(instance: UUID, acceptingStarts: Bool, limits: OperationLimits, kinds: [KindDescriptor], availability: [String: KindAvailability]? = nil, upgrade: MachineUpgradeReport? = nil) {
+    version = 2; self.instance = instance; self.acceptingStarts = acceptingStarts; self.limits = limits; self.kinds = kinds; self.availability = availability; self.upgrade = upgrade
   }
+}
+
+/// A box agent's own automatic-upgrade outcome. `failed` names the target version it will not retry until the target changes.
+public struct MachineUpgradeReport: Codable, Equatable, Sendable {
+  public struct Failure: Codable, Equatable, Sendable {
+    public let version: String
+    public let reason: String
+    public let at: String
+    public init(version: String, reason: String, at: String) { self.version = version; self.reason = reason; self.at = at }
+  }
+
+  public let failed: Failure?
+  public init(failed: Failure?) { self.failed = failed }
 }
 
 public struct StartRequest: Codable, Equatable, Sendable {

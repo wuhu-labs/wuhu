@@ -16,6 +16,7 @@ import struct SessionDomain.ToolCallID
 import enum SessionDomain.ToolResultPayload
 import enum SessionDomain.TranscriptItem
 import protocol SessionTools.HandlerExecutionClient
+import struct SessionTools.ScriptError
 import struct SessionTools.ScriptHandlerInvocation
 import struct SessionTools.ScriptHandlerResult
 import struct SessionTools.Spawned
@@ -30,7 +31,7 @@ import struct WorkerOwner.WorkerScriptControl
 import struct WorkerProtocol.WorkerProtocolError
 
 actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient {
-  typealias Starter = @Sendable (@escaping @Sendable (ExecutionWorkerActivity) async throws -> Void, @escaping @Sendable () async -> Void) async throws -> WorkerConnection
+  typealias Starter = @Sendable (UUID, @escaping @Sendable (ExecutionWorkerActivity) async throws -> Void, @escaping @Sendable () async -> Void) async throws -> WorkerConnection
   private let startConnection: Starter
   private let owner: any ExecutionOwnerClient
   private var incarnation: UUID?
@@ -44,6 +45,7 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   private var stopped = false
   private let sessions: SessionStore
   private let recoverStartupLoss: Bool
+  private let startupExcludedIncarnations: Set<UUID>
   private var assignments: Set<SessionID> = []
   private var admitRecovery: @Sendable (SessionID) async -> Bool = { _ in false }
   private var yielding: Set<SessionID> = []
@@ -52,15 +54,20 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   var processID: Int32? { connection?.processID }
   var activeSessions: Set<SessionID> { Set(activePasses.keys) }
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true, startupExcludedIncarnations: Set<UUID> = []) {
+    self.startupExcludedIncarnations = startupExcludedIncarnations
     self.recoverStartupLoss = recoverStartupLoss
     self.sessions = sessions; self.owner = owner
-    self.startConnection = startConnection ?? { activity, exited in
+    self.startConnection = startConnection ?? { _, activity, exited in
       try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtime, machines: machines, activity: activity, exited: exited)
     }
   }
 
-  func assign(_ id: SessionID) { assignments.insert(id) }
+  func assign(_ id: SessionID) async throws {
+    assignments.insert(id)
+    if let incarnation { try await sessions.assignWorker(id, incarnation: incarnation) }
+  }
+
   func configureRecovery(_ admit: @escaping @Sendable (SessionID) async -> Bool) { admitRecovery = admit }
 
   func requireHandoff() async throws {
@@ -88,6 +95,7 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
       try await retryRecovery { try await self.recoverInterruptedTools(id) }
       recoveryBlocked.remove(id)
     }
+    if let incarnation { try await sessions.releaseWorkerAssignment(id, incarnation: incarnation) }
     assignments.remove(id)
   }
 
@@ -99,7 +107,27 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
     try await prepare()
     let connection = try await connect()
-    return try await RemoteHandlerExecution(client: connection.client).executeHandler(invocation)
+    guard let incarnation else { throw SessionExecutionRetired() }
+    let bridge = "handler-bridge-" + invocation.id.uuidString
+    try await sessions.registerWorkerScript(bridge, session: invocation.session, incarnation: incarnation)
+    do {
+      let result = try await RemoteHandlerExecution(client: connection.client).executeHandler(invocation)
+      return ScriptHandlerResult(stateJSON: result.stateJSON, wakes: result.wakes, acknowledge: {
+        await result.acknowledge()
+        await self.releaseHandlerBridge(bridge, session: invocation.session, incarnation: incarnation)
+      })
+    } catch {
+      if error is ScriptError || (error as? WorkerProtocolError)?.code == .remoteFailure {
+        await releaseHandlerBridge(bridge, session: invocation.session, incarnation: incarnation)
+      }
+      throw error
+    }
+  }
+
+  private func releaseHandlerBridge(_ bridge: String, session: SessionID, incarnation: UUID) async {
+    let release = Task { try await sessions.releaseWorkerScript(bridge, session: session, incarnation: incarnation) }
+    do { try await release.value }
+    catch { log.error("handler bridge release failed", metadata: ["session": "\(session.rawValue)", "error": "\(error)"]) }
   }
 
   private func remote(_ id: SessionID) async throws -> RemoteSessionExecution {
@@ -119,7 +147,9 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
       id = UUID()
       incarnation = id
       start = Task {
-        try await startConnection({ activity in
+        try await self.sessions.beginWorkerOwnership(incarnation: id)
+        for session in self.assignments { try await self.sessions.assignWorker(session, incarnation: id) }
+        return try await startConnection(id, { activity in
           try await self.activity(activity, incarnation: id)
         }, { await self.exited(id) })
       }
@@ -158,7 +188,7 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
     if let preparation { return try await preparation.value }
     let task = Task {
       guard recoverStartupLoss else { return }
-      let lost = try await sessions.recordWorkerLoss()
+      let lost = try await sessions.recordWorkerLoss(excluding: startupExcludedIncarnations)
       await self.recoverLost(lost)
     }
     preparation = task
@@ -214,11 +244,12 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
           guard !recoveryBlocked.contains(id) else { continue }
           try await retryRecovery {
             guard !self.yielding.contains(id), !self.recoveryBlocked.contains(id), try await self.owner.record(id).work != .errored else { return }
+            try await self.assign(id)
             let connection = try await self.connect()
             do { try await RemoteSessionExecution(client: connection.client).wake(id) }
             catch let error as WorkerProtocolError where error.code == .unavailable {
               await connection.stop()
-              let lost = try await self.sessions.recordWorkerLoss()
+              let lost = try await self.sessions.recordWorkerLoss(excluding: self.startupExcludedIncarnations)
               await self.recoverLost(lost)
               throw SessionExecutionRetired()
             }

@@ -189,6 +189,7 @@ function itemDetails(item: TranscriptItem, part: number): EventDetails {
           kind: item.value.kind,
           text: item.value.content.text,
           conversations: item.value.conversations,
+          subscriptionID: item.value.subscriptionID ?? null,
         }).label,
         timestamp: swiftDate(item.value.timestamp),
         facts: facts([

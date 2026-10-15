@@ -33,6 +33,52 @@ actor ExecutionWorkerManifestStore {
   }
 
   func load() async throws -> ExecutionWorkerManifest? {
+    guard let data = try readManifest() else { return nil }
+    let manifest: ExecutionWorkerManifest
+    do { manifest = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: data) }
+    catch { throw Self.unsafeStorage() }
+    try manifest.validate(directory: directory, space: space)
+    return manifest
+  }
+
+  func inspectForBoot() -> ExecutionWorkerBootFence.Read {
+    let data: Data
+    do {
+      guard let bytes = try readManifest() else { return .missing }
+      data = bytes
+    } catch { return .unsafeStorage }
+    struct Header: Decodable { let version: Int }
+    do {
+      guard try JSONDecoder().decode(Header.self, from: data).version == 1 else { return .foreignVersion }
+    } catch { return .corrupt }
+    let manifest: ExecutionWorkerManifest
+    do { manifest = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: data) }
+    catch { return .corrupt }
+    guard manifest.space == space else { return .foreignSpace }
+    do { try manifest.validate(directory: directory, space: space) }
+    catch { return .corrupt }
+    return .manifest(manifest)
+  }
+
+  func hasRuntimeFiles() throws -> Bool {
+    try verifyDirectory()
+    let directory = openat(descriptor, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+    guard directory >= 0 else { throw Self.unsafeStorage() }
+    guard let entries = fdopendir(directory) else { _ = close(directory); throw Self.unsafeStorage() }
+    defer { _ = closedir(entries) }
+    errno = 0
+    while let entry = readdir(entries) {
+      let name = withUnsafePointer(to: entry.pointee.d_name) {
+        $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) { String(cString: $0) }
+      }
+      if name != ".", name != ".." { return true }
+      errno = 0
+    }
+    guard errno == 0 else { throw Self.unsafeStorage() }
+    return false
+  }
+
+  private func readManifest() throws -> Data? {
     try verifyDirectory()
     let file = openat(descriptor, "manifest.json", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard file >= 0 else {
@@ -51,11 +97,7 @@ actor ExecutionWorkerManifestStore {
     }
     var extra: UInt8 = 0
     guard read(file, &extra, 1) == 0 else { throw Self.unsafeStorage() }
-    let manifest: ExecutionWorkerManifest
-    do { manifest = try JSONDecoder().decode(ExecutionWorkerManifest.self, from: Data(bytes)) }
-    catch { throw Self.unsafeStorage() }
-    try manifest.validate(directory: directory, space: space)
-    return manifest
+    return Data(bytes)
   }
 
   func save(_ manifest: ExecutionWorkerManifest) async throws {
@@ -89,6 +131,24 @@ actor ExecutionWorkerManifestStore {
     guard fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
   }
 
+  func removeFencedRuntime() async throws {
+    try verifyDirectory()
+    try validateExistingFile()
+    for name in ["worker.sock", "parent.sock"] {
+      var state = stat()
+      if fstatat(descriptor, name, &state, AT_SYMLINK_NOFOLLOW) == 0 {
+        guard state.st_uid == geteuid(), state.st_mode & S_IFMT == S_IFSOCK else { throw Self.unsafeStorage() }
+      } else if errno != ENOENT { throw Self.unsafeStorage() }
+    }
+    try verifyDirectory()
+    for name in ["worker.sock", "parent.sock", "manifest.json"] {
+      guard unlinkat(descriptor, name, 0) == 0 || errno == ENOENT else { throw Self.unsafeStorage() }
+    }
+    guard fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+    try verifyDirectory()
+    guard rmdir(directory) == 0 else { throw Self.unsafeStorage() }
+  }
+
   private func verifyDirectory() throws {
     let current = try Self.openDirectory(directory)
     defer { _ = close(current) }
@@ -114,7 +174,7 @@ actor ExecutionWorkerManifestStore {
     return state
   }
 
-  private static func openDirectory(_ path: String) throws -> Int32 {
+  static func openDirectory(_ path: String) throws -> Int32 {
     guard path.hasPrefix("/"), !path.utf8.contains(0), !path.hasSuffix("/") else { throw unsafeStorage() }
     let components = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
     guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { throw unsafeStorage() }

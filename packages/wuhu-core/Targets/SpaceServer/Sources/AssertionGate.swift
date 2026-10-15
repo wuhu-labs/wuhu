@@ -45,14 +45,22 @@ func bearerVerdict(request: Request, space: Space, now: Date) async throws -> Be
   guard assertion.hasValidSignature(publicKeyLabel: credential.pubkey) else {
     return .rejected(unauthorized("assertion signature rejected"))
   }
-  guard assertion.claims.isLive(at: now) else {
-    return .rejected(unauthorized("assertion expired; the wuhu CLI re-mints automatically — run the command again"))
-  }
   // A machine or space key must not act as a user principal even with a valid
   // signature over a live row; the rejection is byte-identical to an unknown
-  // key so the response leaks neither existence nor capabilities.
+  // key so the response leaks neither existence nor capabilities. It precedes
+  // the window check, whose refusal would otherwise tell such a key apart.
   guard !credential.capabilities.isDisjoint(with: [.device, .seat, .contractor]) else {
     return .rejected(unknownKey(identity))
+  }
+  switch assertion.claims.validity(at: now) {
+  case .live: break
+  case .expired:
+    return .rejected(outsideItsWindow(
+      "assertion expired; the wuhu CLI re-mints automatically — run the command again",
+      reason: "assertionExpired",
+    ))
+  case .notYetValid:
+    return .rejected(outsideItsWindow("assertion not yet valid", reason: "assertionNotYetValid"))
   }
   return .verified(ActingCredential(
     key: credential,
@@ -124,6 +132,20 @@ private func unknownKey(_ identity: SpaceIdentity) -> Response {
   unauthorized(
     "your device key was revoked for space \(identity.rawValue) (or never enrolled)",
     hint: "re-enroll this device: wuhu login < invite-link (mint one on an enrolled device: wuhu share-login)",
+  )
+}
+
+// The key is still good; only the assertion's times missed the server's clock.
+// `reason` tells a client to re-sign by the server's `now` (GET /v1/server)
+// rather than sign the person out; code and message stay what older clients
+// already read.
+private func outsideItsWindow(_ message: String, reason: String) -> Response {
+  errorResponse(
+    .unauthorized,
+    code: "unauthorized",
+    message: message,
+    hint: "check that this device's date and time are set automatically, then try again",
+    reason: reason,
   )
 }
 

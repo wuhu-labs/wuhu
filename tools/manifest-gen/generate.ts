@@ -2651,6 +2651,17 @@ interface DenoPackageManifest {
   generated?: Record<string, string>
   exportedDirs?: Record<string, string>
   links?: string[]
+  artifacts?: Record<string, DenoArtifact>
+}
+
+// A tree output `deno task <task> <out dir>` produces, keyed by target name.
+// `inputs` maps an environment variable to the label of a file (normally an
+// `http_file` from the package's MODULE.fragment.bazel) whose absolute path
+// the task receives in it; `platforms` are the check lanes that build it.
+export interface DenoArtifact {
+  task: string
+  inputs?: Record<string, string>
+  platforms?: CheckPlatform[]
 }
 
 // Two levels, because a deno workspace root is itself a directory under
@@ -2869,6 +2880,47 @@ export function generateDenoBuildBazel(
     )
   }
   for (
+    const [name, artifact] of Object.entries(manifest.artifacts ?? {})
+      .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
+  ) {
+    const location = `${packageDir}/deno.json artifacts.${name}`
+    if (isMember) {
+      throw new Error(
+        `${location}: a deno workspace member cannot declare artifacts`,
+      )
+    }
+    if (!tasks[artifact.task]) {
+      throw new Error(
+        `${location} names task ${artifact.task}, which deno.json does not declare`,
+      )
+    }
+    if (!symbols.includes('deno_artifact')) symbols.push('deno_artifact')
+    const inputs = Object.entries(artifact.inputs ?? {})
+      .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
+      .map(([variable, label]) => {
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
+          throw new Error(
+            `${location}: ${variable} is not an environment variable name`,
+          )
+        }
+        return `        ${JSON.stringify(label)}: ${
+          JSON.stringify(variable)
+        },\n`
+      })
+      .join('')
+    chunks.push(
+      `deno_artifact(\n    name = ${
+        JSON.stringify(name)
+      },\n    srcs = ${srcs},\n${generatedAttr}${
+        inputs ? `    inputs = {\n${inputs}    },\n` : ''
+      }    tags = ["requires-network"],\n    task = ${
+        JSON.stringify(artifact.task)
+      },\n${
+        platformsAttr(artifact.platforms ?? ['linux', 'mac'], location)
+      })\n`,
+    )
+  }
+  for (
     const [name, dir] of Object.entries(manifest.exportedDirs ?? {})
       .sort(([lhs], [rhs]) => lhs.localeCompare(rhs))
   ) {
@@ -2888,7 +2940,7 @@ export function generateDenoBuildBazel(
   }
   return [
     `load("//bazel/rules:deno.bzl", ${
-      symbols.map((symbol) => `"${symbol}"`).join(', ')
+      symbols.sort().map((symbol) => `"${symbol}"`).join(', ')
     })`,
     `load("//bazel/rules:rules.bzl", "wuhu_platforms")`,
     `\npackage(default_visibility = ["//visibility:public"])\n`,
@@ -3098,7 +3150,10 @@ function collectPackageMetadata(
   }
 }
 
-async function generateModuleBazel(packageDirs: string[]): Promise<string> {
+async function generateModuleBazel(
+  packageDirs: string[],
+  denoPackageDirs: string[],
+): Promise<string> {
   const packages = await Promise.all(
     packageDirs.map(async (packageDir) => {
       const pkg = await readPackageManifest(packageDir)
@@ -3122,7 +3177,9 @@ async function generateModuleBazel(packageDirs: string[]): Promise<string> {
   return renderModuleBazel({
     template: await Deno.readTextFile('MODULE.bazel.template'),
     swiftDepsRepos: repos,
-    packageModules: await readPackageModules(packageDirs),
+    packageModules: await readPackageModules([
+      ...new Set([...packageDirs, ...denoPackageDirs]),
+    ]),
     configure: await readConfigureFragments(),
     pinned: pinnedRepos(
       await Deno.readTextFile('bazel/umbrella/Package.resolved'),
@@ -4862,7 +4919,10 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
     const moduleOutput = apply ? 'MODULE.bazel' : 'MODULE.generated.bazel'
     await writeIfChanged(
       moduleOutput,
-      await generateModuleBazel(packageDirs),
+      await generateModuleBazel(
+        packageDirs,
+        await discoverDenoPackageDirs('packages'),
+      ),
     )
   }
 

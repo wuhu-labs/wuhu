@@ -9,22 +9,26 @@ public actor WorkerCredentials {
   private var successor: String?
   private var deadline: ContinuousClock.Instant?
   private let now: @Sendable () -> ContinuousClock.Instant
+  private let admission: @Sendable (String) -> Bool
 
-  public init(token: String) throws {
+  public init(token: String, admission: @escaping @Sendable (String) -> Bool = { _ in true }) throws {
     try Self.validate(token)
     current = token
     now = { .now }
+    self.admission = admission
   }
 
   init(token: String, now: @escaping @Sendable () -> ContinuousClock.Instant) throws {
     try Self.validate(token)
     current = token
     self.now = now
+    admission = { _ in true }
   }
 
   public var outgoingToken: String { successor ?? current }
 
   func accepts(_ token: String) -> Bool {
+    guard admission(token) else { return false }
     if let successor {
       return token == successor || (token == current && deadline.map { now() < $0 } == true)
     }

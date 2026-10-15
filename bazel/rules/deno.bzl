@@ -130,6 +130,65 @@ deno_bundle = rule(
     },
 )
 
+# A packaged artifact a deno task produces from the package's sources plus
+# declared, hash-pinned files (an `http_file` in the package's
+# MODULE.fragment.bazel): `deno task <task> <out dir>`, each input handed over
+# as an environment variable that holds its absolute path. Only a package
+# outside a deno workspace may declare one.
+def _deno_artifact_impl(ctx):
+    out = ctx.actions.declare_directory(ctx.label.name)
+    exports = []
+    files = []
+    for target, variable in sorted(ctx.attr.inputs.items(), key = lambda item: item[1]):
+        file = _single_generated_file(target)
+        files.append(file)
+        exports.append('export {variable}="$ROOT/{path}"'.format(variable = variable, path = file.path))
+    inject, gen_inputs = _inject_generated(ctx, "$WORK/app", lambda f: "$ROOT/" + f.path)
+    command = """set -euo pipefail
+ROOT="$PWD"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+export DENO_DIR="${{DENO_DIR:-$WORK/deno-dir}}"
+export HOME="$WORK/home" XDG_CACHE_HOME="$WORK/cache" DENO_NO_UPDATE_CHECK=1
+export TMPDIR="$WORK/tmp"
+mkdir -p "$DENO_DIR" "$HOME" "$TMPDIR"
+{exports}
+mkdir -p "$WORK/app"
+cp -RL "{pkg_dir}/." "$WORK/app/"
+rm -rf "$WORK/app/node_modules" "$WORK/app/build" "$WORK/app/BUILD.bazel"
+{inject}
+cd "$WORK/app"
+"$ROOT/{deno}" install --frozen
+"$ROOT/{deno}" task {task} "$ROOT/{out}"
+""".format(
+        deno = ctx.file._deno.path,
+        exports = "\n".join(exports),
+        pkg_dir = ctx.label.package,
+        inject = inject,
+        task = ctx.attr.task,
+        out = out.path,
+    )
+    ctx.actions.run_shell(
+        inputs = depset(ctx.files.srcs + gen_inputs + files + [ctx.file._deno]),
+        outputs = [out],
+        command = command,
+        execution_requirements = {"requires-network": ""},
+        mnemonic = "DenoArtifact",
+        progress_message = "Packaging %{label}",
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+deno_artifact = rule(
+    implementation = _deno_artifact_impl,
+    attrs = {
+        "srcs": attr.label_list(allow_files = True, mandatory = True),
+        "task": attr.string(mandatory = True),
+        "inputs": attr.label_keyed_string_dict(allow_files = True),
+        "generated": _GENERATED_ATTR,
+        "_deno": _DENO_ATTR,
+    },
+)
+
 def _deno_generate_impl(ctx):
     out = ctx.actions.declare_file(ctx.attr.out)
     command = """set -euo pipefail

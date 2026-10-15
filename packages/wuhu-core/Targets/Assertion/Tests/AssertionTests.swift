@@ -85,6 +85,25 @@ import Testing
     #expect(SignedAssertion(rawValue: [parts[0], wrongType, parts[2]].joined(separator: ".")) == nil)
   }
 
+  @Test func notBeforeRoundTripsAndOpensTheWindowInclusively() throws {
+    var early = claims
+    early.notBefore = now
+    let parsed = try #require(SignedAssertion(rawValue: try early.signed(by: key).rawValue))
+    #expect(parsed.claims == early)
+    #expect(early.validity(at: now.addingTimeInterval(-1)) == .notYetValid)
+    #expect(early.validity(at: now) == .live)
+    #expect(early.validity(at: early.expiresAt) == .expired)
+  }
+
+  // Browsers sign iat next to nbf; it is informational and never refuses.
+  @Test func anIssuedAtClaimParsesAndIsIgnored() throws {
+    let parts = try claims.signed(by: key).rawValue.split(separator: ".").map(String.init)
+    let exp = Int(claims.expiresAt.timeIntervalSince1970)
+    let payload = base64URLObject(#"{"key":"k","space":"s","iat":\#(exp + 60),"nbf":\#(exp - 60),"exp":\#(exp)}"#)
+    let parsed = try #require(SignedAssertion(rawValue: [parts[0], payload, parts[2]].joined(separator: ".")))
+    #expect(parsed.claims.notBefore == claims.expiresAt.addingTimeInterval(-60))
+  }
+
   @Test func expiryIsExclusiveOfTheBoundary() {
     #expect(!claims.isLive(at: claims.expiresAt))
     #expect(claims.isLive(at: claims.expiresAt.addingTimeInterval(-1)))

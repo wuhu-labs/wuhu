@@ -71,7 +71,7 @@ int exec_pending(int fd) { int n=0;return ioctl(fd,FIONREAD,&n)<0 ? -errno : n; 
 int exec_read(int fd,void *bytes,size_t count) { ssize_t n=read(fd,bytes,count);return n<0?-errno:(int)n; }
 int exec_write(int fd,const void *bytes,size_t count) { ssize_t n=write(fd,bytes,count);return n<0?-errno:(int)n; }
 void exec_close(int fd) { if(fd>=0) close(fd); }
-int exec_launch_supervisor(const char *executable,const char *directory,int *pid) {
+int exec_launch_detached(char *const argv[],int *pid) {
     posix_spawn_file_actions_t actions;posix_spawnattr_t attr;
     posix_spawn_file_actions_init(&actions);posix_spawnattr_init(&attr);
     for(int fd=0;fd<3;fd++) posix_spawn_file_actions_addopen(&actions,fd,"/dev/null",fd==0?O_RDONLY:O_WRONLY,0);
@@ -79,12 +79,15 @@ int exec_launch_supervisor(const char *executable,const char *directory,int *pid
     int r=posix_spawnattr_setpgroup(&attr,0);
     if(!r) r=close_inherited(&actions,&flags);
     if(!r) r=posix_spawnattr_setflags(&attr,flags);
-    char *args[]={(char *)executable,"machine-v2","supervise",(char *)directory,NULL};
     pid_t child;
-    if(!r) r=posix_spawn(&child,executable,&actions,&attr,args,environ);
+    if(!r) r=posix_spawn(&child,argv[0],&actions,&attr,argv,environ);
     posix_spawn_file_actions_destroy(&actions);posix_spawnattr_destroy(&attr);
     if(!r) *pid=child;
     return r;
+}
+int exec_launch_supervisor(const char *executable,const char *directory,int *pid) {
+    char *args[]={(char *)executable,"machine-v2","supervise",(char *)directory,NULL};
+    return exec_launch_detached(args,pid);
 }
 #include <sys/file.h>
 #include <sys/stat.h>

@@ -187,7 +187,7 @@ data: {}
       let starts = Mutex(0)
       let cleanupWrites = Mutex(0)
       let executable = try binary()
-      let worker = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw CancellationError() }, startConnection: { activity, exited in
+      let worker = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { _, _, _ in throw CancellationError() }, startConnection: { _, activity, exited in
         let attempt = starts.withLock { $0 += 1; return $0 }
         if fault == .replacementAdmission, attempt == 2 { throw WorkerProtocolError(.unavailable, message: "one replacement admission failure") }
         if attempt > 1, fault == .cleanupOnce { #expect(cleanupWrites.withLock { $0 } == 2) }

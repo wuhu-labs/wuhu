@@ -2,6 +2,7 @@ export interface ErrorDetail {
   code: string
   message: string
   hint?: string
+  reason?: string
 }
 
 export class ApiError extends Error {
@@ -27,6 +28,7 @@ export function errorDetail(status: number, text: string): ErrorDetail {
         code: typeof parsed.code === 'string' ? parsed.code : 'internal',
         message: parsed.message,
         ...(typeof parsed.hint === 'string' ? { hint: parsed.hint } : {}),
+        ...(typeof parsed.reason === 'string' ? { reason: parsed.reason } : {}),
       }
     }
   } catch {

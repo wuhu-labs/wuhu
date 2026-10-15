@@ -36,6 +36,7 @@ struct WorkerConnection: Sendable {
     spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned,
     runtime: WorkerRuntimeOwner? = nil,
     machines: Bool = false,
+    credentialFence: ExecutionWorkerCredentialFence? = nil,
     activity: @escaping @Sendable (ExecutionWorkerActivity) async throws -> Void,
     exited: @escaping @Sendable () async -> Void,
   ) async throws -> Self {
@@ -71,7 +72,8 @@ struct WorkerConnection: Sendable {
       }
       return try await parent.stream(call)
     }, acknowledged: parent.acknowledge)
-    let endpoint = try bytes.endpoint(token: bootstrap.token, hello: hello)
+    let credentials = try WorkerCredentials(token: bootstrap.token, admission: { credentialFence?.admits($0) ?? true })
+    let endpoint = bytes.endpoint(credentials: credentials, hello: hello)
     let transport: WorkerOwnerTransport
     do { transport = try await WorkerOwnerTransport.bind(socket: bootstrap.parentSocket, handler: endpoint.handler) }
     catch { _ = rmdir(directory); throw error }
@@ -80,7 +82,7 @@ struct WorkerConnection: Sendable {
     configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit = 4096
     let control = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
     let byteClient = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
-    let client = try WorkerClient(socket: bootstrap.workerSocket, token: bootstrap.token, control: .asyncHTTPClient(control, timeout: nil), bytes: .asyncHTTPClient(byteClient, timeout: nil))
+    let client = try WorkerClient(socket: bootstrap.workerSocket, credentials: credentials, control: .asyncHTTPClient(control, timeout: nil), bytes: .asyncHTTPClient(byteClient, timeout: nil))
     let input = try JSONEncoder().encode(bootstrap)
     let lifetime = Task {
       await withTaskGroup(of: Void.self) { group in

@@ -45,6 +45,10 @@ public final class Scripts: Sendable {
       Logger(label: "wuhu.run-script").warning("could not read the scripts a restart killed: \(error)")
       return
     }
+    await announceRestart(owner: ownerClient, owners: owners)
+  }
+
+  public static func announceRestart(owner ownerClient: any ScriptOwnerClient, owners: [ScriptExecOwner]) async {
     for owner in owners {
       var text = "script \(owner.script) was killed by a server restart"
       if !owner.live.isEmpty {

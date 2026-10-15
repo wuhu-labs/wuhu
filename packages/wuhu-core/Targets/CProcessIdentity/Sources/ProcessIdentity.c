@@ -9,6 +9,9 @@
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
+#include <sys/syscall.h>
+#include <sys/stat.h>
 #endif
 
 #ifndef __APPLE__
@@ -23,6 +26,60 @@ static int read_bounded(const char *path, char *output, size_t capacity) {
     return failure;
 }
 #endif
+
+int process_matches_worker(int pid, const char *executable) {
+#ifdef __APPLE__
+    (void)pid; (void)executable;
+    return -ENOTSUP;
+#else
+    if (pid <= 0 || pid == getpid() || !executable) return 0;
+    char path[64], command[4096] = {0};
+    struct stat process, actual, expected;
+    snprintf(path, sizeof(path), "/proc/%d", pid);
+    if (stat(path, &process) != 0) return -errno;
+    if (process.st_uid != geteuid()) return 0;
+    snprintf(path, sizeof(path), "/proc/%d/exe", pid);
+    if (stat(path, &actual) != 0 || stat(executable, &expected) != 0) return -errno;
+    if (actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) return 0;
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+    int failure = read_bounded(path, command, sizeof(command));
+    if (failure) return -failure;
+    size_t argument = strlen(command) + 1;
+    return argument < sizeof(command) && strcmp(command + argument, "_execution-worker") == 0;
+#endif
+}
+
+int process_open_handle(int pid) {
+#ifdef __APPLE__
+    (void)pid;
+    return -ENOTSUP;
+#else
+    if (pid <= 0 || pid == getpid()) return -EINVAL;
+    int handle = (int)syscall(SYS_pidfd_open, pid, 0);
+    return handle < 0 ? -errno : handle;
+#endif
+}
+
+int process_signal_handle(int handle, int signal) {
+#ifdef __APPLE__
+    (void)handle; (void)signal;
+    return ENOTSUP;
+#else
+    return syscall(SYS_pidfd_send_signal, handle, signal, NULL, 0) == 0 ? 0 : errno;
+#endif
+}
+
+int process_handle_exited(int handle) {
+#ifdef __APPLE__
+    (void)handle;
+    return -ENOTSUP;
+#else
+    struct pollfd descriptor = { .fd = handle, .events = POLLIN };
+    int ready = poll(&descriptor, 1, 0);
+    if (ready < 0) return -errno;
+    return ready > 0 && (descriptor.revents & POLLIN) ? 1 : 0;
+#endif
+}
 
 int process_birth_identity(int pid, char *output, size_t capacity) {
     if (pid <= 0 || capacity < 128) return EINVAL;

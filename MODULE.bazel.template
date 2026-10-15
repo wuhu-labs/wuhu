@@ -66,6 +66,7 @@ archive_override(
 )
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
 # Hash-pinned deno toolchain (2.9.1) for the in-graph web bundle and deno
 # tests (repo-layout laws 4/5/7). Never the host deno. //bazel/rules:deno

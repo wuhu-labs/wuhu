@@ -2250,6 +2250,47 @@ Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
   )
 })
 
+Deno.test('generateDenoBuildBazel emits deno_artifact targets with declared inputs', () => {
+  const build = generateDenoBuildBazel('packages/wuhu-desktop', {
+    owner: 'wuhu-app',
+    tasks: { package: 'p', lint: 'z' },
+    artifacts: {
+      dist: {
+        task: 'package',
+        platforms: ['linux'],
+        inputs: {
+          TOOL_B: '@tool_b//file',
+          TOOL_A: '@tool_a//file',
+        },
+      },
+    },
+  })
+  assertIncludes(
+    build,
+    `load("//bazel/rules:deno.bzl", "deno_artifact", "deno_task_test")`,
+  )
+  assertIncludes(
+    build,
+    `deno_artifact(\n    name = "dist",\n    srcs = [":srcs"],\n    inputs = {\n        "@tool_a//file": "TOOL_A",\n        "@tool_b//file": "TOOL_B",\n    },\n    tags = ["requires-network"],\n    task = "package",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
+  )
+})
+
+Deno.test('generateDenoBuildBazel rejects an artifact naming an undeclared task', () => {
+  let failed = false
+  try {
+    generateDenoBuildBazel('packages/p', {
+      owner: 'wuhu',
+      tasks: { lint: 'z' },
+      artifacts: { dist: { task: 'package' } },
+    })
+  } catch {
+    failed = true
+  }
+  if (!failed) {
+    throw new Error('expected an undeclared artifact task to be rejected')
+  }
+})
+
 Deno.test('generateDenoBuildBazel injects generated inputs and excludes their paths', () => {
   const build = generateDenoBuildBazel('packages/wuhu-web', {
     owner: 'wuhu',

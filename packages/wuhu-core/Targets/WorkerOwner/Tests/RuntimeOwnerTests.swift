@@ -28,7 +28,7 @@ import WuhuAI
     let reminders = Mutex<[Date?]>([])
     let usage = ProviderUsage(plan: "fixture", windows: [.init(name: "five_hour", usedPercent: 37, resetsAt: 500)], observedAt: 100)
     let publications = Mutex<[ProviderUsage]>([])
-    let runtime = WorkerRuntimeOwner(attempts: attempts, scriptLost: { caller, script in
+    var runtime = WorkerRuntimeOwner(attempts: attempts, scriptLost: { caller, script in
       #expect(caller == session)
       lost.withLock { $0.append(script) }
     }, usage: { ["offline": usage] }, receiveUsage: { provider, value in
@@ -41,6 +41,10 @@ import WuhuAI
       #expect(caller == session)
       warming.withLock { $0.append(interval) }
     })
+    runtime.scriptEnded = { caller, script in
+      #expect(caller == session)
+      lost.withLock { $0.append("ended:" + script) }
+    }
     let attempt = UUID()
     try await withOwnerRPC(owner: InProcessExecutionOwnerClient(space: space), runtime: runtime) { _, remote in
       #expect(try await remote.runtimeUsage()["offline"] == usage)
@@ -58,7 +62,7 @@ import WuhuAI
     #expect(publications.withLock { $0 } == [usage])
     #expect(warming.withLock { $0 } == [300])
     #expect(reminders.withLock { $0 } == [Date(timeIntervalSince1970: 123), nil])
-    #expect(lost.withLock { $0 } == ["detached"])
+    #expect(lost.withLock { $0 } == ["detached", "ended:detached"])
     var iterator = events.makeAsyncIterator()
     guard case .started? = await iterator.next(), case .delta? = await iterator.next(), case let .finished(id, .failed(reason))? = await iterator.next() else { Issue.record("Attempt ordering or terminal loss event is missing"); return }
     #expect(id == attempt && reason == "Execution worker exited")

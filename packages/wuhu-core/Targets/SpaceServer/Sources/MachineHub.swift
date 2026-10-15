@@ -107,9 +107,11 @@ public actor MachineHub {
     keyRecheck: Duration = .seconds(30),
     tokens: ExecTokens?,
     secrets: SpaceSecretStores? = nil,
+    startupExcludedSessions: Set<SessionID> = [],
   ) {
     @Dependency(\.continuousClock) var clock
     @Dependency(\.date) var date
+    self.startupExcludedSessions = startupExcludedSessions
     self.space = space
     self.tokens = tokens
     self.secrets = secrets
@@ -124,8 +126,10 @@ public actor MachineHub {
   // Owns every grace timer: run this inside the server's task group. On boot,
   // live registry rows without a caller leg get a fresh caller grace, so an
   // exec orphaned across a restart can never hang live forever.
+  private let startupExcludedSessions: Set<SessionID>
+
   public func run() async {
-    for record in (try? await space.liveExecs()) ?? [] where callerLegs[record.id] == nil {
+    for record in (try? await space.liveExecs()) ?? [] where callerLegs[record.id] == nil && !startupExcludedSessions.contains(SessionID(record.caller ?? "")) {
       if (try? await v2Group(record.machine)) != nil { try? await space.finishExec(record.id, .machineLost); continue }
       remember(record)
       timersContinuation.yield((callerGrace, .callerGone(record.id, generation: callerGenerations[record.id, default: 0])))

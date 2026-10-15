@@ -11,6 +11,7 @@
 import Assertion
 import class AsyncHTTPClient.HTTPClient
 import Crypto
+import Dependencies
 import enum ExecSupervisor.ExecSupervisor
 import Fetch
 import FetchAsyncHTTPClient
@@ -24,6 +25,7 @@ import enum JSONValue.JSONValue
 import struct MachineContract.MachineChallengeOutput
 import struct MachineContract.MachineStatus
 import enum MachineContract.MachineV2Connect
+import struct MachineContract.MachineV2Upgrade
 import struct NIOCore.IOError
 import class NIOPosix.MultiThreadedEventLoopGroup
 import struct OperationProtocol.ErrorEnvelope
@@ -40,6 +42,8 @@ public enum MachineV2Runtime {
     fetch: FetchClient,
     stdin: @Sendable () async throws -> String,
     stdout: @Sendable (String) async -> Void,
+    version: String = "0.0.0-unstamped",
+    serviceCommand: (@Sendable ([String]) async throws -> String)? = nil,
   ) async throws -> Bool {
     guard arguments.first == "machine-v2" else { return false }
     if arguments.count == 1 || arguments == ["machine-v2", "--help"] || (arguments.count >= 2 && ["run", "leave", "preflight", "join"].contains(arguments[1]) && arguments.contains("--help")) {
@@ -54,7 +58,7 @@ public enum MachineV2Runtime {
       """)
       return true
     }
-    guard arguments.count >= 2, ["run", "leave", "preflight", "join"].contains(arguments[1]) else { return false }
+    guard arguments.count >= 2, ["run", "leave", "preflight", "join", "apply-upgrade"].contains(arguments[1]) else { return false }
     guard case .wallet = try Identity.resolve(environment: environment) else { throw CLIError(message: machineV2SessionRefusal(arguments[1])) }
     let trust = try ServerTrust(environment: environment)
     switch arguments[1] {
@@ -71,7 +75,24 @@ public enum MachineV2Runtime {
       await stdout("joined \(machine)\ninstall service: wuhu machine-v2 install \(machine) --binary <signed-wuhu>\nor run in foreground: wuhu machine-v2 run \(machine)\n")
     case "run":
       guard arguments.count == 3 else { throw UsageError(message: "machine-v2 run <id>") }
-      try await run(home: .locate(environment: environment, machine: arguments[2]), trust: trust, fetch: fetch, recording: environment["WUHU_MACHINE_V2_RECORDING"].map { URL(fileURLWithPath: $0) })
+      let home = try MachineV2Home.locate(environment: environment, machine: arguments[2])
+      let upgrader = serviceCommand.flatMap { command in
+        CommandLine.arguments.first == home.binary.path ? liveUpgrader(home: home, version: version, fetch: fetch, command: command) : nil
+      }
+      try await run(home: home, trust: trust, fetch: fetch, recording: environment["WUHU_MACHINE_V2_RECORDING"].map { URL(fileURLWithPath: $0) }, upgrader: upgrader)
+    case "apply-upgrade":
+      guard arguments.count == 6, let serviceCommand, let path = environment["HOME"] else { throw UsageError(message: "machine-v2 apply-upgrade <id> <candidate> <version> <token>") }
+      let home = try MachineV2Home.locate(environment: environment, machine: arguments[2])
+      try home.validate()
+      #if os(macOS)
+        let platform = MachineV2Installer.Platform.macOS
+      #else
+        let platform = MachineV2Installer.Platform.linux
+      #endif
+      let installer = MachineV2Installer(home: URL(fileURLWithPath: path), machine: home.machine, platform: platform, userID: getuid(), command: { arguments in
+        try await serviceCommand(machineV2ServiceArguments(arguments, platform: platform, environment: environment, userID: getuid()))
+      })
+      await MachineV2AutoUpgrade.apply(home: home, candidate: URL(fileURLWithPath: arguments[3]), target: arguments[4], running: version, token: arguments[5], installer: installer)
     case "leave":
       guard arguments.count == 3 else { throw UsageError(message: "machine-v2 leave <id>") }
       try await leave(home: .locate(environment: environment, machine: arguments[2]))
@@ -148,17 +169,65 @@ public enum MachineV2Runtime {
     return headers
   }
 
-  static func run(home: MachineV2Home, trust: ServerTrust, fetch: FetchClient, recording: URL? = nil) async throws {
+  static func liveUpgrader(home: MachineV2Home, version: String, fetch: FetchClient, command: @escaping @Sendable ([String]) async throws -> String) -> MachineV2AutoUpgrader? {
+    guard let config = try? home.load(), let key = try? home.loadKey() else { return nil }
+    @Dependency(UpgradeEnvironment.self) var upgrade
+    let server = pinnedFetch(config.fingerprint, plain: fetch)
+    let origin = URL(string: config.server)
+    return MachineV2AutoUpgrader(home: home, version: version, platform: ReleasePlatform.current?.name, environment: .init(
+      announce: {
+        var request = Request(url: URL(string: config.server + "/v1/machine-v2/" + config.machine + "/upgrade")!)
+        request.headers = try await authentication(server: config.server, machine: config.machine, key: key, fetch: server)
+        let response = try await server(request)
+        guard response.status.code == 200 else { throw MachineV2RuntimeError(.serverUnavailable, message: "Upgrade announcement HTTP \(response.status.code)") }
+        return try await response.body.json(MachineV2Upgrade.self, upTo: 65536)
+      },
+      download: { url in
+        if let fingerprint = config.fingerprint, url.host == origin?.host, url.port == origin?.port {
+          let response = try await PinnedTLS.fetch(Request(url: url), pinnedFingerprint: fingerprint, timeout: .minutes(10))
+          return try await response.validateStatus().data(upTo: 1 << 30)
+        }
+        return try await ReleaseChannel(fetch: upgrade.fetch).download(url, upTo: 1 << 30)
+      },
+      extract: upgrade.extract,
+      command: command,
+      verifySignature: { try MachineV2AutoUpgrade.verifySignature($0, running: $1) },
+      launch: { try ExecSupervisor.launchDetached($0) },
+      reaped: { ExecSupervisor.reapIfExited($0) },
+    ))
+  }
+
+  static func run(home: MachineV2Home, trust: ServerTrust, fetch: FetchClient, recording: URL? = nil, upgrader: MachineV2AutoUpgrader? = nil, clock: OperationClock = .continuous) async throws {
     _ = try home.load(); _ = try home.loadKey(); try home.prepare()
     guard FileManager.default.isExecutableFile(atPath: home.binary.path) else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Install this machine's own v2 binary first") }
     let recorder = try recording.map { try MachineV2Recording(root: $0) }
     try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, controlSocket: home.socket.path, executable: home.binary.path) { handler, acknowledged in
-      let handler = recorder?.handler(handler) ?? handler
-      try await dialLoop(handler: handler, leaveAcknowledged: acknowledged, connect: { try await connect(home: home, trust: trust, fetch: fetch) })
+      let handler = MachineV2AutoUpgrade.reporting(recorder?.handler(handler) ?? handler, home: home)
+      guard let upgrader else {
+        return try await dialLoop(handler: handler, leaveAcknowledged: acknowledged, connect: { try await connect(home: home, trust: trust, fetch: fetch) })
+      }
+      let (checks, check) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+          try await dialLoop(handler: handler, leaveAcknowledged: acknowledged, connect: { try await connect(home: home, trust: trust, fetch: fetch) }, connected: {
+            await upgrader.connected()
+            check.yield()
+          })
+        }
+        group.addTask {
+          while true {
+            try await clock.sleep(MachineV2AutoUpgrade.checkInterval)
+            check.yield()
+          }
+        }
+        group.addTask { for await _ in checks { await upgrader.check() } }
+        defer { group.cancelAll() }
+        try await group.next()
+      }
     }
   }
 
-  static func dialLoop(handler: @escaping Handler, leaveAcknowledged: @escaping @Sendable () async -> Bool, connect: @escaping @Sendable () async throws -> TunnelTransport, clock: OperationClock = .continuous) async throws {
+  static func dialLoop(handler: @escaping Handler, leaveAcknowledged: @escaping @Sendable () async -> Bool, connect: @escaping @Sendable () async throws -> TunnelTransport, connected: @escaping @Sendable () async -> Void = {}, clock: OperationClock = .continuous) async throws {
     while !Task.isCancelled {
       if await leaveAcknowledged() {
         try await clock.sleep(.seconds(2))
@@ -167,6 +236,7 @@ public enum MachineV2Runtime {
       do {
         let transport = try await connect()
         defer { transport.abort() }
+        await connected()
         try await ServeTunnel.run(handler: handler, over: transport)
       } catch is CancellationError { throw CancellationError() }
       catch let error as MachineV2RuntimeError { if error.code != .serverUnavailable { throw error } }

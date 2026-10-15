@@ -1,5 +1,5 @@
-import { authHeaders } from './auth'
-import { notifyUnauthorized } from './http'
+import { errorDetail } from './errors'
+import { notifyUnauthorized, signsOut, withAssertion } from './http'
 import type { EventStream } from './observe'
 import { sseParser } from '~/lib/shell-sdk/open-cache.js'
 
@@ -23,14 +23,12 @@ export function openAuthorizedStream(
     if (!closed) handlers.error?.(status)
   }
   ;(async () => {
-    const response = await fetch(url, {
-      headers: {
-        accept: 'text/event-stream',
-        ...headers,
-        ...(await authHeaders()),
-      },
-      signal: controller.signal,
-    })
+    const response = await withAssertion((auth) =>
+      fetch(url, {
+        headers: { accept: 'text/event-stream', ...headers, ...auth },
+        signal: controller.signal,
+      })
+    )
     // A proxy or SPA fallback can answer 200 with HTML; treating that as a live
     // stream would sit "live" forever with no events. Require the SSE type.
     const contentType = response.headers.get('content-type') ?? ''
@@ -38,7 +36,10 @@ export function openAuthorizedStream(
       !response.ok || response.body == null ||
       !contentType.includes('text/event-stream')
     ) {
-      if (response.status === 401) notifyUnauthorized()
+      if (
+        response.status === 401 &&
+        signsOut(401, errorDetail(401, await response.text()))
+      ) notifyUnauthorized()
       fail(response.ok ? undefined : response.status)
       return
     }

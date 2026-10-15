@@ -1,5 +1,4 @@
 import { firstLine, noticeLabel } from './turn-labels.ts'
-import { routeNotice, routeNoticeLine } from './model-route.ts'
 import {
   eventKey,
   type WorkEvent,
@@ -164,14 +163,6 @@ export function noticePresentation(notice: WorkNotice): NoticePresentation {
           '',
         ) + (sources.length > 1 ? ` + ${sources.length - 1} more` : ''),
       sources,
-    }
-  }
-  const moved = routeNotice(notice.text)
-  if (moved != null) {
-    return {
-      label: 'Model moved',
-      subject: routeNoticeLine(moved),
-      sources: [],
     }
   }
   if (
@@ -499,6 +490,7 @@ export function projectTurns(
         break
       }
       case 'notification':
+        if (event.notice.subscriptionID === 'model-route') break
         // Without a loaded preceding inference, this is an annotation, not a folded invented parent.
         push(
           workItem(event, { kind: 'notice', notice: event.notice }, preceding),

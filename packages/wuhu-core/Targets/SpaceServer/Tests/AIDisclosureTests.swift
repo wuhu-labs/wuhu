@@ -29,7 +29,7 @@ import WuhuVFS
     let h = try Harness(dev: false, origin: "https://space.test")
     let identity = try await h.space.identity().rawValue
     let response = try await h.api(Request(url: URL(string: "https://space.test/v1/server")!))
-    #expect(try await response.text() == "{\"space\":\"\(identity)\",\"origin\":\"https://space.test\",\"contentBase\":\"space.test\",\"features\":[\"groups\",\"observe-batch\",\"watch-batch\"],\"group\":\"shared\"}")
+    #expect(try await response.text() == "{\"space\":\"\(identity)\",\"origin\":\"https://space.test\",\"contentBase\":\"space.test\",\"features\":[\"groups\",\"observe-batch\",\"watch-batch\"],\"group\":\"shared\",\"now\":1700000000.0}")
   }
 
   @Test func readsConfiguredFileThroughVFS() async throws {

@@ -168,6 +168,22 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
     #expect(try await json(response).object?["code"] == .string("provider_entitlement"))
   }
 
+  // 401 is the caller's own credential: a client signs its person out on it,
+  // so the server's provider login failing must never answer one.
+  @Test func aProviderAuthFailureIsABadGatewayNotTheCallers401() async throws {
+    let harness = try Harness(credentials: openAIKey)
+    try await configure(harness)
+    let (provider, _) = providerReplying("expired key", status: .unauthorized)
+
+    let response = try await withDependencies {
+      $0.fetch = provider
+    } operation: {
+      try await harness.api(transcribeRequest(wavAudio, contentType: "audio/wav"))
+    }
+    #expect(response.status == .badGateway)
+    #expect(try await json(response).object?["code"] == .string("provider_auth"))
+  }
+
   @Test func theWallGatesTheRouteOutsideDev() async throws {
     let harness = try Harness(dev: false, credentials: chatGPTLogin)
     let post = try await harness.api(transcribeRequest(wavAudio, contentType: "audio/wav"))

@@ -146,3 +146,7 @@ Remote handler invocation identity is the persisted subscription attempt UUID. `
 After acquiring a handler-result receipt, subscription firing awaits its acknowledgement on every exit after guarded commit or explicit discard, including when both the success write and fallback failure write throw. A failed persistence transaction does not retain the discarded result or pin its worker generation.
 
 Normal machine text/image reads and write/edit results retain opaque filesystem tokens instead of requiring a numeric mtime. Legacy numeric machine receipts keep their mtime representation. Overwrite guards compare opaque tokens exactly and pass the read token into the remote write, so a change between stat and write remains a conflict rather than a clobber.
+
+## Scoped restart reconciliation
+
+`SubscriptionFiring` accepts `startupExcludedSessions`; the registry does not arm any timer, observer or handler belonging to those sessions and does not retire their archived slots. Their subscription state, callback identity and buffered work remain unchanged while other sessions fire normally. `Scripts.announceRestart(owner:owners:)` announces a preselected set of persisted owners without taking ownership rows again. `Scripts.run(announceRestart:)` defaults to ordinary startup announcement; host assembly disables that duplicate pass after scoped reconciliation.

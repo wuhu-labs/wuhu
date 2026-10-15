@@ -10,6 +10,7 @@ public enum SpanAttribute: String, Codable, Sendable {
   case ttftMs = "ttft_ms", inputTokens = "tokens.input", outputTokens = "tokens.output"
   case cacheReadTokens = "tokens.cache_read", cacheWriteTokens = "tokens.cache_write", reasoningTokens = "tokens.reasoning"
   case tool = "tool.name", errorCode = "error.code", bytesIn = "bytes.in", bytesOut = "bytes.out"
+  case count
   case machineReference = "machine.reference", machine = "machine.id", version = "machine.version", kind, exitCode = "exit.code", verdict
 }
 
@@ -26,6 +27,7 @@ public struct TraceContext: Codable, Equatable, Sendable {
 
 public enum SpanName: String, Codable, Sendable {
   case turn = "agent.turn", inference = "inference", tool = "tool.call"
+  case executionWorkerFence = "execution-worker.boot-fence"
   case machine = "machine.operation", script = "script.run"
 }
 
