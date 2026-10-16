@@ -94,7 +94,7 @@ let adminExecFixtureRequested: Bool = {
     }
     #expect(!FileManager.default.fileExists(atPath: folder.path))
     let binary = try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])
-    for arguments in [["serve", folder.path, "--port", "0", "--execution-worker", "--admin-exec"], ["admin-exec", folder.path], ["admin-exec", folder.path, "--rollback"]] {
+    for arguments in [["serve", folder.path, "--port", "0", "--execution-placement", "worker", "--admin-exec"], ["admin-exec", folder.path], ["admin-exec", folder.path, "--rollback"]] {
       let result = try await Subprocess.run(.path(.init(binary)), arguments: .init(arguments), environment: .custom(["PATH": "/usr/bin:/bin", "HOME": fixture.base, "WUHU_CONFIG_DIR": fixture.config]), input: .none, output: .discarded, error: .string(limit: 4096))
       #expect(result.terminationStatus == .exited(1))
       #expect(result.standardError?.contains("unsupportedPlatform") == true)
@@ -125,7 +125,7 @@ let adminExecFixtureRequested: Bool = {
     var options = PlatformOptions()
     options.processGroupID = 0
     options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2)), .send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
-    let result = try await Subprocess.run(.path(.init(binary)), arguments: ["serve", folder.path, "--port", "0", "--execution-worker"], environment: .custom(environment), platformOptions: options, input: .none, output: .discarded, error: .discarded) { process in
+    let result = try await Subprocess.run(.path(.init(binary)), arguments: ["serve", folder.path, "--port", "0", "--execution-placement", "worker"], environment: .custom(environment), platformOptions: options, input: .none, output: .discarded, error: .discarded) { process in
       let birth = try processBirthIdentity(process.processIdentifier.value)
       let root = fixture.config + "/workers/" + id
       try await until("disabled real server started execution worker", timeout: .seconds(30)) {

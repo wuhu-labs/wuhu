@@ -118,7 +118,7 @@ enum Main {
             dev: config.dev,
             version: BuildStamp.version,
             publicRead: config.publicRead,
-            executionPlacement: config.executionWorker ? try .worker() : .inProcess,
+            executionPlacement: config.executionPlacement == .worker ? try .worker() : .inProcess,
             adminExec: config.adminExec,
             devImport: config.devImport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             devExport: config.devExport.map { URL(fileURLWithPath: $0, isDirectory: true) },

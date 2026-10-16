@@ -182,7 +182,7 @@ Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane pointe
 ## Server
 
 ```bash
-wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>]
+wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-placement in-process|worker] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>]
 ```
 
 Hosted servers can advertise `contentHost` from `GET /v1/server`, a template such as `{group}--alex.wuhu.studio`. Replace `{group}` with the group's id and prepend `https://`; otherwise use `https://<group>.<contentBase>` as on self-hosted servers. `wuhu serve --content-host-pattern '{group}--alex.wuhu.studio' --origin https://alex.wuhu.studio` selects flat hosts, requires exactly one `{group}` at the start, requires any pattern port to match the origin, and is exclusive with `--group-certificate`.
@@ -382,4 +382,4 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 
 `wuhu channel create [--title T] [person...]` creates a channel in the acting group and prints its id. A person creator is a member; a session creator is not. `wuhu channel add <id> <person...>` and `wuhu channel remove <id> <person...>` manage people. `wuhu channel rename <id> <title>` sets the title; `wuhu channel rename <id> --clear` returns to members' names. Session membership and blank titles are typed errors. People must be members to read, post or manage the channel. Sessions in groups reading its home group may read, post and manage it without joining. Plain person messages wake no session; mention, reply-target and the attention window still apply.
 
-`wuhu serve --execution-worker` explicitly runs loops, provider sockets, scripts and handlers in a same-binary per-space child; stores, scheduler, secrets/signing and machine brokers stay in the parent. It is off by default. Worker failure never selects in-process execution.
+`wuhu serve --execution-placement worker` explicitly runs loops, provider sockets, scripts and handlers in a same-binary per-space child; stores, scheduler, secrets/signing and machine brokers stay in the parent. The default remains in-process; an operator can explicitly select `--execution-placement in-process`. Worker failure never selects in-process execution. The old `--execution-worker` flag refuses with the replacement spelling. Changing placement requires an authorized quiesced ordinary restart, not live adoption.

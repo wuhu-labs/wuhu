@@ -148,14 +148,30 @@ enum TestFailure: Error { case timeout }
     try await withExec { agent in
       for _ in 0 ..< 12 {
         let id = UUID()
-        try await startExec(agent, id: id, script: "exec yes x")
-        try await ContinuousClock().sleep(for: .milliseconds(25))
+        try await startExec(agent, id: id, script: "printf ready >&2; exec yes x")
+        // Stop only once the child runs: a stop admitted before the spawn is a truthful resultless `stopped`.
+        _ = try await waitStderr(agent, id: id, containing: Data("ready".utf8))
         _ = try await agent.handler(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "race"))))
         let snapshot = try await waitExit(agent, id: id)
         #expect(snapshot.verdict?.tag == .stopped)
         #expect(snapshot.verdict?.result != nil)
       }
     }
+  }
+
+  @Test func stopBeforeExecutionNeverSpawns() async throws {
+    let agent = try OperationAgent(machine: "test", kinds: [AnyOperationKind(ExecKind())], authorize: { _, _ in })
+    let id = UUID()
+    let marker = "/tmp/exec-never-spawned-\(id)"
+    try await startExec(agent, id: id, script: "touch \(marker)")
+    _ = try await agent.handler(execRequest(id, suffix: "/stop", method: .put, body: .json(StopRequest(reason: "early"))))
+    let runner = Task { await agent.run() }
+    let snapshot = try await waitExit(agent, id: id)
+    #expect(snapshot.verdict?.tag == .stopped)
+    #expect(snapshot.verdict?.reason == "early")
+    #expect(snapshot.verdict?.result == nil, "no process ran, so there is no termination to report")
+    #expect(access(marker, F_OK) != 0, "the stopped operation never spawned its child")
+    await agent.shutdown(); runner.cancel()
   }
 
   @Test func childCannotInheritUnrelatedDescriptors() async throws {

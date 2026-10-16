@@ -342,9 +342,11 @@ extension Command {
       let port = try parser.intOption("--port", verb: verb) ?? 5530
       let dev = parser.flag("--dev")
       let publicRead = parser.flag("--public-read")
-      let executionWorker = parser.flag("--execution-worker")
+      guard !parser.flag("--execution-worker") else { throw UsageError(message: "serve: --execution-worker was removed; use --execution-placement worker") }
+      let placementOption = try parser.option("--execution-placement", verb: verb)
+      guard let executionPlacement = ServeCommand.ExecutionPlacement(rawValue: placementOption ?? "in-process") else { throw UsageError(message: "serve: --execution-placement must be in-process or worker") }
       let adminExec = parser.flag("--admin-exec")
-      guard !adminExec || executionWorker else { throw UsageError(message: "serve: --admin-exec requires --execution-worker") }
+      guard !adminExec || executionPlacement == .worker else { throw UsageError(message: "serve: --admin-exec requires worker execution placement") }
       let devImport = try parser.option("--dev-import", verb: verb)
       let devExport = try parser.option("--dev-export", verb: verb)
       let cert = try parser.option("--cert", verb: verb)
@@ -408,7 +410,7 @@ extension Command {
         origin: origin,
         dev: dev,
         publicRead: publicRead,
-        executionWorker: executionWorker,
+        executionPlacement: executionPlacement,
         adminExec: adminExec,
         devImport: devImport,
         devExport: devExport,
@@ -1235,7 +1237,7 @@ extension Command {
     usage: wuhu admin-exec <folder> [--rollback]
 
     Linux-only deployment-admin local same-image exec of an explicitly enabled server.
-    Requires serve --execution-worker --admin-exec and a root-owned
+    Requires serve --execution-placement worker --admin-exec and a root-owned
     /etc/wuhu/admin-exec.json UID policy; disabled by default.
     Unix peer UID authorizes the request, not environment or wallet identity.
     Refuses active nontransferable work immediately, without cancelling it.
@@ -1244,7 +1246,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--admin-exec] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-placement in-process|worker] [--admin-exec] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1255,7 +1257,9 @@ extension Command {
     serves the API and the web app; each group's content (pages, files,
     page APIs) is served at <group>.<host>, the shared group at
     shared.<host>, so the certificate must cover both <host> and *.<host>.
-    --admin-exec opts standalone --execution-worker serving into local
+    --execution-placement chooses in-process (current default) or worker.
+    Failures never switch placement. Changing placement takes an ordinary, quiesced restart.
+    --admin-exec opts standalone worker serving into local
     deployment-admin-only same-image exec and explicit rollback. Off by default;
     requires root-owned /etc/wuhu/admin-exec.json with allowedUIDs. Allowed
     users cannot run machine agents. No policy override exists. Unavailable

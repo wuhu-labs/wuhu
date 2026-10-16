@@ -13,10 +13,34 @@ struct ServeParsingTests {
 
   @Test func workerPlacementIsExplicitOptIn() throws {
     guard case let .serve(defaults) = try Command.parse(["serve", "/tmp/store"]),
-          case let .serve(enabled) = try Command.parse(["serve", "/tmp/store", "--execution-worker"])
+          case let .serve(enabled) = try Command.parse(["serve", "/tmp/store", "--execution-placement", "worker"])
     else { Issue.record("expected serve"); return }
-    #expect(!defaults.executionWorker)
-    #expect(enabled.executionWorker)
+    #expect(defaults.executionPlacement == .inProcess)
+    #expect(enabled.executionPlacement == .worker)
+  }
+
+  @Test(arguments: ["in-process", "worker"])
+  func explicitPlacementIsForwardedWithoutFallback(value: String) throws {
+    guard case let .serve(config) = try Command.parse(["serve", "/tmp/store", "--execution-placement", value]) else { Issue.record("expected serve"); return }
+    #expect(config.executionPlacement.rawValue == value)
+    #expect(!config.adminExec)
+  }
+
+  @Test(arguments: [[], ["--execution-placement", "worker"], ["--execution-placement", "in-process"]])
+  func removedWorkerFlagNamesItsReplacement(options: [String]) {
+    #expect { try Command.parse(["serve", "/tmp/store", "--execution-worker"] + options) } throws: { error in
+      (error as? UsageError)?.message == "serve: --execution-worker was removed; use --execution-placement worker"
+    }
+  }
+
+  @Test(arguments: [
+    ["--execution-placement", "automatic"], ["--execution-placement"],
+    ["--execution-worker", "--execution-placement", "in-process"],
+    ["--execution-placement", "in-process", "--execution-worker"],
+    ["--execution-placement", "in-process", "--admin-exec"],
+  ])
+  func invalidOrConflictingPlacementIsAUsageError(options: [String]) {
+    #expect(throws: UsageError.self) { try Command.parse(["serve", "/tmp/store"] + options) }
   }
 
   @Test func parsesAIDisclosureFile() throws {

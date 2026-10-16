@@ -19,7 +19,12 @@ public struct ServeCommand: Equatable, Sendable {
   public var origin: String? = nil
   public var dev: Bool
   public var publicRead: Bool = false
-  public var executionWorker: Bool = false
+  public enum ExecutionPlacement: String, Equatable, Sendable {
+    case inProcess = "in-process"
+    case worker
+  }
+
+  public var executionPlacement: ExecutionPlacement = .inProcess
   public var adminExec: Bool = false
   public var devImport: String?
   public var devExport: String?
