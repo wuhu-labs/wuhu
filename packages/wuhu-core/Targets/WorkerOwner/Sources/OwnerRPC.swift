@@ -12,6 +12,10 @@ import struct WorkerProtocol.WorkerProtocolError
 struct OwnerRPC: Sendable {
   let client: WorkerClient
   func call<Request: Encodable & Sendable, Result: Decodable & Sendable>(_ operation: String, _ request: Request) async throws -> Result {
+    try await client.withOwnerTransaction { try await admittedCall(operation, request) }
+  }
+
+  private func admittedCall<Request: Encodable & Sendable, Result: Decodable & Sendable>(_ operation: String, _ request: Request) async throws -> Result {
     let call = WorkerCall(operation: operation, payload: try ownerEncode(request))
     if let retained = try await client.retaining(call) { return try await retainedCall(retained) }
     return try await withTaskCancellationHandler {

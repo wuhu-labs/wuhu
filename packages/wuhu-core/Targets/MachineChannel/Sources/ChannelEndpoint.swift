@@ -107,16 +107,18 @@ public actor ChannelEndpoint {
         precondition(exec.sender.eofCursor == nil, "stdin after closeStdin")
         if exec.exitReceived { return }
       case .incoming:
-        precondition(exec.sender.exit == nil, "output after exit")
         if exec.outputStopped {
           exec.outputCut = true
           return
         }
+        precondition(exec.sender.exit == nil, "output after exit")
       }
       let room = exec.sender.room
       guard room > 0 else {
-        if !waitForCapacity {
+        if !waitForCapacity || exec.outputDraining {
           exec.outputCut = true
+          // A draining exec's first shortfall ends its output, so nothing sent later leaves a gap in what the caller reads.
+          if exec.outputDraining { exec.outputStopped = true }
           return
         }
         let (signal, continuation) = AsyncStream<Void>.makeStream()
@@ -203,6 +205,12 @@ public actor ChannelEndpoint {
     guard let exec = execs[id], exec.role == .incoming else { return }
     exec.outputStopped = true
     exec.outputCut = true
+    exec.sender.resumeWaiters()
+  }
+
+  func drainOutput(exec id: ExecID) {
+    guard let exec = execs[id], exec.role == .incoming else { return }
+    exec.outputDraining = true
     exec.sender.resumeWaiters()
   }
 
@@ -456,6 +464,7 @@ private final class ExecState {
   var terminalAckPending: Bool = false
   var retentionCancellation: AsyncStream<Void>.Continuation?
   var outputStopped: Bool = false
+  var outputDraining: Bool = false
   var outputCut: Bool = false
   var timedOut: ExecTimeout?
   var killRequested: Bool = false

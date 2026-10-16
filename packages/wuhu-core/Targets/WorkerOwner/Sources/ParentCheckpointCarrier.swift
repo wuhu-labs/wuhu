@@ -91,7 +91,8 @@ final class ParentCheckpointCarrier: Sendable {
 
   private static func requireCredentialFree(_ checkpoint: ParentExecCheckpoint) throws {
     // Opaque payloads, fault text, tracing baggage and reader values cannot prove credential freedom.
-    guard checkpoint.execution.readers.isEmpty else { throw failure(.unprovenCredentialFreedom) }
+    guard checkpoint.execution.readers.isEmpty,
+          (checkpoint.execution.attempts ?? []).allSatisfy({ credentialFreeSessionID($0.session.rawValue) }) else { throw failure(.unprovenCredentialFreedom) }
     for entry in checkpoint.execution.receipts.clients.flatMap(\.entries) {
       let call = entry.call
       guard call.operation == "runtime.schedule-warming", call.traceContext == nil,
@@ -100,6 +101,14 @@ final class ParentCheckpointCarrier: Sendable {
             call.payload == (try? ownerEncode(request)), entry.reply.error == nil,
             entry.reply.result == .object(["value": .bool(true)])
       else { throw failure(.unprovenCredentialFreedom) }
+    }
+  }
+
+  private static func credentialFreeSessionID(_ value: String) -> Bool {
+    if UUID(uuidString: value)?.uuidString == value { return true }
+    let words = value.split(separator: "-", omittingEmptySubsequences: false)
+    return (3 ... 8).contains(words.count) && words.allSatisfy { word in
+      (1 ... 16).contains(word.utf8.count) && word.utf8.allSatisfy { (97 ... 122).contains($0) }
     }
   }
 

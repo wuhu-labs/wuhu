@@ -1,6 +1,7 @@
 import { api, inGroup, post } from './http'
 import { requireAISharing } from '~/lib/ai-sharing'
 import { browserTimezone } from './session'
+import { ApiError } from './errors'
 import type {
   ConversationPostInput,
   ConversationPostOutput,
@@ -18,12 +19,14 @@ export function conversationPostInput(
   message: string,
   timezone: string,
   replyTarget?: string | null,
+  viewing?: string | null,
 ): ConversationPostInput {
   return {
     ...address,
     message,
     timezone,
     ...(replyTarget == null || replyTarget === '' ? {} : { replyTarget }),
+    ...(viewing == null ? {} : { viewing }),
   }
 }
 
@@ -61,21 +64,48 @@ export function conversationPostRequest(
 }
 
 // Posts as a person acting in `group`: the box's own group reads it, and the
-// message is recorded as sent from there.
+// message is recorded as sent from there. `viewing` names the doc or page on
+// screen at Send (lib/viewing.ts), omitted when there is none. A server that
+// refuses it (gone, or no longer readable) gets the message once more
+// without it: the page is optional context, the message is not.
 export async function postConversationMessage(
   address: MessageAddress,
   group: string,
   message: string,
   replyTarget?: string | null,
   files: readonly File[] = [],
+  viewing: string | null = null,
 ): Promise<ConversationPostOutput> {
   await requireAISharing()
-  return api(
-    '/v1/conversation/message',
-    conversationPostRequest(
-      conversationPostInput(address, message, browserTimezone(), replyTarget),
-      files,
-      group,
-    ),
-  )
+  const send = (viewing: string | null) =>
+    api<ConversationPostOutput>(
+      '/v1/conversation/message',
+      conversationPostRequest(
+        conversationPostInput(
+          address,
+          message,
+          browserTimezone(),
+          replyTarget,
+          viewing,
+        ),
+        files,
+        group,
+      ),
+    )
+  try {
+    return await send(viewing)
+  } catch (failure) {
+    if (viewing === null || !refusesViewing(failure)) throw failure
+    // Dropped silently for the person, but not for whoever reads the log.
+    // The server's message names the path, so neither is logged.
+    console.warn(
+      'The server refused viewing (reason viewing); sending without it',
+    )
+    return send(null)
+  }
+}
+
+export function refusesViewing(failure: unknown): boolean {
+  return failure instanceof ApiError && failure.status === 400 &&
+    failure.detail.reason === 'viewing'
 }

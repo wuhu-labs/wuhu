@@ -43,19 +43,14 @@ import Testing
     #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .invalidInput)
   }
 
-  @Test func fileAndExecAdmissionShareOneActiveMachineCap() async throws {
-    let (agent, registry) = try fixture()
-    let fileIDs = (0 ..< 32).map { _ in UUID() }
+  @Test func fileAndExecShareOperationIDsWithNoActiveCap() async throws {
+    let (agent, _) = try fixture()
+    let fileIDs = (0 ..< 48).map { _ in UUID() }
     for fileID in fileIDs {
       let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + fileID.uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": "/tmp/not-opened-before-run"])))
       #expect(try await agent.handler(request).status.code == 201)
     }
-    let id = UUID()
-    let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + id.uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
-    #expect(try await agent.handler(request).body.json(ErrorEnvelope.self).error.code == .capacityExceeded)
-    #expect(!(await registry.owns(id)))
-    let fileID = fileIDs[0]
-    var duplicate = request; duplicate.url = URL(string: "https://agent/machine/v2/machines/test/operations/" + fileID.uuidString)!
+    let duplicate = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + fileIDs[0].uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
     #expect(try await agent.handler(duplicate).body.json(ErrorEnvelope.self).error.code == .operationExists)
     await agent.shutdown()
   }

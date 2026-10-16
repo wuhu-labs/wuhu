@@ -216,10 +216,11 @@ extension GroupSwitchingTests {
       let fs = await harness.space.fs(.shared)
       let (entry, data) = try await fs.read(ModelsDocument.spacePath)
       var document = try ModelsDocument(json: data)
-      for provider in ["testing", "alternate"] { document.providers[provider]!.models["test-model"]!.cacheWarming = .init() }
+      for provider in ["testing", "alternate"] { document.providers[provider]!.models["test-model"]!.cacheWarming = .init(floorTokens: 1) }
       _ = try await fs.write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: entry)
       let other = try await harness.call("/v1/session", .object(["title": "Other held account", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
       let otherID = SessionID(other.id)
+      for session in [id, otherID] { try await harness.store.appendAssistant(session, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10))) }
       let warmer = CacheWarmer(space: harness.space, usage: harness.runtime.usage)
       #expect(try await warmer.allows(id))
       #expect(try await warmer.allows(otherID))
@@ -238,6 +239,7 @@ extension GroupSwitchingTests {
         let next = try #require(boundary.route)
         _ = try await owner.writePortableHandoff(id, expectedGeneration: hydration.generation, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: next, transcript: portable))
       }
+      try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10)))
       #expect(try await warmer.allows(id))
       #expect(try await warmer.allows(otherID))
     }
@@ -331,10 +333,11 @@ extension GroupSwitchingTests {
         let fs = await harness.space.fs(.shared)
         let (entry, data) = try await fs.read(ModelsDocument.spacePath)
         var document = try ModelsDocument(json: data)
-        document.providers["testing"]!.models["test-model"]!.cacheWarming = .init()
+        document.providers["testing"]!.models["test-model"]!.cacheWarming = .init(floorTokens: 1)
         _ = try await fs.write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: entry)
         let other = try await harness.call("/v1/session", .object(["title": "Peer", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
         let otherID = SessionID(other.id)
+        for session in [id, otherID] { try await harness.store.appendAssistant(session, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10))) }
         let warmer = CacheWarmer(space: harness.space, usage: harness.runtime.usage)
         _ = try await recordRouteFailure(InferenceError.rateLimited(retryAt: now.withLock { $0.addingTimeInterval(600) }), session: id, owner: owner, catalog: catalog)
         #expect(try await warmer.allows(otherID) == false)

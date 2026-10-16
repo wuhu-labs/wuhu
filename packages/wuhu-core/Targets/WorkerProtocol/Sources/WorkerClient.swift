@@ -12,9 +12,10 @@ public actor WorkerClient {
   let control: FetchClient
   let bytes: FetchClient
   var agreement: WorkerAgreement?
+  let ownerTransactions = WorkerOwnerTransactions()
   private var closed = false
   public var isClosed: Bool { closed }
-  public func close() { closed = true }
+  public func close() async { closed = true; await ownerTransactions.close() }
 
   private var localHello: WorkerHello?
   private var continuityID: UUID?

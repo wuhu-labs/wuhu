@@ -118,10 +118,10 @@ actor IdentityController {
     }
   }
 
-  func token(audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil) throws -> String {
+  func token(audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, exec: ExecClaims? = nil) throws -> String {
     let choice = settings.overrides[try ServerIdentity.audience(audience)] ?? settings.defaultIssuer
     if choice == .directory, !directoryConfirmed { throw publicationFailure }
-    return try identity.token(issuer: origin, audience: audience, space: space, group: group, session: session, now: now, id: id, lifetime: lifetime, page: page, viewer: viewer, directoryIssuer: choice == .directory ? resolve(.directory) : nil)
+    return try identity.token(issuer: origin, audience: audience, space: space, group: group, session: session, now: now, id: id, lifetime: lifetime, page: page, viewer: viewer, exec: exec, directoryIssuer: choice == .directory ? resolve(.directory) : nil)
   }
 
   func tokenForInference(audience: URL, space: String, group: String, session: String, now: Date, id: UUID) throws(InferenceError) -> String {

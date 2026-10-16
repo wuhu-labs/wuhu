@@ -54,7 +54,8 @@ extension WorkerConnection {
     let bytes = HTTPClient(eventLoopGroupProvider: .shared(MultiThreadedEventLoopGroup.singleton), configuration: configuration)
     let client = try WorkerClient(socket: manifest.workerSocket(directory: record.directory), credentials: credentials, control: .asyncHTTPClient(control, timeout: .seconds(10)), bytes: .asyncHTTPClient(bytes, timeout: nil))
     _ = try await client.negotiate(hello)
-    try await requireExecIdle(client)
+    try await RemoteSessionExecution(client: client).checkExec(record.fence, acceptingExpired: true)
+    try await requireExecTransferable(client)
     // This is the original parent's direct child, not crash adoption. A failed WNOHANG ownership check refuses before any signal or normal scheduling.
     var status: Int32 = 0
     guard waitpid(record.processID, &status, WNOHANG) == 0 else { throw AdminExecError.refused("workerChildOwnership") }
@@ -74,6 +75,13 @@ extension WorkerConnection {
       await exited()
     }
     return .init(processID: record.processID, client: client, lifetime: lifetime, ownerTransport: transport, parentBinding: binding, storage: storage)
+  }
+
+  static func requireExecTransferable(_ client: WorkerClient) async throws {
+    let inventory = try await RemoteSessionExecution(client: client).inventory()
+    guard inventory.scripts.isEmpty,
+          inventory.assignments.allSatisfy({ !$0.yielding && $0.archiveReservation == nil }),
+          inventory.pendingOwnerCalls.isEmpty else { throw AdminExecError.refused("workerLiveExecution") }
   }
 
   static func requireExecIdle(_ client: WorkerClient) async throws {

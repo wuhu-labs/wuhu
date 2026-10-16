@@ -102,16 +102,18 @@ import Testing
       called.withLock { $0 = true }
       return .init(id: message.id, code: "accepted", processID: getpid())
     } }
-    let reply = try await AdminExecSocket.exchange(path: socket.path, message: .init(id: UUID()))
-    #expect(reply.code == "deploymentAdminOnly")
+    // The refusal answers the request it read, so the caller's write never races the server closing the connection.
+    let message = AdminExecSocket.Message(id: UUID())
+    let reply = try await AdminExecSocket.exchange(path: socket.path, message: message)
+    #expect(reply.id == message.id && reply.code == "deploymentAdminOnly")
     #expect(!called.withLock { $0 })
     await socket.shutdown(); serving.cancel(); await serving.value
   }
 }
 
 @Suite(.enabled(if: !adminExecFixtureRequested), .serialized, .sessionFixtures(timeLimit: .minutes(1))) struct AdminExecReadinessSafetyTests {
-  @Test(arguments: ["lease.json", "request.json", "reply.json", "intent.json", "post-commit-intent", "none"])
-  func bookkeepingFailuresKeepRollbackAndAdmissionClosed(_ failure: String) async throws {
+  @Test(arguments: ["lease.json", "request.json", "reply.json", "intent.json", "post-commit-intent", "worker-commit", "resume-repair", "listener-reopen", "none"])
+  func readinessFailuresRespectRollbackAndForwardRepairBoundary(_ failure: String) async throws {
     try await withSessionDeps {
       let fixture = try PersistenceFixture()
       defer { fixture.clean() }
@@ -135,19 +137,53 @@ import Testing
       _ = try await controller.validateSpace(id, configDirectory: URL(fileURLWithPath: fixture.config), sessions: space.sessions)
       await controller.installRequests(pause: { try await requests.pauseExec() }, resume: { await requests.resumeExec(); resumed.withLock { $0 = true } })
       try await controller.installPublic(bound.server, descriptor: bound.listener.descriptor)
-      let written = Mutex<[String]>([])
-      let policy = AdminExecTesting(allowedUIDs: [UInt32(geteuid())], workerExecutable: nil, beforeCommittedWrite: { if failure == "post-commit-intent" { throw AdminExecError.refused("injectedStorageFailure") } }, beforeReadyWrite: { name in
+      let written = Mutex<[String]>([]), repairAttempts = Mutex(0), reopenAttempts = Mutex(0)
+      let policy = AdminExecTesting(allowedUIDs: [UInt32(geteuid())], workerExecutable: nil, beforeWorkerCommit: {
+        if failure == "worker-commit" { throw AdminExecError.refused("injectedWorkerCommitFailure") }
+      }, afterWorkerResume: {
+        guard failure == "resume-repair" else { return }
+        let attempt = repairAttempts.withLock { $0 += 1; return $0 }
+        if attempt == 1 {
+          #expect(!resumed.withLock { $0 })
+          await #expect(throws: (any Error).self) { try await controller.rollbackPublicDescriptor() }
+          #expect((try? files.read("reply.json", as: AdminExecController.Reply.self)) == nil)
+          #expect(try files.read("intent.json", as: AdminExecController.Intent.self)?.phase == "repairing-forward")
+          throw AdminExecError.refused("injectedResumeReplyFailure")
+        }
+      }, beforeAcceptingConnections: {
+        guard failure == "listener-reopen" else { return }
+        let attempt = reopenAttempts.withLock { $0 += 1; return $0 }
+        if attempt == 1 {
+          #expect(resumed.withLock { $0 })
+          await #expect(throws: (any Error).self) { try await controller.rollbackPublicDescriptor() }
+          #expect(try files.read("reply.json", as: AdminExecController.Reply.self) == nil)
+          #expect(try files.read("status.json", as: AdminExecController.Status.self)?.phase == "preparing")
+          #expect(try files.read("intent.json", as: AdminExecController.Intent.self)?.phase == "repairing-forward")
+          throw AdminExecError.refused("injectedListenerReopenFailure")
+        }
+      }, beforeCommittedWrite: { if failure == "post-commit-intent" { throw AdminExecError.refused("injectedStorageFailure") } }, beforeReadyWrite: { name in
         written.withLock { $0.append(name) }
-        if name == failure { throw AdminExecError.refused("injectedStorageFailure") }
+        if name == failure {
+          if name == "reply.json", written.withLock({ $0.filter { $0 == name }.count }) > 1 { return }
+          throw AdminExecError.refused("injectedStorageFailure")
+        }
       })
       let outcome: Result<Void, any Error>
       do { try await AdminExecTesting.$current.withValue(policy) { try await controller.ready() }; outcome = .success(()) }
       catch { outcome = .failure(error) }
-      if failure == "none" || failure == "post-commit-intent" {
+      if failure == "none" || failure == "post-commit-intent" || failure == "resume-repair" || failure == "reply.json" || failure == "listener-reopen" {
         try outcome.get()
+        if failure == "resume-repair" { #expect(repairAttempts.withLock { $0 } == 2) }
+        if failure == "listener-reopen" { #expect(reopenAttempts.withLock { $0 } == 2) }
+        #expect(try files.read("reply.json", as: AdminExecController.Reply.self)?.code == "ready")
+        #expect(try files.read("status.json", as: AdminExecController.Status.self)?.phase == "ready")
         #expect(resumed.withLock { $0 })
         await #expect(throws: (any Error).self) { try await controller.rollbackPublicDescriptor() }
-        #expect(written.withLock { $0 } == ["lease.json", "request.json", "reply.json", "intent.json"])
+        #expect(written.withLock { $0 } == (
+          failure == "reply.json"
+            ? ["lease.json", "request.json", "intent.json", "reply.json", "reply.json"]
+            : ["lease.json", "request.json", "intent.json", "reply.json"]
+        ))
         var configuration = HTTPClient.Configuration()
         configuration.tlsConfiguration = .makeClientConfiguration()
         configuration.tlsConfiguration?.certificateVerification = .none
@@ -162,7 +198,7 @@ import Testing
         #expect(!resumed.withLock { $0 })
         let retained = try await controller.rollbackPublicDescriptor()
         #expect(fcntl(retained, F_GETFD) & FD_CLOEXEC != 0)
-        #expect(written.withLock { $0.last } == failure)
+        #expect(written.withLock { $0.last } == (failure == "worker-commit" ? "intent.json" : failure))
       }
       try await controller.shutdown()
       await worker.shutdown(); await bound.server.shutdown()

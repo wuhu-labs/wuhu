@@ -19,18 +19,34 @@ import struct WorkerProtocol.WorkerProtocolError
 
 public struct SessionExecutionEndpoint: Sendable {
   private let execution: any SessionExecutionClient
+  private let afterExecResume: @Sendable () async throws -> Void
   private let beforeShutdownReply: @Sendable () async -> Void
   private let scripts: Scripts?
   private let attempts: AttemptHub?
   private let owner: WorkerClient?
-  public init(execution: any SessionExecutionClient, scripts: Scripts? = nil, attempts: AttemptHub? = nil, owner: WorkerClient? = nil, beforeShutdownReply: @escaping @Sendable () async -> Void = {}) {
+  public init(execution: any SessionExecutionClient, scripts: Scripts? = nil, attempts: AttemptHub? = nil, owner: WorkerClient? = nil, afterExecResume: @escaping @Sendable () async throws -> Void = {}, beforeShutdownReply: @escaping @Sendable () async -> Void = {}) {
     self.execution = execution; self.scripts = scripts; self.attempts = attempts; self.owner = owner
     self.beforeShutdownReply = beforeShutdownReply
+    self.afterExecResume = afterExecResume
   }
 
   public func invoke(_ call: WorkerCall) async throws -> JSONValue {
     try await ownerReply {
       switch call.operation {
+      case "execution.exec-pause":
+        guard let owner else { throw WorkerProtocolError(.unavailable, message: "Worker owner fence is unavailable") }
+        let token = try ownerDecode(UUID.self, call.payload)
+        try await owner.pauseOwnerTransactions(token)
+        return .bool(true)
+      case "execution.exec-check":
+        guard let owner else { throw WorkerProtocolError(.unavailable, message: "Worker owner fence is unavailable") }
+        let request = try ownerDecode(ExecFenceCheck.self, call.payload)
+        try await owner.requireOwnerTransactionsPaused(request.token, acceptingExpired: request.acceptingExpired)
+        return .bool(true)
+      case "execution.exec-resume":
+        guard let owner else { throw WorkerProtocolError(.unavailable, message: "Worker owner fence is unavailable") }
+        try await owner.resumeOwnerTransactions(ownerDecode(UUID.self, call.payload), afterResume: afterExecResume)
+        return .bool(true)
       case "execution.inventory":
         guard let execution = execution as? SessionExecution else { throw WorkerProtocolError(.unavailable, message: "Worker inventory is unavailable") }
         let assignments = await execution.inventory()

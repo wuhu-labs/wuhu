@@ -490,6 +490,8 @@ public actor MachineHub {
   private func failMachineCallers(_ machine: MachineID) async {
     let ids = callerLegs.keys.filter { callerMachines[$0] == machine }
     for id in ids {
+      // Machine loss ends the exec's id-token capability for good.
+      tokens?.idTokens.revoke(id)
       if let record = try? await space.execRecord(id), record.terminal == nil {
         try? await space.finishExec(id, .machineLost)
       }
@@ -617,18 +619,28 @@ public actor MachineHub {
   private func machineStart(_ start: ExecStart, record: ExecRecord, groupSecrets: Bool, values: StringMap?) -> ExecStart {
     let names = Self.secretNames(start)
     let unresolved = values == nil && !(names?.entries.isEmpty ?? true)
-    let session: ExecSessionCredential? = if let caller = record.caller, let tokens {
-      tokens.credential(session: SessionID(rawValue: caller), exec: start.id, timeout: start.timeout, now: date.now)
+    var env = Self.withoutReserved(start.env)?.entries ?? [:]
+    var values = values?.entries
+    let session: ExecSessionCredential?
+    if let caller = record.caller, let tokens {
+      let now = date.now
+      session = tokens.credential(session: SessionID(rawValue: caller), exec: start.id, timeout: start.timeout, now: now)
+      let minting = tokens.idTokens.environment(spaceURL: tokens.spaceURL, session: SessionID(rawValue: caller), machine: record.machine, exec: start.id, timeout: start.timeout, now: now)
+      env[SessionExecEnvironment.idTokenURL] = minting.url
+      // An agent that takes secret values masks them in the exec's output;
+      // an older one gets the capability in plain env.
+      if groupSecrets { values = (values ?? [:]).merging([SessionExecEnvironment.idTokenRequest: minting.request]) { _, server in server } }
+      else { env[SessionExecEnvironment.idTokenRequest] = minting.request }
     } else {
-      nil
+      session = nil
     }
     return ExecStart(
       id: start.id,
       cwd: start.cwd,
       command: start.command,
-      env: Self.withoutReserved(start.env),
+      env: start.env == nil && env.isEmpty ? nil : StringMap(env),
       secrets: groupSecrets && !unresolved ? nil : names,
-      secretValues: groupSecrets ? values : nil,
+      secretValues: groupSecrets ? values.map(StringMap.init) : nil,
       window: start.window,
       maxOutput: start.maxOutput,
       timeout: start.timeout,

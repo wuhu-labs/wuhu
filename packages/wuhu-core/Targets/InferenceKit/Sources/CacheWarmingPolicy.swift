@@ -8,19 +8,18 @@ public struct CacheWarmingPolicy: Hashable, Sendable, Codable {
   public var intervalSeconds: Int
   public var maxPings: Int
   public var minimumRemainingPercent: Double
-  public var compactionThresholdTokens: Int
-  public var compactionGrowthTokens: Int
+  /// An idle agent is warmed only while its context is at least this large, and every notice it gets offers compaction.
+  public var floorTokens: Int
 
-  public init(intervalSeconds: Int = 3300, maxPings: Int = 20, minimumRemainingPercent: Double = 10, compactionThresholdTokens: Int = 100_000, compactionGrowthTokens: Int = 50000) {
+  public init(intervalSeconds: Int = 3300, maxPings: Int = 20, minimumRemainingPercent: Double = 10, floorTokens: Int = 50000) {
     self.intervalSeconds = intervalSeconds
     self.maxPings = maxPings
     self.minimumRemainingPercent = minimumRemainingPercent
-    self.compactionThresholdTokens = compactionThresholdTokens
-    self.compactionGrowthTokens = compactionGrowthTokens
+    self.floorTokens = floorTokens
   }
 
   enum CodingKeys: String, CodingKey, CaseIterable {
-    case intervalSeconds, maxPings, minimumRemainingPercent, compactionThresholdTokens, compactionGrowthTokens
+    case intervalSeconds, maxPings, minimumRemainingPercent, floorTokens
   }
 
   public init(from decoder: any Decoder) throws {
@@ -35,13 +34,12 @@ public struct CacheWarmingPolicy: Hashable, Sendable, Codable {
         intervalSeconds: try integer(.intervalSeconds, default: 3300),
         maxPings: try integer(.maxPings, default: 20),
         minimumRemainingPercent: container.contains(.minimumRemainingPercent) ? try container.decode(Double.self, forKey: .minimumRemainingPercent) : 10,
-        compactionThresholdTokens: try integer(.compactionThresholdTokens, default: 100_000),
-        compactionGrowthTokens: try integer(.compactionGrowthTokens, default: 50000),
+        floorTokens: try integer(.floorTokens, default: 50000),
       )
-      guard intervalSeconds > 0, maxPings > 0, compactionThresholdTokens > 0, compactionGrowthTokens > 0,
+      guard intervalSeconds > 0, maxPings > 0, floorTokens > 0,
             minimumRemainingPercent.isFinite, (0 ... 100).contains(minimumRemainingPercent)
       else {
-        throw CatalogError.invalidCacheWarming("interval, count and token thresholds must be positive; remaining percent must be 0...100")
+        throw CatalogError.invalidCacheWarming("interval, count and floor must be positive; remaining percent must be 0...100")
       }
     } catch let error as CatalogError { throw error }
     catch { throw CatalogError.invalidCacheWarming(String(describing: error)) }

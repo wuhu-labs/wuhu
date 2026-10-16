@@ -76,7 +76,8 @@ public actor MemoryOperationStore: OperationStore {
       guard try prior.machine == record.machine && prior.start.canonicalData() == record.start.canonicalData() else { throw OperationError(.invocationConflict, operation: id) }
       return .init(record: prior, dispatch: false)
     }
-    guard records.count < capacity, records[record.id] == nil else { throw OperationError(.capacityExceeded) }
+    guard records[record.id] == nil else { throw OperationError(.operationExists, operation: record.id) }
+    guard records.count < capacity else { throw OperationError.capacityExceeded("clientRecords", used: records.count, limit: capacity) }
     owners[owner] = record.id; records[record.id] = record
     return .init(record: record, dispatch: true)
   }

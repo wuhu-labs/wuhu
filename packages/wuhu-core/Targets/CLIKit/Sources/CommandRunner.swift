@@ -120,6 +120,11 @@ public struct CommandRunner: Sendable {
         await self.stdout(JSONValue.object(["result": .string(result)]).jsonString() + "\n")
         return 0
       }
+      // id-token presents only the exec's own capability, never a wallet or the session token.
+      if case let .idToken(audience, json) = command {
+        try await IDTokenVerb(runner: self).run(audience: audience, json: json)
+        return 0
+      }
       let identity = try Identity.resolve(environment: self.environment)
       if case .session = identity {
         _ = try GroupSelection.resolve(flag: invocation.group, environment: self.environment, config: nil)
@@ -274,6 +279,7 @@ enum Command: Equatable {
   case untrust(String)
   case upgrade(UpgradeCommand)
   case agent(AgentLog?)
+  case idToken(audience: String, json: Bool)
   case read(path: String, rev: Int?, lines: String?)
   case write(path: String, body: String, force: Bool)
   case cat(path: String)

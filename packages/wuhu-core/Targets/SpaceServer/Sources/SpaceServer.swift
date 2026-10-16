@@ -191,6 +191,7 @@ public enum SpaceServer {
     }
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
+    addIDTokenRoute(&router, space: space, tokens: execTokens, identity: identityController)
     addGroupRoutes(&router, space: space, dev: dev)
     addMachineRoutes(
       &router, space: space, hub: hub, machineV2Hub: machineV2Hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
@@ -274,6 +275,8 @@ public enum SpaceServer {
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
       "/v1/server", "/v1/groups",
       "/.well-known/openid-configuration", "/.well-known/jwks.json",
+      // A running exec's WUHU_ID_TOKEN_REQUEST capability (IDTokenRoute.swift).
+      "/v1/id-token",
     ]
     return hostRouted(contentHost, api: gated { request in
       let v2Path = request.url.path.hasPrefix("/v1/machine-v2/") ? request.url.path.split(separator: "/") : []

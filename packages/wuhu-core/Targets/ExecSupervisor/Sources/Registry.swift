@@ -47,8 +47,13 @@ actor ExecSupervisorRegistry {
   static let stagingReservation = 1024 * 1024
   static let fullReservation = 576 * 1024 + stagingReservation
   var reservations: [UUID: Int] = [:]
-  var active: Set<UUID> = []
-  var recoveryFailures: Set<UUID> = []
+  /// Recovered manifests not yet identified; each stays charged a full reservation until its supervisor answers `/identity`.
+  var unidentified: Set<UUID> = []
+  /// Operations last seen unsettled. One whose supervisor goes away before it is seen settled lost its departure evidence.
+  var unsettled: Set<UUID> = []
+  /// Operations seen settled. Settlement is monotonic: a response answered before it, arriving after, never makes one unsettled again.
+  var settled: Set<UUID> = []
+  var lost: Set<UUID> = []
   var creating: Set<UUID> = []
   /// Starts admitted past the last `leaving` check whose request has not yet gone to their supervisor. Retirement waits for them,
   /// so each is either refused or has a manifest retirement reaches.
@@ -93,9 +98,9 @@ actor ExecSupervisorRegistry {
     self.files = files; self.clock = clock; self.launch = launch; self.identityFetch = identityFetch ?? fetch
   }
 
-  func admissionUsage() async throws -> (active: Int, receipts: Int, bufferBytes: Int) {
+  func admissionUsage() async throws -> (receipts: Int, bufferBytes: Int) {
     try await refreshReceipts()
-    return (active.count, manifests.count + tombstones.count + malformedDirectories.count, reservations.values.reduce(0, +))
+    return (manifests.count + tombstones.count + malformedDirectories.count, reservations.values.reduce(0, +))
   }
 
   func owns(_ id: UUID) -> Bool { manifests[id] != nil || tombstones[id] != nil }
@@ -223,7 +228,7 @@ actor ExecSupervisorRegistry {
           try await leaveLegacy(manifest)
         } else {
           guard response.status.code == 200 else { throw OperationError(.supervisorUnavailable, operation: manifest.operation) }
-          if !(try await departureLiteral(response.body)) { pending = true }
+          if try await departureLiteral(response.body) { unsettled.remove(manifest.operation) } else { pending = true }
           continue
         }
       }
@@ -234,12 +239,13 @@ actor ExecSupervisorRegistry {
       }
     }
     if pending { return .pending }
+    lost += self.lost.sorted { $0.uuidString < $1.uuidString }
     return lost.isEmpty ? .drained : .leaseExpired(lost)
   }
 
   func recover() async throws {
     let directories = try await files.list(root)
-    guard directories.count <= OperationLimits().receipts else { throw OperationError(.capacityExceeded) }
+    guard directories.count <= OperationLimits().receipts else { throw OperationError.capacityExceeded("receipts", used: directories.count, limit: OperationLimits().receipts) }
     for directory in directories {
       guard let id = UUID(uuidString: URL(fileURLWithPath: directory).lastPathComponent), directory == root + "/" + id.uuidString else { malformedDirectories.insert(directory); continue }
       do {
@@ -247,7 +253,7 @@ actor ExecSupervisorRegistry {
         try validateManifest(manifest, directory: directory)
         guard manifest.machine == machine else { throw OperationError(.supervisorIdentityMismatch) }
         manifests[id] = manifest
-        reservations[id] = Self.fullReservation; active.insert(id); recoveryFailures.insert(id)
+        reservations[id] = Self.fullReservation; unidentified.insert(id)
       } catch {
         let failure = error as? OperationError ?? .init(.invalidConfiguration)
         tombstones[id] = OperationError(failure.code, message: failure.message, operation: id, details: ["path": .string(directory + "/manifest.json")])
@@ -260,9 +266,25 @@ actor ExecSupervisorRegistry {
       for pid in childPIDs {
         if exec_reap_nonblocking(pid) != 0 { childPIDs.remove(pid) }
       }
+      await identifyRecovered()
       do { try await clock.sleep(.milliseconds(100)) } catch { return }
     }
   }
+
+  /// Identifies every recovered supervisor that can answer now (a linked version 2, or a version 1 on its own socket), all at once,
+  /// so a hung one delays none of the others. One that fails stays unidentified, charged in full, and is asked again next round.
+  func identifyRecovered() async {
+    let ready = unidentified.compactMap { id in manifests[id].flatMap { $0.version == 1 || links[id] != nil ? $0 : nil } }
+    guard !ready.isEmpty else { return }
+    await withTaskGroup(of: Void.self) { group in
+      for manifest in ready {
+        group.addTask { if (try? await self.identify(manifest)) != nil { await self.identified(manifest) } }
+      }
+    }
+  }
+
+  /// An identity answer that outlived its receipt (the directory went while it was in flight) changes nothing.
+  func identified(_ manifest: SupervisorManifest) { if manifests[manifest.operation] == manifest { unidentified.remove(manifest.operation) } }
 
   nonisolated var handler: Handler { { await self.handle($0) } }
 
@@ -280,7 +302,9 @@ actor ExecSupervisorRegistry {
         }
       }
       terminalAcknowledgements.removeValue(forKey: id)
-      tombstones.removeValue(forKey: id); manifests.removeValue(forKey: id); active.remove(id); reservations.removeValue(forKey: id); recoveryFailures.remove(id); legacyDepartures.removeValue(forKey: id)
+      settled.remove(id)
+      if unsettled.remove(id) != nil { lost.insert(id) }
+      tombstones.removeValue(forKey: id); manifests.removeValue(forKey: id); reservations.removeValue(forKey: id); unidentified.remove(id); legacyDepartures.removeValue(forKey: id)
       links.removeValue(forKey: id)?.abort()
     }
   }
@@ -326,8 +350,8 @@ actor ExecSupervisorRegistry {
     let response = try await send(Request(url: URL(string: "http://supervisor/identity")!), to: manifest, identity: true)
     guard response.status.code == 200,
           try await response.body.json(SupervisorManifest.self, upTo: 4096) == manifest else { throw OperationError(.supervisorIdentityMismatch, message: "identity status \(response.status.code)") }
-    if response.headers[.init("X-Wuhu-Supervisor-Active")!] == "0" { active.remove(manifest.operation) }
-    if let raw = response.headers[.init("X-Wuhu-Supervisor-Reservation")!], let bytes = Int(raw), (0 ... Self.fullReservation).contains(bytes) { reservations[manifest.operation] = bytes }
+    if let raw = response.headers[.init("X-Wuhu-Supervisor-Reservation")!], let bytes = Int(raw), (0 ... Self.fullReservation).contains(bytes),
+       manifests[manifest.operation] == manifest { reservations[manifest.operation] = bytes }
   }
 
   func localRequest(_ request: Request, manifest: SupervisorManifest) throws -> Request {
@@ -357,7 +381,8 @@ actor ExecSupervisorRegistry {
   func forward(_ request: Request, manifest: SupervisorManifest) async throws -> Response {
     let response = try await send(request, to: manifest, identity: false)
     let data = try await response.body.bytes(upTo: OperationLimits.responseBytes)
-    if (response.status.code == 200 || response.status.code == 201) && !request.url.path.contains("/inputs/") {
+    // A response that outlived its receipt (the directory went while it was in flight) writes no evidence or reservation.
+    if (response.status.code == 200 || response.status.code == 201) && !request.url.path.contains("/inputs/"), manifests[manifest.operation] == manifest {
       let snapshot = try JSONDecoder().decode(OperationSnapshot.self, from: data)
       guard snapshot.operation == manifest.operation else { throw OperationError(.invalidResponse) }
       let path = request.url.path.split(separator: "/")
@@ -369,7 +394,9 @@ actor ExecSupervisorRegistry {
         legacyDepartures[manifest.operation]?.snapshot = snapshot
         legacyDepartures[manifest.operation]?.leaseUntil = clock.now() + .milliseconds(OperationLimits().leaseMs)
       }
-      if snapshot.verdict != nil { active.remove(manifest.operation) }
+      if snapshot.verdict != nil, snapshot.outputConsumed, snapshot.terminalToken == terminalAcknowledgements[manifest.operation] {
+        unsettled.remove(manifest.operation); settled.insert(manifest.operation)
+      } else if !settled.contains(manifest.operation) { unsettled.insert(manifest.operation) }
       if let bytes = snapshot.bufferReservationBytes {
         guard (0 ... 576 * 1024).contains(bytes) else { throw OperationError(.unsupportedProtocol) }
         let staging = snapshot.finalOffsets.count == 2 ? 0 : Self.stagingReservation
@@ -400,13 +427,16 @@ actor ExecSupervisorRegistry {
       guard manifests[id] == nil && tombstones[id] == nil else { throw OperationError(.operationExists) }
       guard start.kind == "exec.v1" else { throw OperationError(.unknownKind) }
       let input = try JSONDecoder().decode(ExecInput.self, from: Data(start.input.jsonString().utf8)); try input.validate()
-      guard manifests.count + tombstones.count + malformedDirectories.count < OperationLimits().receipts, active.count < OperationLimits().activeOperations,
-            reservations.values.reduce(0, +) + Self.fullReservation <= OperationLimits().bufferBytes else { throw OperationError(.capacityExceeded) }
+      let limits = OperationLimits()
+      let receipts = manifests.count + tombstones.count + malformedDirectories.count
+      guard receipts < limits.receipts else { throw OperationError.capacityExceeded("receipts", used: receipts, limit: limits.receipts) }
+      let reserved = reservations.values.reduce(0, +)
+      guard reserved + Self.fullReservation <= limits.bufferBytes else { throw OperationError.capacityExceeded("bufferBytes", used: reserved, limit: limits.bufferBytes, requested: Self.fullReservation) }
       let directory = root + "/" + id.uuidString
       let manifest = SupervisorManifest(version: 2, machine: machine, operation: id, nonce: UUID().uuidString + UUID().uuidString, socket: Rendezvous.socketPath(operationsDirectory: root), disclaimResponsibility: disclaimResponsibility ? true : nil)
       try validateManifest(manifest, directory: directory)
       manifests[id] = manifest
-      active.insert(id); reservations[id] = Self.fullReservation
+      reservations[id] = Self.fullReservation
       creating.insert(id); starting.insert(id)
       defer { starting.remove(id) }
       do { try await files.create(directory, manifest) }
@@ -434,7 +464,7 @@ actor ExecSupervisorRegistry {
     }
     if let error = tombstones[id] { throw error }
     guard let manifest = manifests[id] else { throw OperationError(.unknownOperation) }
-    if recoveryFailures.contains(id) { try await identify(manifest); recoveryFailures.remove(id) }
+    if unidentified.contains(id) { try await identify(manifest); identified(manifest) }
     return try await forward(request, manifest: manifest)
   }
 }

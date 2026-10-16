@@ -41,6 +41,8 @@ import struct WorkerProtocol.WorkerProtocolError
 public struct RemoteExecutionOwner: WorkerOwnerClient {
   public let tracesAttempts: Bool
   let machinesEnabled: Bool
+  let deferredAttemptTerminations = DeferredAttemptTerminations()
+  let deferredActivityReleases = DeferredActivityReleases()
   let rpc: OwnerRPC
   public init(client: WorkerClient, tracesAttempts: Bool, machines: Bool = false) {
     rpc = OwnerRPC(client: client); self.tracesAttempts = tracesAttempts; machinesEnabled = machines

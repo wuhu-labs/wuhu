@@ -162,7 +162,8 @@ extension MachineToolV2RoutingTests {
         let attempt = lost.withLock { value in value.append("stdin"); return value.count(where: { $0 == "stdin" }) }
         if attempt % 2 == 1 { throw LostResponse() }
       }
-      if lossy, request.method == .get, request.url.query?.contains("channel=") == true {
+      // A machine drops an operation once its last channel is acknowledged, so a retried acknowledgement meets an error answer.
+      if lossy, request.method == .get, request.url.query?.contains("channel=") == true, response.status == .ok {
         let snapshot = try await response.body.json(OperationSnapshot.self)
         let drop = lost.withLock { value in
           let key = request.url.query?.contains("terminalAck=") == true ? "ack" : (snapshot.payload?.count ?? 0) > 0 ? "output" : nil

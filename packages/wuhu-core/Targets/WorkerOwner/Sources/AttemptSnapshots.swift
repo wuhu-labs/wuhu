@@ -17,11 +17,14 @@ struct AttemptPublication: Codable, Sendable {
   let event: AttemptSnapshot
 }
 
+enum AttemptUnknownOutcome: String, Codable, Sendable { case handoffFenceExpired }
+
 enum AttemptSnapshot: Codable, Sendable {
   case started(UUID)
   case delta(UUID, InferenceSnapshot)
   case done(UUID, AssistantMessage, AssistantMessageMetadata)
   case failed(UUID, String)
+  case unknown(UUID, AttemptUnknownOutcome)
   init(_ event: AttemptEvent) {
     switch event {
     case let .started(id): self = .started(id)
@@ -37,6 +40,7 @@ enum AttemptSnapshot: Codable, Sendable {
     case let .delta(id, event): .delta(attemptID: id, event: event.event)
     case let .done(id, message, metadata): .finished(attemptID: id, outcome: .done(message, metadata))
     case let .failed(id, reason): .finished(attemptID: id, outcome: .failed(reason: reason))
+    case let .unknown(id, .handoffFenceExpired): .finished(attemptID: id, outcome: .failed(reason: "unknownOutcome: parent execution handoff fence expired"))
     }
   }
 }

@@ -24,6 +24,7 @@ final class ExecTokens: Sendable {
   struct V2Holder: Sendable { let key: V2Key; let expiresAt: Date; let active: @Sendable () async throws -> Bool }
   private let v2 = Mutex<[V2Key: (token: [UInt8], holder: V2Holder, attempts: Int, issued: Bool)]>([:])
   let spaceURL: String
+  let idTokens = IDTokenGrants()
   private let held = Mutex<[ExecID: (token: [UInt8], holder: Holder)]>([:])
 
   init(spaceURL: String) {
@@ -50,7 +51,7 @@ final class ExecTokens: Sendable {
       held = held.filter { $0.value.holder.expiresAt.addingTimeInterval(Self.longestLife) > now }
       if held[identity] == nil {
         guard !previouslyIssued else { throw OperationError(.credentialExpired, message: "Session exec credential unavailable; credentials are not renewed") }
-        guard held.count < 65536 else { throw OperationError(.capacityExceeded) }
+        guard held.count < 65536 else { throw OperationError.capacityExceeded("execCredentials", used: held.count, limit: 65536) }
         let life = min(Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18, Self.longestLife)
         let expiry = now.addingTimeInterval(life)
         guard expiry > now else { throw OperationError(.invalidInput, message: "Session exec credential requires a positive lifetime") }
@@ -84,10 +85,10 @@ final class ExecTokens: Sendable {
     }
   }
 
-  private static func randomToken() -> String {
+  static func randomToken(prefix tokenPrefix: String = ExecTokens.prefix) -> String {
     var generator = SystemRandomNumberGenerator()
     let digits = Array("0123456789abcdef".utf8)
-    var token = Array(prefix.utf8)
+    var token = Array(tokenPrefix.utf8)
     for _ in 0 ..< 32 {
       let byte = UInt8.random(in: .min ... .max, using: &generator)
       token += [digits[Int(byte >> 4)], digits[Int(byte & 0x0F)]]
@@ -97,6 +98,7 @@ final class ExecTokens: Sendable {
 
   func revoke(_ exec: ExecID) {
     _ = held.withLock { $0.removeValue(forKey: exec) }
+    idTokens.revoke(exec)
   }
 
   // Every held token is compared in full, so the time taken says nothing about
@@ -111,6 +113,55 @@ final class ExecTokens: Sendable {
       guard let found, found.expiresAt > now else { return nil }
       return found
     }
+  }
+}
+
+/// The capability a session's exec gets in `WUHU_ID_TOKEN_REQUEST`: it mints
+/// OIDC tokens for that session, machine and exec at `/v1/id-token`, and
+/// nothing else. It lives in memory, so a server restart ends it too.
+final class IDTokenGrants: Sendable {
+  static let prefix: String = "wit_"
+
+  struct Grant: Equatable, Sendable {
+    let session: SessionID
+    let machine: MachineID
+    let exec: ExecID
+    let expiresAt: Date
+  }
+
+  private let held = Mutex<[ExecID: (token: [UInt8], grant: Grant)]>([:])
+
+  func environment(spaceURL: String, session: SessionID, machine: MachineID, exec: ExecID, timeout: Double?, now: Date) -> (url: String, request: String) {
+    let life = min(timeout.flatMap { $0 > 0 ? $0 : nil } ?? ExecTokens.longestLife, ExecTokens.longestLife)
+    let token = held.withLock { held in
+      held = held.filter { $0.value.grant.expiresAt > now }
+      if let existing = held[exec], existing.grant.session == session, existing.grant.machine == machine {
+        return String(decoding: existing.token, as: UTF8.self)
+      }
+      let token = Array(ExecTokens.randomToken(prefix: Self.prefix).utf8)
+      held[exec] = (token, Grant(session: session, machine: machine, exec: exec, expiresAt: now.addingTimeInterval(life)))
+      return String(decoding: token, as: UTF8.self)
+    }
+    return (spaceURL + "/v1/id-token", token)
+  }
+
+  func grant(ofBearer bearer: String, now: Date) -> Grant? {
+    let presented = Array(bearer.utf8)
+    return held.withLock { held in
+      var found: Grant?
+      for (token, grant) in held.values where execTokenEqual(token, presented) { found = grant }
+      guard let found, found.expiresAt > now else { return nil }
+      return found
+    }
+  }
+
+  func revoke(_ exec: ExecID) {
+    _ = held.withLock { $0.removeValue(forKey: exec) }
+  }
+
+  /// When `exec`'s grant lapses, or nil when it holds none.
+  func expiry(of exec: ExecID) -> Date? {
+    held.withLock { $0[exec]?.grant.expiresAt }
   }
 }
 

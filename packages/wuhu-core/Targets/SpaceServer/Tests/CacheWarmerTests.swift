@@ -17,7 +17,7 @@ import WuhuAI
         let space = try Space.inMemory()
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
         var enabled = try #require(document.providers["testing"]?.models["test-model"])
-        enabled.cacheWarming = CacheWarmingPolicy()
+        enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 1)
         document.providers["testing"]?.models["warm-model"] = enabled
         _ = try await space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: nil)
         let store = space.sessions
@@ -38,7 +38,7 @@ import WuhuAI
         #expect(try await store.record(blocked) == before)
         #expect(try await store.transcript(blocked) == transcript)
         #expect(try await store.undrainedInputs(blocked).isEmpty)
-        #expect(try await store.enqueueCacheWarming(blocked, maxPings: 20, contextTokens: 100, offerThreshold: 100_000, offerGrowth: 50000, quotaLow: false))
+        #expect(try await store.enqueueCacheWarming(blocked, maxPings: 20, floorTokens: 1, images: .claude, quotaLow: false))
       }
     }
   }
@@ -50,7 +50,7 @@ import WuhuAI
         let space = try Space.inMemory()
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
         var enabled = try #require(document.providers["testing"]?.models["test-model"])
-        enabled.cacheWarming = CacheWarmingPolicy()
+        enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 1)
         document.providers["testing"]?.models["warm-model"] = enabled
         _ = try await space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: nil)
         let warmer = CacheWarmer(space: space, usage: UsageBoard())
@@ -72,7 +72,7 @@ import WuhuAI
     }
   }
 
-  @Test(arguments: ["removed", "removed-pressure", "restart", "quota", "task"])
+  @Test(arguments: ["removed", "removed-pressure", "restart", "quota", "task", "compacted", "raised-floor"])
   func ineligiblePersistedNoticeDoesNotRunInference(_ reason: String) async throws {
     try await withSessionDeps {
       let calls = Mutex(0)
@@ -83,17 +83,21 @@ import WuhuAI
       )
       var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
       var enabled = try #require(document.providers["testing"]?.models["test-model"])
-      enabled.cacheWarming = CacheWarmingPolicy()
+      enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 50000)
       document.providers["testing"]?.models["warm-model"] = enabled
       let (head, _) = try await harness.space.fs(.shared).read("/models.json")
       _ = try await harness.space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
       let id = try await harness.store.createSession(group: .shared, title: "Recovered", kind: reason == "task" ? .task : .agent, createdBy: "morgan", model: .init(provider: "testing", model: "warm-model", effort: "high"))
-      try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10)))
+      try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 60000, outputTokens: 0, totalTokens: 60000)))
       _ = try await harness.store.enqueue(id, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .context, subscriptionID: .init("cache-warming"), content: .init(text: "<cache-warming-notice>ignore</cache-warming-notice>"))))
       if reason == "restart" {
         try await harness.store.markInterrupted(id)
         _ = try await harness.store.restart(id, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
       } else {
+        if reason == "compacted" {
+          _ = try await harness.store.writeCompaction(id, head: .init(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init()), kept: nil)
+          try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 5000, outputTokens: 0, totalTokens: 5000)))
+        }
         _ = try await harness.store.drainQueue(id)
       }
       if reason == "removed-pressure" {
@@ -104,8 +108,8 @@ import WuhuAI
         try await harness.store.markInterrupted(id)
         try await harness.store.markResumed(id)
       }
-      if reason == "removed" || reason == "removed-pressure" {
-        document.providers["testing"]?.models["warm-model"]?.cacheWarming = nil
+      if reason == "removed" || reason == "removed-pressure" || reason == "raised-floor" {
+        document.providers["testing"]?.models["warm-model"]?.cacheWarming = reason == "raised-floor" ? CacheWarmingPolicy(floorTokens: 60001) : nil
         let (head, _) = try await harness.space.fs(.shared).read("/models.json")
         _ = try await harness.space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
       }
@@ -160,7 +164,7 @@ extension CacheWarmerTests {
       try await withDependencies { $0.date = DateGenerator { time.withLock { $0 } } } operation: {
         let space = try Space.inMemory()
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
-        document.providers["testing"]!.models["test-model"]!.cacheWarming = CacheWarmingPolicy()
+        document.providers["testing"]!.models["test-model"]!.cacheWarming = CacheWarmingPolicy(floorTokens: 1)
         document.providers["alternate"] = document.providers["testing"]
         let group = ModelsDocument.Group(members: [
           .init(id: "held", provider: "testing", model: "test-model"),

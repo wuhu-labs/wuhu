@@ -53,7 +53,7 @@ Hidden from the navigator. Only you and humans write there; every other session'
 
 ## Models: `/models.json`
 
-One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact.
+One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact. An idle agent whose model opts into `cacheWarming` and whose context is at least its `floorTokens` (default 50 000) gets a `<cache-warming-notice>`; on one, judge whether more work is coming soon: if not, compact, and warming stops; if so, end the turn without a reply.
 
 ## Durable handlers
 

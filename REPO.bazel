@@ -1,0 +1,2 @@
+# Workspace marker: lets Bazelisk find the root, and so .bazelversion, before
+# tools/bazel has generated the gitignored MODULE.bazel.

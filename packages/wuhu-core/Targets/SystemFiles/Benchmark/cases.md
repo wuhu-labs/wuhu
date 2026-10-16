@@ -73,9 +73,15 @@ _Afterwards:_ deterministic checks require ordered machine `read` calls, the sec
 
 ## 12. cache-warming
 
-_Text-only smoke input:_ an idle/no-other-work scenario and the exact warming notice wording, including the natural-boundary compaction offer. For this smoke only, the agent is explicitly asked to post its compact-or-decline choice in one sentence.
+_Text-only smoke input:_ an idle agent whose task is finished and reported, with no work announced, and the exact warming notice wording. For this smoke only, the agent is asked to post its compact-or-not decision in one sentence instead of acting on it.
 
-_Afterwards:_ a short decision recognizing that compaction is optional, with no new/changed files and no invented task. This lightweight case checks understanding of the advisory offer, not scheduling or production silence; it does not inject a system notice, require a newer binary, or modify the driver. A real system-notice/no-visible-output case needs the benchmark lead's harness support separately.
+_Afterwards:_ a short decision to compact, with no new/changed files and no invented task. This checks the judgement the notice asks for, not scheduling or production silence; it does not inject a system notice.
+
+## cache-warming-busy
+
+_Text-only smoke input:_ the same notice, but the agent is waiting on a CI verdict it must act on soon.
+
+_Afterwards:_ a short decision not to compact and to end the turn without a reply, with no files changed and no CI check of its own. Together with `cache-warming` it shows the notice is a judgement call, not an order either way.
 
 ## 13. machine-v2-parity
 

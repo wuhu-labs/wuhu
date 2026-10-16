@@ -40,6 +40,12 @@ public struct IncomingExec: Sendable {
     await endpoint.stopOutput(exec: start.id)
   }
 
+  /// Stops waiting for the caller's window: sends go on while it has room, and the first that finds it short sends what fits and
+  /// stops the output, like `stopOutput()`.
+  public func drainOutput() async {
+    await endpoint.drainOutput(exec: start.id)
+  }
+
   /// `timedOut` says the exec's `timeout` ended it, and how.
   public func exit(_ status: ExitStatus, timedOut: ExecTimeout? = nil) async {
     await endpoint.finish(exec: start.id, status: status, timedOut: timedOut)

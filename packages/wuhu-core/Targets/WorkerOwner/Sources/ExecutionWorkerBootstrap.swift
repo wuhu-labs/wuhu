@@ -19,6 +19,8 @@ public struct ExecutionWorkerBootstrap: Codable, Sendable {
     self.parentSocket = parentSocket; self.workerSocket = workerSocket; self.token = token; self.tracesAttempts = tracesAttempts
   }
 
+  static let attemptUnknownCapability = "owner.attempt-unknown.v1"
+  static let execFenceCapability = "execution.exec-fence.v1"
   static let handoffCapability = "execution.handoff.v1"
   static let remindersCapability = "owner.reminders.v1"
   static let routeTransitionsCapability = "owner.route-transitions.v1"
@@ -26,6 +28,6 @@ public struct ExecutionWorkerBootstrap: Codable, Sendable {
 
   public static func hello(release: String) -> WorkerHello {
     let capabilities = WorkerHello.baseline.union(["owner.session.v1", "owner.inference.v1", "owner.spawn.v1", "execution.registry.v1", "owner.tools.v1", "owner.scripts.v1", "owner.runtime.v1", "execution.handlers.v1"])
-    return WorkerHello(capabilities: capabilities.union([routeTransitionsCapability, remindersCapability, handoffCapability, runStateCapability, "telemetry.spans.v1", "owner.continuity.v1", "owner.reader-suspension.v1"]), required: capabilities, release: release)
+    return WorkerHello(capabilities: capabilities.union([attemptUnknownCapability, execFenceCapability, routeTransitionsCapability, remindersCapability, handoffCapability, runStateCapability, "telemetry.spans.v1", "owner.continuity.v1", "owner.reader-suspension.v1"]), required: capabilities, release: release)
   }
 }

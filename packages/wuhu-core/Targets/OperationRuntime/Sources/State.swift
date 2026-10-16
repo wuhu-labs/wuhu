@@ -55,11 +55,6 @@ struct ChannelState: Sendable {
     acknowledged = offset
   }
 
-  mutating func expireRetention() {
-    payload = descriptor.unit == .bytes ? .init(data: Data()) : .init(records: [])
-    floor = through
-  }
-
   func prefix(upTo bytes: Int) -> ChannelPayload {
     if let data = payload.data { return .init(data: Data(data.prefix(bytes))) }
     var size = 0; var count = 0
@@ -118,8 +113,13 @@ struct OperationState: Sendable {
   var verdict: Verdict?
   var terminalToken: UUID?
   var terminalAcknowledged = false
+  /// Output channels whose own poll carried the terminal acknowledgement. A caller acknowledges per channel (an exec relay acks
+  /// stdout and stderr in turn, a search acks with no channel and then on its channel), so only once each has may the operation go.
+  var terminalAcknowledgedChannels: Set<String> = []
   var outputConsumed: Bool { outputs.values.allSatisfy { $0.end && $0.acknowledged == $0.through } }
   var departureSettled: Bool { verdict != nil && terminalAcknowledged && outputConsumed }
+  /// Settled, and acknowledged on every output channel: no caller can still need it.
+  var released: Bool { departureSettled && outputs.keys.allSatisfy(terminalAcknowledgedChannels.contains) }
   var bufferReservation: Int {
     inputs.values.reduce(0) { $0 + (verdict == nil || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }
       + outputs.values.reduce(0) { $0 + (!$1.end || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }

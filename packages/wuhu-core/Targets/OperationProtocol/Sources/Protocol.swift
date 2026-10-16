@@ -104,6 +104,18 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
   }
 }
 
+extension OperationError {
+  /// A refusal at the bound named `reason`: message `<reason> <used>/<limit>`, details `{reason, used, limit}` plus `requested` when a start asked for more.
+  public static func capacityExceeded(_ reason: String, used: Int, limit: Int, requested: Int? = nil, operation: UUID? = nil) -> Self {
+    let details: JSONValue = if let requested {
+      ["reason": .string(reason), "used": .number(Double(used)), "limit": .number(Double(limit)), "requested": .number(Double(requested))]
+    } else {
+      ["reason": .string(reason), "used": .number(Double(used)), "limit": .number(Double(limit))]
+    }
+    return Self(.capacityExceeded, message: "\(reason) \(used)/\(limit)" + (requested.map { " (requested \($0))" } ?? ""), operation: operation, details: details)
+  }
+}
+
 public struct ErrorEnvelope: Codable, Sendable {
   public let error: OperationError
   public init(_ error: OperationError) { self.error = error }
@@ -129,14 +141,16 @@ public struct OperationLimits: Codable, Equatable, Sendable {
   public var inputBytes = 128 * 1024
   public var resultBytes = 64 * 1024
   public var pollBytes = 64 * 1024
+  /// Deprecated: advertised at its default for older servers, whose limit validation and claim checks require it; nothing reads it.
   public var activeOperations = 32
   public var bufferBytes = 64 * 1024 * 1024
   public var receipts = 4096
+  /// Deprecated: advertised at its default for older servers, whose limit validation requires it; nothing reads it. A finished operation is held only until it settles or one receipt retention window (`OperationAgent`) after its caller's last request.
   public var receiptMs = 86_400_000
   public init() {}
   public var isValid: Bool {
     leaseMs > 0 && pollHoldMs >= 0 && pollHoldMs < leaseMs && inputBytes > 0 && resultBytes > 0
-      && pollBytes > 0 && pollBytes <= Self.responseBytes / 2 && resultBytes <= Self.responseBytes && activeOperations > 0 && bufferBytes > 0 && receipts >= activeOperations && receiptMs >= leaseMs
+      && pollBytes > 0 && pollBytes <= Self.responseBytes / 2 && resultBytes <= Self.responseBytes && bufferBytes > 0 && receipts > 0
   }
 }
 

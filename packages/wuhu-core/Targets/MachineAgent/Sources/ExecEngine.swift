@@ -178,6 +178,7 @@ struct ExecEngine: Sendable {
     kill: AsyncStream<Void>.Continuation,
   ) async {
     let budget = OutputBudget(limit: exec.start.maxOutput)
+    let queue = ExecOutputQueue(exec)
     await withTaskGroup(of: Void.self) { group in
       group.addTask {
         do {
@@ -189,32 +190,42 @@ struct ExecEngine: Sendable {
       }
       await withTaskGroup(of: Void.self) { pumps in
         pumps.addTask {
-          await relay(execution.standardOutput, as: .stdout, exec: exec, secrets: secrets, budget: budget, kill: kill)
+          await relay(execution.standardOutput, as: .stdout, exec: exec, secrets: secrets, budget: budget, queue: queue, kill: kill)
         }
         pumps.addTask {
-          await relay(execution.standardError, as: .stderr, exec: exec, secrets: secrets, budget: budget, kill: kill)
+          await relay(execution.standardError, as: .stderr, exec: exec, secrets: secrets, budget: budget, queue: queue, kill: kill)
         }
       }
       group.cancelAll()
     }
   }
 
+  /// With a budget, the pipe is read on while a send waits for window: the budget sees an overrun even when the caller is not
+  /// reading. The read-ahead is an `ExecOutputQueue`; a budget above its ceiling, or none, makes each send hold the pipe.
   private func relay(
     _ output: SubprocessOutputSequence,
     as stream: ExecOutputStream,
     exec: IncomingExec,
     secrets: [String],
     budget: OutputBudget,
+    queue: ExecOutputQueue?,
     kill: AsyncStream<Void>.Continuation,
   ) async {
-    var masker = SecretMasker(secrets: secrets)
-    do {
-      for try await buffer in output {
-        let bytes = buffer.withUnsafeBytes { Array($0) }
-        try await forward(masker.mask(bytes), as: stream, exec: exec, budget: budget, kill: kill)
+    await withTaskGroup(of: Void.self) { group in
+      if let queue {
+        // The kill comes after both queues have drained: killing stops the output.
+        group.addTask { if (try? await queue.run(stream)) == true { kill.yield(()) } }
       }
-    } catch {}
-    try? await forward(masker.flush(), as: stream, exec: exec, budget: budget, kill: kill)
+      var masker = SecretMasker(secrets: secrets)
+      do {
+        for try await buffer in output {
+          let bytes = buffer.withUnsafeBytes { Array($0) }
+          try await forward(masker.mask(bytes), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
+        }
+      } catch {}
+      try? await forward(masker.flush(), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
+      queue?.finish(stream)
+    }
   }
 
   private func forward(
@@ -222,10 +233,16 @@ struct ExecEngine: Sendable {
     as stream: ExecOutputStream,
     exec: IncomingExec,
     budget: OutputBudget,
+    queue: ExecOutputQueue?,
     kill: AsyncStream<Void>.Continuation,
   ) async throws {
     guard !masked.isEmpty else { return }
     let (allowed, exceeded) = budget.admit(masked)
+    if let queue {
+      queue.enqueue(allowed, to: stream)
+      if exceeded { await queue.overrun() }
+      return
+    }
     if !allowed.isEmpty {
       try await exec.send(stream, allowed, waitForCapacity: !exceeded)
     }

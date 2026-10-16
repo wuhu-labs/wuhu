@@ -47,6 +47,8 @@ An exec a session runs (its `exec` tool, or a `run_script` spawn) carries `WUHU_
 
 Set `WUHU_IDENTITY=wallet` in exec's `env` to use the wallet found from cwd up, as its owner on its pinned space, ignoring the session token and URL. Use it for another space, or for verbs only the wallet's owner has when that person asked for it. The CLI prints `acting as <persona> (wallet)` on stderr (`anonymous` for a request without wallet credentials, `the local user` for local-only commands). Wallet mode honors the normal group selection: `--group` beats `WUHU_GROUP`, which beats the wallet's configured group. The announcement uses the command's actual target, not an old pin; repinning to a new space does not look up the old space's persona. Wallet or identity errors fail, never fall back to the session.
 
+`wuhu id-token --audience <origin> [--json]` prints a 60-second OIDC token for this exec (claims `space`, `group`, `session`, `machine`, `exec`; `sub` is `<group>/<session>`) for a service that trusts this space's issuer, such as the build pool. It presents only the exec's `WUHU_ID_TOKEN_REQUEST` at `WUHU_ID_TOKEN_URL`, both set by the server, and fails outside a session's exec.
+
 Outside a session's exec (a person's terminal) nothing of this applies.
 
 ## Files

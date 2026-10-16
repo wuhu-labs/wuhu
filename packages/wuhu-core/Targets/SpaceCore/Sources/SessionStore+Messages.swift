@@ -470,8 +470,9 @@ extension SessionStore {
     return keys
   }
 
-  // The attention window is a union: an agent stays addressable while EITHER
-  // the message count OR the elapsed time is inside its bound. Tasks never
+  // The attention window is an intersection: an agent stays addressable only
+  // while BOTH the message count AND the elapsed time are inside their bounds,
+  // so it closes at whichever bound passes first. Tasks never
   // enter it: a task talks to its parent through their DM, and sweeping one
   // into a box turns every box post into a fan-out to the whole swarm.
   private func attentive(
@@ -492,7 +493,7 @@ extension SessionStore {
       ) AS last
       JOIN sessions ON sessions.id = last.sender_session_id AND sessions.kind = 'agent'
       WHERE last.created_at >= :horizon
-         OR (SELECT COUNT(*) FROM messages
+        AND (SELECT COUNT(*) FROM messages
              WHERE conversation_id = :conversation AND n > last.n AND n < :before) < :window
       """,
       arguments: [

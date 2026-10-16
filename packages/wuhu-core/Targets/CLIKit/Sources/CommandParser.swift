@@ -140,6 +140,12 @@ extension Command {
       case let (nil, path?): return .agent(.resume(path))
       case (_?, _?): throw UsageError(message: "agent: pass only one of --log or --resume")
       }
+    case "id-token":
+      let audience = try parser.option("--audience", verb: verb)
+      let json = parser.flag("--json")
+      try parser.finish(verb: verb)
+      guard let audience else { throw UsageError(message: "id-token: --audience <origin> is required") }
+      return .idToken(audience: audience, json: json)
     case "read":
       let rev = try parser.intOption("--rev", verb: verb)
       let lines = try parser.option("--lines", verb: verb)
@@ -938,6 +944,7 @@ extension Command {
     untrust   forget the trust record for a server
     upgrade   self-update from wuhu.ai into ~/.wuhu/bin
     agent     run a minimal read/write/bash coding agent from a JSON request on stdin
+    id-token  mint a short-lived OIDC token for this session's exec (--audience <origin>)
     read      print file text, clamped to a line range
     write     write --body text to a path
     cat       write a path's raw bytes to stdout
@@ -1069,6 +1076,20 @@ extension Command {
     success prints {"result": "..."} and exits 0. failure prints a typed error
     (isolation, invalidRequest, transcript, inference, noComplete, turnBudgetExhausted)
     to stderr, credentials masked, and exits 1.
+    \(exitCodes)
+    """,
+    "id-token": """
+    usage: wuhu id-token --audience <origin> [--json]
+
+    inside a session's exec, prints a 60-second OIDC token (ES256, this
+    space's issuer) whose aud is <origin> (scheme://host[:port]) and whose
+    claims name the space, group, session (sub <group>/<session>), machine
+    and exec. a service that trusts the issuer, such as the build pool, takes
+    it as the caller's credential. it presents only the exec's
+    WUHU_ID_TOKEN_REQUEST capability at WUHU_ID_TOKEN_URL, which the server
+    sets for execs a session starts; the capability ends with the exec, its
+    session's archiving or a server restart. --json prints
+    {"token": "...", "expiresAt": <unix seconds>}.
     \(exitCodes)
     """,
     "upgrade": """

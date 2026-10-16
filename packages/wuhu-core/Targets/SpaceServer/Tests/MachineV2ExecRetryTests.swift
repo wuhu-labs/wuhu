@@ -315,6 +315,58 @@ private final class Collected: Sendable {
     try await MachineV2Service.$timeoutStopGrace.withValue(.seconds(2)) { try await runLostStops("late") }
   }
 
+  /// A failure before any operation was claimed keeps its own message even when it comes after the timeout: nothing was stopped,
+  /// so the exit status is not unknown.
+  @Test func aSetupFailureAfterTheTimeoutKeepsItsOwnMessage() async throws {
+    let probed = Mutex(false)
+    let space = try Space.inMemory()
+    let (record, _) = try await space.addMachineV2(name: "slow-describe-v2", group: .shared)
+    let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: MachineSide()))], authorize: { _, _ in })
+    let hub = MachineHub(space: space)
+    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { request in
+      let describe = request.method == .get && !request.url.path.contains("/operations/") && request.url.path.hasSuffix(record.id.rawValue)
+      if describe, probed.withLock({ $0 }) {
+        try await Task.sleep(for: .milliseconds(1500))
+        return try refusal(.machineUnavailable, for: request)
+      }
+      let response = try await agent.handler(request)
+      if describe { probed.withLock { $0 = true } }
+      return response
+    } }, abort: { _, _ in })
+    try await coordinator.prepare()
+    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    await hub.configureV2(service)
+    let minted = try await space.mintExec(machine: record.id, group: .shared)
+    let endpoint = ChannelEndpoint()
+    let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["echo-test"], timeout: 1))
+    let backend = execBackend(space: space, hub: hub)
+    try await MachineV2Service.$timeoutStopGrace.withValue(.seconds(5)) {
+      try await withThrowingTaskGroup(of: Void.self) { tasks in
+        tasks.addTask { await agent.run() }
+        tasks.addTask { try await service.run() }
+        defer { tasks.cancelAll() }
+        #expect(try await eventually { probed.withLock { $0 } })
+        let transport = try await backend.connect(minted.id)
+        let caller = Task { await endpoint.run(transport) }
+        defer { caller.cancel() }
+        var stderr = Data(); var status: MachineContract.ExitStatus?; var timedOut = false
+        for try await event in outgoing.events {
+          switch event {
+          case let .output(stream, _, bytes): if stream == .stderr { stderr.append(contentsOf: bytes.bytes) }
+          case let .exit(value): status = value
+          case .timedOut: timedOut = true
+          case .failed, .truncated: break
+          }
+        }
+        #expect(String(decoding: stderr, as: UTF8.self).hasPrefix("machineUnavailable: "), "\(String(decoding: stderr, as: UTF8.self))")
+        #expect(status == .exited(code: 1))
+        #expect(!timedOut)
+        #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 1))
+        await agent.shutdown(); await service.shutdown()
+      }
+    }
+  }
+
   private func runLostStops(_ path: String) async throws {
     let execID = Mutex<ExecID?>(nil)
     let losing = Mutex(true)

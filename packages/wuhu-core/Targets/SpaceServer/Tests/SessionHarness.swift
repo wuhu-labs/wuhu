@@ -72,6 +72,7 @@ struct SessionHarness {
     fingerprint: String? = nil,
     credentials: CredentialResolver = .unavailable,
     execTokens: ExecTokens? = nil,
+    identityController: IdentityController? = nil,
     secrets: SpaceSecretStores? = nil,
     cacheWarmingUsage: UsageBoard? = nil,
     machineV2: Bool = false,
@@ -102,7 +103,7 @@ struct SessionHarness {
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil,
       credentials: credentials, secrets: secrets, execTokens: execTokens,
-      machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
+      identityController: identityController, machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)
   }

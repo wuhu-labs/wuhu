@@ -58,7 +58,8 @@ actor AdminExecController {
   private let pending: AsyncStream<Request>
   private let submit: AsyncStream<Request>.Continuation
   private var busy = false
-  private var readyCommitted = false
+  private enum Readiness { case rollbackEligible, repairingForward, ready }
+  private var readiness = Readiness.rollbackEligible
   private var readinessDeadline: AdminExecReadinessDeadline?
 
   private init(files: AdminExecFiles, image: AdminExecImage, incoming: AdminExecFrame?, rollbackDescriptors: AdminExecDescriptors?) {
@@ -171,7 +172,7 @@ actor AdminExecController {
   }
 
   func rollbackPublicDescriptor() throws -> Int32 {
-    guard let rollbackDescriptors else { throw AdminExecError.refused("publicListenerIdentity") }
+    guard case .rollbackEligible = readiness, let rollbackDescriptors else { throw AdminExecError.refused("publicListenerIdentity") }
     return rollbackDescriptors.descriptors[0]
   }
 
@@ -180,24 +181,19 @@ actor AdminExecController {
     try await execution.reconcileExec()
     try await execution.probeExec()
     if let incoming, !incoming.rollback, ProcessInfo.processInfo.environment["WUHU_ADMIN_EXEC_TEST_READY_FAILURE"] == "1" { throw AdminExecError.refused("injectedReadinessFailure") }
-    try writeStatus("status.json", worker: incoming?.execution.worker, phase: incoming.map { $0.rollback ? "rolled-back" : "ready" } ?? "initial")
+    try writeStatus("status.json", worker: incoming?.execution.worker, phase: incoming == nil ? "initial" : "preparing")
     adminSocket = try await AdminExecSocket(path: AdminExecSocket.location(folder: files.path, uid: UInt32(geteuid()), create: true))
     try AdminExecTesting.current?.beforeReadyWrite("lease.json")
     try files.write("lease.json", Lease(processID: getpid(), birth: processBirthIdentity(getpid())))
     if let incoming {
       try AdminExecTesting.current?.beforeReadyWrite("request.json")
       try files.remove("request.json")
-      try AdminExecTesting.current?.beforeReadyWrite("reply.json")
-      try files.write("reply.json", Reply(id: incoming.request, code: incoming.rollback ? "rolledBack" : "ready", processID: getpid()))
       try AdminExecTesting.current?.beforeReadyWrite("intent.json")
       try files.write("intent.json", Intent(lastGood: incoming.lastGood, digest: digest, phase: "replacing"))
     }
-    try readinessDeadline?.commit()
-    readyCommitted = true
-    readinessDeadline = nil
-    await resumeRequests?()
-    try await server.setAcceptingConnections(true)
-    rollbackDescriptors = nil
+    try AdminExecTesting.current?.beforeWorkerCommit()
+    try await Task { try await self.finishReadiness(execution, server: server) }.value
+    readiness = .ready
     if let incoming {
       do {
         try AdminExecTesting.current?.beforeCommittedWrite()
@@ -206,8 +202,42 @@ actor AdminExecController {
     }
   }
 
+  private func beginForwardRepair() throws {
+    guard case .rollbackEligible = readiness else { return }
+    if let incoming { try files.write("intent.json", Intent(lastGood: incoming.lastGood, digest: digest, phase: "repairing-forward")) }
+    try readinessDeadline?.commit()
+    readinessDeadline = nil
+    readiness = .repairingForward
+    rollbackDescriptors = nil
+  }
+
+  private func finishReadiness(_ execution: LazyExecutionWorker, server: ServeNIOServer) async throws {
+    @Dependency(\.continuousClock) var clock
+    var delay = Duration.milliseconds(100)
+    while true {
+      do {
+        try await execution.commitExec(beforeResume: { try await self.beginForwardRepair() })
+        try await AdminExecTesting.current?.afterWorkerResume()
+        await resumeRequests?()
+        try await AdminExecTesting.current?.beforeAcceptingConnections()
+        try await server.setAcceptingConnections(true)
+        if let incoming {
+          try AdminExecTesting.current?.beforeReadyWrite("reply.json")
+          try files.write("reply.json", Reply(id: incoming.request, code: incoming.rollback ? "rolledBack" : "ready", processID: getpid()))
+          try writeStatus("status.json", worker: incoming.execution.worker, phase: incoming.rollback ? "rolled-back" : "ready")
+        }
+        return
+      } catch {
+        guard case .repairingForward = readiness else { throw error }
+        Logger(label: "wuhu.admin-exec").warning("Repairing forward before readiness")
+        try await clock.sleep(for: delay)
+        delay = min(delay * 2, .seconds(5))
+      }
+    }
+  }
+
   func rollbackIfReplacing() throws {
-    guard !readyCommitted, let incoming, !incoming.rollback, let rollbackDescriptors else { return }
+    guard case .rollbackEligible = readiness, let incoming, !incoming.rollback, let rollbackDescriptors else { return }
     let frame = incoming.replacingDescriptors(rollbackDescriptors.descriptors, rollback: true)
     try Self.replace(frame, files: files)
   }
@@ -227,7 +257,7 @@ actor AdminExecController {
       guard let policy = try DeploymentAdminPolicy.load(), policy.allowedUIDs.contains(uid) else { throw AdminExecError.refused("deploymentAdminOnly") }
       try policy.requireNoMachineAgents()
     }
-    guard readyCommitted else { throw AdminExecError.refused("notReady") }
+    guard case .ready = readiness else { throw AdminExecError.refused("notReady") }
     if message.query {
       return try files.read("reply.json", as: Reply.self).flatMap { $0.id == message.id ? $0 : nil } ?? Reply(id: message.id, code: "pending", processID: getpid())
     }
@@ -279,6 +309,7 @@ actor AdminExecController {
       stage = "replacement"
       try writeStatus("previous.json", worker: exported.record.worker, phase: value.rollback ? "rollback-source" : "source")
       try files.write("intent.json", Intent(lastGood: lastGood, digest: digest, phase: "replacing"))
+      try await execution.checkExec()
       try withExtendedLifetime(exported) { try Self.replace(frame, files: files) }
     } catch {
       Logger(label: "wuhu.admin-exec").error("Preparation refused", metadata: ["stage": "\(stage)", "failureType": "\(String(reflecting: type(of: error)))", "reason": "\(AdminExecError.reason(error))"])
@@ -289,6 +320,7 @@ actor AdminExecController {
           let code = AdminExecError.reason(error)
           let result = request.rollback ? "rollbackBlocked" : code
           if request.rollback { Logger(label: "wuhu.admin-exec").error("rollbackBlocked", metadata: ["reason": "\(code)"]) }
+          try AdminExecTesting.current?.beforeReadyWrite("reply.json")
           try files.write("reply.json", Reply(id: request.id, code: result, processID: getpid(), reason: request.rollback ? code : nil))
           if ownsRequest { try files.remove("request.json") }
           try files.write("intent.json", Intent(lastGood: files.path + "/last-good-" + digest, digest: digest, phase: request.rollback ? "rollbackBlocked" : "refused"))

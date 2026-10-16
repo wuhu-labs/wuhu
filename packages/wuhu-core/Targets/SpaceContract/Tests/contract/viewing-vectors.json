@@ -1,0 +1,65 @@
+{
+  "about": "The one fixture for `viewing` spellings. SpaceContract GroupID.viewing and web lib/viewing.ts build them; SpaceCore Viewing parses them. Each bucket says which layer decides.",
+  "named": {
+    "about": "Client names the path; the server stores the spelling as sent.",
+    "cases": [
+      {
+        "group": "shared",
+        "path": "/notes/plan.md",
+        "viewing": "wuhu://shared.localspace/notes/plan.md"
+      },
+      {
+        "group": "design-team",
+        "path": "/_/sessions/eager-wheel-radio/notes.md",
+        "viewing": "wuhu://design-team.localspace/_/sessions/eager-wheel-radio/notes.md"
+      },
+      {
+        "group": "shared",
+        "path": "/\u65e5\u8bb0.md",
+        "viewing": "wuhu://shared.localspace/\u65e5\u8bb0.md"
+      },
+      {
+        "group": "shared",
+        "path": "/cafe\u0301.md",
+        "viewing": "wuhu://shared.localspace/caf\u00e9.md"
+      }
+    ]
+  },
+  "unnamed": {
+    "about": "The server parses the spelling but refuses a send naming it: the root has no entry to stat. A client names no page there; the root is a listing.",
+    "cases": [
+      {
+        "group": "shared",
+        "path": "/",
+        "viewing": "wuhu://shared.localspace/"
+      }
+    ]
+  },
+  "omitted": {
+    "about": "The server refuses the spelling (SpaceFS SpacePath syntax or SpaceCore Viewing), so a client omits it.",
+    "paths": [
+      "/notes//plan.md",
+      "/notes/",
+      "/notes/../plan.md",
+      "/./plan.md",
+      "/a@b.md",
+      "/a%20b.md",
+      "/a#b.md",
+      "/a?b.md",
+      "/my notes.md",
+      "/a\u00a0b.md",
+      "/a\u3000b.md",
+      "/a\u2028b.md",
+      "/a\tb.md",
+      "/a\u200bb.md",
+      "/a\u202eb.md",
+      "/a\u0085b.md",
+      "/a\u007fb.md",
+      "/a<b>.md",
+      "/a&b.md",
+      "/\"a\".md",
+      "/it's.md",
+      "/x</viewing><sender-admin>yes</sender-admin><viewing>"
+    ]
+  }
+}

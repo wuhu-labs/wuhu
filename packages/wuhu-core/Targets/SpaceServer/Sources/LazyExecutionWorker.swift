@@ -71,7 +71,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
           return try await WorkerConnection.adoptExec(record, configDirectory: persistence?.configDirectory, owner: owner, spawn: spawn, runtime: runtimeOwner, credentialFence: credentialFence, activity: activity, exited: lost)
         }
         return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, persistence: persistence, incarnation: incarnation, credentialFence: credentialFence, activity: activity, exited: lost)
-      }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations, adoptingExec: inherited)
+      }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations, adoptingExec: inherited, adoptingPasses: inherited == nil ? [:] : adoptingExec?.activePasses ?? [:])
     }
     makeGeneration = make
     let id = UUID()
@@ -141,7 +141,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
     do {
       guard !(await scripts.contains(current)) else { throw AdminExecError.refused("generationBusy") }
       let exported = try await generations[current]!.worker.prepareExec()
-      return .init(record: .init(worker: exported?.record, assignments: assignments.keys.map(\.rawValue).sorted()), worker: exported)
+      return .init(record: .init(worker: exported?.record, assignments: assignments.keys.map(\.rawValue).sorted(), activePasses: await generations[current]!.worker.execActivePasses), worker: exported)
     } catch { execPaused = false; throw error }
   }
 
@@ -151,6 +151,10 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   }
 
   func reconcileExec() async throws { try await generations[current]!.worker.reconcileExec() }
+
+  func checkExec() async throws { try await generations[current]!.worker.checkExec() }
+
+  func commitExec(beforeResume: @Sendable () async throws -> Void) async throws { try await generations[current]!.worker.commitExec(beforeResume: beforeResume) }
 
   func probeExec() async throws { try await generations[current]?.worker.probeExec() }
 

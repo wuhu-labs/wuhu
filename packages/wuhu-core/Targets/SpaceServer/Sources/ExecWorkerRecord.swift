@@ -28,6 +28,7 @@ struct ExecWorkerRecord: Codable, Sendable {
   let incarnation: UUID
   let processID: Int32
   let birth: String
+  let fence: UUID
   let carrier: Int32
   let listener: Int32
   let listenerIdentity: ListenerIdentity
@@ -55,6 +56,11 @@ struct ExecWorkerExport: Sendable {
 struct ExecSpaceRecord: Codable, Sendable {
   let worker: ExecWorkerRecord?
   let assignments: [String]
+  let activePasses: [String: [UUID]]
+
+  init(worker: ExecWorkerRecord?, assignments: [String], activePasses: [String: [UUID]] = [:]) {
+    self.worker = worker; self.assignments = assignments; self.activePasses = activePasses
+  }
 }
 
 struct ExecSpaceExport: Sendable {

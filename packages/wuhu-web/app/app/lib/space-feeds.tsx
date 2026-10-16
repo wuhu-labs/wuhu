@@ -154,7 +154,7 @@ const emptyFeed: GroupFeed = {
   contentOrigin: undefined,
 }
 
-interface SpaceFeeds {
+export interface SpaceFeeds {
   // Null until the viewer's groups are known.
   groups: GroupSummary[] | null
   feed(group: string): GroupFeed
@@ -163,7 +163,7 @@ interface SpaceFeeds {
   sessions: SessionRecord[] | null
 }
 
-const SpaceFeedsContext = createContext<SpaceFeeds | null>(null)
+export const SpaceFeedsContext = createContext<SpaceFeeds | null>(null)
 
 export function useSpaceFeeds(): SpaceFeeds {
   const feeds = useContext(SpaceFeedsContext)

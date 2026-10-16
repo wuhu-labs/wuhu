@@ -14,11 +14,15 @@ import { sessionCapability } from '~/lib/session-capability'
 import { useSpaceFeeds } from '~/lib/space-feeds'
 import { useDictationOffered } from '~/lib/use-dictation'
 import { useDrafts } from '~/lib/use-drafts'
-import { postConversationMessage } from '~/sdk/conversation'
+import { composerSend } from '~/lib/composer-send'
 
 // On its own page the composer posts there. Elsewhere on desktop it stays
 // docked on the last agent box opened, named by a pill, and never on a task.
-export function SpaceComposer({ page }: { page: ComposeTarget | null }) {
+// A send names the doc or page on screen as `viewing` (lib/viewing.ts).
+export function SpaceComposer({ page, viewing }: {
+  page: ComposeTarget | null
+  viewing: string | null
+}) {
   const drafts = useDrafts()
   const { compact } = useChrome()
   const { sessions } = useSpaceFeeds()
@@ -61,16 +65,11 @@ export function SpaceComposer({ page }: { page: ComposeTarget | null }) {
         ? `Post into ${docked!.title}’s box…`
         : 'Post into the box…'}
       dictate={dictate}
-      onSend={(draft) =>
-        postConversationMessage(
-          target.kind === 'conversation'
-            ? { conversation: target.id }
-            : { session: target.id },
-          aim.docked ? docked!.group : group,
-          draft.text,
-          draft.reply?.messageId,
-          draft.files.map((held) => held.file),
-        )}
+      onSend={composerSend({
+        target,
+        group: aim.docked ? docked!.group : group,
+        viewing,
+      })}
     />
   )
 }

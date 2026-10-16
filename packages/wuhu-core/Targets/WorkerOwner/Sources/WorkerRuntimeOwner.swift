@@ -45,8 +45,11 @@ struct UsagePublication: Codable, Sendable { let provider: String; let usage: Pr
 struct ReminderRequest: Codable, Sendable { let session: SessionID; let due: Date? }
 struct WarmingRequest: Codable, Sendable { let session: SessionID; let intervalSeconds: Int }
 
+struct RuntimeAttempt: Codable, Equatable, Sendable { let id: UUID; let session: SessionID }
+
 actor ParentWorkerRuntime {
   let owner: WorkerRuntimeOwner?
+  private var ownsAttempts = true
   private var active: [UUID: SessionID] = [:]
   private var scripts: [String: SessionID] = [:]
   init(owner: WorkerRuntimeOwner?) { self.owner = owner }
@@ -104,9 +107,27 @@ actor ParentWorkerRuntime {
     }
   }
 
-  func requireTransferable() throws {
-    guard active.isEmpty && scripts.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Active runtime scripts or attempts cannot be transferred") }
+  func checkpoint() throws -> [RuntimeAttempt] {
+    guard scripts.isEmpty else { throw WorkerProtocolError(.unavailable, message: "Active runtime scripts cannot be transferred") }
+    return active.map { .init(id: $0.key, session: $0.value) }
   }
+
+  func restore(_ attempts: [RuntimeAttempt]) throws {
+    guard active.isEmpty, scripts.isEmpty, attempts.count <= 4096,
+          Set(attempts.map(\.id)).count == attempts.count else { throw WorkerProtocolError(.invalidConfiguration, message: "Invalid runtime attempt checkpoint") }
+    active = Dictionary(uniqueKeysWithValues: attempts.map { ($0.id, $0.session) })
+    ownsAttempts = false
+  }
+
+  func activateTransferred() {
+    guard !ownsAttempts else { return }
+    ownsAttempts = true
+    for (id, session) in active where owner?.attempts.inFlight(session: session)[id] == nil {
+      owner?.attempts.publish(session: session, .started(attemptID: id))
+    }
+  }
+
+  func retireTransferred() { active.removeAll() }
 
   func stop() async {
     let lost = scripts
@@ -115,7 +136,7 @@ actor ParentWorkerRuntime {
       await owner?.scriptLost(session, id)
       await owner?.scriptEnded(session, id)
     }
-    for (id, session) in active { owner?.attempts.publish(session: session, .finished(attemptID: id, outcome: .failed(reason: "Execution worker exited"))) }
+    for (id, session) in active where ownsAttempts { owner?.attempts.publish(session: session, .finished(attemptID: id, outcome: .failed(reason: "Execution worker exited"))) }
     active.removeAll()
   }
 }
@@ -135,11 +156,16 @@ extension RemoteExecutionOwner {
   }
 
   public var attemptEvents: AttemptEventSink {
-    .init { [rpc] session, event in
-      try await Task {
-        let _: Bool = try await rpc.call("runtime.attempt", AttemptPublication(session: session, event: .init(event)))
-      }.value
+    .init { [rpc, deferredAttemptTerminations] session, event in
+      try await Task { try await deferredAttemptTerminations.publish(session: session, event: event, rpc: rpc) }.value
     }
+  }
+
+  public func publishActivity(_ activity: ExecutionWorkerActivity) async throws { try await deferredActivityReleases.publish(activity, rpc: rpc) }
+
+  public func flushDeferredOwnerPublications() async throws {
+    try await deferredAttemptTerminations.flush(using: rpc)
+    try await deferredActivityReleases.flush(using: rpc)
   }
 
   public func runtimeUsage() async throws -> [String: ProviderUsage] { try await rpc.call("runtime.usage", EmptyRequest()) }

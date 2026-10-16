@@ -79,6 +79,8 @@ let adminExecFixtureRequested: Bool = {
 }
 
 @Suite(.enabled(if: !adminExecFixtureRequested), .serialized, .timeLimit(.minutes(2))) struct AdminExecProcessTests {
+  @Test(.enabled(if: adminExecPlatformSupported), arguments: [false, true]) func heldProviderResponseSurvivesParentExecAndRollback(readinessFailure: Bool) async throws { try await rehearse(readinessFailure: readinessFailure, activeInference: true) }
+  @Test(.enabled(if: adminExecPlatformSupported)) func refusedTraceCheckpointResumesSameLiveProviderAndOldParent() async throws { try await rehearse(readinessFailure: false, activeInference: true, preparationFailure: true) }
   @Test(.enabled(if: adminExecPlatformSupported)) func sameImageExecPreservesRealServerWorkerAndChild() async throws { try await rehearse(readinessFailure: false) }
   @Test(.enabled(if: adminExecPlatformSupported)) func readinessFailureRestoresOldImageBeforeBoot() async throws { try await rehearse(readinessFailure: true) }
   @Test(.enabled(if: adminExecPlatformSupported)) func successorIdentityRefusalRestoresPinnedOldImageBeforeBoot() async throws { try await rehearse(readinessFailure: true, identityFailure: true) }
@@ -145,7 +147,7 @@ let adminExecFixtureRequested: Bool = {
     #expect(result.terminationStatus == .exited(0))
   }
 
-  private func rehearse(readinessFailure: Bool, identityFailure: Bool = false) async throws {
+  private func rehearse(readinessFailure: Bool, identityFailure: Bool = false, activeInference: Bool = false, preparationFailure: Bool = false) async throws {
     let fixture = try PersistenceFixture(root: #require(ProcessInfo.processInfo.environment["TEST_TMPDIR"]))
     defer { fixture.clean() }
     let binary = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).standardizedFileURL.path
@@ -153,108 +155,137 @@ let adminExecFixtureRequested: Bool = {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
     let id = try await space.identity().rawValue
-    let session = try await space.sessions.createSession(group: .shared, title: "exec rehearsal", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: "missing", effort: "none"))
-    _ = try await space.fs(.shared).write("/start-worker.js", Data("export default async () => ({ready:true})".utf8), ifMatch: nil)
-    let fire = Date().addingTimeInterval(-1)
-    _ = try await space.sessions.armSubscription(session, slot: .init(id: .init("start-worker"), kind: .timer(.oneShot(fire), message: ""), handler: "/start-worker.js"), nextFireAt: fire)
-    var environment: [Environment.Key: String] = ["PATH": "/usr/bin:/bin", "HOME": fixture.base, "WUHU_CONFIG_DIR": fixture.config]
-    for key in ["SDKROOT", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH"] {
-      if let value = ProcessInfo.processInfo.environment[key] { environment[Environment.Key(stringLiteral: key)] = value }
-    }
-    if readinessFailure { environment["WUHU_ADMIN_EXEC_TEST_READY_FAILURE"] = "1" }
-    environment["WUHU_ADMIN_EXEC_TEST_FIXTURE"] = "v1"
-    environment["TESTBRIDGE_TEST_ONLY"] = "^AdminExecProcessFixture/run"
-    let fixtureBinary = try #require(try ExecutionPlacement.worker().executable)
-    let helperFile = fixture.base + "/helper.pid"
-    let log = fixture.base + "/server.log"
-    let script = "umask 077; /bin/sleep 120 & c=$!; printf '%s' \"$c\" > '\(helperFile)'; exec '\(fixtureBinary)' --wuhu-admin-exec-fixture v1 '\(folder.path)' '\(binary)' \(identityFailure ? "identity-failure" : readinessFailure ? "failure" : "normal") 2> '\(log)'"
-    var options = PlatformOptions()
-    options.processGroupID = 0
-    options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2)), .send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
-    let result = try await Subprocess.run(.path("/bin/sh"), arguments: ["-c", script], environment: .custom(environment), platformOptions: options, input: .none, output: .discarded, error: .discarded) { process in
-      do {
-        let files = try await waitForFiles(folder: folder)
-        let initial = try #require(try files.read("status.json", as: AdminExecController.Status.self))
-        #expect(initial.processID == process.processIdentifier.value)
-        #expect(initial.executable == URL(fileURLWithPath: fixtureBinary).resolvingSymlinksInPath().path)
-        let helper = try #require(Int32(try String(contentsOfFile: helperFile, encoding: .utf8)))
-        let helperBirth = try processBirthIdentity(helper)
-        defer { if (try? processBirthIdentity(helper)) == helperBirth { _ = kill(helper, SIGTERM) } }
-        let root = fixture.config + "/workers/" + id
-        try await until("real standalone worker manifest", timeout: .seconds(30)) {
-          guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root), let entry = entries.first else { return false }
-          return FileManager.default.fileExists(atPath: root + "/" + entry + "/manifest.json")
-        }
-        let entry = try #require(try FileManager.default.contentsOfDirectory(atPath: root).first)
-        let store = try await ExecutionWorkerManifestStore.open(directory: root + "/" + entry, space: id)
-        let manifest = try #require(try await store.load())
-        let image = try #require(manifest.image)
-        let imageRoot = fixture.config + "/execution-images"
-        try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
-        let parentPath = try #require(manifest.sockets?.parent)
-        var beforePath = stat()
-        #expect(lstat(parentPath, &beforePath) == 0)
-        let client = HTTPClient(eventLoopGroupProvider: .singleton)
-        let worker = try WorkerClient(socket: manifest.workerSocket(directory: root + "/" + entry), token: manifest.credentials.current, control: .asyncHTTPClient(client, timeout: .seconds(3)), bytes: .asyncHTTPClient(client, timeout: .seconds(3)))
-        let outcome: Result<Void, any Error>
-        do {
-          try await until("real worker settles before controlled exec", timeout: .seconds(30)) {
-            do {
-              _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "exec-rehearsal"))
-              try await WorkerConnection.requireExecIdle(worker)
-              return try await space.sessions.armedSubscriptions(session).isEmpty
-            } catch { return false }
-          }
-          try await ContinuousClock().sleep(for: .milliseconds(200))
-          let cli = try await Subprocess.run(.path(.init(binary)), arguments: ["admin-exec", folder.path], environment: .custom(environment), input: .none, output: .string(limit: 65536), error: .string(limit: 65536))
-          #expect(cli.terminationStatus == .exited(readinessFailure ? 1 : 0), "\(cli.standardError)")
-          let before = try #require(try files.read("previous.json", as: AdminExecController.Status.self))
-          let after = try #require(try files.read("status.json", as: AdminExecController.Status.self))
-          #expect(before.processID == initial.processID && after.processID == initial.processID)
-          #expect(before.birth == initial.birth && after.birth == initial.birth)
-          #expect(after.listenerDevice == before.listenerDevice && after.listenerInode == before.listenerInode)
-          #expect(after.port == before.port && after.port == initial.port)
-          #expect(after.workerProcessID == manifest.processID && after.workerBirth == manifest.birth)
-          try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
-          #expect(after.workerListenerDevice == before.workerListenerDevice && after.workerListenerInode == before.workerListenerInode)
-          var afterPath = stat()
-          #expect(lstat(parentPath, &afterPath) == 0)
-          #expect(afterPath.st_dev == beforePath.st_dev && afterPath.st_ino == beforePath.st_ino)
-          #expect(try processBirthIdentity(manifest.processID) == manifest.birth)
-          #expect(try processBirthIdentity(helper) == helperBirth)
-          #expect(after.phase == (readinessFailure ? "rolled-back" : "ready"))
-          #expect(after.executable == files.path + "/last-good-" + (try adminExecDigest(fixtureBinary)))
-          _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "after-exec"))
-          try await WorkerConnection.requireExecIdle(worker)
-          try await provePublicTLS(port: after.port)
-          if !readinessFailure {
-            let retry = try await Subprocess.run(.path(.init(binary)), arguments: ["admin-exec", folder.path, "--rollback"], environment: .custom(environment), input: .none, output: .string(limit: 65536), error: .string(limit: 65536))
-            #expect(retry.terminationStatus == .exited(0), "\(retry.standardError)")
-            let retried = try #require(try files.read("status.json", as: AdminExecController.Status.self))
-            #expect(retried.processID == initial.processID && retried.birth == initial.birth)
-            #expect(retried.phase == "rolled-back")
-            #expect(retried.listenerInode == before.listenerInode && retried.port == before.port)
-            #expect(retried.workerProcessID == manifest.processID && retried.workerBirth == manifest.birth)
-            try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
-            #expect(try processBirthIdentity(helper) == helperBirth)
-            _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "after-explicit-rollback"))
-            try await WorkerConnection.requireExecIdle(worker)
-            try await provePublicTLS(port: retried.port)
-          }
-          outcome = .success(())
-        } catch {
-          outcome = .failure(error)
-        }
-        await worker.close()
-        try await client.shutdown()
-        _ = kill(process.processIdentifier.value, SIGTERM)
-        try outcome.get()
-      } catch {
-        if let text = try? String(contentsOfFile: log, encoding: .utf8) { Issue.record("Standalone rehearsal log: \(text)") }
-        throw error
+    let provider = activeInference ? try await AdminExecInferenceFixture.start(space: space) : nil
+    do {
+      let session = try await space.sessions.createSession(group: .shared, title: "exec rehearsal", kind: .agent, createdBy: "owner", model: .init(provider: "offline", model: activeInference ? "small" : "missing", effort: "none"))
+      _ = try await space.fs(.shared).write("/start-worker.js", Data("export default async () => ({ready:true})".utf8), ifMatch: nil)
+      let fire = Date().addingTimeInterval(-1)
+      if activeInference {
+        _ = try await space.sessions.enqueue(session, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .timer, subscriptionID: .init("fixture"), content: .init(text: "exercise one tool then hold the provider response"))))
+      } else {
+        _ = try await space.sessions.armSubscription(session, slot: .init(id: .init("start-worker"), kind: .timer(.oneShot(fire), message: ""), handler: "/start-worker.js"), nextFireAt: fire)
       }
-    }
-    #expect(result.terminationStatus == .exited(0))
+      var environment: [Environment.Key: String] = ["PATH": "/usr/bin:/bin", "HOME": fixture.base, "WUHU_CONFIG_DIR": fixture.config]
+      for key in ["SDKROOT", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH"] {
+        if let value = ProcessInfo.processInfo.environment[key] { environment[Environment.Key(stringLiteral: key)] = value }
+      }
+      if activeInference { environment["OFFLINE_API_KEY"] = "fixture-credential" }
+      if preparationFailure { environment["WUHU_ATTEMPT_LOG_DIR"] = fixture.base + "/traces" }
+      if readinessFailure { environment["WUHU_ADMIN_EXEC_TEST_READY_FAILURE"] = "1" }
+      environment["WUHU_ADMIN_EXEC_TEST_FIXTURE"] = "v1"
+      environment["TESTBRIDGE_TEST_ONLY"] = "^AdminExecProcessFixture/run"
+      let fixtureBinary = try #require(try ExecutionPlacement.worker().executable)
+      let helperFile = fixture.base + "/helper.pid"
+      let log = fixture.base + "/server.log"
+      let script = "umask 077; /bin/sleep 120 & c=$!; printf '%s' \"$c\" > '\(helperFile)'; exec '\(fixtureBinary)' --wuhu-admin-exec-fixture v1 '\(folder.path)' '\(binary)' \(identityFailure ? "identity-failure" : readinessFailure ? "failure" : "normal") 2> '\(log)'"
+      var options = PlatformOptions()
+      options.processGroupID = 0
+      options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2)), .send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
+      let result = try await Subprocess.run(.path("/bin/sh"), arguments: ["-c", script], environment: .custom(environment), platformOptions: options, input: .none, output: .discarded, error: .discarded) { process in
+        do {
+          let files = try await waitForFiles(folder: folder)
+          let initial = try #require(try files.read("status.json", as: AdminExecController.Status.self))
+          #expect(initial.processID == process.processIdentifier.value)
+          #expect(initial.executable == URL(fileURLWithPath: fixtureBinary).resolvingSymlinksInPath().path)
+          let helper = try #require(Int32(try String(contentsOfFile: helperFile, encoding: .utf8)))
+          let helperBirth = try processBirthIdentity(helper)
+          defer { if (try? processBirthIdentity(helper)) == helperBirth { _ = kill(helper, SIGTERM) } }
+          let root = fixture.config + "/workers/" + id
+          try await until("real standalone worker manifest", timeout: .seconds(30)) {
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root), let entry = entries.first else { return false }
+            return FileManager.default.fileExists(atPath: root + "/" + entry + "/manifest.json")
+          }
+          let entry = try #require(try FileManager.default.contentsOfDirectory(atPath: root).first)
+          let store = try await ExecutionWorkerManifestStore.open(directory: root + "/" + entry, space: id)
+          let manifest = try #require(try await store.load())
+          let image = try #require(manifest.image)
+          let imageRoot = fixture.config + "/execution-images"
+          try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
+          let parentPath = try #require(manifest.sockets?.parent)
+          var beforePath = stat()
+          #expect(lstat(parentPath, &beforePath) == 0)
+          let client = HTTPClient(eventLoopGroupProvider: .singleton)
+          let worker = try WorkerClient(socket: manifest.workerSocket(directory: root + "/" + entry), token: manifest.credentials.current, control: .asyncHTTPClient(client, timeout: .seconds(3)), bytes: .asyncHTTPClient(client, timeout: .seconds(3)))
+          let outcome: Result<Void, any Error>
+          do {
+            try await until("real worker settles before controlled exec", timeout: .seconds(30)) {
+              do {
+                _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "exec-rehearsal"))
+                if let provider {
+                  let inventory = try await RemoteSessionExecution(client: worker).inventory()
+                  return provider.isHeld() && inventory.scripts.isEmpty && inventory.inferences[session]?.isEmpty == false && inventory.pendingOwnerCalls.isEmpty
+                }
+                try await WorkerConnection.requireExecIdle(worker)
+                return try await space.sessions.armedSubscriptions(session).isEmpty
+              } catch { return false }
+            }
+            let attempts = try await RemoteSessionExecution(client: worker).inventory().inferences[session] ?? []
+            try await ContinuousClock().sleep(for: .milliseconds(200))
+            let cli = try await Subprocess.run(.path(.init(binary)), arguments: ["admin-exec", folder.path], environment: .custom(environment), input: .none, output: .string(limit: 65536), error: .string(limit: 65536))
+            #expect(cli.terminationStatus == .exited(readinessFailure || preparationFailure ? 1 : 0), "\(cli.standardError)")
+            if preparationFailure {
+              let after = try #require(try files.read("status.json", as: AdminExecController.Status.self))
+              #expect(after.processID == initial.processID && after.birth == initial.birth && after.phase == "initial")
+              #expect(try files.read("previous.json", as: AdminExecController.Status.self) == nil)
+              #expect(try processBirthIdentity(manifest.processID) == manifest.birth)
+              #expect(try await RemoteSessionExecution(client: worker).inventory().inferences[session] == attempts)
+              try await provePublicTLS(port: initial.port)
+            } else {
+              let before = try #require(try files.read("previous.json", as: AdminExecController.Status.self))
+              let after = try #require(try files.read("status.json", as: AdminExecController.Status.self))
+              #expect(before.processID == initial.processID && after.processID == initial.processID)
+              #expect(before.birth == initial.birth && after.birth == initial.birth)
+              #expect(after.listenerDevice == before.listenerDevice && after.listenerInode == before.listenerInode)
+              #expect(after.port == before.port && after.port == initial.port)
+              #expect(after.workerProcessID == manifest.processID && after.workerBirth == manifest.birth)
+              try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
+              #expect(after.workerListenerDevice == before.workerListenerDevice && after.workerListenerInode == before.workerListenerInode)
+              var afterPath = stat()
+              #expect(lstat(parentPath, &afterPath) == 0)
+              #expect(afterPath.st_dev == beforePath.st_dev && afterPath.st_ino == beforePath.st_ino)
+              #expect(try processBirthIdentity(manifest.processID) == manifest.birth)
+              #expect(try processBirthIdentity(helper) == helperBirth)
+              #expect(after.phase == (readinessFailure ? "rolled-back" : "ready"))
+              #expect(after.executable == files.path + "/last-good-" + (try adminExecDigest(fixtureBinary)))
+              _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "after-exec"))
+              if provider != nil {
+                #expect(try await RemoteSessionExecution(client: worker).inventory().inferences[session] == attempts)
+              } else { try await WorkerConnection.requireExecIdle(worker) }
+              try await provePublicTLS(port: after.port)
+              if !readinessFailure {
+                let retry = try await Subprocess.run(.path(.init(binary)), arguments: ["admin-exec", folder.path, "--rollback"], environment: .custom(environment), input: .none, output: .string(limit: 65536), error: .string(limit: 65536))
+                #expect(retry.terminationStatus == .exited(0), "\(retry.standardError)")
+                let retried = try #require(try files.read("status.json", as: AdminExecController.Status.self))
+                #expect(retried.processID == initial.processID && retried.birth == initial.birth)
+                #expect(retried.phase == "rolled-back")
+                #expect(retried.listenerInode == before.listenerInode && retried.port == before.port)
+                #expect(retried.workerProcessID == manifest.processID && retried.workerBirth == manifest.birth)
+                try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
+                #expect(try processBirthIdentity(helper) == helperBirth)
+                _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "after-explicit-rollback"))
+                if provider != nil {
+                  #expect(try await RemoteSessionExecution(client: worker).inventory().inferences[session] == attempts)
+                } else { try await WorkerConnection.requireExecIdle(worker) }
+                try await provePublicTLS(port: retried.port)
+              }
+            }
+            if let provider { try await provider.finish(space: space, session: session, worker: worker) }
+            outcome = .success(())
+          } catch {
+            outcome = .failure(error)
+          }
+          await worker.close()
+          try await client.shutdown()
+          _ = kill(process.processIdentifier.value, SIGTERM)
+          try outcome.get()
+        } catch {
+          if let text = try? String(contentsOfFile: log, encoding: .utf8) { Issue.record("Standalone rehearsal log: \(text)") }
+          throw error
+        }
+      }
+      #expect(result.terminationStatus == .exited(0))
+    } catch { await provider?.shutdown(); throw error }
+    await provider?.shutdown()
   }
 
   private func waitForFiles(folder: URL) async throws -> AdminExecFiles {

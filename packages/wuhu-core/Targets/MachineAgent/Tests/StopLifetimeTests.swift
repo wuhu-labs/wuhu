@@ -6,11 +6,13 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct StopLifetimeTests {
-  @Test func outputBudgetDropsItsAllowedSuffixWhenTheUnreadWindowFills() async throws {
+  /// The overrun ends the exec however the output is split: a send waiting on the unread window must not hide the excess byte.
+  @Test(arguments: ["printf abc; sleep 10", "printf ab; sleep 0.2; printf c; sleep 10"])
+  func outputBudgetDropsItsAllowedSuffixWhenTheUnreadWindowFills(_ script: String) async throws {
     try await Harness(killGrace: .milliseconds(50)).run { h in
       let (maybeTap, _) = h.connect(tapAgentSide: true)
       let tap = try #require(maybeTap)
-      let exec = await h.caller.startExec(makeStart(execID(706), command: ["sh", "-c", "printf abc; sleep 10"], window: 1, maxOutput: 2))
+      let exec = await h.caller.startExec(makeStart(execID(706), command: ["sh", "-c", script], window: 1, maxOutput: 2))
       #expect(try await pollUntil(attempts: 50) { tap.sent.value.contains { $0.opcode == .execExit } })
       let exit = try #require(tap.sent.value.first { $0.opcode == .execExit }).payload(ExecExit.self)
       #expect(tap.outputBytes() == 1)
@@ -20,6 +22,29 @@ struct StopLifetimeTests {
       let result = try await collect(exec)
       #expect(result.stdoutText == "a")
       #expect(result.exit == exit.status)
+    }
+  }
+
+  /// Output queued for the window is not lost when a later chunk overruns the budget: the caller gets everything within it.
+  @Test func outputBudgetKeepsQueuedOutputBeforeAnOverrun() async throws {
+    try await Harness(killGrace: .milliseconds(50)).run { h in
+      h.connect()
+      let exec = await h.caller.startExec(makeStart(execID(707), command: ["sh", "-c", "printf ab; sleep 0.2; printf cd; sleep 10"], window: 100, maxOutput: 3))
+      let result = try await collect(exec)
+      #expect(result.stdoutText == "abc")
+      #expect(result.exit == .signaled(signal: 15))
+    }
+  }
+
+  /// The streams share the budget: stderr's admitted output still reaches the caller when stdout overruns it.
+  @Test func outputBudgetOverrunOnOneStreamKeepsTheOther() async throws {
+    try await Harness(killGrace: .milliseconds(50)).run { h in
+      h.connect()
+      let exec = await h.caller.startExec(makeStart(execID(708), command: ["sh", "-c", "printf eeee >&2; sleep 0.2; printf oooooooo; sleep 10"], window: 100, maxOutput: 10))
+      let result = try await collect(exec)
+      #expect(result.stderrText == "eeee")
+      #expect(result.stdoutText == "oooooo")
+      #expect(result.exit == .signaled(signal: 15))
     }
   }
 

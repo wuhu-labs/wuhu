@@ -136,7 +136,7 @@ public actor OperationClient {
       let d = try await request(MachineDescription.self, url: address(machine), opportunistic: opportunistic, timeoutLimit: [opportunistic ? .seconds(1) : nil, exchangeLimit].compactMap { $0 }.min())
       guard d.version == 2 && d.limits.isValid,
             d.kinds.allSatisfy({ $0.schemaDialect == "https://json-schema.org/draft/2020-12/schema" }) else { throw OperationError(.unsupportedProtocol) }
-      guard descriptions[machine] != nil || descriptions.count < 4096 else { throw OperationError(.capacityExceeded) }
+      guard descriptions[machine] != nil || descriptions.count < 4096 else { throw OperationError.capacityExceeded("machineDescriptions", used: descriptions.count, limit: 4096) }
       descriptions[machine] = d; presence[machine] = clock.now(); answerDates[machine] = wallNow(); detached.remove(machine); return d
     } catch let error as OperationError {
       if error.code == .leaving { detached.insert(machine); leftDates[machine] = wallNow() }; throw error
@@ -318,10 +318,26 @@ public actor OperationClient {
         return try await self.commit(s, record: r)
       }
     } catch let error as OperationError {
+      if error.code == .unknownOperation, let settled = try await settled(id, channel: channel) { return settled }
       if error.code == .unknownOperation { try await saveUnknown(error, record: r, dispatchInFlight: dispatchInFlight) }
       if error.code == .requestDeadline || error.code == .transport { _ = try await active(id) }
       throw error
     }
+  }
+
+  /// A machine drops an operation once it settles, so a later poll meets `unknownOperation`. The stored outcome is the answer only with the
+  /// verdict and a committed final offset for every output channel the kind declares; anything less is a truncated result, so the poll fails.
+  func settled(_ id: UUID, channel: String?) async throws -> OperationSnapshot? {
+    let r = try await store.read(id)
+    guard let s = r.snapshot, s.verdict != nil, let outputs = r.description.kinds.first(where: { $0.name == r.start.kind })?.outputChannels,
+          outputs.allSatisfy({ output in s.finalOffsets[output.name].map { $0 <= (r.committed[output.name] ?? .zero) } ?? false }) else { return nil }
+    guard let channel else { return .init(operation: id, verdict: s.verdict, terminalToken: s.terminalToken, finalOffsets: s.finalOffsets, outputConsumed: true) }
+    guard let unit = outputs.first(where: { $0.name == channel })?.unit else { return nil }
+    let through = r.committed[channel] ?? .zero
+    return .init(
+      operation: id, verdict: s.verdict, terminalToken: s.terminalToken, finalOffsets: s.finalOffsets, outputConsumed: true,
+      channel: channel, from: through, through: through, payload: unit == .bytes ? .init(data: Data()) : .init(records: []), channelEnd: true,
+    )
   }
 
   func saveUnknown(_ error: OperationError, record: ClientRecord, dispatchInFlight: Bool) async throws {
@@ -349,7 +365,7 @@ public actor OperationClient {
               payload.byteCount <= r.description.limits.pollBytes,
               payload.records?.allSatisfy({ $0.jsonString().utf8.count <= descriptor.maxRecordBytes }) ?? true else { throw OperationError(.invalidResponse) }
         let buffered = value.output.values.flatMap { $0 }.reduce(0) { $0 + $1.byteCount }
-        guard buffered + payload.byteCount <= r.outputCapacity else { throw OperationError(.capacityExceeded) }
+        guard buffered + payload.byteCount <= r.outputCapacity else { throw OperationError.capacityExceeded("outputBuffer", used: buffered, limit: r.outputCapacity, requested: payload.byteCount, operation: r.id) }
         if payload.count > 0 { value.output[channel, default: []].append(payload) }
         value.committed[channel] = through
       }

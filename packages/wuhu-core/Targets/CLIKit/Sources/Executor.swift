@@ -274,6 +274,8 @@ struct Executor {
       preconditionFailure("upgrade is routed before the executor")
     case .agent:
       preconditionFailure("agent is routed before the executor")
+    case .idToken:
+      preconditionFailure("id-token is routed before the executor")
     case .skillExport:
       try await self.skillExport()
     case let .modelsList(json):

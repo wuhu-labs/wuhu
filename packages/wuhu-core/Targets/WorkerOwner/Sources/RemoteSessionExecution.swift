@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import Dependencies
 import enum JSONValue.JSONValue
 import protocol LoopCore.SessionExecutionClient
 import enum SessionDomain.QueueInput
@@ -56,6 +57,32 @@ public struct RemoteSessionExecution: SessionExecutionClient {
     return try result.restart()
   }
 
+  public func pauseExec(_ token: UUID) async throws {
+    try await rpc.client.requireCapability(ExecutionWorkerBootstrap.execFenceCapability)
+    let _: Bool = try await rpc.call("execution.exec-pause", token)
+  }
+
+  public func checkExec(_ token: UUID, acceptingExpired: Bool = false) async throws {
+    try await rpc.client.requireCapability(ExecutionWorkerBootstrap.execFenceCapability)
+    let _: Bool = try await rpc.call("execution.exec-check", ExecFenceCheck(token: token, acceptingExpired: acceptingExpired))
+  }
+
+  public func resumeExec(_ token: UUID) async throws {
+    try await rpc.client.requireCapability(ExecutionWorkerBootstrap.execFenceCapability)
+    @Dependency(\.continuousClock) var clock
+    var delay = Duration.milliseconds(100)
+    while true {
+      do {
+        let _: Bool = try await rpc.call("execution.exec-resume", token)
+        return
+      } catch let error as WorkerProtocolError where error.code == .invalidConfiguration || error.code == .missingCapability { throw error }
+      catch {
+        try await clock.sleep(for: delay)
+        delay = min(delay * 2, .seconds(5))
+      }
+    }
+  }
+
   public func inventory() async throws -> WorkerExecutionInventory {
     try await rpc.client.requireCapability("owner.continuity.v1")
     return try await rpc.call("execution.inventory", EmptyRequest())
@@ -86,3 +113,5 @@ public struct RemoteSessionExecution: SessionExecutionClient {
 }
 
 struct ReservationRequest: Codable, Sendable { let id: SessionID; let reservation: UUID }
+
+struct ExecFenceCheck: Codable, Sendable { let token: UUID; let acceptingExpired: Bool }

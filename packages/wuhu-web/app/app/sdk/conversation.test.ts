@@ -50,6 +50,31 @@ Deno.test('replyTarget rides along only when one was picked', () => {
   }
 })
 
+Deno.test('viewing rides along only when a page is on screen', () => {
+  assertEquals(
+    conversationPostInput(
+      { conversation: 'c' },
+      'hi',
+      'UTC',
+      null,
+      'wuhu://shared.localspace/notes/plan.md',
+    ),
+    {
+      conversation: 'c',
+      message: 'hi',
+      timezone: 'UTC',
+      viewing: 'wuhu://shared.localspace/notes/plan.md',
+    },
+  )
+  for (const none of [null, undefined]) {
+    assertEquals(
+      'viewing' in
+        conversationPostInput({ session: 's' }, 'hi', 'UTC', null, none),
+      false,
+    )
+  }
+})
+
 Deno.test('the observe stream is cursored on the space-global ordinal', () => {
   const subscription = conversationSubscription('cave-lime-otter', 'shared')
   assertEquals(subscription.from, 0)

@@ -26,6 +26,7 @@ public actor OperationAgent {
   let kinds: [String: AnyOperationKind]
   let clock: OperationClock
   let limits: OperationLimits
+  let receiptRetention: Duration
   let ids: @Sendable () -> UUID
   let authorize: @Sendable (Request, String) async throws -> Void
   let availability: KindAvailabilityProvider?
@@ -44,17 +45,21 @@ public actor OperationAgent {
     kinds: [AnyOperationKind],
     clock: OperationClock = .continuous,
     limits: OperationLimits = .init(),
+    receiptRetention: Duration = OperationAgent.receiptRetention,
     instance: UUID = UUID(),
     ids: @escaping @Sendable () -> UUID = { UUID() },
     availability: KindAvailabilityProvider? = nil,
     authorize: @escaping @Sendable (Request, String) async throws -> Void,
   ) throws {
-    guard limits.isValid, !machine.isEmpty else { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
+    guard limits.isValid, !machine.isEmpty, receiptRetention > .zero else { throw OperationError(.invalidInput, message: "Invalid machine registry or limits") }
     try Self.validate(descriptors: kinds.map(\.descriptor), limits: limits)
     self.machine = machine; self.kinds = Dictionary(uniqueKeysWithValues: kinds.map { ($0.descriptor.name, $0) })
-    self.clock = clock; self.limits = limits; self.instance = instance; self.ids = ids; self.authorize = authorize; self.availability = availability
-    (starts, startQueue) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(limits.activeOperations))
+    self.clock = clock; self.limits = limits; self.receiptRetention = receiptRetention; self.instance = instance; self.ids = ids; self.authorize = authorize; self.availability = availability
+    (starts, startQueue) = AsyncStream.makeStream()
   }
+
+  /// How long a finished operation that has not settled (terminal token and every output acknowledged) is held after its caller's last request. A settled one is dropped at once.
+  public static let receiptRetention: Duration = .seconds(60)
 
   /// The registry checks every agent applies at init: unique nonempty names, the 2020-12 dialect, channel windows and record sizes within `limits`, no channels on bounded-result kinds, the worst-case poll response within the transport frame, and the whole registry within 1 MiB. Composers that serve kinds outside an OperationAgent (ComputerAgent's external kind) run the same checks over their combined registry.
   public static func validate(descriptors: [KindDescriptor], limits: OperationLimits = .init()) throws {
@@ -81,9 +86,11 @@ public actor OperationAgent {
         payload: .init(data: Data()),
       )
       let head = try Body.json(metadata, outputFormatting: [.sortedKeys, .withoutEscapingSlashes]).contentLength ?? 0
-      guard head + Int64(limits.resultBytes) + Int64(limits.pollBytes) * 2 + 32 <= OperationLimits.responseBytes else { throw OperationError(.capacityExceeded) }
+      let worst = Int(head) + limits.resultBytes + limits.pollBytes * 2 + 32
+      guard worst <= OperationLimits.responseBytes else { throw OperationError.capacityExceeded("responseBytes", used: worst, limit: OperationLimits.responseBytes) }
     }
-    guard try JSONEncoder().encode(descriptors).count <= 1024 * 1024 else { throw OperationError(.capacityExceeded) }
+    let registry = try JSONEncoder().encode(descriptors).count
+    guard registry <= 1024 * 1024 else { throw OperationError.capacityExceeded("registryBytes", used: registry, limit: 1024 * 1024) }
   }
 
   public nonisolated var handler: Handler { { try await self.handle($0) } }
@@ -102,9 +109,9 @@ public actor OperationAgent {
     running = false
   }
 
-  public func admissionUsage() -> (active: Int, receipts: Int, bufferBytes: Int) {
+  public func admissionUsage() -> (receipts: Int, bufferBytes: Int) {
     sweep()
-    return (operations.values.filter { $0.verdict == nil }.count, operations.count, operations.values.reduce(0) { $0 + $1.bufferReservation })
+    return (operations.count, operations.values.reduce(0) { $0 + $1.bufferReservation })
   }
 
   public func departureSettled() -> Bool {
@@ -143,19 +150,18 @@ public actor OperationAgent {
     }
   }
 
+  /// Drops a finished operation once it settles and every output channel has carried the terminal acknowledgement, and otherwise
+  /// `receiptRetention` after its caller's last request. Dropped unsettled, it loses departure evidence.
   func sweep() {
     let now = clock.now()
     for id in operations.keys {
       operations[id]?.expire(now: now)
-      if let op = operations[id], let finished = op.finishedAt {
-        if now - op.lastRequest >= .milliseconds(limits.leaseMs) {
-          for c in op.outputs.keys { operations[id]?.outputs[c]?.expireRetention() }
-        }
-        if now - finished >= .milliseconds(limits.receiptMs) {
-          if !op.departureSettled { departureEvidenceLost = true }
-          operations.removeValue(forKey: id)
-        }
-      }
+      guard let op = operations[id], op.finishedAt != nil else { continue }
+      if op.departureSettled { pendingDeparture.remove(id) }
+      let expired = now - op.lastRequest >= receiptRetention
+      guard op.released || expired else { continue }
+      if !op.departureSettled { departureEvidenceLost = true }
+      operations.removeValue(forKey: id)
     }
   }
 
@@ -312,8 +318,8 @@ public actor OperationAgent {
       let d = kind.descriptor
       let reserve = (d.inputChannels + d.outputChannels).reduce(0) { $0 + $1.windowBytes }
       let used = operations.values.reduce(0) { $0 + $1.bufferReservation }
-      guard operations.count < limits.receipts, operations.values.filter({ $0.verdict == nil }).count < limits.activeOperations,
-            reserve <= limits.bufferBytes - used else { throw OperationError(.capacityExceeded) }
+      guard operations.count < limits.receipts else { throw OperationError.capacityExceeded("receipts", used: operations.count, limit: limits.receipts) }
+      guard reserve <= limits.bufferBytes - used else { throw OperationError.capacityExceeded("bufferBytes", used: used, limit: limits.bufferBytes, requested: reserve) }
       let now = clock.now()
       operations[id] = .init(
         id: id,
@@ -327,7 +333,7 @@ public actor OperationAgent {
       // A gate change between admission and insertion: its sweep may have run before this operation existed.
       // Re-check while the operation is inserted but not yet runnable, so a revoked kind never runs its effect.
       if availability?.changes != nil { await enforceAvailability() }
-      guard case .enqueued = startQueue.yield(id) else { operations.removeValue(forKey: id); executions.removeValue(forKey: id); throw OperationError(.capacityExceeded) }
+      guard case .enqueued = startQueue.yield(id) else { operations.removeValue(forKey: id); executions.removeValue(forKey: id); throw OperationError(.leaving) }
       guard let created = operations[id] else { throw OperationError(.unknownOperation) }
       return try .json(created.snapshot(), status: .created)
     }
@@ -348,12 +354,13 @@ public actor OperationAgent {
       if let token = q["terminalAck"] {
         guard UUID(uuidString: token) == operations[id]?.terminalToken, operations[id]?.verdict != nil else { throw OperationError(.invalidInput) }
         operations[id]?.terminalAcknowledged = true
+        if let channel { operations[id]?.terminalAcknowledgedChannels.insert(channel) }
       }
       if operations[id]?.departureSettled == true { pendingDeparture.remove(id) }
       operations[id]?.renew(now: clock.now(), lease: .milliseconds(limits.leaseMs))
       let deadline = clock.now() + .milliseconds(hold)
       while true {
-        let s = operations[id]!.snapshot(channel: channel, limit: limit)
+        guard let s = operations[id]?.snapshot(channel: channel, limit: limit) else { throw OperationError(.unknownOperation) }
         if s.verdict != nil || (s.payload?.count ?? 0) > 0 || s.channelEnd || clock.now() >= deadline {
           let response = try Response.json(s, outputFormatting: [.sortedKeys, .withoutEscapingSlashes])
           guard (response.body.contentLength ?? 0) <= OperationLimits.responseBytes else { throw OperationError(.resultTooLarge) }

@@ -113,6 +113,8 @@ actor WorkerParentBinding {
     }
   }
 
+  func commitExec() async throws { try await handoff.commitExec() }
+
   func probeExec() async throws { try await transport.probeExec(credentials: credentials, hello: hello) }
 
   func rollbackExec() async throws {

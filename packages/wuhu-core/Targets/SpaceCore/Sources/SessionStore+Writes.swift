@@ -198,7 +198,6 @@ extension SessionStore {
       if let closing {
         try Sessions.append(key, generation: runtime.generation, items: [TranscriptItem.toolResult(closing)], in: db)
       }
-      try CacheWarmingRow.resetOffer(key, in: db)
       let compacted = transition?.transcript ?? transcript.compacted(head: head, kept: kept)
       if let transition {
         try Sessions.commitRouteTransition(key, transition: transition, in: db)

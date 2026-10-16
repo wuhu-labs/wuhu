@@ -19,7 +19,7 @@ private struct EchoKind: OperationKind {
 }
 
 private final class FakeExternal: Sendable {
-  let usage = Mutex((active: 0, receipts: 0, bufferBytes: 0))
+  let usage = Mutex((receipts: 0, bufferBytes: 0))
   let owned = Mutex<Set<UUID>>([])
   let left = Mutex(false)
   var kind: ExternalKind { kind() }
@@ -82,9 +82,11 @@ private final class FakeExternal: Sendable {
     let poll = try await agent.handler(Request(url: URL(string: base + "/operations/" + id.uuidString)!))
     #expect(try await poll.body.json([String: String].self) == ["routed": "external"])
     #expect(try await start(agent, id, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .operationExists)
-    external.usage.withLock { $0.active = OperationLimits().activeOperations - 1 }
+    external.usage.withLock { $0.receipts = OperationLimits().receipts - 1 }
     #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).status.code == 201)
-    #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .capacityExceeded)
+    let refusal = try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error
+    #expect(refusal.code == .capacityExceeded)
+    #expect(refusal.message.hasPrefix("receipts "))
     #expect(try await start(agent, kind: "missing.v1", input: [:]).body.json(ErrorEnvelope.self).error.code == .unknownKind)
     await agent.shutdown()
   }
@@ -120,16 +122,16 @@ private final class FakeExternal: Sendable {
   @Test func externalUsageMustBeNonnegativeAndCannotOverflowTheBudget() async throws {
     let external = FakeExternal()
     let agent = try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind())], external: external.kind)
-    for usage in [(active: -1, receipts: 0, bufferBytes: 0), (active: 0, receipts: -1, bufferBytes: 0), (active: 0, receipts: 0, bufferBytes: -OperationLimits().bufferBytes)] {
+    for usage in [(receipts: -1, bufferBytes: 0), (receipts: 0, bufferBytes: -OperationLimits().bufferBytes)] {
       external.usage.withLock { $0 = usage }
       #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
       #expect(try await agent.handler(Request(url: URL(string: base)!)).body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
     }
-    for usage in [(active: Int.max, receipts: 0, bufferBytes: 0), (active: 0, receipts: Int.max, bufferBytes: 0), (active: 0, receipts: 0, bufferBytes: Int.max)] {
+    for usage in [(receipts: Int.max, bufferBytes: 0), (receipts: 0, bufferBytes: Int.max)] {
       external.usage.withLock { $0 = usage }
       #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .capacityExceeded)
     }
-    external.usage.withLock { $0 = (0, 0, 0) }
+    external.usage.withLock { $0 = (0, 0) }
     #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).status.code == 201)
     await agent.shutdown()
   }

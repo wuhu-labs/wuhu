@@ -54,7 +54,7 @@ import Testing
       } operation: {
         // A Claude model: the one whose turn runs without thinking after the boundary.
         let claude = testModelsJSON.replacingOccurrences(of: "\"test-model\"", with: "\"claude-test-model\"")
-        let models = wake == .context ? claude.replacingOccurrences(of: "\"maxInput\": 100000,", with: "\"cacheWarming\": {}, \"maxInput\": 100000,") : claude
+        let models = wake == .context ? claude.replacingOccurrences(of: "\"maxInput\": 100000,", with: "\"cacheWarming\": {\"floorTokens\": 1}, \"maxInput\": 100000,") : claude
         let harness = try await SessionHarness(assembledModels: models)
         let id = try await harness.createSession(model: "claude-test-model")
         var source = try await harness.store.transcript(id)

@@ -14,6 +14,7 @@ struct ParentExecSource: Sendable {
     try await execution.prepare()
     var paused = false
     do {
+      try await execution.requireIdleRuntimeCheckpoint()
       try await listener.pauseAccepting()
       paused = true
       let carrier = try await execution.execCarrier(identity: identity)

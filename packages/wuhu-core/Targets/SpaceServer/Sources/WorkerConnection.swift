@@ -154,14 +154,29 @@ struct WorkerConnection: Sendable {
     }
   }
 
-  func exportExec() async throws -> ExecWorkerExport {
+  func exportExec(fence: UUID) async throws -> ExecWorkerExport {
     guard let storage, let parentBinding else { throw AdminExecError.refused("ephemeralWorker") }
-    try await Self.requireExecIdle(client)
-    let (transfer, listener) = try await parentBinding.exportExec()
+    let execution = RemoteSessionExecution(client: client)
+    try await client.requireCapability("execution.exec-fence.v1")
+    try await client.requireCapability("owner.attempt-unknown.v1")
     do {
-      let record = try await storage.execRecord(carrier: transfer.descriptor, listener: listener)
-      return .init(record: record, transfer: transfer, listener: listener)
-    } catch { try await parentBinding.rollbackExec(); throw error }
+      try await execution.pauseExec(fence)
+      try await Self.requireExecTransferable(client)
+    } catch {
+      try await Task { try await execution.resumeExec(fence) }.value
+      throw error
+    }
+    do {
+      let (transfer, listener) = try await parentBinding.exportExec()
+      do {
+        try await execution.checkExec(fence)
+        let record = try await storage.execRecord(fence: fence, carrier: transfer.descriptor, listener: listener)
+        return .init(record: record, transfer: transfer, listener: listener)
+      } catch { try await parentBinding.rollbackExec(); throw error }
+    } catch {
+      try await Task { try await execution.resumeExec(fence) }.value
+      throw error
+    }
   }
 
   func stop() async {

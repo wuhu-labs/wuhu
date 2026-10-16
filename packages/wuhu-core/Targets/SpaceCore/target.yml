@@ -33,9 +33,11 @@ dependencies:
 tests:
   exclude:
     - Fixtures/**
-  # The storage lint reads the sources back by path.
+  # The storage lint reads the sources back by path; the viewing vector test
+  # reads the clients' contract fixture.
   data:
     - Targets/SpaceCore/Sources
+    - Targets/SpaceContract/Tests/contract
   resources:
     - path: Fixtures
       mode: copy

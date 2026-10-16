@@ -23,12 +23,7 @@ public struct ExecutionWorkerActivity: Codable, Sendable {
   }
 
   public func publish(using client: WorkerClient) async throws {
-    let call = try call()
-    if let retained = try await client.retaining(call) {
-      let _: Bool = try await OwnerRPC(client: client).retainedCall(retained)
-    } else {
-      _ = try await client.call(call)
-    }
+    let _: Bool = try await OwnerRPC(client: client).call("worker.activity", self)
   }
 
   public func call() throws -> WorkerCall {

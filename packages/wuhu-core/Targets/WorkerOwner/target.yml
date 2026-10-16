@@ -28,6 +28,7 @@ dependencies:
   - Logging
 tests:
   dependencies:
+    - Clocks
     - AsyncHTTPClient
     - FetchAsyncHTTPClient
     - NIOPosix

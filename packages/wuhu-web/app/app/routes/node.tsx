@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react'
 import { useLocation, useOutletContext } from 'react-router'
 import { ContentFrame } from '~/components/content-frame'
 import { DocMeta } from '~/components/doc-meta'
@@ -6,13 +5,9 @@ import { FileCard, FileImage } from '~/components/file-view'
 import { MarkdownDocument } from '~/components/markdown-document'
 import { TableView } from '~/components/table-view'
 import type { QueryOutput } from '~/lib/contract.gen'
-import { cachedThenLive } from '~/lib/cached-then-live'
-import { loadNode, type NodeSource, type NodeView } from '~/lib/node-view'
-import { type GroupFeed, useSpaceFeeds } from '~/lib/space-feeds'
-import { ApiError, errorMessage } from '~/sdk/errors'
+import type { NodeView } from '~/lib/node-view'
 import { tableSubscription } from '~/sdk/subscriptions'
 import { spaceDestination } from '~/lib/space-url'
-import { withoutGroup } from '~/lib/links'
 import { useObserve } from '~/lib/use-observe'
 import type { SpaceContext } from './space'
 
@@ -26,76 +21,14 @@ export default function Node() {
       </div>
     )
   }
-  return <NodePage path={destination.path} />
+  return <NodePage />
 }
 
-function NodePage({ path }: { path: string }) {
-  const { group, client, contentOrigin, viewRevs } = useOutletContext<
-    SpaceContext
-  >()
-  const location = useLocation()
-  const suffix = withoutGroup(location.search) + location.hash
-  const viewRev = viewRevs[path] ?? 0
-  const [view, setView] = useState<NodeView>({ state: 'loading' })
-  // The tree names a path's kind without a round trip; reading it through a
-  // ref keeps every space mutation from reloading the page.
-  const feed = useRef<GroupFeed | null>(null)
-  feed.current = useSpaceFeeds().feed(group)
-  const [active, setActive] = useState({
-    client,
-    contentOrigin,
-    path,
-    suffix,
-    viewRev,
-  })
-  if (
-    active.client !== client ||
-    active.contentOrigin !== contentOrigin ||
-    active.path !== path ||
-    active.suffix !== suffix ||
-    active.viewRev !== viewRev
-  ) {
-    setActive({ client, contentOrigin, path, suffix, viewRev })
-    setView({ state: 'loading' })
-  }
-
-  useEffect(() => {
-    let cancelled = false
-    const apply = (next: NodeView) => {
-      if (!cancelled) setView(next)
-    }
-    const kept: NodeSource = {
-      stat: (at) => {
-        if (!feed.current?.loaded) {
-          return Promise.reject(new Error('The kept tree is not loaded.'))
-        }
-        const kind = at === '/' ? 'directory' : feed.current.files.paths.get(at)
-        return kind === undefined
-          ? Promise.reject(
-            new ApiError(404, {
-              code: 'notFound',
-              message: `${at} is not in the kept tree`,
-            }),
-          )
-          : Promise.resolve({ kind })
-      },
-      read: (at) => client.keptRead(at),
-    }
-    const live: NodeSource = {
-      stat: (at) => client.stat(at),
-      read: (at) => client.read(at),
-    }
-    cachedThenLive(
-      () => loadNode(kept, contentOrigin, path, suffix, viewRev),
-      () => loadNode(live, contentOrigin, path, suffix, viewRev),
-      apply,
-      (failure) => apply({ state: 'error', message: errorMessage(failure) }),
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [client, contentOrigin, path, suffix, viewRev])
-
+// Renders the page SpaceBody holds for this address (lib/use-shown-node.ts),
+// the same state a send names.
+function NodePage() {
+  const { group, client, shown } = useOutletContext<SpaceContext>()
+  const view: NodeView = shown?.view ?? { state: 'loading' }
   const reading = view.state === 'markdown'
   return (
     <div

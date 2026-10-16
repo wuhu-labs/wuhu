@@ -26,7 +26,6 @@ struct CacheWarmingRow {
   @Column("interval_seconds") var intervalSeconds: Int
   @Column("ping_count") var pingCount: Int
   @Column("warming_origin") var warmingOrigin: Bool = false
-  @Column("last_offer_tokens") var lastOfferTokens: Int?
 }
 
 @Table("sessions")
@@ -85,7 +84,7 @@ extension SessionStore {
   }
 
   @discardableResult
-  public func enqueueCacheWarming(_ id: SessionID, maxPings: Int, contextTokens: Int, offerThreshold: Int, offerGrowth: Int, quotaLow: Bool) async throws -> Bool {
+  public func enqueueCacheWarming(_ id: SessionID, maxPings: Int, floorTokens: Int, images: ImageLimits, quotaLow: Bool) async throws -> Bool {
     @Dependency(\.uuid) var uuid
     let noticeID = uuid()
     let now = dateGen.now
@@ -95,7 +94,8 @@ extension SessionStore {
       guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, record.work == .noWork,
             !self.archiveReservations.contains(id), kernel,
             var row = try CacheWarmingRow.where({ $0.sessionID.eq(id.rawValue) }).fetchOne(db),
-            row.nextPingAt <= now.timeIntervalSince1970, row.pingCount < maxPings else { return false }
+            row.nextPingAt <= now.timeIntervalSince1970, row.pingCount < maxPings,
+            try Sessions.transcript(id.rawValue, in: db).reachesCacheWarmingFloor(floorTokens, images: images) else { return false }
       row.nextPingAt = now.timeIntervalSince1970 + Double(row.intervalSeconds)
       if quotaLow {
         row.pingCount = maxPings
@@ -104,13 +104,11 @@ extension SessionStore {
       }
       row.pingCount += 1
       row.warmingOrigin = true
-      let offer = contextTokens >= offerThreshold && (row.lastOfferTokens.map { contextTokens - $0 >= offerGrowth } ?? true)
-      if offer { row.lastOfferTokens = contextTokens }
       try CacheWarmingRow.upsert { row }.execute(db)
       let text = """
       <cache-warming-notice>
-      This system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation. Ignore it if there is nothing to do; ending this turn without a reply is normal.
-      \(offer ? "If you don't expect new work soon, call the compact tool now, so the cache doesn't have to be kept warm; otherwise ignore it. The system never forces compaction for this notice." : "")
+      This system notice keeps the prompt cache warm. It is not a message from a person and creates no reply obligation.
+      Judge whether you expect more work soon. If you don't, call the compact tool now: a compacted context below the warming floor gets no more of these notices. If you do, end this turn without a reply; that is normal.
       </cache-warming-notice>
       """
       _ = try Sessions.enqueue(id.rawValue, input: .notification(.init(id: noticeID, timestamp: now, kind: .context, subscriptionID: SubscriptionID("cache-warming"), content: .init(text: text))), nowDate: now, in: db)
@@ -132,9 +130,5 @@ extension CacheWarmingRow {
 
   static func reset(_ key: String, in db: Database) throws {
     try Self.where { $0.sessionID.eq(key) }.delete().execute(db)
-  }
-
-  static func resetOffer(_ key: String, in db: Database) throws {
-    try Self.where { $0.sessionID.eq(key) }.update { $0.lastOfferTokens = #bind(nil) }.execute(db)
   }
 }

@@ -40,6 +40,13 @@ async function homepage(
   return { path: '/', entry: { kind: 'directory' } }
 }
 
+// What a node page shows: the view, and the path it resolved to, the
+// homepage for the root.
+export interface ShownNode {
+  path: string
+  view: NodeView
+}
+
 export async function loadNode(
   source: NodeSource,
   contentOrigin: ContentOrigin,
@@ -47,9 +54,47 @@ export async function loadNode(
   suffix: string,
   viewRev: number,
 ): Promise<NodeView> {
-  const { path, entry: { kind, size } } = requested === '/'
+  return (await loadShownNode(
+    source,
+    contentOrigin,
+    requested,
+    suffix,
+    viewRev,
+  ))
+    .view
+}
+
+export async function loadShownNode(
+  source: NodeSource,
+  contentOrigin: ContentOrigin,
+  requested: string,
+  suffix: string,
+  viewRev: number,
+): Promise<ShownNode> {
+  const { path, entry } = requested === '/'
     ? await homepage(source)
     : { path: requested, entry: await source.stat(requested) }
+  return {
+    path,
+    view: await resolvedView(
+      source,
+      contentOrigin,
+      path,
+      entry,
+      suffix,
+      viewRev,
+    ),
+  }
+}
+
+async function resolvedView(
+  source: NodeSource,
+  contentOrigin: ContentOrigin,
+  path: string,
+  { kind, size }: NodeEntry,
+  suffix: string,
+  viewRev: number,
+): Promise<NodeView> {
   if (/^\/_\/conversations\/[^/]+\/attachments(?:\/|$)/.test(path)) {
     if (kind !== 'directory' && fileOpening(path) !== 'text') {
       return openFile(

@@ -41,6 +41,7 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   private var activePasses: [SessionID: Set<UUID>] = [:]
   private var connection: WorkerConnection?
   private var execPaused = false
+  private var execFence: UUID?
   private var pendingExec: ExecWorkerRecord?
   private var starting: Task<WorkerConnection, any Error>?
   private var retirement: Task<Void, Never>?
@@ -57,7 +58,9 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   var processID: Int32? { connection?.processID }
   var activeSessions: Set<SessionID> { Set(activePasses.keys) }
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true, startupExcludedIncarnations: Set<UUID> = [], adoptingExec: ExecWorkerRecord? = nil) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true, startupExcludedIncarnations: Set<UUID> = [], adoptingExec: ExecWorkerRecord? = nil, adoptingPasses: [String: [UUID]] = [:]) {
+    execFence = adoptingExec?.fence
+    activePasses = Dictionary(uniqueKeysWithValues: adoptingPasses.map { (SessionID(rawValue: $0.key), Set($0.value)) })
     pendingExec = adoptingExec
     self.startupExcludedIncarnations = startupExcludedIncarnations.union(adoptingExec.map { [$0.incarnation] } ?? [])
     self.recoverStartupLoss = recoverStartupLoss
@@ -179,15 +182,37 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
 
   func prepareExec() async throws -> ExecWorkerExport? {
     guard !stopped, !execPaused, starting == nil, retirement == nil, preparation == nil || connection != nil,
-          activePasses.isEmpty, yielding.isEmpty, recoveryBlocked.isEmpty, unreconciledLosses.isEmpty else { throw AdminExecError.refused("workerBusy") }
+          yielding.isEmpty, recoveryBlocked.isEmpty, unreconciledLosses.isEmpty else { throw AdminExecError.refused("workerBusy") }
     execPaused = true
-    do { return try await connection?.exportExec() }
-    catch { execPaused = false; throw error }
+    do {
+      let fence = UUID()
+      let exported = try await connection?.exportExec(fence: fence)
+      execFence = exported == nil ? nil : fence
+      return exported
+    } catch { execPaused = false; throw error }
   }
 
   func rollbackExec() async throws {
     if let connection { try await connection.parentBinding?.rollbackExec() }
+    if let connection, let execFence { try await RemoteSessionExecution(client: connection.client).resumeExec(execFence) }
+    execFence = nil
     execPaused = false
+  }
+
+  var execActivePasses: [String: [UUID]] {
+    Dictionary(uniqueKeysWithValues: activePasses.map { ($0.key.rawValue, Array($0.value)) })
+  }
+
+  func checkExec() async throws {
+    if let connection, let execFence { try await RemoteSessionExecution(client: connection.client).checkExec(execFence) }
+  }
+
+  func commitExec(beforeResume: @Sendable () async throws -> Void) async throws {
+    guard let connection, let execFence else { try await beforeResume(); return }
+    try await connection.parentBinding?.commitExec()
+    try await beforeResume()
+    try await RemoteSessionExecution(client: connection.client).resumeExec(execFence)
+    self.execFence = nil
   }
 
   func probeExec() async throws {

@@ -11,6 +11,6 @@ export const spaceRoutes: RouteConfigEntry[] = [
     route('_/system/*', 'routes/system.tsx'),
     route('_/sessions/:id', 'routes/session.tsx'),
     route('_/conversations/:id', 'routes/conversation.tsx'),
-    route('*', 'routes/node.tsx'),
+    route('*', 'routes/node.tsx', { id: 'routes/node' }),
   ]),
 ]

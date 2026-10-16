@@ -15,8 +15,13 @@ public enum SessionExecEnvironment {
   public static let expiresAt: String = "WUHU_TOKEN_EXPIRES_AT"
   public static let identity: String = "WUHU_IDENTITY"
   public static let group: String = "WUHU_GROUP"
+  /// Set by the server in `env` (or `secretValues`, so the agent masks it), so
+  /// agents of any version pass them through: the endpoint that mints OIDC
+  /// tokens for the exec, and the capability that alone authorizes it.
+  public static let idTokenURL: String = "WUHU_ID_TOKEN_URL"
+  public static let idTokenRequest: String = "WUHU_ID_TOKEN_REQUEST"
 
-  public static let reserved: Set<String> = [exec, token, spaceURL, expiresAt]
+  public static let reserved: Set<String> = [exec, token, spaceURL, expiresAt, idTokenURL, idTokenRequest]
 }
 
 /// The credential a session's exec runs with: a token that acts as the session

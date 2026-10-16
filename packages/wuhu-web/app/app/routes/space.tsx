@@ -5,7 +5,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { Outlet, useLocation, useNavigate } from 'react-router'
+import { Outlet, useLocation, useMatches, useNavigate } from 'react-router'
 import { type Crumb, Crumbs, Pill, Topbar } from '@wuhu/ui'
 import { SpaceRouteFrame } from '~/lib/space-route-frame'
 import { NewDocumentDialog } from '~/components/new-document'
@@ -25,6 +25,7 @@ import {
   sessionView,
   systemAddress,
   withGroup,
+  withoutGroup,
 } from '~/lib/links'
 import { memberGroups, memberOr, sharedGroup } from '~/lib/groups'
 import {
@@ -32,7 +33,7 @@ import {
   contentOriginString,
 } from '~/lib/use-content-origin'
 import { spaceDestination } from '~/lib/space-url'
-import { homepages } from '~/lib/node-view'
+import { useShownNode } from '~/lib/use-shown-node'
 import { ShareActions } from '~/components/share-actions'
 import { SessionActions } from '~/components/session-actions'
 import { AISharingDialog } from '~/components/ai-sharing-dialog'
@@ -47,6 +48,7 @@ import {
   sessionCapability,
 } from '~/lib/session-capability'
 import { pageTarget, targetKey } from '~/lib/composer-target'
+import { type ShownPage, viewingOf } from '~/lib/viewing'
 import { DraftsProvider, useDrafts } from '~/lib/use-drafts'
 import { useConversationAccess } from '~/lib/use-conversation-access'
 import { useKeyboardViewport } from '~/lib/use-keyboard-viewport'
@@ -70,6 +72,8 @@ export interface SpaceContext {
   conversationError: string | null
   replyTo: ((draft: ReplyDraft) => void) | null
   reviewAISharing: () => void
+  // The node page at this address as it is on screen, or null elsewhere.
+  shown: ShownPage | null
 }
 
 interface SpaceShellStyle extends CSSProperties {
@@ -79,6 +83,10 @@ interface SpaceShellStyle extends CSSProperties {
 export function meta() {
   return [{ title: 'Wuhu' }]
 }
+
+// The node route's ids in space-routes.ts: the root, and every other path a
+// screen does not claim.
+const nodeRoutes = new Set(['routes/home', 'routes/node'])
 
 function nodePathOf(pathname: string): string | null {
   const destination = spaceDestination(pathname)
@@ -130,7 +138,7 @@ export default function Space() {
   )
 }
 
-function SpaceBody(
+export function SpaceBody(
   { server, device, scope }: {
     server: SpaceServer
     device: EnrolledDevice | null
@@ -160,9 +168,16 @@ function SpaceBody(
     ? [sharedGroup]
     : memberGroups(feeds.groups)
   const activePath = nodePathOf(location.pathname)
-  const shownPath = activePath === '/'
-    ? homepages.find((page) => paths.has(page)) ?? activePath
-    : activePath
+  const leaf = useMatches().at(-1)
+  const onNode = leaf !== undefined && nodeRoutes.has(leaf.id)
+  const shown = useShownNode({
+    group,
+    client,
+    contentOrigin,
+    path: onNode ? activePath : null,
+    suffix: withoutGroup(location.search) + location.hash,
+    viewRev: activePath === null ? 0 : viewRevs[activePath] ?? 0,
+  }, feeds.feed(group))
 
   const go = useCallback((to: string) => {
     void navigate(to)
@@ -246,7 +261,7 @@ function SpaceBody(
     <>
       <SpaceRouteFrame
         style={shellStyle}
-        canvas={shownPath?.endsWith('.md') ? 'quiet' : 'atmospheric'}
+        canvas={shown?.path.endsWith('.md') ? 'quiet' : 'atmospheric'}
         sidebar={
           <SpaceSidebar
             account={{
@@ -293,7 +308,12 @@ function SpaceBody(
               : <ShareActions />}
           </Topbar>
         }
-        composer={<SpaceComposer page={page} />}
+        composer={
+          <SpaceComposer
+            page={page}
+            viewing={viewingOf(shown)}
+          />
+        }
       >
         <Outlet
           context={{
@@ -307,6 +327,7 @@ function SpaceBody(
             conversationError: access.error,
             replyTo,
             reviewAISharing: () => setReviewingAISharing(true),
+            shown,
           } satisfies SpaceContext}
         />
       </SpaceRouteFrame>

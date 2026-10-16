@@ -140,7 +140,7 @@ private final class DiskWalk: Sendable {
             let status = try parent.map { try statusAt($0, leaf(path)) } ?? fileStatus(path)
             if path == root && status.kind == "symlink" && !symlinks { throw OperationError(.invalidInput, message: "Search root is a symlink") }
             if status.kind == "directory" {
-              guard state.frames.count < 128 else { throw OperationError(.capacityExceeded, message: "Traversal depth exceeds 128") }
+              guard state.frames.count < 128 else { throw OperationError.capacityExceeded("traversalDepth", used: state.frames.count, limit: 128) }
               state.frames.append(try openDirectory(path, status: status, parent: parent))
             } else if status.kind != "symlink" || symlinks {
               let file = status.kind == "file" ? try rootFile(path, status: status, beforeOpen: beforeOpen) : nil

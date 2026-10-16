@@ -61,7 +61,7 @@ extension Space {
   }
 
   func v2Claim(_ owner: OperationOwner, record: ClientRecord, group: GroupID, key: SymmetricKey) async throws -> OperationClaim {
-    guard record.description.limits.isValid, record.description.limits.bufferBytes <= 64 * 1024 * 1024, record.description.limits.activeOperations <= 32,
+    guard record.description.limits.isValid, record.description.limits.bufferBytes <= 64 * 1024 * 1024,
           !owner.scope.isEmpty, !owner.key.isEmpty, owner.scope.utf8.count <= 1024, owner.key.utf8.count <= 1024 else { throw OperationError(.invalidInput) }
     guard try JSONEncoder().encode(record.start).count <= record.description.limits.inputBytes else { throw OperationError(.inputTooLarge) }
     let now = dateGen.now; let stamp = SQLiteDateFormat.string(from: now)
@@ -85,13 +85,15 @@ extension Space {
       let channels = record.description.kinds.first(where: { $0.name == record.start.kind }).map { $0.inputChannels + $0.outputChannels } ?? []
       var reservation = 0
       for channel in channels {
-        guard channel.windowBytes > 0, channel.windowBytes <= record.description.limits.bufferBytes - reservation else { throw OperationError(.capacityExceeded) }
+        guard channel.windowBytes > 0, channel.windowBytes <= record.description.limits.bufferBytes - reservation else { throw OperationError.capacityExceeded("bufferBytes", used: reservation, limit: record.description.limits.bufferBytes, requested: channel.windowBytes) }
         reservation += channel.windowBytes
       }
-      guard active.count < 4096, active.filter({ $0.ownerScope == owner.scope }).count < 8,
-            machineRows.filter(\.active).count < record.description.limits.activeOperations,
-            machineRows.reduce(0, { $0 + $1.reservedBytes }) + reservation <= record.description.limits.bufferBytes,
-            try MachineV2OperationRow.where({ $0.id.eq(record.id.uuidString) }).fetchOne(db) == nil else { throw OperationError(.capacityExceeded) }
+      guard active.count < 4096 else { throw OperationError.capacityExceeded("groupActiveOperations", used: active.count, limit: 4096) }
+      let owned = active.filter { $0.ownerScope == owner.scope }.count
+      guard owned < 8 else { throw OperationError.capacityExceeded("callerActiveOperations", used: owned, limit: 8) }
+      let reserved = machineRows.reduce(0) { $0 + $1.reservedBytes }
+      guard reserved + reservation <= record.description.limits.bufferBytes else { throw OperationError.capacityExceeded("machineBufferBytes", used: reserved, limit: record.description.limits.bufferBytes, requested: reservation) }
+      guard try MachineV2OperationRow.where({ $0.id.eq(record.id.uuidString) }).fetchOne(db) == nil else { throw OperationError(.operationExists, operation: record.id) }
       let digest = try V2Records.digest(record, key: key)
       let row = MachineV2OperationRow(id: record.id.uuidString, grp: group.rawValue, ownerScope: owner.scope, invocationKey: owner.key, machineID: record.machine, correlationID: record.correlation.uuidString, inputDigest: digest, dispatchConsumed: true, record: "", active: true, reservedBytes: reservation, createdAt: stamp)
       try V2Records.save(record, row: row, key: key, stamp: stamp, in: db)
@@ -199,7 +201,13 @@ private enum V2Records {
       }
     }
     let inputs = record.description.kinds.first(where: { $0.name == record.start.kind })?.inputChannels ?? []
-    guard record.pendingInputs.allSatisfy({ name, pending in inputs.contains { $0.name == name && pending.payload.byteCount <= min($0.windowBytes, 64 * 1024) } }), output <= record.outputCapacity, input <= record.inputCapacity else { throw OperationError(.capacityExceeded) }
+    for (name, pending) in record.pendingInputs {
+      guard let channel = inputs.first(where: { $0.name == name }) else { throw OperationError(.unknownChannel, operation: record.id) }
+      let limit = min(channel.windowBytes, 64 * 1024)
+      guard pending.payload.byteCount <= limit else { throw OperationError.capacityExceeded("pendingInputBytes", used: pending.payload.byteCount, limit: limit, operation: record.id) }
+    }
+    guard output <= record.outputCapacity else { throw OperationError.capacityExceeded("outputBytes", used: output, limit: record.outputCapacity, operation: record.id) }
+    guard input <= record.inputCapacity else { throw OperationError.capacityExceeded("inputBytes", used: input, limit: record.inputCapacity, operation: record.id) }
     try MachineV2OperationRow.upsert { row }.execute(db)
     try MachineV2ChannelRow.where { $0.operationID.eq(row.id) }.delete().execute(db)
     try MachineV2OutputRow.where { $0.operationID.eq(row.id) }.delete().execute(db)

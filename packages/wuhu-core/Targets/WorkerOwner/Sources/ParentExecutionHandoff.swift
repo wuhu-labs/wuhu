@@ -61,7 +61,7 @@ public actor ParentExecutionHandoff {
       try await bytes.requireTransferableReplies()
       let retained = Set(receipts.clients.flatMap { $0.entries.map { $0.call.id } })
       let readers = try await parent.checkpointReaders(retaining: retained)
-      let checkpoint = ParentExecutionCheckpoint(receipts: receipts, readers: readers)
+      let checkpoint = try await ParentExecutionCheckpoint(receipts: receipts, readers: readers, attempts: parent.checkpointAttempts())
       try checkpoint.validate()
       try Task.checkCancellation()
       try requirePreparing()
@@ -75,6 +75,10 @@ public actor ParentExecutionHandoff {
       }
       throw error
     }
+  }
+
+  func requireIdleRuntimeCheckpoint() throws {
+    guard case let .paused(_, checkpoint) = state, checkpoint.attempts?.isEmpty != false else { throw unavailable() }
   }
 
   func execCheckpoint(identity: ParentExecCheckpoint.Identity) throws -> Data {
@@ -97,8 +101,9 @@ public actor ParentExecutionHandoff {
     let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: spawn, control: control)
     do {
       try await parent.restoreReaders(checkpoint.readers)
+      try await parent.restoreAttempts(checkpoint.attempts ?? [])
       let restored = ParentExecutionHandoff(parent: parent, journal: journal, token: try await journal.pauseAdmission(), checkpoint: checkpoint)
-      try await restored.resume()
+      try await restored.resume(activateRuntime: false)
       return restored
     } catch {
       await journal.stop()
@@ -107,7 +112,14 @@ public actor ParentExecutionHandoff {
     }
   }
 
-  public func resume() async throws {
+  public func resume() async throws { try await resume(activateRuntime: true) }
+
+  public func commitExec() async throws {
+    guard case .active = state else { throw unavailable() }
+    await parent.activateTransferredAttempts()
+  }
+
+  private func resume(activateRuntime: Bool) async throws {
     guard case let .paused(token, _) = state else { throw unavailable() }
     state = .preparing
     await parent.resumeResources()
@@ -116,6 +128,7 @@ public actor ParentExecutionHandoff {
     try await bytes.admission.resume()
     try requirePreparing()
     state = .active
+    if activateRuntime { await parent.activateTransferredAttempts() }
   }
 
   public func transfer(to owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, spawn: ParentSpawnEndpoint? = nil, control: (@Sendable (WorkerCall) async throws -> JSONValue)? = nil) async throws -> ParentExecutionHandoff {
@@ -126,12 +139,14 @@ public actor ParentExecutionHandoff {
       try checkpoint.validate()
       let journal = try OwnerReceiptJournal(restoring: checkpoint.receipts)
       try await replacement.restoreReaders(checkpoint.readers)
+      try await replacement.restoreAttempts(checkpoint.attempts ?? [])
       let restoredToken = try await journal.pauseAdmission()
       try Task.checkCancellation()
       let restored = ParentExecutionHandoff(parent: replacement, journal: journal, token: restoredToken, checkpoint: checkpoint)
       guard case .transferring = state else { await restored.shutdown(); throw unavailable() }
       await bytes.admission.close()
       await bytes.shutdown()
+      await parent.retireTransferredAttempts()
       await parent.shutdown()
       guard case .transferring = state else { await restored.shutdown(); throw unavailable() }
       state = .retired
@@ -163,21 +178,24 @@ public actor ParentExecutionHandoff {
       let journal = try OwnerReceiptJournal(restoring: decoded.receipts)
       try await stage(.journal)
       try await parent.restoreReaders(decoded.readers)
+      try await parent.restoreAttempts(decoded.attempts ?? [])
       try await stage(.readers)
       let restored = ParentExecutionHandoff(parent: parent, journal: journal, token: try await journal.pauseAdmission(), checkpoint: decoded)
       staged = restored
       stagedRestore = restored
-      try await restored.resume()
+      try await restored.resume(activateRuntime: false)
       try await stage(.resumed)
       try await stage(.installing)
       try Task.checkCancellation()
       guard case .transferring = state else { throw unavailable() }
       // A successful install is the commit: it must not throw after publishing the route.
       try await install(restored)
+      await restored.parent.activateTransferredAttempts()
       stagedRestore = nil
       state = .retired
       await bytes.admission.close()
       await bytes.shutdown()
+      await self.parent.retireTransferredAttempts()
       await self.parent.shutdown()
       return restored
     } catch {
@@ -218,14 +236,23 @@ public actor ParentExecutionHandoff {
 struct ParentExecutionCheckpoint: Codable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
   let receipts: OwnerReceiptCheckpoint
   let readers: [ScriptStreamCheckpoint]
+  let attempts: [RuntimeAttempt]?
+
+  init(receipts: OwnerReceiptCheckpoint, readers: [ScriptStreamCheckpoint], attempts: [RuntimeAttempt] = []) {
+    self.receipts = receipts; self.readers = readers; self.attempts = attempts.isEmpty ? nil : attempts
+  }
+
   var description: String { "ParentExecutionCheckpoint(<redacted>)" }
   var debugDescription: String { description }
   var customMirror: Mirror { Mirror(self, children: [:]) }
 
   func validate() throws {
     _ = try receipts.restore()
+    let active = attempts ?? []
+    guard active.count <= 4096, Set(active.map(\.id)).count == active.count,
+          active.allSatisfy({ !$0.session.rawValue.isEmpty && $0.session.rawValue.utf8.count <= 256 }) else { throw invalid() }
     guard readers.count <= 256, Set(readers.map { $0.definition.id }).count == readers.count,
-          try JSONEncoder().encode(receipts).count + JSONEncoder().encode(readers).count <= 128 << 20
+          try JSONEncoder().encode(receipts).count + JSONEncoder().encode(readers).count + JSONEncoder().encode(active).count <= 128 << 20
     else { throw invalid() }
     let entries = receipts.clients.flatMap(\.entries)
     guard Set(entries.map { $0.call.id }).count == entries.count else { throw invalid() }

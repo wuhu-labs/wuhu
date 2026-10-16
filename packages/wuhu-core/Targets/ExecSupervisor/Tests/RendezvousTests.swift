@@ -136,6 +136,53 @@ func compose<R: Sendable>(_ home: MachineHome, _ body: @escaping @Sendable (Comp
     }
   }
 
+  @Test func theSupervisorProcessExitsOnceItsOperationSettlesEvenAcrossAnAgentRestart() async throws {
+    let home = try MachineHome(); defer { home.remove() }
+    let manifest = try await home.manifest()
+    let id = manifest.operation
+    let directory = home.operations + "/" + id.uuidString
+    let supervisor = Task { try await ExecSupervisor.run(directory: directory) }
+    defer { supervisor.cancel() }
+    try await compose(home) { _, registry in
+      try await waitForLink(registry, id)
+      let start = execRequest(id, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh", "-c", "printf done"], "cwd": "/tmp", "stdin": false])))
+      #expect(try await registry.send(start, to: manifest, identity: false).status.code == 201)
+    }
+    try await compose(home) { computer, registry in
+      try await waitForLink(registry, id)
+      let clock = ContinuousClock(); let deadline = clock.now + .seconds(10)
+      var finals: [String: UInt64] = [:]
+      for channel in ["stdout", "stderr"] {
+        var after: UInt64 = 0
+        defer { finals[channel] = after }
+        while true {
+          guard clock.now < deadline else { throw TestFailure.timeout }
+          let snapshot = try await computer.handler(execRequest(id, query: "?channel=\(channel)&after=\(after)")).body.json(OperationSnapshot.self)
+          let through = snapshot.through?.rawValue ?? after
+          if snapshot.channelEnd, through == after { break }
+          if through == after { try await clock.sleep(for: .milliseconds(20)) }
+          after = through
+        }
+      }
+      var token: UUID?
+      while token == nil {
+        guard clock.now < deadline else { throw TestFailure.timeout }
+        token = try await computer.handler(execRequest(id)).body.json(OperationSnapshot.self).terminalToken
+        if token == nil { try await clock.sleep(for: .milliseconds(20)) }
+      }
+      // The server acks on each channel's poll in turn; stderr is empty, and its ack must still find the operation.
+      for channel in ["stdout", "stderr"] {
+        #expect(FileManager.default.fileExists(atPath: directory))
+        #expect(try await computer.handler(execRequest(id, query: "?channel=\(channel)&after=\(finals[channel]!)&terminalAck=\(token!.uuidString)")).status.code == 200)
+      }
+      while FileManager.default.fileExists(atPath: directory) {
+        guard clock.now < deadline else { throw TestFailure.timeout }
+        try await clock.sleep(for: .milliseconds(50))
+      }
+    }
+    try await supervisor.value
+  }
+
   // The ctl.sock link replaced the per-operation socket as transport only: a start's server attribution reaches the supervisor intact.
   @Test func aStartsCallerCrossesTheCtlSockLinkToTheSupervisor() async throws {
     let home = try MachineHome(); defer { home.remove() }

@@ -29,9 +29,9 @@ struct AdminExecFrame: Codable, Sendable {
 
   func replacingDescriptors(_ fds: [Int32], rollback: Bool) -> Self {
     let worker = execution.worker.map { record in
-      ExecWorkerRecord(directory: record.directory, space: record.space, generation: record.generation, incarnation: record.incarnation, processID: record.processID, birth: record.birth, carrier: fds[2], listener: fds[3], listenerIdentity: record.listenerIdentity)
+      ExecWorkerRecord(directory: record.directory, space: record.space, generation: record.generation, incarnation: record.incarnation, processID: record.processID, birth: record.birth, fence: record.fence, carrier: fds[2], listener: fds[3], listenerIdentity: record.listenerIdentity)
     }
-    return .init(version: version, processID: processID, birth: birth, request: request, digest: digest, lastGood: lastGood, rollback: rollback, image: fds[1], listener: fds[0], listenerDevice: listenerDevice, listenerInode: listenerInode, space: space, execution: .init(worker: worker, assignments: execution.assignments))
+    return .init(version: version, processID: processID, birth: birth, request: request, digest: digest, lastGood: lastGood, rollback: rollback, image: fds[1], listener: fds[0], listenerDevice: listenerDevice, listenerInode: listenerInode, space: space, execution: .init(worker: worker, assignments: execution.assignments, activePasses: execution.activePasses))
   }
 
   func validate() throws {
@@ -40,7 +40,10 @@ struct AdminExecFrame: Codable, Sendable {
           digest.count == 64, digest.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 || $0 >= 97 && $0 <= 102 }),
           !space.isEmpty, execution.assignments.count <= 4096,
           Set(execution.assignments).count == execution.assignments.count,
-          execution.worker != nil || execution.assignments.isEmpty else { throw AdminExecError.refused("execIdentity") }
+          execution.activePasses.count <= 4096,
+          Set(execution.activePasses.keys).isSubset(of: Set(execution.assignments)),
+          execution.activePasses.values.allSatisfy({ $0.count <= 4096 && Set($0).count == $0.count }),
+          execution.worker != nil || execution.assignments.isEmpty && execution.activePasses.isEmpty else { throw AdminExecError.refused("execIdentity") }
     var state = stat()
     guard fstat(listener, &state) == 0, state.st_mode & S_IFMT == S_IFSOCK,
           UInt64(truncatingIfNeeded: state.st_dev) == listenerDevice,

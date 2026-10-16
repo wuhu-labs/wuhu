@@ -116,6 +116,10 @@ The server echoes the actual placement in `MachineAddOutput.group`. When a targe
 
 `wuhu agent [--log <path> | --resume <path>]` runs [MinimalAgent](../MinimalAgent/SPEC.md) in the current directory with the JSON request read from stdin, dispatched before identity resolution, so no wallet, pin or session token is read and a missing or bad `WUHU_TOKEN` in a session's exec does not stop it; it works offline. A terminal stdin and passing both flags are usage errors (64). Success prints `{"result": …}` on stdout and exits 0; an `AgentError` prints `<code>: <message>` on stderr, credential masked, and exits 1.
 
+## Exec ID tokens
+
+`wuhu id-token --audience <origin> [--json]` is dispatched before identity resolution, like `agent`: it reads only `WUHU_ID_TOKEN_URL` and `WUHU_ID_TOKEN_REQUEST`, never a wallet, pin or `WUHU_TOKEN`, and sends one `GET <url>?audience=<origin>` with `Authorization: Bearer <request>`. Either name unset or empty fails (exit 1) without traffic. A 200 prints the token, or with `--json` the server's `{token, expiresAt}`; any other status prints `id-token: <server message>` and exits 1. A missing `--audience` is a usage error (64).
+
 ## Retained execution images
 
 Upgrade installation and version-directory pruning share the execution image store lock at `<config>/execution-images/lock` with worker image staging. SHA256 references protect matching version bytes in addition to current/previous and the mtime keep count. An existing retained version cannot be replaced even if its version name is reused. Corrupt, foreign-owned, substituted or unreadable reference evidence refuses replacement/pruning rather than assuming no live image; failed prune remains a reported warning after an otherwise completed installation. Rollback does not release image references. The private image copies survive version-directory removal by other software; external installers/pruners must use the same advisory lock and digest-reference gate before deleting or replacing source versions.

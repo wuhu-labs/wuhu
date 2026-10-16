@@ -122,10 +122,10 @@ actor ExecutionWorkerRuntimeStorage {
     return .init(space: manifest.space, generation: manifest.generation, incarnation: manifest.incarnation, processID: manifest.processID, birth: manifest.birth)
   }
 
-  func execRecord(carrier: Int32, listener: WorkerListener.ListenerExport) throws -> ExecWorkerRecord {
+  func execRecord(fence: UUID, carrier: Int32, listener: WorkerListener.ListenerExport) throws -> ExecWorkerRecord {
     guard durable, let manifest, manifest.credentials.successor == nil else { throw AdminExecError.refused("workerIdentity") }
     try manifest.verifyProcess()
-    return .init(directory: directory, space: space, generation: generation, incarnation: incarnation, processID: manifest.processID, birth: manifest.birth, carrier: carrier, listener: listener.descriptor, listenerIdentity: .init(listener.identity))
+    return .init(directory: directory, space: space, generation: generation, incarnation: incarnation, processID: manifest.processID, birth: manifest.birth, fence: fence, carrier: carrier, listener: listener.descriptor, listenerIdentity: .init(listener.identity))
   }
 
   func cleanup() async throws {

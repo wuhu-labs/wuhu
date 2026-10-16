@@ -20,7 +20,7 @@ Deno.test('/ is the space index route, which renders the node page', () => {
 
 Deno.test('a path below / still renders the node page', () => {
   const matched = leaf('/notes/plan.md')
-  if (matched !== 'routes/node.tsx') {
+  if (matched !== 'routes/node') {
     throw new Error(`/notes/plan.md matched ${matched}`)
   }
 })

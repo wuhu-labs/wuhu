@@ -222,18 +222,15 @@ extension MachineV2StoreTests {
 }
 
 extension MachineV2StoreTests {
-  @Test func machineActiveCapacityIsSharedAcrossCallerGroups() async throws {
+  @Test func machineActiveOperationsAreNotCounted() async throws {
     let space = try Space.inMemory(); let key = SymmetricKey(size: .bits256)
     let first = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let second = try await space.machineV2Store(group: .init(rawValue: "other"), key: key, problemsGroup: .shared)
-    var limits = OperationLimits(); limits.activeOperations = 2
-    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: limits, kinds: [ComputerKindSchemas.read])
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: OperationLimits(), kinds: [ComputerKindSchemas.read])
     func record() -> ClientRecord { .init(id: UUID(), correlation: UUID(), machine: "shared-machine", start: .init(kind: "read.v1", input: [:]), description: description) }
-    _ = try await first.claim(.init(scope: "script", key: "one"), record: record())
-    _ = try await second.claim(.init(scope: "script", key: "two"), record: record())
-    do { _ = try await first.claim(.init(scope: "another-script", key: "three"), record: record()); Issue.record("cross-group machine cap bypass") }
-    catch let error as OperationError { #expect(error.code == .capacityExceeded) }
-    #expect(try await first.lookup(.init(scope: "another-script", key: "three")) == nil)
+    for n in 0 ..< 40 {
+      _ = try await (n.isMultiple(of: 2) ? first : second).claim(.init(scope: "script-\(n)", key: "start"), record: record())
+    }
   }
 
   @Test func machineBufferReservationsAreSharedButScriptCapacityRemainsGroupScoped() async throws {

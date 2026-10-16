@@ -6,13 +6,15 @@
     ".react-router",
     "build",
     "app/lib/transcript-semantics.gen.json",
-    "app/lib/model-route-inspection.gen.json"
+    "app/lib/model-route-inspection.gen.json",
+    "app/lib/viewing.vectors.json"
   ],
   "generated": {
     "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
     "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json",
     "app/lib/transcript-semantics.gen.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/transcript-semantics.json",
-    "app/lib/model-route-inspection.gen.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/model-route-inspection.json"
+    "app/lib/model-route-inspection.gen.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/model-route-inspection.json",
+    "app/lib/viewing.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/viewing-vectors.json"
   },
   "exportedDirs": {
     "shell-sdk": "app/lib/shell-sdk"
@@ -32,12 +34,12 @@
     "jsxImportSource": "react"
   },
   "tasks": {
-    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/transcript-semantics.json app/lib/transcript-semantics.gen.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/model-route-inspection.json app/lib/model-route-inspection.gen.json)",
+    "gen-contract": "test ! -f ../../../tools/contract-ts/emit.ts && echo 'gen-contract: emitter absent (in-graph inject); skipping' || (deno run --allow-read --allow-write ../../../tools/contract-ts/emit.ts ../../wuhu-core/Targets/SpaceContract/Tests/contract --out app/lib/contract.gen.ts && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/space-url-vectors.json app/lib/space-url.vectors.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/transcript-semantics.json app/lib/transcript-semantics.gen.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/model-route-inspection.json app/lib/model-route-inspection.gen.json && cp ../../wuhu-core/Targets/SpaceContract/Tests/contract/viewing-vectors.json app/lib/viewing.vectors.json)",
     "dev": "deno task gen-contract && deno run -A npm:@react-router/dev dev",
     "build": "deno run -A npm:@react-router/dev build",
     "typecheck": "deno task gen-contract && deno run -A npm:@react-router/dev typegen && deno run -A npm:typescript/tsc -p tsconfig.check.json",
     "fmt": "deno fmt --check .",
     "lint": "deno lint app",
-    "test": "deno task gen-contract && deno test --sloppy-imports --allow-read --allow-env=NODE_ENV --quiet app/lib app/sdk"
+    "test": "deno task gen-contract && deno test --sloppy-imports --allow-read --allow-env=NODE_ENV,WS_NO_BUFFER_UTIL --quiet app/lib app/sdk"
   }
 }

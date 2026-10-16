@@ -12,6 +12,11 @@ import struct WuhuVFS.NodeTreeVFS
 import struct WuhuVFS.VFSPath
 import protocol WuhuVFS.VirtualFileSystem
 
+struct ExecClaims: Equatable, Sendable {
+  let machine: String
+  let exec: String
+}
+
 struct ServerIdentity: Sendable {
   private let key: P256.Signing.PrivateKey
   let kid: String
@@ -57,7 +62,7 @@ struct ServerIdentity: Sendable {
     ])])])
   }
 
-  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, directoryIssuer: String? = nil) throws -> String {
+  func token(issuer: String?, audience: URL, space: String, group: String, session: String? = nil, now: Date, id: UUID, lifetime: Int = 300, page: String? = nil, viewer: String? = nil, exec: ExecClaims? = nil, directoryIssuer: String? = nil) throws -> String {
     let issuer = try directoryIssuer ?? Self.issuer(issuer)
     let audience = try Self.audience(audience)
     let issued = Int(now.timeIntervalSince1970)
@@ -69,6 +74,10 @@ struct ServerIdentity: Sendable {
     if let session { claims["session"] = .string(session) }
     if let page { claims["path"] = .string(page) }
     if let viewer { claims["viewer"] = .string(viewer) }
+    if let exec {
+      claims["machine"] = .string(exec.machine)
+      claims["exec"] = .string(exec.exec)
+    }
     let header: JSONValue = .object(["alg": .string("ES256"), "typ": .string("JWT"), "kid": .string(kid)])
     let signingInput = Data(header.jsonString().utf8).base64URL + "." + Data(JSONValue.object(claims).jsonString().utf8).base64URL
     do {

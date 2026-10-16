@@ -47,10 +47,14 @@ public struct ParentExecutionEndpoint: Sendable {
     try await machines.requireTransferable()
     try await identity.requireTransferable()
     try await traces.requireTransferable()
-    try await runtime.requireTransferable()
     try await sessions.requireTransferable()
     return try await streams.checkpoint(retaining: calls)
   }
+
+  func checkpointAttempts() async throws -> [RuntimeAttempt] { try await runtime.checkpoint() }
+  func restoreAttempts(_ attempts: [RuntimeAttempt]) async throws { try await runtime.restore(attempts) }
+  func activateTransferredAttempts() async { await runtime.activateTransferred() }
+  func retireTransferredAttempts() async { await runtime.retireTransferred() }
 
   func restoreReaders(_ checkpoints: [ScriptStreamCheckpoint]) async throws {
     guard !checkpoints.isEmpty else { return }

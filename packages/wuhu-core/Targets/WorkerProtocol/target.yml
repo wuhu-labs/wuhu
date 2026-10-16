@@ -5,6 +5,8 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - Dependencies
+  - Clocks
   - ServerTelemetry
   - Fetch
   - Serve
@@ -15,6 +17,8 @@ dependencies:
   - NIOPosix
 tests:
   dependencies:
+    - Dependencies
+    - Clocks
     - ServerTelemetry
     - Fetch
     - FetchAsyncHTTPClient

@@ -41,8 +41,7 @@ struct CacheWarmer: Sendable {
           try await space.sessions.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds)
           try await space.sessions.enqueueCacheWarming(
             id, maxPings: policy.maxPings,
-            contextTokens: transcript.estimatedContextTokens(images: entry.budget(provider.dialect).images),
-            offerThreshold: policy.compactionThresholdTokens, offerGrowth: policy.compactionGrowthTokens,
+            floorTokens: policy.floorTokens, images: entry.budget(provider.dialect).images,
             quotaLow: quotaLow(provider: model.provider, policy: policy),
           )
         } catch {
@@ -57,8 +56,10 @@ struct CacheWarmer: Sendable {
   func allows(_ id: SessionID) async throws -> Bool {
     guard !startupExcludedSessions.contains(id) else { return false }
     let record = try await space.sessions.record(id)
-    guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, let (model, _, entry) = try await configuration(record) else { return false }
-    guard let policy = entry.cacheWarming else { return false }
+    guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal,
+          let (model, provider, entry) = try await configuration(record), let policy = entry.cacheWarming,
+          try await space.sessions.transcript(id).reachesCacheWarmingFloor(policy.floorTokens, images: entry.budget(provider.dialect).images)
+    else { return false }
     return !quotaLow(provider: model.provider, policy: policy)
   }
 

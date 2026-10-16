@@ -33,7 +33,7 @@ public struct ExternalKind: Sendable {
   let descriptor: KindDescriptor
   let reservation: Int
   let handler: Handler
-  let usage: @Sendable () async throws -> (active: Int, receipts: Int, bufferBytes: Int)
+  let usage: @Sendable () async throws -> (receipts: Int, bufferBytes: Int)
   let owns: @Sendable (UUID) async -> Bool
   let leave: @Sendable () async throws -> Void
   let departure: @Sendable () async throws -> ExternalDeparture
@@ -41,7 +41,7 @@ public struct ExternalKind: Sendable {
     descriptor: KindDescriptor,
     reservation: Int,
     handler: @escaping Handler,
-    usage: @escaping @Sendable () async throws -> (active: Int, receipts: Int, bufferBytes: Int),
+    usage: @escaping @Sendable () async throws -> (receipts: Int, bufferBytes: Int),
     owns: @escaping @Sendable (UUID) async -> Bool,
     leave: @escaping @Sendable () async throws -> Void,
     departure: @escaping @Sendable () async throws -> ExternalDeparture,
@@ -153,18 +153,18 @@ public actor ComputerAgent {
   func owned(_ id: UUID) async -> Bool { await external?.owns(id) ?? false }
 
   /// The external backend's usage, refused when any count is negative so it can never lend budget to the shared caps.
-  func externalUsage() async throws -> (active: Int, receipts: Int, bufferBytes: Int) {
-    guard let external else { return (0, 0, 0) }
+  func externalUsage() async throws -> (receipts: Int, bufferBytes: Int) {
+    guard let external else { return (0, 0) }
     let usage = try await external.usage()
-    guard usage.active >= 0, usage.receipts >= 0, usage.bufferBytes >= 0 else { throw OperationError(.supervisorUnavailable, message: "Invalid external usage") }
+    guard usage.receipts >= 0, usage.bufferBytes >= 0 else { throw OperationError(.supervisorUnavailable, message: "Invalid external usage") }
     return usage
   }
 
-  /// Checked sum; an overflow can only mean the budget is exhausted.
-  static func total(_ values: [Int]) throws -> Int {
+  /// Checked sum; an overflow can only mean the budget `cap` is exhausted.
+  static func total(_ values: [Int], cap: String, limit: Int) throws -> Int {
     try values.reduce(0) { sum, value in
       let (result, overflow) = sum.addingReportingOverflow(value)
-      guard !overflow else { throw OperationError(.capacityExceeded) }
+      guard !overflow else { throw OperationError.capacityExceeded(cap, used: .max, limit: limit) }
       return result
     }
   }
@@ -198,11 +198,12 @@ public actor ComputerAgent {
       // Awaited probes can interleave with other admissions; pending covers all not-yet-returned starts.
       guard !leaving else { throw OperationError(.leaving) }
       guard pending[id] == nil, await runtime.inspect(id) == nil, !(await owned(id)) else { throw OperationError(.operationExists) }
-      guard generation == admissionGeneration else { throw OperationError(.capacityExceeded) }
-      let reserved = try Self.total(Array(pending.values))
-      guard try Self.total([a.active, b.active, pending.count]) < OperationLimits().activeOperations,
-            try Self.total([a.receipts, b.receipts, pending.count]) < OperationLimits().receipts,
-            try Self.total([a.bufferBytes, b.bufferBytes, reserved, reserve]) <= OperationLimits().bufferBytes else { throw OperationError(.capacityExceeded) }
+      guard generation == admissionGeneration else { throw OperationError(.capacityExceeded, message: "admissionRace: a concurrent start changed the budget", details: ["reason": "admissionRace"]) }
+      let limits = OperationLimits()
+      let receipts = try Self.total([a.receipts, b.receipts, pending.count], cap: "receipts", limit: limits.receipts)
+      guard receipts < limits.receipts else { throw OperationError.capacityExceeded("receipts", used: receipts, limit: limits.receipts) }
+      let buffered = try Self.total([a.bufferBytes, b.bufferBytes] + Array(pending.values), cap: "bufferBytes", limit: limits.bufferBytes)
+      guard try Self.total([buffered, reserve], cap: "bufferBytes", limit: limits.bufferBytes) <= limits.bufferBytes else { throw OperationError.capacityExceeded("bufferBytes", used: buffered, limit: limits.bufferBytes, requested: reserve) }
       pending[id] = reserve; admissionGeneration += 1
       defer { pending.removeValue(forKey: id); admissionGeneration += 1 }
       var forwarded = request; forwarded.body = try .json(start)

@@ -119,15 +119,15 @@ public enum ExecutionWorker {
       allowCacheWarming: { try await owner.allowsCacheWarming($0) },
       scheduleWake: { try await owner.scheduleReminder($0, at: $1) },
       executionActivity: { id, pass, active in
-        try await ExecutionWorkerActivity(session: id, pass: pass, active: active).publish(using: parent)
+        try await owner.publishActivity(ExecutionWorkerActivity(session: id, pass: pass, active: active))
       },
     )
     let execution = await SessionExecution(owner: owner, loopConfig: config)
     let exportSpans: @Sendable ([FinishedSpan]) async throws -> Void = { spans in
       let payload = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(spans))
-      _ = try await parent.call(.init(operation: "telemetry.spans", payload: payload, traceContext: nil))
+      _ = try await parent.withOwnerTransaction { try await parent.call(.init(operation: "telemetry.spans", payload: payload, traceContext: nil)) }
     }
-    let operations = SessionExecutionEndpoint(execution: execution, scripts: scripts, attempts: attempts, owner: parent, beforeShutdownReply: {
+    let operations = SessionExecutionEndpoint(execution: execution, scripts: scripts, attempts: attempts, owner: parent, afterExecResume: { try await owner.flushDeferredOwnerPublications() }, beforeShutdownReply: {
       await handlers.shutdown()
       if let telemetry { await telemetry.shutdown(export: exportSpans) }
     })

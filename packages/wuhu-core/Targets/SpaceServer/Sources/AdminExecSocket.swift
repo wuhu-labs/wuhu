@@ -98,15 +98,18 @@ final class AdminExecSocket: Sendable {
             group.addTask {
               try? await connection.executeThenClose { input, output in
                 let uid = try await Self.peerUID(connection.channel)
-                guard allowedUIDs.contains(uid) else {
-                  try await output.write(ByteBuffer(bytes: JSONEncoder().encode(AdminExecController.Reply(id: UUID(), code: "deploymentAdminOnly", processID: getpid()))))
-                  return
-                }
                 let timeout = Task { try await ContinuousClock().sleep(for: .seconds(2)); try? await connection.channel.close() }
                 defer { timeout.cancel() }
+                // A refused peer is answered only after its request is read: closing first would let its write fail instead.
                 var iterator = input.makeAsyncIterator()
                 guard let bytes = try await iterator.next() else { return }
-                let message = try JSONDecoder().decode(Message.self, from: Data(bytes.readableBytesView))
+                let request = Data(bytes.readableBytesView)
+                guard allowedUIDs.contains(uid) else {
+                  let id = (try? JSONDecoder().decode(Message.self, from: request))?.id ?? UUID()
+                  try await output.write(ByteBuffer(bytes: JSONEncoder().encode(AdminExecController.Reply(id: id, code: "deploymentAdminOnly", processID: getpid()))))
+                  return
+                }
+                let message = try JSONDecoder().decode(Message.self, from: request)
                 let reply: AdminExecController.Reply
                 do { reply = try await handle(uid, message) }
                 catch { reply = .init(id: message.id, code: AdminExecError.reason(error), processID: getpid()) }

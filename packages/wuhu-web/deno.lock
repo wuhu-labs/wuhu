@@ -2415,6 +2415,7 @@
             "npm:@babel/core@^7.28.0",
             "npm:@babel/preset-typescript@^7.27.1",
             "npm:@floating-ui/dom@^1.8.0",
+            "npm:@happy-dom/global-registrator@^21.0.1",
             "npm:@react-router/dev@8.1.0",
             "npm:@react-router/node@8.1.0",
             "npm:@tailwindcss/vite@4.3.2",

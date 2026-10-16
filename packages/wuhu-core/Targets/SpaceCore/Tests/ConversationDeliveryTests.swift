@@ -176,38 +176,44 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     #expect(Set(delivery.enqueued) == [owner, other])
   }
 
-  @Test func `the attention window forwards while either bound holds and closes when both lapse`() async throws {
-    let rig = try MovingClockSpace()
+  private func visited(_ rig: MovingClockSpace) async throws -> (owner: SessionID, visitor: SessionID) {
     let owner = try await agent(rig.store, "owner")
     let visitor = try await agent(rig.store, "visitor")
     _ = try await rig.store.post(
       .box(owner), messageID: MessageID("v1"), sender: human(visitor.rawValue),
       senderSession: visitor, content: .init(text: "dropping in"),
     )
+    return (owner, visitor)
+  }
 
-    let inWindow = try await rig.store.post(
-      .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "one"),
-    )
-    #expect(Set(inWindow.enqueued) == [owner, visitor])
+  private func carol(_ rig: MovingClockSpace, _ owner: SessionID, _ id: String) async throws -> Set<SessionID> {
+    try await Set(rig.store.post(.box(owner), messageID: MessageID(id), sender: human("carol"), content: .init(text: id)).enqueued)
+  }
 
-    // Past the time bound but still inside the message bound.
-    rig.advance(1000)
-    let byCount = try await rig.store.post(
-      .box(owner), messageID: MessageID("m2"), sender: human("carol"), content: .init(text: "two"),
-    )
-    #expect(Set(byCount.enqueued) == [owner, visitor])
-
-    // Past both bounds: the window is closed.
-    for index in 3 ... 13 {
-      _ = try await rig.store.post(
-        .box(owner), messageID: MessageID("m\(index)"), sender: human("carol"),
-        content: .init(text: "filler"),
-      )
+  @Test func `the attention window forwards while both bounds hold`() async throws {
+    let rig = try MovingClockSpace()
+    let (owner, visitor) = try await visited(rig)
+    for index in 1 ... ConversationDefaults.windowMessages {
+      rig.advance(Double(ConversationDefaults.windowSeconds - 1) / Double(ConversationDefaults.windowMessages))
+      #expect(try await carol(rig, owner, "m\(index)") == [owner, visitor])
     }
-    let expired = try await rig.store.post(
-      .box(owner), messageID: MessageID("last"), sender: human("carol"), content: .init(text: "late"),
-    )
-    #expect(expired.enqueued == [owner])
+  }
+
+  @Test func `the attention window closes after its message bound, inside its time bound`() async throws {
+    let rig = try MovingClockSpace()
+    let (owner, visitor) = try await visited(rig)
+    for index in 1 ... ConversationDefaults.windowMessages {
+      #expect(try await carol(rig, owner, "m\(index)") == [owner, visitor])
+    }
+    #expect(try await carol(rig, owner, "over") == [owner])
+  }
+
+  @Test func `the attention window closes after its time bound, inside its message bound`() async throws {
+    let rig = try MovingClockSpace()
+    let (owner, visitor) = try await visited(rig)
+    #expect(try await carol(rig, owner, "m1") == [owner, visitor])
+    rig.advance(Double(ConversationDefaults.windowSeconds + 1))
+    #expect(try await carol(rig, owner, "late") == [owner])
   }
 
   @Test func `a task posting in a box never enters the attention window`() async throws {

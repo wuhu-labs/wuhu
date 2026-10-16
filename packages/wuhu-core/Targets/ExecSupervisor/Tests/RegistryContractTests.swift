@@ -76,6 +76,24 @@ private actor SupervisorFixture {
     return (reached, releasing)
   }
 
+  var heldPoll: (reached: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)?
+  /// The next operation GET is answered with the state at its arrival, but only after `release` yields: a stale response in flight.
+  func holdNextPoll() -> (reached: AsyncStream<Void>, release: AsyncStream<Void>.Continuation) {
+    let (reached, signal) = AsyncStream<Void>.makeStream()
+    let (release, releasing) = AsyncStream<Void>.makeStream()
+    heldPoll = (signal, release)
+    return (reached, releasing)
+  }
+
+  var heldIdentity: (reached: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)?
+  /// The next `/identity` is answered with the manifest at its arrival, but only after `release` yields.
+  func holdNextIdentity() -> (reached: AsyncStream<Void>, release: AsyncStream<Void>.Continuation) {
+    let (reached, signal) = AsyncStream<Void>.makeStream()
+    let (release, releasing) = AsyncStream<Void>.makeStream()
+    heldIdentity = (signal, release)
+    return (reached, releasing)
+  }
+
   func launch() async {
     launches += 1
     if let held = heldLaunch {
@@ -99,6 +117,11 @@ private actor SupervisorFixture {
       var response = try Response.json(manifest)
       response.headers[.init("X-Wuhu-Supervisor-Active")!] = "0"
       response.headers[.init("X-Wuhu-Supervisor-Reservation")!] = String(reservation)
+      if let held = heldIdentity {
+        heldIdentity = nil
+        held.reached.yield()
+        for await _ in held.release { break }
+      }
       return response
     }
     if request.url.path == "/retire" {
@@ -117,7 +140,13 @@ private actor SupervisorFixture {
     if request.method == .get, let raw = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "terminalAck" })?.value {
       if rejectAck || UUID(uuidString: raw) != terminalToken { return try .json(ErrorEnvelope(.init(.invalidInput)), status: .badRequest) }
     }
-    return try .json(OperationSnapshot(operation: manifest.operation, verdict: terminal ? Verdict(reason == nil ? .completed : .stopped, result: .null, reason: reason) : nil, terminalToken: terminal ? terminalToken : nil, finalOffsets: ["stdout": .zero, "stderr": .zero], outputConsumed: drained, bufferReservationBytes: reservation))
+    let response = try Response.json(OperationSnapshot(operation: manifest.operation, verdict: terminal ? Verdict(reason == nil ? .completed : .stopped, result: .null, reason: reason) : nil, terminalToken: terminal ? terminalToken : nil, finalOffsets: ["stdout": .zero, "stderr": .zero], outputConsumed: drained, bufferReservationBytes: reservation))
+    if request.method == .get, let held = heldPoll {
+      heldPoll = nil
+      held.reached.yield()
+      for await _ in held.release { break }
+    }
+    return response
   }
 
   nonisolated var files: SupervisorFiles { .init(create: { await self.create($0, $1) }, load: { try await self.load($0) }, list: { _ in await self.directories() }) }
@@ -516,12 +545,61 @@ private final class RegistryAborted: Sendable { let value = Mutex(false) }
     let effects = SupervisorFixture(); await effects.retainInput(); let registry = try effects.registry(); let id = UUID()
     _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": true]))))
     #expect(await registry.reservations[id] == 64 * 1024)
-    #expect(await registry.active.isEmpty)
     await effects.removeAll()
     _ = try await registry.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!))
     #expect(await registry.reservations.isEmpty)
     let response = try await registry.handler(execRequest(id))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .unknownOperation)
+  }
+
+  @Test func aStaleResponseArrivingAfterSettlementNeverMakesTheOperationUnsettledAgain() async throws {
+    let effects = SupervisorFixture(); await effects.capability(200, drained: false); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
+    let (reached, release) = await effects.holdNextPoll()
+    async let stale = registry.handler(execRequest(id))
+    for await _ in reached { break }
+    await effects.consumeOutput()
+    _ = try await registry.handler(ackRequest(id, token: effects.terminalToken))
+    #expect(await registry.unsettled.isEmpty)
+    release.yield()
+    #expect(try await stale.status.code == 200)
+    #expect(await registry.unsettled.isEmpty)
+    await effects.removeAll()
+    _ = try await registry.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!))
+    #expect(await registry.lost.isEmpty)
+  }
+
+  @Test func aLateResponseForARemovedReceiptWritesNoReservation() async throws {
+    let effects = SupervisorFixture(); await effects.retainInput(); let registry = try effects.registry(); let id = UUID()
+    _ = try await registry.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
+    let (reached, release) = await effects.holdNextPoll()
+    async let late = registry.handler(execRequest(id))
+    for await _ in reached { break }
+    await effects.removeAll()
+    _ = try await registry.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!))
+    #expect(await registry.reservations.isEmpty)
+    release.yield()
+    _ = try await late
+    #expect(await registry.reservations.isEmpty)
+    #expect(await registry.unsettled.isEmpty)
+    #expect(try await registry.admissionUsage().bufferBytes == 0)
+  }
+
+  @Test func aLateIdentityForARemovedReceiptWritesNoReservation() async throws {
+    let effects = SupervisorFixture(); await effects.retainInput(); let first = try effects.registry(); let id = UUID()
+    _ = try await first.handler(execRequest(id, method: .post, body: .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/sh"], "cwd": "/tmp", "stdin": false]))))
+    let recovered = try await effects.recovered()
+    let (reached, release) = await effects.holdNextIdentity()
+    async let late: Void = recovered.identifyRecovered()
+    for await _ in reached { break }
+    await effects.removeAll()
+    _ = try await recovered.handler(Request(url: URL(string: "http://memory/machine/v2/machines/test")!))
+    #expect(await recovered.reservations.isEmpty)
+    release.yield()
+    await late
+    #expect(await recovered.reservations.isEmpty)
+    #expect(await recovered.unidentified.isEmpty)
+    #expect(try await recovered.admissionUsage().bufferBytes == 0)
   }
 
   @Test func recoveryIdentityFailureIsPerOperationAndNeverAdopted() async throws {

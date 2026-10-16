@@ -152,7 +152,7 @@ private func entryName(_ entry: UnsafeMutablePointer<dirent>) -> String {
 
 private func removeAt(_ parent: Int32, _ name: String, depth: Int, check: @Sendable () throws -> Void) throws {
   try check()
-  guard depth < 128 else { throw OperationError(.capacityExceeded) }
+  guard depth < 128 else { throw OperationError.capacityExceeded("traversalDepth", used: depth, limit: 128) }
   let entry = try metadataAt(parent, name)
   if entry.kind == .directory {
     let fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)

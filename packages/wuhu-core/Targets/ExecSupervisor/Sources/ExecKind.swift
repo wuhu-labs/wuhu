@@ -41,7 +41,7 @@ struct ExecInput: Codable, Sendable {
 
   var environment: [String] {
     var value = ProcessInfo.processInfo.environment
-    for key in ["WUHU_IDENTITY", "WUHU_GROUP", "WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL", "WUHU_TOKEN_EXPIRES_AT"] { value.removeValue(forKey: key) }
+    for key in ["WUHU_IDENTITY", "WUHU_GROUP", "WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL", "WUHU_TOKEN_EXPIRES_AT", "WUHU_ID_TOKEN_URL", "WUHU_ID_TOKEN_REQUEST"] { value.removeValue(forKey: key) }
     value.merge(env ?? [:], uniquingKeysWith: { _, b in b }); value.merge(secretValues ?? [:], uniquingKeysWith: { _, b in b })
     for key in ["WUHU_EXEC", "WUHU_TOKEN", "WUHU_SPACE_URL", "WUHU_TOKEN_EXPIRES_AT"] { value.removeValue(forKey: key) }
     if let credential = sessionCredential { value["WUHU_EXEC"] = "1"; value["WUHU_TOKEN"] = credential.token; value["WUHU_SPACE_URL"] = credential.spaceURL; if let expiresAt = credential.expiresAt { value["WUHU_TOKEN_EXPIRES_AT"] = String(expiresAt) } }

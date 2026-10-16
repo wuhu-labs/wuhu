@@ -10,7 +10,7 @@ public struct WorkerProtocolError: Error, Codable, Equatable, Sendable {
   public enum Code: String, Codable, Sendable {
     case incompatibleABI, missingCapability, invalidMessage, unauthorized, notNegotiated
     case unavailable, invalidConfiguration, remoteFailure, capacityExceeded
-    case unknownOutcome, consumedReceipt, cancelled
+    case unknownOutcome, consumedReceipt, cancelled, handoffTimedOut
   }
 
   public let code: Code
