@@ -82,6 +82,31 @@ public actor ParentExecutionHandoff {
     return try ParentExecCheckpoint(identity: identity, execution: checkpoint).encode()
   }
 
+  func execCarrier(identity: ParentExecCheckpoint.Identity) async throws -> ParentCheckpointCarrier {
+    guard case let .paused(token, checkpoint) = state else { throw unavailable() }
+    try Task.checkCancellation()
+    let carrier = try await Task.detached { try ParentCheckpointCarrier.export(ParentExecCheckpoint(identity: identity, execution: checkpoint)) }.value
+    try Task.checkCancellation()
+    guard case let .paused(current, _) = state, current == token else { throw unavailable() }
+    return carrier
+  }
+
+  static func restoreExec(_ checkpoint: ParentExecutionCheckpoint, owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, control: (@Sendable (WorkerCall) async throws -> JSONValue)? = nil) async throws -> ParentExecutionHandoff {
+    try checkpoint.validate()
+    let journal = try OwnerReceiptJournal(restoring: checkpoint.receipts)
+    let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: nil, control: control)
+    do {
+      try await parent.restoreReaders(checkpoint.readers)
+      let restored = ParentExecutionHandoff(parent: parent, journal: journal, token: try await journal.pauseAdmission(), checkpoint: checkpoint)
+      try await restored.resume()
+      return restored
+    } catch {
+      await journal.stop()
+      await parent.shutdown()
+      throw error
+    }
+  }
+
   public func resume() async throws {
     guard case let .paused(token, _) = state else { throw unavailable() }
     state = .preparing

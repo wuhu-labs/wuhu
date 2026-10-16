@@ -49,7 +49,7 @@ import Testing
 
 /// The leaf a completed handshake presents under `serverName` (no SNI when
 /// nil): completion proves the served key matches the served certificate.
-private func handshakeLeaf(port: Int, serverName: String?) async throws -> String {
+func handshakeLeaf(port: Int, serverName: String?) async throws -> String {
   var configuration = TLSConfiguration.makeClientConfiguration()
   configuration.certificateVerification = .none
   let context = try NIOSSLContext(configuration: configuration)

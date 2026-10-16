@@ -18,20 +18,19 @@ public actor WorkerListener {
   let server: ServeNIOServer
   let path: String
   let identity: SocketIdentity
-  var stopped = false
-  init(server: ServeNIOServer, path: String, identity: SocketIdentity) { self.server = server; self.path = path; self.identity = identity }
+  enum Acceptance { case accepting, pausing, paused, resuming, stopped }
+  enum PathOwnership { case owned, exportPending, unowned }
+  var pathOwnership = PathOwnership.unowned
+  var acceptance = Acceptance.accepting
+  var retainedDescriptor: ListenerExport?
+  init(server: ServeNIOServer, path: String, identity: SocketIdentity, retainedDescriptor: ListenerExport, initiallyAccepting: Bool = true) {
+    self.server = server; self.path = path; self.identity = identity; self.retainedDescriptor = retainedDescriptor
+    acceptance = initiallyAccepting ? .accepting : .paused
+  }
 
   public static func bind(socket: String, handler: @escaping Handler) async throws -> Self {
-    guard socket.hasPrefix("/"), !socket.utf8.contains(0), socket.utf8.count < 104 else {
-      throw WorkerProtocolError(.invalidConfiguration, message: "Invalid private worker socket path")
-    }
+    try validateDirectory(socket: socket)
     var state = stat()
-    let directory = URL(fileURLWithPath: socket).deletingLastPathComponent().path
-    guard lstat(directory, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700,
-          state.st_mode & S_IFMT == S_IFDIR
-    else {
-      throw WorkerProtocolError(.invalidConfiguration, message: "Worker socket directory must be owned by this user and mode 0700")
-    }
     if lstat(socket, &state) == 0 {
       guard state.st_mode & S_IFMT == S_IFSOCK, state.st_uid == getuid(), state.st_mode & 0o777 == 0o600 else {
         throw WorkerProtocolError(.invalidConfiguration, message: "Existing worker path is not an owner-private socket")
@@ -53,21 +52,32 @@ public actor WorkerListener {
     } else if errno != ENOENT {
       throw WorkerProtocolError(.invalidConfiguration, message: "Cannot inspect worker socket path")
     }
-    let server: ServeNIOServer
+    let bound = try createListener(at: socket)
     do {
-      server = try await ServeNIOServer.bind(unixDomainSocketPath: socket, options: ServeOptions(maximumHeadBytes: 32 << 10, maximumHeaderLineBytes: 20 << 10, maximumBodyBytes: .max, requestBodyHighWatermarkBytes: 64 << 10, requestBodyLowWatermarkBytes: 16 << 10, requestReadInactivityTimeout: nil), handler: handler)
-    } catch { throw WorkerProtocolError(.unavailable, message: "Worker socket bind failed: \(error)") }
-    guard lstat(socket, &state) == 0, state.st_mode & S_IFMT == S_IFSOCK, state.st_uid == getuid() else {
-      await server.shutdown()
-      throw WorkerProtocolError(.invalidConfiguration, message: "Cannot identify bound worker socket")
+      let listener = try await adopt(bound.descriptor, socket: socket, expecting: bound.identity, handler: handler)
+      await listener.claimBoundPath()
+      return listener
+    } catch {
+      bound.identity.path.removeIfUnchanged(at: socket)
+      throw error
     }
-    let identity = SocketIdentity(device: UInt64(state.st_dev), inode: UInt64(state.st_ino))
-    guard chmod(socket, 0o600) == 0 else {
-      await server.shutdown()
-      identity.removeIfUnchanged(at: socket)
-      throw WorkerProtocolError(.invalidConfiguration, message: "Cannot make worker socket owner-private")
+  }
+
+  static var workerOptions: ServeOptions {
+    ServeOptions(maximumHeadBytes: 32 << 10, maximumHeaderLineBytes: 20 << 10, maximumBodyBytes: .max, requestBodyHighWatermarkBytes: 64 << 10, requestBodyLowWatermarkBytes: 16 << 10, requestReadInactivityTimeout: nil)
+  }
+
+  static func validateDirectory(socket: String) throws {
+    guard socket.hasPrefix("/"), !socket.utf8.contains(0), socket.utf8.count < 104 else {
+      throw WorkerProtocolError(.invalidConfiguration, message: "Invalid private worker socket path")
     }
-    return Self(server: server, path: socket, identity: identity)
+    var state = stat()
+    let directory = URL(fileURLWithPath: socket).deletingLastPathComponent().path
+    guard lstat(directory, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700,
+          state.st_mode & S_IFMT == S_IFDIR
+    else {
+      throw WorkerProtocolError(.invalidConfiguration, message: "Worker socket directory must be owned by this user and mode 0700")
+    }
   }
 
   public func run() async {
@@ -75,11 +85,16 @@ public actor WorkerListener {
     await shutdown()
   }
 
+  private func claimBoundPath() { pathOwnership = .owned }
+
   public func shutdown() async {
-    guard !stopped else { return }
-    stopped = true
+    guard acceptance != .stopped else { return }
+    acceptance = .stopped
+    let removesPath = pathOwnership == .owned
+    pathOwnership = .unowned
+    retainedDescriptor = nil
     await server.shutdown()
-    identity.removeIfUnchanged(at: path)
+    if removesPath { identity.removeIfUnchanged(at: path) }
   }
 }
 
@@ -89,7 +104,7 @@ struct SocketIdentity: Sendable {
 
   func removeIfUnchanged(at path: String) {
     var current = stat()
-    guard lstat(path, &current) == 0, UInt64(current.st_dev) == device, UInt64(current.st_ino) == inode else { return }
+    guard lstat(path, &current) == 0, UInt64(truncatingIfNeeded: current.st_dev) == device, UInt64(truncatingIfNeeded: current.st_ino) == inode else { return }
     _ = unlink(path)
   }
 }

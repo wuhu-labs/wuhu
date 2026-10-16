@@ -28,6 +28,9 @@ dependencies:
   - Logging
 tests:
   dependencies:
+    - AsyncHTTPClient
+    - FetchAsyncHTTPClient
+    - NIOPosix
     - Dependencies
     - ServerTelemetry
     - SessionToolsTestSupport
