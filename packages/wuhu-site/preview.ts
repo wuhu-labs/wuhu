@@ -16,6 +16,8 @@ Deno.serve({ hostname: '127.0.0.1', port }, async (request) => {
     ['privacy', 'privacy.html'],
     ['terms', 'terms.html'],
     ['support', 'support.html'],
+    ['download', 'download.html'],
+    ['download.html', 'download.html'],
     ['install.sh', 'install.sh'],
   ])
   const file = files.get(path)

@@ -84,6 +84,7 @@ public struct SubscriptionSlot: Hashable, Sendable, Codable {
     case timer(TimerSchedule, message: String)
     case parkReminder(request: RequestID)
     case requestDeadline(request: RequestID, task: SessionID)
+    case requestStall(RequestStall)
   }
 
   public var id: SubscriptionID

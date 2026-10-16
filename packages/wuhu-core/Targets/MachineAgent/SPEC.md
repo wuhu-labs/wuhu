@@ -14,7 +14,7 @@ this file pins the agent semantics on top.
 (a later milestone), tests hand in in-memory pairs. The production dialer
 announces `group-secrets` in MachineContract's capabilities header on every
 dial: this agent takes secret values from the exec start and resolves no name
-itself. `run` returns only on task cancellation. The clock is `@Dependency(\.continuousClock)`, captured at init.
+itself. `run` returns on task cancellation or an OS-user deployment-policy refusal before dialing. The clock is `@Dependency(\.continuousClock)`, captured at init.
 
 ## Connection lifecycle
 
@@ -137,3 +137,7 @@ M5 can assert space/machine parity for identical contract inputs:
   tree: sibling sort keys append `/` to directory names, and resume prunes
   subtrees below the cursor. Every page is bounded by `entryLimit` regardless
   of tree size.
+
+## Deployment administration separation
+
+Before dialing or admitting work, the agent retains a close-on-exec lifetime role lock and checks `/etc/wuhu/admin-exec.json` through DeploymentAdmin. A configured allowed administrator UID refuses machine-agent startup; malformed or unsafe policy also refuses. With no policy file, ordinary dialing and execution behavior is unchanged. Removing session environment markers cannot change this OS-user boundary.

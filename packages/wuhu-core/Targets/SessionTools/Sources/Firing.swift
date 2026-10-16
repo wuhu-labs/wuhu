@@ -22,12 +22,21 @@ public struct SubscriptionFiring: Sendable {
   }
 
   let handler: (any HandlerExecutionClient)?
+  /// The scripts running in this process, which a request's stall check
+  /// counts as waits; worker-hosted scripts have owner rows instead.
+  private let scripts: Scripts?
   private let startupExcludedSessions: Set<SessionID>
 
-  public init(space: Space, handler: (any HandlerExecutionClient)?, startupExcludedSessions: Set<SessionID> = []) {
+  public init(
+    space: Space,
+    handler: (any HandlerExecutionClient)?,
+    scripts: Scripts? = nil,
+    startupExcludedSessions: Set<SessionID> = [],
+  ) {
     self.startupExcludedSessions = startupExcludedSessions
     self.space = space
     self.handler = handler
+    self.scripts = scripts
   }
 
   public func run() async {
@@ -169,6 +178,10 @@ public struct SubscriptionFiring: Sendable {
       try await firePark(subscription)
     case let .requestDeadline(request, task):
       try await fireDeadline(subscription, request: request, task: task, now: now)
+    case .requestStall:
+      try await space.sessions.checkRequestStall(
+        subscription.session, subscriptionID: subscription.slot.id, now: now, liveScripts: scripts?.runningSessions ?? [],
+      )
     }
   }
 

@@ -96,7 +96,7 @@ public struct SessionRuntime: Sendable {
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, handler: handler, startupExcludedSessions: startupExcludedSessions)
+    firing = SubscriptionFiring(space: space, handler: handler, scripts: scripts, startupExcludedSessions: startupExcludedSessions)
     self.scripts = scripts
   }
 
@@ -221,7 +221,8 @@ extension SessionRuntime {
       }, scheduleWarming: { session, interval in
         try await space.sessions.scheduleCacheWarming(session, intervalSeconds: interval)
       })
-      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true, persistence: workerPersistence, credentialFence: credentialFence, startupExcludedIncarnations: startupFence?.unresolved ?? [], startupExcludedSessions: blocked)
+      let execution = LazyExecutionWorker(executable: executable, sessions: space.sessions, owner: owner, spawn: { try await owner.spawn($0, $1, $2) }, runtime: runtimeOwner, machines: true, persistence: workerPersistence, credentialFence: credentialFence, startupExcludedIncarnations: startupFence?.unresolved ?? [], startupExcludedSessions: blocked, adoptingExec: AdminExecScope.current?.incoming?.execution)
+      await AdminExecScope.current?.register(execution)
       let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: .seconds(24 * 3600), deferredSessions: blocked)
       serviceSlot.bind(service)
       return SessionRuntime(
@@ -278,6 +279,7 @@ extension SessionRuntime {
     )
 
     config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
+    config.archived = { scripts.stopScripts(of: $0) }
     let execution = await SessionExecution(owner: owner, loopConfig: config)
     let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace, deferredSessions: blocked)
     serviceSlot.bind(service)

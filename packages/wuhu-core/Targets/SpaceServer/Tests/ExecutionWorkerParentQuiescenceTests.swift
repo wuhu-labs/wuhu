@@ -20,7 +20,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(2))) struct ExecutionWorkerParentQuiescenceTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(2))) struct ExecutionWorkerParentQuiescenceTests {
   @Test func boundParentQuiescesAndResumesTheSameLiveWorkerBeforeOwnerEffects() async throws {
     try await withSessionDeps {
       let executable = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).standardizedFileURL.path

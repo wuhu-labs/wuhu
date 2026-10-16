@@ -100,6 +100,26 @@ actor WorkerParentBinding {
     if case .busy = state { state = .active }
   }
 
+  func exportExec() async throws -> (ParentExecTransfer, WorkerListener.ListenerExport) {
+    try await prepare()
+    do {
+      guard let identity else { throw AdminExecError.refused("workerIdentity") }
+      let transfer = try await handoff.exportExec(identity: identity)
+      let listener = try await transport.exportExec()
+      return (transfer, listener)
+    } catch {
+      try await resume()
+      throw error
+    }
+  }
+
+  func probeExec() async throws { try await transport.probeExec(credentials: credentials, hello: hello) }
+
+  func rollbackExec() async throws {
+    try await resume()
+    try await transport.resumeExec()
+  }
+
   func shutdown() async {
     if let shutdownTask { await shutdownTask.value; return }
     state = .stopped

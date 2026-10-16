@@ -297,3 +297,241 @@ Deno.test('the hero and install section offer apps alongside the unchanged CLI c
     'Only the two app links accompany the hero CLI command',
   )
 })
+
+Deno.test('the homepage sends Windows and Linux to /download from the hero and install section', async () => {
+  const html = await Deno.readTextFile(`${siteDir}/index.html`)
+  const sections = [
+    html.match(/<header>([\s\S]*?)<\/header>/)?.[1],
+    html.match(/<section id="install">([\s\S]*?)<\/section>/)?.[1],
+  ]
+  for (const section of sections) {
+    if (!section) throw new Error('Homepage section missing')
+    const links = [
+      ...section.matchAll(/<a\b[^>]*href="\/download"[^>]*>(.*?)<\/a>/g),
+    ]
+    assertEquals(links.length, 1, 'One /download link')
+    assertEquals(links[0][1], 'Windows and Linux')
+  }
+})
+
+Deno.test('download.html offers all four apps and names no version before the pointer loads', async () => {
+  const html = await Deno.readTextFile(`${siteDir}/download.html`)
+  const hrefs = [...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map((m) => m[1])
+  for (
+    const href of [
+      'https://wuhu.ai/releases/app/mac/latest/Wuhu.zip',
+      'https://wuhu.ai/releases/app/windows/latest/Wuhu-Setup.exe',
+      'https://wuhu.ai/releases/app/linux/latest/wuhu.deb',
+      'https://apps.apple.com/app/id6807771419',
+    ]
+  ) {
+    assertEquals(hrefs.filter((h) => h === href).length, 1, href)
+  }
+  assertEquals(
+    html.includes("fetch('/releases/app/desktop/latest.json'"),
+    true,
+    'Reads the desktop pointer',
+  )
+  const text = html.replace(/<svg[\s\S]*?<\/svg>/g, '')
+  assertEquals(/\b\d+\.\d+\.\d+\b/.exec(text)?.[0], undefined)
+})
+
+// download.html's script, run against a stand-in document, navigator and
+// fetch: which card it highlights and what it does with the desktop pointer.
+async function runDownloadPage(
+  userAgent: string,
+  maxTouchPoints: number,
+  pointer: (() => Promise<Response>) | null,
+) {
+  const html = await Deno.readTextFile(`${siteDir}/download.html`)
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
+  if (!script) throw new Error('download.html script missing')
+  const element = (id: string) => {
+    const classes = new Set<string>()
+    const tag = { hidden: true }
+    const btn = {
+      classList: {
+        has: (name: string) => classes.has(`btn ${name}`),
+        replace: (from: string, to: string) => {
+          if (classes.delete(`btn ${from}`)) classes.add(`btn ${to}`)
+        },
+      },
+    }
+    classes.add('btn soft')
+    return {
+      id,
+      href: `default:${id}`,
+      textContent: `default:${id}`,
+      title: '',
+      tag,
+      btn,
+      classList: {
+        add: (name: string) => classes.add(name),
+        contains: (name: string) => classes.has(name),
+      },
+      querySelector: (selector: string) =>
+        selector === '.tag' ? tag : selector === '.btn' ? btn : null,
+    }
+  }
+  const elements = new Map(
+    [
+      'app-mac',
+      'app-windows',
+      'app-linux',
+      'app-store',
+      'dl-windows',
+      'dl-windows-meta',
+      'dl-linux',
+      'dl-linux-meta',
+      'dl-linux-cmd',
+    ].map((id) => [id, element(id)]),
+  )
+  const fetched: string[] = []
+  const fakeFetch = (url: string) => {
+    fetched.push(url)
+    return pointer ? pointer() : Promise.reject(new TypeError('offline'))
+  }
+  const loaded = new Function(
+    'navigator',
+    'document',
+    'fetch',
+    `${script}\nreturn desktopLoaded`,
+  )(
+    { userAgent, maxTouchPoints },
+    { getElementById: (id: string) => elements.get(id) ?? null },
+    fakeFetch,
+  )
+  await loaded
+  const highlighted = ['mac', 'windows', 'linux', 'store'].filter((name) => {
+    const card = elements.get(`app-${name}`)!
+    const mine = card.classList.contains('mine')
+    assertEquals(card.tag.hidden, !mine, `${name} tag`)
+    assertEquals(card.btn.classList.has('solid'), mine, `${name} button`)
+    return mine
+  })
+  assertEquals(
+    JSON.stringify(fetched),
+    '["/releases/app/desktop/latest.json"]',
+  )
+  return { highlighted, elements }
+}
+
+const userAgents = {
+  iPhone:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  mac:
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+  windows:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+  linux:
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
+  android:
+    'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
+}
+
+Deno.test('download.html highlights the visitor platform', async () => {
+  const cases: [string, number, string][] = [
+    [userAgents.iPhone, 5, 'store'],
+    // iPadOS asks for the desktop site with a Mac user agent.
+    [userAgents.mac, 5, 'store'],
+    [userAgents.mac, 0, 'mac'],
+    [userAgents.windows, 0, 'windows'],
+    [userAgents.linux, 0, 'linux'],
+    [userAgents.android, 5, ''],
+  ]
+  for (const [userAgent, touchPoints, expected] of cases) {
+    const { highlighted } = await runDownloadPage(userAgent, touchPoints, null)
+    assertEquals(highlighted.join(), expected, userAgent)
+  }
+})
+
+const validPointer = {
+  version: '0.1.0',
+  artifacts: {
+    windows: {
+      name: 'Wuhu-Setup-0.1.0-x64.exe',
+      url:
+        'https://wuhu.ai/releases/app/windows/0.1.0/Wuhu-Setup-0.1.0-x64.exe',
+      sha256: 'a'.repeat(64),
+      size: 111225104,
+    },
+    linux: {
+      name: 'wuhu-desktop_0.1.0_amd64.deb',
+      url:
+        'https://wuhu.ai/releases/app/linux/0.1.0/wuhu-desktop_0.1.0_amd64.deb',
+      sha256: 'b'.repeat(64),
+      size: 99199488,
+    },
+  },
+}
+
+Deno.test('download.html moves Windows and Linux to a valid pointer release', async () => {
+  const { elements } = await runDownloadPage(
+    userAgents.linux,
+    0,
+    () => Promise.resolve(Response.json(validPointer)),
+  )
+  const get = (id: string) => elements.get(id)!
+  assertEquals(get('dl-windows').href, validPointer.artifacts.windows.url)
+  assertEquals(get('dl-linux').href, validPointer.artifacts.linux.url)
+  assertEquals(get('dl-windows-meta').textContent, 'Version 0.1.0 · 111 MB')
+  assertEquals(get('dl-linux-meta').textContent, 'Version 0.1.0 · 99 MB')
+  assertEquals(
+    get('dl-linux-meta').title,
+    `wuhu-desktop_0.1.0_amd64.deb\nsha256 ${'b'.repeat(64)}`,
+  )
+  assertEquals(
+    get('dl-linux-cmd').textContent,
+    'sudo apt install ./wuhu-desktop_0.1.0_amd64.deb',
+  )
+})
+
+Deno.test('download.html keeps the latest/ links when the pointer is missing or malformed', async () => {
+  const broken = (change: (pointer: typeof validPointer) => void) => {
+    const pointer = structuredClone(validPointer)
+    change(pointer)
+    return () => Promise.resolve(Response.json(pointer))
+  }
+  const cases: [string, (() => Promise<Response>) | null][] = [
+    ['offline', null],
+    ['404', () => Promise.resolve(new Response('no', { status: 404 }))],
+    ['not JSON', () => Promise.resolve(new Response('<html>'))],
+    ['JSON null', () => Promise.resolve(Response.json(null))],
+    ['no version', broken((p) => (p.version = undefined as never))],
+    [
+      'no linux',
+      broken((p) => delete (p.artifacts as Partial<typeof p.artifacts>).linux),
+    ],
+    [
+      'foreign url',
+      broken((p) => (p.artifacts.windows.url = 'https://example.com/x.exe')),
+    ],
+    [
+      'url of another version',
+      broken((
+        p,
+      ) => (p.artifacts.linux.url = p.artifacts.linux.url.replace(
+        '/0.1.0/',
+        '/0.0.9/',
+      ))),
+    ],
+    ['bad sha256', broken((p) => (p.artifacts.linux.sha256 = 'nope'))],
+    [
+      'shell in the name',
+      broken((p) => (p.artifacts.linux.name = 'x; rm -rf ~.deb')),
+    ],
+  ]
+  for (const [label, pointer] of cases) {
+    const { elements } = await runDownloadPage(userAgents.windows, 0, pointer)
+    for (const id of ['dl-windows', 'dl-linux']) {
+      assertEquals(elements.get(id)!.href, `default:${id}`, `${label} ${id}`)
+    }
+    for (const id of ['dl-windows-meta', 'dl-linux-meta', 'dl-linux-cmd']) {
+      assertEquals(
+        elements.get(id)!.textContent,
+        `default:${id}`,
+        `${label} ${id}`,
+      )
+    }
+  }
+})

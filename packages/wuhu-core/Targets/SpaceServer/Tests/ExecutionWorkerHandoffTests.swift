@@ -24,7 +24,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(2))) struct ExecutionWorkerHandoffTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(2))) struct ExecutionWorkerHandoffTests {
   private func binary() throws -> String {
     URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).standardizedFileURL.path
   }

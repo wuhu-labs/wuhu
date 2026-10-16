@@ -50,6 +50,16 @@ class Handler(BaseHTTPRequestHandler):
         self._handle()
 
     def _read_body(self):
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";", 1)[0].strip(), 16)
+                if size == 0:
+                    while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                        pass
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length == 0:
             return b""
@@ -80,6 +90,30 @@ class Handler(BaseHTTPRequestHandler):
             except (TimeoutError, ConnectionError):
                 pass
             self.wfile.write(b"!")
+            self.wfile.flush()
+            self.close_connection = True
+            return
+
+        if parsed.path == "/error-after-first-chunk":
+            # The 400 head goes out only after the first chunk has arrived, so
+            # the client had already written it when the head paused its
+            # upload. The response end then waits for the terminating chunk:
+            # "!" once it has arrived, "?" if the client never sent it.
+            self.rfile.read(int(self.rfile.readline().split(b";", 1)[0].strip(), 16))
+            self.rfile.readline()
+            self.send_response(400)
+            self.send_header("Content-Length", "1")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.flush()
+            # This bound only covers teardown when a client never ends its upload.
+            self.connection.settimeout(30)
+            try:
+                self._read_body()
+                ended = True
+            except (TimeoutError, ConnectionError, ValueError):
+                ended = False
+            self.wfile.write(b"!" if ended else b"?")
             self.wfile.flush()
             self.close_connection = True
             return

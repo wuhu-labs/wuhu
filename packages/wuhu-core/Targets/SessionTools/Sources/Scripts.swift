@@ -83,6 +83,21 @@ public final class Scripts: Sendable {
     running.withLock { $0[id] }.flatMap { $0.session == session ? $0 : nil }
   }
 
+  /// Sessions with a run_script execution running here; handler firings
+  /// are not counted.
+  var runningSessions: Set<SessionID> {
+    Set(running.withLock { $0.values.map(\.session) })
+  }
+
+  /// Asks every run_script execution of `session` to stop, as archive does
+  /// on a worker, without waiting: a script may be the one archiving its own
+  /// session, and each ends within the stop grace regardless.
+  public func stopScripts(of session: SessionID) {
+    for execution in running.withLock({ $0.values.filter { $0.session == session } }) {
+      execution.requestStop()
+    }
+  }
+
   let handlerInventory = Mutex<[String: SessionID]>([:])
   public var inventory: [String: SessionID] {
     running.withLock { $0.mapValues(\.session) }.merging(handlerInventory.withLock { $0 }) { _, handler in handler }

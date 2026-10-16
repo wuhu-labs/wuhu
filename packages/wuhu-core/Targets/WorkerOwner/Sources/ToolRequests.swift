@@ -83,9 +83,10 @@ struct ToolRequestRequest: Codable, Sendable {
   let task: String
   let message: String
   let deadlineSeconds: Double?
+  let stallSeconds: Double?
   init(_ caller: SessionID, _ call: ToolCallID, _ arguments: RequestArguments) {
-    self.caller = caller; self.call = call; task = arguments.task; message = arguments.message; deadlineSeconds = arguments.deadlineSeconds
+    self.caller = caller; self.call = call; task = arguments.task; message = arguments.message; deadlineSeconds = arguments.deadlineSeconds; stallSeconds = arguments.stallSeconds
   }
 
-  var arguments: RequestArguments { .init(task: task, message: message, deadlineSeconds: deadlineSeconds) }
+  var arguments: RequestArguments { .init(task: task, message: message, deadlineSeconds: deadlineSeconds, stallSeconds: stallSeconds) }
 }

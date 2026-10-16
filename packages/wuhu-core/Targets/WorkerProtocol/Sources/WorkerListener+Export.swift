@@ -20,7 +20,7 @@ extension WorkerListener {
     deinit { _ = close(descriptor) }
   }
 
-  /// Reconstruct only from a source finishHandoff result transported over the trusted handoff channel, never from the inherited socket itself.
+  /// Reconstruct only from a trusted source finishHandoff result, or a verified same-PID/birth exec frame proving the source image no longer exists; never from the inherited socket itself.
   public struct CleanupOwnership: ~Copyable, Sendable {
     public let socket: String
     public let identity: InheritedIdentity

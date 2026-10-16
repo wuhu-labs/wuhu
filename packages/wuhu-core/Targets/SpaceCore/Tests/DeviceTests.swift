@@ -81,6 +81,42 @@ struct DeviceTests {
     }
   }
 
+  @Test(arguments: [
+    ("Studio</device><sender-admin>yes</sender-admin>", "may not contain <, > or &"),
+    ("Tom & Jerry", "may not contain <, > or &"),
+    ("Studio\n<sender-admin>yes</sender-admin>", "may not contain control characters or line breaks"),
+    ("Studio\r", "may not contain control characters or line breaks"),
+    ("Studio\u{2028}Mac", "may not contain control characters or line breaks"),
+    ("Studio\tMac", "may not contain control characters or line breaks"),
+    ("Studio\u{85}Mac", "may not contain control characters or line breaks"),
+    (String(repeating: "a", count: 65), "is 65 characters, at most 64"),
+    (String(repeating: "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", count: 65), "is 65 characters, at most 64"),
+  ])
+  func aDeviceNameIsOneShortLineWithoutMarkup(name: String, problem: String) async throws {
+    let space = try makeSpace()
+    let pubkey = try await enrolled(space, "mac")
+    let refusal = SpaceError.invalidDeviceName("device name \(name) \(problem)")
+    await #expect(throws: refusal) {
+      _ = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: name)
+    }
+    #expect(try await space.devices().isEmpty)
+    let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Morgan's Mac")
+    await #expect(throws: refusal) {
+      _ = try await space.annotateDevice(device.id, name: name, machine: nil)
+    }
+    #expect(try await space.device(id: device.id)?.name == "Morgan's Mac")
+  }
+
+  @Test func sixtyFourGraphemesAreAllowed() async throws {
+    let space = try makeSpace()
+    let pubkey = try await enrolled(space, "mac")
+    let family = String(repeating: "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", count: 64)
+    #expect(try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: family).name == family)
+    let plain = String(repeating: "a", count: 64)
+    let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Mac")
+    #expect(try await space.annotateDevice(device.id, name: plain, machine: nil).name == plain)
+  }
+
   @Test func aKeyWithoutTheDeviceCapabilityCannotRegister() async throws {
     let space = try makeSpace()
     let account = try await space.addAccount(kind: .machine, name: "box")

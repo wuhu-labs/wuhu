@@ -59,7 +59,7 @@ public extension SubscriptionFiring {
     let handler: (any HandlerExecutionClient)?
     if let scripts, let tools { handler = ScriptHandlerExecutor(scripts: scripts, tools: tools) }
     else { handler = nil }
-    self.init(space: space, handler: handler)
+    self.init(space: space, handler: handler, scripts: scripts)
   }
 }
 

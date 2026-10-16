@@ -285,7 +285,7 @@ wuhu session create --model-group work [--effort high] "Title"
 wuhu session restart --model-group work <session-id>  # Start over with fresh group placement
 wuhu session inspect <session-id>   # requested target, active route, placement reason/evidence (JSON)
 wuhu session request [--deadline SECS] <child-id> "message"   # a session's exec only
-wuhu send <session-id> "message" [--wait [--timeout SECS]]
+wuhu send <session-id> "message" [--wait [--timeout SECS]] [--viewing PATH]
 wuhu session log <session-id>       # channel view (default, every executor)
 wuhu session log --direct|-v|-vv [--limit N] [--before REF] <session-id>
 wuhu session entry <session-id> <ref>
@@ -319,6 +319,10 @@ wuhu inbox
   until the session posts back into that conversation, and prints it. It
   exits nonzero **immediately** if the session is already errored, and
   nonzero on error or `--timeout SECS` expiry; `--timeout` requires `--wait`.
+  `--viewing PATH` names the doc or page you have open (`/<path>`, or
+  `wuhu://<group>.localspace/<path>`); the server refuses a path you cannot
+  read now with `400 invalidArgument`, and the session sees it as a
+  `<viewing>` header line. Run by a session, `--viewing` is refused.
 - `session log` default = the session's channel (threads, senders, replies;
   every executor). `--direct` is the deep per-session log of a kernel session; old Claude Code turns are no longer translated. Levels
   select kinds: `--direct` = narrative (inputs,

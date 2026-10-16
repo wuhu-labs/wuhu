@@ -332,12 +332,19 @@ extension Command {
       let id = try parser.required("exec-id", verb: verb)
       try parser.finish(verb: verb)
       return .kill(id: id)
+    case "admin-exec":
+      let rollback = parser.flag("--rollback")
+      let folder = try parser.required("folder", verb: verb)
+      try parser.finish(verb: verb)
+      return .adminExec(folder: folder, rollback: rollback)
     case "serve":
       let host = try parser.option("--host", verb: verb) ?? "127.0.0.1"
       let port = try parser.intOption("--port", verb: verb) ?? 5530
       let dev = parser.flag("--dev")
       let publicRead = parser.flag("--public-read")
       let executionWorker = parser.flag("--execution-worker")
+      let adminExec = parser.flag("--admin-exec")
+      guard !adminExec || executionWorker else { throw UsageError(message: "serve: --admin-exec requires --execution-worker") }
       let devImport = try parser.option("--dev-import", verb: verb)
       let devExport = try parser.option("--dev-export", verb: verb)
       let cert = try parser.option("--cert", verb: verb)
@@ -402,6 +409,7 @@ extension Command {
         dev: dev,
         publicRead: publicRead,
         executionWorker: executionWorker,
+        adminExec: adminExec,
         devImport: devImport,
         devExport: devExport,
         certificate: cert,
@@ -463,13 +471,14 @@ extension Command {
     while let attachment = try parser.option("--attach", verb: "send") {
       attachments.append(attachment)
     }
+    let viewing = try parser.option("--viewing", verb: "send")
     let session = try parser.required("session-id", verb: "send")
     let text = try parser.required("message", verb: "send")
     try parser.finish(verb: "send")
     if timeout != nil, !wait {
       throw UsageError(message: "send: --timeout requires --wait")
     }
-    return .send(SendCommand(session: session, text: text, wait: wait, timeout: timeout, attachments: attachments))
+    return .send(SendCommand(session: session, text: text, wait: wait, timeout: timeout, attachments: attachments, viewing: viewing))
   }
 
   private static func parseGroup(_ parser: inout ArgumentCursor) throws -> Self {
@@ -538,10 +547,11 @@ extension Command {
       ))
     case "request":
       let deadline = try parser.doubleOption("--deadline", verb: "session request")
+      let stall = try parser.doubleOption("--stall", verb: "session request")
       let id = try parser.required("session-id", verb: "session request")
       let message = try parser.required("message", verb: "session request")
       try parser.finish(verb: "session request")
-      return .sessionRequest(id: id, message: message, deadline: deadline)
+      return .sessionRequest(id: id, message: message, deadline: deadline, stall: stall)
     case "restart":
       let provider = try parser.option("--provider", verb: "session restart")
       let model = try parser.option("--model", verb: "session restart")
@@ -1221,8 +1231,20 @@ extension Command {
       --once             glob: print the first event; sql: skip equal snapshot hashes, print first change
     \(exitCodes)
     """,
+    "admin-exec": """
+    usage: wuhu admin-exec <folder> [--rollback]
+
+    Linux-only deployment-admin local same-image exec of an explicitly enabled server.
+    Requires serve --execution-worker --admin-exec and a root-owned
+    /etc/wuhu/admin-exec.json UID policy; disabled by default.
+    Unix peer UID authorizes the request, not environment or wallet identity.
+    Refuses active nontransferable work immediately, without cancelling it.
+    --rollback retries a fresh checkpoint into the private last-good image.
+    No arbitrary binary selection, remote endpoint or session identity is allowed.
+    \(exitCodes)
+    """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--execution-worker] [--admin-exec] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1233,6 +1255,12 @@ extension Command {
     serves the API and the web app; each group's content (pages, files,
     page APIs) is served at <group>.<host>, the shared group at
     shared.<host>, so the certificate must cover both <host> and *.<host>.
+    --admin-exec opts standalone --execution-worker serving into local
+    deployment-admin-only same-image exec and explicit rollback. Off by default;
+    requires root-owned /etc/wuhu/admin-exec.json with allowedUIDs. Allowed
+    users cannot run machine agents. No policy override exists. Unavailable
+    to sessions, remote APIs and run_script. Active nontransferable
+    inference/script/handler state refuses without waiting or cancellation.
     --ai-disclosure <json-file> publishes the configured AI provider set in
     server discovery. Unreadable or invalid disclosure refuses startup.
 
@@ -1731,7 +1759,7 @@ extension Command {
     \(exitCodes)
     """,
     "send": """
-    usage: wuhu send <session-id> <message> [--wait [--timeout SECONDS]] [--attach PATH ...]
+    usage: wuhu send <session-id> <message> [--wait [--timeout SECONDS]] [--attach PATH ...] [--viewing PATH]
 
     posts <message> as your persona (or the owner if unenrolled), in your local
     timezone, into the agent's box. the session answers there with
@@ -1749,6 +1777,10 @@ extension Command {
                  <file name> and references that copy from the message.
                  the session sees a png, jpeg, gif or webp as an image and
                  any other file as its path, type and size.
+      --viewing  the space path of the doc or page you have open, /<path> or
+                 wuhu://<group>.localspace/<path>. it must be a path you can
+                 read now; the session sees it as a <viewing> header line.
+                 a session cannot set it.
     \(exitCodes)
     """,
     "inbox": """
@@ -1779,7 +1811,7 @@ extension Command {
 
     subcommands:
       create [--kind agent|task] [--top-level] [--executor E] [--provider P --model M | --model-group G] [--effort E] [--template NAME] [--extra JSON] [--tag T]... <title>
-      request [--deadline SECONDS] <session-id> <message>
+      request [--deadline SECONDS] [--stall SECONDS] <session-id> <message>
                                from a session's exec: open a request on a
                                child it created, which owes it a final report
       restart [--executor E] [--provider P] [--model M] [--model-group G] [--effort E] [--extra JSON] [--message TEXT] <session-id>
@@ -1837,12 +1869,15 @@ extension Command {
     \(exitCodes)
     """,
     "session request": """
-    usage: wuhu session request [--deadline SECONDS] <session-id> <message>
+    usage: wuhu session request [--deadline SECONDS] [--stall SECONDS] <session-id> <message>
 
     only from a session's exec (WUHU_EXEC=1): opens a request on a child the
     session created, posting <message> into their DM. the child owes a final
-    report; --deadline notifies the session if none arrives in time. prints
-    the request id and the DM's conversation id.
+    report; --deadline notifies the session if none arrives in time. --stall
+    (default 1800, 0 for off) notifies it once the child and its descendants
+    show no progress for that long while not waiting on a script, exec,
+    one-shot timer or request of their own. prints the request id and the
+    DM's conversation id.
     \(exitCodes)
     """,
     "session restart": """

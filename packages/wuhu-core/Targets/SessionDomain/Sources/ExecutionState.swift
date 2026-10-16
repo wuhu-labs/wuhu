@@ -88,6 +88,10 @@ extension SubscriptionID {
     SubscriptionID("deadline.\(request.rawValue)")
   }
 
+  public static func stall(_ request: RequestID) -> SubscriptionID {
+    SubscriptionID("stall.\(request.rawValue)")
+  }
+
   public static func script(_ id: String) -> SubscriptionID {
     SubscriptionID("script.\(id)")
   }

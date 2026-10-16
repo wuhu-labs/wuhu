@@ -9,7 +9,7 @@ import { senderName } from '~/lib/directory'
 import { useDirectory, useSessionTitles } from '~/lib/use-directory'
 import { QuoteStrip } from '~/components/message-row'
 import { PendingFiles } from '~/components/pending-files'
-import { isComposerSendKey } from '~/lib/composer'
+import { isComposerSendKey, sendKeyLabel, useSendKey } from '~/lib/composer'
 import {
   type Draft,
   type Drafts,
@@ -41,6 +41,7 @@ export function ShellComposer({
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
+  const sendKey = useSendKey()
   const picker = useRef<HTMLInputElement>(null)
   useEffect(
     () =>
@@ -140,7 +141,7 @@ export function ShellComposer({
         ref={field}
         rows={1}
         aria-label={placeholder}
-        aria-keyshortcuts='Shift+Enter'
+        aria-keyshortcuts={sendKeyLabel(sendKey)}
         placeholder={placeholder}
         value={draft.text}
         onChange={(event) => {
@@ -158,8 +159,10 @@ export function ShellComposer({
           if (
             isComposerSendKey({
               key: event.key,
+              keyCode: event.keyCode,
               shiftKey: event.shiftKey,
               isComposing: event.nativeEvent.isComposing,
+              sendKey,
             })
           ) {
             event.preventDefault()
@@ -186,7 +189,7 @@ export function ShellComposer({
       )}
       <SendButton
         disabled={!canSend}
-        label='Send (Shift+Enter)'
+        label={`Send (${sendKeyLabel(sendKey)})`}
         onClick={send}
       />
     </ComposerZone>

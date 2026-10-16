@@ -80,6 +80,7 @@ extension SessionStore {
       )
       if let parent = hydration.record.parent {
         try await cancelSubscription(parent, subscriptionID: .deadline(open.id))
+        try await cancelSubscription(parent, subscriptionID: .stall(open.id))
       }
     }
   }

@@ -10,7 +10,7 @@ import SessionDomain
 @testable import SpaceServer
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct ResponsesRuntimeTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ResponsesRuntimeTests {
   @Test func assembledRuntimeReleasesSuccessfulLeasesAcknowledgesActualCommitsAndRoutesQuota() async throws {
     try await withSessionDeps {
       let peer = RuntimeResponsesPeer()

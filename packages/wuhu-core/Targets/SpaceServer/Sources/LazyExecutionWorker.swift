@@ -39,14 +39,16 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   private var sessionHandoffs: [SessionID: UUID] = [:]
   private var scriptChanges: Task<Void, Never>?
   private var stopped = false
+  private var execPaused = false
   private var stopping: Task<Void, Never>?
   private let log = Logger(label: "wuhu.execution-directory")
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, persistence: ExecutionWorkerPersistence? = nil, startConnection: Starter? = nil, credentialFence: ExecutionWorkerCredentialFence? = nil, startupExcludedIncarnations: Set<UUID> = [], startupExcludedSessions: Set<SessionID> = []) {
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, persistence: ExecutionWorkerPersistence? = nil, startConnection: Starter? = nil, credentialFence: ExecutionWorkerCredentialFence? = nil, startupExcludedIncarnations: Set<UUID> = [], startupExcludedSessions: Set<SessionID> = [], adoptingExec: ExecSpaceRecord? = nil) {
     self.startupExcludedSessions = startupExcludedSessions
     let scripts = WorkerScriptDirectory()
     self.scripts = scripts
     let make: @Sendable (UUID, Bool) -> ExecutionWorkerGeneration = { generation, recoverStartupLoss in
+      let inherited = recoverStartupLoss ? adoptingExec?.worker : nil
       return ExecutionWorkerGeneration(executable: executable, sessions: sessions, owner: owner, spawn: spawn, startConnection: { incarnation, activity, exited in
         var runtimeOwner = runtime
         runtimeOwner?.scriptStarted = { session, script in
@@ -65,13 +67,17 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
           await exited()
         }
         if let startConnection { return try await startConnection(incarnation, activity, lost) }
+        if let record = inherited, record.incarnation == incarnation {
+          return try await WorkerConnection.adoptExec(record, configDirectory: persistence?.configDirectory, owner: owner, spawn: spawn, runtime: runtimeOwner, credentialFence: credentialFence, activity: activity, exited: lost)
+        }
         return try await WorkerConnection.start(executable: executable, owner: owner, spawn: spawn, runtime: runtimeOwner, machines: machines, persistence: persistence, incarnation: incarnation, credentialFence: credentialFence, activity: activity, exited: lost)
-      }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations)
+      }, recoverStartupLoss: recoverStartupLoss, startupExcludedIncarnations: startupExcludedIncarnations, adoptingExec: inherited)
     }
     makeGeneration = make
     let id = UUID()
     current = id
     generations = [id: Generation(worker: make(id, true))]
+    assignments = Dictionary(uniqueKeysWithValues: (adoptingExec?.assignments ?? []).map { (SessionID(rawValue: $0), id) })
   }
 
   var processID: Int32? { get async { await generations[current]?.worker.processID } }
@@ -86,7 +92,7 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
   }
 
   private func selected(_ id: SessionID? = nil) async throws -> (UUID, ExecutionWorkerGeneration) {
-    guard !stopped else { throw SessionExecutionRetired() }
+    guard !stopped, !execPaused else { throw SessionExecutionRetired() }
     if scriptChanges == nil {
       scriptChanges = Task {
         for await _ in scripts.changes {
@@ -128,8 +134,28 @@ actor LazyExecutionWorker: SessionExecutionClient, HandlerExecutionClient {
     }
   }
 
+  func prepareExec() async throws -> ExecSpaceExport {
+    guard !stopped, !execPaused, handoffs.isEmpty, generations.count == 1,
+          generations.values.allSatisfy({ $0.handlers == 0 }) else { throw AdminExecError.refused("generationBusy") }
+    execPaused = true
+    do {
+      guard !(await scripts.contains(current)) else { throw AdminExecError.refused("generationBusy") }
+      let exported = try await generations[current]!.worker.prepareExec()
+      return .init(record: .init(worker: exported?.record, assignments: assignments.keys.map(\.rawValue).sorted()), worker: exported)
+    } catch { execPaused = false; throw error }
+  }
+
+  func rollbackExec() async throws {
+    try await generations[current]!.worker.rollbackExec()
+    execPaused = false
+  }
+
+  func reconcileExec() async throws { try await generations[current]!.worker.reconcileExec() }
+
+  func probeExec() async throws { try await generations[current]?.worker.probeExec() }
+
   func replaceGeneration() async throws {
-    guard !stopped else { throw SessionExecutionRetired() }
+    guard !stopped, !execPaused else { throw SessionExecutionRetired() }
     let old = current
     let worker = generations[old]!.worker
     try await worker.requireHandoff()

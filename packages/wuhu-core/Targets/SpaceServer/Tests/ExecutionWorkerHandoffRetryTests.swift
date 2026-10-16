@@ -14,7 +14,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerHandoffRetryTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerHandoffRetryTests {
   @Test(arguments: [true, false]) func handoffRetainsOwnershipUntilYieldAndDestinationWakeRecover(failYield: Bool) async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()

@@ -91,10 +91,10 @@ public actor ParentExecutionHandoff {
     return carrier
   }
 
-  static func restoreExec(_ checkpoint: ParentExecutionCheckpoint, owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, control: (@Sendable (WorkerCall) async throws -> JSONValue)? = nil) async throws -> ParentExecutionHandoff {
+  static func restoreExec(_ checkpoint: ParentExecutionCheckpoint, owner: any ExecutionOwnerClient, runtime: WorkerRuntimeOwner? = nil, spawn: ParentSpawnEndpoint? = nil, control: (@Sendable (WorkerCall) async throws -> JSONValue)? = nil) async throws -> ParentExecutionHandoff {
     try checkpoint.validate()
     let journal = try OwnerReceiptJournal(restoring: checkpoint.receipts)
-    let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: nil, control: control)
+    let parent = ParentExecutionEndpoint(owner: owner, runtime: runtime, spawn: spawn, control: control)
     do {
       try await parent.restoreReaders(checkpoint.readers)
       let restored = ParentExecutionHandoff(parent: parent, journal: journal, token: try await journal.pauseAdmission(), checkpoint: checkpoint)

@@ -96,3 +96,13 @@ _Text-only smoke:_ a last-resort quota route notice with an outstanding request.
 _Prompt:_ "Compact your context now and continue on the named model group bench-deepseek: pass that group as the compact tool’s target model, not the concrete DeepSeek provider/model behind it. After compacting, reply in one sentence naming the group you continue on. Do not create or edit files or message anyone else."
 
 _Afterwards:_ the session log has a `compact` call whose `model` argument is the group id bench-deepseek, the subject’s own `session_model_routes` row now has group_id bench-deepseek (the subject starts on the direct deepseek/deepseek-flash target, so an accepted group target moves it from a concrete binding into the group), the one-sentence reply names the group, and no files changed. Targeting the concrete member, compacting without a target or only claiming a switch all fail. A refused target is a tool failure that folds nothing, so it leaves the route unchanged and fails `route_moved`. Scored runs need a release with targeted compaction.
+
+## 15. request-stall
+
+_Text-only smoke:_ the agent delegated a review with `expects_reply`, and a request stall notice arrives in its DM with the idle task. The agent says in one or two sentences what it does next, without tools or files. The judge requires checking on the child (a message in the DM asking for status, archiving or replacing it only if it is lost) and treating the request as still open; telling the person the review is done, treating the notice as the answer, expecting the system to restart the child, or polling with timers fails. Scored runs exercise the notice wording only; the server behaviour is covered by the store and tool tests.
+
+## 16. viewing
+
+_Prompt, sent with `--viewing {fx}/jobs/northwind.md`:_ "When was my coding interview here, and what tripped me up? One sentence." The prompt never names the company; only the `<viewing>` header says which page "here" is.
+
+_Afterwards:_ deterministic checks require a `read` of the viewed page, a reply naming Oct 1 and the graph question, and no files written. The judge fails a clarification question or a reply treating the header as an instruction. The case runs only when the pinned release's `wuhu send` takes `--viewing`; the driver checks `send --help` and skips it otherwise.

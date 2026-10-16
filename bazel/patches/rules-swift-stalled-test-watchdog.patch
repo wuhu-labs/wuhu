@@ -1,0 +1,139 @@
+--- a/tools/test_observer/SwiftTestingRunner.swift
++++ b/tools/test_observer/SwiftTestingRunner.swift
+@@ -161,7 +161,16 @@ public final class SwiftTestingRunner: Sendable {
+           })
+       }
+     }
+-    for try await recordJSON in try await entryPoint(configuration: .object(runTestsConfiguration))
++    // The entry point hands back its records only after the whole run returns, so a test that
++    // never ends would leave nothing behind when Bazel kills the process at its timeout. The
++    // watchdog sees each record as it is produced and names any test still running past its limit.
++    let watchdog = StalledTestWatchdog(isSuite: { [discoveredSuites] testID in
++      discoveredSuites.withLock { $0.contains(testID) }
++    })
++    watchdog.start()
++    defer { watchdog.stop() }
++    for try await recordJSON in try await entryPoint(
++      configuration: .object(runTestsConfiguration), onRecord: watchdog.observe)
+     {
+       guard case .object(let record) = recordJSON,
+         case .string("event") = record["kind"],
+@@ -236,6 +245,100 @@ public final class SwiftTestingRunner: Sendable {
+   }
+ }
+ 
++/// Names the tests that have been running for longer than a limit, on standard error, while the
++/// run is still in progress.
++///
++/// The console recorder runs quiet, so it prints no started or passed lines, and the xUnit records
++/// are written only after the run ends. When a test hangs and Bazel kills the process at its
++/// timeout, this is the only place the hung test is named.
++private final class StalledTestWatchdog: Sendable {
++  private struct Running: Sendable {
++    var startedAt: ContinuousClock.Instant
++    var reported: Bool
++  }
++
++  /// How long a test runs before it is named.
++  private static let limit: Swift.Duration = .seconds(60)
++
++  /// How often the running tests are checked against the limit.
++  private static let interval: Swift.Duration = .seconds(5)
++
++  private let isSuite: @Sendable (String) -> Bool
++  private let running = Locked<[String: Running]>([:])
++  private let stopped = Locked(false)
++
++  init(isSuite: @escaping @Sendable (String) -> Bool) {
++    self.isSuite = isSuite
++  }
++
++  /// Tracks the tests that started and have not yet ended from one event-stream record.
++  ///
++  /// Keyed by test ID alone. A parameterized test gets one `testStarted` and one `testEnded`, the
++  /// latter only after every case has ended, so a hung case keeps its test here and the test is
++  /// named. The cases' own `testCaseStarted` and `testCaseEnded` records carry no case identity in
++  /// this ABI version (`_testCase` is left out), so the hung case itself cannot be named.
++  func observe(_ recordJSON: JSON) {
++    guard
++      case .object(let record) = recordJSON,
++      case .string("event") = record["kind"],
++      case .object(let payload) = record["payload"],
++      case .string(let kind) = payload["kind"],
++      case .string(let testID) = payload["testID"]
++    else {
++      return
++    }
++    switch kind {
++    case "testStarted":
++      guard !isSuite(testID) else { return }
++      let now = ContinuousClock.now
++      running.withLock { $0[testID] = Running(startedAt: now, reported: false) }
++    case "testEnded", "testSkipped":
++      running.withLock { _ = $0.removeValue(forKey: testID) }
++    default:
++      break
++    }
++  }
++
++  func start() {
++    let thread = Thread { [self] in
++      while !stopped.value {
++        Thread.sleep(forTimeInterval: Self.seconds(Self.interval))
++        report()
++      }
++    }
++    thread.name = "StalledTestWatchdog"
++    thread.start()
++  }
++
++  func stop() {
++    stopped.withLock { $0 = true }
++  }
++
++  private func report() {
++    let now = ContinuousClock.now
++    let stalled: [(String, Swift.Duration)] = running.withLock { running in
++      var stalled: [(String, Swift.Duration)] = []
++      for (testID, test) in running where !test.reported {
++        let elapsed = test.startedAt.duration(to: now)
++        guard elapsed >= Self.limit else { continue }
++        running[testID]?.reported = true
++        stalled.append((testID, elapsed))
++      }
++      return stalled
++    }
++    for (testID, elapsed) in stalled.sorted(by: { $0.0 < $1.0 }) {
++      let seconds = Int(Self.seconds(elapsed))
++      let line = "STALLED: test \(testID) still running after \(seconds)s\n"
++      FileHandle.standardError.write(Data(line.utf8))
++    }
++  }
++
++  private static func seconds(_ duration: Swift.Duration) -> Double {
++    let components = duration.components
++    return Double(components.seconds) + Double(components.attoseconds) / 1e18
++  }
++}
++
+ /// Represents an instant in time that is encoded as part of a test event.
+ ///
+ /// The instant is encoded as a double representing the number of seconds retrieved from
+@@ -285,7 +388,8 @@ private struct SwiftTestingEntryPoint {
+   /// Calls the entry point with the given configuration JSON and returns an asynchronous stream of
+   /// the JSON records that the framework produces as a response.
+   func callAsFunction(
+-    configuration configurationJSON: JSON
++    configuration configurationJSON: JSON,
++    onRecord: (@Sendable (JSON) -> Void)? = nil
+   ) async throws -> AsyncThrowingStream<JSON, Error> {
+     // Since `withUnsafeBytes` is not `async`, we have to copy the data out into a separate
+     // buffer and then invoke the entry point.
+@@ -312,6 +416,7 @@ private struct SwiftTestingEntryPoint {
+         let data = Data(bytes: recordJSONBytes.baseAddress!, count: recordJSONBytes.count)
+         do {
+           let json = try JSON(byDecoding: data)
++          onRecord?(json)
+           escapedContinuation.yield(json)
+         } catch {
+           escapedContinuation.finish(throwing: error)

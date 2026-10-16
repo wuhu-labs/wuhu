@@ -258,7 +258,7 @@ func addSessionRoutes(
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
     let input: SessionRestartInput
     if request.body == nil {
-      input = SessionRestartInput(provider: nil, model: nil, effort: nil, message: nil, identity: nil, timezone: nil)
+      input = SessionRestartInput(provider: nil, model: nil, effort: nil, message: nil, identity: nil, timezone: nil, viewing: nil)
     } else {
       do {
         input = try await request.json(SessionRestartInput.self)
@@ -277,6 +277,14 @@ func addSessionRoutes(
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
+    case let .refused(response): return response
+    }
+    guard input.viewing == nil || input.message?.isEmpty == false else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "viewing rides on a message; this restart has none")
+    }
+    let viewing: Viewing?
+    switch try await viewingVerdict(input.viewing, space: space, as: principal.speaking(as: identity)) {
+    case let .viewing(resolved): viewing = resolved
     case let .refused(response): return response
     }
     do {
@@ -301,7 +309,7 @@ func addSessionRoutes(
       if let message = input.message, !message.isEmpty {
         @Dependency(\.uuid) var uuid
         queued = try await store.post(
-          .box(id), messageID: MessageID(uuid().uuidString.lowercased()), sender: sender,
+          .box(id), messageID: MessageID(uuid().uuidString.lowercased()), sender: sender, viewing: viewing,
           content: MessageContent(text: message), acting: principal.speaking(as: identity),
         ).enqueued.count
       }
@@ -460,6 +468,11 @@ func addSessionRoutes(
       return unknownTimezone(input.timezone)
     }
     sender.device = try await actingDevice(request: request, space: space, now: dateGen.now)
+    let viewing: Viewing?
+    switch try await viewingVerdict(input.viewing, space: space, as: principal.speaking(as: identity)) {
+    case let .viewing(resolved): viewing = resolved
+    case let .refused(response): return response
+    }
     @Dependency(\.uuid) var uuid
     do {
       let delivery = try await store.post(
@@ -467,6 +480,7 @@ func addSessionRoutes(
         messageID: MessageID(uuid().uuidString.lowercased()),
         sender: sender,
         replyTarget: input.replyTarget.map { MessageID($0) },
+        viewing: viewing,
         content: MessageContent(text: input.message),
         uploads: uploads,
         acting: principal.speaking(as: identity),
@@ -736,6 +750,20 @@ private func actingDevice(request: Request, space: Space, now: Date) async throw
     return nil
   }
   return try await space.device(pubkey: credential.key.pubkey)?.id
+}
+
+private enum ViewingVerdict {
+  case viewing(Viewing?)
+  case refused(Response)
+}
+
+private func viewingVerdict(_ spelling: String?, space: Space, as principal: Principal) async throws -> ViewingVerdict {
+  guard let spelling else { return .viewing(nil) }
+  do {
+    return .viewing(try await space.viewing(spelling, as: principal))
+  } catch let refusal as ViewingError {
+    return .refused(errorResponse(.badRequest, code: "invalidArgument", message: refusal.message))
+  }
 }
 
 private func unknownTimezone(_ timezone: String?) -> Response {

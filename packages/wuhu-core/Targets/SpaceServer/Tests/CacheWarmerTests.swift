@@ -9,7 +9,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite(.timeLimit(.minutes(1))) struct CacheWarmerTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct CacheWarmerTests {
   @Test func deferredSessionWarmingTickAndPolicyLeaveItUntouched() async throws {
     let time = Mutex(Date(timeIntervalSince1970: 100))
     try await withSessionDeps {

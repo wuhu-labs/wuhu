@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useOutletContext, useSearchParams } from 'react-router'
 import { policyLinks } from '~/components/ai-sharing-dialog'
 import { Avatar } from '~/components/avatar'
+import { BrowserCard } from '~/components/settings-browser'
 import { ToolsCard } from '~/components/settings-tools'
 import { UsageCard } from '~/components/settings-usage'
 import { displayNameFor, handleFor } from '~/lib/directory'
@@ -78,6 +79,7 @@ export default function Settings() {
           <div className='wuhu-settings'>
             <ProfileCard />
             <DevicesCard signOut={enrolled ? signOut : null} />
+            <BrowserCard />
             <PrivacyCard review={reviewAISharing} />
           </div>
         )

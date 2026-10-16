@@ -30,6 +30,7 @@ enum Fix {
     at: Date = instant,
     attachments: [Attachment] = [],
     device: String? = nil,
+    viewing: String? = nil,
   ) -> TranscriptItem {
     .message(.init(
       id: UUID(),
@@ -42,6 +43,7 @@ enum Fix {
       requestID: request.map { RequestID($0) },
       replyTarget: replyTarget.map { MessageID($0) },
       owesReply: owesReply,
+      viewing: viewing,
       content: .init(text: text, attachments: attachments),
     ))
   }

@@ -50,8 +50,12 @@ public actor SpaceHost {
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
     let id = try await space.identity().rawValue
     return try await SpaceLogContext.$spaceID.withValue(id) {
-      let bootFence = try await ExecutionWorkerBootReconciliation.prepare(sessions: space.sessions) {
-        return await ExecutionWorkerBootReconciliation.run(configDirectory: configDirectory, space: id, executable: executionPlacement.executable)
+      let bootFence: ExecutionWorkerBootFence.Result
+      if let controlled = try await AdminExecScope.current?.validateSpace(id, configDirectory: configDirectory, sessions: space.sessions) { bootFence = controlled }
+      else {
+        bootFence = try await ExecutionWorkerBootReconciliation.prepare(sessions: space.sessions) {
+          return await ExecutionWorkerBootReconciliation.run(configDirectory: configDirectory, space: id, executable: executionPlacement.executable)
+        }
       }
       let advertisedOrigin = deployment.origin
       let logger = Logger(label: "wuhu.serve")
@@ -157,7 +161,8 @@ public actor SpaceHost {
         pageFetch: PageFetch(controller: serverIdentity).response,
       )
       let sockets = HostSockets()
-      let requests = HostRequests()
+      let requests = HostRequests(execPaused: AdminExecScope.current != nil)
+      await AdminExecScope.current?.installRequests(pause: { try await requests.pauseExec() }, resume: { await requests.resumeExec() })
       let scoped = spaceScopedHandler(id: id, handler: handler)
       let owned = spaceOwnedHandler(handler: scoped, requests: requests, sockets: sockets)
       return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {

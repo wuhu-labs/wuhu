@@ -48,6 +48,7 @@ extension Executor {
       "timezone": .string(timezone),
     ])
     body.set("identity", identity.map(JSONValue.string))
+    body.set("viewing", command.viewing.map(JSONValue.string))
     let post = try await client.postMessage(body, files: files)
     guard command.wait else {
       await self.runner.stdout("posted \(post.messageId) in \(post.conversationId)\n")
@@ -187,7 +188,7 @@ extension Executor {
     await self.runner.stdout(output.id + "\n")
   }
 
-  mutating func sessionRequest(id: String, message: String, deadline: Double?) async throws {
+  mutating func sessionRequest(id: String, message: String, deadline: Double?, stall: Double?) async throws {
     let task = try sessionKey(id)
     guard self.session != nil else {
       throw UsageError(message: "session request: only a session opens requests, from its own exec (WUHU_EXEC=1)")
@@ -195,6 +196,7 @@ extension Executor {
     let space = try self.wallet.pinnedSpace()
     var body: JSONValue = .object(["message": .string(message)])
     body.set("deadlineSeconds", deadline.map(JSONValue.number))
+    body.set("stallSeconds", stall.map(JSONValue.number))
     let output: SessionRequestOutput = try await self.authenticated(space).api(
       .post, "/v1/session/\(task)/request", body: body,
     )

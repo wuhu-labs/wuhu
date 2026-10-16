@@ -213,7 +213,7 @@ public enum Wire {
           : "\(path) is part of group \(group)'s layer; only its members write it",
         hint: group == GroupID.shared.rawValue ? "ask a top-level agent or a human admin of shared to make the change" : nil,
       )
-    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .personalGroupEdge,
+    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName, .personalGroupEdge,
          .notAFile, .notADirectory, .pathIsDirectory, .invalidRevision,
          .columnCountMismatch, .columnTypeChanged, .invalidTableHeader, .reservedTablePath,
          .queryNotReadOnly, .templateInvalid, .importInvalid:

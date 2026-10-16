@@ -1,3 +1,4 @@
+import DeploymentAdmin
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -74,6 +75,7 @@ public enum MachineV2Runtime {
       let machine = try await join(server: arguments[2], fingerprint: fingerprint, name: name, token: stdin(), environment: environment, trust: trust, fetch: fetch)
       await stdout("joined \(machine)\ninstall service: wuhu machine-v2 install \(machine) --binary <signed-wuhu>\nor run in foreground: wuhu machine-v2 run \(machine)\n")
     case "run":
+      try DeploymentAdminPolicy.requireMachineAgentUser()
       guard arguments.count == 3 else { throw UsageError(message: "machine-v2 run <id>") }
       let home = try MachineV2Home.locate(environment: environment, machine: arguments[2])
       let installed = serviceCommand.flatMap { command in CommandLine.arguments.first == home.binary.path ? command : nil }
@@ -197,6 +199,7 @@ public enum MachineV2Runtime {
   }
 
   static func run(home: MachineV2Home, trust: ServerTrust, fetch: FetchClient, recording: URL? = nil, upgrader: MachineV2AutoUpgrader? = nil, service: MachineV2Service? = nil, clock: OperationClock = .continuous) async throws {
+    try DeploymentAdminPolicy.requireMachineAgentUser()
     _ = try home.load(); _ = try home.loadKey(); try home.prepare()
     guard FileManager.default.isExecutableFile(atPath: home.binary.path) else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Install this machine's own v2 binary first") }
     let recorder = try recording.map { try MachineV2Recording(root: $0) }

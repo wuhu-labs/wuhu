@@ -173,6 +173,10 @@ import Testing
         }
         #expect(try await pollUntil { try await h.liveExecIDs().count == 1 })
         let execID = try await h.liveExecIDs()[0]
+        // The exec is listed from the moment it is minted, before the CLI's
+        // caller leg dials. Killing in that gap leaves the late caller waiting
+        // out the machine grace, which the hub's test clock never ends.
+        try #require(try await pollUntil { await h.callerBound(execID) })
         #expect(await h.run(["kill", execID]) == 0)
 
         let code = try await group.next()

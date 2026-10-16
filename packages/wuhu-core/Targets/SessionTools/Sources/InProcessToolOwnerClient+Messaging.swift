@@ -71,6 +71,7 @@ extension InProcessToolOwnerClient {
       guard seconds >= 1 else { throw ToolProblem("deadline_seconds must be at least 1") }
       return date.now.addingTimeInterval(seconds)
     }
+    let stall = try stallSeconds(arguments.stallSeconds)
     let task = SessionID(arguments.task)
     do {
       let delivery = try await store.openRequest(
@@ -79,6 +80,7 @@ extension InProcessToolOwnerClient {
         messageID: MessageID(UUID.deterministic("request", session.rawValue, callID.rawValue).uuidString.lowercased()),
         text: arguments.message,
         deadline: deadline,
+        stallSeconds: stall,
       )
       return .request(.init(
         requestID: delivery.message.requestID!,
@@ -89,6 +91,14 @@ extension InProcessToolOwnerClient {
     } catch let error as SessionStoreError {
       throw problem(error)
     }
+  }
+
+  // Absent means the default; 0 turns the alert off.
+  func stallSeconds(_ seconds: Double?) throws -> Double? {
+    guard let seconds else { return RequestStall.defaultSeconds }
+    guard seconds != 0 else { return nil }
+    guard seconds >= 1 else { throw ToolProblem("stall_seconds is 0 (off) or at least 1") }
+    return seconds
   }
 
   func report(
@@ -284,6 +294,7 @@ extension InProcessToolOwnerClient {
         template: arguments.template,
         expectsReply: arguments.expectsReply ?? false,
         message: arguments.message,
+        stallSeconds: arguments.stallSeconds,
       ))
     } catch let problem as ToolProblem {
       throw ToolProblem("create_session: \(problem.message)", code: problem.code)

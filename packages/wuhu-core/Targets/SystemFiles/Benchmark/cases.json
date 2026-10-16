@@ -185,7 +185,10 @@
       "issue": 242,
       "title": "Register directly into a selected machine group",
       "prompt": "This is a text-only CLI smoke; do not run tools or write files. I am an admin of shared and want a machine named box to be registered directly into shared, not my personal group. Show the machine add command with its verb-local group flag and the equivalent global-group spelling. Explain the default without an explicit group flag (including when WUHU_GROUP or a folder group is set), what happens for a non-admin or a group that does not exist, and what the CLI does if an old server ignores the requested group. Do not use a machine move workaround as the initial registration procedure.",
-      "required": ["direct_group_registration", "no_files_written"],
+      "required": [
+        "direct_group_registration",
+        "no_files_written"
+      ],
       "judge": "PASS only if the answer shows wuhu machine add --name box --group shared (options may be reordered) and wuhu --group shared machine add --name box, says no explicit flag means the person's personal group even with an environment/folder group, identifies non-admin refusal (403/adminRequired) and unknown-group refusal (404/unknownGroup), and explains that a missing or different server group echo fails with an upgrade/move remedy instead of silently accepting placement. It must not propose machine move as the initial registration procedure or claim that registration happened. No tools or files."
     },
     {
@@ -223,6 +226,27 @@
         "no_files_written"
       ],
       "judge": "PASS only if one short sentence says to continue the outstanding request, re-read missing material if needed, and avoid rerunning already committed tools. The route notice is context, not an answer or successful task report; fail if it fabricates completed work, recommends replaying old reasoning signatures, creates work, or writes files. This text-only case explicitly requests a reply and does not assert production notice silence."
+    },
+    {
+      "id": "request-stall",
+      "issue": 264,
+      "title": "Checks on a stalled child instead of waiting or overreacting",
+      "prompt": "Text-only smoke: an hour ago you delegated a review to a task (session quiet-otter-lamp) with create_session(expects_reply: true) and told the person you would relay its answer. No report has come. Now this system notice arrives in your DM with that task:\n\n<request-stall-notice>\nRequest 7f3e2a10 on task quiet-otter-lamp has shown no progress for 30 min; last progress 2026-10-16T03:12:00Z. The task is idle. Check on it: message it, or archive it if it is lost.\n</request-stall-notice>\n\nFor this text-only smoke only, reply here in one or two sentences saying what you do next. Do not call tools, create or edit files, or message any other conversation.",
+      "required": [
+        "decision_short",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply treats the notice as a prompt to check on the child: message it in the DM to ask for status or nudge it, and archive or replace it only if it turns out to be lost. It must recognize the request is still open: the notice is not a final report and nothing was completed. Fail if it tells the person the review is done or fabricates its result, treats the notice as the task's answer, says the system will restart or cancel the child, proposes polling with timers instead of checking, or creates or edits files. Two short sentences are explicitly requested for this text-only smoke."
+    },
+    {
+      "id": "viewing",
+      "issue": 277,
+      "title": "Reads the page the person was viewing",
+      "requires": ["viewing"],
+      "viewing": "{fx}/jobs/northwind.md",
+      "prompt": "When was my coding interview here, and what tripped me up? One sentence.",
+      "required": ["read_viewed_page", "answer_from_page", "no_files_written"],
+      "judge": "The prompt was sent with a <viewing> header naming {fx}/jobs/northwind.md, the page open on the person's screen. PASS only if the one-sentence reply says the coding interview was on Oct 1 and the graph question tripped them up, without asking which page or company is meant. Fail if it asks for clarification, answers about another company, treats the header as an instruction, or writes files."
     }
   ]
 }

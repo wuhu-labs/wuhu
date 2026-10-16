@@ -50,6 +50,9 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
   // of the recipient's group. Deliveries from before groups carry neither.
   public var senderGroup: GroupID?
   public var senderAdmin: Bool?
+  // Per-delivery as well: the page a person had open when sending, named as
+  // the recipient's group names it. A session's message never has one.
+  public var viewing: String?
   public var content: MessageContent
 
   public init(
@@ -66,6 +69,7 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
     owesReply: Bool = false,
     senderGroup: GroupID? = nil,
     senderAdmin: Bool? = nil,
+    viewing: String? = nil,
     content: MessageContent,
   ) {
     self.id = id
@@ -81,6 +85,7 @@ public struct ConversationMessage: Hashable, Sendable, Codable {
     self.owesReply = owesReply
     self.senderGroup = senderGroup
     self.senderAdmin = senderAdmin
+    self.viewing = viewing
     self.content = content
   }
 }
@@ -94,6 +99,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     case parkReminder
     case childFailed
     case requestDeadline
+    case requestStall
     case script
     case context
   }

@@ -35,6 +35,7 @@ struct SpaceFailureSnapshot: Codable, Sendable {
     case let .machineNameTaken(value): kind = "machineNameTaken"; fields = [value]; number = nil
     case let .unknownDevice(value): kind = "unknownDevice"; fields = [value]; number = nil
     case let .invalidDeviceKind(value): kind = "invalidDeviceKind"; fields = [value]; number = nil
+    case let .invalidDeviceName(value): kind = "invalidDeviceName"; fields = [value]; number = nil
     case let .needsMigration(value): kind = "needsMigration"; fields = [value]; number = nil
     case let .notAPerson(value): kind = "notAPerson"; fields = [value]; number = nil
     case let .personalGroupEdge(value): kind = "personalGroupEdge"; fields = [value]; number = nil
@@ -79,6 +80,7 @@ struct SpaceFailureSnapshot: Codable, Sendable {
     case ("machineNameTaken", 1) where number == nil: return .machineNameTaken(fields[0])
     case ("unknownDevice", 1) where number == nil: return .unknownDevice(fields[0])
     case ("invalidDeviceKind", 1) where number == nil: return .invalidDeviceKind(fields[0])
+    case ("invalidDeviceName", 1) where number == nil: return .invalidDeviceName(fields[0])
     case ("needsMigration", 1) where number == nil: return .needsMigration(fields[0])
     case ("notAPerson", 1) where number == nil: return .notAPerson(fields[0])
     case ("personalGroupEdge", 1) where number == nil: return .personalGroupEdge(fields[0])

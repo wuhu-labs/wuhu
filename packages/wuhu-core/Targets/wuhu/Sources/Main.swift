@@ -119,6 +119,7 @@ enum Main {
             version: BuildStamp.version,
             publicRead: config.publicRead,
             executionPlacement: config.executionWorker ? try .worker() : .inProcess,
+            adminExec: config.adminExec,
             devImport: config.devImport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             devExport: config.devExport.map { URL(fileURLWithPath: $0, isDirectory: true) },
             certificate: config.certificate.map { URL(fileURLWithPath: $0) },
@@ -141,6 +142,7 @@ enum Main {
         defer { sources.forEach { $0.cancel() } }
         try await server.value
       },
+      adminExec: { folder, rollback in try await SpaceServer.requestAdminExec(folder: URL(fileURLWithPath: folder, isDirectory: true), rollback: rollback) },
       user: { command in
         switch command {
         case let .add(folder, name, admin):

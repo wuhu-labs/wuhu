@@ -150,7 +150,8 @@ private struct Upload: AsyncSequence, Sendable {
 
     mutating func next() async -> ByteBuffer? {
       guard index < upload.count else { return nil }
-      if index == 3 { upload.started.yield() }
+      // The server must begin draining before the initial HTTP/2 stream window is exhausted.
+      if index == 1 { upload.started.yield() }
       index += 1
       return upload.chunk
     }

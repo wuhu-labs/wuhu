@@ -138,6 +138,16 @@ import WuhuAI
     #expect(text.text.hasPrefix("<sender>ali (alice)</sender>\n"))
   }
 
+  @Test func `a person's request carries the viewed page into the user turn`() async {
+    let transcript = Transcript(items: [Fix.message(kind: .request, request: "r-1", viewing: "wuhu://ops.localspace/runbook.md")])
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+    guard case let .text(text) = context.messages[0].user?.content.first else {
+      Issue.record("a request must be user role")
+      return
+    }
+    #expect(text.text.contains("\n<viewing>wuhu://ops.localspace/runbook.md</viewing>\n"))
+  }
+
   @Test func `render never synthesizes pressure notices`() async {
     let transcript = Transcript(items: [Fix.assistant(totalTokens: 800)])
     let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")

@@ -21,6 +21,8 @@ export function noticeLabel(kind: string): string {
       return 'Child failed'
     case 'requestDeadline':
       return 'Request deadline'
+    case 'requestStall':
+      return 'Request stall'
     case 'compactRequest':
       return 'Compaction request'
     case 'context':

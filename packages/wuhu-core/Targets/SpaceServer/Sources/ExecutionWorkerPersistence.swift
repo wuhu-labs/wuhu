@@ -9,6 +9,7 @@
   import Darwin
 #endif
 import struct WorkerOwner.ParentExecutionIdentity
+import class WorkerProtocol.WorkerListener
 import struct WorkerProtocol.WorkerProtocolError
 
 struct ExecutionWorkerPersistence: Sendable {
@@ -57,9 +58,18 @@ actor ExecutionWorkerRuntimeStorage {
   private var manifest: ExecutionWorkerManifest?
   private var durable = false
 
-  init(directory: String, space: String, generation: UUID, incarnation: UUID, location: ExecutionWorkerSocketLocation, store: ExecutionWorkerManifestStore, sockets: ExecutionWorkerSocketDirectory) {
+  init(directory: String, space: String, generation: UUID, incarnation: UUID, location: ExecutionWorkerSocketLocation, store: ExecutionWorkerManifestStore, sockets: ExecutionWorkerSocketDirectory, manifest: ExecutionWorkerManifest? = nil) {
     self.directory = directory; self.space = space; self.generation = generation; self.incarnation = incarnation
     self.location = location; self.store = store; self.sockets = sockets
+    self.manifest = manifest; durable = manifest != nil
+  }
+
+  static func adoptExec(record: ExecWorkerRecord, manifest: ExecutionWorkerManifest) async throws -> ExecutionWorkerRuntimeStorage {
+    guard let location = manifest.sockets, let sockets = try await ExecutionWorkerSocketDirectory.openIfPresent(location, space: record.space, generation: record.generation) else { throw AdminExecError.refused("workerSockets") }
+    let store = try await ExecutionWorkerManifestStore.open(directory: record.directory, space: record.space)
+    let storage = ExecutionWorkerRuntimeStorage(directory: record.directory, space: record.space, generation: record.generation, incarnation: record.incarnation, location: location, store: store, sockets: sockets, manifest: manifest)
+    try await storage.pinEndpoints()
+    return storage
   }
 
   func pinEndpoints() async throws { try await sockets.pinEndpoints() }
@@ -82,6 +92,12 @@ actor ExecutionWorkerRuntimeStorage {
     guard durable, let manifest else { throw WorkerProtocolError(.unavailable, message: "Execution worker identity is unavailable") }
     try manifest.verifyProcess()
     return .init(space: manifest.space, generation: manifest.generation, incarnation: manifest.incarnation, processID: manifest.processID, birth: manifest.birth)
+  }
+
+  func execRecord(carrier: Int32, listener: WorkerListener.ListenerExport) throws -> ExecWorkerRecord {
+    guard durable, let manifest, manifest.credentials.successor == nil else { throw AdminExecError.refused("workerIdentity") }
+    try manifest.verifyProcess()
+    return .init(directory: directory, space: space, generation: generation, incarnation: incarnation, processID: manifest.processID, birth: manifest.birth, carrier: carrier, listener: listener.descriptor, listenerIdentity: .init(listener.identity))
   }
 
   func cleanup() async throws {

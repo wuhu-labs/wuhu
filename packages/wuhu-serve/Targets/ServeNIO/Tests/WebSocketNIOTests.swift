@@ -62,12 +62,16 @@ struct WebSocketNIOTests {
     }
   }
 
-  @Test func serverCloseFinishesTheClient() async throws {
+  @Test(.timeLimit(.minutes(1))) func serverCloseFinishesTheClient() async throws {
     try await withWebSocketServer(session: { socket in
+      // Confirm the client pipeline is upgraded before testing the close lifecycle.
+      var inbound = socket.inbound.makeAsyncIterator()
+      #expect(await inbound.next() == .text("ready"))
       try? await socket.send(.text("bye"))
       socket.close()
     }) { port in
       let client = try await connectWebSocket(port: port, path: "/ws")
+      try await client.send(.text, bytes: Array("ready".utf8))
       var sawClose = false
       for await frame in client.frames where frame.opcode == .connectionClose {
         sawClose = true

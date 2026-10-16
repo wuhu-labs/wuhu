@@ -47,7 +47,7 @@ data: {}
 
 """
 
-@Suite(.timeLimit(.minutes(2))) struct ExecutionWorkerTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(2))) struct ExecutionWorkerTests {
   private func binary() throws -> String {
     let path = try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])
     return URL(fileURLWithPath: path).standardizedFileURL.path

@@ -1,0 +1,13 @@
+diff --git a/Sources/AsyncHTTPClient/ConnectionPool/HTTPRequestStateMachine.swift b/Sources/AsyncHTTPClient/ConnectionPool/HTTPRequestStateMachine.swift
+index cef736063..0dd90f2de 100644
+--- a/Sources/AsyncHTTPClient/ConnectionPool/HTTPRequestStateMachine.swift
++++ b/Sources/AsyncHTTPClient/ConnectionPool/HTTPRequestStateMachine.swift
+@@ -376,8 +376,6 @@ struct HTTPRequestStateMachine {
+             .streaming(let expectedBodyLength, let sentBodyBytes, _),
+             .receivingBody(let head, let streamState)
+         ):
+-            assert(head.status.code < 300)
+-
+             if let expected = expectedBodyLength, expected != sentBodyBytes {
+                 let error = HTTPClientError.bodyLengthMismatch
+                 self.state = .failed(error)

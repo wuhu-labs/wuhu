@@ -86,6 +86,9 @@ extension InProcessToolOwnerClient {
     // The fold answers only so a cancel retried after a crash, its slot
     // already deleted, stays idempotent.
     let armed = try await store.armedSubscriptions(session).first { $0.slot.id == subscriptionID }
+    if case .requestStall = armed?.slot.kind {
+      throw ToolProblem("\(subscriptionID.rawValue) is the stall alert of a request you opened; it ends with the task's final report")
+    }
     let standing = if let armed { armed.subscription } else { state.subscriptions[subscriptionID] }
     switch (standing, kind) {
     case (.observe, .observation), (.timer, .timer):
@@ -117,7 +120,7 @@ extension ArmedSubscription {
     case .requestDeadline:
       guard let nextFireAt else { preconditionFailure("a request deadline is armed with its fire time") }
       return .requestDeadline(nextFireAt)
-    case .parkReminder:
+    case .parkReminder, .requestStall:
       return nil
     }
   }

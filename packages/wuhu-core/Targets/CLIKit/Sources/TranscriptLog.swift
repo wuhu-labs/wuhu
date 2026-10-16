@@ -69,6 +69,7 @@ private func renderedKernelItem(_ logItem: SessionLogItem, level: Int, clip: Int
     case .parkReminder: "park reminder"
     case .childFailed: "child failed"
     case .requestDeadline: "request deadline"
+    case .requestStall: "request stall"
     case .script: "script"
     case .context: "context"
     }

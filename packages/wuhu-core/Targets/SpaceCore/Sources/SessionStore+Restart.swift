@@ -69,6 +69,8 @@ extension SessionStore {
         case .requestDeadline:
           guard let deadline = armed.nextFireAt else { throw SessionStoreError.requestDeadlineWithoutFireDate(armed.slot.id.rawValue) }
           subscriptions[armed.slot.id] = .requestDeadline(deadline)
+        case .requestStall:
+          continue
         case .parkReminder:
           try db.execute(
             sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",

@@ -114,6 +114,27 @@ import Testing
     #expect(untouched.machine == machine.id.rawValue)
   }
 
+  @Test(arguments: [
+    ("Studio</device><sender-admin>yes</sender-admin>", "may not contain <, > or &"),
+    ("Studio\n<sender-admin>yes</sender-admin>", "may not contain control characters or line breaks"),
+    (String(repeating: "a", count: 65), "is 65 characters, at most 64"),
+  ])
+  func aBadDeviceNameIsRefusedAtRegistrationAndAnnotation(name: String, problem: String) async throws {
+    _ = try await enroll(key)
+    let expected: JSONValue = ["code": "invalidArgument", "message": .string("device name \(name) \(problem)")]
+    let registration = try await call(.put, "/v1/device", as: key, body: [
+      "installation": "install-1", "kind": "mac", "name": .string(name),
+    ])
+    #expect(registration.status == .badRequest)
+    #expect(try await json(registration) == expected)
+    #expect(try await harness.space.devices().isEmpty)
+    let device = try await register(key)
+    let annotation = try await call(.patch, "/v1/device/\(device.id)", as: key, body: ["name": .string(name)])
+    #expect(annotation.status == .badRequest)
+    #expect(try await json(annotation) == expected)
+    #expect(try await harness.space.device(id: device.id)?.name == "Studio")
+  }
+
   @Test func anotherAccountCannotAnnotateYourDevice() async throws {
     _ = try await enroll(key)
     let device = try await register(key)

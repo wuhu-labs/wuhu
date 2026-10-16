@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download wuhu — Mac, Windows, Linux, iPhone and iPad</title>
+<link rel="canonical" href="https://wuhu.ai/download">
+<meta name="description" content="Download the Wuhu app for Mac, Windows, Linux, iPhone and iPad.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0d12'/%3E%3Cpath d='M12 24c4 0 4 8 8 8s4-16 8-16 4 24 8 24 4-16 8-16 4 8 8 8' fill='none' stroke='%2358f0c8' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #0b0d12;
+    --ink-2: #4b5261;
+    --ink-3: #8a91a0;
+    --paper: #f7f7f4;
+    --card: #ffffff;
+    --line: rgba(11,13,18,.08);
+    --mint: #10c99a;
+    --mint-bright: #58f0c8;
+    --coral: #ff6b57;
+    --violet: #7b6cff;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --ease: cubic-bezier(.22,.9,.28,1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+
+  .orbs { position: fixed; inset: 0; z-index: 0; pointer-events: none; filter: blur(70px); opacity: .5; }
+  .orb { position: absolute; border-radius: 50%; }
+  .orb.a { width: 46vw; height: 46vw; background: radial-gradient(circle, #a5f3dd, transparent 65%); top: -14vw; right: -10vw; animation: drift-a 26s var(--ease) infinite alternate; }
+  .orb.b { width: 34vw; height: 34vw; background: radial-gradient(circle, #d8d2ff, transparent 65%); top: 30vh; left: -14vw; animation: drift-b 32s var(--ease) infinite alternate; }
+  .orb.c { width: 26vw; height: 26vw; background: radial-gradient(circle, #ffd9d2, transparent 65%); bottom: -10vw; right: 16vw; animation: drift-c 38s var(--ease) infinite alternate; }
+  @keyframes drift-a { to { transform: translate(-9vw, 11vh) scale(1.12); } }
+  @keyframes drift-b { to { transform: translate(7vw, -9vh) scale(.94); } }
+  @keyframes drift-c { to { transform: translate(-5vw, -7vh) scale(1.18); } }
+
+  .shell { position: relative; z-index: 1; max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  nav { display: flex; align-items: center; gap: 14px; padding: 22px 0; }
+  .mark { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--ink); }
+  .mark b { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  nav .spacer { flex: 1; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    text-decoration: none; font-weight: 600; font-size: 14.5px;
+    padding: 10px 18px; border-radius: 10px;
+    transition: transform .18s var(--ease), box-shadow .18s var(--ease), background .18s;
+  }
+  .btn.solid { background: var(--ink); color: #fff; box-shadow: 0 10px 26px -14px rgba(11,13,18,.55); }
+  .btn.solid:hover { transform: translateY(-1.5px); box-shadow: 0 16px 32px -14px rgba(11,13,18,.6); }
+  .btn.ghost { color: var(--ink-2); }
+  .btn.ghost:hover { color: var(--ink); }
+  .btn.soft { background: rgba(11,13,18,.05); color: var(--ink); }
+  .btn.soft:hover { transform: translateY(-1.5px); background: rgba(11,13,18,.08); }
+
+  header { padding: 72px 0 0; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--mint); margin-bottom: 22px;
+  }
+  .kicker::before { content: ""; width: 22px; height: 2px; background: var(--mint); border-radius: 2px; }
+  h1 {
+    font-size: clamp(44px, 7.4vw, 84px);
+    line-height: .98; letter-spacing: -.035em; font-weight: 700;
+  }
+  h1 .wave {
+    background: linear-gradient(92deg, var(--mint) 0%, var(--violet) 55%, var(--coral) 100%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: hue 7s linear infinite;
+  }
+  @keyframes hue { 0% { background-position: 0% 0; } 100% { background-position: 220% 0; } }
+  .lede {
+    margin: 26px 0 0; font-size: clamp(17px, 2vw, 20px);
+    color: var(--ink-2); max-width: 56ch;
+  }
+
+  /* One row per app: the action column lines up down the list, and each row
+     is only as tall as what it says. */
+  .apps { display: flex; flex-direction: column; gap: 14px; margin-top: 52px; }
+  .app {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 248px;
+    grid-template-areas: "ico title get" ".   body  get";
+    grid-template-rows: auto 1fr;
+    column-gap: 22px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 20px; padding: 26px 28px;
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s;
+  }
+  .app:hover { transform: translateY(-2px); box-shadow: 0 22px 44px -26px rgba(11,13,18,.3); }
+  /* The ring is drawn inside the border box, so this card's edges and gaps
+     match the others. */
+  .app.mine {
+    order: -1; border-color: rgba(16,201,154,.6);
+    box-shadow: inset 0 0 0 2px rgba(16,201,154,.16), 0 22px 44px -26px rgba(11,13,18,.3);
+  }
+  .app .ico {
+    grid-area: ico;
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+    color: var(--ink);
+    background: linear-gradient(135deg, rgba(16,201,154,.14), rgba(123,108,255,.14));
+  }
+  .app .ico svg { width: 22px; height: 22px; display: block; }
+  .app .title { grid-area: title; align-self: center; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+  .app h2 { font-size: 21px; font-weight: 700; letter-spacing: -.02em; }
+  .app .tag {
+    font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--mint); background: rgba(16,201,154,.1);
+    padding: 6px 9px; border-radius: 999px;
+  }
+  .app .tag[hidden] { display: none; }
+  .app .body { grid-area: body; }
+  .app p { margin-top: 6px; font-size: 15px; color: var(--ink-2); }
+  .app .note { margin-top: 8px; font-size: 13.5px; color: var(--ink-3); }
+  .app .note b { color: var(--ink-2); font-weight: 600; }
+  .app .note code {
+    display: block; width: fit-content; max-width: 100%; margin-top: 8px;
+    font: 500 12px/1.5 var(--mono); background: rgba(11,13,18,.05);
+    padding: 5px 8px; border-radius: 6px; color: var(--ink-2); overflow-wrap: anywhere;
+  }
+  .app .get { grid-area: get; align-self: center; }
+  .app .get .btn { width: 100%; white-space: nowrap; }
+  .app .meta {
+    display: block; margin-top: 9px; text-align: center;
+    font: 400 12px/1.45 var(--mono); color: var(--ink-3);
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 44px minmax(0, 1fr) 236px; column-gap: 18px; }
+  }
+  @media (max-width: 640px) {
+    .app {
+      grid-template-columns: 44px minmax(0, 1fr);
+      grid-template-areas: "ico title" "body body" "get get";
+      grid-template-rows: auto;
+      column-gap: 14px; padding: 24px;
+    }
+    .app .body { margin-top: 10px; }
+    .app .get { margin-top: 20px; }
+  }
+
+  .fine { margin-top: 26px; font-size: 13.5px; color: var(--ink-3); }
+  .fine a { color: var(--ink-2); }
+
+  footer {
+    margin-top: 96px; padding: 34px 0 46px;
+    border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between;
+    color: var(--ink-3); font-size: 13.5px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb, h1 .wave { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="orbs" aria-hidden="true"><i class="orb a"></i><i class="orb b"></i><i class="orb c"></i></div>
+
+<div class="shell">
+
+  <nav>
+    <a class="mark" href="/"><b>wuhu</b></a>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/docs">Docs</a>
+    <a class="btn ghost" href="/#install">CLI</a>
+  </nav>
+
+  <header>
+    <div class="kicker">download</div>
+    <h1>Get <span class="wave">wuhu.</span></h1>
+    <p class="lede">For Mac, Windows, Linux, iPhone and iPad. Sign in to your space and pick up where you left off.</p>
+  </header>
+
+  <main class="apps">
+    <section class="app" id="app-mac">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg></div>
+      <div class="title"><h2>Mac</h2><span class="tag" hidden>This device</span></div>
+      <div class="body">
+        <p>Signed and notarized. Updates itself.</p>
+        <p class="note">Unzip it and move Wuhu to Applications.</p>
+      </div>
+      <div class="get">
+        <a class="btn soft" href="https://wuhu.ai/releases/app/mac/latest/Wuhu.zip">Download for Mac</a>
+        <span class="meta">Wuhu.zip</span>
+      </div>
+    </section>
+
+    <section class="app" id="app-windows">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M2 4.5 10 3.4v7.9H2zM11 3.27 22 1.75v9.55H11zM2 12.3h8v7.9L2 19.1zM11 12.3h11v9.95l-11-1.52z"/></svg></div>
+      <div class="title"><h2>Windows</h2><span class="tag" hidden>This device</span></div>
+      <div class="body">
+        <p>Windows 10 and 11, 64-bit.</p>
+        <p class="note">Windows may warn that it doesn't recognize the app. Click <b>More info</b>, then <b>Run anyway</b>.</p>
+      </div>
+      <div class="get">
+        <a class="btn soft" id="dl-windows" href="https://wuhu.ai/releases/app/windows/latest/Wuhu-Setup.exe">Download for Windows</a>
+        <span class="meta" id="dl-windows-meta">Wuhu-Setup.exe</span>
+      </div>
+    </section>
+
+    <section class="app" id="app-linux">
+      <div class="ico"><svg viewBox="4.5 4 15 19" aria-hidden="true"><ellipse cx="12" cy="13.5" rx="6.6" ry="8.5" fill="currentColor"/><ellipse cx="12" cy="15.2" rx="4.3" ry="5.9" fill="#fff"/><circle cx="10" cy="8.4" r="1.25" fill="#fff"/><circle cx="14" cy="8.4" r="1.25" fill="#fff"/><path d="M10.2 10.6h3.6L12 12.6z" fill="#f5b83d"/><ellipse cx="8.6" cy="21.6" rx="2.6" ry="1.2" fill="#f5b83d"/><ellipse cx="15.4" cy="21.6" rx="2.6" ry="1.2" fill="#f5b83d"/></svg></div>
+      <div class="title"><h2>Linux</h2><span class="tag" hidden>This device</span></div>
+      <div class="body">
+        <p>A .deb for Ubuntu and Debian, x86-64.</p>
+        <p class="note">Open it with your software installer, or run:<code id="dl-linux-cmd">sudo apt install ./wuhu.deb</code></p>
+      </div>
+      <div class="get">
+        <a class="btn soft" id="dl-linux" href="https://wuhu.ai/releases/app/linux/latest/wuhu.deb">Download .deb</a>
+        <span class="meta" id="dl-linux-meta">wuhu.deb</span>
+      </div>
+    </section>
+
+    <section class="app" id="app-store">
+      <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="2.5" width="13" height="19" rx="2.6"/><rect x="11.5" y="8.5" width="9.5" height="13" rx="2.2" fill="#fff"/><path d="M8 18.5h2" stroke-linecap="round"/></svg></div>
+      <div class="title"><h2>App Store</h2><span class="tag" hidden>This device</span></div>
+      <div class="body">
+        <p>For iPhone, iPad and Mac. Updates through the App Store.</p>
+      </div>
+      <div class="get">
+        <a class="btn soft" href="https://apps.apple.com/app/id6807771419">Download on the App Store</a>
+        <span class="meta">iPhone · iPad · Mac</span>
+      </div>
+    </section>
+  </main>
+
+  <p class="fine">Looking for the command line? <a href="/#install">Install the CLI</a>.</p>
+
+  <footer>
+    <div>© 2026 wuhu</div>
+    <div>built by one person and a fleet of agents</div>
+    <div style="display:flex;flex-wrap:wrap;gap:20px"><a href="/privacy" style="color:inherit">Privacy</a><a href="/terms" style="color:inherit">Terms</a><a href="/support" style="color:inherit">Support</a></div>
+  </footer>
+
+</div>
+
+<script>
+  // site_test.ts runs this script against a stand-in document, navigator and
+  // fetch; keep it self-contained.
+
+  // The visitor's platform: 'mac', 'windows', 'linux', 'store' or null.
+  // iPadOS asks for desktop sites with a Mac user agent, so a Mac user agent
+  // with a touch screen counts as an iPad.
+  function platformOf(ua, maxTouchPoints) {
+    if (/iPhone|iPad|iPod/.test(ua)) return 'store';
+    if (/Macintosh/.test(ua)) return maxTouchPoints > 1 ? 'store' : 'mac';
+    if (/Windows/.test(ua)) return 'windows';
+    if (/Android|CrOS/.test(ua)) return null;
+    if (/Linux/.test(ua)) return 'linux';
+    return null;
+  }
+
+  // The release releases/app/desktop/latest.json names, or null unless every
+  // field the page shows is well-formed.
+  function releaseOf(pointer) {
+    if (!pointer || typeof pointer.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(pointer.version)) return null;
+    const artifact = (platform, extension) => {
+      const a = pointer.artifacts && pointer.artifacts[platform];
+      if (!a || typeof a.name !== 'string' || !/^[\w.+-]+$/.test(a.name) || !a.name.endsWith(extension)) return null;
+      if (a.url !== `https://wuhu.ai/releases/app/${platform}/${pointer.version}/${a.name}`) return null;
+      if (!/^[0-9a-f]{64}$/.test(a.sha256)) return null;
+      return { name: a.name, url: a.url, sha256: a.sha256, size: Number.isFinite(a.size) && a.size > 0 ? a.size : null };
+    };
+    const windows = artifact('windows', '.exe');
+    const linux = artifact('linux', '.deb');
+    return windows && linux ? { version: pointer.version, windows, linux } : null;
+  }
+
+  const platform = platformOf(navigator.userAgent, navigator.maxTouchPoints);
+  if (platform) {
+    const card = document.getElementById(`app-${platform}`);
+    card.classList.add('mine');
+    card.querySelector('.tag').hidden = false;
+    card.querySelector('.btn').classList.replace('soft', 'solid');
+  }
+
+  // Until the pointer answers with a well-formed release, the Windows and
+  // Linux buttons stay on the latest/ downloads and show no version.
+  async function loadDesktop() {
+    const response = await fetch('/releases/app/desktop/latest.json', { cache: 'no-cache' });
+    if (!response.ok) return;
+    const release = releaseOf(await response.json());
+    if (!release) return;
+    for (const [id, artifact] of [['dl-windows', release.windows], ['dl-linux', release.linux]]) {
+      document.getElementById(id).href = artifact.url;
+      const meta = document.getElementById(`${id}-meta`);
+      meta.textContent = `Version ${release.version}${artifact.size ? ` · ${Math.round(artifact.size / 1e6)} MB` : ''}`;
+      meta.title = `${artifact.name}\nsha256 ${artifact.sha256}`;
+    }
+    document.getElementById('dl-linux-cmd').textContent = `sudo apt install ./${release.linux.name}`;
+  }
+  const desktopLoaded = loadDesktop().catch(() => {});
+</script>
+</body>
+</html>

@@ -59,6 +59,7 @@ export type NotificationKind =
   | 'parkReminder'
   | 'childFailed'
   | 'requestDeadline'
+  | 'requestStall'
   | 'script'
   | 'context'
 

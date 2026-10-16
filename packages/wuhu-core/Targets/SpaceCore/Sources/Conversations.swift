@@ -118,6 +118,7 @@ public struct MessageRecord: Hashable, Sendable {
   public var kind: MessageKind
   public var requestID: RequestID?
   public var deadline: Date?
+  public var viewing: Viewing?
   public var content: MessageContent
   public var createdAt: Date
 }
@@ -231,10 +232,12 @@ enum Conversations {
     return id
   }
 
-  // The device rides in a side table, so the projection every read shares has
-  // to carry it: `messages` itself is untouched and old spaces read correctly.
+  // The device and the viewed page ride in side tables, so the projection every
+  // read shares has to carry them: `messages` itself is untouched and old
+  // spaces read correctly.
   static let selection = """
   SELECT m.*, (SELECT device_id FROM message_devices WHERE message_id = m.id) AS device_id,
+    (SELECT path FROM message_viewing WHERE message_id = m.id) AS viewing,
     \(senderGroupSQL) AS sender_grp FROM messages m
   """
 
@@ -268,6 +271,7 @@ enum Conversations {
       kind: MessageKind(rawValue: row["kind"])!,
       requestID: (row["request_id"] as String?).map { RequestID($0) },
       deadline: try (row["deadline_at"] as String?).map(SQLiteDateFormat.date(from:)),
+      viewing: (row["viewing"] as String?).map(Viewing.stored),
       content: try Sessions.decode(MessageContent.self, from: row["content"]),
       createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
     )

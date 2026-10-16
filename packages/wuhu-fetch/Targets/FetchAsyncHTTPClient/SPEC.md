@@ -2,7 +2,7 @@
 
 `FetchClient.asyncHTTPClient(_:timeout:)` adapts an existing AsyncHTTPClient client without taking ownership of its lifecycle. Request deadlines, response streaming, and transport-error classification remain independent of connection health checks.
 
-Buffered request bodies, including empty and JSON bodies, are consumed into AHC's explicit `ByteBuffer` body overload, not an asynchronous request stream. This applies at every buffered payload size, including above the Collection overload's 4 MiB streaming threshold. An early error response can therefore race the request without a later stream-end callback violating AHC's request state machine. Actual stream-backed bodies remain asynchronous and backpressured, regardless of their known length or replayability. Response bodies remain streamed.
+Buffered request bodies, including empty and JSON bodies, are consumed into AHC's explicit `ByteBuffer` body overload, not an asynchronous request stream. This applies at every buffered payload size, including above the Collection overload's 4 MiB streaming threshold. An early error response can therefore race the request without a later stream-end callback violating AHC's request state machine. Actual stream-backed bodies remain asynchronous and backpressured, regardless of their known length or replayability. An error response head (status 300 or above) pauses such a body without cancelling it, so the stream may still end after the head: the request then finishes normally and the error response is delivered intact. Response bodies remain streamed.
 
 ## Opt-in HTTP/2 health checks
 

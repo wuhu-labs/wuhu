@@ -23,7 +23,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(2))) struct ExecutionWorkerParentReplacementTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(2))) struct ExecutionWorkerParentReplacementTests {
   private func runtime() -> WorkerRuntimeOwner {
     .init(attempts: .init(), usage: { [:] }, receiveUsage: { _, _ in }, allowsWarming: { _ in false }, scheduleWarming: { _, _ in })
   }

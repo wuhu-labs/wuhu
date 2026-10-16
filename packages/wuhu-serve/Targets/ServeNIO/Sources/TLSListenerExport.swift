@@ -55,6 +55,7 @@ extension ServeNIOServer {
     subdomains: [String: TLSIdentity] = [:],
     options: ServeOptions = .init(),
     hooks: ServeNIOHooks = .init(),
+    initiallyAccepting: Bool = true,
     eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
     upgrading handler: @escaping UpgradingHandler,
   ) async throws -> (server: ServeNIOServer, listener: ListenerExport) {
@@ -65,7 +66,7 @@ extension ServeNIOServer {
       descriptor = fcntl(listener.descriptor, F_DUPFD_CLOEXEC, 0)
       guard descriptor >= 0 else { throw IOError(errnoCode: errno, reason: "Cannot duplicate TLS listener") }
     } catch { hooks.onStartupFailure(error); throw error }
-    let server = try await adoptListeningSocket(descriptor, tls: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, upgrading: handler)
+    let server = try await adoptListeningSocket(descriptor, tls: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, initiallyAccepting: initiallyAccepting, upgrading: handler)
     return (server, listener)
   }
 }

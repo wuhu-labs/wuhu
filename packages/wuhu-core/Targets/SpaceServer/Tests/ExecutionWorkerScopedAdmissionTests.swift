@@ -20,7 +20,7 @@ import SpaceCore
 import Testing
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerScopedAdmissionTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerScopedAdmissionTests {
   @Test func deferredExecutionIsAnOperatorConflictRatherThanAnInternalServerError() async throws {
     let response = sessionErrorResponse(SessionExecutionDeferred(session: .init("blocked-session")))
     #expect(response.status == .conflict)

@@ -51,7 +51,7 @@ private struct BootHostFixture {
   }
 }
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerBootHostTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerBootHostTests {
   @Test(arguments: [false, true])
   func markedWorkerBlocksOnlyItsSessionsAndRetainsTheirScriptOwners(worker: Bool) async throws {
     try await withSessionDeps {

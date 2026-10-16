@@ -34,12 +34,13 @@ let testModelsJSON = """
 }
 """
 
-private let sessionFixtureAdmission = SessionFixtureAdmission(capacity: 8)
+struct SessionFixtureUnderTimeLimit: Error, CustomStringConvertible {
+  var description: String { "A session fixture under .timeLimit queues inside that limit; use .sessionFixtures(timeLimit:) instead" }
+}
 
 func withSessionDeps<R>(_ body: () async throws -> R) async throws -> R {
-  try await sessionFixtureAdmission.acquire()
-  do {
-    let result = try await withDependencies {
+  func run() async throws -> R {
+    try await withDependencies {
       $0.date = DateGenerator { Date() }
       $0.uuid = UUIDGenerator { UUID() }
       $0.continuousClock = ContinuousClock()
@@ -47,12 +48,10 @@ func withSessionDeps<R>(_ body: () async throws -> R) async throws -> R {
     } operation: {
       try await body()
     }
-    await sessionFixtureAdmission.release()
-    return result
-  } catch {
-    await sessionFixtureAdmission.release()
-    throw error
   }
+  if SessionFixtureAdmission.isAdmitted { return try await run() }
+  guard Test.current?.timeLimit == nil else { throw SessionFixtureUnderTimeLimit() }
+  return try await sessionFixtureAdmission.admit(Test.current?.name ?? "unnamed fixture", within: sessionFixtureAdmissionBound, run)
 }
 
 struct SessionHarness {

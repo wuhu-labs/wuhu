@@ -638,6 +638,9 @@ private func until(
     #expect(try Command.parse(["send", "--attach", "a.mp4", "--attach", "b.pdf", "abc", "hi"]) == .send(SendCommand(
       session: "abc", text: "hi", wait: false, timeout: nil, attachments: ["a.mp4", "b.pdf"],
     )))
+    #expect(try Command.parse(["send", "--viewing", "/wuhu/plan.md", "abc", "hi"]) == .send(SendCommand(
+      session: "abc", text: "hi", wait: false, timeout: nil, viewing: "/wuhu/plan.md",
+    )))
     #expect(throws: (any Error).self) { try Command.parse(["send", "--image", "a.png", "abc", "hi"]) }
     #expect(throws: (any Error).self) { try Command.parse(["send", "--direct", "abc", "hi"]) }
     #expect(throws: (any Error).self) { try Command.parse(["send", "--timeout", "5", "abc", "hi"]) }

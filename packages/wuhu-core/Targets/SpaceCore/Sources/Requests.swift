@@ -14,6 +14,7 @@ extension SessionStore {
     messageID: MessageID,
     text: String,
     deadline: Date?,
+    stallSeconds: Double? = nil,
   ) async throws -> MessageDelivery {
     let key = task.rawValue
     // A retry of a request that already posted replays it: that request is
@@ -43,6 +44,16 @@ extension SessionStore {
         parent,
         slot: .init(id: .deadline(request), kind: .requestDeadline(request: request, task: task)),
         nextFireAt: deadline,
+      )
+    }
+    // A replay re-arms the stall clock too, in case the first attempt posted
+    // and failed before arming it; arming is idempotent.
+    if let stallSeconds, try await writer.read({ try !Sessions.requestClosed(request, in: $0) }) {
+      let opened = delivery.message.createdAt
+      try await armSubscription(
+        parent,
+        slot: .init(id: .stall(request), kind: .requestStall(.init(request: request, task: task, seconds: stallSeconds, openedAt: opened))),
+        nextFireAt: opened.addingTimeInterval(stallSeconds),
       )
     }
     return delivery
@@ -76,6 +87,7 @@ extension SessionStore {
     )
     if kind == .final {
       try await cancelSubscription(parent, subscriptionID: .deadline(request))
+      try await cancelSubscription(parent, subscriptionID: .stall(request))
     }
     return delivery
   }

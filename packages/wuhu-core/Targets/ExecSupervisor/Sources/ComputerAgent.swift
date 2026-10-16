@@ -14,6 +14,7 @@ import struct ComputerFiles.AdmittedStart
 import class ComputerFiles.ComputerAgent
 import struct ComputerFiles.ComputerFileSystem
 import struct ComputerFiles.ExternalKind
+import DeploymentAdmin
 import Fetch
 import FetchAsyncHTTPClient
 import struct Logging.Logger
@@ -99,6 +100,8 @@ extension ExecSupervisor {
     forgetsRevokedMachine: Bool = false,
     _ body: @escaping @Sendable (ComputerAgent, ExecSupervisorRegistry) async throws -> R,
   ) async throws -> R {
+    let admission = try DeploymentAdminPolicy.admitMachineAgent()
+    defer { withExtendedLifetime(admission) {} }
     // A path the platform cannot bind is a typed refusal to start, before anything else happens.
     let rendezvous = Rendezvous.socketPath(operationsDirectory: operationsDirectory)
     try Rendezvous.validateSocketPath(rendezvous)

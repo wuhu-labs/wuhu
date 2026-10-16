@@ -90,6 +90,7 @@ extension Space {
     name: String,
   ) async throws -> DeviceRecord {
     guard let kind = DeviceKind(rawValue: kind) else { throw SpaceError.invalidDeviceKind(kind) }
+    try Self.checkDeviceName(name)
     guard let key = try await credential(pubkey: pubkey), key.capabilities.contains(.device) else {
       throw SpaceError.unknownDevice(pubkey)
     }
@@ -131,6 +132,10 @@ extension Space {
     return Self.device(from: row)
   }
 
+  static func checkDeviceName(_ name: String) throws {
+    if let problem = DeviceName.problem(name) { throw SpaceError.invalidDeviceName("device name \(name) \(problem)") }
+  }
+
   public func devices() async throws -> [DeviceRecord] {
     try await writer.read { db in
       try DeviceRow.order { $0.id }.fetchAll(db).map(Self.device(from:))
@@ -154,6 +159,7 @@ extension Space {
     name: String?,
     machine: MachineID?,
   ) async throws -> DeviceRecord {
+    if let name { try Self.checkDeviceName(name) }
     let row = try await writer.write { db -> DeviceRow in
       let found = try DeviceRow.where { $0.id.eq(id) }.fetchOne(db)
       guard var row = found else { throw SpaceError.unknownDevice(id) }
@@ -201,5 +207,19 @@ extension Space {
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       lastSeenAt: (try? SQLiteDateFormat.date(from: row.lastSeenAt)) ?? Date(timeIntervalSince1970: 0),
     )
+  }
+}
+
+/// A device name is shown on one line inside a message header.
+enum DeviceName {
+  static let maxCharacters = 64
+
+  static func problem(_ name: String) -> String? {
+    if name.count > maxCharacters { return "is \(name.count) characters, at most \(maxCharacters)" }
+    if name.contains(where: \.isNewline) || name.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+      return "may not contain control characters or line breaks"
+    }
+    if name.contains(where: { "<>&".contains($0) }) { return "may not contain <, > or &" }
+    return nil
   }
 }

@@ -194,7 +194,7 @@ extension QueueInput {
         .owedReminder(conversations: notification.conversations, at: notification.timestamp)
       case .parkReminder:
         notification.requestID.map { .parkReminder(request: $0, at: notification.timestamp) }
-      case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .script, .context:
+      case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .context:
         nil
       }
     }

@@ -47,6 +47,8 @@ func addDeviceRoutes(_ router: inout Router, space: Space, dev: Bool) {
         message: "unknown device kind: \(kind)",
         hint: "one of: \(DeviceKind.allCases.map(\.rawValue).joined(separator: ", "))",
       )
+    } catch let SpaceError.invalidDeviceName(reason) {
+      return errorResponse(.badRequest, code: "invalidArgument", message: reason)
     }
   }
 
@@ -70,7 +72,11 @@ func addDeviceRoutes(_ router: inout Router, space: Space, dev: Bool) {
       }
       machine = resolved.id
     }
-    return try Response.json(devicePayload(try await space.annotateDevice(id, name: input.name, machine: machine)))
+    do {
+      return try Response.json(devicePayload(try await space.annotateDevice(id, name: input.name, machine: machine)))
+    } catch let SpaceError.invalidDeviceName(reason) {
+      return errorResponse(.badRequest, code: "invalidArgument", message: reason)
+    }
   }
 
   router.get("/v1/devices") { _, _ in

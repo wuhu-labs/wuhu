@@ -38,12 +38,16 @@ single_version_override(
 # single failing case therefore replays hundreds of ticks before the one line that matters. The
 # generated runner ignores argv, so `--test_arg` cannot reach it, and swift-testing has no
 # verbosity environment variable, so that one configuration key is the only knob there is.
+# Quiet, a run killed at Bazel's test timeout names no test at all: the runner reads the event
+# stream only after the run returns. The stalled-test watchdog reads it live and prints a
+# `STALLED:` line naming every test still running after 60 seconds.
 single_version_override(
     module_name = "rules_swift",
     patch_strip = 1,
     patches = [
         "//bazel/patches:rules-swift-swift-testing-quiet.patch",
         "//bazel/patches:rules-swift-test-runner-completion.patch",
+        "//bazel/patches:rules-swift-stalled-test-watchdog.patch",
     ],
     version = "3.6.1",
 )
@@ -178,3 +182,5 @@ use_repo(
     swift_deps,
 {{swift_deps_repos}}
 )
+
+register_toolchains("//bazel/test_host:all")

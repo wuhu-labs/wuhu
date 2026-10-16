@@ -354,6 +354,45 @@ struct MessagingTests {
     }
   }
 
+  @Test func requestArmsAStallClockUnlessTurnedOff() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let executor = ToolExecutor(space: space, resolveModelExecutor: { provider, model, effort in
+        .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
+      })
+      let parent = try await makeSession(space, name: "parent")
+      var world = ToolWorld(executor: executor, session: parent)
+      func stalls() async throws -> [SessionID: Double] {
+        try await space.sessions.armedSubscriptions(parent).reduce(into: [:]) { found, armed in
+          if case let .requestStall(clock) = armed.slot.kind { found[clock.task] = clock.seconds }
+        }
+      }
+
+      let quiet = try await makeTask(space, parent: parent, name: "quiet")
+      _ = try await world.run("request", .object(["task": .string(key(quiet)), "message": .string("go")]))
+      let off = try await makeTask(space, parent: parent, name: "off")
+      _ = try await world.run("request", .object(["task": .string(key(off)), "message": .string("go"), "stall_seconds": .integer(0)]))
+      let odd = try await makeTask(space, parent: parent, name: "odd")
+      let refused = try await world.run("request", .object(["task": .string(key(odd)), "message": .string("go"), "stall_seconds": .number(0.5)]))
+      #expect(try failureMessage(refused).contains("stall_seconds"))
+
+      let briefed = try await world.run("create_session", .object([
+        "title": .string("worker"), "provider": .string("deepseek"), "model": .string("deepseek-v4-pro"),
+        "expects_reply": .bool(true), "message": .string("go do it"), "stall_seconds": .integer(900),
+      ]))
+      guard case let .createSession(worker) = briefed else {
+        throw Mismatch("expected a create outcome, got \(briefed)")
+      }
+      #expect(try await stalls() == [quiet: 1800, worker.sessionID: 900])
+
+      let unbriefed = try await world.run("create_session", .object([
+        "title": .string("scout"), "provider": .string("deepseek"), "model": .string("deepseek-v4-pro"),
+        "stall_seconds": .integer(900),
+      ]))
+      #expect(try failureMessage(unbriefed).contains("needs expects_reply"))
+    }
+  }
+
   @Test func onlyTheCreatorMayRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

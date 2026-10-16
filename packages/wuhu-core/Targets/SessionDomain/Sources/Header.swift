@@ -16,6 +16,7 @@ public struct MessageHeader: Hashable, Sendable {
   public var replyTarget: String?
   public var device: String?
   public var deviceName: String?
+  public var viewing: String?
   public var senderGroup: String?
   public var senderAdmin: Bool?
 
@@ -28,6 +29,7 @@ public struct MessageHeader: Hashable, Sendable {
     messageID: String? = nil,
     replyTarget: String? = nil,
     device: String? = nil,
+    viewing: String? = nil,
     senderGroup: String? = nil,
     senderAdmin: Bool? = nil,
   ) {
@@ -41,6 +43,7 @@ public struct MessageHeader: Hashable, Sendable {
     self.messageID = messageID
     self.replyTarget = replyTarget
     self.device = device
+    self.viewing = viewing
   }
 
   public enum Source: Hashable, Sendable {
@@ -71,6 +74,7 @@ public struct MessageHeader: Hashable, Sendable {
     case parkReminder
     case childFailed
     case requestDeadline
+    case requestStall
     case script
     case systemNotice
 
@@ -89,6 +93,7 @@ public struct MessageHeader: Hashable, Sendable {
       case .parkReminder: "park reminder"
       case .childFailed: "child failed"
       case .requestDeadline: "request deadline"
+      case .requestStall: "request stall"
       case .script: "script"
       case .systemNotice: "system notice"
       }
@@ -115,27 +120,38 @@ public struct MessageHeader: Hashable, Sendable {
     }
     let style = Date.ISO8601FormatStyle(timeZoneSeparator: .colon, timeZone: formattingZone)
     var tags = [
-      "<sender>\(senderHandle.map { "\($0) (\(sender))" } ?? sender)</sender>",
+      "<sender>\(escaped(senderHandle.map { "\($0) (\(sender))" } ?? sender))</sender>",
       "<timestamp>\(style.format(timestamp))</timestamp>",
-      "<source>\(source.rendered)</source>",
+      "<source>\(escaped(source.rendered))</source>",
       "<type>\(kind.rendered)</type>",
     ]
     if let messageID {
-      tags.append("<message-id>\(messageID)</message-id>")
+      tags.append("<message-id>\(escaped(messageID))</message-id>")
     }
     if let replyTarget {
-      tags.append("<reply-target>\(replyTarget)</reply-target>")
+      tags.append("<reply-target>\(escaped(replyTarget))</reply-target>")
     }
     if let device {
-      tags.append("<device>\(deviceName.map { "\($0) (\(device))" } ?? device)</device>")
+      tags.append("<device>\(escaped(deviceName.map { "\($0) (\(device))" } ?? device))</device>")
+    }
+    if let viewing {
+      tags.append("<viewing>\(escaped(viewing))</viewing>")
     }
     if let senderGroup {
-      tags.append("<sender-group>\(senderGroup)</sender-group>")
+      tags.append("<sender-group>\(escaped(senderGroup))</sender-group>")
     }
     if let senderAdmin {
       tags.append("<sender-admin>\(senderAdmin ? "yes" : "no")</sender-admin>")
     }
     return tags.joined(separator: "\n")
+  }
+
+  /// A value someone else named, such as a device name, must not close its tag
+  /// and open a trusted one.
+  private func escaped(_ value: String) -> String {
+    value.replacingOccurrences(of: "&", with: "&amp;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+      .replacingOccurrences(of: ">", with: "&gt;")
   }
 }
 
@@ -183,6 +199,7 @@ extension ConversationMessage {
       messageID: messageID.rawValue,
       replyTarget: replyTarget?.rawValue,
       device: sender.device,
+      viewing: viewing,
       senderGroup: senderGroup?.rawValue,
       senderAdmin: senderAdmin,
     )
@@ -205,6 +222,7 @@ extension SystemNotification {
         case .parkReminder: .parkReminder
         case .childFailed: .childFailed
         case .requestDeadline: .requestDeadline
+        case .requestStall: .requestStall
         case .script: .script
         case .context: .systemNotice
         }

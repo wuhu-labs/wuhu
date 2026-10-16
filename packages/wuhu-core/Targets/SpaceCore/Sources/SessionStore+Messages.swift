@@ -120,10 +120,12 @@ extension SessionStore {
     requestID: RequestID? = nil,
     deadline: Date? = nil,
     replyTarget: MessageID? = nil,
+    viewing: Viewing? = nil,
     content: MessageContent,
     uploads: [AttachmentUpload] = [],
     acting: Principal? = nil,
   ) async throws -> MessageDelivery {
+    precondition(viewing == nil || senderSession == nil, "only a person's message carries viewing")
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
     var staged: [(upload: AttachmentUpload, blob: Blob)] = []
@@ -188,6 +190,9 @@ extension SessionStore {
           sql: "INSERT OR IGNORE INTO message_devices (message_id, device_id) VALUES (?, ?)",
           arguments: [messageID.rawValue, device],
         )
+      }
+      if let viewing {
+        try Viewing.insert(viewing, message: messageID.rawValue, in: db)
       }
       try db.execute(
         sql: "INSERT OR IGNORE INTO message_groups (message_id, grp) VALUES (?, ?)",
@@ -387,6 +392,7 @@ extension SessionStore {
         owesReply: owes,
         senderGroup: poster.group == home ? nil : poster.group,
         senderAdmin: try poster.isAdmin(of: home, in: db),
+        viewing: message.viewing?.named(for: home),
         content: message.content.attachments(in: conversation.group, for: home),
       ))
       do {

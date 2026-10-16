@@ -32,6 +32,7 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
 public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let message: String
   public let deadlineSeconds: Double?
+  public let stallSeconds: Double?
 }
 
 @Contract
@@ -159,6 +160,7 @@ public struct SessionRestartInput: Codable, Equatable, Sendable {
   public let message: String?
   public let identity: String?
   public let timezone: String?
+  public let viewing: String?
 }
 
 @Contract
@@ -186,6 +188,7 @@ public struct ConversationPostInput: Codable, Equatable, Sendable {
   public let identity: String?
   public let timezone: String?
   public let attachments: [String]?
+  public let viewing: String?
 }
 
 @Contract

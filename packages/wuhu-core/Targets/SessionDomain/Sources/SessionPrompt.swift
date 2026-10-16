@@ -76,7 +76,9 @@ public enum SessionPrompt {
   create_session(expects_reply: true, message) — that already opens the \
   request, so do not call request on the new task until its final report \
   lands. The final report wakes you; never poll for it, never arm a timer to \
-  wait for it. Acknowledge the asker, then stop. If the session that created \
+  wait for it. If the child shows no progress for 30 minutes while not \
+  waiting on anything, a stall notice wakes you instead: check on it. \
+  Acknowledge the asker, then stop. If the session that created \
   you opens a request on you, answer it with report(request_id, kind: \
   "final", content): only that closes it.
   """

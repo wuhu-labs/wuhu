@@ -295,13 +295,23 @@ def _deno_command_test_impl(ctx):
     body = "\"$DENO_BIN\" {}\n".format(" ".join(ctx.attr.command))
     return _deno_test_script(ctx, body)
 
+# The `test` exec group runs on the target lane's host OS (see
+# //bazel/test_host). deno resolves for the same group, so tool and action
+# share a platform.
 deno_command_test = rule(
     implementation = _deno_command_test_impl,
     test = True,
+    exec_groups = {
+        "test": exec_group(toolchains = ["//bazel/test_host:toolchain_type"]),
+    },
     attrs = {
         "srcs": attr.label_list(allow_files = True, mandatory = True),
         "command": attr.string_list(mandatory = True),
-        "_deno": _DENO_ATTR,
+        "_deno": attr.label(
+            allow_single_file = True,
+            cfg = config.exec("test"),
+            default = Label("//bazel/rules:deno"),
+        ),
     },
 )
 

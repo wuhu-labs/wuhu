@@ -1,5 +1,10 @@
 import Dependencies
-import Foundation
+import DeploymentAdmin
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import Logging
 import MachineChannel
 import MachineContract
@@ -31,6 +36,10 @@ public final class MachineAgent: Sendable {
   }
 
   public func run(dial: @escaping @Sendable () async throws -> any FrameTransport) async {
+    let admission: DeploymentAdminPolicy.MachineAdmission
+    do { admission = try DeploymentAdminPolicy.admitMachineAgent() }
+    catch { logger.error("Machine agent refused: deployment admin UID policy"); return }
+    defer { withExtendedLifetime(admission) {} }
     if FileManager.default.fileExists(atPath: legacyVault.path) {
       logger.notice("\(legacyVault.path) is no longer used: an exec's secrets are its machine's group secrets (wuhu secret set)")
     }

@@ -178,6 +178,8 @@ public enum SpaceError: Error, Equatable, Sendable {
   case machineNameTaken(String)
   case unknownDevice(String)
   case invalidDeviceKind(String)
+  /// The refusal's reason, naming the device name.
+  case invalidDeviceName(String)
   /// The database predates a schema compaction this binary requires.
   case needsMigration(String)
   /// Admin is held through a personal group, which only a human account has.

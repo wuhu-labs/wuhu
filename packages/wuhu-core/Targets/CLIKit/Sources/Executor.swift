@@ -248,7 +248,7 @@ struct Executor {
     case let .observe(command):
       let space = try self.wallet.pinnedSpace()
       try await self.observe(command, space: space)
-    case .serve:
+    case .serve, .adminExec:
       preconditionFailure("serve is routed before the executor")
     case .user:
       preconditionFailure("user is routed before the executor")
@@ -308,8 +308,8 @@ struct Executor {
       try await self.inbox()
     case let .sessionCreate(command):
       try await self.sessionCreate(command)
-    case let .sessionRequest(id, message, deadline):
-      try await self.sessionRequest(id: id, message: message, deadline: deadline)
+    case let .sessionRequest(id, message, deadline, stall):
+      try await self.sessionRequest(id: id, message: message, deadline: deadline, stall: stall)
     case let .sessionAction(verb, id, force):
       try await self.sessionAction(verb, id: id, force: force)
     case let .sessionCompact(id, instructions):

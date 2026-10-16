@@ -82,6 +82,29 @@ import Testing
     }
   }
 
+  // An error head pauses a stream-backed upload; it does not cancel it. The
+  // fixture sends the 400 head only after the first chunk, so the client is
+  // already waiting on the stream, not on a paused write, when it finishes.
+  // The fixture answers "!" only once the terminating chunk arrives, and the
+  // client sends that chunk from requestStreamFinished, so a "!" proves the
+  // stream finished after the 400 head and before the response end.
+  @Test func streamedBodiesMayFinishAfterAnEarlyErrorHead() async throws {
+    let server = try IntegrationServer.start()
+    defer { server.stop() }
+    try await withHTTPClient { client in
+      let fetch = FetchClient.asyncHTTPClient(client)
+      for _ in 0 ..< 20 {
+        let (chunks, producer) = AsyncStream<Bytes>.makeStream()
+        producer.yield(Bytes("one".utf8))
+        let request = Request(url: server.baseURL.appendingPathComponent("error-after-first-chunk"), method: .post, body: .stream(chunks))
+        let response = try await fetch(request)
+        #expect(response.status.code == 400)
+        producer.finish()
+        #expect(try await response.text() == "!")
+      }
+    }
+  }
+
   @Test func bufferedBodiesStillValidateDeclaredLength() async throws {
     let server = try IntegrationServer.start()
     defer { server.stop() }

@@ -12,7 +12,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerBootProcessTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerBootProcessTests {
   @Test(arguments: ["stale-credential", "wrong-executable", "transport-failure", "reused-pid", "authenticated-ack", "authenticated-no-ack"], [1, 2])
   func bootFenceAuthenticatesOrChecksOSIdentityBeforeSignallingARealWorker(kind: String, version: Int) async throws {
     try await withSessionDeps {

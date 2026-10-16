@@ -84,6 +84,11 @@ public actor MachineHub {
       || relayedSecrets[id] != nil || execsByStream.values.contains { $0.values.contains(id) }
   }
 
+  /// Whether a caller leg is bound to `id` right now.
+  func hasCaller(_ id: ExecID) -> Bool {
+    callerLegs[id] != nil
+  }
+
   private var nextRequestID: Int = 1
   private var pendingRequests: [Int: AsyncThrowingStream<Frame, any Error>.Continuation] = [:]
   private var pendingMachines: [Int: MachineID] = [:]

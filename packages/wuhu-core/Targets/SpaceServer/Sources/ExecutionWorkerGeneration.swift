@@ -24,6 +24,7 @@ import struct SessionTools.SpawnOrder
 import struct SpaceCore.SessionRestart
 import struct SpaceCore.SessionStore
 import struct WorkerOwner.ExecutionWorkerActivity
+import struct WorkerOwner.ExecutionWorkerBootstrap
 import struct WorkerOwner.RemoteHandlerExecution
 import struct WorkerOwner.RemoteSessionExecution
 import struct WorkerOwner.WorkerRuntimeOwner
@@ -39,6 +40,8 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   private var unreconciledLosses: Set<UUID> = []
   private var activePasses: [SessionID: Set<UUID>] = [:]
   private var connection: WorkerConnection?
+  private var execPaused = false
+  private var pendingExec: ExecWorkerRecord?
   private var starting: Task<WorkerConnection, any Error>?
   private var retirement: Task<Void, Never>?
   private var stopping: Task<Void, Never>?
@@ -54,8 +57,9 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   var processID: Int32? { connection?.processID }
   var activeSessions: Set<SessionID> { Set(activePasses.keys) }
 
-  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true, startupExcludedIncarnations: Set<UUID> = []) {
-    self.startupExcludedIncarnations = startupExcludedIncarnations
+  init(executable: String, sessions: SessionStore, owner: any ExecutionOwnerClient, spawn: @escaping @Sendable (SessionID, ToolCallID, SpawnOrder) async throws -> Spawned, runtime: WorkerRuntimeOwner? = nil, machines: Bool = false, startConnection: Starter? = nil, recoverStartupLoss: Bool = true, startupExcludedIncarnations: Set<UUID> = [], adoptingExec: ExecWorkerRecord? = nil) {
+    pendingExec = adoptingExec
+    self.startupExcludedIncarnations = startupExcludedIncarnations.union(adoptingExec.map { [$0.incarnation] } ?? [])
     self.recoverStartupLoss = recoverStartupLoss
     self.sessions = sessions; self.owner = owner
     self.startConnection = startConnection ?? { _, activity, exited in
@@ -138,16 +142,18 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
   }
 
   private func connect() async throws -> WorkerConnection {
-    guard !stopped else { throw SessionExecutionRetired() }
+    guard !stopped, !execPaused else { throw SessionExecutionRetired() }
     if let connection { return connection }
     let id: UUID
     let start: Task<WorkerConnection, any Error>
     if let starting, let incarnation { id = incarnation; start = starting }
     else {
-      id = UUID()
+      let adopting = pendingExec
+      pendingExec = nil
+      id = adopting?.incarnation ?? UUID()
       incarnation = id
       start = Task {
-        try await self.sessions.beginWorkerOwnership(incarnation: id)
+        if adopting == nil { try await self.sessions.beginWorkerOwnership(incarnation: id) }
         for session in self.assignments { try await self.sessions.assignWorker(session, incarnation: id) }
         return try await startConnection(id, { activity in
           try await self.activity(activity, incarnation: id)
@@ -169,6 +175,32 @@ actor ExecutionWorkerGeneration: SessionExecutionClient, HandlerExecutionClient 
       if let error = error as? WorkerProtocolError, error.code == .unavailable { throw SessionExecutionRetired() }
       throw error
     }
+  }
+
+  func prepareExec() async throws -> ExecWorkerExport? {
+    guard !stopped, !execPaused, starting == nil, retirement == nil, preparation == nil || connection != nil,
+          activePasses.isEmpty, yielding.isEmpty, recoveryBlocked.isEmpty, unreconciledLosses.isEmpty else { throw AdminExecError.refused("workerBusy") }
+    execPaused = true
+    do { return try await connection?.exportExec() }
+    catch { execPaused = false; throw error }
+  }
+
+  func rollbackExec() async throws {
+    if let connection { try await connection.parentBinding?.rollbackExec() }
+    execPaused = false
+  }
+
+  func probeExec() async throws {
+    guard !stopped else { throw AdminExecError.refused("workerStopped") }
+    if let connection {
+      _ = try await connection.client.negotiate(ExecutionWorkerBootstrap.hello(release: "parent-health"))
+      try await connection.parentBinding?.probeExec()
+    }
+  }
+
+  func reconcileExec() async throws {
+    guard pendingExec != nil else { return }
+    _ = try await connect()
   }
 
   private func activity(_ activity: ExecutionWorkerActivity, incarnation: UUID) async throws {

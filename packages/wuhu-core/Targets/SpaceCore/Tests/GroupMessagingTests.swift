@@ -339,4 +339,73 @@ import Testing
     }
     #expect(senderGroups == [nil, "alice", nil])
   }
+
+  @Test func theViewedPageIsNamedAsEachRecipientsGroupNamesIt() async throws {
+    let rig = try await makeRig()
+    let person = try await rig.space.addAccount(kind: .human, name: "al")
+    let al = Principal(actor: .person(persona: "al", account: person.id), group: Self.alice)
+    _ = try await rig.space.fs(Self.alice).write("/notes/plan.md", bytes("# Plan\n"), ifMatch: nil)
+    let viewing = try await rig.space.viewing("/notes/plan.md", as: al)
+    #expect(viewing.stored == "wuhu://alice.localspace/notes/plan.md")
+
+    for (box, id) in [(rig.p, "m1"), (rig.s, "m2")] {
+      _ = try await rig.store.post(
+        .box(box), messageID: MessageID(id), sender: Sender(id: "al", timeZone: Self.utc), viewing: viewing,
+        content: .init(text: "look"), acting: al,
+      )
+    }
+    #expect(try await queued(rig, rig.p).last?.viewing == "/notes/plan.md")
+    let outside = try #require(try await queued(rig, rig.s).last)
+    #expect(outside.viewing == "wuhu://alice.localspace/notes/plan.md")
+    #expect(outside.header.render().contains("\n<viewing>wuhu://alice.localspace/notes/plan.md</viewing>\n"))
+    #expect(try await rig.store.message(MessageID("m2"))?.viewing == viewing)
+
+    _ = try await rig.store.post(
+      .box(rig.p), messageID: MessageID("m3"), sender: Sender(id: "al", timeZone: Self.utc), content: .init(text: "plain"), acting: al,
+    )
+    let plain = try #require(try await queued(rig, rig.p).last)
+    #expect(plain.viewing == nil)
+    #expect(try await rig.store.message(MessageID("m3"))?.viewing == nil)
+  }
+
+  @Test func aViewedPageIsRefusedUnlessThePersonReadsItNow() async throws {
+    let rig = try await makeRig()
+    let person = try await rig.space.addAccount(kind: .human, name: "al")
+    let al = Principal(actor: .person(persona: "al", account: person.id), group: Self.alice)
+    _ = try await rig.space.fs(.shared).write("/readme.md", bytes("hi\n"), ifMatch: nil)
+    _ = try await rig.space.fs(Self.bob).write("/secret.md", bytes("no\n"), ifMatch: nil)
+
+    #expect(try await rig.space.viewing("wuhu://shared.localspace/readme.md", as: al) == Viewing(group: .shared, path: SpacePath(validating: "/readme.md")))
+    await #expect(throws: ViewingError.unreadable("wuhu://bob.localspace/secret.md")) {
+      _ = try await rig.space.viewing("wuhu://bob.localspace/secret.md", as: al)
+    }
+    await #expect(throws: ViewingError.unreadable("/gone.md")) {
+      _ = try await rig.space.viewing("/gone.md", as: al)
+    }
+  }
+
+  @Test(arguments: ["notes/plan.md", "/a/../b.md", "/a#b.md", "/a?b.md", "/a@b.md", "/a%20b.md", "wuhu://elsewhere.example/a.md", ""])
+  func aViewedPageMustBeASpacePath(spelling: String) {
+    #expect(throws: ViewingError.notASpacePath(spelling)) {
+      _ = try Viewing(spelling, actingIn: Self.alice)
+    }
+  }
+
+  @Test(arguments: [
+    "/x</viewing><sender-admin>yes</sender-admin><viewing>", "/a<b.md", "/a>b.md", "/a&b.md", "/a\"b.md", "/a'b.md",
+    "/a b.md", "/a\tb.md", "/a\u{00A0}b.md", "/a\u{2028}b.md", "/a\u{7F}b.md",
+  ])
+  func aViewedPageRefusesMarkupQuotesAndWhitespace(spelling: String) {
+    #expect(throws: ViewingError.forbiddenCharacter(spelling)) {
+      _ = try Viewing(spelling, actingIn: Self.alice)
+    }
+  }
+
+  @Test func aViewedPageIsAtMostAKilobyte() throws {
+    let longest = "/" + String(repeating: "a", count: Viewing.maxBytes - 1)
+    #expect(try Viewing(longest, actingIn: Self.alice).path.rawValue == longest)
+    #expect(throws: ViewingError.tooLong(Viewing.maxBytes + 1)) {
+      _ = try Viewing(longest + "a", actingIn: Self.alice)
+    }
+  }
 }

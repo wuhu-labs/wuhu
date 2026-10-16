@@ -59,6 +59,7 @@ public struct SpawnOrder: Sendable {
   public var template: String?
   public var expectsReply = false
   public var message: String?
+  public var stallSeconds: Double?
   public init(
     executor: String? = nil,
     title: String,
@@ -73,11 +74,13 @@ public struct SpawnOrder: Sendable {
     template: String? = nil,
     expectsReply: Bool = false,
     message: String? = nil,
+    stallSeconds: Double? = nil,
   ) {
     self.executor = executor; self.title = title; self.kind = kind; self.topLevel = topLevel
     self.group = group; self.provider = provider; self.model = model; self.effort = effort
     self.modelGroup = modelGroup
     self.tags = tags; self.template = template; self.expectsReply = expectsReply; self.message = message
+    self.stallSeconds = stallSeconds
   }
 }
 
@@ -108,6 +111,10 @@ extension InProcessToolOwnerClient {
     guard !order.expectsReply || order.message != nil else {
       throw ToolProblem("expects_reply wants a message: it is create plus one request")
     }
+    guard order.expectsReply || order.stallSeconds == nil else {
+      throw ToolProblem("stall_seconds needs expects_reply: it belongs to the request")
+    }
+    let stall = try stallSeconds(order.stallSeconds)
     let title: String
     let creator: SessionRecord
     do {
@@ -220,7 +227,7 @@ extension InProcessToolOwnerClient {
       }
       if let message = order.message {
         if order.expectsReply {
-          let delivery = try await store.openRequest(on: id, from: caller, messageID: messageID, text: message, deadline: nil)
+          let delivery = try await store.openRequest(on: id, from: caller, messageID: messageID, text: message, deadline: nil, stallSeconds: stall)
           spawned.requestID = delivery.message.requestID
         } else if try await store.message(messageID) == nil {
           _ = try await deliver(

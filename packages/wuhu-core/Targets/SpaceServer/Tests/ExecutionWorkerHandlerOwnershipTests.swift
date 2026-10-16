@@ -23,7 +23,7 @@ private struct OwnershipHandler: HandlerExecutionClient {
 
 private enum HandlerOutcome: CaseIterable { case completed, discarded, unknown }
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerHandlerOwnershipTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerHandlerOwnershipTests {
   @Test(arguments: HandlerOutcome.allCases) fileprivate func handlerOwnershipAfterReopen(outcome: HandlerOutcome) async throws {
     try await withSessionDeps {
       let folder = try ScratchFolder("handler-worker-ownership")

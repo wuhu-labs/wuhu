@@ -329,6 +329,10 @@ extension MachineCLIHarness {
     #expect(try await pollUntil { await self.machineListText().contains("\(id) attached") })
   }
 
+  func callerBound(_ id: String) async -> Bool {
+    await hub.hasCaller(ExecID(rawValue: id))
+  }
+
   func liveExecIDs() async throws -> [String] {
     let response = try await http(.get, "/v1/exec")
     let statuses = try await response.json([ExecStatus].self)

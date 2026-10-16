@@ -31,7 +31,7 @@ import Testing
 import WorkerOwner
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(2))) struct WorkerExecutionContractTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(2))) struct WorkerExecutionContractTests {
   private func binary() throws -> String {
     let path = try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])
     return URL(fileURLWithPath: path).standardizedFileURL.path

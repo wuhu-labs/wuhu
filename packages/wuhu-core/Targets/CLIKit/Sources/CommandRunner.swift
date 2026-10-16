@@ -20,6 +20,7 @@ public struct ServeCommand: Equatable, Sendable {
   public var dev: Bool
   public var publicRead: Bool = false
   public var executionWorker: Bool = false
+  public var adminExec: Bool = false
   public var devImport: String?
   public var devExport: String?
   public var certificate: String?
@@ -44,6 +45,7 @@ public struct CommandRunner: Sendable {
   public var fetch: FetchClient
   public var observeFetch: FetchClient
   public var serve: (@Sendable (ServeCommand) async throws -> Void)?
+  public var adminExec: (@Sendable (String, Bool) async throws -> Void)?
   public var user: (@Sendable (UserCommand) async throws -> (output: String, note: String?))?
   public var stdin: @Sendable () async throws -> String
   public var stdout: @Sendable (String) async -> Void
@@ -62,6 +64,7 @@ public struct CommandRunner: Sendable {
     fetch: FetchClient,
     observeFetch: FetchClient? = nil,
     serve: (@Sendable (ServeCommand) async throws -> Void)? = nil,
+    adminExec: (@Sendable (String, Bool) async throws -> Void)? = nil,
     user: (@Sendable (UserCommand) async throws -> (output: String, note: String?))? = nil,
     stdin: @escaping @Sendable () async throws -> String,
     stdout: @escaping @Sendable (String) async -> Void,
@@ -79,6 +82,7 @@ public struct CommandRunner: Sendable {
     self.fetch = fetch
     self.observeFetch = observeFetch ?? fetch
     self.serve = serve
+    self.adminExec = adminExec
     self.user = user
     self.stdin = stdin
     self.stdout = stdout
@@ -113,7 +117,14 @@ public struct CommandRunner: Sendable {
       if case .wallet(announce: true) = identity, command.runsWithoutWallet {
         await self.stderr("acting as the local user (wallet)\n")
       }
+      if case let .adminExec(folder, rollback) = command {
+        guard !isSessionExec(self.environment), let adminExec = self.adminExec else { throw CLIError(message: "admin-exec is deployment-admin only and requires an enabled local server") }
+        try await adminExec(folder, rollback)
+        await self.stdout("same-binary exec ready\n")
+        return 0
+      }
       if case let .serve(config) = command {
+        guard !config.adminExec || !isSessionExec(self.environment) else { throw CLIError(message: "--admin-exec is deployment-admin only") }
         guard let serve = self.serve else {
           throw CLIError(message: "serve is not available in this client")
         }
@@ -272,6 +283,7 @@ enum Command: Equatable {
   case new(template: String, in: String?)
   case observe(ObserveCommand)
   case serve(ServeCommand)
+  case adminExec(folder: String, rollback: Bool)
   case user(UserCommand)
   case userAdd(name: String, admin: Bool, ttl: Int?)
   case userInvite(account: String, ttl: Int?)
@@ -320,7 +332,7 @@ enum Command: Equatable {
   case send(SendCommand)
   case inbox
   case sessionCreate(SessionCreateCommand)
-  case sessionRequest(id: String, message: String, deadline: Double?)
+  case sessionRequest(id: String, message: String, deadline: Double?, stall: Double?)
   case sessionAction(SessionActionVerb, id: String, force: Bool = false)
   case sessionCompact(id: String, instructions: String?)
   case sessionRename(id: String, title: String)
@@ -352,6 +364,7 @@ struct SendCommand: Equatable {
   var wait: Bool
   var timeout: Double?
   var attachments: [String] = []
+  var viewing: String? = nil
 }
 
 struct SessionCreateCommand: Equatable {

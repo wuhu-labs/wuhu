@@ -25,8 +25,8 @@ struct PersistenceFixture {
   var root: String { config + "/workers/" + space }
   var persistence: ExecutionWorkerPersistence { .init(configDirectory: config, space: space, runtimeRoot: base + "/r") }
 
-  init() throws {
-    let resolved = try #require(realpath("/tmp", nil))
+  init(root: String = "/tmp") throws {
+    let resolved = try #require(realpath(root, nil))
     defer { free(resolved) }
     base = String(cString: resolved) + "/wp-" + String(UUID().uuidString.prefix(8))
     try FileManager.default.createDirectory(atPath: config, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -41,7 +41,7 @@ struct PersistenceFixture {
   }
 }
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerPersistenceTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerPersistenceTests {
   private func binary() throws -> String {
     URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).standardizedFileURL.path
   }

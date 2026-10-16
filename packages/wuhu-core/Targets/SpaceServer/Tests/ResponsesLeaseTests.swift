@@ -11,7 +11,7 @@ import SpaceCore
 import Testing
 import WuhuAI
 
-@Suite(.timeLimit(.minutes(1))) struct ResponsesLeaseTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ResponsesLeaseTests {
   @Test(arguments: [Optional(401), Optional(409), nil])
   func providerFailureOrCancellationReleasesRegistryLeaseForResume(status: Int?) async throws {
     try await withSessionDeps {

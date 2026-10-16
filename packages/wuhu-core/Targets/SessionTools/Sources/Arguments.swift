@@ -134,15 +134,17 @@ public struct RequestArguments: Decodable, Sendable {
   public var task: String
   public var message: String
   public var deadlineSeconds: Double?
+  public var stallSeconds: Double?
 
-  public init(task: String, message: String, deadlineSeconds: Double? = nil) {
-    self.task = task; self.message = message; self.deadlineSeconds = deadlineSeconds
+  public init(task: String, message: String, deadlineSeconds: Double? = nil, stallSeconds: Double? = nil) {
+    self.task = task; self.message = message; self.deadlineSeconds = deadlineSeconds; self.stallSeconds = stallSeconds
   }
 
   enum CodingKeys: String, CodingKey {
     case task
     case message
     case deadlineSeconds = "deadline_seconds"
+    case stallSeconds = "stall_seconds"
   }
 }
 
@@ -172,6 +174,7 @@ struct CreateSessionArguments: Decodable {
   var template: String?
   var expectsReply: Bool?
   var message: String?
+  var stallSeconds: Double?
 
   enum CodingKeys: String, CodingKey {
     case title
@@ -187,6 +190,7 @@ struct CreateSessionArguments: Decodable {
     case template
     case expectsReply = "expects_reply"
     case message
+    case stallSeconds = "stall_seconds"
   }
 }
 

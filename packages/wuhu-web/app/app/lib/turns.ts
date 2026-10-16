@@ -174,6 +174,7 @@ export function noticePresentation(notice: WorkNotice): NoticePresentation {
       'parkReminder',
       'childFailed',
       'requestDeadline',
+      'requestStall',
       'restart',
     ].includes(notice.kind)
   ) {

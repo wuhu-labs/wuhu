@@ -11,7 +11,7 @@ extension Transcript {
         if notice.isCacheWarming, !notice.content.text.isEmpty { return true }
         switch notice.kind {
         case .context, .owedReply, .parkReminder: continue
-        case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .script: return false
+        case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script: return false
         }
       case .assistant, .toolResult, .bookmark, .generationHead: continue
       }

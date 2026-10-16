@@ -34,6 +34,7 @@ struct ScriptSessions {
     var tags: [String]?
     var message: String?
     var expectsReply: Bool?
+    var stallSeconds: Double?
     var key: String?
   }
 
@@ -66,6 +67,7 @@ struct ScriptSessions {
             template: options.template,
             expectsReply: options.expectsReply ?? false,
             message: options.message,
+            stallSeconds: options.stallSeconds,
           ))
         } catch let error as ExecutorUnavailableError {
           return .object(["error": .string(error.description), "code": "executorNoLongerSupported"])
@@ -102,19 +104,21 @@ struct ScriptSessions {
     engine.define("__wuhu_session_request", promising: { [session, tools] arguments in
       try await scripted {
         guard case let .string(task)? = arguments[safe: 0], case let .string(message)? = arguments[safe: 1] else {
-          throw ToolProblem("request(id, message, { deadlineSeconds }) wants a session id and a message")
+          throw ToolProblem("request(id, message, { deadlineSeconds, stallSeconds }) wants a session id and a message")
         }
-        let deadline: Double? = switch arguments[safe: 2] {
-        case let .integer(seconds)?: Double(seconds)
-        case let .number(seconds)?: seconds
-        default: nil
+        func seconds(_ value: JSONValue?) -> Double? {
+          switch value {
+          case let .integer(seconds)?: Double(seconds)
+          case let .number(seconds)?: seconds
+          default: nil
+          }
         }
         try await tools.refuseUnlessLive(session)
         @Dependency(\.uuid) var uuid
         let result = try await tools.request(
           session,
           ToolCallID("script:\(uuid().uuidString.lowercased())"),
-          RequestArguments(task: task, message: message, deadlineSeconds: deadline),
+          RequestArguments(task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3])),
         )
         guard case let .request(opened) = result else {
           preconditionFailure("request answered with \(result)")
@@ -205,7 +209,7 @@ export async function toolRoster() {
 
 export async function createSession(options) {
   if (options === null || typeof options !== "object") {
-    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, key }")
+    throw new TypeError("createSession needs { title, kind, topLevel, group, provider, model, modelGroup, effort, template, tags, message, expectsReply, stallSeconds, key }")
   }
   const made = await create(options)
   if (made.error !== undefined) {
@@ -225,8 +229,8 @@ export function sendMessage(options) {
   return send(options)
 }
 
-export function request(id, message, { deadlineSeconds } = {}) {
-  return ask(String(id), String(message), deadlineSeconds ?? null)
+export function request(id, message, { deadlineSeconds, stallSeconds } = {}) {
+  return ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null)
 }
 
 export async function setTags(id, tags) {

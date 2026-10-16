@@ -29,6 +29,7 @@ struct WorkerConnection: Sendable {
   let lifetime: Task<Void, Never>
   var ownerTransport: WorkerOwnerTransport? = nil
   var parentBinding: WorkerParentBinding? = nil
+  var storage: ExecutionWorkerRuntimeStorage? = nil
 
   static func start(
     executable: String,
@@ -154,13 +155,23 @@ struct WorkerConnection: Sendable {
       if let storage { try await binding.bindIdentity(storage.checkpointIdentity()) }
       _ = try await client.negotiate(hello)
       admission.yield(true)
-      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport, parentBinding: binding)
+      return Self(processID: processID, client: client, lifetime: lifetime, ownerTransport: transport, parentBinding: binding, storage: storage)
     } catch {
       admission.finish()
       lifetime.cancel()
       await lifetime.value
       throw error
     }
+  }
+
+  func exportExec() async throws -> ExecWorkerExport {
+    guard let storage, let parentBinding else { throw AdminExecError.refused("ephemeralWorker") }
+    try await Self.requireExecIdle(client)
+    let (transfer, listener) = try await parentBinding.exportExec()
+    do {
+      let record = try await storage.execRecord(carrier: transfer.descriptor, listener: listener)
+      return .init(record: record, transfer: transfer, listener: listener)
+    } catch { try await parentBinding.rollbackExec(); throw error }
   }
 
   func stop() async {

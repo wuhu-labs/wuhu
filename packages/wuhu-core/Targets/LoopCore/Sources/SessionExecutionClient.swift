@@ -28,12 +28,14 @@ public protocol SessionExecutionClient: Sendable {
 public struct SessionExecution: SessionExecutionClient {
   let registry: SessionRegistry
   private let liveness = LivenessTracker()
+  private let archived: @Sendable (SessionID) async -> Void
 
   public init(owner: any SessionExecutionOwnerClient, loopConfig: LoopConfig) async {
     await self.init(makeRepo: { SessionRepo(owner: owner, id: $0) }, loopConfig: loopConfig)
   }
 
   init(makeRepo: @escaping @Sendable (SessionID) -> SessionRepo, loopConfig: LoopConfig) async {
+    archived = loopConfig.archived
     registry = SessionRegistry(makeRepo: makeRepo, loopConfig: loopConfig, liveness: liveness)
     await registry.activate()
   }
@@ -68,6 +70,7 @@ public struct SessionExecution: SessionExecutionClient {
 
   public func archive(_ id: SessionID, reservation: UUID) async throws {
     try await withCallback(of: Void.self) { send(.archive(reservation, $0), to: id) }
+    await archived(id)
   }
 
   public func unarchive(_ id: SessionID) async throws {

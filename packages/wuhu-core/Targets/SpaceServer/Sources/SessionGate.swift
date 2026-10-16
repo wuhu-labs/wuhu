@@ -317,6 +317,7 @@ private func sessionRouter(
     }
     var arguments: OrderedDictionary<String, JSONValue> = ["task": .string(id.rawValue), "message": .string(input.message)]
     arguments["deadline_seconds"] = input.deadlineSeconds.map(JSONValue.number)
+    arguments["stall_seconds"] = input.stallSeconds.map(JSONValue.number)
     let payload = try await tool("request", .object(arguments))
     guard case let .request(opened) = payload else { return toolRefusal(payload) }
     return try Response.json(SessionRequestOutput(
@@ -357,6 +358,9 @@ private func sessionRouter(
       input = try JSONValueDecoder().decode(ConversationPostInput.self, from: body)
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a conversation-post body: \(error)")
+    }
+    if case let .object(fields) = body, fields["viewing"] != nil {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "viewing is set only on a person's message, never by a session")
     }
     var arguments: OrderedDictionary<String, JSONValue> = ["message": .string(input.message)]
     arguments["conversation"] = input.conversation.map(JSONValue.string)

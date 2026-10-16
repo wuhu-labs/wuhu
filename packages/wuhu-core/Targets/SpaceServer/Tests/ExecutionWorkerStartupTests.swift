@@ -13,7 +13,7 @@ import SpaceCore
 import Testing
 import WorkerProtocol
 
-@Suite(.timeLimit(.minutes(1))) struct ExecutionWorkerStartupTests {
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerStartupTests {
   @Test func shutdownStopsConnectionReturnedByCancellationIgnoringStartup() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()

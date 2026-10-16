@@ -49,12 +49,13 @@ struct SpawnOrderSnapshot: Codable, Sendable {
   let template: String?
   let expectsReply: Bool
   let message: String?
+  let stallSeconds: Double?
   init(_ order: SpawnOrder) {
-    executor = order.executor; title = order.title; kind = order.kind; topLevel = order.topLevel; group = order.group; provider = order.provider; model = order.model; modelGroup = order.modelGroup; effort = order.effort; tags = order.tags; template = order.template; expectsReply = order.expectsReply; message = order.message
+    executor = order.executor; title = order.title; kind = order.kind; topLevel = order.topLevel; group = order.group; provider = order.provider; model = order.model; modelGroup = order.modelGroup; effort = order.effort; tags = order.tags; template = order.template; expectsReply = order.expectsReply; message = order.message; stallSeconds = order.stallSeconds
   }
 
   var order: SpawnOrder {
-    .init(executor: executor, title: title, kind: kind, topLevel: topLevel, group: group, provider: provider, model: model, modelGroup: modelGroup, effort: effort, tags: tags, template: template, expectsReply: expectsReply, message: message)
+    .init(executor: executor, title: title, kind: kind, topLevel: topLevel, group: group, provider: provider, model: model, modelGroup: modelGroup, effort: effort, tags: tags, template: template, expectsReply: expectsReply, message: message, stallSeconds: stallSeconds)
   }
 }
 

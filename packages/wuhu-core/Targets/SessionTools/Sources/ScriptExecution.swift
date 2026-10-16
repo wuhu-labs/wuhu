@@ -229,6 +229,15 @@ final class ScriptExecution: Sendable {
     return .killed(.cancelled)
   }
 
+  func requestStop() {
+    let ended = state.withLock { state -> Bool in
+      if state.ending != nil { return true }
+      if state.stop == nil { state.stop = .requested }
+      return false
+    }
+    if !ended { control.yield(.abort(.requested)) }
+  }
+
   func cancelHandler() {
     kill(.cancelled)
     state.withLock { $0.killed = .cancelled }

@@ -1,0 +1,12 @@
+# async-http-client 1.35 asserts in debug builds that a streaming request body
+# never finishes after a >= 300 response head. That head only pauses the body
+# producer, so a body that ends between the error head and the response end
+# traps (SIGILL) in every fastbuild test binary; release builds compile the
+# assert out and take the correct path. The patch is upstream's exact fix,
+# swift-server/async-http-client#934 (73d0974), which removes the assert.
+# Drop this block once the pinned release includes it.
+swift_deps.configure_package(
+    name = "swiftpkg_async_http_client",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:async-http-client-stream-finish-after-error-head.patch"],
+)

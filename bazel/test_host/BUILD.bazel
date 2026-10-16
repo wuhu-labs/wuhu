@@ -1,0 +1,31 @@
+load(":defs.bzl", "test_host")
+
+# A test exec group that requires this toolchain type runs on the target
+# lane's host OS: Linux for the linux lane, macOS for the mac lane and every
+# Apple simulator lane. Bazel's default test exec group instead asks for an
+# execution platform matching the target platform, which no host is for a
+# simulator.
+toolchain_type(
+    name = "toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+test_host(name = "host")
+
+[
+    toolchain(
+        name = "{}_on_{}".format(target, host),
+        exec_compatible_with = ["@platforms//os:" + host],
+        target_compatible_with = ["@platforms//os:" + target],
+        toolchain = ":host",
+        toolchain_type = ":toolchain_type",
+    )
+    for target, host in [
+        ("linux", "linux"),
+        ("macos", "macos"),
+        ("ios", "macos"),
+        ("tvos", "macos"),
+        ("visionos", "macos"),
+        ("watchos", "macos"),
+    ]
+]
