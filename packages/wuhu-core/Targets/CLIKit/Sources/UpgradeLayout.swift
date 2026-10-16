@@ -10,6 +10,8 @@
   import Glibc
 #endif
 
+import ImageRetention
+
 struct UpgradeLayout {
   var root: URL
 
@@ -87,7 +89,13 @@ struct UpgradeLayout {
     return staging
   }
 
+  private var imageRoot: String { self.root.deletingLastPathComponent().appendingPathComponent("execution-images").path }
+
   func install(payload: URL, version: String) throws {
+    try ImageRetention.transaction(root: imageRoot) { retention in try install(payload: payload, version: version, retention: retention) }
+  }
+
+  private func install(payload: URL, version: String, retention: ImageRetention) throws {
     let destination = self.root.appendingPathComponent(version, isDirectory: true)
     let binary = payload.appendingPathComponent("wuhu")
     guard FileManager.default.fileExists(atPath: binary.path) else {
@@ -97,6 +105,9 @@ struct UpgradeLayout {
     if FileManager.default.fileExists(atPath: destination.path) {
       guard self.currentVersion() != version else {
         throw CLIError(message: "refusing to replace \(version): it is the current version")
+      }
+      guard try !retention.protects(binary: destination.appendingPathComponent("wuhu").path) else {
+        throw CLIError(message: "refusing to replace \(version): execution image is retained")
       }
       try FileManager.default.removeItem(at: destination)
     }
@@ -147,6 +158,10 @@ struct UpgradeLayout {
 
   @discardableResult
   func prune(keep: Int) throws -> [String] {
+    try ImageRetention.transaction(root: imageRoot) { retention in try prune(keep: keep, retention: retention) }
+  }
+
+  private func prune(keep: Int, retention: ImageRetention) throws -> [String] {
     let manager = FileManager.default
     guard let names = try? manager.contentsOfDirectory(atPath: self.root.path) else { return [] }
     let protected = Set([self.currentVersion(), self.previousVersion()].compactMap { $0 })
@@ -162,6 +177,7 @@ struct UpgradeLayout {
       .sorted { $0.modified > $1.modified }
     var removed: [String] = []
     for (index, version) in versions.enumerated() where index >= keep && !protected.contains(version.name) {
+      if try retention.protects(binary: version.url.appendingPathComponent("wuhu").path) { continue }
       try manager.removeItem(at: version.url)
       removed.append(version.name)
     }

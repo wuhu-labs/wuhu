@@ -195,6 +195,36 @@ private func expectCode(_ code: OperationError.Code, _ work: () async throws -> 
     #expect(try await store.read(id).snapshot?.verdict?.tag == .completed)
     await client.shutdown()
   }
+
+  @Test func channelAnswerFromBeforeTheVerdictStillDeliversItsBytes() async throws {
+    let time = LocalTime(); let agent = try machine(time); let store = MemoryOperationStore()
+    let client = try driver(agent, time: time, store: store)
+    _ = try await client.describe("phone"); let id = try await start(client, large: true)
+    let record = try await store.read(id)
+    await agent.execute(id); _ = try await client.poll(id)
+    let head = ChannelPayload(data: Data(repeating: 42, count: 3))
+    func answer(from: UInt64) -> OperationSnapshot {
+      .init(
+        operation: id,
+        verdict: nil,
+        terminalToken: nil,
+        finalOffsets: [:],
+        outputConsumed: false,
+        channel: "out",
+        from: Offset(rawValue: from),
+        through: Offset(rawValue: from + 3),
+        payload: head,
+      )
+    }
+    _ = try await client.commit(answer(from: 0), record: record)
+    _ = try await client.commit(answer(from: 0), record: record)
+    #expect(try await store.read(id).snapshot?.verdict?.tag == .completed)
+    #expect(try await client.takeOutput(id, channel: "out") == [head])
+    let rest = try await client.poll(id, channel: "out")
+    #expect(rest.from == Offset(rawValue: 3))
+    #expect(rest.payload?.data == Data(repeating: 42, count: 65533))
+    await client.shutdown()
+  }
 }
 
 @Test func stoppedRequestDeadlineIsClampedToRemainingSilenceLease() async throws {

@@ -4,14 +4,14 @@ import Synchronization
 import Testing
 
 @Suite struct AdminExecCLITests {
-  @Test func requiresBothExplicitSwitchAndProcessMode() throws {
+  @Test func adminExecRemainsExplicitWithWorkerDefault() throws {
     guard case let .serve(defaults) = try Command.parse(["serve", "/tmp/space"]),
-          case let .serve(enabled) = try Command.parse(["serve", "/tmp/space", "--execution-placement", "worker", "--admin-exec"]) else { Issue.record("Expected serve"); return }
+          case let .serve(enabled) = try Command.parse(["serve", "/tmp/space", "--admin-exec"]) else { Issue.record("Expected serve"); return }
     guard case let .serve(explicit) = try Command.parse(["serve", "/tmp/space", "--execution-placement", "worker", "--admin-exec"]) else { Issue.record("Expected serve"); return }
     #expect(explicit == enabled)
     #expect(!defaults.adminExec)
     #expect(enabled.adminExec && enabled.executionPlacement == .worker)
-    #expect(throws: (any Error).self) { try Command.parse(["serve", "/tmp/space", "--admin-exec"]) }
+    #expect(throws: (any Error).self) { try Command.parse(["serve", "/tmp/space", "--execution-placement", "in-process", "--admin-exec"]) }
     #expect(try Command.parse(["admin-exec", "/tmp/space", "--rollback"]) == .adminExec(folder: "/tmp/space", rollback: true))
     #expect(throws: (any Error).self) { try Command.parse(["admin-exec", "/tmp/space", "--binary", "/tmp/other"]) }
   }

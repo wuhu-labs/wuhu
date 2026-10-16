@@ -31,6 +31,9 @@ func formatGrep(_ output: GrepOutput) -> String {
   var text = output.matches.map { match in
     "\(match.path):\(match.line):\(match.text)\n"
   }.joined()
+  for file in output.skipped ?? [] {
+    text += "skipped \(file.path) \(file.reason) bytes=\(file.bytes)\n"
+  }
   if let cursor = output.cursor {
     text += "cursor \(cursor)\n"
   }

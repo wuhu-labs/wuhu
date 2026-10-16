@@ -11,11 +11,12 @@ struct ServeParsingTests {
     )))
   }
 
-  @Test func workerPlacementIsExplicitOptIn() throws {
+  @Test func workerPlacementIsTheStandaloneDefault() throws {
     guard case let .serve(defaults) = try Command.parse(["serve", "/tmp/store"]),
           case let .serve(enabled) = try Command.parse(["serve", "/tmp/store", "--execution-placement", "worker"])
     else { Issue.record("expected serve"); return }
-    #expect(defaults.executionPlacement == .inProcess)
+    #expect(defaults.executionPlacement == .worker)
+    #expect(!defaults.adminExec)
     #expect(enabled.executionPlacement == .worker)
   }
 

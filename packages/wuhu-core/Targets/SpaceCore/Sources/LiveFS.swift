@@ -182,24 +182,40 @@ struct LiveFS: SpaceVFS {
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
     let p = try Self.validated(path)
+    let (entries, _, token) = try await page(of: p, from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
+    return (token, entries.sorted { $0.name < $1.name })
+  }
+
+  func list(_ path: String, from: String, limit: Int) async throws -> (entries: [Entry], next: String?) {
+    precondition(limit > 0)
+    let (entries, next, _) = try await page(of: Self.validated(path), from: from, limit: limit, budget: ListingBudget(limit: nil))
+    return (entries, next)
+  }
+
+  private func page(of p: SpacePath, from: String, limit: Int, budget: ListingBudget) async throws -> ([Entry], String?, VersionToken) {
     let group = group
+    let start = (p.isRoot ? "/" : p.rawValue + "/") + from
     return try await writer.read { db in
       if !p.isRoot {
         guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
         guard head.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
       }
-      let query = FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.parentPath.eq(p.rawValue) }
-        .order { $0.path }.limit(listingLimit ?? Int.max)
+      let query = FSHeadRow.where { $0.grp.eq(group.rawValue) && $0.parentPath.eq(p.rawValue) && $0.path.gte(start) }
+        .order { $0.path }.limit(limit == Int.max ? limit : limit + 1)
       let cursor = try QueryValueCursor<FSHeadRow>(db: db, query: query.query)
-      var budget = ListingBudget(limit: listingByteLimit)
+      var budget = budget
       var entries: [Entry] = []
+      var next: String?
       while let child = try cursor.next() {
         let name = SpacePath.lastComponent(of: child.path)
+        guard entries.count < limit else {
+          next = name
+          break
+        }
         try budget.consume(name)
         entries.append(Substrate.entry(from: child))
       }
-      let token = VersionToken(rev: Int(try Substrate.maxRevision(in: db)))
-      return (token, entries.sorted { $0.name < $1.name })
+      return (entries, next, VersionToken(rev: Int(try Substrate.maxRevision(in: db))))
     }
   }
 

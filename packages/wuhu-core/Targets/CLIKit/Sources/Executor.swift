@@ -272,6 +272,8 @@ struct Executor {
       try await self.keyRevoke(pubkey: pubkey)
     case .upgrade:
       preconditionFailure("upgrade is routed before the executor")
+    case .agent:
+      preconditionFailure("agent is routed before the executor")
     case .skillExport:
       try await self.skillExport()
     case let .modelsList(json):

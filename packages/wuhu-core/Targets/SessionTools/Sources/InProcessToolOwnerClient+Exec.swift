@@ -9,6 +9,7 @@ import MachineChannel
 import enum MachineContract.ExecEvent
 import struct MachineContract.ExecID
 import struct MachineContract.ExecStart
+import enum MachineContract.ExecTimeout
 import enum MachineContract.ExitStatus
 import struct MachineContract.StringMap
 import SessionDomain
@@ -19,6 +20,17 @@ let execOutputBudget = 1 << 20
 struct ExecEnvironment: Equatable, Sendable {
   var env: StringMap?
   var secrets: StringMap?
+}
+
+func execLifetime(_ arguments: ExecArguments) throws -> Double {
+  if arguments.timeoutSeconds != nil {
+    throw ToolProblem("exec: timeout_seconds is renamed to max_lifetime_seconds", code: "invalidArgument")
+  }
+  let lifetime = arguments.maxLifetimeSeconds ?? ToolLifetimes.execDefault
+  guard lifetime > 0, lifetime <= ToolLifetimes.ceiling else {
+    throw ToolProblem("exec: max_lifetime_seconds must be more than 0 and at most \(seconds(.seconds(ToolLifetimes.ceiling)))", code: "invalidArgument")
+  }
+  return lifetime
 }
 
 func execEnvironment(_ arguments: ExecArguments) throws -> ExecEnvironment {
@@ -75,6 +87,7 @@ extension InProcessToolOwnerClient {
     }
     let environment = try execEnvironment(arguments)
     if let recorded = try await store.receipt(session, toolCallID: callID) { return recorded }
+    let lifetime = try execLifetime(arguments)
 
     let span = ServerTracing.enabled ? ServerSpan(.machine, session: session.rawValue) : nil
     var spanAttributes: [SpanAttribute: String]? = span == nil ? nil : [.machine: machine.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
@@ -92,7 +105,7 @@ extension InProcessToolOwnerClient {
       // the window must therefore cover the full output budget.
       window: maxOutput + 65536,
       maxOutput: maxOutput,
-      timeout: arguments.timeoutSeconds,
+      timeout: lifetime,
     )
     // Cancellation deliberately does NOT kill the process: the executor
     // cannot tell an interrupt from a crash-shaped teardown, and a crash
@@ -103,7 +116,13 @@ extension InProcessToolOwnerClient {
       var record: ExecRecord?
       if let fetched = try? await backend.status(claim.record.id) { record = fetched }
       switch drive {
-      case let .exited(output, status, cut):
+      case let .exited(output, status, cut, timedOut):
+        if timedOut == .statusUnknown {
+          throw ToolProblem(
+            "exec \(claim.record.id.rawValue) was stopped at its \(seconds(.seconds(lifetime))) s max lifetime, but its own exit status never came back",
+            code: "requestDeadline",
+          )
+        }
         let exitCode: Int32 = switch status {
         case let .exited(code): Int32(truncatingIfNeeded: code)
         case let .signaled(signal): Int32(128 + signal)
@@ -120,6 +139,11 @@ extension InProcessToolOwnerClient {
         if cut { text += "\n[output was cut when the command stopped]" }
         if output.count >= maxOutput {
           text += "\n[output hit the \(maxOutput)-byte budget; the command was killed]"
+        }
+        if timedOut == .killed {
+          text += arguments.maxLifetimeSeconds == nil
+            ? "\n[killed after \(seconds(.seconds(lifetime))) s, the default max lifetime; start longer work detached and watch it from run_script]"
+            : "\n[killed after \(seconds(.seconds(lifetime))) s, its max_lifetime_seconds]"
         }
         let payload = ToolResultPayload.exec(.init(output: text, exitCode: exitCode, reaped: record?.terminal == .reaped))
         try await deliverContext(session, callID, touching: address, state: state)
@@ -148,7 +172,7 @@ extension InProcessToolOwnerClient {
   }
 
   private enum DriveOutcome: Sendable {
-    case exited(output: [UInt8], status: ExitStatus, cut: Bool)
+    case exited(output: [UInt8], status: ExitStatus, cut: Bool, timedOut: ExecTimeout?)
     case lost(String)
   }
 
@@ -169,28 +193,50 @@ extension InProcessToolOwnerClient {
         await outgoing.closeStdin()
         var output: [UInt8] = []
         var cut = false
+        var timedOut: ExecTimeout?
+        var drive: DriveOutcome?
+        // The result is built outside the stream's catch, so a refusal it
+        // throws reaches the caller as itself, not as a lost stream.
         do {
-          for try await event in outgoing.events {
+          events: for try await event in outgoing.events {
             switch event {
             case let .output(_, _, data):
               output += data.bytes
             case let .exit(status):
-              let payload = try await consume(.exited(output: output, status: status, cut: cut))
-              await outgoing.acknowledgeExit()
-              return payload
+              drive = .exited(output: output, status: status, cut: cut, timedOut: timedOut)
+              break events
             case .truncated:
               cut = true
+            case let .timedOut(outcome):
+              timedOut = outcome
             case let .failed(error):
-              return try await consume(.lost(error.message))
+              drive = .lost(error.message)
+              break events
             }
           }
         } catch is CancellationError {
           return nil
         } catch {
+          drive = .lost(String(describing: error))
+        }
+        guard let drive else {
+          if Task.isCancelled { return nil }
+          return try await consume(.lost("exec stream ended without an exit event"))
+        }
+        guard case .exited = drive else { return try await consume(drive) }
+        let payload: ToolResultPayload
+        do {
+          payload = try await consume(drive)
+        } catch let problem as ToolProblem {
+          throw problem
+        } catch is CancellationError {
+          return nil
+        } catch {
+          // A result that could not be recorded fails the call with why.
           return try await consume(.lost(String(describing: error)))
         }
-        if Task.isCancelled { return nil }
-        return try await consume(.lost("exec stream ended without an exit event"))
+        await outgoing.acknowledgeExit()
+        return payload
       }
       defer { group.cancelAll() }
       while let outcome = try await group.next() {

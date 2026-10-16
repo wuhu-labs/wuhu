@@ -52,6 +52,18 @@ single_version_override(
     version = "3.6.1",
 )
 
+# rules_cc's autodetected Linux toolchain writes a module map listing every header on the host,
+# and every C/C++ compile takes it as an input: the Linux build pool and the public build's
+# image differed only in a few unrelated -dev packages and shared no C action keys.
+# The map serves layering_check alone, which nothing here enables; Apple toolchains come from
+# apple_support and carry their own.
+single_version_override(
+    module_name = "rules_cc",
+    patch_strip = 1,
+    patches = ["//bazel/patches:rules-cc-no-system-module-map.patch"],
+    version = "0.2.25",
+)
+
 # Our fork of rules_swift_package_manager 1.17.1. Upstream always enables a
 # dependency's own default traits and ignores every `.package(traits:)`
 # selection in the graph; the fork implements SwiftPM trait unification

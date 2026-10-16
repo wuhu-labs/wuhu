@@ -141,9 +141,15 @@ extension ToolExecutor {
   func runScript(_ session: SessionID, _ arguments: RunScriptArguments) async throws -> ToolResultPayload {
     guard let scripts else { throw ToolProblem("run_script is not available here") }
     let timeout = min(arguments.timeoutSeconds ?? 60, scriptSecondsCeiling)
-    let lifetime = min(arguments.maxLifetimeSeconds ?? 3600, scriptSecondsCeiling)
-    guard timeout > 0, lifetime > 0 else {
-      throw ToolProblem("run_script: timeout_seconds and max_lifetime_seconds must be positive")
+    let lifetime = arguments.maxLifetimeSeconds ?? ToolLifetimes.scriptDefault
+    guard timeout > 0 else {
+      throw ToolProblem("run_script: timeout_seconds must be positive")
+    }
+    guard lifetime > 0 else {
+      throw ToolProblem("run_script: max_lifetime_seconds must be positive", code: "invalidArgument")
+    }
+    guard lifetime <= ToolLifetimes.ceiling else {
+      throw ToolProblem("run_script: max_lifetime_seconds is at most \(seconds(.seconds(ToolLifetimes.ceiling)))", code: "invalidArgument")
     }
     let execution = try await scripts.start(arguments.source, session: session, lifetime: .seconds(lifetime), tools: self)
     switch try await execution.answer(within: .seconds(timeout), onTimeout: arguments.onTimeout ?? .detach) {

@@ -179,6 +179,14 @@ wuhu upgrade --rollback
 
 Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane pointer, then the artifact it names, checked against its sha256. Installs into `~/.wuhu/bin/<version>/wuhu`, then copies that binary to a temp file and renames it over `~/.wuhu/bin/wuhu`, a real file whose path never changes, so macOS privacy grants survive upgrades; `~/.wuhu/bin/.current` names the version. The last 3 versions are kept and `--rollback` puts the previous one back the same way. The binary follows its own release lane (`-dev.N` / `-beta.N` / stable) — crossing lanes takes an explicit `--lane`. `--check` only prints. Never touches PATH, shells, or dotfiles; if another `wuhu` shadows the installed one on PATH it warns and leaves it alone.
 
+## Minimal agent
+
+```bash
+wuhu agent [--log run.jsonl | --resume run.jsonl] < request.json
+```
+
+Runs a read/write/bash coding agent in the current directory, no space involved, until the model calls `complete`; prints `{"result": ...}`. The request names the model, its provider's `/models.json` entry, the credential, `system`, `task`, `maxTurns` and `bashTimeoutSeconds`: `wuhu agent --help` shows the shape. Credentials go only on stdin.
+
 ## Server
 
 ```bash
@@ -382,4 +390,4 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 
 `wuhu channel create [--title T] [person...]` creates a channel in the acting group and prints its id. A person creator is a member; a session creator is not. `wuhu channel add <id> <person...>` and `wuhu channel remove <id> <person...>` manage people. `wuhu channel rename <id> <title>` sets the title; `wuhu channel rename <id> --clear` returns to members' names. Session membership and blank titles are typed errors. People must be members to read, post or manage the channel. Sessions in groups reading its home group may read, post and manage it without joining. Plain person messages wake no session; mention, reply-target and the attention window still apply.
 
-`wuhu serve --execution-placement worker` explicitly runs loops, provider sockets, scripts and handlers in a same-binary per-space child; stores, scheduler, secrets/signing and machine brokers stay in the parent. The default remains in-process; an operator can explicitly select `--execution-placement in-process`. Worker failure never selects in-process execution. The old `--execution-worker` flag refuses with the replacement spelling. Changing placement requires an authorized quiesced ordinary restart, not live adoption.
+`wuhu serve` defaults to running loops, provider sockets, scripts and handlers in a same-binary per-space child on Linux and macOS; stores, scheduler, secrets/signing and machine brokers stay in the parent. An operator preserving parent execution must explicitly select `--execution-placement in-process`. The hosted CLI and library entry points still default to in-process; `--execution-placement worker` explicitly selects the child in either CLI. Admin-exec remains off unless explicitly enabled (Linux only). Worker failure never selects in-process execution. The old `--execution-worker` flag refuses with the replacement spelling. Changing placement requires an authorized quiesced ordinary restart, not live adoption.

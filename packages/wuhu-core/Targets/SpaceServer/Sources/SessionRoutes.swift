@@ -762,7 +762,7 @@ private func viewingVerdict(_ spelling: String?, space: Space, as principal: Pri
   do {
     return .viewing(try await space.viewing(spelling, as: principal))
   } catch let refusal as ViewingError {
-    return .refused(errorResponse(.badRequest, code: "invalidArgument", message: refusal.message))
+    return .refused(errorResponse(.badRequest, code: "invalidArgument", message: refusal.message, reason: "viewing"))
   }
 }
 

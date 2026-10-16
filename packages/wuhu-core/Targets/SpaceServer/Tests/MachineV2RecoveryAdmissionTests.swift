@@ -46,6 +46,45 @@ private final class RecoveryBacklog: Sendable {
   func release() { state.withLock { $0.released = true; return $0.releases }.forEach { $0.finish() }; entrance.finish() }
 }
 
+/// A manual `now`, and exchange deadlines that pass only when the test expires them.
+private final class DeadlineTime: Sendable {
+  struct State {
+    var now = Duration.zero
+    var calls = 0
+    var sleepers: [UUID: CheckedContinuation<Void, any Error>] = [:]
+  }
+
+  let state = Mutex(State())
+  let (sleeps, sleep) = AsyncStream<Void>.makeStream()
+  var clock: OperationClock { .init(now: { self.state.withLock { $0.now } }, sleep: { _ in try await self.wait() }) }
+  func advance(_ duration: Duration) { state.withLock { $0.now += duration } }
+
+  /// Waits until `sleepers` deadlines have begun in all, then passes every one still pending.
+  func expire(sleepers: Int) async {
+    var begun = sleeps.makeAsyncIterator()
+    while state.withLock({ $0.calls }) < sleepers { _ = await begun.next() }
+    let pending = state.withLock { state in defer { state.sleepers = [:] }; return state.sleepers }
+    for sleeper in pending.values { sleeper.resume() }
+  }
+
+  private func wait() async throws {
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (sleeper: CheckedContinuation<Void, any Error>) in
+        let cancelled = state.withLock { state in
+          state.calls += 1
+          if Task.isCancelled { return true }
+          state.sleepers[id] = sleeper; return false
+        }
+        if cancelled { sleeper.resume(throwing: CancellationError()) }
+        sleep.yield(())
+      }
+    } onCancel: {
+      state.withLock { $0.sleepers.removeValue(forKey: id) }?.resume(throwing: CancellationError())
+    }
+  }
+}
+
 @Suite(.timeLimit(.minutes(1))) struct MachineV2RecoveryAdmissionTests {
   @Test(arguments: [false, true])
   func expiredOutputIsTerminalForRecoveryAndRetainsKnownVerdictAcrossRestart(terminal: Bool) async throws {
@@ -205,26 +244,43 @@ private final class RecoveryBacklog: Sendable {
       try await space.registerMachineV2(machine.id.rawValue, group: .shared)
       healthy.append(machine.id.rawValue)
     }
-    let backlog = RecoveryBacklog(); let time = AdmissionTime()
+    let backlog = RecoveryBacklog(); let time = DeadlineTime()
     let calls = Mutex(0); let (answers, answer) = AsyncStream<Void>.makeStream()
+    let (exits, exit) = AsyncStream<Void>.makeStream()
     let description = Self.record(machine: "presence").description
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
       FetchClient { request in
-        if request.url.path.hasSuffix("/" + hanging.id.rawValue) { return try await backlog.fetch() }
+        if request.url.path.hasSuffix("/" + hanging.id.rawValue) {
+          defer { exit.yield(()) }
+          return try await backlog.fetch()
+        }
         calls.withLock { $0 += 1 }; answer.yield(())
         return Self.reply(try .json(description), to: request)
       }
     }, abort: { _, _ in })
+    let healthyAttached: @Sendable () async throws -> Bool = { [healthy] in
+      for machine in healthy {
+        if try await space.machineV2PresenceEvidence(machine, group: .shared)?.state != .attached { return false }
+      }
+      return true
+    }
     try await coordinator.prepare()
     try await withThrowingTaskGroup(of: Void.self) { tasks in
+      var presenceWrites = regionWakes([Table("machine_v2_presence")], in: await space.writer).makeAsyncIterator()
       tasks.addTask { try await coordinator.tick() }
-      var arrived = answers.makeAsyncIterator()
-      for _ in 0 ..< 3 { _ = await arrived.next() }
+      var arrived = answers.makeAsyncIterator(); var entered = backlog.entered.makeAsyncIterator()
+      for _ in healthy { _ = await arrived.next() }
+      _ = await entered.next()
+      // Every healthy box turns attached while the hanging box still holds its exchange; no deadline passes meanwhile.
+      while try await !healthyAttached() { try #require(await presenceWrites.next() != nil) }
+      await time.expire(sleepers: healthy.count + 1)
       _ = try await tasks.next()
+      var exited = exits.makeAsyncIterator(); _ = await exited.next()
       time.advance(.seconds(20))
       tasks.addTask { try await coordinator.tick() }
-      for _ in 0 ..< 3 { _ = await arrived.next() }
-      #expect(calls.withLock { $0 } == 6)
+      for _ in healthy { _ = await arrived.next() }
+      _ = await entered.next()
+      #expect(calls.withLock { $0 } == 2 * healthy.count)
       backlog.release(); answer.finish()
       while try await tasks.next() != nil {}
       for machine in healthy {
@@ -243,7 +299,7 @@ private final class RecoveryBacklog: Sendable {
     for n in 0 ..< 4 {
       _ = try await store.claim(.init(scope: "blocked-\(n)", key: "one"), record: Self.record(machine: "backlog-\(n)"))
     }
-    let backlog = RecoveryBacklog(); let time = AdmissionTime(); let probes = Mutex(0)
+    let backlog = RecoveryBacklog(); let time = DeadlineTime(); let probes = Mutex(0)
     let description = Self.record(machine: "healthy").description
     let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: Self.origin, clock: time.clock, fetch: { _ in
       FetchClient { request in

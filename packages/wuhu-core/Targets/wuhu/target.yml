@@ -2,6 +2,7 @@ name: wuhu
 kind: executable
 sources: Sources
 stamp: true
+unstamped: true
 info:
   CFBundleIdentifier: ai.wuhu.cli
   CFBundleName: wuhu

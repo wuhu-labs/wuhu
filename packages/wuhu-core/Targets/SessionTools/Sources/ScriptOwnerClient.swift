@@ -18,7 +18,7 @@ import WuhuAI
 public enum ScriptDataOperation: String, Sendable {
   case createTable = "table.create", tableSchema = "table.schema", alterTable = "table.alter"
   case instantiateTemplate = "new", remove = "rm", readAttributes = "attributes.read", patchAttributes = "attributes.patch"
-  case stat, history, move = "mv"
+  case stat, history, move = "mv", find, grep
 }
 
 public struct ScriptModuleSnapshot: Sendable {

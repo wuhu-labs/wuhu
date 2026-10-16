@@ -256,7 +256,7 @@ import Testing
           matchLimit: run.matchLimit, entryLimit: run.entryLimit,
         )
         #expect(spacePages == machinePages, "grep \(run)")
-        #expect(spacePages.last?.cursor == nil)
+        #expect(spacePages.last?.hasCursor == false)
         if run.matchLimit == nil, run.entryLimit == nil {
           #expect(spacePages.count == 1)
           #expect(spacePages[0].items == [
@@ -279,7 +279,7 @@ import Testing
           matchLimit: run.matchLimit, entryLimit: run.entryLimit,
         )
         #expect(spacePages == machinePages, "find \(run)")
-        #expect(spacePages.last?.cursor == nil)
+        #expect(spacePages.last?.hasCursor == false)
         #expect(spacePages.flatMap(\.items) == [
           "/docs/a.txt", "/docs/b.txt", "/docs/c.txt", "/src/deep/nested.txt",
         ])
@@ -296,9 +296,11 @@ private struct ToolFailure {
   let hint: String?
 }
 
+// Space steps are opaque and machine steps are raw paths, so a page compares
+// whether it hands back a step, not the step itself.
 private struct Page: Equatable {
   let items: [String]
-  let cursor: String?
+  let hasCursor: Bool
 }
 
 func awaitAttached(_ server: TestServer, _ machine: MachineID) async throws {
@@ -334,8 +336,7 @@ private func failure(_ server: TestServer, _ tool: String, _ input: JSONValue) a
 }
 
 // The fixture root is a random-suffixed absolute path, so removing every
-// occurrence normalizes both match paths (full address prefix) and cursors
-// (machine-local path after the "line@").
+// occurrence normalizes match paths (full address prefix).
 private func stripPrefix(_ value: String, _ strips: [String]) -> String {
   var value = value
   for strip in strips {
@@ -365,7 +366,7 @@ private func grepPages(
     let output = try await call(server, "grep", input, as: GrepOutput.self)
     pages.append(Page(
       items: output.matches.map { "\(stripPrefix($0.path, strip)):\($0.line):\($0.text)" },
-      cursor: output.cursor.map { stripPrefix($0, strip) },
+      hasCursor: output.cursor != nil,
     ))
     guard let next = output.cursor else { return pages }
     step = next
@@ -387,7 +388,7 @@ private func findPages(
     let output = try await call(server, "find", input, as: FindOutput.self)
     pages.append(Page(
       items: output.paths.map { stripPrefix($0, strip) },
-      cursor: output.cursor.map { stripPrefix($0, strip) },
+      hasCursor: output.cursor != nil,
     ))
     guard let next = output.cursor else { return pages }
     step = next

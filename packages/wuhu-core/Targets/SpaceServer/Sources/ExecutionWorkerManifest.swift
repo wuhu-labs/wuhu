@@ -4,6 +4,7 @@
   import Foundation
 #endif
 import CProcessIdentity
+import struct ImageRetention.ImageReference
 import struct WorkerProtocol.WorkerProtocolError
 
 struct ExecutionWorkerManifest: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
@@ -25,7 +26,14 @@ struct ExecutionWorkerManifest: Codable, Equatable, Sendable, CustomStringConver
   var credentials: Credentials
   var sockets: ExecutionWorkerSocketLocation? = nil
 
+  var image: ImageReference? = nil
+
   func validate() throws {
+    if let image {
+      guard image.id == incarnation, image.processID == processID, image.birth == birth, image.owner == "worker:" + space + ":" + incarnation.uuidString else {
+        throw WorkerProtocolError(.invalidConfiguration, message: "Invalid execution worker image reference")
+      }
+    }
     let tokens = [credentials.current] + (credentials.successor.map { [$0] } ?? [])
     guard (version == 1 && sockets == nil || version == 2 && sockets != nil), !space.isEmpty, processID > 0,
           birth.utf8.count >= 16, birth.utf8.count <= 128,

@@ -74,6 +74,7 @@ func runListenerAdoptionFixture(descriptor: Int32) async throws {
   let scenario = try #require(environment["WUHU_LISTENER_TEST_SCENARIO"].flatMap(ListenerScenario.init(rawValue:)))
   func number(_ key: String) throws -> UInt64 { try #require(environment["WUHU_LISTENER_TEST_" + key].flatMap(UInt64.init)) }
   let identity = try WorkerListener.InheritedIdentity(descriptorDevice: number("FD_DEVICE"), descriptorInode: number("FD_INODE"), pathDevice: number("PATH_DEVICE"), pathInode: number("PATH_INODE"))
+  let file = try DescriptorFile(of: descriptor)
   var before = stat()
   let existed = lstat(path, &before) == 0
   if scenario == .queuedExport {
@@ -107,12 +108,11 @@ func runListenerAdoptionFixture(descriptor: Int32) async throws {
     } catch let error as WorkerProtocolError {
       try #require(error.code == .invalidConfiguration)
     }
-    try #require(fcntl(descriptor, F_GETFD) == -1)
-    try #require(errno == EBADF)
+    try #require(released(descriptor, from: file))
     var after = stat()
     try #require((lstat(path, &after) == 0) == existed)
     if existed { try #require(after.st_ino == before.st_ino && after.st_dev == before.st_dev && after.st_mode == before.st_mode) }
-    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor) == 0)
+    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor, file: file) == 0)
     return
   }
   let listener = try await WorkerListener.adopt(descriptor, socket: path, expecting: identity) { _ in .text("adopted-listener") }
@@ -124,7 +124,7 @@ func runListenerAdoptionFixture(descriptor: Int32) async throws {
     var after = stat()
     try #require(lstat(path, &after) == 0 && after.st_ino == before.st_ino && after.st_dev == before.st_dev)
     try #require(try await Task.detached { try requestListener(path: path) }.value.hasSuffix("adopted-listener"))
-    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor) == 0)
+    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor, file: file) == 0)
     if scenario == .replacementShutdown {
       try #require(unlink(path) == 0)
       replacement = try rawListener(path: path)
@@ -134,8 +134,7 @@ func runListenerAdoptionFixture(descriptor: Int32) async throws {
   await listener.shutdown()
   await listener.shutdown()
   try result.get()
-  try #require(fcntl(descriptor, F_GETFD) == -1)
-  try #require(errno == EBADF)
+  try #require(released(descriptor, from: file))
   var final = stat()
   if replacement >= 0 {
     defer { _ = close(replacement); _ = unlink(path) }

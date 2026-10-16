@@ -146,9 +146,10 @@ public actor ChannelEndpoint {
     outbound?.yield(Frame(streamID: exec.streamID, opcode: .kill, payload: Kill(id: id)))
   }
 
-  func finish(exec id: ExecID, status: ExitStatus) {
+  func finish(exec id: ExecID, status: ExitStatus, timedOut: ExecTimeout?) {
     guard let exec = execs[id], exec.role == .incoming, exec.sender.exit == nil else { return }
     exec.sender.exit = status
+    exec.timedOut = timedOut
     let (cancelled, cancellation) = AsyncStream<Void>.makeStream()
     exec.retentionCancellation = cancellation
     expirationContinuation.yield((id, expiryWait(clock), cancelled))
@@ -224,6 +225,7 @@ public actor ChannelEndpoint {
   private func exitFrame(for exec: ExecState) -> Frame {
     Frame(streamID: exec.streamID, opcode: .execExit, payload: ExecExit(
       id: exec.start.id, cursor: exec.sender.nextCursor, status: exec.sender.exit!, outputCut: exec.outputCut ? true : nil,
+      timedOut: exec.timedOut,
     ))
   }
 
@@ -455,6 +457,7 @@ private final class ExecState {
   var retentionCancellation: AsyncStream<Void>.Continuation?
   var outputStopped: Bool = false
   var outputCut: Bool = false
+  var timedOut: ExecTimeout?
   var killRequested: Bool = false
   var killDelivered: Bool = false
 

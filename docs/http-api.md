@@ -219,7 +219,8 @@ served sandboxed, with no import map, and cannot write. The SDK speaks the data 
 origin, as the viewer's read cookie: `GET /_/space/query`,
 `GET /_/space/observe` (SSE of typed snapshots), `GET /_/space/watch` (SSE of
 file events, opening with an `event: head` frame carrying the head `rev` when
-no `from` is given), `GET /_/space/attributes`, and the page writes
+no `from` is given), `GET /_/space/attributes`, `GET /_/space/find` and
+`GET /_/space/grep` (the find and grep tools, paged by `step`), and the page writes
 `POST /_/space/rows` and `POST /_/space/attributes`, which act as the host's
 group minus admin and record the viewer's persona and the page in the
 revision's attribution. The wire, admission, status codes and attribution are

@@ -11,6 +11,10 @@
 //   mutateRows(path, ops)          -> Promise<{ rev, ids }>
 //   readAttributes(path)           -> Promise<{ attributes, token }>
 //   patchAttributes(path, patch)   -> Promise<{ token }>
+//   find(search)                   -> Promise<{ paths, cursor? }>
+//   grep(search)                   -> Promise<{ matches, cursor?, skipped? }>
+// A search is the find or grep tool's input: `{ glob | pattern, path?,
+// matchLimit?, entryLimit?, step? }`, unset fields omitted.
 // A snapshot is `{ columns, rows }`, each cell a scalar, `{ blob: base64 }` or
 // `{ json: value }`. A stream is `{ next(): Promise<value | null>, close() }`,
 // opened when iteration starts; `null` ends it. A transport rejects with a
@@ -289,6 +293,46 @@ const live = (open, convert) => ({
   },
 })
 
+const limit = (value, what) => {
+  if (value === undefined || value === null) return undefined
+  const count = typeof value === 'bigint' ? bigint(value, what) : value
+  if (!Number.isSafeInteger(count)) {
+    throw new TypeError(`${what} must be an integer`)
+  }
+  return count
+}
+
+// The find or grep tool's input. Range checks, a bad pattern, path or step
+// are the server's, so they reject as the same SpaceError the tool raises.
+function search(key, value, options) {
+  const verb = key === 'glob' ? 'find' : 'grep'
+  if (typeof value !== 'string' || value === '') {
+    throw new TypeError(`${verb} takes a non-empty ${key}`)
+  }
+  if (options === undefined || options === null) options = {}
+  if (!plain(options)) {
+    throw new TypeError(`${verb} takes { path, limit, entryLimit, step }`)
+  }
+  const { path: where, limit: matches, entryLimit, step, ...extra } = options
+  const unknown = Object.keys(extra)
+  if (unknown.length > 0) {
+    throw new TypeError(`${verb} has unexpected options: ${unknown.join(', ')}`)
+  }
+  const out = { [key]: value }
+  if (where !== undefined && where !== null) out.path = path(where)
+  const matchLimit = limit(matches, 'limit')
+  if (matchLimit !== undefined) out.matchLimit = matchLimit
+  const entries = limit(entryLimit, 'entryLimit')
+  if (entries !== undefined) out.entryLimit = entries
+  if (step !== undefined && step !== null) {
+    if (typeof step !== 'string' || step === '') {
+      throw new TypeError('step must be the step a previous call returned')
+    }
+    out.step = step
+  }
+  return out
+}
+
 const revision = (value) => {
   if (value === undefined || value === null) return null
   return rowID(value, 'from')
@@ -323,6 +367,26 @@ export function createSpace(transport) {
         path(target),
         attributePatch(options),
       )
+    },
+    async find(glob, options) {
+      const found = await transport.find(search('glob', glob, options))
+      return { paths: found.paths, step: found.cursor ?? null }
+    },
+    async grep(pattern, options) {
+      const found = await transport.grep(search('pattern', pattern, options))
+      return {
+        matches: found.matches.map(({ path, line, text }) => ({
+          path,
+          line,
+          text,
+        })),
+        step: found.cursor ?? null,
+        skipped: (found.skipped ?? []).map(({ path, bytes, reason }) => ({
+          path,
+          bytes,
+          reason,
+        })),
+      }
     },
   }
 }

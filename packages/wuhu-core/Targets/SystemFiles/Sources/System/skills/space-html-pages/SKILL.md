@@ -11,12 +11,13 @@ Any HTML file in the space is a real page on its group's host. Discover it throu
 
 ## Data: `wuhu:space`
 
-A page imports `wuhu:space`, the shared data subset of `run_script`, with the same query/observe/watch/mutateRows/readAttributes/patchAttributes names, shapes and values. The script-only table/schema/template/file/conversation exports are not page exports. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
+A page imports `wuhu:space`, the shared data subset of `run_script`, with the same query/observe/watch/find/grep/mutateRows/readAttributes/patchAttributes names, shapes and values. The script-only table/schema/template/file/conversation exports are not page exports. The proxied `fetch` export below is page-only; run_script keeps its ambient native fetch. The server maps it into every HTML page; nothing to install. A file under `/_/conversations/*/attachments/` is message content, served sandboxed without it, so author pages elsewhere.
 
 - `query` — one shot, resolves to an array of row objects. Bind values with a tagged template or `query(sql, params)`; never splice them into the SQL. Table names are quoted paths (`"/tasks.table"`); induced tables (`docs`, `links`, `sessions`, ...) work too.
 - `observe` — live: an async iterable of whole snapshots, the current rows first, then new rows after every commit that changes them.
 - `watch(glob, { from })` — live file events `{ kind: "write" | "delete" | "move", path, to?, rev, entry? }` after revision `from`; a delete has no `entry`. Fetch a file's content with a plain GET of its path. Without `from`, it starts at the current revision.
 - `mutateRows(path, ops)` — `{ insert: {…} }`, `{ update: id, set: {…} }` (only the named fields) and `{ delete: id }`, all in one revision. Resolves to `{ rev, ids }`, the inserted row ids in order. An unknown column or a wrong type is an error.
+- `find(glob, { path, limit, entryLimit, step })` → `{ paths, step }` and `grep(pattern, { path, limit, entryLimit, step })` → `{ matches: [{ path, line, text }], step, skipped }` — the find and grep tools, read-only, as the page's group. `limit` caps matches (50), `entryLimit` files scanned (1000); a non-null `step` means more, so pass it back as `step` until it is null. Regexes are ICU syntax; `skipped` lists files over 4 MiB grep did not search.
 - `readAttributes(path)` — a Markdown file's top-level frontmatter keys, `{ attributes, token }`.
 - `patchAttributes(path, { set, remove, ifMatch })` — sets and removes top-level keys, keeping comments, key order, quoting and the body. `ifMatch` is the `token` you read; a stale one rejects with `code: "conflict"` and the current `token`.
 

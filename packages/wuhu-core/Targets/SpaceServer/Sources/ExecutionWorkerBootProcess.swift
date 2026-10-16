@@ -11,6 +11,7 @@
 import CProcessIdentity
 import Dependencies
 import struct Fetch.FetchClient
+import ImageRetention
 import WorkerOwner
 import WorkerProtocol
 
@@ -65,7 +66,17 @@ struct ExecutionWorkerBootProcess: Sendable {
     }
     if Self.gone(manifest) { return .exited }
     #if os(Linux)
-      guard process_matches_worker(manifest.processID, executable) == 1 else { return .unsafeProcessIdentity }
+      let expectedExecutable: String
+      if let image = manifest.image {
+        let root = URL(fileURLWithPath: directory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("execution-images").path
+        do {
+          expectedExecutable = try ImageRetention.transaction(root: root) { store in
+            try store.verify(image)
+            return try store.imagePath(image)
+          }
+        } catch { return .unsafeProcessIdentity }
+      } else { expectedExecutable = executable }
+      guard process_matches_worker(manifest.processID, expectedExecutable) == 1 else { return .unsafeProcessIdentity }
       guard case .matching = Self.inspect(manifest) else { return Self.gone(manifest) ? .exited : .unconfirmed }
       return await fenceHandle(handle) ? .staleCredentialExited : .didNotExit
     #else

@@ -274,6 +274,15 @@ struct SpaceView: SpaceVFS {
 
   func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {
     let (token, entries) = try await view(path).list(path)
+    return (token, try await readable(entries, in: path))
+  }
+
+  func list(_ path: String, from: String, limit: Int) async throws -> (entries: [SpaceFS.Entry], next: String?) {
+    let (entries, next) = try await view(path).list(path, from: from, limit: limit)
+    return (try await readable(entries, in: path), next)
+  }
+
+  private func readable(_ entries: [SpaceFS.Entry], in path: String) async throws -> [SpaceFS.Entry] {
     var readable: [SpaceFS.Entry] = []
     for entry in entries {
       let child = (path.hasSuffix("/") ? path : path + "/") + entry.name
@@ -282,7 +291,7 @@ struct SpaceView: SpaceVFS {
         readable.append(entry)
       } catch SpaceError.notFound {}
     }
-    return (token, readable)
+    return readable
   }
 
   func stat(_ path: String) async throws -> SpaceFS.Entry {

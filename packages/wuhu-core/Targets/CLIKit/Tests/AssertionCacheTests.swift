@@ -100,14 +100,15 @@ struct AssertionCacheTests {
     let group = DispatchGroup()
     let warnings = Mutex<[String]>([])
     let directory = scratch.url
-    DispatchQueue.global().async(group: group) {
+    // Own queues: they overcommit, while a global-queue block can wait seconds for a core under parallel tests.
+    DispatchQueue(label: "assertion-migration").async(group: group) {
       var wallet = Wallet(directory: directory)
       started.signal()
       _ = wallet.assertion(space: "first.example:443", identity: identity)
       warnings.withLock { $0 += wallet.drainWarnings() }
       migrated.signal()
     }
-    DispatchQueue.global().async(group: group) {
+    DispatchQueue(label: "assertion-minting").async(group: group) {
       var wallet = Wallet(directory: directory)
       started.signal()
       wallet.recordAssertion("second-credential", space: "https://second.example")

@@ -130,6 +130,16 @@ extension Command {
         throw UsageError(message: "upgrade: --rollback stands alone")
       }
       return .upgrade(UpgradeCommand(check: check, rollback: rollback, lane: lane))
+    case "agent":
+      let log = try parser.option("--log", verb: verb)
+      let resume = try parser.option("--resume", verb: verb)
+      try parser.finish(verb: verb)
+      switch (log, resume) {
+      case (nil, nil): return .agent(nil)
+      case let (path?, nil): return .agent(.new(path))
+      case let (nil, path?): return .agent(.resume(path))
+      case (_?, _?): throw UsageError(message: "agent: pass only one of --log or --resume")
+      }
     case "read":
       let rev = try parser.intOption("--rev", verb: verb)
       let lines = try parser.option("--lines", verb: verb)
@@ -344,7 +354,7 @@ extension Command {
       let publicRead = parser.flag("--public-read")
       guard !parser.flag("--execution-worker") else { throw UsageError(message: "serve: --execution-worker was removed; use --execution-placement worker") }
       let placementOption = try parser.option("--execution-placement", verb: verb)
-      guard let executionPlacement = ServeCommand.ExecutionPlacement(rawValue: placementOption ?? "in-process") else { throw UsageError(message: "serve: --execution-placement must be in-process or worker") }
+      guard let executionPlacement = ServeCommand.ExecutionPlacement(rawValue: placementOption ?? "worker") else { throw UsageError(message: "serve: --execution-placement must be in-process or worker") }
       let adminExec = parser.flag("--admin-exec")
       guard !adminExec || executionPlacement == .worker else { throw UsageError(message: "serve: --admin-exec requires worker execution placement") }
       let devImport = try parser.option("--dev-import", verb: verb)
@@ -927,6 +937,7 @@ extension Command {
     trust     re-record a pinned server certificate after an expected change
     untrust   forget the trust record for a server
     upgrade   self-update from wuhu.ai into ~/.wuhu/bin
+    agent     run a minimal read/write/bash coding agent from a JSON request on stdin
     read      print file text, clamped to a line range
     write     write --body text to a path
     cat       write a path's raw bytes to stdout
@@ -1037,6 +1048,27 @@ extension Command {
     device to onboard; the link dies at first use or after --ttl seconds
     (default 600, at most 259200 — 3 days). requires this device to be
     enrolled (wuhu login).
+    \(exitCodes)
+    """,
+    "agent": """
+    usage: wuhu agent [--log <path> | --resume <path>] < request.json
+
+    runs a minimal coding agent in the working directory, offline from any
+    space: read, write and bash (blocking) until the model calls complete.
+    stdin is one JSON object; credentials come only from it, never argv or env:
+      {"model": "<provider>/<model>", "effort": "<effort>" (optional; the
+       model's defaultEffort), "provider": <that provider's /models.json entry>,
+       "credential": {"apiKey": "..."} | {"chatGPT": {"accessToken": "...",
+       "accountID": "..."}}, "system": "...", "task": "...",
+       "maxTurns": <model calls this run>, "bashTimeoutSeconds": <per command>}
+    --log appends every message to a new JSONL transcript; --resume continues
+    one (stdin again, its task becomes the next user turn) and keeps appending.
+    a tool call the transcript left unanswered gets an error result, never a
+    re-run. a reply without a tool call gets one reminder; a second in a row
+    ends the run. no retries.
+    success prints {"result": "..."} and exits 0. failure prints a typed error
+    (isolation, invalidRequest, transcript, inference, noComplete, turnBudgetExhausted)
+    to stderr, credentials masked, and exits 1.
     \(exitCodes)
     """,
     "upgrade": """
@@ -1257,7 +1289,7 @@ extension Command {
     serves the API and the web app; each group's content (pages, files,
     page APIs) is served at <group>.<host>, the shared group at
     shared.<host>, so the certificate must cover both <host> and *.<host>.
-    --execution-placement chooses in-process (current default) or worker.
+    --execution-placement chooses worker (default) or in-process.
     Failures never switch placement. Changing placement takes an ordinary, quiesced restart.
     --admin-exec opts standalone worker serving into local
     deployment-admin-only same-image exec and explicit rollback. Off by default;

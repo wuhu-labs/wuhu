@@ -471,9 +471,37 @@ import struct WuhuAI.ToolCall
     let world = MachineWorld()
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
-      try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(1e30), "timeout_seconds": .number(1e30)])
+      try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(14400), "timeout_seconds": .number(1e30)])
       try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(0.5)])
       try rig.expect("script-ceilings")
+    }
+  }
+
+  @Test func aLifetimePastFourHoursIsRefusedNotClamped() async throws {
+    try await withRig { rig in
+      for lifetime in [14400.5, 1e30] {
+        guard case let .failure(refused) = try await rig.payload(["source": "result('never')", "max_lifetime_seconds": .number(lifetime)]) else {
+          Issue.record("max_lifetime_seconds \(lifetime) was accepted")
+          continue
+        }
+        #expect(refused.code == "invalidArgument")
+        #expect(refused.message == "run_script: max_lifetime_seconds is at most 14400")
+      }
+      try await rig.released()
+    }
+  }
+
+  @Test func aLifetimeOfZeroOrLessIsAnInvalidArgument() async throws {
+    try await withRig { rig in
+      for lifetime in [0.0, -5] {
+        guard case let .failure(refused) = try await rig.payload(["source": "result('never')", "max_lifetime_seconds": .number(lifetime)]) else {
+          Issue.record("max_lifetime_seconds \(lifetime) was accepted")
+          continue
+        }
+        #expect(refused.code == "invalidArgument")
+        #expect(refused.message == "run_script: max_lifetime_seconds must be positive")
+      }
+      try await rig.released()
     }
   }
 
@@ -587,16 +615,20 @@ final class ScriptRig: Sendable {
     record("stop_script", try await call("stop_script", ["id": .string(id)]))
   }
 
-  private func call(_ name: String, _ arguments: OrderedDictionary<String, JSONValue>) async throws -> String {
+  func payload(_ arguments: OrderedDictionary<String, JSONValue>, tool name: String = "run_script") async throws -> ToolResultPayload {
     let id = calls.withLock {
       $0 += 1
       return "tc-\($0)"
     }
-    let payload = try await executor.execute(
+    return try await executor.execute(
       session: session,
       call: ToolCall(id: id, name: name, arguments: .object(arguments)),
       state: ToolExecutionState(),
     )
+  }
+
+  private func call(_ name: String, _ arguments: OrderedDictionary<String, JSONValue>) async throws -> String {
+    let payload = try await payload(arguments, tool: name)
     switch payload {
     case let .script(result): return result.output
     case let .failure(failure): return "failed: " + failure.message

@@ -1,6 +1,8 @@
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1'
 import {
   fetch as spaceFetch,
+  find,
+  grep,
   mutateRows,
   observe,
   patchAttributes,
@@ -105,6 +107,36 @@ Deno.test('writes post JSON naming the page, and read attributes by path', async
     ifMatch: 't1',
     page: '/apps/tasks.html',
   })
+})
+
+Deno.test('find and grep read their routes with the tool input as the query', async () => {
+  const sent = page([
+    () => json({ paths: ['/a.md'], cursor: '/b c.md' }),
+    () => json({ matches: [], cursor: null }),
+    () => json({ code: 'notFound', message: 'not found: /' }, 404),
+  ])
+  assertEquals(await find('**/*.md', { path: '/notes', limit: 1 }), {
+    paths: ['/a.md'],
+    step: '/b c.md',
+  })
+  assertEquals(await grep('a+b', { step: '1@/b c.md', entryLimit: 5 }), {
+    matches: [],
+    step: null,
+    skipped: [],
+  })
+  assertEquals(
+    sent[0]!.url.href,
+    `${origin}/_/space/find?glob=**%2F*.md&path=%2Fnotes&matchLimit=1`,
+  )
+  assertEquals(
+    sent[1]!.url.href,
+    `${origin}/_/space/grep?pattern=a%2Bb&entryLimit=5&step=1%40%2Fb%20c.md`,
+  )
+  const error = await assertRejects(
+    () => grep('x', { path: 'wuhu://other.localspace/' }),
+    SpaceError,
+  )
+  assertEquals(error.code, 'notFound')
 })
 
 Deno.test('an error status rejects with its SpaceError, a conflict with the current token', async () => {

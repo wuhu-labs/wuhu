@@ -1,0 +1,15 @@
+--- a/cc/private/toolchain/unix_cc_configure.bzl
++++ b/cc/private/toolchain/unix_cc_configure.bzl
+@@ -656,7 +656,11 @@
+         (["/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"] if darwin else []),
+     )
+ 
+-    generate_modulemap = is_clang
++    # Wuhu: no system module map. It lists every header under the host's include
++    # directories and is an input to every C/C++ compile, so two hosts that differ
++    # only in an unrelated -dev package share no C action keys. It only serves
++    # layering_check, which nothing here enables.
++    generate_modulemap = False
+     if generate_modulemap:
+         repository_ctx.file("module.modulemap", _generate_system_module_map(
+             repository_ctx,

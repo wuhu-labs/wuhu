@@ -12,6 +12,7 @@ import class OperationClient.OperationClient
 import struct OperationClient.OperationOwner
 import struct OperationProtocol.ChannelPayload
 import struct OperationProtocol.OperationError
+import struct OperationProtocol.OperationSnapshot
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
 import struct OperationProtocol.WriteReceipt
@@ -30,6 +31,14 @@ struct MachineV2ExecRelay: Sendable {
 }
 
 extension MachineV2Service {
+  static let timeoutStop = "timeout"
+  // Seconds, the way the v1 agent bounds a caller's timeout: a larger Duration traps.
+  static let timeoutCeiling = 1e9
+  /// How long a timeout stop may take to answer, end the process and drain its output: the supervisor's five-second
+  /// SIGKILL escalation plus margin. Past it the exec fails as a deadline instead of holding its caller. Task-local
+  /// so tests can shorten it.
+  @TaskLocal static var timeoutStopGrace: Duration = .seconds(30)
+
   func noteMinted(_ record: ExecRecord, space: Space) {
     relays.continuation.yield(.minted(record, space))
   }
@@ -96,8 +105,9 @@ extension MachineV2Service {
 
   func killExec(_ record: ExecRecord) async throws {
     killedExecs.insert(record.id.rawValue)
-    if let id = execOperations[record.id.rawValue] {
-      _ = try await client(group: record.group).stop(id, reason: "callerCancelled")
+    if let stops = execOperations[record.id.rawValue] {
+      let operations = try await client(group: record.group)
+      try await stopOperation(operations, id: stops.id, reason: "callerCancelled", within: stops.budget)
     }
   }
 
@@ -123,10 +133,16 @@ extension MachineV2Service {
       return await tasks.next() ?? nil
     }
     guard let exec else { try? await relay.space.finishExec(record.id, .reaped); return }
+    let lifetime = RelayLifetime()
+    // A timed exec's one deadline, fixed at admission: every exchange and stop that holds up its caller's answer, whichever path
+    // sends it, ends by the time the caller must be answered. A stop sent after the answer gets a fresh retry window instead.
+    @Dependency(\.continuousClock) var clock
+    let deadline = exec.start.timeout.map { ExecDeadline(timeout: $0, clock: clock) }
+    let limit = deadline.map(RetryBudget.init(answering:))
     do {
       guard try await relay.space.execRecord(record.id)?.terminal == nil else { throw OperationError(.operationEnded, message: "Exec output is no longer retained") }
       let client = try await client(group: record.group)
-      _ = try await client.describe(record.machine.rawValue)
+      _ = try await retryingExchange(within: limit) { try await client.describe(record.machine.rawValue, exchangeLimit: $0) }
       let owner = OperationOwner(scope: "exec/" + record.id.rawValue, key: record.id.rawValue)
       var input: [String: JSONValue] = ["argv": .array(exec.start.command.map(JSONValue.string)), "cwd": .string(exec.start.cwd), "stdin": true]
       input["env"] = exec.start.env.map { .object(.init(uniqueKeysWithValues: $0.entries.map { ($0.key, .string($0.value)) })) }
@@ -148,54 +164,93 @@ extension MachineV2Service {
       let sender = relay.starter.sender?.session
       let owned = sender != nil && sender?.rawValue == record.caller
       if owned, let caller = record.caller, let tokens = relay.tokens {
-        input["sessionCredential"] = try await credential(tokens: tokens, session: SessionID(rawValue: caller), group: record.group, owner: owner, timeout: .seconds(exec.start.timeout ?? ExecTokens.longestLife))
+        input["sessionCredential"] = try await credential(tokens: tokens, session: SessionID(rawValue: caller), group: record.group, owner: owner, timeout: .seconds(min(exec.start.timeout ?? ExecTokens.longestLife, ExecTokens.longestLife)))
         reserved = true
       }
       let id: UUID
       do {
         id = try await client.start(record.machine.rawValue, request: .init(kind: "exec.v1", input: .object(.init(uniqueKeysWithValues: input.map { ($0.key, $0.value) })), caller: relay.space.startCaller(sender)), owner: owner, onClaim: { id in claimed.withLock { $0 = id } })
       } catch {
-        if let id = claimed.withLock({ $0 }) { _ = try? await client.stop(id, reason: "callerCancelled") }
+        // The claimed operation is stopped after the caller is answered, like any stop after a relay failure.
+        if let id = claimed.withLock({ $0 }) { execOperations[record.id.rawValue] = ExecStops(id: id, limit: limit, lifetime: lifetime) }
         if reserved, let caller = record.caller { relay.tokens?.finishCredentialAttempt(session: SessionID(rawValue: caller), group: record.group, scope: owner.scope, key: owner.key, claimed: claimed.withLock { $0 != nil }) }
         throw error
       }
       if reserved, let caller = record.caller { relay.tokens?.finishCredentialAttempt(session: SessionID(rawValue: caller), group: record.group, scope: owner.scope, key: owner.key, claimed: true) }
-      execOperations[record.id.rawValue] = id
+      execOperations[record.id.rawValue] = ExecStops(id: id, limit: limit, lifetime: lifetime)
       try await relay.space.recordExecCommand(record.id, command: exec.start.command.joined(separator: " "))
-      if killedExecs.contains(record.id.rawValue) { _ = try await client.stop(id, reason: "callerCancelled") }
-      let verdict = try await pump(exec, client: client, id: id, key: record.id.rawValue)
+      if killedExecs.contains(record.id.rawValue) { try await stopOperation(client, id: id, reason: "callerCancelled", within: limit) }
+      let verdict = try await pump(exec, client: client, id: id, key: record.id.rawValue, lifetime: lifetime, deadline: deadline, limit: limit) { message in
+        await self.answerUnresolved(exec, record: record, space: relay.space, lifetime: lifetime, message: message)
+      }
       if let error = verdict.error { throw error }
-      if verdict.tag == .stopped { throw OperationError(.requestCancelled, message: "Machine exec stopped: \(verdict.reason ?? "stopped")", operation: id) }
-      guard let termination = verdict.result?.object?["termination"]?.object else { throw OperationError(.invalidResponse, operation: id) }
+      let termination = verdict.result?.object?["termination"]?.object
+      let timedOut = verdict.tag == .stopped && verdict.reason == Self.timeoutStop
+      if timedOut, termination == nil {
+        throw TimeoutUnresolved(message: "Machine exec stopped at its timeout; the process's own status was not reported")
+      }
+      if verdict.tag == .stopped, !timedOut {
+        throw OperationError(.requestCancelled, message: "Machine exec stopped: \(verdict.reason ?? "stopped")", operation: id)
+      }
+      guard let termination else { throw OperationError(.invalidResponse, operation: id) }
       let status: ExitStatus
+      let ending: ExecTerminalState
       if termination["tag"]?.stringValue == "signal", let signal = termination["signal"]?.intValue {
-        status = .signaled(signal: signal)
-        try await relay.space.finishExec(record.id, .signaled(signal: signal))
+        status = .signaled(signal: signal); ending = .signaled(signal: signal)
       } else if termination["tag"]?.stringValue == "exit", let code = termination["code"]?.intValue {
-        status = .exited(code: code)
-        try await relay.space.finishExec(record.id, .exited(code: code))
+        status = .exited(code: code); ending = .exited(code: code)
       } else { throw OperationError(.invalidResponse, operation: id) }
-      await exec.exit(status)
+      // Whoever answers the caller records the ending, so the record never says the process exited while the
+      // caller was told its status is unknown.
+      guard lifetime.answer() else { return }
+      try? await relay.space.finishExec(record.id, ending)
+      await exec.exit(status, timedOut: timedOut ? .killed : nil)
     } catch is CancellationError {
       await stopRelay(record)
       try? await relay.space.finishExec(record.id, .machineLost)
     } catch {
-      await stopRelay(record)
       let message: String
-      if let error = error as? OperationError { message = "\(error.code.rawValue): \(error.message)" }
+      if let error = error as? TimeoutUnresolved { message = error.message }
+      else if let error = error as? OperationError { message = "\(error.code.rawValue): \(error.message)" }
       else { message = "machine exec failed: \(error)" }
-      try? await exec.send(.stderr, Array((message + "\n").utf8), waitForCapacity: false)
-      try? await relay.space.finishExec(record.id, .exited(code: 1))
-      await exec.exit(.exited(code: 1))
+      // Once the timeout has asked for a stop, any failure leaves the process's outcome unknown, like a lost
+      // machine's, and the exit says so instead of passing its placeholder status off as the process's. The
+      // stop that cleans up comes after the exit, so it never holds the caller.
+      if lifetime.ended.withLock({ $0 }) {
+        await answerUnresolved(exec, record: record, space: relay.space, lifetime: lifetime, message: message)
+      } else if lifetime.answer() {
+        try? await exec.send(.stderr, Array((message + "\n").utf8), waitForCapacity: false)
+        try? await relay.space.finishExec(record.id, .exited(code: 1))
+        await exec.exit(.exited(code: 1))
+      }
+      await stopRelay(record)
     }
   }
 
-  private func stopRelay(_ record: ExecRecord) async {
-    guard let id = execOperations[record.id.rawValue], let client = try? await client(group: record.group) else { return }
-    _ = try? await client.stop(id, reason: "callerCancelled")
+  private func answerUnresolved(_ exec: IncomingExec, record: ExecRecord, space: Space, lifetime: RelayLifetime, message: String) async {
+    guard lifetime.answer() else { return }
+    try? await exec.send(.stderr, Array("requestDeadline: \(message)\n".utf8), waitForCapacity: false)
+    try? await space.finishExec(record.id, .machineLost)
+    await exec.exit(.exited(code: 1), timedOut: .statusUnknown)
   }
 
-  private func pump(_ exec: IncomingExec, client: OperationClient, id: UUID, key: String) async throws -> Verdict {
+  private func stopRelay(_ record: ExecRecord) async {
+    guard let stops = execOperations[record.id.rawValue], let client = try? await client(group: record.group) else { return }
+    try? await stopOperation(client, id: stops.id, reason: "callerCancelled", within: stops.budget)
+  }
+
+  /// Stops one machine operation, retrying transient failures. `id` is the operation this exec started, captured by the caller and
+  /// never looked up again, so a retry can only reach that operation. A stop is idempotent on the machine (the first reason wins), so
+  /// a retry after an applied stop whose response was lost is harmless. A stop makes one attempt even when its budget is already
+  /// spent, so the client persists its intent and the relay's later stop, or a reconcile, still sends it.
+  private func stopOperation(_ client: OperationClient, id: UUID, reason: String, within limit: RetryBudget?) async throws {
+    _ = try await retryingExchange(within: limit, firstAttempt: MachineV2ExecRetry.lastStopAttempt) { try await client.stop(id, reason: reason, exchangeLimit: $0) }
+  }
+
+  private func pump(
+    _ exec: IncomingExec, client: OperationClient, id: UUID, key: String, lifetime: RelayLifetime, deadline: ExecDeadline?, limit: RetryBudget?,
+    unresolved: @escaping @Sendable (String) async -> Void,
+  ) async throws -> Verdict {
     let budget = RelayOutputBudget()
     return try await withThrowingTaskGroup(of: Verdict?.self) { tasks in
       tasks.addTask {
@@ -205,35 +260,66 @@ extension MachineV2Service {
           try await clock.sleep(for: .seconds(1))
           if await self.callerExpired(key) {
             await exec.stopOutput()
-            _ = try await client.stop(id, reason: "callerGone")
+            try await self.stopOperation(client, id: id, reason: "callerGone", within: limit)
             return nil
           }
           ticks += 1
-          if ticks == 20 { _ = try await client.reconcile(id); ticks = 0 }
+          if ticks >= MachineV2ExecRetry.reconcileTicks { _ = try await retryingExchange(within: limit) { try await client.reconcile(id, exchangeLimit: $0) }; ticks = 0 }
         }
       }
       tasks.addTask {
-        for try await bytes in exec.stdin { try await self.input(client, id: id, bytes: Data(bytes), end: false) }
-        try await self.input(client, id: id, bytes: Data(), end: true)
+        for try await bytes in exec.stdin { try await self.input(client, id: id, bytes: Data(bytes), end: false, within: limit) }
+        try await self.input(client, id: id, bytes: Data(), end: true, within: limit)
         return nil
       }
       tasks.addTask {
-        for await _ in exec.kills { await exec.stopOutput(); _ = try await client.stop(id, reason: "callerCancelled"); break }
+        for await _ in exec.kills { await exec.stopOutput(); try await self.stopOperation(client, id: id, reason: "callerCancelled", within: limit); break }
         return nil
       }
-      if let timeout = exec.start.timeout {
+      if let deadline {
         tasks.addTask {
           @Dependency(\.continuousClock) var clock
-          try await clock.sleep(for: .seconds(timeout))
-          await exec.stopOutput()
-          _ = try await client.stop(id, reason: "timeout")
+          try await clock.sleep(for: deadline.untilStop())
+          lifetime.ended.withLock { $0 = true }
+          // Output keeps flowing until the process group is gone, so the
+          // result carries the tail and the real termination, but only until
+          // the deadline. A stop that fails, never answers or never ends the
+          // process answers the caller at once, before any teardown that
+          // could hold it.
+          try await withThrowingTaskGroup(of: Void.self) { bound in
+            bound.addTask {
+              do { try await self.stopOperation(client, id: id, reason: Self.timeoutStop, within: limit) }
+              catch is CancellationError { throw CancellationError() }
+              catch {
+                let message = "Machine exec timeout stop failed: \(error)"
+                await unresolved(message)
+                throw TimeoutUnresolved(message: message)
+              }
+            }
+            bound.addTask {
+              @Dependency(\.continuousClock) var clock
+              try await clock.sleep(for: deadline.untilAnswer())
+              let message = "Machine exec did not end within \(Self.timeoutStopGrace.components.seconds) s of its timeout stop"
+              await unresolved(message)
+              throw TimeoutUnresolved(message: message)
+            }
+            while try await bound.next() != nil {}
+          }
           return nil
         }
       }
       for (channel, stream) in [("stdout", ExecOutputStream.stdout), ("stderr", .stderr)] {
         tasks.addTask {
           while true {
-            let snapshot = try await client.poll(id, channel: channel, holdMs: 20000)
+            let snapshot: OperationSnapshot
+            do { snapshot = try await retryingExchange(within: limit) { try await client.poll(id, channel: channel, holdMs: 20000, exchangeLimit: $0) } }
+            catch let error as OperationError where error.code == .operationEnded && lifetime.ended.withLock({ $0 }) {
+              // The client refuses to poll a stopped operation until its
+              // verdict is known; stop answers with it once the process is
+              // gone, and the rest of the output drains after that.
+              try await self.awaitVerdict(client, id: id, within: limit)
+              continue
+            }
             for payload in try await client.takeOutput(id, channel: channel) {
               let bytes = payload.data ?? Data()
               let admitted = budget.bytes.withLock { used in
@@ -242,11 +328,11 @@ extension MachineV2Service {
               if admitted > 0 { try await exec.send(stream, Array(bytes.prefix(admitted))) }
               if admitted < bytes.count || budget.bytes.withLock({ $0 >= (exec.start.maxOutput ?? Int.max) }) {
                 await exec.stopOutput()
-                _ = try await client.stop(id, reason: "outputLimit")
+                try await self.stopOperation(client, id: id, reason: "outputLimit", within: limit)
               }
             }
             if snapshot.channelEnd, let verdict = snapshot.verdict {
-              _ = try await client.poll(id, channel: channel, terminalAck: true)
+              _ = try await retryingExchange(within: limit) { try await client.poll(id, channel: channel, terminalAck: true, exchangeLimit: $0) }
               return verdict
             }
             if snapshot.channelEnd {
@@ -266,16 +352,129 @@ extension MachineV2Service {
     }
   }
 
-  private func input(_ client: OperationClient, id: UUID, bytes: Data, end: Bool) async throws {
+  private func awaitVerdict(_ client: OperationClient, id: UUID, within limit: RetryBudget?) async throws {
+    @Dependency(\.continuousClock) var clock
+    while try await retryingExchange(within: limit, { try await client.reconcile(id, exchangeLimit: $0) }).verdict == nil {
+      try await clock.sleep(for: .milliseconds(100))
+    }
+  }
+
+  /// Writes one stdin chunk until the machine accepts all of it. The client persists the chunk at its stream offset until a receipt
+  /// covers it and resends exactly that chunk, and the machine accepts an offset it already holds only with identical bytes, so a
+  /// retried write whose earlier attempt was applied (response lost) neither duplicates nor reorders stdin.
+  private func input(_ client: OperationClient, id: UUID, bytes: Data, end: Bool, within limit: RetryBudget?) async throws {
     @Dependency(\.continuousClock) var clock
     while true {
       let receipt: WriteReceipt
-      do { receipt = try await client.write(id, channel: "stdin", payload: ChannelPayload(data: bytes), end: end) }
+      do { receipt = try await retryingExchange(within: limit) { try await client.write(id, channel: "stdin", payload: ChannelPayload(data: bytes), end: end, exchangeLimit: $0) } }
       catch let error as OperationError where error.code == .operationEnded { return }
       if !receipt.blocked { return }
       try await clock.sleep(for: .milliseconds(10))
     }
   }
+}
+
+/// A timeout stop that never brought the process's own status back.
+private struct TimeoutUnresolved: Error {
+  let message: String
+}
+
+/// A timed exec's two moments, fixed once when the exec is admitted: when its timeout stops it, and the latest its
+/// caller is answered, `timeoutStopGrace` later, whether or not the stop has ended the process.
+struct ExecDeadline: Sendable {
+  let untilStop: @Sendable () -> Duration
+  let untilAnswer: @Sendable () -> Duration
+
+  init(timeout: Double, clock: some Clock<Duration>) {
+    let stop = clock.now.advanced(by: .seconds(min(timeout, MachineV2Service.timeoutCeiling)))
+    let answer = stop.advanced(by: MachineV2Service.timeoutStopGrace)
+    untilStop = { max(.zero, clock.now.duration(to: stop)) }
+    untilAnswer = { max(.zero, clock.now.duration(to: answer)) }
+  }
+}
+
+final class RelayLifetime: Sendable {
+  /// Set once the timeout has asked the supervisor to stop the exec.
+  let ended = Mutex(false)
+  private let claimed = Mutex(false)
+
+  /// Whether the caller's one exit has been claimed.
+  var answered: Bool { claimed.withLock { $0 } }
+
+  /// Claims the one exit the caller gets; false once it was sent.
+  func answer() -> Bool {
+    claimed.withLock { answered in
+      defer { answered = true }
+      return !answered
+    }
+  }
+}
+
+/// Runs one idempotent operation exchange (describe, poll, terminal acknowledgement, reconcile, stdin write, stop), retrying it while
+/// it fails with a transient exchange error: a request deadline or a transport failure says nothing about the remote process, so a
+/// slow or dropped exchange must not end a healthy exec. The budget is hard: it is `MachineV2ExecRetry.window` from the first
+/// attempt, cut to `limit` when one is given, and each attempt gets the remaining budget as its exchange limit, so the call returns
+/// within the budget however long a single exchange would otherwise hold. Retries back off from 100 ms to 1 s; when the budget runs
+/// out the last transient error is rethrown as the cause. Every other error, including the client's own lease-silence and
+/// caller-deadline verdicts, is returned at once, and cancellation ends the retries. `firstAttempt` is the least exchange limit the
+/// first attempt gets, so a positive one makes the exchange run at least once however little budget is left.
+func retryingExchange<T>(within limit: RetryBudget? = nil, firstAttempt: Duration = .zero, _ exchange: (Duration) async throws -> T) async throws -> T {
+  @Dependency(\.continuousClock) var clock
+  let window = RetryBudget(MachineV2ExecRetry.window)
+  func remaining() -> Duration { min(window.remaining(), limit?.remaining() ?? window.remaining()) }
+  var delay = Duration.milliseconds(100)
+  var last: OperationError?
+  var floor = firstAttempt
+  while true {
+    let budget = max(remaining(), floor)
+    floor = .zero
+    guard budget > .zero else { throw last ?? OperationError(.requestDeadline, message: "Exec exchange budget exhausted") }
+    do { return try await exchange(budget) }
+    catch let error as OperationError where error.code == .requestDeadline || error.code == .transport {
+      last = error
+      guard remaining() > delay else { throw error }
+      try await clock.sleep(for: delay)
+      delay = min(delay * 2, .seconds(1))
+    }
+  }
+}
+
+/// What bounds a later stop of one relayed exec's machine operation: the exec's answer deadline while the stop would hold up the
+/// caller's answer, a fresh retry window once the caller has been answered.
+struct ExecStops: Sendable {
+  let id: UUID
+  let limit: RetryBudget?
+  let lifetime: RelayLifetime
+
+  var budget: RetryBudget? { lifetime.answered ? nil : limit }
+}
+
+/// A deadline on the dependency clock, shared by every retried exchange it bounds.
+struct RetryBudget: Sendable {
+  let remaining: @Sendable () -> Duration
+
+  /// A timed exec's budget: until its caller must be answered, the timeout's stop grace after the timeout.
+  init(answering deadline: ExecDeadline) { remaining = deadline.untilAnswer }
+
+  init(_ total: Duration) {
+    @Dependency(\.continuousClock) var clock
+    remaining = Self.deadline(clock: clock, after: total)
+  }
+
+  private static func deadline<C: Clock<Duration>>(clock: C, after total: Duration) -> @Sendable () -> Duration {
+    let end = clock.now.advanced(by: total)
+    return { clock.now.duration(to: end) }
+  }
+}
+
+enum MachineV2ExecRetry {
+  /// How long one retried exchange keeps trying through transient failures. Shorter than the default operation lease, so the relay
+  /// reports the transient cause itself before the client would declare the operation silent.
+  static let window: Duration = .seconds(30)
+  /// The exchange limit of a stop's one attempt once its budget is spent.
+  static let lastStopAttempt: Duration = .seconds(1)
+  /// Seconds between the relay's liveness reconciles of a running exec.
+  @TaskLocal static var reconcileTicks = 20
 }
 
 private final class RelayOutputBudget: Sendable {

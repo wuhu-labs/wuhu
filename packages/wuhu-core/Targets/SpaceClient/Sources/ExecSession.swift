@@ -101,7 +101,7 @@ public struct ExecSession: Sendable {
             let limitReached = self.start.maxOutput.map { total >= $0 } ?? false
             return .signaled(signal, outputLimitReached: limitReached)
           }
-        case .truncated, .failed:
+        case .truncated, .timedOut, .failed:
           continue
         }
       }

@@ -274,6 +274,9 @@ export interface TargetManifest {
   // it references them, e.g. the superclass of an overlay's subclass.
   linkedFrameworks?: string[]
   stamp?: boolean
+  // A stamped executable also gets `<name>_unstamped`, for tests (see
+  // unstampedTwin); so it requires `stamp: true`.
+  unstamped?: boolean
   // An executable's embedded Info.plist (macOS only); the version keys are
   // stamped, so it requires `stamp: true`.
   info?: { [key: string]: PlistValue }
@@ -455,6 +458,18 @@ export function validateTargetLinkedFrameworks(target: TargetManifest): void {
 }
 
 const stampedInfoKeys = ['CFBundleShortVersionString', 'CFBundleVersion']
+
+export function validateTargetUnstamped(target: TargetManifest): void {
+  if (target.unstamped === undefined) return
+  if (typeof target.unstamped !== 'boolean') {
+    throw new Error(`${target.name}.unstamped must be true or false`)
+  }
+  if (target.unstamped && (target.kind !== 'executable' || !target.stamp)) {
+    throw new Error(
+      `${target.name} declares unstamped: but is not a stamped executable (kind: executable, stamp: true)`,
+    )
+  }
+}
 
 export function validateTargetInfo(target: TargetManifest): void {
   const info = target.info
@@ -1034,6 +1049,7 @@ async function discoverTargets(root: string): Promise<TargetManifest[]> {
     const resolved = { ...target, manifestDir: dirname(manifestPath) }
     validateTargetRelease(resolved)
     validateTargetInfo(resolved)
+    validateTargetUnstamped(resolved)
     validateTargetLinkedFrameworks(resolved)
     targets.push(resolved)
   }
@@ -2158,6 +2174,30 @@ SWIFT
 )\n`
 }
 
+// The stamp carries the commit, so a stamped binary re-links on every commit
+// and every test that takes it as data runs again, with no cache hit anywhere.
+// Tests take this twin instead (`unstamped: true` asks for it): the same
+// sources and deps with the checked-in fallback stamp and no Info.plist.
+// `manual`, so only a dependent builds it; releases and installs keep the
+// stamped target, and a test that checks the real version takes that too.
+function unstampedTwin(
+  pkg: PackageManifest,
+  target: TargetManifest,
+  deps: string[],
+  pluginsAttr: string,
+): string {
+  return `wuhu_swift_binary(\n    name = "${target.name}_unstamped",\n    srcs = ${
+    bazelSourceGlob(`Targets/${target.name}/${target.sources}`)
+  },\n${swiftSettingsCoptsAttr(target.swiftSettings)}    deps = ${
+    starlarkList(deps)
+  },\n${pluginsAttr}    tags = ["manual"],\n${
+    platformsAttr(
+      libraryPlatforms(pkg, target),
+      `${target.manifestDir}/target.yml`,
+    )
+  })\n`
+}
+
 const infoPlistVersionPlaceholder = '@WUHU_VERSION@'
 
 // macOS identifies a flat Mach-O by its code-signing identifier, which codesign
@@ -2416,6 +2456,9 @@ export async function generateBuildBazel(
           )
         })\n`,
       )
+      if (target.stamp && target.unstamped) {
+        chunks.push(unstampedTwin(pkg, target, deps, pluginsAttr))
+      }
       if (target.productName && target.productName !== target.name) {
         chunks.push(
           `alias(\n    name = "${target.productName}",\n    actual = ":${target.name}",\n)\n`,
@@ -2639,6 +2682,10 @@ ${
   return chunks.join('\n')
 }
 
+// Deno tasks are host tooling; the simulator lanes have no business running
+// them, and without this every lane would. An artifact may narrow this.
+export const denoCheckPlatforms: CheckPlatform[] = ['linux', 'mac']
+
 export async function discoverPackageDirs(root: string): Promise<string[]> {
   return (await globFiles(`${root}/*/package.yml`))
     .map((manifestPath) => manifestPath.slice(0, -'/package.yml'.length))
@@ -2856,10 +2903,8 @@ export function generateDenoBuildBazel(
   const workspaceAttr = isMember
     ? denoWorkspaceAttrs(packageDir, workspace!)
     : ''
-  // Deno tasks are host tooling; the simulator lanes have no business running
-  // them, and without this every lane would.
   const denoPlatformsAttr = platformsAttr(
-    ['linux', 'mac'],
+    denoCheckPlatforms,
     `${packageDir}/deno.json`,
   )
   const symbols: string[] = []

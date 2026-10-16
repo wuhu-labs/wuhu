@@ -104,6 +104,16 @@ public struct GrepInput: Codable, Equatable, Sendable {
 public struct GrepOutput: Codable, Equatable, Sendable {
   public let matches: [Match]
   public let cursor: String?
+  /// Files the search did not read, with the reason; absent when none.
+  public let skipped: [SkippedFile]?
+}
+
+@Contract
+public struct SkippedFile: Codable, Equatable, Sendable {
+  public let path: String
+  public let bytes: Int
+  /// `tooLarge`: over the search's per-file size bound.
+  public let reason: String
 }
 
 @Contract

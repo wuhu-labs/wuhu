@@ -63,7 +63,7 @@ caller blips:
 
 - `maxOutput` budgets masked output across stdout and stderr together. On exceed, total transmitted output is **at most**, not necessarily exactly, `maxOutput`, and the group is killed. The final allowed prefix is sent only while the window has room; its unsent suffix is dropped rather than delaying termination. For example, an unread one-byte window with a two-byte budget and a three-byte output chunk emits one byte before terminating. `ExecExit.outputCut` records a cutoff, rendered as `ExecEvent.truncated` before the exit.
 - `timeout` is wall clock from spawn on the injected clock; expiry kills the
-  group.
+  group and marks the exit `timedOut: killed`.
 
 Backpressure is the channel window: `send` suspends when the window fills,
 which stops the pipe read loop, so the child blocks on write — local-pipe

@@ -1,7 +1,10 @@
 import Foundation
 import JSONValue
 import SpaceContract
-import SpaceTools
+import enum SpaceCore.SpaceError
+import SpaceFS
+@testable import SpaceTools
+import Synchronization
 import Testing
 
 @Suite struct SearchToolTests {
@@ -159,7 +162,6 @@ import Testing
     let page = try await run("find", .object(["glob": "/docs/*.txt", "entryLimit": 2]), context, as: FindOutput.self)
     #expect(page.paths == ["/docs/a.txt", "/docs/b.txt"])
     let cursor = try #require(page.cursor)
-    #expect(cursor == "/docs/c.txt")
 
     let rest = try await run(
       "find", .object(["glob": "/docs/*.txt", "entryLimit": 2, "step": .string(cursor)]), context, as: FindOutput.self,
@@ -178,4 +180,300 @@ import Testing
       #expect({ if case .failed(code: .invalidArgument, _, _, _) = bad { true } else { false } }(), "\(input)")
     }
   }
+
+  @Test func stepsAreBoundToTheirSearchAndMalformedOnesAreRefused() async throws {
+    let context = try makeContext()
+    try await seedCorpus(context)
+    let find = try await run("find", .object(["glob": "/**", "matchLimit": 1]), context, as: FindOutput.self)
+    let findStep = try #require(find.cursor)
+    let grep = try await run("grep", .object(["pattern": "foo", "matchLimit": 1]), context, as: GrepOutput.self)
+    let grepStep = try #require(grep.cursor)
+    for input in [
+      JSONValue.object(["glob": "/**", "step": "/docs/b.txt"]),
+      .object(["glob": "/**", "step": "s1.!!"]),
+      .object(["glob": "/**", "step": "s1."]),
+      .object(["glob": "/**/*.txt", "step": .string(findStep)]),
+      .object(["glob": "/**", "path": "/docs", "step": .string(findStep)]),
+      .object(["glob": "/**", "step": .string(grepStep)]),
+    ] {
+      let bad = await failure("find", input, context)
+      #expect({ if case .failed(code: .invalidArgument, _, _, _) = bad { true } else { false } }(), "\(input)")
+    }
+    for input in [
+      JSONValue.object(["pattern": "foo", "step": "1@/docs/a.txt"]),
+      .object(["pattern": "foo", "step": "1@"]),
+      .object(["pattern": "fo+", "step": .string(grepStep)]),
+      .object(["pattern": "foo", "step": .string(findStep)]),
+    ] {
+      let bad = await failure("grep", input, context)
+      #expect({ if case .failed(code: .invalidArgument, _, _, _) = bad { true } else { false } }(), "\(input)")
+    }
+  }
+
+  @Test func largeLimitsAreCappedNotRefused() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/many.txt", String(repeating: "x\n", count: SearchBounds.matchLimit + 5), context)
+    let page = try await run("grep", .object(["pattern": "x", "matchLimit": 50000, "entryLimit": 10_000_000]), context, as: GrepOutput.self)
+    #expect(page.matches.count == SearchBounds.matchLimit)
+    let rest = try await run(
+      "grep", .object(["pattern": "x", "matchLimit": 50000, "step": .string(try #require(page.cursor))]), context, as: GrepOutput.self,
+    )
+    #expect(rest.matches.count == 5)
+    #expect(rest.cursor == nil)
+  }
+
+  @Test func oversizedFilesAreListedAsSkippedAndLongLinesClamped() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/a/big.log", String(repeating: "foo\n", count: SearchBounds.fileBytes / 4 + 1), context)
+    _ = try await seedFile("/a/long.txt", "foo" + String(repeating: "é", count: 2000), context)
+    let output = try await run("grep", .object(["pattern": "foo"]), context, as: GrepOutput.self)
+    #expect(output.skipped == [SkippedFile(path: "/a/big.log", bytes: SearchBounds.fileBytes + 4, reason: "tooLarge")])
+    let text = try #require(output.matches.first?.text)
+    #expect(output.matches.map(\.path) == ["/a/long.txt"])
+    #expect(text.hasPrefix("foo") && text.contains("[line clamped: 4003 bytes]"))
+    #expect(text.utf8.count < 600)
+
+    let none = try await run("grep", .object(["pattern": "foo", "path": "/a/long.txt"]), context, as: GrepOutput.self)
+    #expect(none.skipped == nil)
+  }
+
+  @Test func aBacktrackingPatternEndsEachPageWithinTheBudget() async throws {
+    let context = try makeContext()
+    let costly = String(repeating: "a", count: 20) + "!"
+    _ = try await seedFile("/costly.txt", "fine\n" + String(repeating: "\(costly)\n", count: 200), context)
+    var step: String?
+    var pages = 0
+    repeat {
+      let started = ContinuousClock.now
+      let input: JSONValue = step.map { .object(["pattern": "^(a+)+$", "step": .string($0)]) } ?? .object(["pattern": "^(a+)+$"])
+      let page = try await run("grep", input, context, as: GrepOutput.self)
+      #expect(page.matches.isEmpty)
+      #expect(ContinuousClock.now - started < SearchBounds.pageBudget + SearchBounds.lineBudget, "page \(pages)")
+      step = page.cursor
+      pages += 1
+    } while step != nil && pages < 200
+    #expect(step == nil, "every page advances")
+  }
+
+  // A budget spent before the first line (listing, reading) still lets the
+  // page examine one line, so paging always advances.
+  @Test func aPageWhoseBudgetIsGoneBeforeMatchingStillAdvances() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/a.txt", "foo 1\nbar\nfoo 2", context)
+    _ = try await seedFile("/b.txt", "foo 3", context)
+    try await SearchBounds.$pageBudget.withValue(.zero) {
+      var found: [String] = []
+      var step: String?
+      var pages = 0
+      repeat {
+        let input: JSONValue = step.map { .object(["pattern": "foo", "step": .string($0)]) } ?? .object(["pattern": "foo"])
+        let page = try await run("grep", input, context, as: GrepOutput.self)
+        #expect(page.matches.count <= 1)
+        found += page.matches.map { "\($0.path):\($0.line)" }
+        step = page.cursor
+        pages += 1
+      } while step != nil && pages < 10
+      #expect(found == ["/a.txt:1", "/a.txt:3", "/b.txt:1"])
+      #expect(pages == 4, "one line a page: a.txt's three, then b.txt's")
+
+      let find = try await run("find", .object(["glob": "/*.txt"]), context, as: FindOutput.self)
+      #expect(find.paths == ["/a.txt"])
+      #expect(find.cursor != nil)
+    }
+  }
+
+  @Test func aStepIsBoundToTheBackendItsPathResolvedTo() async throws {
+    let context = try makeContext()
+    try await seedCorpus(context)
+    let find = try await run("find", .object(["glob": "/**", "matchLimit": 1]), context, as: FindOutput.self)
+    let grep = try await run("grep", .object(["pattern": ".", "matchLimit": 1]), context, as: GrepOutput.self)
+    for (tool, input) in [
+      ("find", JSONValue.object(["glob": "/**", "path": "wuhu://system/", "step": .string(try #require(find.cursor))])),
+      ("grep", .object(["pattern": ".", "path": "wuhu://system/", "step": .string(try #require(grep.cursor))])),
+    ] {
+      let bad = await failure(tool, input, context)
+      #expect({ if case .failed(code: .invalidArgument, _, _, _) = bad { true } else { false } }(), "\(tool)")
+    }
+  }
+
+  @Test func aSizeOverTheBoundFoundOnReadIsSkipped() async throws {
+    let big = Data(count: SearchBounds.fileBytes + 1)
+    let tree = ListingTree(["/": ["big", "small"]], content: ["/big": big])
+    #expect(try await searchable(tree, "/big", listedSize: 1) == .tooLarge(SearchBounds.fileBytes + 1), "the listing's size was stale")
+    #expect(try await searchable(tree, "/small", listedSize: 1) == .text(Data("x".utf8)))
+    #expect(try await searchable(tree, "/small", listedSize: SearchBounds.fileBytes + 9) == .tooLarge(SearchBounds.fileBytes + 9))
+  }
+
+  // grep's dialect is ICU regular expressions (NSRegularExpression).
+  @Test func grepSpeaksTheICUDialect() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/d.txt", "Price: 42 USD\ncafé crème\nfoobar\nbarfoo\nTAB\there\n", context)
+    let cases: [(String, [Int])] = [
+      (#"\d{2}"#, [1]),
+      (#"^\w+:"#, [1]),
+      (#"[[:alpha:]]+ crème$"#, [2]),
+      (#"\p{L}+é\b"#, [2]),
+      (#"foo(?=bar)"#, [3]),
+      (#"(?<=bar)foo"#, [4]),
+      (#"(?i)^tab\t"#, [5]),
+      (#"\bbar"#, [4]),
+    ]
+    for (pattern, lines) in cases {
+      let output = try await run("grep", .object(["pattern": .string(pattern)]), context, as: GrepOutput.self)
+      #expect(output.matches.map(\.line) == lines, "\(pattern)")
+    }
+  }
+
+  @Test func theWalkStopsListingAtTheBoundAndPrunesWhatAStepPassed() async throws {
+    let tree = ListingTree([
+      "/": ["a", "b", "c"],
+      "/a": ["1", "2"],
+      "/b": ["1", "2"],
+      "/c": ["1", "2"],
+    ])
+    let first = walk(tree, entryLimit: 1)
+    var seen: [String] = []
+    try await first.run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/a/1"])
+    #expect(first.next == "/a/2")
+    #expect(tree.listed == ["/", "/a"])
+
+    tree.listed = []
+    let second = walk(tree, entryLimit: 2, resume: "/b/2")
+    seen = []
+    try await second.run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/b/2", "/c/1"])
+    #expect(second.next == "/c/2")
+    #expect(tree.listed == ["/b", "/", "/c"], "/a is wholly before the step and never listed")
+  }
+
+  @Test func aWideDirectoryIsListedAPageAtATimeFromTheStep() async throws {
+    let names = (0 ..< 300_000).map { String(format: "n%06d", $0) }
+    let tree = ListingTree(["/": names])
+    let first = walk(tree, entryLimit: 1)
+    var seen: [String] = []
+    try await first.run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/n000000"])
+    #expect(first.next == "/n000001")
+    #expect(tree.returned == SearchWalk.pageSize, "one page, not the directory")
+
+    tree.returned = 0
+    let deep = walk(tree, entryLimit: 3, resume: "/n250000")
+    seen = []
+    try await deep.run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/n250000", "/n250001", "/n250002"])
+    #expect(tree.returned == SearchWalk.pageSize, "the page starts at the step")
+  }
+
+  @Test func aPastDeadlineStopsTheWalkAfterOneLeaf() async throws {
+    let tree = ListingTree(["/": ["a", "b", "c"]])
+    var position: String?
+    var seen: [String] = []
+    repeat {
+      let late = SearchWalk(backend: tree, entryLimit: 10, deadline: .now - .seconds(1), resume: position)
+      try await late.run(root: "/") { path, _ in seen.append(path); return true }
+      position = late.next
+    } while position != nil && seen.count < 10
+    #expect(seen == ["/a", "/b", "/c"])
+  }
+
+  // Full-path order: "/a-b" < "/a/z" because "-" < "/", the machine agent's order too.
+  @Test func theWalkFollowsFullPathOrderAcrossDirectoryBoundaries() async throws {
+    let tree = ListingTree(["/": ["a", "a-b", "a-c", "a0"], "/a": ["z"], "/a-c": ["y"]])
+    var seen: [String] = []
+    try await walk(tree, entryLimit: 10).run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/a-b", "/a-c/y", "/a/z", "/a0"])
+
+    for (resume, rest) in [
+      ("/a-b", ["/a-b", "/a-c/y", "/a/z", "/a0"]),
+      ("/a-c/y", ["/a-c/y", "/a/z", "/a0"]),
+      ("/a-c/", ["/a-c/y", "/a/z", "/a0"]),
+      ("/a/z", ["/a/z", "/a0"]),
+      ("/a0", ["/a0"]),
+    ] {
+      seen = []
+      try await walk(tree, entryLimit: 10, resume: resume).run(root: "/") { path, _ in seen.append(path); return true }
+      #expect(seen == rest, "from \(resume)")
+    }
+  }
+
+  // SQLite's byte order, where Swift's `<` would call these two names equal.
+  @Test func theWalkOrdersAndResumesByBytesNotCanonicalEquivalence() async throws {
+    let decomposed = "e\u{301}", precomposed = "\u{E9}"
+    let tree = ListingTree(["/": [precomposed, "f", decomposed]])
+    var seen: [String] = []
+    try await walk(tree, entryLimit: 10).run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen.map(\.utf8.count) == [4, 2, 3], "e\u{301}, f, \u{E9}")
+
+    seen = []
+    try await walk(tree, entryLimit: 10, resume: "/f").run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen == ["/f", "/" + precomposed])
+    seen = []
+    try await walk(tree, entryLimit: 10, resume: "/" + precomposed).run(root: "/") { path, _ in seen.append(path); return true }
+    #expect(seen.map(\.utf8.count) == [3])
+  }
+
+  private func walk(_ tree: ListingTree, entryLimit: Int, resume: String? = nil) -> SearchWalk {
+    SearchWalk(backend: tree, entryLimit: entryLimit, deadline: .now + .seconds(60), resume: resume)
+  }
+}
+
+// Directories by path; every other name is a file of `size` bytes. Records
+// each listing and how many entries the paged listings returned.
+private final class ListingTree: SpaceVFS {
+  let directories: [String: [String]]
+  let size: Int
+  let content: [String: Data]
+  private let log = Mutex<(listed: [String], returned: Int)>(([], 0))
+
+  init(_ directories: [String: [String]], size: Int = 1, content: [String: Data] = [:]) {
+    self.directories = directories.mapValues { $0.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) } }
+    self.size = size
+    self.content = content
+  }
+
+  var listed: [String] {
+    get { log.withLock { $0.listed } }
+    set { log.withLock { $0.listed = newValue } }
+  }
+
+  var returned: Int {
+    get { log.withLock { $0.returned } }
+    set { log.withLock { $0.returned = newValue } }
+  }
+
+  private func child(_ name: String, of path: String) -> String {
+    path == "/" ? "/\(name)" : "\(path)/\(name)"
+  }
+
+  private func entry(_ name: String, at path: String) -> SpaceFS.Entry {
+    SpaceFS.Entry(name: name, kind: directories[path] == nil ? .file : .directory, size: size, lineCount: nil, token: VersionToken(Data("t".utf8)), mtime: Date())
+  }
+
+  func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {
+    log.withLock { $0.listed.append(path) }
+    return (VersionToken(Data("t".utf8)), (directories[path] ?? []).map { entry($0, at: child($0, of: path)) })
+  }
+
+  func list(_ path: String, from: String, limit: Int) async throws -> (entries: [SpaceFS.Entry], next: String?) {
+    let names = (directories[path] ?? []).drop { $0.utf8.lexicographicallyPrecedes(from.utf8) }
+    let page = names.prefix(limit).map { entry($0, at: child($0, of: path)) }
+    log.withLock {
+      $0.listed.append(path)
+      $0.returned += page.count
+    }
+    return (page, names.dropFirst(limit).first)
+  }
+
+  func stat(_ path: String) async throws -> SpaceFS.Entry {
+    let parent = path.split(separator: "/").dropLast().joined(separator: "/")
+    let name = String(path.split(separator: "/").last ?? "")
+    guard path == "/" || directories["/" + parent]?.contains(name) == true else { throw SpaceError.notFound(path) }
+    return entry(name, at: path)
+  }
+
+  func read(_ path: String) async throws -> (VersionToken, Data) { (VersionToken(Data("t".utf8)), content[path] ?? Data("x".utf8)) }
+  func write(_: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken { VersionToken(Data("t".utf8)) }
+  func delete(_: String, ifMatch _: VersionToken?) async throws {}
+  func move(_: String, to _: String) async throws {}
 }

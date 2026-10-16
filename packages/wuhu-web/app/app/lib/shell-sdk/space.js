@@ -178,6 +178,8 @@ const httpTransport = {
     globalThis.fetch(address('attributes', { path })).then(answer),
   patchAttributes: (path, { set, remove, ifMatch }) =>
     send('attributes', { path, set, remove, ifMatch }),
+  find: (search) => globalThis.fetch(address('find', search)).then(answer),
+  grep: (search) => globalThis.fetch(address('grep', search)).then(answer),
 }
 
 export const {
@@ -187,6 +189,8 @@ export const {
   mutateRows,
   readAttributes,
   patchAttributes,
+  find,
+  grep,
 } = createSpace(httpTransport)
 export { SpaceError }
 

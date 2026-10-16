@@ -118,6 +118,8 @@ import Testing
 
 import MachineChannel
 
+private struct LostResponse: Error {}
+
 private struct RoutedEcho: OperationKind {
   var fastExit = false
   struct Input: Decodable, Sendable { let argv: [String]; let cwd: String; let stdin: Bool }
@@ -132,11 +134,15 @@ private struct RoutedEcho: OperationKind {
 }
 
 extension MachineToolV2RoutingTests {
-  @Test(arguments: ["echo", "fast", "early-eof"])
+  /// `lossy` applies the first attempt of each stdin write, the first output poll carrying bytes and the first terminal
+  /// acknowledgement on the machine, then loses the response: the retries must neither drop nor duplicate a byte.
+  @Test(arguments: ["echo", "fast", "early-eof", "lossy"])
   func normalExecBackendBridgesStdinBothOutputsAndExit(mode: String) async throws {
     let fastExit = mode == "fast"
     let native = mode == "early-eof"
+    let lossy = mode == "lossy"
     let earlyEOF = Mutex<Set<String>>([])
+    let lost = Mutex<[String]>([])
     let folder = try ScratchFolder("exec-early-eof")
     let exitGate = folder.url.appending(path: "exit")
     let space = try Space.inMemory()
@@ -152,6 +158,20 @@ extension MachineToolV2RoutingTests {
         return response
       }
       let response = try await agent.handler(request)
+      if lossy, request.method == .put, request.url.path.hasSuffix("/inputs/stdin") {
+        let attempt = lost.withLock { value in value.append("stdin"); return value.count(where: { $0 == "stdin" }) }
+        if attempt % 2 == 1 { throw LostResponse() }
+      }
+      if lossy, request.method == .get, request.url.query?.contains("channel=") == true {
+        let snapshot = try await response.body.json(OperationSnapshot.self)
+        let drop = lost.withLock { value in
+          let key = request.url.query?.contains("terminalAck=") == true ? "ack" : (snapshot.payload?.count ?? 0) > 0 ? "output" : nil
+          guard let key, !value.contains(key) else { return false }
+          value.append(key); return true
+        }
+        if drop { throw LostResponse() }
+        return try Response(status: response.status, headers: response.headers, body: .json(snapshot))
+      }
       if native, request.method == .get, request.url.query?.contains("channel=") == true {
         let snapshot = try await response.body.json(OperationSnapshot.self)
         if snapshot.channelEnd, snapshot.verdict == nil, let channel = snapshot.channel {
@@ -184,11 +204,13 @@ extension MachineToolV2RoutingTests {
         case let .exit(value): status = value
         case let .failed(error): Issue.record("normal exec failed: \(error)")
         case .truncated: Issue.record("normal exec truncated")
+        case .timedOut: Issue.record("normal exec timed out")
         }
       }
       #expect(stdout == Data((native ? "hi" : fastExit ? "fast" : "input").utf8)); #expect(stderr == Data("stderr".utf8)); #expect(status == .exited(code: 7))
       #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 7))
       if native { #expect(earlyEOF.withLock { $0 } == ["stdout", "stderr"]) }
+      if lossy { #expect(lost.withLock { $0 }.sorted() == ["ack", "output", "stdin", "stdin", "stdin", "stdin"]) }
       await agent.shutdown(); await service.shutdown()
     }
   }

@@ -9,8 +9,8 @@ import Synchronization
 let scriptStopGrace: Duration = .seconds(5)
 // How long a cancelled run_script call waits for its script to end.
 let scriptWindDown: Duration = .seconds(10)
-// The longest wait a script can ask for, in seconds: its max lifetime,
-// timeout_seconds, sleep(). Longer than any script runs, and far inside what
+// The longest wait a script can ask for, in seconds: timeout_seconds,
+// sleep(), an AbortSignal timeout. Longer than any script runs, and far inside what
 // Duration and a clock's sleep can hold; past those, the server trapped.
 let scriptSecondsCeiling = 1e9
 let scriptConsoleBytes = 16 * 1024

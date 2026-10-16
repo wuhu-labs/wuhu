@@ -70,6 +70,32 @@ struct ChannelTests {
     }
   }
 
+  @Test func aTimedOutExitAnnouncesTheCutThenTheTimeoutThenTheExit() async throws {
+    let caller = ChannelEndpoint()
+    let machine = ChannelEndpoint()
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await drive(caller, machine) }
+      group.addTask {
+        for await exec in machine.incomingExecs {
+          await exec.stopOutput()
+          await exec.exit(.signaled(signal: 9), timedOut: .killed)
+        }
+      }
+      let exec = await caller.startExec(makeStart(execID(1)))
+      var events: [String] = []
+      for try await event in exec.events {
+        switch event {
+        case .truncated: events.append("truncated")
+        case let .timedOut(outcome): events.append("timedOut \(outcome)")
+        case let .exit(status): events.append("exit \(status)")
+        default: events.append("\(event)")
+        }
+      }
+      #expect(events == ["truncated", "timedOut killed", "exit signaled(signal: 9)"])
+      group.cancelAll()
+    }
+  }
+
   @Test func malformedStreamBodyFailsOnlyThatExec() async throws {
     let machine = ChannelEndpoint()
     let (raw, machineSide) = InMemoryTransport.pair()

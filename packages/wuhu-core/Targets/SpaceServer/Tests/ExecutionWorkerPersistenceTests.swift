@@ -10,12 +10,14 @@
 #endif
 import Dependencies
 import ExecutionOwner
+import ImageRetention
 import SessionDomain
 import SpaceCore
 @testable import SpaceServer
 import Subprocess
 import Testing
 import struct WorkerOwner.ExecutionWorkerBootstrap
+import struct WorkerOwner.RemoteSessionExecution
 import WorkerProtocol
 
 struct PersistenceFixture {
@@ -43,7 +45,7 @@ struct PersistenceFixture {
 
 @Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ExecutionWorkerPersistenceTests {
   private func binary() throws -> String {
-    URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).standardizedFileURL.path
+    URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["WUHU_EXECUTION_WORKER_BINARY"])).resolvingSymlinksInPath().path
   }
 
   @Test func realChildIsDurablyIdentifiedBeforeAdmissionAndCleanExitRemovesBothLayouts() async throws {
@@ -52,10 +54,19 @@ struct PersistenceFixture {
       defer { fixture.clean() }
       let space = try Space.inMemory()
       let incarnation = UUID()
-      let connection = try await WorkerConnection.start(executable: binary(), owner: InProcessExecutionOwnerClient(space: space), spawn: { _, _, _ in throw CancellationError() }, persistence: fixture.persistence, incarnation: incarnation, activity: { _ in }, exited: {})
+      let staged = fixture.base + "/staged-version"
+      try FileManager.default.createDirectory(atPath: staged, withIntermediateDirectories: true)
+      try FileManager.default.copyItem(atPath: binary(), toPath: staged + "/wuhu")
+      let connection = try await WorkerConnection.start(executable: staged + "/wuhu", owner: InProcessExecutionOwnerClient(space: space), spawn: { _, _, _ in throw CancellationError() }, persistence: fixture.persistence, incarnation: incarnation, activity: { _ in }, exited: {})
       let result: Result<Void, any Error>
       do {
         let (directory, manifest) = try await fixture.manifest()
+        let image = try #require(manifest.image)
+        let imageRoot = fixture.config + "/execution-images"
+        try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
+        try FileManager.default.removeItem(atPath: staged)
+        _ = try await RemoteSessionExecution(client: connection.client).inventory()
+        #expect(kill(connection.processID, 0) == 0)
         #expect(manifest.incarnation == incarnation)
         #expect(manifest.processID == connection.processID)
         #expect(manifest.birth == (try processBirthIdentity(connection.processID)))
@@ -67,6 +78,7 @@ struct PersistenceFixture {
         result = .success(())
       } catch { result = .failure(error) }
       await connection.stop()
+      #expect(try ImageRetention.transaction(root: fixture.config + "/execution-images") { try $0.references().isEmpty })
       try result.get()
       #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root).isEmpty)
       #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.persistence.runtimeRoot).isEmpty)

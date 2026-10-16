@@ -6,6 +6,7 @@ import MachineChannel
 import struct MachineContract.ExecID
 import struct MachineContract.ExecStart
 import struct MachineContract.MachineID
+import OrderedCollections
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
@@ -328,6 +329,169 @@ import struct WuhuAI.ToolArguments
 
       let refused = try await world.run("exec", .object(["machine": "box", "cwd": "work", "command": "true"]))
       #expect(try failureMessage(refused).contains("absolute cwd"))
+      #expect(scripted.startCount.value == 0)
+    }
+  }
+}
+
+extension ExecToolTests {
+  @Test(arguments: [nil, 30, 14400] as [Double?])
+  func aKilledExecSaysWhichLifetimeEndedIt(_ explicit: Double?) async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      let scripted = ScriptedExecMachine()
+      var world = ToolWorld(
+        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
+        session: session,
+      )
+      let limit = explicit ?? 1800
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await scripted.pump() }
+        group.addTask {
+          await scripted.serve { exec in
+            #expect(exec.start.timeout == limit)
+            try? await exec.send(.stdout, Array("working\n".utf8))
+            await time.advance(by: limit)
+            await exec.exit(.signaled(signal: 15), timedOut: .killed)
+          }
+        }
+        var arguments: OrderedDictionary<String, JSONValue> = ["machine": .string(machine.rawValue), "cwd": "/work", "command": "sleep 7200"]
+        if let explicit { arguments["max_lifetime_seconds"] = .number(explicit) }
+        guard case let .exec(result) = try await world.run("exec", ToolArguments(.object(arguments)), id: "tc-timeout") else {
+          throw Mismatch("timed-out exec failed")
+        }
+        let note = explicit == nil
+          ? "[killed after 1800 s, the default max lifetime; start longer work detached and watch it from run_script]"
+          : "[killed after \(Int(limit)) s, its max_lifetime_seconds]"
+        #expect(result.output == "working\n\n" + note)
+        #expect(result.exitCode == 128 + 15)
+        group.cancelAll()
+      }
+    }
+  }
+
+  @Test func anExecThatEndsInTimeCarriesNoLifetimeNote() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      let scripted = ScriptedExecMachine()
+      var world = ToolWorld(
+        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
+        session: session,
+      )
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await scripted.pump() }
+        group.addTask {
+          await scripted.serve { exec in
+            await time.advance(by: 1799)
+            await exec.exit(.exited(code: 0))
+          }
+        }
+        guard case let .exec(result) = try await world.run(
+          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make"]), id: "tc-in-time",
+        ) else { throw Mismatch("exec failed") }
+        #expect(result.output == "")
+        #expect(result.exitCode == 0)
+        group.cancelAll()
+      }
+    }
+  }
+
+  /// The note comes from the machine's verdict, never from the clock: an
+  /// exec that took longer than its lifetime to report but was not ended by
+  /// it carries no note.
+  @Test func aLateExitTheTimeoutDidNotCauseCarriesNoNote() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      let scripted = ScriptedExecMachine()
+      var world = ToolWorld(
+        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
+        session: session,
+      )
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await scripted.pump() }
+        group.addTask {
+          await scripted.serve { exec in
+            await time.advance(by: 1900)
+            await exec.exit(.exited(code: 0))
+          }
+        }
+        guard case let .exec(result) = try await world.run(
+          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make"]), id: "tc-late",
+        ) else { throw Mismatch("exec failed") }
+        #expect(result.output == "")
+        #expect(result.exitCode == 0)
+        group.cancelAll()
+      }
+    }
+  }
+
+  @Test func aTimeoutWhoseExitStatusNeverCameBackIsARequestDeadline() async throws {
+    try await withToolDeps { time in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      let machine = try await space.addMachine(name: "box").id
+      let scripted = ScriptedExecMachine()
+      var world = ToolWorld(
+        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
+        session: session,
+      )
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await scripted.pump() }
+        group.addTask {
+          await scripted.serve { exec in
+            await time.advance(by: 60)
+            await exec.exit(.exited(code: 1), timedOut: .statusUnknown)
+          }
+        }
+        let outcome = try await world.run(
+          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "sleep 7200", "max_lifetime_seconds": .number(60)]),
+          id: "tc-unknown",
+        )
+        guard case let .failure(failure) = outcome else {
+          Issue.record("an unresolved timeout returned \(outcome)")
+          group.cancelAll()
+          return
+        }
+        #expect(failure.code == "requestDeadline")
+        #expect(failure.message.contains("never came back"))
+        group.cancelAll()
+      }
+    }
+  }
+
+  @Test func theOldNameOrAnOutOfRangeLifetimeNeverStartsAnExec() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let session = try await makeSession(space)
+      _ = try await space.addMachine(name: "box")
+      let scripted = ScriptedExecMachine()
+      var world = ToolWorld(
+        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)),
+        session: session,
+      )
+      let cases: [(String, JSONValue, String)] = [
+        ("timeout_seconds", .number(30), "exec: timeout_seconds is renamed to max_lifetime_seconds"),
+        ("max_lifetime_seconds", .number(14400.5), "exec: max_lifetime_seconds must be more than 0 and at most 14400"),
+        ("max_lifetime_seconds", .number(1e300), "exec: max_lifetime_seconds must be more than 0 and at most 14400"),
+        ("max_lifetime_seconds", .number(0), "exec: max_lifetime_seconds must be more than 0 and at most 14400"),
+      ]
+      for (index, (name, value, message)) in cases.enumerated() {
+        let refused = try await world.run(
+          "exec", .object(["machine": "box", "cwd": "/work", "command": "true", name: value]), id: "tc-refused-\(index)",
+        )
+        guard case let .failure(failure) = refused else {
+          Issue.record("\(name) \(value) was accepted")
+          continue
+        }
+        #expect(failure.message == message)
+        #expect(failure.code == "invalidArgument")
+      }
       #expect(scripted.startCount.value == 0)
     }
   }

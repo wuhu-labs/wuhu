@@ -41,6 +41,8 @@
     "createChannel",
     "createTable",
     "dm",
+    "find",
+    "grep",
     "groups",
     "history",
     "identity",

@@ -119,8 +119,10 @@ public actor OperationClient {
     }
   }
 
-  public func describe(_ machine: String) async throws -> MachineDescription {
-    try await describe(machine, opportunistic: false)
+  /// `exchangeLimit`, on this and the other per-operation calls, caps the call's own exchange deadline below its normal bound (it
+  /// never extends it); expiry is the usual `requestDeadline`. A caller retrying transient failures uses it to keep a hard budget.
+  public func describe(_ machine: String, exchangeLimit: Duration? = nil) async throws -> MachineDescription {
+    try await describe(machine, opportunistic: false, exchangeLimit: exchangeLimit)
   }
 
   /// Skips saturation without a failure trace; probe priority expires after five seconds without another skipped probe.
@@ -129,9 +131,9 @@ public actor OperationClient {
     catch is ExchangeSkipped { return nil }
   }
 
-  private func describe(_ machine: String, opportunistic: Bool) async throws -> MachineDescription {
+  private func describe(_ machine: String, opportunistic: Bool, exchangeLimit: Duration? = nil) async throws -> MachineDescription {
     do {
-      let d = try await request(MachineDescription.self, url: address(machine), opportunistic: opportunistic, timeoutLimit: opportunistic ? .seconds(1) : nil)
+      let d = try await request(MachineDescription.self, url: address(machine), opportunistic: opportunistic, timeoutLimit: [opportunistic ? .seconds(1) : nil, exchangeLimit].compactMap { $0 }.min())
       guard d.version == 2 && d.limits.isValid,
             d.kinds.allSatisfy({ $0.schemaDialect == "https://json-schema.org/draft/2020-12/schema" }) else { throw OperationError(.unsupportedProtocol) }
       guard descriptions[machine] != nil || descriptions.count < 4096 else { throw OperationError(.capacityExceeded) }
@@ -263,13 +265,13 @@ public actor OperationClient {
     Task { _ = try? await self.stop(r.id, reason: reason) }
   }
 
-  public func reconcile(_ id: UUID, holdMs: Int = 0) async throws -> OperationSnapshot {
+  public func reconcile(_ id: UUID, holdMs: Int = 0, exchangeLimit: Duration? = nil) async throws -> OperationSnapshot {
     let record = try await active(id, allowStopped: true)
-    if let reason = record.stopReason { return try await stop(id, reason: reason) }
-    do { return try await poll(id, holdMs: holdMs) }
+    if let reason = record.stopReason { return try await stop(id, reason: reason, exchangeLimit: exchangeLimit) }
+    do { return try await poll(id, holdMs: holdMs, exchangeLimit: exchangeLimit) }
     catch let error as OperationError where error.code == .operationEnded {
       let current = try await active(id, allowStopped: true)
-      if let reason = current.stopReason { return try await stop(id, reason: reason) }
+      if let reason = current.stopReason { return try await stop(id, reason: reason, exchangeLimit: exchangeLimit) }
       throw error
     }
   }
@@ -281,7 +283,7 @@ public actor OperationClient {
     return try await sendStop(id, reason: reason, bestEffort: record.unknown != nil)
   }
 
-  public func poll(_ id: UUID, channel: String? = nil, holdMs: Int = 0, terminalAck: Bool = false) async throws -> OperationSnapshot {
+  public func poll(_ id: UUID, channel: String? = nil, holdMs: Int = 0, terminalAck: Bool = false, exchangeLimit: Duration? = nil) async throws -> OperationSnapshot {
     let key = "\(id)/output/\(channel ?? "state")"
     guard busy.insert(key).inserted else { throw try await busyError(id, reason: "concurrentPoll") }; defer { busy.remove(key) }
     let r = try await active(id)
@@ -311,7 +313,7 @@ public actor OperationClient {
     components.queryItems = items
     let dispatchInFlight = dispatching.contains(id)
     do {
-      return try await request(OperationSnapshot.self, url: components.url!, record: r, poll: true) { s in
+      return try await request(OperationSnapshot.self, url: components.url!, record: r, poll: true, timeoutLimit: exchangeLimit) { s in
         guard s.channel == channel else { throw OperationError(.invalidResponse) }
         return try await self.commit(s, record: r)
       }
@@ -333,9 +335,12 @@ public actor OperationClient {
     guard s.operation == r.id, (s.verdict == nil) == (s.terminalToken == nil) else { throw OperationError(.invalidResponse) }
     guard (s.verdict?.result?.jsonString().utf8.count ?? 0) <= r.description.limits.resultBytes else { throw OperationError(.resultTooLarge) }
     let updated = try await store.transaction(r.id) { value in
-      if value.snapshot?.verdict != nil && s.verdict == nil { return }
-      if let existing = value.snapshot?.verdict, s.verdict != existing { throw OperationError(.invalidResponse) }
+      // An answer from before the verdict, arriving after another exchange committed it, is stale as a snapshot but still carries
+      // the channel bytes it was answered with: keep those (when they continue the cursor) and keep the verdict.
+      let stale = value.snapshot?.verdict != nil && s.verdict == nil
+      if !stale, let existing = value.snapshot?.verdict, s.verdict != existing { throw OperationError(.invalidResponse) }
       if let channel = s.channel {
+        if stale, s.from != (value.committed[channel] ?? .zero) { return }
         guard let from = s.from, let through = s.through, let payload = s.payload,
               from == (value.committed[channel] ?? .zero), try from.advanced(by: payload.count) == through else { throw OperationError(.invalidResponse) }
         guard let descriptor = r.description.kinds.first(where: { $0.name == r.start.kind })?.outputChannels.first(where: { $0.name == channel }),
@@ -348,6 +353,7 @@ public actor OperationClient {
         if payload.count > 0 { value.output[channel, default: []].append(payload) }
         value.committed[channel] = through
       }
+      if stale { return }
       value.snapshot = s
       try value.markEvidence()
       if s.verdict != nil || value.unknown?.details != ["outcome": "unknown", "reason": "leaseSilence"] { value.unknown = nil }
@@ -387,7 +393,7 @@ public actor OperationClient {
     _ = try await store.transaction(id) { $0.output[channel]?.removeFirst(output.count) }; return output
   }
 
-  public func write(_ id: UUID, channel: String, payload: ChannelPayload, end: Bool = false) async throws -> WriteReceipt {
+  public func write(_ id: UUID, channel: String, payload: ChannelPayload, end: Bool = false, exchangeLimit: Duration? = nil) async throws -> WriteReceipt {
     let key = "\(id)/input/\(channel)"
     guard busy.insert(key).inserted else { throw try await busyError(id, reason: "concurrentWrite") }; defer { busy.remove(key) }
     let r = try await active(id)
@@ -402,6 +408,7 @@ public actor OperationClient {
       method: .put,
       body: .json(pending),
       record: r,
+      timeoutLimit: exchangeLimit,
     ) { receipt in
       let requestedEnd = try pending.offset.advanced(by: pending.payload.count)
       guard receipt.acceptedThrough >= pending.offset, receipt.acceptedThrough <= requestedEnd,
@@ -418,11 +425,11 @@ public actor OperationClient {
     lastAnswer[id] = clock.now(); presence[r.machine] = clock.now(); answerDates[r.machine] = wallNow(); return receipt
   }
 
-  public func stop(_ id: UUID, reason: String) async throws -> OperationSnapshot {
-    try await sendStop(id, reason: reason)
+  public func stop(_ id: UUID, reason: String, exchangeLimit: Duration? = nil) async throws -> OperationSnapshot {
+    try await sendStop(id, reason: reason, exchangeLimit: exchangeLimit)
   }
 
-  func sendStop(_ id: UUID, reason: String, bestEffort: Bool = false) async throws -> OperationSnapshot {
+  func sendStop(_ id: UUID, reason: String, bestEffort: Bool = false, exchangeLimit: Duration? = nil) async throws -> OperationSnapshot {
     if !bestEffort { _ = try await active(id, allowStopped: true) }
     let r = try await store.transaction(id) { $0.stopReason = $0.stopReason ?? reason }
     callerDeadline.removeValue(forKey: id)
@@ -430,7 +437,7 @@ public actor OperationClient {
     do {
       return try await request(
         OperationSnapshot.self, url: address(r.machine, operation: id, suffix: "stop"), method: .put,
-        body: .json(StopRequest(reason: r.stopReason ?? reason)), record: r, silenceBound: !bestEffort,
+        body: .json(StopRequest(reason: r.stopReason ?? reason)), record: r, silenceBound: !bestEffort, timeoutLimit: exchangeLimit,
       ) { s in
         guard s.channel == nil else { throw OperationError(.invalidResponse) }
         return try await self.commit(s, record: r)

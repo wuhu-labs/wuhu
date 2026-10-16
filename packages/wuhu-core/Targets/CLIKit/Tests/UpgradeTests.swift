@@ -1,5 +1,6 @@
 @testable import CLIKit
 import Foundation
+import ImageRetention
 import Scratch
 import Testing
 
@@ -328,6 +329,60 @@ struct UpgradeLayoutTests {
     #expect(layout.versionDirectoryExists("0.1.0-dev.3"))
     #expect(layout.currentVersion() == "0.1.0-dev.5")
     #expect(layout.previousVersion() == "0.1.0-dev.4")
+  }
+
+  @Test func retainedDigestSurvivesPruneAndSameVersionReplacementAcrossRollback() throws {
+    let scratch = try ScratchFolder("upgrade-retention")
+    defer { scratch.remove() }
+    let layout = try self.layout(in: scratch)
+    for version in ["0.1.0-dev.1", "0.1.0-dev.2", "0.1.0-dev.3"] {
+      try plantVersion(layout, version, content: version)
+    }
+    let source = layout.root.appendingPathComponent("0.1.0-dev.1/wuhu").path
+    let root = scratch.url.appendingPathComponent("execution-images").path
+    let reference = try ImageRetention.transaction(root: root) { try $0.retain(source: source, id: UUID(), owner: "prepared-worker") }
+    try layout.flip(to: "0.1.0-dev.2")
+    try layout.flip(to: "0.1.0-dev.3")
+    #expect(try layout.prune(keep: 0).isEmpty)
+    let replacement = try layout.stagingDirectory()
+    try Data("different digest".utf8).write(to: replacement.appendingPathComponent("wuhu"))
+    #expect(throws: CLIError.self) { try layout.install(payload: replacement, version: "0.1.0-dev.1") }
+    _ = try layout.rollback()
+    #expect(try layout.prune(keep: 0).isEmpty)
+    try ImageRetention.transaction(root: root) { try $0.verify(reference) }
+    #expect(try Data(contentsOf: URL(fileURLWithPath: source)) == Data("0.1.0-dev.1".utf8))
+  }
+
+  @Test func concurrentStageAndPruneNeverDeleteAPublishedImage() async throws {
+    for _ in 0 ..< 12 {
+      let scratch = try ScratchFolder("upgrade-retention-race")
+      defer { scratch.remove() }
+      let layout = try self.layout(in: scratch)
+      try plantVersion(layout, "0.1.0-dev.1")
+      let versionRoot = layout.root
+      let source = versionRoot.appendingPathComponent("0.1.0-dev.1/wuhu").path
+      let imageRoot = scratch.url.appendingPathComponent("execution-images").path
+      let retained = try await withThrowingTaskGroup(of: ImageReference?.self) { group in
+        group.addTask {
+          do { return try ImageRetention.transaction(root: imageRoot) { try $0.retain(source: source, id: UUID(), owner: "prepared-worker") } }
+          catch ImageRetentionError.imageChanged { return nil }
+        }
+        group.addTask {
+          _ = try UpgradeLayout(root: versionRoot).prune(keep: 0)
+          return nil
+        }
+        var reference: ImageReference?
+        for try await result in group { if let result { reference = result } }
+        return reference
+      }
+      if let retained {
+        try ImageRetention.transaction(root: imageRoot) { try $0.verify(retained) }
+        #expect(FileManager.default.fileExists(atPath: source))
+      } else {
+        #expect(!FileManager.default.fileExists(atPath: source))
+        #expect(try ImageRetention.transaction(root: imageRoot) { try $0.references().isEmpty })
+      }
+    }
   }
 
   @Test func shadowWarningNamesTheDecoy() throws {

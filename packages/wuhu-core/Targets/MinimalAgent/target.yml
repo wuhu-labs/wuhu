@@ -1,0 +1,26 @@
+name: MinimalAgent
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - CProcessIdentity
+  - Credentials
+  - InferenceKit
+  - SessionDomain
+  - WuhuAI
+  - JSONValue
+  - OrderedCollections
+  - Dependencies
+  - Subprocess
+  - SystemPackage
+tests:
+  dependencies:
+    - CProcessIdentity
+    - WuhuAI
+    - JSONValue
+    - Dependencies
+    - Fetch
+    - FetchURLSession
+    - Scratch

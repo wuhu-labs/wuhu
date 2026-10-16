@@ -29,6 +29,12 @@ public enum ExecutionWorker {
   public static func run(bootstrap data: Data, release: String) async throws {
     guard data.count <= 16 << 10 else { throw WorkerProtocolError(.invalidConfiguration, message: "Execution bootstrap exceeds limit") }
     let bootstrap = try JSONDecoder().decode(ExecutionWorkerBootstrap.self, from: data)
+    if bootstrap.imageLease == true {
+      var state = stat()
+      guard fstat(3, &state) == 0, state.st_uid == geteuid(), state.st_mode & S_IFMT == S_IFREG,
+            state.st_mode & 0o7777 == 0o600, state.st_nlink == 1, state.st_size == 0,
+            fcntl(3, F_SETFD, FD_CLOEXEC) == 0 else { throw WorkerProtocolError(.invalidConfiguration, message: "Worker image lease is unavailable") }
+    }
     var configuration = HTTPClient.Configuration()
     configuration.redirectConfiguration = .disallow
     configuration.connectionPool.concurrentHTTP1ConnectionsPerHostSoftLimit = 4096

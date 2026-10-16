@@ -222,7 +222,7 @@ final class ScriptProcess: Sendable {
         case let .exit(status):
           finish(.exited(status))
           return
-        case .truncated:
+        case .truncated, .timedOut:
           continue
         case let .failed(error):
           finish(.lost(error.message))

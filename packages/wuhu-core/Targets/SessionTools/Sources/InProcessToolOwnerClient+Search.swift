@@ -40,9 +40,15 @@ extension InProcessToolOwnerClient {
             case let .integer(line)? = entry["line"],
             case let .string(text)? = entry["text"]
       else { return nil }
-      return "\(path):\(line): \(ToolOutput.clampedLine(text))"
+      return "\(path):\(line): \(text)"
     }
     if lines.isEmpty { lines.append("no matches") }
+    if case let .array(skipped)? = fields["skipped"] {
+      for case let .object(entry) in skipped {
+        guard case let .string(path)? = entry["path"], case let .integer(bytes)? = entry["bytes"] else { continue }
+        lines.append("skipped \(path): \(bytes) bytes, over the \(SearchBounds.fileBytes >> 20) MiB search bound")
+      }
+    }
     if case let .string(cursor)? = fields["cursor"] {
       lines.append("more results available; pass step: \"\(cursor)\" to continue")
     }

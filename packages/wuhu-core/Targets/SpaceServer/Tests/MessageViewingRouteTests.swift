@@ -7,6 +7,7 @@ import Fetch
 import JSONValue
 import SessionDomain
 import struct SpaceContract.ConversationPostOutput
+import struct SpaceContract.GroupID
 import struct SpaceContract.SessionRestartOutput
 @testable import SpaceCore
 @testable import SpaceServer
@@ -67,8 +68,27 @@ import Testing
           "session": .string(t.parent.rawValue), "identity": .string(person), "message": "refused",
           "viewing": .string(viewing),
         ])
-        #expect(try await refusal(response) == .object(["code": "invalidArgument", "message": .string(reason)]))
+        #expect(try await refusal(response) == .object(["code": "invalidArgument", "message": .string(reason), "reason": "viewing"]))
       }
+      #expect(try await t.harness.store.messages(conversation: .init(t.parent.rawValue)).isEmpty)
+    }
+  }
+
+  @Test func aPageInAGroupTheActingGroupCannotReadIsRefusedAsViewing() async throws {
+    try await withSessionDeps {
+      let t = try await SessionGateTests().tree()
+      let person = try await t.harness.mintPersona()
+      try await t.harness.space.writer.write { db in
+        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('sealed', '2026-01-01T00:00:00.000Z')")
+      }
+      _ = try await t.harness.space.fs(GroupID(rawValue: "sealed")).write("/secret.md", Data("no\n".utf8), ifMatch: nil)
+      let response = try await t.harness.post("/v1/conversation/message", [
+        "session": .string(t.parent.rawValue), "identity": .string(person), "message": "look",
+        "viewing": "wuhu://sealed.localspace/secret.md",
+      ])
+      #expect(try await refusal(response) == .object([
+        "code": "invalidArgument", "message": "viewing wuhu://sealed.localspace/secret.md is not a path you can read", "reason": "viewing",
+      ]))
       #expect(try await t.harness.store.messages(conversation: .init(t.parent.rawValue)).isEmpty)
     }
   }
@@ -103,7 +123,7 @@ import Testing
         ["identity": .string(person), "message": "start", "viewing": "/missing.md"],
       )
       #expect(try await refusal(unreadable) == .object([
-        "code": "invalidArgument", "message": "viewing /missing.md is not a path you can read",
+        "code": "invalidArgument", "message": "viewing /missing.md is not a path you can read", "reason": "viewing",
       ]))
       _ = try await t.harness.call(
         "/v1/session/\(t.parent.rawValue)/restart",

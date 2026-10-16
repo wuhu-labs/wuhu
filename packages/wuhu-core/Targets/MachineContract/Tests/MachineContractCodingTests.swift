@@ -50,6 +50,7 @@ struct MachineContractCodingTests {
       "kind": "exit", "status": .object(["kind": "exited", "code": 0]),
     ]))
     #expect(try encoder.encode(ExecEvent.truncated(limit: 1024)) == .object(["kind": "truncated", "limit": 1024]))
+    #expect(try encoder.encode(ExecEvent.timedOut(outcome: .statusUnknown)) == .object(["kind": "timedOut", "outcome": "statusUnknown"]))
     #expect(try encoder.encode(ExecEvent.failed(error: MachineError(code: .machineLost, message: "gone"))) == .object([
       "kind": "failed", "error": .object(["code": "machineLost", "message": "gone"]),
     ]))

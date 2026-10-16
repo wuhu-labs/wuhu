@@ -260,6 +260,7 @@ struct MachineV2Installer {
       [Unit]
       Description=Wuhu machine v2 (\(self.machine))
       After=network-online.target
+      StartLimitIntervalSec=0
       [Service]
       Type=simple
       ExecStart="\(executable)" machine-v2 run \(self.machine)

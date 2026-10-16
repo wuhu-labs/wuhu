@@ -82,6 +82,21 @@ func spaceDataResponse(
     }
     let context = SpaceToolContext(space: space, principal: try await webPrincipal(viewer, group: caller.group, space: space))
     return await toolResponse(context, "attributes.read", input: .object(["path": .string(path)])).viewed(by: viewer)
+  case ("find", .get), ("find", .head), ("grep", .get), ("grep", .head):
+    let viewer: AccountID?
+    switch try await scriptAdmission(space: space, caller: caller, dev: dev, publicRead: publicRead, request: request) {
+    case let .refused(wall): return wall
+    case let .admitted(account): viewer = account
+    }
+    let key = route == "find" ? "glob" : "pattern"
+    guard let input = searchInput(key, query) else {
+      return errorResponse(
+        .badRequest, code: "invalidArgument",
+        message: "\(route) takes ?\(key)=[&path=][&matchLimit=][&entryLimit=][&step=], limits as integers",
+      )
+    }
+    let context = SpaceToolContext(space: space, principal: try await webPrincipal(viewer, group: caller.group, space: space))
+    return await toolResponse(context, route, input: input).viewed(by: viewer)
   case ("rows", .post):
     let write: PageWrite
     switch try await writeAdmission(space: space, caller: caller, dev: dev, request: request) {
@@ -108,7 +123,7 @@ func spaceDataResponse(
     var input = write.body
     input.removeValue(forKey: "page")
     return await toolResponse(write.context, "attributes.patch", input: .object(input)).viewed(by: write.viewer)
-  case ("query", _), ("observe", _), ("watch", _), ("rows", _), ("attributes", _):
+  case ("query", _), ("observe", _), ("watch", _), ("rows", _), ("attributes", _), ("find", _), ("grep", _):
     return plainStatus(.methodNotAllowed)
   default:
     return plainStatus(.notFound)
@@ -120,6 +135,22 @@ private func boundParameters(_ raw: String?) -> [JSONValue]? {
   guard let raw else { return [] }
   guard case let .array(values)? = JSONValue.parse(raw) else { return nil }
   return values
+}
+
+/// The find or grep tool's input from a page's query string; nil when the
+/// glob or pattern is missing or a limit is not an integer. The context has
+/// no machine seam, so a `machines://` path is the tool's `unavailable`.
+private func searchInput(_ key: String, _ query: [String: String]) -> JSONValue? {
+  guard let value = query[key] else { return nil }
+  var input: OrderedDictionary<String, JSONValue> = [key: .string(value)]
+  if let path = query["path"] { input["path"] = .string(path) }
+  for name in ["matchLimit", "entryLimit"] {
+    guard let raw = query[name] else { continue }
+    guard let limit = Int(raw) else { return nil }
+    input[name] = .integer(limit)
+  }
+  if let step = query["step"] { input["step"] = .string(step) }
+  return .object(input)
 }
 
 private func parametersRefusal() -> Response {

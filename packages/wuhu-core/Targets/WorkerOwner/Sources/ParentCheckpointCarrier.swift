@@ -10,7 +10,7 @@
 #endif
 
 struct ParentCheckpointCarrierError: Error, Equatable, Sendable {
-  enum Code: Equatable, Sendable { case unprovenCredentialFreedom, io, shortRead, oversized, invalidFrame, descriptorStillOpen }
+  enum Code: Equatable, Sendable { case unprovenCredentialFreedom, io, shortRead, oversized, invalidFrame, closeFailed }
   let code: Code
 }
 
@@ -60,9 +60,9 @@ final class ParentCheckpointCarrier: Sendable {
     guard info.st_size == 16 + Int64(length) else { throw failure(.invalidFrame) }
     let checkpoint = try ParentExecCheckpoint.decode(read(descriptor, count: Int(length), offset: 16), expecting: identity)
     try requireCredentialFree(checkpoint)
-    // A close attempt relinquishes ownership even on EINTR; its number may be reused.
+    // A close attempt relinquishes ownership even on EINTR, which therefore counts as closed. Its number may be reused at once by another thread, so close's result is the only evidence.
     ownsDescriptor = false
-    guard closeDescriptor(descriptor) == 0, fcntl(descriptor, F_GETFD) == -1, errno == EBADF else { throw failure(.descriptorStillOpen) }
+    guard closeDescriptor(descriptor) == 0 || errno == EINTR else { throw failure(.closeFailed) }
     return checkpoint
   }
 

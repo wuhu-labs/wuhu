@@ -91,7 +91,7 @@ private func exerciseComposedExec(_ scenario: ComposedScenario) async throws {
     ]
     for fd in [exported.carrier.descriptor, exported.listener.descriptor] {
       try #require(fcntl(fd, F_GETFD) & FD_CLOEXEC != 0)
-      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0)
+      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd, file: DescriptorFile(of: fd)) == 0)
     }
     if scenario == .commit {
       let hello = String(decoding: try JSONEncoder().encode(ExecutionWorkerBootstrap.hello(release: "queued-worker")), as: UTF8.self)
@@ -162,6 +162,7 @@ func runComposedExecFixture(carrier: Int32, descriptor: Int32) async throws {
   let identity = try WorkerListener.InheritedIdentity(descriptorDevice: number("FD_DEVICE"), descriptorInode: number("FD_INODE") + (scenario == .listenerAdopt ? 1 : 0), pathDevice: number("PATH_DEVICE"), pathInode: number("PATH_INODE"))
   let expected = scenario == .carrierImport ? ParentExecCheckpoint.Identity(space: "foreign", generation: carrierIdentity.generation, incarnation: carrierIdentity.incarnation, processID: carrierIdentity.processID, birth: carrierIdentity.birth) : carrierIdentity
   try #require(fcntl(descriptor, F_GETFD) & FD_CLOEXEC == 0)
+  let carrierFile = try DescriptorFile(of: carrier), listenerFile = try DescriptorFile(of: descriptor)
   let effects = Mutex(0)
   let committed = AsyncStream<JSONValue>.makeStream()
   defer { committed.continuation.finish() }
@@ -176,9 +177,9 @@ func runComposedExecFixture(carrier: Int32, descriptor: Int32) async throws {
         throw WorkerProtocolError(.unavailable, message: "Injected composed handoff failure")
       }
       if stage == .adopted {
-        try #require(fcntl(carrier, F_GETFD) == -1)
+        try #require(released(carrier, from: carrierFile))
         try #require(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
-        for fd in [carrier, descriptor] { try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0) }
+        for (fd, file) in [(carrier, carrierFile), (descriptor, listenerFile)] { try #require(try spawnCarrierTest(mode: "absent", descriptor: fd, file: file) == 0) }
       }
     })
     successor = imported
@@ -203,9 +204,10 @@ func runComposedExecFixture(carrier: Int32, descriptor: Int32) async throws {
     try #require(await imported.execution.bytes.journal.inventory().isEmpty)
   } catch let error as WorkerProtocolError where scenario != .commit {
     try #require(error.code == .invalidConfiguration || error.code == .unavailable)
-    try #require(fcntl(carrier, F_GETFD) == -1)
-    try #require(fcntl(descriptor, F_GETFD) == -1)
-    for fd in [carrier, descriptor] { try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0) }
+    for (fd, file) in [(carrier, carrierFile), (descriptor, listenerFile)] {
+      try #require(released(fd, from: file))
+      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd, file: file) == 0)
+    }
     var state = stat()
     try #require(lstat(path, &state) == 0 && UInt64(truncatingIfNeeded: state.st_ino) == identity.pathInode)
   }

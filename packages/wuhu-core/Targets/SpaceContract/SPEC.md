@@ -51,11 +51,21 @@ changes here are contract changes.
   `"1-40"` is the first forty lines). Both endpoints are required. Omit `lines`
   to read the whole file.
 
-- **Grep pagination** (`GrepInput.step`, `GrepOutput.cursor`): an **opaque**
-  continuation cursor string (donor `GrepTool` semantics). `GrepOutput.cursor`
-  is present **iff** the results were truncated by `matchLimit`/`entryLimit`;
-  the client passes it back as the next `GrepInput.step` to continue. Absent
-  `cursor` means the scan is complete.
+- **Search pagination** (`GrepInput.step`/`FindInput.step`, `.cursor`): an
+  **opaque** continuation cursor string. A space cursor is bound to the search
+  that issued it (tool, pattern or glob, the group or `wuhu://system/` the
+  path resolved to, root path); any other step is `invalidArgument`. `cursor`
+  is present **iff** the page stopped early: at `matchLimit` or `entryLimit`
+  (capped at 1000 and 100000, never refused), at 100 skipped files, or when
+  the page's 2 s budget ran out; a page always passes at least one file or
+  line first, and one line that alone takes over 2 s to match is
+  `invalidArgument`. The client passes it
+  back as the next `step`; absent `cursor` means the scan is complete.
+
+- **`GrepOutput.skipped`** (`[SkippedFile]`, absent when empty): files over
+  4 MiB the space grep listed instead of reading, `{path, bytes, reason:
+  "tooLarge"}`. Machine grep never sets it. Matched `text` is clamped past
+  500 bytes.
 
 - **`HistoryEntry`**: `to` is present on `move` entries (the destination path);
   `fromRev` is present on `checkout` entries (the revision the content was

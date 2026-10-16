@@ -19,7 +19,6 @@ import struct SessionDomain.SessionID
 import struct SessionDomain.ToolCallID
 import struct SessionTools.Spawned
 import struct SessionTools.SpawnOrder
-import Subprocess
 import WorkerOwner
 import WorkerProtocol
 
@@ -44,11 +43,14 @@ struct WorkerConnection: Sendable {
     exited: @escaping @Sendable () async -> Void,
   ) async throws -> Self {
     let storage = try await persistence?.allocate(incarnation: incarnation)
+    let workerExecutable: String
+    do { workerExecutable = try await storage?.prepareImage(executable: executable) ?? executable }
+    catch { try? await storage?.cleanup(); throw WorkerProtocolError(.unavailable, message: "Cannot retain execution worker image") }
     let directory = storage?.location.directory ?? ("/tmp/wuhu-execution-" + UUID().uuidString)
     if storage == nil {
       guard mkdir(directory, 0o700) == 0 else { throw WorkerProtocolError(.unavailable, message: "Cannot create private execution directory") }
     }
-    let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled)
+    let bootstrap = ExecutionWorkerBootstrap(parentSocket: directory + "/parent.sock", workerSocket: directory + "/worker.sock", token: UUID().uuidString + UUID().uuidString, tracesAttempts: owner.tracesAttempts, machines: machines, telemetry: ServerTracing.enabled, imageLease: storage != nil)
     let (ready, continuation) = AsyncStream<Int32>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let (admitted, admission) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
     defer { admission.finish() }
@@ -102,20 +104,8 @@ struct WorkerConnection: Sendable {
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await transport.run() }
         group.addTask {
-          var options = PlatformOptions()
-          options.processGroupID = 0
-          options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2))]
-          _ = try? await Subprocess.run(.path(.init(executable)), arguments: ["_execution-worker"], environment: .custom([:]), platformOptions: options, input: .inputWriter, output: .discarded, error: .discarded) { execution in
-            // The child cannot decode bootstrap or call the owner before its real OS identity is durable.
-            try await storage?.persist(processID: execution.processIdentifier.value, token: bootstrap.token)
-            try Task.checkCancellation()
-            var offset = 0
-            while offset < input.count {
-              let written = try await execution.standardInputWriter.write(Array(input.dropFirst(offset)))
-              guard written > 0 else { throw WorkerProtocolError(.unavailable, message: "Execution bootstrap input closed") }
-              offset += written
-            }
-            try await execution.standardInputWriter.finish()
+          try? await WorkerChildProcess.run(executable: workerExecutable, lease: await storage?.preparationDescriptor, bootstrap: input) { processID in
+            try await storage?.persist(processID: processID, token: bootstrap.token)
           }
           await client.close()
         }

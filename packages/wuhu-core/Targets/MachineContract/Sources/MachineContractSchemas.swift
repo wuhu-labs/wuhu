@@ -38,6 +38,7 @@ public enum MachineContractSchemas {
     ("ExecOutputStream", ExecOutputStream.jsonSchema),
     ("OutputChunk", OutputChunk.jsonSchema),
     ("ExitStatus", ExitStatus.jsonSchema),
+    ("ExecTimeout", ExecTimeout.jsonSchema),
     ("ExecExit", ExecExit.jsonSchema),
     ("Ack", Ack.jsonSchema),
     ("Kill", Kill.jsonSchema),

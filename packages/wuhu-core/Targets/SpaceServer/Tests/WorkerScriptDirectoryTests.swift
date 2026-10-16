@@ -36,23 +36,25 @@ import Testing
     await directory.shutdown()
   }
 
-  @Test func stopResponsePinsGenerationAfterTheScriptExitNotification() async throws {
+  // A loaded run can leave this test's tasks waiting seconds for an executor
+  // slot, so it waits on the control's own signal, bounded by the time limit.
+  @Test(.timeLimit(.minutes(1))) func stopResponsePinsGenerationAfterTheScriptExitNotification() async throws {
     let directory = WorkerScriptDirectory()
     let generation = UUID()
     let session = SessionID("owner")
-    let entered = Mutex(false)
+    let entered = AsyncStream<Void>.makeStream()
     let release = AsyncStream<Void>.makeStream()
     let gate = Task { for await _ in release.stream { break } }
     defer { release.continuation.finish(); gate.cancel() }
     await directory.bind(generation) { _, _ in
       await directory.ended("script", session: session, generation: generation)
-      entered.withLock { $0 = true }
+      entered.continuation.finish()
       await gate.value
       return .script(.init(output: "stopped"))
     }
     try await directory.started("script", session: session, generation: generation)
     let stopping = Task { try await directory.stop("script", session: session) }
-    try await until("stop control admitted") { entered.withLock { $0 } }
+    for await _ in entered.stream {}
     #expect(await directory.scripts(for: session).isEmpty)
     #expect(await directory.contains(generation))
     release.continuation.yield(())

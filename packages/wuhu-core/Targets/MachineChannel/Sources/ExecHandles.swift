@@ -40,8 +40,9 @@ public struct IncomingExec: Sendable {
     await endpoint.stopOutput(exec: start.id)
   }
 
-  public func exit(_ status: ExitStatus) async {
-    await endpoint.finish(exec: start.id, status: status)
+  /// `timedOut` says the exec's `timeout` ended it, and how.
+  public func exit(_ status: ExitStatus, timedOut: ExecTimeout? = nil) async {
+    await endpoint.finish(exec: start.id, status: status, timedOut: timedOut)
   }
 }
 
@@ -84,15 +85,19 @@ public struct ExecEvents: AsyncSequence, Sendable {
     var frames: AsyncStream<Frame>.AsyncIterator
     var consumed: Int
     let autoAcknowledge: Bool
-    var pendingExit: ExitStatus?
+    /// Events an exit frame announces ahead of its exit, then the exit itself.
+    var pending: [ExecEvent] = []
     var finished: Bool = false
 
     public mutating func next() async throws -> ExecEvent? {
       guard !finished else { return nil }
-      if let status = pendingExit {
-        finished = true
-        if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
-        return .exit(status: status)
+      if !pending.isEmpty {
+        let event = pending.removeFirst()
+        if case .exit = event {
+          finished = true
+          if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
+        }
+        return event
       }
       while let frame = await frames.next() {
         switch frame.opcode {
@@ -140,10 +145,12 @@ public struct ExecEvents: AsyncSequence, Sendable {
           guard exit.cursor == consumed else {
             throw ChannelError.protocolViolation("exit at \(exit.cursor) with output consumed through \(consumed)")
           }
-          if exit.outputCut == true {
+          if exit.outputCut == true { pending.append(.truncated(limit: consumed)) }
+          if let outcome = exit.timedOut { pending.append(.timedOut(outcome: outcome)) }
+          if !pending.isEmpty {
             finished = false
-            pendingExit = exit.status
-            return .truncated(limit: consumed)
+            pending.append(.exit(status: exit.status))
+            return pending.removeFirst()
           }
           if autoAcknowledge { await endpoint.acknowledgeExit(exec: id) }
           return .exit(status: exit.status)

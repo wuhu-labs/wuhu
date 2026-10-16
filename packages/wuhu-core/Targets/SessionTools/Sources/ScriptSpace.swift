@@ -26,7 +26,7 @@ struct ScriptSpace: Sendable {
     engine.define("__wuhu_space_verb", promising: { arguments in
       await spaceAnswer {
         let name = string(arguments, 0)
-        guard ["table.create", "table.schema", "table.alter", "new", "rm"].contains(name) else {
+        guard ["table.create", "table.schema", "table.alter", "new", "rm", "find", "grep"].contains(name) else {
           throw ToolRunError.failed(code: .invalidArgument, message: "unknown space operation", hint: nil)
         }
         let principal = try await principal()
@@ -213,7 +213,7 @@ let spaceCoreModule: String = {
   #else
     return """
     const missing = () => { throw new Error("wuhu:space needs the embedded shell SDK") }
-    export const createSpace = () => ({ query: missing, observe: missing, watch: missing, mutateRows: missing, readAttributes: missing, patchAttributes: missing })
+    export const createSpace = () => ({ query: missing, observe: missing, watch: missing, mutateRows: missing, readAttributes: missing, patchAttributes: missing, find: missing, grep: missing })
     export const failure = missing
     """
   #endif

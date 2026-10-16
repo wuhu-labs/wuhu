@@ -7,6 +7,8 @@
 import Fetch
 import JSONValue
 import MachineChannel
+import enum MinimalAgent.AgentLog
+import enum MinimalAgent.MinimalAgent
 import SpaceClient
 import enum SpaceContract.SessionToolExecutor
 import struct SpaceContract.ToolError
@@ -24,7 +26,7 @@ public struct ServeCommand: Equatable, Sendable {
     case worker
   }
 
-  public var executionPlacement: ExecutionPlacement = .inProcess
+  public var executionPlacement: ExecutionPlacement = .worker
   public var adminExec: Bool = false
   public var devImport: String?
   public var devExport: String?
@@ -109,6 +111,13 @@ public struct CommandRunner: Sendable {
       let command = invocation.command
       if case let .help(text) = command {
         await self.stdout(text + "\n")
+        return 0
+      }
+      // The agent acts on no space and as nobody, so no wallet or session token is consulted.
+      if case let .agent(log) = command {
+        guard !self.stdinIsTerminal else { throw UsageError(message: "agent: pipe its JSON request on stdin (wuhu agent --help)") }
+        let result = try await MinimalAgent.run(request: try await self.stdin(), log: log, workingDirectory: self.currentDirectory)
+        await self.stdout(JSONValue.object(["result": .string(result)]).jsonString() + "\n")
         return 0
       }
       let identity = try Identity.resolve(environment: self.environment)
@@ -264,6 +273,7 @@ enum Command: Equatable {
   case trust(String)
   case untrust(String)
   case upgrade(UpgradeCommand)
+  case agent(AgentLog?)
   case read(path: String, rev: Int?, lines: String?)
   case write(path: String, body: String, force: Bool)
   case cat(path: String)

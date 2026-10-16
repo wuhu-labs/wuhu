@@ -7,7 +7,9 @@ import SessionDomain
 import Synchronization
 import Testing
 
-@Suite struct RuntimePortableThinkingTests {
+// Under a loaded pool the whole process stalls for seconds at a time, so the
+// waits are bounded by the admitted time limit rather than the default 10 s.
+@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct RuntimePortableThinkingTests {
   @Test func upgradeMidToolLoopCompletesAndNextMessageRestoresThinking() async throws {
     try await runUpgrade(wake: nil)
   }
@@ -60,7 +62,7 @@ import Testing
         source.items += items
         try await harness.store.append(id, items: items, transcript: source)
         try await harness.running {
-          try await until("legacy turn completes without error") {
+          try await until("legacy turn completes without error", timeout: .seconds(40)) {
             let record = try await harness.store.record(id)
             try #require(record.work != .errored, "\(record.errorMessage ?? "")")
             return record.work == .noWork && bodies.withLock { $0.count } == 2
@@ -71,7 +73,7 @@ import Testing
           } else {
             try await harness.deliver("fresh user turn", to: id)
           }
-          try await until("fresh turn completes with reasoning restored") {
+          try await until("fresh turn completes with reasoning restored", timeout: .seconds(40)) {
             let record = try await harness.store.record(id)
             try #require(record.work != .errored, "\(record.errorMessage ?? "")")
             return record.work == .noWork && bodies.withLock { $0.count } == 4

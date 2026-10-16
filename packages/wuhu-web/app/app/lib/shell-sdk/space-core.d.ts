@@ -37,6 +37,35 @@ export interface AttributePatch {
   ifMatch: string
 }
 
+export interface Search {
+  glob?: string
+  pattern?: string
+  path?: string
+  matchLimit?: number
+  entryLimit?: number
+  step?: string
+}
+
+export interface SearchOptions {
+  path?: string | null
+  limit?: number | bigint | null
+  entryLimit?: number | bigint | null
+  step?: string | null
+}
+
+export interface GrepMatch {
+  path: string
+  line: number
+  text: string
+}
+
+// A file grep did not read; reason `tooLarge` is over the per-file bound.
+export interface SkippedFile {
+  path: string
+  bytes: number
+  reason: string
+}
+
 export interface Stream<T> {
   next(): Promise<T | null>
   close(): void
@@ -57,6 +86,14 @@ export interface Transport {
     path: string,
     patch: AttributePatch,
   ): Promise<{ token: string }>
+  find(search: Search): Promise<{ paths: string[]; cursor?: string | null }>
+  grep(
+    search: Search,
+  ): Promise<{
+    matches: GrepMatch[]
+    cursor?: string | null
+    skipped?: SkippedFile[] | null
+  }>
 }
 
 export interface Space {
@@ -86,6 +123,16 @@ export interface Space {
       ifMatch: string
     },
   ): Promise<{ token: string }>
+  find(
+    glob: string,
+    options?: SearchOptions,
+  ): Promise<{ paths: string[]; step: string | null }>
+  grep(
+    pattern: string,
+    options?: SearchOptions,
+  ): Promise<
+    { matches: GrepMatch[]; step: string | null; skipped: SkippedFile[] }
+  >
 }
 
 export class SpaceError extends Error {

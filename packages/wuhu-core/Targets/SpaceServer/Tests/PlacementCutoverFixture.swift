@@ -70,7 +70,7 @@ struct PlacementCutoverFixture: Sendable {
     }
   }
 
-  func serve(_ placement: String, stopSignal: Int32 = SIGTERM, body: @escaping @Sendable (Int32) async throws -> Void) async throws {
+  func serve(_ placement: String? = nil, stopSignal: Int32 = SIGTERM, body: @escaping @Sendable (Int32) async throws -> Void) async throws {
     var environment: [Environment.Key: String] = ["PATH": "/usr/bin:/bin", "HOME": files.base, "WUHU_CONFIG_DIR": files.config, "OFFLINE_API_KEY": "fixture"]
     for key in ["SDKROOT", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH"] {
       if let value = ProcessInfo.processInfo.environment[key] { environment[Environment.Key(stringLiteral: key)] = value }
@@ -78,8 +78,10 @@ struct PlacementCutoverFixture: Sendable {
     var options = PlatformOptions()
     options.processGroupID = 0
     options.teardownSequence = [.send(signal: .terminate, toProcessGroup: true, allowedDurationToNextStep: .seconds(2)), .send(signal: .kill, toProcessGroup: true, allowedDurationToNextStep: .seconds(1))]
-    let log = files.base + "/" + placement + ".log"
-    let command = "exec '\(binary)' serve '\(folder.path)' --port \(port) --public-read --execution-placement \(placement) 2> '\(log)'"
+    let label = placement ?? "default"
+    let log = files.base + "/" + label + ".log"
+    let selection = placement.map { " --execution-placement \($0)" } ?? ""
+    let command = "exec '\(binary)' serve '\(folder.path)' --port \(port) --public-read\(selection) 2> '\(log)'"
     do {
       let result = try await Subprocess.run(.path("/bin/sh"), arguments: ["-c", command], environment: .custom(environment), platformOptions: options, input: .none, output: .discarded, error: .discarded) { process in
         try await ready()
@@ -90,7 +92,7 @@ struct PlacementCutoverFixture: Sendable {
       if stopSignal == SIGTERM { #expect(result.terminationStatus == .exited(0)) }
       else { #expect(result.terminationStatus != .exited(0)) }
     } catch {
-      if let text = try? String(contentsOfFile: log, encoding: .utf8) { Issue.record("Cutover \(placement) server log: \(text)") }
+      if let text = try? String(contentsOfFile: log, encoding: .utf8) { Issue.record("Cutover \(label) server log: \(text)") }
       throw error
     }
   }

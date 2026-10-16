@@ -8,6 +8,7 @@
 #else
   import Darwin
 #endif
+import ImageRetention
 import struct WorkerProtocol.WorkerProtocolError
 
 actor ExecutionWorkerBootStorage {
@@ -16,6 +17,7 @@ actor ExecutionWorkerBootStorage {
   private let runtimeRoot: String
   private enum Opened {
     case runtime(ExecutionWorkerManifestStore, ExecutionWorkerManifest, ExecutionWorkerSocketDirectory?)
+    case preparation(ExecutionWorkerManifestStore, ExecutionWorkerPreparation, ExecutionWorkerSocketDirectory)
     case cleanup(ExecutionWorkerManifestStore, ExecutionWorkerCleanup, ExecutionWorkerSocketDirectory?)
   }
 
@@ -24,6 +26,11 @@ actor ExecutionWorkerBootStorage {
   init(root: String, space: String, runtimeRoot: String = ExecutionWorkerSocketLocation.runtimeRoot) { self.root = root; self.space = space; self.runtimeRoot = runtimeRoot }
 
   func inventory() async -> ExecutionWorkerBootFence.Inventory {
+    let images = URL(fileURLWithPath: root).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("execution-images").path
+    if FileManager.default.fileExists(atPath: images) {
+      do { try ImageRetention.transaction(root: images) { _ in } }
+      catch { return .unsafeStorage(images) }
+    }
     var state = stat()
     if lstat(root, &state) != 0, errno == ENOENT { return .missing }
     let descriptor: Int32
@@ -59,7 +66,18 @@ actor ExecutionWorkerBootStorage {
         return .cleanup(manifest?.credentials)
       }
       let result = await store.inspectForBoot()
-      if case .missing = result { return try await store.hasRuntimeFiles() ? .missingManifest : .missing }
+      if case .missing = result {
+        if let preparation = try await store.loadPreparation() {
+          guard try await store.preparationImage(preparation.image) == nil else { return .missingManifest }
+          if try await ExecutionWorkerSocketDirectory.openIfPresent(preparation.location, space: space, generation: generation, runtimeRoot: runtimeRoot) == nil {
+            _ = try await ExecutionWorkerSocketDirectory.create(space: space, generation: generation, runtimeRoot: runtimeRoot)
+          }
+          guard let sockets = try await ExecutionWorkerSocketDirectory.openIfPresent(preparation.location, space: space, generation: generation, runtimeRoot: runtimeRoot) else { return .unsafeStorage }
+          opened[directory] = .preparation(store, preparation, sockets)
+          return .cleanup(nil)
+        }
+        return try await store.hasRuntimeFiles() ? .missingManifest : .missing
+      }
       if case let .manifest(manifest) = result {
         guard manifest.generation == generation else { return .corrupt }
         let sockets: ExecutionWorkerSocketDirectory?
@@ -80,6 +98,11 @@ actor ExecutionWorkerBootStorage {
     let manifest: ExecutionWorkerManifest
     var claim: ExecutionWorkerSocketDirectory?
     switch opened {
+    case let .preparation(store, preparation, sockets):
+      guard try await store.preparationImage(preparation.image) == nil else { throw WorkerProtocolError(.unavailable, message: "Worker preparation is still live") }
+      let record = try await ExecutionWorkerCleanup.stage(store: store, space: space, generation: preparation.generation, location: preparation.location, sockets: sockets, manifest: nil, image: preparation.image)
+      try await record.finish(store: store, sockets: sockets)
+      return
     case let .cleanup(store, record, sockets):
       try await record.finish(store: store, sockets: sockets)
       return

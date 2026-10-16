@@ -18,7 +18,7 @@ import Testing
 import WorkerProtocol
 
 @Suite(.serialized, .sessionFixtures(timeLimit: .minutes(2))) struct PlacementCutoverTests {
-  @Test func quiescedProductionBinaryRestartPreservesDurableWorkAndRecoversWorkerCrash() async throws {
+  @Test func quiescedProductionBinaryRestartIntoDefaultWorkerPreservesDurableWorkAndRecoversWorkerCrash() async throws {
     try await withSessionDeps {
       let requests = Mutex<[String: [String]]>([:])
       let provider = try await ServeNIOServer.bind(port: 0, handler: { request in
@@ -68,7 +68,7 @@ import WorkerProtocol
         try await fixture.write("/held-worker.js", "import {writeText} from 'wuhu:space'; export default async () => { await writeText('/worker-handler-entered.txt','committed',{ifMatch:null}); await sleep(600000); await writeText('/worker-handler-must-not-finish.txt','no',{ifMatch:null}); return {finished:true}; }")
         let due = Date().addingTimeInterval(-1)
         _ = try await space.sessions.armSubscription(handler, slot: .init(id: .init("held"), kind: .timer(.oneShot(due), message: ""), handler: "/held-worker.js"), nextFireAt: due)
-        try await fixture.serve("worker") { _ in
+        try await fixture.serve() { _ in
           try await until("worker drains queued input and executes real script/handler", timeout: .seconds(40)) {
             guard try await fixture.completed(after) else { return false }
             return await fixture.exists("/worker-handler-entered.txt")
@@ -141,7 +141,7 @@ import WorkerProtocol
         gate.continuation.finish()
         let scriptEffect = try await fixture.space.fs(.shared).stat("/old-script-entered.txt")
         let handlerEffect = try await fixture.space.fs(.shared).stat("/old-handler-entered.txt")
-        try await fixture.serve("worker") { _ in
+        try await fixture.serve() { _ in
           try await until("new inference attempt and new handler invocation finish", timeout: .seconds(40)) {
             guard try await fixture.completed(inference), await fixture.exists("/old-handler-retried.txt") else { return false }
             return try await fixture.space.sessions.armedSubscriptions(handler).isEmpty

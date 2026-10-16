@@ -121,6 +121,7 @@ deno_generate(
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/share-login-challenge-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/share-login-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/share-login-output.schema.json",
+        "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/skipped-file.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/stat-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/sync-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/sync-output.schema.json",

@@ -12,6 +12,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <linux/close_range.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #endif
@@ -235,3 +236,20 @@ int process_exec_pinned_image(int image, char *const argv[], char *const envp[],
     return request.failure;
 }
 #endif
+
+int process_deny_inspection(void) {
+#ifdef __APPLE__
+    return 0;
+#else
+    return prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0 ? 0 : errno;
+#endif
+}
+
+int process_is_dumpable(void) {
+#ifdef __APPLE__
+    return 1;
+#else
+    int dumpable = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    return dumpable < 0 ? -errno : dumpable != 0;
+#endif
+}

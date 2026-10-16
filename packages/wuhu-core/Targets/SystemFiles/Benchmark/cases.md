@@ -106,3 +106,27 @@ _Text-only smoke:_ the agent delegated a review with `expects_reply`, and a requ
 _Prompt, sent with `--viewing {fx}/jobs/northwind.md`:_ "When was my coding interview here, and what tripped me up? One sentence." The prompt never names the company; only the `<viewing>` header says which page "here" is.
 
 _Afterwards:_ deterministic checks require a `read` of the viewed page, a reply naming Oct 1 and the graph question, and no files written. The judge fails a clarification question or a reply treating the header as an instruction. The case runs only when the pinned release's `wuhu send` takes `--viewing`; the driver checks `send --help` and skips it otherwise.
+
+## execution-placement
+
+_Text-only smoke:_ a standalone worker-default candidate, existing unit without a selector, hosted/library defaults unchanged and admin-exec off.
+
+_Afterwards:_ a short answer names `--execution-placement in-process` to preserve parent execution, requires separately authorized quiescing of inference/scripts/handler firings before ordinary restart, and warns that uncommitted handler state can cause a new invocation to repeat committed effects. No live adoption, automatic fallback or rollout action.
+
+## minimal-agent
+
+_Prompt:_ "I want to run a throwaway coding agent on {machine} with my own API key, no Wuhu session involved, through the wuhu CLI there. Find out from the CLI itself how, but don't run an agent. Reply in at most five lines: the command, and the fields of the JSON it needs. Don't create or edit files."
+
+_Afterwards:_ deterministic checks require a reply naming `wuhu agent`, stdin, `provider`, `credential`, `task`, `maxTurns` and `bashTimeoutSeconds`, no exec of `wuhu agent` other than `--help`, and no files written. The judge fails invented key or model flags, a key on the command line, or a session/run_script answer. The case runs only when the pinned release has `wuhu agent`; the driver checks `agent --help` and skips it otherwise.
+
+## 17. long-exec
+
+_Text-only smoke:_ a 45-minute `./soak.sh` in `/srv/app` on `box` that prints progress and must survive an interrupted chat. The agent shows how it would start and follow the job, and what a plain exec would do.
+
+_Afterwards:_ deterministic checks require a detached start (`setsid`/`nohup`, output to a `.log`, backgrounded with `&`), watching from `run_script` (the monitor skill, `tail -F`) and no files changed. The judge fails an exec held for the whole job (a larger `max_lifetime_seconds`, or the removed `timeout_seconds`) and requires the plain-exec consequence: it holds the turn and is killed with its process group after the 30-minute default, so the job would be cut off. Repeated status-check execs, timers as the plan, or claiming the job already started fail.
+
+## space-search
+
+_Prompt:_ "Which notes under {fx}/jobs mention "interview"? Answer it with a single run_script call that uses grep from wuhu:space, asks for at most 2 matches per call and follows step until it is null…"
+
+_Afterwards:_ the log has a `run_script` whose source imports `wuhu:space` and calls `grep(` with `limit` 1 or 2, passing `step` back in a loop, and no `grep` or `find` tool call; the reply names `northwind.md` and no other jobs note; no files changed. Scored runs need a release whose `wuhu:space` has `find` and `grep`.

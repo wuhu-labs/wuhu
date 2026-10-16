@@ -25,7 +25,8 @@ actor MachineV2Service {
   }
 
   var execEndpoints: [String: ExecEndpoint] = [:]
-  var execOperations: [String: UUID] = [:]
+  /// The machine operation each relayed exec started, with what bounds a later stop of it.
+  var execOperations: [String: ExecStops] = [:]
   var killedExecs: Set<String> = []
   enum ExecJob: Sendable {
     case caller(MachineV2ExecRelay)

@@ -4,6 +4,14 @@ import MachineContract
 import Subprocess
 import Synchronization
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#endif
+
 #if canImport(System)
   import System
 #else
@@ -82,6 +90,7 @@ struct ExecEngine: Sendable {
 
     let agentKills = registry.register(start.id)
     defer { registry.unregister(start.id) }
+    let timedOut = TimeoutMark()
 
     do {
       let result = try await withThrowingTaskGroup(of: Void.self) { group in
@@ -94,7 +103,7 @@ struct ExecEngine: Sendable {
         }
         group.addTask {
           for await execution in executions {
-            await supervise(exec, execution, agentKills: agentKills, kills: kills, kill: killContinuation)
+            await supervise(exec, execution, agentKills: agentKills, kills: kills, kill: killContinuation, timedOut: timedOut)
           }
         }
         let outcome = try await Subprocess.run(
@@ -115,7 +124,7 @@ struct ExecEngine: Sendable {
         try await group.waitForAll()
         return outcome
       }
-      await exec.exit(status(of: result.terminationStatus))
+      await exec.exit(status(of: result.terminationStatus), timedOut: timedOut.won.withLock { $0 } ? .killed : nil)
     } catch is CancellationError {
       return
     } catch {
@@ -129,6 +138,7 @@ struct ExecEngine: Sendable {
     agentKills: AsyncStream<Void>,
     kills: AsyncStream<Void>,
     kill: AsyncStream<Void>.Continuation,
+    timedOut: TimeoutMark,
   ) async {
     await withTaskGroup(of: Void.self) { group in
       group.addTask {
@@ -140,12 +150,16 @@ struct ExecEngine: Sendable {
       if let timeout = exec.start.timeout {
         group.addTask {
           do { try await clock.sleep(for: .seconds(min(timeout, execTimeoutCeiling))) } catch { return }
+          timedOut.due.withLock { $0 = true }
           kill.yield(())
         }
       }
       var iterator = kills.makeAsyncIterator()
       if await iterator.next() != nil, !Task.isCancelled {
         await exec.stopOutput()
+        // Checked as late as possible: a command that exited on its own as
+        // the timeout fired keeps its own exit, without the timeout's mark.
+        if timedOut.due.withLock({ $0 }), !exited(execution) { timedOut.won.withLock { $0 = true } }
         try? execution.send(signal: .terminate, toProcessGroup: true)
         do {
           try await clock.sleep(for: killGrace)
@@ -278,3 +292,19 @@ final class OutputBudget: Sendable {
 // years, far inside what Duration and a clock's sleep can hold (a larger
 // value trapped the agent).
 let execTimeoutCeiling = 1e9
+
+private final class TimeoutMark: Sendable {
+  /// The timeout asked for the kill.
+  let due = Mutex(false)
+  /// The timeout's kill reached the command before it exited on its own.
+  let won = Mutex(false)
+}
+
+/// Whether the command has exited, its zombie left for Subprocess to reap.
+private func exited(_ execution: ChildProcess) -> Bool {
+  var info = siginfo_t()
+  while waitid(P_PID, id_t(execution.processIdentifier.value), &info, WEXITED | WNOHANG | WNOWAIT) == -1 {
+    guard errno == EINTR else { return true }
+  }
+  return info.si_signo != 0
+}

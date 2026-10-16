@@ -59,13 +59,15 @@ const stream = (kind, sql, extra) => {
   }
 }
 
-export const { query, observe, watch, mutateRows, readAttributes, patchAttributes } = createSpace({
+export const { query, observe, watch, mutateRows, readAttributes, patchAttributes, find, grep } = createSpace({
   query: (sql, params) => call(() => hostQuery(sql, params)),
   observe: (sql, params) => stream("observe", sql, params),
   watch: (glob, from) => stream("watch", glob, from),
   mutateRows: (path, ops) => call(() => hostRows(path, ops)),
   readAttributes: (path) => call(() => hostAttributes(path)),
   patchAttributes: (path, patch) => call(() => hostPatch(path, patch)),
+  find: (search) => call(() => hostVerb("find", search, {})),
+  grep: (search) => call(() => hostVerb("grep", search, {})),
 })
 
 export const context = () => call(() => discover("context"))

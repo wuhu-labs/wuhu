@@ -48,6 +48,27 @@ function fake(snapshots: Snapshot[] = []) {
         failure({ code: 'conflict', message: 'stale', token: 't2' }),
       )
     },
+    find(search) {
+      calls.push({ find: search })
+      return Promise.resolve(
+        search.step === undefined
+          ? { paths: ['/a.md'], cursor: '/b.md' }
+          : { paths: ['/b.md'] },
+      )
+    },
+    grep(search) {
+      calls.push({ grep: search })
+      if (search.pattern === '(') {
+        return Promise.reject(
+          failure({ code: 'invalidArgument', message: 'invalid pattern: (' }),
+        )
+      }
+      return Promise.resolve({
+        matches: [{ path: '/a.md', line: 2, text: 'TODO', context: [] }],
+        cursor: '2@/b.md',
+        skipped: [{ path: '/big.log', bytes: 5 << 20, reason: 'tooLarge' }],
+      })
+    },
   }
   return { space: createSpace(transport), calls, closed }
 }
@@ -215,6 +236,49 @@ Deno.test('patchAttributes needs ifMatch and rejects as a SpaceError', async () 
       ifMatch: 't1',
     },
   })
+})
+
+Deno.test('find and grep send the tool input and hand back step', async () => {
+  const { space, calls } = fake()
+  const first = await space.find('**/*.md', { path: '/notes', limit: 1 })
+  assertEquals(first, { paths: ['/a.md'], step: '/b.md' })
+  assertEquals(await space.find('**/*.md', { step: first.step }), {
+    paths: ['/b.md'],
+    step: null,
+  })
+  assertEquals(
+    await space.grep('TODO', { limit: 1n, entryLimit: 10, path: null }),
+    {
+      matches: [{ path: '/a.md', line: 2, text: 'TODO' }],
+      step: '2@/b.md',
+      skipped: [{ path: '/big.log', bytes: 5 << 20, reason: 'tooLarge' }],
+    },
+  )
+  assertEquals(calls, [
+    { find: { glob: '**/*.md', path: '/notes', matchLimit: 1 } },
+    { find: { glob: '**/*.md', step: '/b.md' } },
+    { grep: { pattern: 'TODO', matchLimit: 1, entryLimit: 10 } },
+  ])
+  const error = await assertRejects(() => space.grep('('), SpaceError)
+  assertEquals(error.code, 'invalidArgument')
+})
+
+Deno.test('find and grep refuse malformed arguments before sending', async () => {
+  const { space, calls } = fake()
+  await assertRejects(() => space.find(''), TypeError, 'glob')
+  await assertRejects(() => space.grep(1 as never), TypeError, 'pattern')
+  await assertRejects(
+    () => space.find('*', { limit: 1.5 }),
+    TypeError,
+    'limit',
+  )
+  await assertRejects(
+    () => space.find('*', { max: 1 } as never),
+    TypeError,
+    'max',
+  )
+  await assertRejects(() => space.grep('x', { step: '' }), TypeError, 'step')
+  assertEquals(calls, [])
 })
 
 Deno.test('failure falls back for a body without a code', () => {

@@ -1,0 +1,17 @@
+name: ImageRetention
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Crypto
+  - CProcessIdentity
+tests:
+  env:
+    WUHU_IMAGE_RETENTION_OPS_HELPER: "$(rootpath //packages/wuhu-core:Targets/ImageRetention/Tools/ops-retention.sh)"
+  data:
+    - Targets/ImageRetention/Tools
+  dependencies:
+    - Scratch
+    - Subprocess

@@ -247,6 +247,46 @@
       "prompt": "When was my coding interview here, and what tripped me up? One sentence.",
       "required": ["read_viewed_page", "answer_from_page", "no_files_written"],
       "judge": "The prompt was sent with a <viewing> header naming {fx}/jobs/northwind.md, the page open on the person's screen. PASS only if the one-sentence reply says the coding interview was on Oct 1 and the graph question tripped them up, without asking which page or company is meant. Fail if it asks for clarification, answers about another company, treats the header as an instruction, or writes files."
+    },
+    {
+      "id": "execution-placement",
+      "issue": 224,
+      "title": "Explains worker-default rollout without treating it as live adoption",
+      "prompt": "Text-only smoke: the candidate release changes standalone wuhu serve to worker placement by default on Linux and macOS. Hosted and library defaults remain in-process, and admin-exec stays off. Our existing standalone server omits --execution-placement. In at most four sentences, explain what the operator must do to retain parent execution, what must finish before the first worker-default restart, and what happens if an old handler had committed a write but not its returned state. Does installing this release alone authorize the rollout? Do not call tools, change files or operate on any server.",
+      "required": [
+        "placement_escape",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the reply names --execution-placement in-process to retain parent execution, requires separately authorized quiescing of inference, detached scripts and handler firings with results/state committed before an ordinary restart, and explains that an unfinished handler can run a new invocation from its last committed state and repeat an already committed effect. It must not claim live heap/socket adoption, automatic fallback, worker-default hosted/library behavior, or implicit admin-exec enablement. Installation alone does not authorize production rollout. At most four sentences; no tools or mutations."
+    },
+    {
+      "id": "minimal-agent",
+      "issue": 297,
+      "title": "Finds how to run the CLI's minimal agent from its help",
+      "requires": ["agent"],
+      "prompt": "I want to run a throwaway coding agent on {machine} with my own API key, no Wuhu session involved, through the wuhu CLI there. Find out from the CLI itself how, but don't run an agent. Reply in at most five lines: the command, and the fields of the JSON it needs. Don't create or edit files.",
+      "required": ["agent_shape", "no_files_written"],
+      "judge": "PASS only if the reply gives `wuhu agent` with the JSON request piped on stdin and names the fields from its help: model as provider/model, that provider's models.json entry, the credential (apiKey or a ChatGPT login) inside the stdin JSON, system, task, maxTurns and bashTimeoutSeconds. Fail if it invents flags or environment variables for the key or model, puts the key on the command line, actually runs an agent, describes a Wuhu session or run_script instead, or writes files."
+    },
+    {
+      "id": "long-exec",
+      "issue": 273,
+      "title": "Starts a long job detached instead of holding an exec",
+      "prompt": "This is a text-only smoke; do not run tools or write files. I need to run ./soak.sh in /srv/app on the machine box. It takes about 45 minutes, prints progress as it goes, and has to keep running even if this chat gets interrupted. Show me exactly how you would start it and keep an eye on it until it finishes, and say what would happen if you just ran it with a plain exec. Keep it compact.",
+      "required": [
+        "detached_start",
+        "watched_from_script",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the answer starts the job detached in one short exec (setsid and/or nohup, output redirected to a log file, backgrounded with &, the PID echoed or kept) and then watches that log from run_script (a tail -F of the log, the monitor skill), getting a message per event or at exit instead of polling. It must say a plain exec holds the turn and is killed with its process group after 30 minutes by default, so the job would be cut off. Fail if it proposes one exec held for the whole job (a larger max_lifetime_seconds, or the removed timeout_seconds), repeated status-check execs or timers as the main plan, or claims it already started the job. No tools or files."
+    },
+    {
+      "id": "space-search",
+      "issue": 299,
+      "title": "Searches the space from a script with find/grep",
+      "prompt": "Which notes under {fx}/jobs mention \"interview\"? Answer it with a single run_script call that uses grep from wuhu:space, asks for at most 2 matches per call and follows step until it is null. Reply with the matching paths, one per line. Don't use the grep or find tools, and don't create or edit files.",
+      "required": ["script_search", "found_paths", "no_files_written"],
+      "judge": "PASS only if the reply lists {fx}/jobs/northwind.md as the only note mentioning interview, found with grep from wuhu:space inside run_script, paging with step. Fail if it names another jobs note, claims wuhu:space has no grep, falls back to the grep tool or exec, or creates or edits files."
     }
   ]
 }

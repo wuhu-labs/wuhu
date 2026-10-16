@@ -18,6 +18,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - ImageRetention
   - DeploymentAdmin
   - CProcessIdentity
   - ServerTelemetry
@@ -65,11 +66,12 @@ dependencies:
   - WuhuVFS
 tests:
   externalData:
-    - //packages/wuhu-core:wuhu
+    - //packages/wuhu-core:wuhu_unstamped
   env:
-    WUHU_EXECUTION_WORKER_BINARY: "$(rootpath //packages/wuhu-core:wuhu)"
+    WUHU_EXECUTION_WORKER_BINARY: "$(rootpath //packages/wuhu-core:wuhu_unstamped)"
   size: large
   dependencies:
+    - ImageRetention
     - ServeTLS
     - Subprocess
     - ServerTelemetry

@@ -46,7 +46,18 @@ struct HistoricalFS: SpaceVFS {
 
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
     let p = try LiveFS.validated(path)
+    let (entries, _) = try await page(of: p, from: "", limit: listingLimit ?? Int.max, budget: ListingBudget(limit: listingByteLimit))
+    return (VersionToken(rev: Int(ceiling)), entries.sorted { $0.name < $1.name })
+  }
+
+  func list(_ path: String, from: String, limit: Int) async throws -> (entries: [Entry], next: String?) {
+    precondition(limit > 0)
+    return try await page(of: LiveFS.validated(path), from: from, limit: limit, budget: ListingBudget(limit: nil))
+  }
+
+  private func page(of p: SpacePath, from: String, limit: Int, budget: ListingBudget) async throws -> ([Entry], String?) {
     let group = group
+    let ceiling = ceiling
     return try await writer.read { db in
       try Self.requireRevision(ceiling, in: db)
       if !p.isRoot {
@@ -56,12 +67,18 @@ struct HistoricalFS: SpaceVFS {
         guard node.kind == "directory" else { throw SpaceError.notADirectory(p.rawValue) }
       }
       var entries: [Entry] = []
-      var budget = ListingBudget(limit: listingByteLimit)
-      try Self.forEachChild(of: p, group: group, ceiling: ceiling, limit: listingLimit, in: db) { node in
-        try budget.consume(SpacePath.lastComponent(of: node.path))
+      var next: String?
+      var budget = budget
+      try Self.forEachChild(of: p, from: from, group: group, ceiling: ceiling, limit: limit == Int.max ? limit : limit + 1, in: db) { node in
+        let name = SpacePath.lastComponent(of: node.path)
+        guard entries.count < limit else {
+          next = name
+          return
+        }
+        try budget.consume(name)
         entries.append(try Self.entry(from: node, in: db))
       }
-      return (VersionToken(rev: Int(ceiling)), entries.sorted { $0.name < $1.name })
+      return (entries, next)
     }
   }
 
@@ -102,23 +119,23 @@ struct HistoricalFS: SpaceVFS {
   // `/a/` sorts between `/a/` and `/a0`, `0` being the byte after `/`.
   static func children(of parent: SpacePath, group: GroupID, ceiling: Int64, limit: Int? = nil, in db: Database) throws -> [ResolvedNode] {
     var nodes: [ResolvedNode] = []
-    try forEachChild(of: parent, group: group, ceiling: ceiling, limit: limit, in: db) { nodes.append($0) }
+    try forEachChild(of: parent, from: "", group: group, ceiling: ceiling, limit: limit ?? Int.max, in: db) { nodes.append($0) }
     return nodes
   }
 
-  private static func forEachChild(of parent: SpacePath, group: GroupID, ceiling: Int64, limit: Int?, in db: Database, body: (ResolvedNode) throws -> Void) throws {
+  private static func forEachChild(of parent: SpacePath, from: String, group: GroupID, ceiling: Int64, limit: Int, in db: Database, body: (ResolvedNode) throws -> Void) throws {
     let prefix = parent.isRoot ? "/" : parent.rawValue + "/"
     let rows = try Row.fetchCursor(
       db,
       sql: """
       SELECT v.path AS path, v.kind AS kind, v.blob_hash AS blob_hash, v.rev AS rev, r.mtime AS mtime
       FROM fs_versions v JOIN revisions r ON r.rev = v.rev
-      WHERE v.grp = ? AND v.path > ? AND v.path < ? AND instr(substr(v.path, length(?) + 1), '/') = 0
+      WHERE v.grp = ? AND v.path >= ? AND v.path < ? AND instr(substr(v.path, length(?) + 1), '/') = 0
         AND v.rev = (SELECT MAX(rev) FROM fs_versions v2 WHERE v2.grp = v.grp AND v2.path = v.path AND v2.rev <= ?)
         AND v.kind IS NOT NULL
       ORDER BY v.path LIMIT ?
       """,
-      arguments: [group.rawValue, prefix, String(prefix.dropLast()) + "0", prefix, ceiling, limit ?? Int.max],
+      arguments: [group.rawValue, prefix + from, String(prefix.dropLast()) + "0", prefix, ceiling, limit],
     )
     while let row = try rows.next() {
       try body(ResolvedNode(path: row["path"], kind: row["kind"], blobHash: row["blob_hash"], rev: row["rev"], mtime: row["mtime"]))

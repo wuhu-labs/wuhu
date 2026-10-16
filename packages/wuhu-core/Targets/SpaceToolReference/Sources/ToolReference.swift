@@ -54,7 +54,7 @@ public enum ToolReference {
     ),
     Entry(
       tool: "grep", input: "GrepInput", output: "GrepOutput",
-      summary: "Search file contents under `path` (default `/`) for a regular expression. A non-null `cursor` in the answer is the `step` that continues the search.",
+      summary: "Search file contents under `path` (default `/`) for an ICU regular expression. Files over 4 MiB are listed in `skipped`, not searched. A non-null `cursor` in the answer is the `step` that continues the search.",
     ),
     Entry(
       tool: "find", input: "FindInput", output: "FindOutput",

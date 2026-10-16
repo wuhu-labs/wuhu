@@ -400,6 +400,42 @@ import Testing
     }
   }
 
+  @Test func findAndGrepReadAsThePagesGroupAndPageWithAStep() async throws {
+    let r = try await rig()
+    try await run(r, r.aliceGroup, "write", ["path": "/notes/a.md", "content": "TODO one\nTODO two\n"])
+    try await run(r, .shared, "write", ["path": "/docs/s.md", "content": "TODO shared\n"])
+    try await run(r, r.bobGroup, "write", ["path": "/secret.md", "content": "TODO bob\n"])
+    let alices = try await cookie(r, r.alice, r.aliceGroup)
+
+    let first = try await get(r, r.aliceHost, "/_/space/grep", ["pattern": "^TODO", "path": "/notes", "matchLimit": "1"], cookie: alices)
+    #expect(first.status == .ok)
+    let page = try await json(first)
+    #expect(page.object?["matches"] == [["path": "/notes/a.md", "line": 1, "text": "TODO one", "context": []]])
+    let step = try #require(page.object?["cursor"]?.stringValue)
+    let second = try await json(get(
+      r, r.aliceHost, "/_/space/grep", ["pattern": "^TODO", "path": "/notes", "matchLimit": "1", "step": step], cookie: alices,
+    ))
+    #expect(second == ["matches": [["path": "/notes/a.md", "line": 2, "text": "TODO two", "context": []]]])
+
+    let shared = try await get(r, r.aliceHost, "/_/space/find", ["glob": "**/*.md", "path": "wuhu://shared.localspace/docs"], cookie: alices)
+    #expect(try await json(shared) == ["paths": ["wuhu://shared.localspace/docs/s.md"]])
+
+    let refusals: [(String, [String: String], Status, String)] = [
+      ("grep", ["pattern": "TODO", "path": "wuhu://\(r.bobGroup.rawValue).localspace/"], .notFound, "notFound"),
+      ("find", ["glob": "*", "path": "machines://mc_abcdefgh/tmp"], .serviceUnavailable, "unavailable"),
+      ("grep", ["pattern": "(", "path": "/notes"], .badRequest, "invalidArgument"),
+      ("find", ["glob": "*", "matchLimit": "two"], .badRequest, "invalidArgument"),
+      ("find", ["path": "/notes"], .badRequest, "invalidArgument"),
+    ]
+    for (route, query, status, code) in refusals {
+      let response = try await get(r, r.aliceHost, "/_/space/\(route)", query, cookie: alices)
+      #expect(response.status == status, "\(route) \(query)")
+      #expect(try await self.code(response) == code, "\(route) \(query)")
+    }
+    let posted = try await post(r, r.aliceHost, "/_/space/find", ["glob": "*", "page": "/p.html"], cookie: alices)
+    #expect(posted.status == .methodNotAllowed)
+  }
+
   @Test func pagesGetTheImportMapAtTheStartOfHeadAndATagThatCarriesIt() async throws {
     let r = try await rig(dev: true)
     try await run(r, .shared, "write", [

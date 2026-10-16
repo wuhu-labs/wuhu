@@ -9,6 +9,7 @@
   import Darwin
 #endif
 import AsyncHTTPClient
+import CProcessIdentity
 import Dependencies
 import protocol ExecutionOwner.ExecutionOwnerClient
 import FetchAsyncHTTPClient
@@ -61,7 +62,7 @@ extension WorkerConnection {
     let lifetime = Task {
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await transport.run() }
-        group.addTask { await waitForExecChild(record) }
+        group.addTask { await waitForExecChild(processID: record.processID, birth: record.birth) }
         _ = await group.next()
         group.cancelAll()
       }
@@ -82,24 +83,27 @@ extension WorkerConnection {
           inventory.pendingOwnerCalls.allSatisfy(\.terminal) else { throw AdminExecError.refused("workerLiveExecution") }
   }
 
-  private static func waitForExecChild(_ record: ExecWorkerRecord) async {
+  static func waitForExecChild(processID: Int32, birth: String?, terminate: Bool = false) async {
+    let handle = process_watch_child(processID)
+    defer { if handle >= 0 { _ = close(handle) } }
     @Dependency(\.continuousClock) var clock
-    while !Task.isCancelled {
+    while !Task.isCancelled && !terminate {
       var status: Int32 = 0
-      let result = waitpid(record.processID, &status, WNOHANG)
-      if result == record.processID || result < 0 && errno != EINTR { return }
+      let result = waitpid(processID, &status, WNOHANG)
+      if result == processID || result < 0 && errno != EINTR { return }
+      if handle >= 0, process_child_exited(handle) < 0 { break }
       do { try await clock.sleep(for: .milliseconds(100)) } catch { break }
     }
     // Only this lifetime reaps the inherited direct child. An unreaped child/zombie pins its PID, unlike an arbitrary boot manifest.
     var status: Int32 = 0
-    guard waitpid(record.processID, &status, WNOHANG) == 0, (try? processBirthIdentity(record.processID)) == record.birth else { return }
-    _ = kill(record.processID, SIGTERM)
+    guard waitpid(processID, &status, WNOHANG) == 0, (birth == nil || (try? processBirthIdentity(processID)) == birth) else { return }
+    _ = kill(-processID, SIGTERM)
     let reaping = Task {
       for attempt in 0 ..< 30 {
         var status: Int32 = 0
-        let result = waitpid(record.processID, &status, WNOHANG)
-        if result == record.processID || result < 0 && errno != EINTR { return }
-        if attempt == 20 { _ = kill(record.processID, SIGKILL) }
+        let result = waitpid(processID, &status, WNOHANG)
+        if result == processID || result < 0 && errno != EINTR { return }
+        if attempt == 20 { _ = kill(-processID, SIGKILL) }
         try? await clock.sleep(for: .milliseconds(100))
       }
     }

@@ -316,7 +316,7 @@ import Testing
         case let .exit(status):
           #expect(status == .exited(code: 0))
           exited = true
-        case .truncated: break
+        case .truncated, .timedOut: break
         case let .failed(error): Issue.record("silent healthy command failed: \(error)")
         }
       }

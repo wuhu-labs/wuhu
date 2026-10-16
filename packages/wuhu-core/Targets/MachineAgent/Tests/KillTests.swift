@@ -25,6 +25,18 @@ private func awaitExit(_ iterator: inout ExecEvents.Iterator) async throws -> Ma
   return nil
 }
 
+private func ending(_ exec: OutgoingExec) async throws -> (status: MachineContract.ExitStatus?, timedOut: ExecTimeout?) {
+  var timedOut: ExecTimeout?
+  for try await event in exec.events {
+    switch event {
+    case let .timedOut(outcome): timedOut = outcome
+    case let .exit(status): return (status, timedOut)
+    default: break
+    }
+  }
+  return (nil, timedOut)
+}
+
 @Suite
 struct KillTests {
   @Test func killTakesDownTheWholeProcessGroup() async throws {
@@ -60,8 +72,22 @@ struct KillTests {
     try await Harness().run { h in
       h.connect()
       let exec = await h.caller.startExec(makeStart(execID(1), command: ["sleep", "30"], timeout: 0.2))
-      let collected = try await collect(exec)
-      #expect(collected.exit == .signaled(signal: 15))
+      let ending = try await ending(exec)
+      #expect(ending.status == .signaled(signal: 15))
+      #expect(ending.timedOut == .killed)
+    }
+  }
+
+  /// The command exits on its own before the timeout, but a child it left
+  /// holds its output open, so the exec is still running when the timeout
+  /// kills the group: the exit is the command's own and carries no mark.
+  @Test func anExitBeforeTheTimeoutIsNotMarkedTimedOut() async throws {
+    try await Harness().run { h in
+      h.connect()
+      let exec = await h.caller.startExec(makeStart(execID(1), command: ["sh", "-c", "sleep 30 & exit 0"], timeout: 0.5))
+      let ending = try await ending(exec)
+      #expect(ending.status == .exited(code: 0))
+      #expect(ending.timedOut == nil)
     }
   }
 

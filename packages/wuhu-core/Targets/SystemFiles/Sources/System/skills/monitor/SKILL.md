@@ -31,6 +31,7 @@ for await (const { stream, text } of p.lines()) {
 - `grep --line-buffered` matters: without it grep holds its output in a 4 KiB buffer when writing to a pipe, and lines arrive late and in clumps.
 - `p.lines()` yields `{ stream: "out" | "err", text }`, one per line, the line ending and a trailing `\r` removed. Raw bytes: `for await (const { stream, data } of p)`. A process has one reader; a second `lines()` or iteration throws.
 - Pass `max_lifetime_seconds` to `run_script` for anything that should outlive the default hour. When the lifetime runs out, the script and its processes are killed and you get a notice.
+- A job that has to outlive the script, or run past exec's 4-hour cap, is started detached by `exec`, not held in one: `setsid nohup make test > /tmp/test.log 2>&1 & echo $!` returns the PID at once, and this monitor tails `/tmp/test.log`. A plain `exec` is killed after 30 minutes by default, and its `max_lifetime_seconds` goes no higher than 4 hours.
 
 ## Batch a chatty source: flush every 5 s
 

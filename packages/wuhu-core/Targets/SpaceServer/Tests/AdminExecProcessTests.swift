@@ -11,6 +11,7 @@
 import AsyncHTTPClient
 import Dependencies
 import FetchAsyncHTTPClient
+import ImageRetention
 import SessionDomain
 import SpaceCore
 @testable import SpaceServer
@@ -187,6 +188,9 @@ let adminExecFixtureRequested: Bool = {
         let entry = try #require(try FileManager.default.contentsOfDirectory(atPath: root).first)
         let store = try await ExecutionWorkerManifestStore.open(directory: root + "/" + entry, space: id)
         let manifest = try #require(try await store.load())
+        let image = try #require(manifest.image)
+        let imageRoot = fixture.config + "/execution-images"
+        try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
         let parentPath = try #require(manifest.sockets?.parent)
         var beforePath = stat()
         #expect(lstat(parentPath, &beforePath) == 0)
@@ -211,6 +215,7 @@ let adminExecFixtureRequested: Bool = {
           #expect(after.listenerDevice == before.listenerDevice && after.listenerInode == before.listenerInode)
           #expect(after.port == before.port && after.port == initial.port)
           #expect(after.workerProcessID == manifest.processID && after.workerBirth == manifest.birth)
+          try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
           #expect(after.workerListenerDevice == before.workerListenerDevice && after.workerListenerInode == before.workerListenerInode)
           var afterPath = stat()
           #expect(lstat(parentPath, &afterPath) == 0)
@@ -230,6 +235,7 @@ let adminExecFixtureRequested: Bool = {
             #expect(retried.phase == "rolled-back")
             #expect(retried.listenerInode == before.listenerInode && retried.port == before.port)
             #expect(retried.workerProcessID == manifest.processID && retried.workerBirth == manifest.birth)
+            try ImageRetention.transaction(root: imageRoot) { try $0.verify(image) }
             #expect(try processBirthIdentity(helper) == helperBirth)
             _ = try await worker.negotiate(ExecutionWorkerBootstrap.hello(release: "after-explicit-rollback"))
             try await WorkerConnection.requireExecIdle(worker)

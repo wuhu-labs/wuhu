@@ -10,11 +10,12 @@ public struct ExecutionWorkerBootstrap: Codable, Sendable {
   public let workerSocket: String
   public let token: String
   public let tracesAttempts: Bool
+  public let imageLease: Bool?
   public let telemetry: Bool?
   public let machines: Bool
 
-  public init(parentSocket: String, workerSocket: String, token: String, tracesAttempts: Bool, machines: Bool = false, telemetry: Bool = false) {
-    self.telemetry = telemetry; self.machines = machines
+  public init(parentSocket: String, workerSocket: String, token: String, tracesAttempts: Bool, machines: Bool = false, telemetry: Bool = false, imageLease: Bool = false) {
+    self.imageLease = imageLease; self.telemetry = telemetry; self.machines = machines
     self.parentSocket = parentSocket; self.workerSocket = workerSocket; self.token = token; self.tracesAttempts = tracesAttempts
   }
 

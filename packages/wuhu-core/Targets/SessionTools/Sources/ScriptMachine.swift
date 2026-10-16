@@ -268,7 +268,7 @@ final class ScriptMachineBindings: Sendable {
           switch event {
           case let .output(stream, _, data): output[stream, default: []] += data.bytes
           case let .exit(status): return .exited(status, stdout: output[.stdout] ?? [], stderr: output[.stderr] ?? [])
-          case .truncated: continue
+          case .truncated, .timedOut: continue
           case let .failed(error): return .lost(error.message)
           }
         }

@@ -8,6 +8,7 @@
 #else
   import Darwin
 #endif
+import ImageRetention
 import struct WorkerProtocol.WorkerProtocolError
 
 actor ExecutionWorkerManifestStore {
@@ -122,7 +123,7 @@ actor ExecutionWorkerManifestStore {
   func save(_ manifest: ExecutionWorkerManifest) async throws {
     try manifest.validate(directory: directory, space: space, runtimeRoot: runtimeRoot)
     guard try readRecord("cleanup.json") == nil else { throw Self.unsafeStorage() }
-    if manifest.sockets != nil { try Self.requireEntries(descriptor, allowed: ["manifest.json"]) }
+    if manifest.sockets != nil { try Self.requireEntries(descriptor, allowed: ["manifest.json", "preparation.json"]) }
     try saveRecord(JSONEncoder().encode(manifest), name: "manifest.json")
   }
 
@@ -148,6 +149,33 @@ actor ExecutionWorkerManifestStore {
     guard renameat(descriptor, temporary, descriptor, name) == 0, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
   }
 
+  func loadPreparation() throws -> ExecutionWorkerPreparation? {
+    guard let bytes = try readRecord("preparation.json") else { return nil }
+    guard let record = try? JSONDecoder().decode(ExecutionWorkerPreparation.self, from: bytes),
+          let generation = UUID(uuidString: URL(fileURLWithPath: directory).lastPathComponent) else { throw Self.unsafeStorage() }
+    try record.validate(space: space, generation: generation, runtimeRoot: runtimeRoot)
+    return record
+  }
+
+  func savePreparation(_ record: ExecutionWorkerPreparation) throws {
+    try record.validate(space: space, generation: record.generation, runtimeRoot: runtimeRoot)
+    try Self.requireEntries(descriptor, allowed: [])
+    try saveRecord(JSONEncoder().encode(record), name: "preparation.json")
+  }
+
+  func removePreparation() throws {
+    guard unlinkat(descriptor, "preparation.json", 0) == 0 || errno == ENOENT, fsync(descriptor) == 0 else { throw Self.unsafeStorage() }
+  }
+
+  func preparationImage(_ reference: ImageReference) throws -> ImageReference? {
+    let config = URL(fileURLWithPath: directory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    return try ImageRetention.transaction(root: config.appendingPathComponent("execution-images").path) { store in
+      let current = try store.references().first { $0.id == reference.id }
+      guard current == nil || current?.digest == reference.digest && current?.owner == reference.owner else { throw Self.unsafeStorage() }
+      return current
+    }
+  }
+
   func loadCleanup() throws -> ExecutionWorkerCleanup? {
     guard let bytes = try readRecord("cleanup.json") else { return nil }
     guard let record = try? JSONDecoder().decode(ExecutionWorkerCleanup.self, from: bytes) else { throw Self.unsafeStorage() }
@@ -162,11 +190,17 @@ actor ExecutionWorkerManifestStore {
 
   func retireCleanupManifest(_ record: ExecutionWorkerCleanup) async throws {
     guard try loadCleanup() == record else { throw Self.unsafeStorage() }
-    try Self.requireEntries(descriptor, allowed: ["manifest.json", "cleanup.json"])
+    try Self.requireEntries(descriptor, allowed: ["manifest.json", "cleanup.json", "preparation.json"])
     if let manifest = try await load() {
       guard manifest.space == record.space, manifest.generation == record.generation, manifest.sockets == record.location else { throw Self.unsafeStorage() }
     }
     try await remove()
+    try removePreparation()
+  }
+
+  func releaseImage(_ reference: ImageReference) throws {
+    let config = URL(fileURLWithPath: directory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    try ImageRetention.transaction(root: config.appendingPathComponent("execution-images").path) { try $0.release(reference) }
   }
 
   func removeCleanup(_ record: ExecutionWorkerCleanup) throws {
@@ -200,7 +234,7 @@ actor ExecutionWorkerManifestStore {
     try verifyDirectory()
     try validateExistingFile()
     let socketNames = socketsInDirectory ? ["worker.sock", "parent.sock"] : []
-    try Self.requireEntries(descriptor, allowed: Set(socketNames + ["manifest.json"]))
+    try Self.requireEntries(descriptor, allowed: Set(socketNames + ["manifest.json", "preparation.json"]))
     for name in socketNames {
       var state = stat()
       if fstatat(descriptor, name, &state, AT_SYMLINK_NOFOLLOW) == 0 {

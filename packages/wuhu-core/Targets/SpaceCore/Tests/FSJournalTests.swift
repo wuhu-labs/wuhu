@@ -238,3 +238,36 @@ import Testing
     await #expect(throws: SpaceError.self) { _ = try await space.fs(.shared).read("/d/x.md") }
   }
 }
+
+@Suite struct PagedListingTests {
+  @Test func liveAndHistoricalListingsPageFromANameInNameOrder() async throws {
+    let space = try makeSpace()
+    for name in ["d/b.md", "d/a.md", "d/c", "d/c-1.md", "d/sub/x.md", "top.md"] {
+      _ = try await space.writeText("/" + name, name)
+    }
+    let token = try await space.writeText("/d/z.md", "z")
+    _ = try await space.writeText("/d/late.md", "late")
+    let live = await space.fs(.shared)
+    let then = await space.fs(.shared, at: Rev(try #require(token.rev)))
+
+    for (fs, all) in [(live, ["a.md", "b.md", "c", "c-1.md", "late.md", "sub", "z.md"]), (then, ["a.md", "b.md", "c", "c-1.md", "sub", "z.md"])] {
+      var names: [String] = []
+      var from = ""
+      var pages = 0
+      while true {
+        let (entries, next) = try await fs.list("/d", from: from, limit: 2)
+        #expect(entries.count <= 2)
+        names += entries.map(\.name)
+        pages += 1
+        guard let next else { break }
+        from = next
+      }
+      #expect(names == all)
+      #expect(pages == (all.count + 1) / 2)
+      let tail = try await fs.list("/d", from: "c-", limit: 10)
+      #expect(tail.entries.map(\.name) == all.filter { $0 >= "c-" })
+      #expect(tail.next == nil)
+      #expect(try await fs.list("/", from: "d", limit: 1).entries.map(\.name) == ["d"])
+    }
+  }
+}

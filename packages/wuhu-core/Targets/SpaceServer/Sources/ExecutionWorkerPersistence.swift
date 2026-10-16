@@ -8,6 +8,7 @@
 #else
   import Darwin
 #endif
+import ImageRetention
 import struct WorkerOwner.ParentExecutionIdentity
 import class WorkerProtocol.WorkerListener
 import struct WorkerProtocol.WorkerProtocolError
@@ -57,29 +58,56 @@ actor ExecutionWorkerRuntimeStorage {
   private let sockets: ExecutionWorkerSocketDirectory
   private var manifest: ExecutionWorkerManifest?
   private var durable = false
+  private var preparation: ImagePreparation?
+  var preparationDescriptor: Int32? { preparation?.descriptor }
+  private var image: ImageReference?
 
   init(directory: String, space: String, generation: UUID, incarnation: UUID, location: ExecutionWorkerSocketLocation, store: ExecutionWorkerManifestStore, sockets: ExecutionWorkerSocketDirectory, manifest: ExecutionWorkerManifest? = nil) {
     self.directory = directory; self.space = space; self.generation = generation; self.incarnation = incarnation
     self.location = location; self.store = store; self.sockets = sockets
-    self.manifest = manifest; durable = manifest != nil
+    self.manifest = manifest; durable = manifest != nil; image = manifest?.image
   }
 
   static func adoptExec(record: ExecWorkerRecord, manifest: ExecutionWorkerManifest) async throws -> ExecutionWorkerRuntimeStorage {
     guard let location = manifest.sockets, let sockets = try await ExecutionWorkerSocketDirectory.openIfPresent(location, space: record.space, generation: record.generation) else { throw AdminExecError.refused("workerSockets") }
     let store = try await ExecutionWorkerManifestStore.open(directory: record.directory, space: record.space)
+    if let image = manifest.image {
+      let root = URL(fileURLWithPath: record.directory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("execution-images").path
+      try ImageRetention.transaction(root: root) { try $0.verify(image) }
+    }
     let storage = ExecutionWorkerRuntimeStorage(directory: record.directory, space: record.space, generation: record.generation, incarnation: record.incarnation, location: location, store: store, sockets: sockets, manifest: manifest)
     try await storage.pinEndpoints()
     return storage
+  }
+
+  func prepareImage(executable: String) async throws -> String {
+    guard image == nil, manifest == nil else { throw AdminExecError.refused("workerImageIdentity") }
+    let prepared = try ImageRetention.transaction(root: imageRoot) { store in
+      try store.prepare(source: URL(fileURLWithPath: executable).resolvingSymlinksInPath().path, id: incarnation, owner: "worker:" + space + ":" + incarnation.uuidString)
+    }
+    preparation = prepared
+    image = prepared.reference
+    try await store.savePreparation(.init(version: 1, space: space, generation: generation, location: location, image: prepared.reference))
+    return try ImageRetention.transaction(root: imageRoot) { try $0.imagePath(prepared.reference) }
+  }
+
+  private var imageRoot: String {
+    URL(fileURLWithPath: directory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("execution-images").path
   }
 
   func pinEndpoints() async throws { try await sockets.pinEndpoints() }
 
   func persist(processID: Int32, token: String) async throws {
     guard manifest == nil else { throw WorkerProtocolError(.invalidConfiguration, message: "Execution worker identity was already recorded") }
-    let record = ExecutionWorkerManifest(version: 2, space: space, generation: generation, incarnation: incarnation, processID: processID, birth: try processBirthIdentity(processID), credentials: .init(current: token), sockets: location)
+    let birth = try processBirthIdentity(processID)
+    if let reference = image {
+      image = try ImageRetention.transaction(root: imageRoot) { try $0.bind(reference, processID: processID, birth: birth) }
+    }
+    let record = ExecutionWorkerManifest(version: 2, space: space, generation: generation, incarnation: incarnation, processID: processID, birth: birth, credentials: .init(current: token), sockets: location, image: image)
     manifest = record
     try await store.save(record)
     durable = true
+    try await store.removePreparation()
   }
 
   func admit(processID: Int32) async throws {
@@ -106,9 +134,11 @@ actor ExecutionWorkerRuntimeStorage {
       case .absent, .differentBirth: break
       case .matching, .unverified: throw WorkerProtocolError(.unavailable, message: "Execution worker exit is unconfirmed; persistence retained")
       }
-      guard try await store.load() == manifest else { throw WorkerProtocolError(.invalidConfiguration, message: "Execution worker manifest changed before cleanup") }
+      guard try await store.load() == (durable ? manifest : nil) else { throw WorkerProtocolError(.invalidConfiguration, message: "Execution worker manifest changed before cleanup") }
     }
-    let cleanup = try await ExecutionWorkerCleanup.stage(store: store, space: space, generation: generation, location: location, sockets: sockets, manifest: manifest)
+    preparation = nil
+    let saved = try await store.load()
+    let cleanup = try await ExecutionWorkerCleanup.stage(store: store, space: space, generation: generation, location: location, sockets: sockets, manifest: saved, image: image)
     try await cleanup.finish(store: store, sockets: sockets)
   }
 }

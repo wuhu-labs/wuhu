@@ -42,6 +42,7 @@ import {
   validateTargetInfo,
   validateTargetLinkedFrameworks,
   validateTargetRelease,
+  validateTargetUnstamped,
   variantBundle,
   viewPilotProducts,
 } from './generate.ts'
@@ -1720,6 +1721,25 @@ Deno.test('generateBuildBazel stamps an executable with a status genrule and def
     `srcs = glob(["Targets/wuhu/Sources/**/*.swift"]) + [":wuhu_stamp"]`,
   )
   assertIncludes(build, `"-DWUHU_STAMPED"`)
+  // The twin is opt-in.
+  if (build.includes('wuhu_unstamped')) {
+    throw new Error('did not expect a twin without unstamped: true')
+  }
+
+  // Tests take the unstamped twin, so a new commit does not re-run them.
+  const twinned = await generateBuildBazel(basePkg, [
+    { ...minimalTarget('wuhu', 'executable'), stamp: true, unstamped: true },
+  ])
+  const twin = twinChunk(twinned, 'wuhu')
+  assertIncludes(
+    twin,
+    `name = "wuhu_unstamped",\n    srcs = glob(["Targets/wuhu/Sources/**/*.swift"]),`,
+  )
+  assertIncludes(twin, 'tags = ["manual"]')
+  if (twin.includes(':wuhu_stamp') || twin.includes('WUHU_STAMPED')) {
+    throw new Error(`the twin takes the stamp:\n${twin}`)
+  }
+  assertEquals(twinned.split('"-DWUHU_STAMPED"').length, 2)
 
   const plain = await generateBuildBazel(basePkg, [
     minimalTarget('tool', 'executable'),
@@ -1729,11 +1749,22 @@ Deno.test('generateBuildBazel stamps an executable with a status genrule and def
   }
 })
 
+// The `<name>_unstamped` rule of a generated BUILD file, through its closing
+// paren.
+function twinChunk(build: string, name: string): string {
+  const start = build.indexOf(
+    `wuhu_swift_binary(\n    name = "${name}_unstamped",`,
+  )
+  if (start < 0) throw new Error(`no ${name}_unstamped rule in:\n${build}`)
+  return build.slice(start, build.indexOf('\n)\n', start) + 3)
+}
+
 Deno.test('generateBuildBazel embeds an executable Info.plist on macOS only', async () => {
   const build = await generateBuildBazel(basePkg, [
     {
       ...minimalTarget('wuhu', 'executable'),
       stamp: true,
+      unstamped: true,
       info: { CFBundleIdentifier: 'ai.wuhu.cli', Cost: '$5 \\ R&D' },
     },
   ])
@@ -1763,6 +1794,10 @@ Deno.test('generateBuildBazel embeds an executable Info.plist on macOS only', as
     build,
     '    linkopts = select({\n        "//bazel/constraints:mac": ["-Wl,-sectcreate,__TEXT,__info_plist,$(location :wuhu_info_plist)"],\n        "//conditions:default": [],\n    }),',
   )
+  const twin = twinChunk(build, 'wuhu')
+  if (twin.includes('info_plist') || twin.includes('linkopts')) {
+    throw new Error(`the twin embeds the Info.plist:\n${twin}`)
+  }
 
   const plain = await generateBuildBazel(basePkg, [
     { ...minimalTarget('tool', 'executable'), stamp: true },
@@ -1786,6 +1821,11 @@ Deno.test('executable info blocks are validated at parse', () => {
   assertThrows(
     () => validateTargetInfo({ ...target, kind: 'library' }),
     'is not a stamped executable',
+  )
+  validateTargetUnstamped({ ...target, unstamped: true })
+  assertThrows(
+    () => validateTargetUnstamped({ ...target, stamp: false, unstamped: true }),
+    'declares unstamped: but is not a stamped executable',
   )
   assertThrows(
     () => validateTargetInfo({ ...target, info: { CFBundleName: 'wuhu' } }),

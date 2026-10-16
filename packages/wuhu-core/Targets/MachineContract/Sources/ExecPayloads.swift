@@ -76,12 +76,22 @@ public enum ExitStatus: Codable, Equatable, Sendable {
   case signaled(signal: Int)
 }
 
+/// How an exec's `timeout` ended it.
+@Contract
+public enum ExecTimeout: String, Codable, Equatable, Sendable {
+  /// The command was killed and `status` is its own.
+  case killed
+  /// The command was stopped but its status was never reported: `status` is a placeholder.
+  case statusUnknown
+}
+
 @Contract
 public struct ExecExit: Codable, Equatable, Sendable {
   public let id: ExecID
   public let cursor: Int
   public let status: ExitStatus
   public let outputCut: Bool?
+  public let timedOut: ExecTimeout?
 }
 
 @Contract
@@ -101,5 +111,6 @@ public enum ExecEvent: Codable, Equatable, Sendable {
   case output(stream: ExecOutputStream, cursor: Int, data: Base64Data)
   case exit(status: ExitStatus)
   case truncated(limit: Int)
+  case timedOut(outcome: ExecTimeout)
   case failed(error: MachineError)
 }

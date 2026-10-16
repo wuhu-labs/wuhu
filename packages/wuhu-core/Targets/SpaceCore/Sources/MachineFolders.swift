@@ -32,6 +32,13 @@ struct MachineFolders: SpaceVFS {
     try await base.move(stored(path, mutating: true), to: stored(destination, mutating: true))
   }
 
+  func list(_ path: String, from: String, limit: Int) async throws -> (entries: [Entry], next: String?) {
+    guard let p = try? SpacePath(validating: path), p.components.starts(with: Self.root) else {
+      return try await base.list(path, from: from, limit: limit)
+    }
+    return try await listBySlicing(path, from: from, limit: limit)
+  }
+
   func list(_ path: String) async throws -> (VersionToken, [Entry]) {
     guard let p = try? SpacePath(validating: path), p.components.starts(with: Self.root) else {
       return try await base.list(path)

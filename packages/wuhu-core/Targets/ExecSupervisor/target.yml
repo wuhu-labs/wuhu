@@ -24,9 +24,9 @@ tests:
   size: large
   # Retirement tests run real supervisor processes: `wuhu machine-v2 supervise`.
   externalData:
-    - //packages/wuhu-core:wuhu
+    - //packages/wuhu-core:wuhu_unstamped
   env:
-    WUHU_CLI: "$(rootpath //packages/wuhu-core:wuhu)"
+    WUHU_CLI: "$(rootpath //packages/wuhu-core:wuhu_unstamped)"
   resources:
     - path: Recordings
       mode: copy

@@ -49,6 +49,8 @@ import Testing
     #expect(installer.serviceDefinition.contains("machine-v2 run mc_test-v2"))
     // A revoked agent exits 0 and stays down; a crash or any failure still restarts.
     #expect(installer.serviceDefinition.contains("Restart=always\nRestartPreventExitStatus=0\n"))
+    // No start limit: a rollback's restart after a crash-looping version must never be refused.
+    #expect(installer.serviceDefinition.contains("[Unit]\nDescription=Wuhu machine v2 (mc_test-v2)\nAfter=network-online.target\nStartLimitIntervalSec=0\n[Service]\n"))
     try Data("newer signed artifact".utf8).write(to: candidate)
     try await installer.install(candidate: candidate)
     #expect(try Data(contentsOf: installer.previous) == Data("new signed artifact".utf8))

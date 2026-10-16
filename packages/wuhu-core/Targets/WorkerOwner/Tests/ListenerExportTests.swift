@@ -64,11 +64,8 @@ import struct WorkerProtocol.WorkerProtocolError
     do {
       await #expect(throws: WorkerProtocolError.self) { _ = try await source.finishHandoff() }
       try await source.pauseAccepting()
-      let released = try await temporaryExport(source)
-      var state = stat()
-      if fstat(released.descriptor, &state) == 0 {
-        try #require(UInt64(truncatingIfNeeded: state.st_dev) != released.identity.descriptorDevice || UInt64(truncatingIfNeeded: state.st_ino) != released.identity.descriptorInode)
-      } else { try #require(errno == EBADF) }
+      let temporary = try await temporaryExport(source)
+      try #require(released(temporary.descriptor, from: DescriptorFile(device: temporary.identity.descriptorDevice, inode: temporary.identity.descriptorInode)))
       try #require(unlink(path) == 0)
       replacement = try rawListener(path: path)
       await #expect(throws: WorkerProtocolError.self) { try await source.exportListener() }
@@ -127,7 +124,7 @@ private func exerciseSourceExport(_ scenario: SourceExportScenario) async throws
     await #expect(throws: WorkerProtocolError.self) { try await source.pauseAccepting() }
     let exported = try await source.exportListener()
     try #require(fcntl(exported.descriptor, F_GETFD) & FD_CLOEXEC != 0)
-    try #require(try spawnCarrierTest(mode: "absent", descriptor: exported.descriptor) == 0)
+    try #require(try spawnCarrierTest(mode: "absent", descriptor: exported.descriptor, file: DescriptorFile(of: exported.descriptor)) == 0)
     let queued = try sendListenerRequest(path: path)
     defer { _ = close(queued) }
     var event = pollfd(fd: queued, events: Int16(POLLIN), revents: 0)
@@ -220,7 +217,7 @@ func runQueuedExportFixture(descriptor: Int32, path: String, identity: WorkerLis
   let result: Result<Void, any Error>
   do {
     try #require(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
-    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor) == 0)
+    try #require(try spawnCarrierTest(mode: "absent", descriptor: descriptor, file: DescriptorFile(of: descriptor)) == 0)
     let committed = try await withThrowingTaskGroup(of: WorkerListener.InheritedIdentity?.self) { group in
       group.addTask {
         for await identity in acknowledged.stream { return identity }

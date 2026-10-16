@@ -12,6 +12,7 @@ import ExecutionOwner
 import JSONValue
 import SessionDomain
 import SpaceCore
+import Synchronization
 import Testing
 @testable import WorkerOwner
 import WorkerProtocol
@@ -25,13 +26,16 @@ let carrierFixtureRequested: Bool = {
   let environment = ProcessInfo.processInfo.environment
   let requested = environment["WUHU_CARRIER_TEST_MODE"] != nil || environment["WUHU_CARRIER_TEST_DEPTH"] != nil || environment["WUHU_CARRIER_TEST_FD"] != nil || environment.keys.contains(where: { $0.hasPrefix("WUHU_LISTENER_TEST_") }) || CommandLine.arguments.contains("--wuhu-checkpoint-fixture")
   if requested {
-    guard let mode = environment["WUHU_CARRIER_TEST_MODE"], ["absent", "import", "left-open", "short", "oversize", "listener", "composed"].contains(mode),
+    guard let mode = environment["WUHU_CARRIER_TEST_MODE"], ["absent", "import", "short", "oversize", "listener", "composed"].contains(mode),
           environment["WUHU_CARRIER_TEST_FD"].flatMap(Int32.init).map({ $0 >= 0 }) == true,
           let depth = environment["WUHU_CARRIER_TEST_DEPTH"], let level = Int(depth), (1 ... 2).contains(level),
           level == 1 || mode == "absent",
           CommandLine.arguments.dropFirst() == ["--wuhu-checkpoint-fixture", "v1", depth, mode][...],
           environment["TESTBRIDGE_TEST_ONLY"] == "^ParentCheckpointCarrierExecFixture/run"
     else { _exit(90) }
+  }
+  if environment["WUHU_CARRIER_TEST_MODE"] == "absent" {
+    guard ["DEVICE", "INODE"].allSatisfy({ environment["WUHU_CARRIER_TEST_" + $0].flatMap(UInt64.init) != nil }) else { _exit(90) }
   }
   if ["listener", "composed"].contains(environment["WUHU_CARRIER_TEST_MODE"] ?? "") {
     guard let path = environment["WUHU_LISTENER_TEST_PATH"], path.hasPrefix("/"), path.utf8.count < 104,
@@ -47,8 +51,10 @@ let carrierFixtureRequested: Bool = {
 
 @Suite(.enabled(if: !carrierFixtureRequested), .serialized, .timeLimit(.minutes(2))) struct ParentCheckpointCarrierTests {
   @Test func invalidFixtureInvocationFailsBeforeRunningTests() throws {
+    let unrelated = try ParentCheckpointCarrier.empty()
+    let file = try DescriptorFile(of: unrelated.descriptor)
     for rejection in FixtureRejection.allCases {
-      #expect(try spawnCarrierTest(mode: "absent", descriptor: inheritedCarrier, rejection: rejection) == 0)
+      #expect(try spawnCarrierTest(mode: "absent", descriptor: inheritedCarrier, file: file, rejection: rejection) == 0)
     }
   }
 
@@ -71,9 +77,8 @@ let carrierFixtureRequested: Bool = {
       var info = stat()
       #expect(fstat(carrier.descriptor, &info) == 0)
       #expect(info.st_nlink == 0)
-      #expect(try spawnCarrierTest(mode: "absent", descriptor: carrier.descriptor) == 0)
+      #expect(try spawnCarrierTest(mode: "absent", descriptor: carrier.descriptor, file: DescriptorFile(of: carrier.descriptor)) == 0)
       #expect(try spawnCarrierTest(mode: "import", descriptor: carrier.descriptor, mapping: true) == 0)
-      #expect(try spawnCarrierTest(mode: "left-open", descriptor: carrier.descriptor, mapping: true) == 0)
       #expect(fcntl(carrier.descriptor, F_GETFD) & FD_CLOEXEC != 0)
       let restored = try ParentCheckpointCarrier.take(duplicate(carrier.descriptor), expecting: carrierIdentity)
       #expect(restored.execution.receipts.clients[0].entries[0].reply == original.execution.receipts.clients[0].entries[0].reply)
@@ -87,9 +92,9 @@ let carrierFixtureRequested: Bool = {
       var bytes = Data(count: count)
       _ = bytes.withUnsafeMutableBytes { pread(carrier.descriptor, $0.baseAddress, count, 0) }
       _ = bytes.withUnsafeBytes { pwrite(malformed.descriptor, $0.baseAddress, count, 0) }
-      let fd = try duplicate(malformed.descriptor)
+      let fd = try duplicate(malformed.descriptor), file = try DescriptorFile(of: fd)
       #expect(throws: ParentCheckpointCarrierError(code: .shortRead)) { try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity) }
-      #expect(fcntl(fd, F_GETFD) == -1)
+      #expect(released(fd, from: file))
       #expect(try spawnCarrierTest(mode: "short", descriptor: malformed.descriptor, mapping: true) == 0)
     }
     let damaged = try ParentCheckpointCarrier.export(carrierFixture())
@@ -98,9 +103,9 @@ let carrierFixtureRequested: Bool = {
     for offset in [info.st_size, 0] {
       var bad: UInt8 = 0
       try #require(pwrite(damaged.descriptor, &bad, 1, offset) == 1)
-      let fd = try duplicate(damaged.descriptor)
+      let fd = try duplicate(damaged.descriptor), file = try DescriptorFile(of: fd)
       #expect(throws: ParentCheckpointCarrierError(code: .invalidFrame)) { try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity) }
-      #expect(fcntl(fd, F_GETFD) == -1)
+      #expect(released(fd, from: file))
     }
     let oversized = try ParentCheckpointCarrier.empty()
     var prefix = Data("WUHUCP01".utf8)
@@ -108,27 +113,54 @@ let carrierFixtureRequested: Bool = {
     withUnsafeBytes(of: &length) { prefix.append(contentsOf: $0) }
     _ = prefix.withUnsafeBytes { pwrite(oversized.descriptor, $0.baseAddress, prefix.count, 0) }
     #expect(try spawnCarrierTest(mode: "oversize", descriptor: oversized.descriptor, mapping: true) == 0)
-    let fd = try duplicate(oversized.descriptor)
+    let fd = try duplicate(oversized.descriptor), file = try DescriptorFile(of: fd)
     #expect(throws: ParentCheckpointCarrierError(code: .oversized)) { try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity) }
-    #expect(fcntl(fd, F_GETFD) == -1)
+    #expect(released(fd, from: file))
     let foreign = ParentExecCheckpoint.Identity(space: "other", generation: carrierIdentity.generation, incarnation: carrierIdentity.incarnation, processID: carrierIdentity.processID, birth: carrierIdentity.birth)
-    let other = try duplicate(carrier.descriptor)
+    let other = try duplicate(carrier.descriptor), otherFile = try DescriptorFile(of: other)
     #expect(throws: WorkerProtocolError.self) { try ParentCheckpointCarrier.take(other, expecting: foreign) }
-    #expect(fcntl(other, F_GETFD) == -1)
+    #expect(released(other, from: otherFile))
   }
 
-  @Test(arguments: [Int32(-1), Int32(0)]) func closeFailureOrLeftOpenDescriptorRefusesImport(status: Int32) throws {
+  @Test func closeFailureRefusesImport() throws {
     let carrier = try ParentCheckpointCarrier.export(carrierFixture())
-    let fd = try duplicate(carrier.descriptor)
+    let fd = try duplicate(carrier.descriptor), file = try DescriptorFile(of: fd)
     defer { _ = close(fd) }
-    #expect(throws: ParentCheckpointCarrierError(code: .descriptorStillOpen)) {
+    #expect(throws: ParentCheckpointCarrierError(code: .closeFailed)) {
       try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity, closeDescriptor: { open in
         #expect(fcntl(open, F_GETFD) & FD_CLOEXEC != 0)
-        #expect((try? spawnCarrierTest(mode: "absent", descriptor: open)) == 0)
-        return status
+        #expect((try? spawnCarrierTest(mode: "absent", descriptor: open, file: file)) == 0)
+        errno = EIO
+        return -1
       })
     }
     #expect(fcntl(fd, F_GETFD) >= 0)
+  }
+
+  @Test func interruptedCloseStillImports() throws {
+    let carrier = try ParentCheckpointCarrier.export(carrierFixture())
+    let fd = try duplicate(carrier.descriptor)
+    let restored = try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity, closeDescriptor: { open in
+      _ = close(open)
+      errno = EINTR
+      return -1
+    })
+    #expect(restored.execution.receipts.clients.count == 1)
+  }
+
+  @Test func numberReusedRightAfterCloseStillImports() throws {
+    let carrier = try ParentCheckpointCarrier.export(carrierFixture())
+    let fd = try duplicate(carrier.descriptor)
+    let reuse = Mutex<Int32>(-1)
+    defer { if reuse.withLock({ $0 }) >= 0 { _ = close(reuse.withLock { $0 }) } }
+    let restored = try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity, closeDescriptor: { open in
+      let result = close(open)
+      // The lowest free number at or above the closed one: almost always the closed number, naming the same file again.
+      reuse.withLock { $0 = fcntl(carrier.descriptor, F_DUPFD_CLOEXEC, open) }
+      return result
+    })
+    #expect(reuse.withLock { $0 } >= fd)
+    #expect(restored.execution.receipts.clients.count == 1)
   }
 
   @Test func credentialAndOpaqueRepliesAreNeverWrittenOrFiltered() throws {
@@ -165,12 +197,13 @@ let carrierFixtureRequested: Bool = {
     let environment = ProcessInfo.processInfo.environment
     guard let mode = environment["WUHU_CARRIER_TEST_MODE"], let fd = environment["WUHU_CARRIER_TEST_FD"].flatMap(Int32.init) else { return }
     if mode == "absent" {
-      try #require(fcntl(fd, F_GETFD) == -1)
-      try #require(errno == EBADF)
+      func number(_ key: String) throws -> UInt64 { try #require(environment["WUHU_CARRIER_TEST_" + key].flatMap(UInt64.init)) }
+      try #require(released(fd, from: DescriptorFile(device: number("DEVICE"), inode: number("INODE"))))
       _exit(42)
     }
     try #require(fd == inheritedCarrier)
     try #require(fcntl(fd, F_GETFD) & FD_CLOEXEC == 0)
+    let inherited = try DescriptorFile(of: fd)
     if mode == "composed" {
       try await runComposedExecFixture(carrier: fd, descriptor: 199)
       _exit(42)
@@ -179,17 +212,10 @@ let carrierFixtureRequested: Bool = {
       try await runListenerAdoptionFixture(descriptor: fd)
       _exit(42)
     }
-    if mode == "left-open" {
-      try #require(throws: ParentCheckpointCarrierError(code: .descriptorStillOpen)) { try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity, closeDescriptor: { _ in 0 }) }
-      try #require(fcntl(fd, F_GETFD) & FD_CLOEXEC != 0)
-      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0)
-      try #require(close(fd) == 0)
-      _exit(42)
-    }
     if mode == "short" || mode == "oversize" {
       try #require(throws: ParentCheckpointCarrierError(code: mode == "short" ? .shortRead : .oversized)) { try ParentCheckpointCarrier.take(fd, expecting: carrierIdentity) }
-      try #require(fcntl(fd, F_GETFD) == -1)
-      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0)
+      try #require(released(fd, from: inherited))
+      try #require(try spawnCarrierTest(mode: "absent", descriptor: fd, file: inherited) == 0)
       _exit(42)
     }
     try #require(fcntl(fd, F_GETFD) >= 0)
@@ -200,9 +226,8 @@ let carrierFixtureRequested: Bool = {
     await journal.stop()
     try #require(restored.execution.receipts.clients.count == 1)
     try #require(restored.execution.receipts.clients[0].entries[0].call.operation == "runtime.schedule-warming")
-    try #require(fcntl(fd, F_GETFD) == -1)
-    try #require(errno == EBADF)
-    try #require(try spawnCarrierTest(mode: "absent", descriptor: fd) == 0)
+    try #require(released(fd, from: inherited))
+    try #require(try spawnCarrierTest(mode: "absent", descriptor: fd, file: inherited) == 0)
     _exit(42)
   }
 }
@@ -220,7 +245,29 @@ private func duplicate(_ fd: Int32) throws -> Int32 {
   return result
 }
 
-func spawnCarrierTest(mode: String, descriptor: Int32, mapping: Bool = false, rejection: FixtureRejection? = nil, listenerEnvironment: [String: String] = [:], listenerDescriptor: Int32? = nil) throws -> Int32 {
+/// The open file behind a descriptor. A closed number can be reused by any later open in the process (NIO selectors, descriptors inherited from the parent), so closure and absence are proven by the file, never by the number.
+struct DescriptorFile: Equatable, Sendable {
+  let device: UInt64
+  let inode: UInt64
+
+  init(device: UInt64, inode: UInt64) { self.device = device; self.inode = inode }
+
+  init(of descriptor: Int32) throws {
+    var state = stat()
+    try #require(fstat(descriptor, &state) == 0)
+    self.init(device: UInt64(truncatingIfNeeded: state.st_dev), inode: UInt64(truncatingIfNeeded: state.st_ino))
+  }
+}
+
+/// Whether the descriptor number no longer refers to `file`: it is closed, or a later open reused the number.
+func released(_ descriptor: Int32, from file: DescriptorFile) -> Bool {
+  var state = stat()
+  guard fstat(descriptor, &state) == 0 else { return errno == EBADF }
+  return DescriptorFile(device: UInt64(truncatingIfNeeded: state.st_dev), inode: UInt64(truncatingIfNeeded: state.st_ino)) != file
+}
+
+/// `file` is required for, and only for, `absent`: the file the child's descriptor must not refer to.
+func spawnCarrierTest(mode: String, descriptor: Int32, file: DescriptorFile? = nil, mapping: Bool = false, rejection: FixtureRejection? = nil, listenerEnvironment: [String: String] = [:], listenerDescriptor: Int32? = nil) throws -> Int32 {
   #if os(Linux)
     var linuxActions = posix_spawn_file_actions_t()
     guard posix_spawn_file_actions_init(&linuxActions) == 0 else { throw ParentCheckpointCarrierError(code: .io) }
@@ -245,6 +292,11 @@ func spawnCarrierTest(mode: String, descriptor: Int32, mapping: Bool = false, re
   let listenerKeys: Set<String> = ["PATH", "SCENARIO", "FD_DEVICE", "FD_INODE", "PATH_DEVICE", "PATH_INODE"]
   guard listenerEnvironment.keys.allSatisfy({ listenerKeys.contains($0) }), listenerEnvironment.isEmpty || mode == "listener" || mode == "composed" else { _exit(91) }
   guard (mode == "composed") == (listenerDescriptor != nil), mode != "composed" || (mapping && descriptor != listenerDescriptor && descriptor != 199 && listenerDescriptor != 198) else { _exit(91) }
+  guard (mode == "absent") == (file != nil) else { _exit(91) }
+  if let file {
+    environment["WUHU_CARRIER_TEST_DEVICE"] = String(file.device)
+    environment["WUHU_CARRIER_TEST_INODE"] = String(file.inode)
+  }
   if listenerDescriptor != nil { environment["WUHU_LISTENER_TEST_FD"] = "199" }
   for (key, value) in listenerEnvironment { environment["WUHU_LISTENER_TEST_" + key] = value }
   for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "SDKROOT"] {

@@ -1,6 +1,6 @@
 # `grep`
 
-Search file contents under `path` (default `/`) for a regular expression. A non-null `cursor` in the answer is the `step` that continues the search.
+Search file contents under `path` (default `/`) for an ICU regular expression. Files over 4 MiB are listed in `skipped`, not searched. A non-null `cursor` in the answer is the `step` that continues the search.
 
 `POST /v1/tools/grep` takes a [`GrepInput`](../../../SpaceContract/Tests/contract/grep-input.schema.json) body and answers `200` with a [`GrepOutput`](../../../SpaceContract/Tests/contract/grep-output.schema.json).
 
@@ -24,6 +24,10 @@ Search file contents under `path` (default `/`) for a regular expression. A non-
 | `matches[].text` | string | yes |
 | `matches[].context` | array of string | yes |
 | `cursor` | string or null | no |
+| `skipped` | array of object or null | no |
+| `skipped[].path` | string | yes |
+| `skipped[].bytes` | integer | yes |
+| `skipped[].reason` | string | yes |
 
 ## Errors
 
