@@ -15,6 +15,7 @@ import struct OperationProtocol.StopRequest
 import struct OperationProtocol.Verdict
 import struct OperationProtocol.WriteReceipt
 import struct OperationProtocol.WriteRequest
+import TaskLifetime
 
 /// The only code that talks to a machine about one operation. One control lane sends the start (once, by the claim winner),
 /// the stop, pending input and the terminal acknowledgement, and watches state otherwise; one lane per output channel takes
@@ -34,7 +35,9 @@ actor OperationDriver {
   private var generation: UInt64 = 0
   private var work: UInt64 = 0
   private var waiters: [UUID: AsyncStream<Void>.Continuation] = [:]
-  private var lanes: [Task<Void, Never>] = []
+  private let taskScope = TaskScope()
+  private var running = false
+  private let lifetime = AsyncStream<Void>.makeStream()
   private var locked = false
   private var lockQueue: [CheckedContinuation<Void, Never>] = []
   private var ended = false
@@ -55,11 +58,14 @@ actor OperationDriver {
   /// Concurrent exchanges this driver holds: its control lane and one per output channel.
   var laneCount: Int { 1 + record.outputChannels.count }
 
-  func run() {
-    guard lanes.isEmpty, !ended else { return }
-    if !record.live { end(); return }
-    lanes.append(Task { await self.controlLane() })
+  func run() async {
+    guard !running, !ended else { return }
+    running = true
+    if !record.live { await end(); return }
+    _ = try? taskScope.run("operation-control") { await self.controlLane() }
     if !dispatch { startOutputLanes() }
+    for await _ in lifetime.stream {}
+    await taskScope.close()
   }
 
   /// Stops the lanes and returns once no write of this driver is in flight; later writes fail, so a driver resumed over the same
@@ -67,10 +73,12 @@ actor OperationDriver {
   func shutdown() async {
     fenced = true
     ended = true
-    for lane in lanes { lane.cancel() }
+    lifetime.continuation.finish()
+    taskScope.cancel()
     wake()
     await lock()
     unlock()
+    await taskScope.close()
   }
 
   // MARK: Consumer surface
@@ -196,7 +204,7 @@ actor OperationDriver {
       let failure: OperationError?
       switch nextStep() {
       case .done:
-        end(); return
+        await end(); return
       case .start:
         failure = await sendStart()
       case .stop:
@@ -214,7 +222,7 @@ actor OperationDriver {
         failure = await watchState()
       }
       guard let failure else { delay = Self.backoff.first; continue }
-      if await concludeIfFinal(failure) { end(); return }
+      if await concludeIfFinal(failure) { await end(); return }
       await waitWork(since: work, timeout: delay)
       delay = min(delay * 2, Self.backoff.last)
     }
@@ -236,7 +244,9 @@ actor OperationDriver {
   }
 
   private func startOutputLanes() {
-    for channel in record.outputChannels { lanes.append(Task { await self.outputLane(channel) }) }
+    for channel in record.outputChannels {
+      _ = try? taskScope.run("operation-output-\(channel.name)") { await self.outputLane(channel) }
+    }
   }
 
   // MARK: Exchanges
@@ -517,15 +527,15 @@ actor OperationDriver {
     }
   }
 
-  private func end() {
+  private func end() async {
     guard !finished else { return }
     finished = true
     ended = true
-    for lane in lanes { lane.cancel() }
-    lanes = []
+    lifetime.continuation.finish()
+    taskScope.cancel()
     wake()
     let id = record.id
-    Task { await onEnd(id) }
+    await onEnd(id)
   }
 
   private func wake() {
@@ -549,11 +559,9 @@ actor OperationDriver {
     let id = UUID()
     let (signal, continuation) = AsyncStream<Void>.makeStream()
     waiters[id] = continuation
-    continuation.onTermination = { _ in Task { await self.dropWaiter(id) } }
+    defer { waiters[id] = nil }
     for await _ in signal {}
   }
-
-  private func dropWaiter(_ id: UUID) { waiters[id] = nil }
 
   private func waitWorkGeneration(_ since: UInt64) async {
     while work <= since, !ended, record.live, !Task.isCancelled { await waitGeneration(generation) }

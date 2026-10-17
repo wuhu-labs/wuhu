@@ -4,6 +4,6 @@ lines: process <id>: machine <machine> stopped responding; remote process outcom
 wait: process <id>: machine <machine> stopped responding; remote process outcome is unknown; it gets killed if the machine comes back
 running after the loss: 8
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe
 killed when the script ended: 9 of 9

@@ -5,11 +5,12 @@ import ServerTelemetry
 import SessionDomain
 import SpaceCore
 import Synchronization
+import TaskLifetime
 
 let scriptStopGrace: Duration = .seconds(5)
 // How long a cancelled run_script call waits for its script to end.
 let scriptWindDown: Duration = .seconds(10)
-// The longest wait a script can ask for, in seconds: timeout_seconds,
+// The longest wait a script can ask for, in seconds: wait_seconds,
 // sleep(), an AbortSignal timeout. Longer than any script runs, and far inside what
 // Duration and a clock's sleep can hold; past those, the server trapped.
 let scriptSecondsCeiling = 1e9
@@ -18,14 +19,12 @@ let scriptEngineMemoryBytes = 256 << 20
 
 enum ScriptStop: Sendable, Equatable {
   case requested
-  case timeout(Duration)
   case lifetime(Duration)
   case cancelled
 
   var abortMessage: String {
     switch self {
-    case .requested: "stopped by stop_script"
-    case let .timeout(limit): "no result() within \(seconds(limit)) s"
+    case .requested: "stopped by cancel"
     case let .lifetime(limit): "max lifetime of \(seconds(limit)) s reached"
     case .cancelled: "the run_script call was cancelled"
     }
@@ -33,8 +32,7 @@ enum ScriptStop: Sendable, Equatable {
 
   var killReason: String {
     switch self {
-    case .requested: "it ignored stop_script for \(seconds(scriptStopGrace)) s"
-    case let .timeout(limit): "it did not call result() within \(seconds(limit)) s"
+    case .requested: "it ignored the cancel for \(seconds(scriptStopGrace)) s"
     case let .lifetime(limit): "it reached its max lifetime of \(seconds(limit)) s"
     case .cancelled: "the run_script call was cancelled"
     }
@@ -50,12 +48,7 @@ enum ScriptEnding: Sendable, Equatable {
 enum ScriptAnswer: Sendable, Equatable {
   case result(String)
   case failure(String)
-  case detached
-}
-
-enum ScriptTimeoutAction: String, Decodable, Sendable {
-  case detach
-  case kill
+  case detached(WaitCut)
 }
 
 final class ScriptExecution: Sendable {
@@ -65,13 +58,13 @@ final class ScriptExecution: Sendable {
   }
 
   private enum Waiter {
-    case pending(AsyncStream<ScriptAnswer?>.Continuation?)
+    case pending(AsyncStream<ScriptAnswer>.Continuation?)
     case detached
     case taken
   }
 
   private enum Delivery {
-    case answer(AsyncStream<ScriptAnswer?>.Continuation, ScriptAnswer)
+    case answer(AsyncStream<ScriptAnswer>.Continuation, ScriptAnswer)
     case post(String)
     case ended([AsyncStream<ScriptEnding>.Continuation], ScriptEnding)
     case finishPost
@@ -138,10 +131,10 @@ final class ScriptExecution: Sendable {
 
   // MARK: The caller's side
 
-  func answer(within timeout: Duration, onTimeout: ScriptTimeoutAction) async throws -> ScriptAnswer {
-    @Dependency(\.continuousClock) var continuousClock
-    let clock = continuousClock
-    let (events, sink) = AsyncStream<ScriptAnswer?>.makeStream()
+  // Once `cut` returns, the call returns and the script runs on; its result
+  // arrives as a message.
+  func answer(until cut: @escaping @Sendable () async -> WaitCut?) async throws -> ScriptAnswer {
+    let (events, sink) = AsyncStream<ScriptAnswer>.makeStream()
     state.withLock {
       $0.waiter = .pending(sink)
       if let answer = $0.answer { $0.deliveries.append(.answer(sink, answer)) }
@@ -150,28 +143,22 @@ final class ScriptExecution: Sendable {
     return try await withThrowingTaskGroup(of: Void.self) { group in
       defer { group.cancelAll() }
       group.addTask {
-        try await clock.sleep(for: timeout)
-        sink.yield(nil)
+        guard let cut = await cut() else { return }
+        sink.yield(.detached(cut))
       }
-      var killing = false
       for await event in events {
-        if let event {
+        guard case let .detached(cut) = event else {
           state.withLock { $0.waiter = .taken }
           return event
         }
-        guard !killing else { continue }
-        let detached = state.withLock { state -> ScriptAnswer? in
+        return state.withLock { state -> ScriptAnswer in
           if let answer = state.answer {
             state.waiter = .taken
             return answer
           }
-          guard onTimeout == .detach else { return nil }
           state.waiter = .detached
-          return .detached
+          return .detached(cut)
         }
-        if let detached { return detached }
-        killing = true
-        kill(.timeout(timeout))
       }
       kill(.cancelled)
       await windDown()
@@ -187,6 +174,7 @@ final class ScriptExecution: Sendable {
   private func windDown() async {
     @Dependency(\.continuousClock) var continuousClock
     let clock = continuousClock
+    let scope = TaskScope()
     let timer = Mutex<Task<Void, Never>?>(nil)
     let ended = await withCheckedContinuation { (waiter: CheckedContinuation<Bool, Never>) in
       let windDown = WindDown(waiter)
@@ -196,19 +184,18 @@ final class ScriptExecution: Sendable {
         return true
       }
       guard pending else { return windDown.resume(ended: true) }
-      // Unstructured: the waiting task is cancelled already, and a child of it
-      // would be too.
       timer.withLock {
-        $0 = Task {
+        $0 = try? scope.run("script-wind-down") {
           guard (try? await clock.sleep(for: scriptWindDown)) != nil else { return }
           windDown.resume(ended: false)
         }
       }
     }
     timer.withLock { $0 }?.cancel()
+    await scope.close()
     if !ended {
       Logger(label: "wuhu.run-script").error(
-        "script \(id) did not end within \(seconds(scriptWindDown)) s of its call's cancellation; the call returns without it",
+        "\(scriptHandle(id)) did not end within \(seconds(scriptWindDown)) s of its call's cancellation; the call returns without it",
       )
     }
   }
@@ -227,6 +214,11 @@ final class ScriptExecution: Sendable {
       return ending
     }
     return .killed(.cancelled)
+  }
+
+  /// The end of its console so far, for the `running` return.
+  var consoleTail: String {
+    ToolOutput.tail(state.withLock { $0.console.text }, maxLines: 40, maxBytes: 4096).text
   }
 
   func requestStop() {
@@ -310,10 +302,17 @@ final class ScriptExecution: Sendable {
   }
 
   private func evaluate(owner: any ScriptOwnerClient) async -> ScriptEnding {
+    let streams = ScriptStreams()
+    let ending = await evaluate(owner: owner, streams: streams)
+    await streams.shutdown()
+    return ending
+  }
+
+  private func evaluate(owner: any ScriptOwnerClient, streams: ScriptStreams) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
     ScriptBindings(execution: self, owner: owner, secrets: secrets).install(in: engine)
     ScriptFiles(owner: owner, execution: self).install(in: engine)
-    ScriptSpace(execution: self, owner: owner).install(in: engine)
+    ScriptSpace(execution: self, owner: owner, streams: streams).install(in: engine)
     ScriptDiscovery(execution: self, owner: owner).install(in: engine)
     ScriptMachineBindings(execution: self, owner: owner, access: machines).install(in: engine)
     do {
@@ -424,7 +423,7 @@ final class ScriptExecution: Sendable {
       state.waiter = .taken
       switch answer {
       case let .result(text):
-        state.deliveries.append(.post("result of script \(id):\n" + text))
+        state.deliveries.append(.post("result of \(scriptHandle(id)):\n" + text))
       case let .failure(message):
         state.deliveries.append(.post(message))
       case .detached:
@@ -445,10 +444,10 @@ final class ScriptExecution: Sendable {
       } else if !state.resulted {
         let awaited = if case .pending = state.waiter { true } else { false }
         if awaited || !stopped {
-          produce(.failure("script \(id) " + ending.withoutResult + tail), in: &state)
+          produce(.failure("\(scriptHandle(id)) " + ending.withoutResult + tail), in: &state)
         }
       } else if ending != .released, !stopped {
-        state.deliveries.append(.post("script \(id) failed after its result: " + ending.afterResult + tail))
+        state.deliveries.append(.post("\(scriptHandle(id)) failed after its result: " + ending.afterResult + tail))
       }
       state.deliveries.append(.ended(state.endWaiters, ending))
       state.endWaiters = []
@@ -538,8 +537,10 @@ struct ScriptConsole {
   }
 
   var rendered: String {
-    lines.isEmpty ? "" : "\n\nconsole:\n" + lines.joined(separator: "\n")
+    lines.isEmpty ? "" : "\n\nconsole:\n" + text
   }
+
+  var text: String { lines.joined(separator: "\n") }
 }
 
 // Wakes `session` with a message from script `script`.

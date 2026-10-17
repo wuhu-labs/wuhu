@@ -11,7 +11,7 @@ public enum Nag: Hashable, Sendable, Codable {
     case .parkReminder:
       guard let request = notification.requestID else { return nil }
       self = .park(request: request)
-    case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .context:
+    case .timer, .spaceObservation, .compactRequest, .childFailed, .requestDeadline, .requestStall, .script, .exec, .context:
       return nil
     }
   }

@@ -13,6 +13,8 @@ export function noticeLabel(kind: string): string {
       return 'Observation'
     case 'script':
       return 'Script update'
+    case 'exec':
+      return 'Exec finished'
     case 'owedReply':
       return 'Owed reply'
     case 'parkReminder':

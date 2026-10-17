@@ -72,3 +72,5 @@ The launchd recording waits up to ten local seconds for a successful describe ov
 ## Deployment administration separation
 
 Computer-agent composition retains a close-on-exec lifetime machine-role lock and checks the fixed root-owned `/etc/wuhu/admin-exec.json` policy before recovering workers, binding sockets or admitting operations. An allowed administrator UID, unsafe policy or unavailable role lock refuses startup. No policy file leaves existing machine-agent behavior unchanged.
+
+Supervisor request waiters obey the shared deadline and cancellation. Transport workers remain named in the supervisor transport scope until their adapter returns; shutdown cancels this scope but does not await non-cooperative adapters. Control work drains separately. Worker inventory persistence drains before directory removal, so no late inventory write can recreate a removed directory.

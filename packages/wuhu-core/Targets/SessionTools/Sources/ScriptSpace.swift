@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,7 +17,7 @@ import SpaceTools
 struct ScriptSpace: Sendable {
   let execution: ScriptExecution
   let owner: any ScriptOwnerClient
-  let streams = ScriptStreams()
+  let streams: ScriptStreams
 
   private var session: SessionID {
     execution.session
@@ -159,16 +160,23 @@ private func id(_ arguments: [JSONValue]) -> Int {
 /// The observe and watch streams one execution has open, each read by one
 /// `next` at a time; the rest end with the execution.
 actor ScriptStreams {
+  private let taskScope = TaskScope()
   private var last = 0
   private var reading: [Int: AsyncThrowingStream<JSONValue, any Error>.AsyncIterator] = [:]
   private var pending: Set<Int> = []
   private var closing: Set<Int> = []
 
+  func shutdown() async {
+    reading.removeAll()
+    closing.formUnion(pending)
+    await taskScope.close()
+  }
+
   func open<Source: AsyncSequence & Sendable>(
     _ source: Source, newestOnly: Bool, render: @escaping @Sendable (Source.Element) -> JSONValue,
   ) -> Int where Source.Element: Sendable {
     let stream = AsyncThrowingStream<JSONValue, any Error>(bufferingPolicy: newestOnly ? .bufferingNewest(1) : .unbounded) { continuation in
-      let pump = Task {
+      let pump = try? taskScope.run("script-stream") {
         do {
           for try await element in source {
             continuation.yield(render(element))
@@ -178,7 +186,8 @@ actor ScriptStreams {
           continuation.finish(throwing: error)
         }
       }
-      continuation.onTermination = { _ in pump.cancel() }
+      if pump == nil { continuation.finish(throwing: TaskScopeClosed()) }
+      continuation.onTermination = { _ in pump?.cancel() }
     }
     last += 1
     reading[last] = stream.makeAsyncIterator()

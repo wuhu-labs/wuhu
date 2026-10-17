@@ -12,6 +12,7 @@ release:
 checks:
   build: [linux, mac]
 dependencies:
+  - TaskLifetime
   - ExecSupervisor
   - CLIKit
   - PinnedTLS

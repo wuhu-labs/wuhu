@@ -129,7 +129,7 @@ _Afterwards:_ deterministic checks require a reply naming `wuhu agent`, stdin, `
 
 _Text-only smoke:_ a 45-minute `./soak.sh` in `/srv/app` on `box` that prints progress and must survive an interrupted chat. The agent shows how it would start and follow the job, and what a plain exec would do.
 
-_Afterwards:_ deterministic checks require a detached start (`setsid`/`nohup`, output to a `.log`, backgrounded with `&`), watching from `run_script` (the monitor skill, `tail -F`) and no files changed. The judge fails an exec held for the whole job (a larger `max_lifetime_seconds`, or the removed `timeout_seconds`) and requires the plain-exec consequence: it holds the turn and is killed with its process group after the 30-minute default, so the job would be cut off. Repeated status-check execs, timers as the plan, or claiming the job already started fail.
+_Afterwards:_ deterministic checks require a detached start (`setsid`/`nohup`, output to a `.log`, backgrounded with `&`), watching from `run_script` (the monitor skill, `tail -F`) and no files changed. The judge fails an exec held for the whole job (a larger `max_lifetime_seconds`, or the removed `timeout_seconds`) and requires the plain-exec consequence: it is killed with its process group after the 30-minute default, so the job would be cut off. Repeated status-check execs, timers as the plan, or claiming the job already started fail.
 
 ## space-search
 
@@ -142,3 +142,21 @@ _Afterwards:_ the log has a `run_script` whose source imports `wuhu:space` and c
 _Prompt:_ "Which note under {sb}/planning says when the release freeze starts? Reply with its path and the date…" The `ignored-draft` setup writes `planning/.gitignore` (`drafts/`), `roadmap.md` and `drafts/q4.md`, the only note naming the freeze.
 
 _Afterwards:_ the log has a `grep` or `find` call with `no_ignore: true` (a default search finds nothing and lists the folder under `skipped`, reason `ignored`); the reply names `drafts/q4.md` and not `roadmap.md`; nothing beyond the seeded files is written. Scored runs need a release whose search reports `skipped` reasons and takes `no_ignore`.
+
+## cancel-own-work
+
+_Prompt:_ "Set yourself a timer to remind you in two hours to look at {sb}/notes.md. Answer in one sentence and don't create any files." _Follow-up:_ "Never mind, stop the thing you just started. One sentence."
+
+_Afterwards:_ deterministic checks require a `timer` call, a `cancel` call whose `id` is a `timer.…` id, no subscription left armed for the subject and no files written. The judge fails a claimed stop without a `cancel` call, a clarification question, or anything new armed. Scored runs need a release with the `cancel` tool.
+
+## running-exec
+
+_Text-only smoke:_ an exec of `make test` on `box` came back `{"status":"running","id":"exec.ex_7k2m9q4p",…}`. The agent says what happens to it, what it does meanwhile, and how it would stop it.
+
+_Afterwards:_ deterministic checks require no rerun or polling, the end arriving as a message, `cancel` with `exec.ex_7k2m9q4p`, and no files changed. The judge fails a rerun, polling (execs, timers, `execStatus`), calling the exec failed, or a removed tool. Scored runs need a release with exec `wait_seconds`.
+
+## message-during-exec
+
+_Text-only smoke:_ a `./deploy.sh` exec on `box` with `wait_seconds` 600 came back early with `running` because the person asked "how's it going?". The agent answers in at most two lines.
+
+_Afterwards:_ deterministic checks require the progress (bundle 3 of 7) in the reply, no cancel, rerun or polling, and no files changed. The judge fails a cancelled or rerun deploy, polling, calling it failed or timed out, or more than two lines. Scored runs need a release whose exec gives the turn back when a message arrives.

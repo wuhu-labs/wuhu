@@ -9,4 +9,4 @@ list: notes.txt (file), old (directory)
 notFound: not found: /work/old
 after remove: notes.txt
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]

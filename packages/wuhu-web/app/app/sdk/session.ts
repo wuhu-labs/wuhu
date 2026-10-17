@@ -61,6 +61,7 @@ export type NotificationKind =
   | 'requestDeadline'
   | 'requestStall'
   | 'script'
+  | 'exec'
   | 'context'
 
 export interface SystemNotification {

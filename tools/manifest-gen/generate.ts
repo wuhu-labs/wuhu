@@ -4721,7 +4721,11 @@ export function resolvedEntitlements(
   } else {
     values['com.apple.developer.team-identifier'] = teamID
     if (usesICloud) {
-      values['com.apple.developer.icloud-container-environment'] = 'Production'
+      values['com.apple.developer.icloud-container-environment'] =
+        signing === 'adhoc'
+          ? values['com.apple.developer.icloud-container-environment'] ??
+            'Production'
+          : 'Production'
     }
   }
   return values

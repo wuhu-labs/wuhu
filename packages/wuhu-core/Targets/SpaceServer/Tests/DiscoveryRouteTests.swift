@@ -17,7 +17,10 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
     group.addTask { await scripts.run() }
     defer { group.cancelAll() }
     let execution = try await scripts.start(source, session: session, lifetime: .seconds(30), tools: tools)
-    let answer = try await execution.answer(within: .seconds(30), onTimeout: .kill)
+    let answer = try await execution.answer(until: {
+      do { try await Task.sleep(for: .seconds(30)) } catch { return nil }
+      return .waited(30)
+    })
     guard case let .result(text) = answer else {
       Issue.record("Discovery script failed: \(answer)")
       return .null

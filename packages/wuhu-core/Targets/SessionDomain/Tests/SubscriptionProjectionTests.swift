@@ -57,6 +57,18 @@ import Testing
     #expect(request.messages.count == 3)
   }
 
+  @Test func theHeadListsTheRunningWorkTheTranscriptCarries() async throws {
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init(preReads: ["/a.md"]))
+    func snapshotText(_ transcript: Transcript) async -> String? {
+      let request = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+      guard case let .text(text)? = request.messages.first?.user?.content.first else { return nil }
+      return text.text
+    }
+    let busy = Transcript(items: [.generationHead(head)], runningWork: ["script.ffff0000", "exec.ex_0a1b2c3d"])
+    #expect(await snapshotText(busy)?.contains("running: exec.ex_0a1b2c3d, script.ffff0000\n") == true)
+    #expect(await snapshotText(Transcript(items: [.generationHead(head)]))?.contains("running: none\n") == true)
+  }
+
   @Test func toolHandlerMetadataDoesNotChangeLegacyCodableBytes() throws {
     let original = ToolExecutionState(subscriptions: [.init("timer"): .timer(.oneShot(Fix.instant))])
     var metadata = original

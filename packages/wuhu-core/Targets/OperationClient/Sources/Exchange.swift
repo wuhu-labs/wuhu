@@ -9,6 +9,7 @@ import struct OperationProtocol.OperationClock
 import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationTrace
 import Synchronization
+import TaskLifetime
 
 /// What one exchange came back with. `answered` says the machine itself answered (its instance header was valid), so the
 /// operation's lease was renewed, even when the answer is a typed error.
@@ -20,6 +21,7 @@ struct Exchanged<T: Sendable>: Sendable {
 /// One request to one machine, with a real deadline: the caller is answered when the deadline passes, whatever the fetch is
 /// doing, and the fetch is cancelled behind it. Nothing here limits how many exchanges run at once.
 struct MachineLink: Sendable {
+  let taskScope = TaskScope()
   let origin: URL
   let fetch: FetchClient
   let clock: OperationClock
@@ -51,35 +53,29 @@ struct MachineLink: Sendable {
     request.headers["X-Wuhu-Correlation-ID"] = (correlation ?? id).uuidString
     let began = clock.now()
     record(request, id: id, began: began, .dispatch)
-    let gate = Gate<Exchanged<Data>>()
-    let outcome = await withTaskCancellationHandler {
-      await withCheckedContinuation { (continuation: CheckedContinuation<Exchanged<Data>, Never>) in
-        gate.arm(continuation)
-        let worker = Task { [request] in
-          do {
-            let response = try await fetch(request)
-            record(request, id: id, began: began, .head, status: response.status.code)
-            let bytes = try await response.body.data(upTo: limit)
-            guard response.headers[.init("X-Wuhu-Correlation-ID")!] == request.headers["X-Wuhu-Correlation-ID"],
-                  response.headers[.init("X-Wuhu-Request-ID")!] == request.headers["X-Wuhu-Request-ID"],
-                  response.headers[.init("X-Wuhu-Agent-Instance")!].flatMap(UUID.init(uuidString:)) != nil
-            else { gate.fire(.init(result: .failure(.init(.invalidResponse)), answered: false)); return }
-            if response.status.code >= 400 {
-              let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: bytes)
-              gate.fire(.init(result: .failure(envelope?.error ?? .init(.invalidResponse)), answered: envelope != nil))
-            } else { gate.fire(.init(result: .success(bytes), answered: true)) }
-          } catch {
-            gate.fire(.init(result: .failure(error as? OperationError ?? .init(.transport, message: String(describing: error))), answered: false))
-          }
+    let outcome: Exchanged<Data>
+    do {
+      outcome = try await withUnjoinedDeadline("machine-exchange", within: deadline, clock: ExchangeClock(clock), scope: taskScope) { [request] in
+        do {
+          let response = try await fetch(request)
+          record(request, id: id, began: began, .head, status: response.status.code)
+          let bytes = try await response.body.data(upTo: limit)
+          guard response.headers[.init("X-Wuhu-Correlation-ID")!] == request.headers["X-Wuhu-Correlation-ID"],
+                response.headers[.init("X-Wuhu-Request-ID")!] == request.headers["X-Wuhu-Request-ID"],
+                response.headers[.init("X-Wuhu-Agent-Instance")!].flatMap(UUID.init(uuidString:)) != nil
+          else { return .init(result: .failure(.init(.invalidResponse)), answered: false) }
+          if response.status.code >= 400 {
+            let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: bytes)
+            return .init(result: .failure(envelope?.error ?? .init(.invalidResponse)), answered: envelope != nil)
+          } else { return .init(result: .success(bytes), answered: true) }
+        } catch {
+          return .init(result: .failure(error as? OperationError ?? .init(.transport, message: String(describing: error))), answered: false)
         }
-        let timer = Task {
-          do { try await clock.sleep(max(.zero, deadline)) } catch { return }
-          gate.fire(.init(result: .failure(.init(.requestDeadline)), answered: false))
-        }
-        gate.onFire { worker.cancel(); timer.cancel() }
       }
-    } onCancel: {
-      gate.fire(.init(result: .failure(.init(.requestCancelled)), answered: false))
+    } catch is DeadlineExceeded {
+      outcome = .init(result: .failure(.init(.requestDeadline)), answered: false)
+    } catch {
+      outcome = .init(result: .failure(.init(.requestCancelled)), answered: false)
     }
     let result: Result<T, OperationError> = outcome.result.flatMap { bytes in
       do { return .success(try JSONDecoder().decode(type, from: bytes)) } catch { return .failure(.init(.invalidResponse)) }
@@ -103,44 +99,5 @@ struct MachineLink: Sendable {
       status: status,
       error: error,
     ))
-  }
-}
-
-/// A continuation resumed once by whichever of worker, timer or cancellation fires first.
-private final class Gate<T: Sendable>: Sendable {
-  private struct State {
-    var continuation: CheckedContinuation<T, Never>?
-    var value: T?
-    var cleanup: (@Sendable () -> Void)?
-    var fired = false
-  }
-
-  private let state = Mutex(State())
-
-  func arm(_ continuation: CheckedContinuation<T, Never>) {
-    let value: T? = state.withLock { state in
-      if let value = state.value { return value }
-      state.continuation = continuation; return nil
-    }
-    if let value { continuation.resume(returning: value) }
-  }
-
-  func onFire(_ cleanup: @escaping @Sendable () -> Void) {
-    let fired = state.withLock { state in
-      if state.fired { return true }
-      state.cleanup = cleanup; return false
-    }
-    if fired { cleanup() }
-  }
-
-  func fire(_ value: T) {
-    let (continuation, cleanup): (CheckedContinuation<T, Never>?, (@Sendable () -> Void)?) = state.withLock { state in
-      guard !state.fired else { return (nil, nil) }
-      state.fired = true; state.value = value
-      defer { state.continuation = nil; state.cleanup = nil }
-      return (state.continuation, state.cleanup)
-    }
-    continuation?.resume(returning: value)
-    cleanup?()
   }
 }

@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -22,6 +23,7 @@ import class SpaceCore.Space
 /// Machine v2 on the server: one `MachineOperations` per group, all sharing the machines' tunnel lanes, the members' presence,
 /// and the exec relay. Boot resumes a group's live operations before a caller can reach one of them.
 actor MachineV2Service {
+  private let presenceScope = TaskScope()
   struct ExecEndpoint {
     let endpoint: ChannelEndpoint
     let starter: ExecStarter
@@ -265,6 +267,7 @@ actor MachineV2Service {
     presence = [:]
     let current = Array(groups.values)
     for operations in current { await operations.shutdown() }
+    await presenceScope.close()
   }
 
   private static func unavailable(_ error: any Error) -> OperationError {
@@ -291,7 +294,9 @@ actor MachineV2Service {
         }
         for (machine, group) in members where presence[machine] == nil {
           let detached = try await space.machineV2DetachedMembers(group: group).contains(machine)
-          presence[machine] = (group, Task { await self.watch(machine, group: group, detached: detached) })
+          if let task = try? presenceScope.run("machine-presence", operation: { await self.watch(machine, group: group, detached: detached) }) {
+            presence[machine] = (group, task)
+          }
         }
       } catch {}
       try? await clock.sleep(for: .seconds(1))

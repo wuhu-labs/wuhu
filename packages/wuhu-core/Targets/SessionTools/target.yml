@@ -10,6 +10,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - TaskLifetime
   - ServerTelemetry
   - Credentials
   - ExecutionOwner

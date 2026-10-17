@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -202,9 +203,10 @@ extension MachineV2Service {
     // Fixed once, when the exec is admitted, and kept on the operation: a restart resumes the same deadline.
     var deadline = state?.stopAt.map { ExecDeadline(stopAt: $0, now: date.now, clock: clock) }
     // A resumed exec's timeout stops it whether or not its caller is back yet.
+    let stopScope = TaskScope()
     let stopping = relay.resumed.flatMap { resumed in
-      deadline.map { deadline in
-        Task<Void, Never> {
+      deadline.flatMap { deadline in
+        try? stopScope.run("resumed-exec-timeout") {
           @Dependency(\.continuousClock) var clock
           do { try await clock.sleep(for: deadline.untilStop()) } catch { return }
           try? await resumed.operation.stop(Self.timeoutStop)
@@ -213,6 +215,7 @@ extension MachineV2Service {
     }
     let incoming = await firstExec(relay.endpoint)
     stopping?.cancel()
+    await stopScope.close()
     guard let exec = incoming else {
       guard !Task.isCancelled, !closing else { return }
       if let resumed = relay.resumed {
@@ -434,38 +437,45 @@ extension MachineV2Service {
   ) async throws {
     let limit = min(exec.start.maxOutput ?? Int.max, state.cut ?? Int.max)
     let queue = ExecOutputQueue(exec)
-    let sending = queue.map { queue in Task { _ = try await queue.run() } }
-    defer { sending?.cancel() }
-    var used = output
-    var after: UInt64?
-    var cutting = used >= limit
-    if cutting { try await cutOutput(exec, operation: operation, state: state, queue: queue, sending: sending, ledger: ledger, cut: cut) }
-    while let chunks = try await operation.output(after: after) {
-      for chunk in chunks {
-        after = chunk.sequence
-        guard !cutting, !lifetime.answered else { continue }
-        let retained = chunk.payload.data ?? Data()
-        let skipped = min(retained.count, max(0, Int(consumed[chunk.channel]?.rawValue ?? 0) - Int(chunk.from.rawValue)))
-        let bytes = retained.dropFirst(skipped)
-        let stream: ExecOutputStream = chunk.channel == "stderr" ? .stderr : .stdout
-        let admitted = Array(bytes.prefix(max(0, limit - used)))
-        // Ledgered before it is sent, so an acknowledgement racing the send still finds it.
-        if !admitted.isEmpty {
-          ledger.add(channel: chunk.channel, from: Offset(rawValue: chunk.from.rawValue + UInt64(skipped)), count: admitted.count, end: used + admitted.count)
+    let scope = TaskScope()
+    let sending = try queue.map { queue in try scope.run("exec-output-queue") { _ = try await queue.run() } }
+    do {
+      defer { sending?.cancel() }
+      var used = output
+      var after: UInt64?
+      var cutting = used >= limit
+      if cutting { try await cutOutput(exec, operation: operation, state: state, queue: queue, sending: sending, ledger: ledger, cut: cut) }
+      while let chunks = try await operation.output(after: after) {
+        for chunk in chunks {
+          after = chunk.sequence
+          guard !cutting, !lifetime.answered else { continue }
+          let retained = chunk.payload.data ?? Data()
+          let skipped = min(retained.count, max(0, Int(consumed[chunk.channel]?.rawValue ?? 0) - Int(chunk.from.rawValue)))
+          let bytes = retained.dropFirst(skipped)
+          let stream: ExecOutputStream = chunk.channel == "stderr" ? .stderr : .stdout
+          let admitted = Array(bytes.prefix(max(0, limit - used)))
+          // Ledgered before it is sent, so an acknowledgement racing the send still finds it.
+          if !admitted.isEmpty {
+            ledger.add(channel: chunk.channel, from: Offset(rawValue: chunk.from.rawValue + UInt64(skipped)), count: admitted.count, end: used + admitted.count)
+          }
+          used += admitted.count
+          cutting = admitted.count < bytes.count || used >= limit
+          if let queue {
+            queue.enqueue(admitted, to: stream)
+          } else if !admitted.isEmpty {
+            try await exec.send(stream, admitted, waitForCapacity: !cutting)
+          }
+          if cutting { try await cutOutput(exec, operation: operation, state: state, queue: queue, sending: sending, ledger: ledger, cut: cut) }
         }
-        used += admitted.count
-        cutting = admitted.count < bytes.count || used >= limit
-        if let queue {
-          queue.enqueue(admitted, to: stream)
-        } else if !admitted.isEmpty {
-          try await exec.send(stream, admitted, waitForCapacity: !cutting)
-        }
-        if cutting { try await cutOutput(exec, operation: operation, state: state, queue: queue, sending: sending, ledger: ledger, cut: cut) }
       }
+      queue?.finish(.stdout)
+      queue?.finish(.stderr)
+      try await sending?.value
+      await scope.close()
+    } catch {
+      await scope.close()
+      throw error
     }
-    queue?.finish(.stdout)
-    queue?.finish(.stderr)
-    try await sending?.value
   }
 
   /// Ends the caller's output where it is now. The stop and that cursor are durable together; what the caller has not

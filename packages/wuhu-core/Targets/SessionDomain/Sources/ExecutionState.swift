@@ -95,6 +95,12 @@ extension SubscriptionID {
   public static func script(_ id: String) -> SubscriptionID {
     SubscriptionID("script.\(id)")
   }
+
+  /// An exec job's handle, `exec.<exec id>`: what its end is announced as and
+  /// what cancel takes.
+  public static func exec(_ id: String) -> SubscriptionID {
+    SubscriptionID("exec.\(id)")
+  }
 }
 
 extension ToolExecutionState: Codable {

@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -22,6 +23,7 @@ public actor SpaceHost {
   public nonisolated let id: String
   public nonisolated let handler: UpgradingHandler
   nonisolated let credentials: CredentialResolver
+  private let taskScope = TaskScope()
   private var runTask: Task<Void, Never>?
   private let sockets: HostSockets
   private let requests: HostRequests
@@ -127,6 +129,9 @@ public actor SpaceHost {
         logger: logger,
         client: .live(fetch: fetch),
       )
+      let keyStreams = KeyStreams()
+      @Dependency(\.continuousClock) var releaseClock
+      let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: fetch, clock: releaseClock)
       let handler = SpaceServer.configuredHandler(
         space: space,
         hub: hub,
@@ -146,6 +151,8 @@ public actor SpaceHost {
         execTokens: execTokens,
         identityController: serverIdentity,
         machineV2Hub: v2Hub,
+        machineV2Releases: releases,
+        keyStreams: keyStreams,
         pageFetch: PageFetch(controller: serverIdentity).response,
       )
       let sockets = HostSockets()
@@ -167,15 +174,16 @@ public actor SpaceHost {
           await group.waitForAll()
         }
       }, shutdownBody: {
+        await keyStreams.close()
+        await releases.close()
+        await space.close()
         await v2Service.shutdown()
         await sessions.service.shutdown()
         await metricsWriter.close()
         try await webPushHTTPClient.shutdown()
         if let devExport {
-          // Graceful shutdown reaches here with serve()'s task already cancelled;
-          // an unstructured task shields the export from GRDB's cancellation check.
-          let export = Task { try await space.exportFolder(devExport) }
-          try await export.value
+          // The export must survive cancellation of serve.
+          try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
         }
       })
     }
@@ -195,9 +203,9 @@ public actor SpaceHost {
   public func run() async {
     guard !stopped else { return }
     if runTask == nil {
-      runTask = Task { await SpaceLogContext.$spaceID.withValue(id) { await runBody() } }
+      runTask = try? taskScope.run("space-services") { await SpaceLogContext.$spaceID.withValue(id) { await runBody() } }
     }
-    let task = runTask!
+    guard let task = runTask else { return }
     await withTaskCancellationHandler {
       await task.value
     } onCancel: { task.cancel() }
@@ -208,13 +216,16 @@ public actor SpaceHost {
     stopped = true
     let background = runTask
     background?.cancel()
-    let shutdown = Task {
+    // Shutdown must finish even if its first caller is cancelled.
+    let shutdown = try taskScope.run("space-shutdown") {
       await requests.shutdown(sockets: sockets)
       await background?.value
       try await SpaceLogContext.$spaceID.withValue(id) { try await shutdownBody() }
     }
     shutdownTask = shutdown
-    try await shutdown.value
+    let result = await shutdown.result
+    await taskScope.close()
+    try result.get()
   }
 }
 

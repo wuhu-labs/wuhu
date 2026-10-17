@@ -1,4 +1,5 @@
 import Foundation
+import struct MachineContract.ExecID
 import SessionDomain
 @testable import SpaceCore
 import Synchronization
@@ -103,6 +104,20 @@ import Testing
     // Ended, it was a wait since the anchor, so the clock starts over.
     #expect(try await rig.check(1900).isEmpty)
     #expect(try await rig.due() == time(2500))
+    #expect(try await rig.check(2500).count == 1)
+  }
+
+  @Test func `an exec whose call returned running holds the clock from its start`() async throws {
+    let rig = try await Rig()
+    try await rig.store.detachExecJob(
+      ExecJobRecord(session: rig.task, toolCallID: ToolCallID("tc-1"), exec: ExecID(rawValue: "ex_1"), notice: UUID(), spec: "{}", startedAt: time(300)),
+      payload: .exec(.init(output: "running", exitCode: 0)),
+    )
+    for second in stride(from: 600.0, through: 1800, by: 600) {
+      #expect(try await rig.check(second).isEmpty)
+    }
+    try await rig.store.settleExecJob(rig.task, toolCallID: ToolCallID("tc-1"), notification: nil)
+    #expect(try await rig.check(1900).isEmpty)
     #expect(try await rig.check(2500).count == 1)
   }
 

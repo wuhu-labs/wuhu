@@ -95,7 +95,7 @@ extension TranscriptItem {
     case let .bookmark(marker):
       marker.name ?? "bookmark"
     case let .generationHead(head):
-      head.snapshot.rendered + "\n" + head.summary + "\n" + (head.note ?? "")
+      head.snapshot.rendered(running: []) + "\n" + head.summary + "\n" + (head.note ?? "")
     }
   }
 }

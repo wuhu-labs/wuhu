@@ -216,6 +216,10 @@ extension Sessions {
       waits.append(try (row["run_progress_at"] as String?).map(SQLiteDateFormat.date(from:)))
     }
     if liveScripts.contains(clock.task) { waits.append(nil) }
+    // An exec whose call returned `running` waits from when it started.
+    if let job = try String.fetchOne(db, sql: "SELECT MIN(started_at) FROM exec_jobs WHERE session_id = ?", arguments: [task]) {
+      waits.append(try SQLiteDateFormat.date(from: job))
+    }
     var until: Date?
     for timer in try SubscriptionRow.where({ $0.sessionID.eq(task) }).fetchAll(db) {
       guard case .timer(.oneShot, _) = try Sessions.decode(SubscriptionSlot.self, from: timer.payload).kind,

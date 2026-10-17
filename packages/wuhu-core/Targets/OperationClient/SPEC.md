@@ -40,3 +40,5 @@ Write sends length plus SHA-256 in the start and streams the bytes as 64 KiB inp
 ## Normal machine tool adapters
 
 `search(machine:query:caller:)` runs one `SearchQuery` page through `search.v1` and decodes the `SearchPage` result; the agent's engine pages it, so cursors are FileSearch's, bound to the query. A failure carrying `details.search` comes back as that `SearchError`. A machine whose description lacks `search.v1` throws kindUnavailable with `reason:agentTooOld`, `started:false` and an `agent too old, upgrade` message before any start. There is no fallback.
+
+Shutdown fences operation-store writes and drains cooperative claim, driver and cleanup lanes. Exchange waiters answer at their deadline or cancellation even if an adapter ignores it: transport workers stay named and retained by the machine-link scope until they actually return. Shutdown cancels that transport scope without waiting for non-cooperative adapters.

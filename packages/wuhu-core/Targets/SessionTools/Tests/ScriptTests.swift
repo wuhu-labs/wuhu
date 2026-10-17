@@ -26,6 +26,19 @@ import struct WuhuAI.ToolCall
 // every tool result, every message the script sent, and the harness's own
 // probes, in order — with the checked-in <name>.expected.
 @Suite struct ScriptTests {
+  @Test func executionEndsWithAnUnclosedObservation() async throws {
+    try await withRig { rig in
+      let result = try await rig.evaluate(#"""
+      import { observe } from 'wuhu:space'
+      const iterator = observe('SELECT path FROM docs')[Symbol.asyncIterator]()
+      const first = await iterator.next()
+      result(first.done === false)
+      """#)
+      #expect(result == .bool(true))
+      try await rig.released()
+    }
+  }
+
   @Test func sample() async throws {
     let watchQueries = Box(0)
     let space = {
@@ -41,7 +54,7 @@ import struct WuhuAI.ToolCall
         ("Old migration", "claude-opus-5-5"),
       ])
       try await rig.apply("sample.sql")
-      try await rig.run("sample", ["timeout_seconds": 60, "on_timeout": "detach"])
+      try await rig.run("sample", ["wait_seconds": 60])
 
       try await until("the watch list is read") { watchQueries.value > 0 }
       try await rig.apply("sample-done.sql")
@@ -113,10 +126,26 @@ import struct WuhuAI.ToolCall
   @Test func stopScript() async throws {
     try await withRig { rig in
       try await rig.run("stop")
+      rig.probe("running: \(rig.scripts.running(of: rig.session))")
+      try await rig.cancel("script.\(scriptID)", as: makeSession(rig.space, name: "stranger"))
       try await rig.stop(scriptID)
       try await rig.messages(1)
       try await rig.released()
+      rig.probe("running: \(rig.scripts.running(of: rig.session))")
+      try await rig.cancel("script.\(scriptID)")
+      try await rig.cancel("script.ffffffff")
+      try await rig.cancel(scriptID)
       try rig.expect("stop")
+    }
+  }
+
+  @Test func sessionModuleCancels() async throws {
+    try await withRig { rig in
+      _ = try await rig.payload(["message": "x", "in_seconds": 600], tool: "timer")
+      try await rig.run("session-cancel")
+      try await rig.released()
+      rig.probe("armed: \(try await rig.space.sessions.armedSubscriptions(rig.session).map(\.slot.id.rawValue))")
+      try rig.expect("session-cancel")
     }
   }
 
@@ -130,20 +159,27 @@ import struct WuhuAI.ToolCall
     }
   }
 
-  @Test func timeoutKills() async throws {
+  @Test func theOldWaitNamesAreRefused() async throws {
     try await withRig { rig in
-      try await rig.advancing {
-        try await rig.run("timeout", ["timeout_seconds": 30, "on_timeout": "kill"])
+      let cases: [(String, JSONValue, String)] = [
+        ("timeout_seconds", .number(30), "run_script: timeout_seconds is renamed to wait_seconds"),
+        ("on_timeout", .string("kill"), "run_script: on_timeout is gone; past wait_seconds a script always runs on, and cancel stops it"),
+      ]
+      for (name, value, message) in cases {
+        guard case let .failure(refused) = try await rig.payload(["source": "result('never')", name: value]) else {
+          Issue.record("\(name) was accepted")
+          continue
+        }
+        #expect(refused.message == message)
+        #expect(refused.code == "invalidArgument")
       }
-      try await rig.released()
-      try rig.expect("timeout-kill")
     }
   }
 
-  @Test func timeoutDetaches() async throws {
+  @Test func pastTheWaitTheScriptRunsOn() async throws {
     try await withRig { rig in
       try await rig.advancing {
-        try await rig.run("timeout", ["timeout_seconds": 30, "on_timeout": "detach"])
+        try await rig.run("timeout", ["wait_seconds": 30])
       }
       try await rig.messages(1)
       try await rig.released()
@@ -151,10 +187,25 @@ import struct WuhuAI.ToolCall
     }
   }
 
+  @Test func aMessageArrivingDuringTheWaitReturnsRunningEarly() async throws {
+    try await withRig { rig in
+      _ = try await rig.space.sessions.post(
+        .box(rig.session), messageID: MessageID("m1"), sender: Sender(id: "carol", timeZone: TimeZone(identifier: "UTC")!),
+        content: .init(text: "are you there?"),
+      )
+      try await rig.advancing {
+        try await rig.run("timeout", ["wait_seconds": 1800])
+      }
+      try await rig.messages(1)
+      try await rig.released()
+      try rig.expect("grace-detach")
+    }
+  }
+
   @Test func timeoutSparesAScriptThatAnswered() async throws {
     try await withRig { rig in
       try await rig.advancing {
-        try await rig.run("busy-after-result", ["timeout_seconds": 30, "on_timeout": "kill"])
+        try await rig.run("busy-after-result", ["wait_seconds": 30])
       }
       try await rig.released()
       try rig.expect("busy-after-result")
@@ -378,6 +429,8 @@ import struct WuhuAI.ToolCall
       export const ours = "\(ours.rawValue)"
       export const foreign = "\(foreign.rawValue)"
       """)
+      // The session has taken in its box before the script reads it back.
+      _ = try await store.drainQueue(rig.session)
       try await rig.run("conversation")
       try rig.expect("conversation")
     }
@@ -471,7 +524,7 @@ import struct WuhuAI.ToolCall
     let world = MachineWorld()
     try await withRig(world: world) { rig in
       try await world.attach("box", in: rig.space)
-      try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(14400), "timeout_seconds": .number(1e30)])
+      try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(14400), "wait_seconds": .number(1e30)])
       try await rig.run("script-ceilings", ["max_lifetime_seconds": .number(0.5)])
       try rig.expect("script-ceilings")
     }
@@ -611,8 +664,23 @@ final class ScriptRig: Sendable {
     _ = try await space.fs(.shared).write(path, Data(text.utf8), ifMatch: nil)
   }
 
+  /// A cancel with its failure code shown, from `caller` (the rig's session
+  /// by default).
+  func cancel(_ id: String, as caller: SessionID? = nil) async throws {
+    let payload = try await executor.execute(
+      session: caller ?? session,
+      call: ToolCall(id: "cancel-\(id)", name: "cancel", arguments: .object(["id": .string(id)])),
+      state: ToolExecutionState(),
+    )
+    switch payload {
+    case let .script(result): record("cancel", result.output)
+    case let .failure(failure): record("cancel", "failed (\(failure.code ?? "no code")): \(failure.message)")
+    default: throw Mismatch("unexpected payload \(payload)")
+    }
+  }
+
   func stop(_ id: String) async throws {
-    record("stop_script", try await call("stop_script", ["id": .string(id)]))
+    record("cancel", try await call("cancel", ["id": .string("script.\(id)")]))
   }
 
   func payload(_ arguments: OrderedDictionary<String, JSONValue>, tool name: String = "run_script") async throws -> ToolResultPayload {

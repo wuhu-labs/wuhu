@@ -9,6 +9,23 @@ public struct Transcript: Hashable, Sendable, Codable {
   public var keptCount: Int
   public var registeredSubscriptions: Set<SubscriptionID>? = nil
   public var handlerSubscriptions: Set<SubscriptionID> = []
+  // The ids of the work running for the session right now, read before each
+  // inference and rendered as the head's `running:` line.
+  public var runningWork: [String]? = nil
+
+  // A reading of the running work is not transcript content: two
+  // transcripts that differ only in it are the same.
+  public static func == (lhs: Transcript, rhs: Transcript) -> Bool {
+    lhs.items == rhs.items && lhs.keptCount == rhs.keptCount
+      && lhs.registeredSubscriptions == rhs.registeredSubscriptions && lhs.handlerSubscriptions == rhs.handlerSubscriptions
+  }
+
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(items)
+    hasher.combine(keptCount)
+    hasher.combine(registeredSubscriptions)
+    hasher.combine(handlerSubscriptions)
+  }
 
   enum CodingKeys: String, CodingKey {
     case items
@@ -18,11 +35,13 @@ public struct Transcript: Hashable, Sendable, Codable {
   public init(
     items: [TranscriptItem] = [], keptCount: Int = 0,
     registeredSubscriptions: Set<SubscriptionID>? = nil, handlerSubscriptions: Set<SubscriptionID> = [],
+    runningWork: [String]? = nil,
   ) {
     self.items = items
     self.keptCount = keptCount
     self.registeredSubscriptions = registeredSubscriptions
     self.handlerSubscriptions = handlerSubscriptions
+    self.runningWork = runningWork
   }
 
   public var environment: SessionEnvironment {
@@ -83,6 +102,7 @@ public struct Transcript: Hashable, Sendable, Codable {
     return Transcript(
       items: carried, keptCount: carried.count,
       registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions,
+      runningWork: runningWork,
     )
   }
 

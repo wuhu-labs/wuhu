@@ -1,0 +1,8 @@
+name: TaskLifetime
+kind: library
+sources: Sources
+dependencies:
+  - Logging
+tests:
+  dependencies:
+    - Clocks

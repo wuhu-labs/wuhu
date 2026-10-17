@@ -77,3 +77,5 @@ Each `SessionActor` is given a session-scoped repository backed only by `Session
 ## Cut model streams
 
 `InferenceError.streamCut` uses the bounded transient retry schedule, without escalating the idle-timeout schedule. The cut attempt commits no assistant message or tool calls; a successful retry completes the turn without a human resume.
+
+Registry shutdown joins concurrent shutdown callers, closes command admission, dismounts sessions, and drains their work. Session work may invoke external tools that write the space, and has no global write fence; therefore shutdown keeps the drain rather than permitting writes after it returns. An admitted retirement is registered before its first suspension, so shutdown owns even a concurrently discarded session.

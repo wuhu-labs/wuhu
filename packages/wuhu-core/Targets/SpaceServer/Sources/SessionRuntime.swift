@@ -3,6 +3,7 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import ExecutionOwner
 import struct FileSearch.SearchError
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -27,6 +28,7 @@ import SystemFiles
 import WuhuAI
 
 public struct SessionRuntime: Sendable {
+  let streamScope = TaskScope()
   public let service: SessionService
   public let attempts: AttemptHub
   let store: SessionStore
@@ -124,6 +126,8 @@ public struct SessionRuntime: Sendable {
       }
       await group.waitForAll()
     }
+    await streamScope.close()
+    await discoveryOwner?.closeExecJobs()
   }
 }
 
@@ -185,7 +189,7 @@ extension SessionRuntime {
     let serviceSlot = SessionServiceSlot()
     let machines = machineSeam(hub: hub)
     let exec = execBackend(space: space, hub: hub)
-    let owner: any SessionOwnerClient = InProcessToolOwnerClient(
+    let toolOwner = InProcessToolOwnerClient(
       space: space,
       executionOwner: executionOwner,
       secrets: secrets,
@@ -199,11 +203,13 @@ extension SessionRuntime {
       completionMetrics: executionMetrics,
       control: sessionControl { serviceSlot.service },
     )
+    let owner: any SessionOwnerClient = toolOwner
     let startup: @Sendable () async -> Void = {
       do {
         let owners = try await space.takeScriptExecOwners()
         await Scripts.announceRestart(owner: owner, owners: owners)
       } catch { Logger(label: "wuhu.execution-boot").error("Could not read restart script owners") }
+      await toolOwner.adoptExecJobs()
     }
     let sockets = ResponsesSocketRegistry()
     let scripts = Scripts(owner: owner)
@@ -244,7 +250,11 @@ extension SessionRuntime {
     )
 
     config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
-    config.archived = { scripts.stopScripts(of: $0) }
+    config.archived = { session in
+      scripts.stopScripts(of: session)
+      await toolOwner.cancelExecJobs(of: session)
+    }
+    config.runningWork = { scripts.running(of: $0) + toolOwner.runningExecJobs(of: $0) }
     let execution = await SessionExecution(owner: owner, loopConfig: config)
     let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace)
     serviceSlot.bind(service)
@@ -351,7 +361,7 @@ func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
       let (server, client) = WebSocket.pair()
       // Bounded, not leaked: the hub session ends when the transport
       // closes its socket end (tool completion, cancellation, or kill).
-      Task { await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous) }
+      _ = try? hub.callerScope.run("in-process-exec-caller") { await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous) }
       return WebSocketTransport(client)
     },
     status: { try await space.execRecord($0) },
@@ -448,8 +458,7 @@ extension ToolResultPayload {
     case .templates: "templates"
     case .observe: "observe"
     case .timer: "timer"
-    case .cancelObservation: "cancel_observation"
-    case .cancelTimer: "cancel_timer"
+    case .cancelObservation, .cancelTimer: "cancel"
     case .query: "query"
     case .sendMessage: "send_message"
     case .request: "request"

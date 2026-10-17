@@ -57,20 +57,10 @@ func attemptLoggingFetch(
     let response = try await base.fetch(outbound)
 
     let source = response.body.asyncBytes()
-    let teed = AsyncThrowingStream<Data, any Error> { continuation in
-      let task = Task {
-        do {
-          for try await chunk in source {
-            sizes.addResponse(chunk.count)
-            await log.append(chunk)
-            continuation.yield(chunk)
-          }
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
-      }
-      continuation.onTermination = { _ in task.cancel() }
+    let teed = source.map { chunk in
+      sizes.addResponse(chunk.count)
+      await log.append(chunk)
+      return chunk
     }
     return Response(
       status: response.status,

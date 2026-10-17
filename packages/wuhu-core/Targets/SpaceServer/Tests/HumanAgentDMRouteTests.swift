@@ -102,7 +102,7 @@ import struct WuhuAI.ToolCall
           """
           let payload = try await executor.execute(
             session: t.parent,
-            call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "timeout_seconds": 10, "on_timeout": "kill"])),
+            call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 10])),
             state: ToolExecutionState(),
           )
           guard case let .script(result) = payload else {

@@ -1,8 +1,20 @@
 === run_script
 watching
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
-=== stop_script
-script 00000000 stopped
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
+=== probe
+running: ["script.00000000"]
+=== cancel
+failed (notFound): you have no script script.00000000
+=== cancel
+script.00000000 stopped: its signal was aborted and it ended
 === message
-AbortError: stopped by stop_script
+AbortError: stopped by cancel
+=== probe
+running: []
+=== cancel
+failed (alreadyEnded): script.00000000 has already ended
+=== cancel
+failed (notFound): you have no script script.ffffffff
+=== cancel
+failed (invalidArgument): cancel: a script id is written script.00000000

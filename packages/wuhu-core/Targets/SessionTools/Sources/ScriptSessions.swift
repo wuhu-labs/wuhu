@@ -156,6 +156,17 @@ struct ScriptSessions {
         return .null
       }
     })
+    engine.define("__wuhu_session_cancel", promising: { [session, tools] arguments in
+      try await scripted {
+        guard case let .string(id)? = arguments.first else { throw ToolProblem("cancel(id) wants an id", code: "invalidArgument") }
+        switch try await tools.cancel(session, id: id) {
+        case let .failure(failure):
+          throw ToolProblem(failure.message, code: failure.code ?? "invalidArgument")
+        case let payload:
+          return .object(["id": .string(id), "message": .string(payload.renderedText)])
+        }
+      }
+    })
     try engine.defineModule("wuhu:session", source: sessionModule)
   }
 }
@@ -200,6 +211,7 @@ const ask = __wuhu_session_request
 const send = __wuhu_session_send
 const retag = __wuhu_session_tags
 const act = __wuhu_session_control
+const stop = __wuhu_session_cancel
 
 export async function toolRoster() {
   const reply = await discover("toolRoster")
@@ -252,5 +264,15 @@ export async function interrupt(id) {
 
 export async function resume(id) {
   await act("resume", String(id))
+}
+
+export async function cancel(id) {
+  const reply = await stop(String(id))
+  if (reply.error !== undefined) {
+    const error = new Error(reply.error)
+    error.code = reply.code
+    throw error
+  }
+  return reply
 }
 """#

@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -530,19 +531,26 @@ import Testing
   /// A peer that never answers holds a request only to its deadline, and a cancelled caller not at all.
   @Test func aRequestDeadlineAnswersWithoutWaitingForTheWork() async throws {
     let parked = Mutex<[CheckedContinuation<Void, Never>]>([])
-    defer { for continuation in parked.withLock({ $0 }) { continuation.resume() } }
-    let never: @Sendable () async throws -> Void = { await withCheckedContinuation { continuation in parked.withLock { $0.append(continuation) } } }
+    let scope = TaskScope()
+    let client = FetchClient { _ in
+      await withCheckedContinuation { continuation in parked.withLock { $0.append(continuation) } }
+      return Response.text("late")
+    }
+    let request = Request(url: URL(string: "http://supervisor/identity")!)
     let clock = ContinuousClock(); let began = clock.now
     do {
-      try await withDeadline(.milliseconds(200), operation: nil, never)
+      _ = try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .milliseconds(200), operation: nil)
       Issue.record("the deadline did not fire")
     } catch let error as OperationError { #expect(error.message == Unavailable.supervisorTimeout.rawValue) }
     #expect(clock.now - began < .seconds(2))
-    let caller = Task { try await withDeadline(.seconds(60), operation: nil, never) }
+    let caller = Task { try await ExecWorkers.exchange(scope: scope, request, client: client, nonce: "nonce", deadline: .seconds(60), operation: nil) }
     try await clock.sleep(for: .milliseconds(50))
     caller.cancel()
     await #expect(throws: CancellationError.self) { try await caller.value }
     #expect(clock.now - began < .seconds(4))
+    for continuation in parked.withLock({ $0 }) { continuation.resume() }
+    await scope.close()
+    #expect(scope.liveTasks.isEmpty)
   }
 }
 

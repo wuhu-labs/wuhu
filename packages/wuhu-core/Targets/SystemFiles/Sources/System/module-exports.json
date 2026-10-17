@@ -23,6 +23,7 @@
   ],
   "wuhu:session": [
     "archive",
+    "cancel",
     "createSession",
     "interrupt",
     "request",

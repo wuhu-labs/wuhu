@@ -59,4 +59,4 @@ unknown conversation: unknown conversation: no-such-box
 a box in an unread group: unknown conversation: bike-noodle-sunset
 no id: conversation(id) wants a conversation id: a box is its agent's session id, a DM comes from dm(a, b)
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]

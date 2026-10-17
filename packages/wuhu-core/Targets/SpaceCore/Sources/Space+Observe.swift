@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,7 +19,7 @@ extension Space {
     guard let from else { return live }
     let writer = writer
     return AsyncStream { continuation in
-      let task = Task {
+      let task = try? taskScope.run("filesystem-replay") {
         let ceiling: Int
         do {
           let journal = try await Self.journalEvents(after: from.value, group: group, writer: writer)
@@ -38,7 +39,8 @@ extension Space {
         }
         continuation.finish()
       }
-      continuation.onTermination = { _ in task.cancel() }
+      if task == nil { continuation.finish() }
+      continuation.onTermination = { _ in task?.cancel() }
     }
   }
 
@@ -120,7 +122,7 @@ extension Space {
       return ReadScope(acting: principal.group, readable: readable, viewer: viewer, member: principal.member)
     }
     return AsyncThrowingStream<Rows, any Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
-      let task = Task {
+      let task = try? taskScope.run("query-observation") {
         let arguments: [DatabaseValue]
         do {
           arguments = try Self.bound(parameters)
@@ -133,7 +135,8 @@ extension Space {
           continuation: continuation,
         )
       }
-      continuation.onTermination = { _ in task.cancel() }
+      if task == nil { continuation.finish(throwing: TaskScopeClosed()) }
+      continuation.onTermination = { _ in task?.cancel() }
     }
   }
 

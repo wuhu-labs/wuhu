@@ -81,7 +81,7 @@ private func runScriptCall(interrupting session: SessionID) -> String {
     await interrupt("\(session.rawValue)")
     result("interrupted")
     """),
-    "timeout_seconds": 1_000_000,
+    "wait_seconds": 1_000_000,
   ]
   let call: JSONValue = [
     "type": "function_call", "call_id": "call_1", "name": "run_script", "arguments": .string(arguments.jsonString()),

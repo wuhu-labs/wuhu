@@ -102,7 +102,7 @@ extension Transcript {
         content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the full carried input; re-read files/history as needed."),
       ))
       let carried = [TranscriptItem.generationHead(head)] + projected.indices.filter { selected.contains($0) }.map { projected[$0] } + [notice]
-      let result = Transcript(items: carried, keptCount: carried.count, registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions)
+      let result = Transcript(items: carried, keptCount: carried.count, registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions, runningWork: runningWork)
       if result.items.reduce(0, { $0 + $1.estimatedTokens(budget.images) }) <= budget.usableTokens { return result }
       guard tailBudget > 0 else { throw PortableHandoffError.modelHandoffTooLarge }
       tailBudget = tailBudget > 256 ? tailBudget / 2 : 0

@@ -73,6 +73,9 @@ public protocol ScriptOwnerClient: Sendable {
 public protocol ToolOwnerClient: ScriptOwnerClient {
   func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext?
   func killInterruptedExec(session: SessionID, toolCallID: ToolCallID) async
+  /// For each urgency, the earliest item in the session's queue that the
+  /// model has not seen yet: now, and again after every change.
+  func pendingArrivals(_ session: SessionID) -> AsyncThrowingStream<[PendingArrival], any Error>
   func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload
   func refuseUnlessLive(_ session: SessionID) async throws
   func spawn(_ caller: SessionID, _ call: ToolCallID, _ order: SpawnOrder) async throws -> Spawned

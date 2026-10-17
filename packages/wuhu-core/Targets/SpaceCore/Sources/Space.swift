@@ -1,4 +1,5 @@
 import Dependencies
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -13,6 +14,7 @@ import SpaceFS
 import SpaceSQL
 
 public actor Space {
+  nonisolated let taskScope = TaskScope()
   let writer: any DatabaseWriter
   let reads: ReadPool
   let blobs: BlobStore
@@ -43,6 +45,11 @@ public actor Space {
     self.clock = clock
     self.rng = rng
     self.log = log
+  }
+
+  public func close() async {
+    broadcast.close()
+    await taskScope.close()
   }
 
   public static func open(

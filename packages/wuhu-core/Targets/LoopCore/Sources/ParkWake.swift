@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -24,7 +25,7 @@ extension SessionActor {
     if let nag { return nag }
     guard let due else { return nil }
     let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(now))), clock: clock)
-    let wake = Task {
+    let wake = try taskScope.run("session-park-wake") {
       guard (try? await sleep()) != nil else { return }
       self.parkWakeFired(at: due)
     }

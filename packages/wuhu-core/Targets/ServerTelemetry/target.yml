@@ -2,6 +2,7 @@ name: ServerTelemetry
 kind: library
 sources: Sources
 dependencies:
+  - TaskLifetime
   - Dependencies
   - Clocks
   - Fetch

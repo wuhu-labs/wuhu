@@ -1,4 +1,5 @@
 import Dependencies
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -82,6 +83,7 @@ actor SessionActor {
   var liveState: LiveState?
   private var lastCommandProcessedAt: Date?
   private var nudges: Inbox<Void>?
+  let taskScope = TaskScope()
   private var handlerTask: Task<Void, Never>?
   private(set) var looperTask: Task<Void, Never>?
   var longRunningTask: (id: UUID, task: Task<Void, Never>)?
@@ -106,7 +108,7 @@ actor SessionActor {
   func activate() {
     precondition(handlerTask == nil, "SessionActor activates once")
     guard !retired else { return }
-    handlerTask = Task { await runHandler() }
+    handlerTask = try? taskScope.run("session-handler") { await runHandler() }
   }
 
   var live: LiveState {
@@ -148,6 +150,7 @@ actor SessionActor {
 
   func shutdown() async {
     retired = true
+    taskScope.cancel()
     handlerTask?.cancel()
     handlerTask = nil
     dismountLive()
@@ -279,7 +282,7 @@ actor SessionActor {
   private func mountLooper() {
     let nudges = Inbox<Void>(coalescing: true)
     self.nudges = nudges
-    looperTask = Task { await runLooper(nudges: nudges) }
+    looperTask = try? taskScope.run("session-loop") { await runLooper(nudges: nudges) }
     nudges.post(())
   }
 

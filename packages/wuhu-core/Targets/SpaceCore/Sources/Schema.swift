@@ -4,7 +4,7 @@ import StructuredQueriesSQLite
 
 let spaceSchemaSQL = [
   sessionWorkerOwnershipSchemaSQL, sessionWorkerSchemaSQL, machineV2SchemaSQL, sessionModelRouteSchemaSQL, cacheWarmingSchemaSQL,
-  substrateSchemaSQL, blobObjectSchemaSQL, sessionSchemaSQL, sessionCommandSchemaSQL, sessionContextSchemaSQL,
+  substrateSchemaSQL, blobObjectSchemaSQL, sessionSchemaSQL, execJobSchemaSQL, sessionCommandSchemaSQL, sessionContextSchemaSQL,
   sessionScopeContextSchemaSQL, conversationSchemaSQL, notificationSchemaSQL,
   allocationSchemaSQL, authSchemaSQL, groupSchemaSQL, deviceSchemaSQL, messageViewingSchemaSQL, enrollmentSchemaSQL, personaSchemaSQL,
   spaceMetaSchemaSQL, webPushSchemaSQL, pushRelaySchemaSQL,

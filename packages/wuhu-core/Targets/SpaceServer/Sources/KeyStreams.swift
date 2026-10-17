@@ -3,6 +3,7 @@ import struct FetchTunnel.TunnelTransport
 import Serve
 import SpaceCore
 import Synchronization
+import TaskLifetime
 
 /// The streamed responses and sockets a person key opened through the wall,
 /// so removing the key or its account ends them at once instead of at the
@@ -10,6 +11,18 @@ import Synchronization
 /// reconnect then meets the gate's revoked-key 401. Entries live exactly as
 /// long as their stream.
 final class KeyStreams: Sendable {
+  private let taskScope = TaskScope()
+
+  func close() async {
+    let holds = ledger.withLock { state in
+      let holds = state.holds.values.flatMap { $0.values }
+      state.holds.removeAll()
+      return holds
+    }
+    for hold in holds { hold.end() }
+    await taskScope.close()
+  }
+
   private struct Hold: Sendable {
     let account: AccountID
     let end: @Sendable () -> Void
@@ -66,7 +79,7 @@ final class KeyStreams: Sendable {
   private func endable(_ body: Body, under key: KeyRecord, space: Space) async -> Body {
     let (chunks, output) = AsyncThrowingStream<Bytes, any Error>.makeStream(bufferingPolicy: .bufferingOldest(1))
     let (demand, input) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
-    let pump = Task {
+    let pump = try? taskScope.run("key-response-body") {
       defer { output.finish(); input.finish() }
       var iterator = body.asyncBytes().makeAsyncIterator()
       do {
@@ -76,8 +89,9 @@ final class KeyStreams: Sendable {
         }
       } catch { output.finish(throwing: error) }
     }
-    let id = hold(key) { output.finish(); pump.cancel() }
-    output.onTermination = { _ in pump.cancel(); self.release(key.pubkey, id) }
+    if pump == nil { output.finish(); input.finish() }
+    let id = hold(key) { output.finish(); pump?.cancel() }
+    output.onTermination = { _ in pump?.cancel(); self.release(key.pubkey, id) }
     if await !isLive(key, space: space) { output.finish() }
     return .stream(contentType: body.contentType, HostBodyChunks(chunks: chunks, demand: input))
   }

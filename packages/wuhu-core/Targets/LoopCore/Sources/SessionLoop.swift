@@ -1,6 +1,7 @@
 import Dependencies
 import enum Fetch.TransportFailureKind
 import ServerTelemetry
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -70,7 +71,7 @@ extension SessionActor {
         let transcript = try await repo.discardPendingCacheWarming()
         try modify { $0.transcript = transcript }
       }
-      guard try await refreshRegisteredSubscriptions() else { return }
+      guard try await refreshLiveState() else { return }
       if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
@@ -116,12 +117,10 @@ extension SessionActor {
     await settleCompacting()
   }
 
-  // The loop may end here cancelled (shutdown, a yielded assignment), and a
-  // cancelled owner call never leaves; a detached task does not inherit the
-  // cancellation, so the re-derive still lands.
   private func settleCompacting() async {
     let repo = repo
-    await Task.detached { try? await repo.markCompacting(false) }.value
+    // Persist the settled state even when the loop was cancelled.
+    await uncancellable("Persist settled compaction state after loop cancellation") { try? await repo.markCompacting(false) }
   }
 
   // The operator-facing compact verb, the kernel's counterpart to Claude
@@ -152,13 +151,16 @@ extension SessionActor {
     return try await nagOrScheduleWake((try live).transcript.environment)
   }
 
-  private func refreshRegisteredSubscriptions() async throws -> Bool {
+  // What the head renders live: the armed subscriptions and the running work.
+  private func refreshLiveState() async throws -> Bool {
     let registered = try await repo.registeredSubscriptions()
+    let running = try await loopConfig.runningWork(id)
     try Task.checkCancellation()
     guard !(try live).archiving else { return false }
     try modify {
       $0.transcript.registeredSubscriptions = registered.ids
       $0.transcript.handlerSubscriptions = registered.handlers
+      $0.transcript.runningWork = running
     }
     return true
   }
@@ -181,20 +183,20 @@ extension SessionActor {
     defer {
       if longRunningTask?.id == workID { longRunningTask = nil }
     }
-    let work = Task<Result<T, any Error>, Never> {
+    guard let work = try? taskScope.run("session-work", operation: { () -> Result<T, any Error> in
       do {
         return .success(try await body())
       } catch {
         return .failure(error)
       }
-    }
-    let handle = Task<Void, Never> {
+    }) else { return .failure(TaskScopeClosed()) }
+    guard let handle = try? taskScope.run("session-work-cancellation", operation: {
       await withTaskCancellationHandler {
         _ = await work.value
       } onCancel: {
         work.cancel()
       }
-    }
+    }) else { work.cancel(); return .failure(TaskScopeClosed()) }
     longRunningTask = (workID, handle)
     let result = await withTaskCancellationHandler {
       await work.value
@@ -403,7 +405,7 @@ extension SessionActor {
     var boundedFailures = 0
     while true {
       if case .interrupting = (try live).sessionStatus { return }
-      guard try await refreshRegisteredSubscriptions() else { return }
+      guard try await refreshLiveState() else { return }
 
       let attemptID = uuid()
       let request = InferenceRequest(
@@ -596,7 +598,7 @@ extension SessionActor {
 
   @discardableResult
   func fallbackCompact() async throws -> Bool {
-    guard try await refreshRegisteredSubscriptions() else { return false }
+    guard try await refreshLiveState() else { return false }
     let transcript = (try live).transcript
     let sessionID = id
     let compactClaim = try live.compactRequestClaim
@@ -642,13 +644,13 @@ extension SessionActor {
       delay = raw * jitter
     }
     let sleep = deadlineSleep(after: .seconds(delay), clock: clock)
-    let pause = Task { try await sleep() }
+    let pause = try? taskScope.run("session-retry") { try await sleep() }
     retryPause = pause
     defer { retryPause = nil }
     return await withTaskCancellationHandler {
-      if case .failure = await pause.result { return false }
+      if case .failure = await pause?.result { return false }
       return !Task.isCancelled
-    } onCancel: { pause.cancel() }
+    } onCancel: { pause?.cancel() }
   }
 
   func writeToolResult(

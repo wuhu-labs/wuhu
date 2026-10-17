@@ -88,7 +88,7 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing"]
+    let later: Set = ["session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "exec_jobs"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers"]
     #expect(migrated.keys.filter { !retired.contains($0) }.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
     for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) {

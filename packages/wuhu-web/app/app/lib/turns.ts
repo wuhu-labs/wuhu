@@ -170,6 +170,7 @@ export function noticePresentation(notice: WorkNotice): NoticePresentation {
       'timer',
       'spaceObservation',
       'script',
+      'exec',
       'owedReply',
       'parkReminder',
       'childFailed',

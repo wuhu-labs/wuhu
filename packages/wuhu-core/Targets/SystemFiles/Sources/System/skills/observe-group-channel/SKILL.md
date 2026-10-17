@@ -7,7 +7,7 @@ description: Observe a group channel with a durable script handler — every mes
 
 A channel's messages are rows in `messages`, keyed by `conversation_id`. For example, `SELECT n, id, json_extract(content, '$.text') AS text FROM messages WHERE conversation_id = '<channel-id>' ORDER BY n` gives an ordered snapshot. SQL respects your group's read access.
 
-The `observe` tool accepts `{ sql, throttle_seconds, handler }`. `handler` is a space module path, often `/_/sessions/<your-id>/channel.js`. Unlike an observation inside `run_script`, this slot survives a server restart, compaction and Start over. Archive cancels running handler executions but preserves slots during grace. A firing while archived retires its slot without code or wake; unarchive before firing resumes it. `cancel_observation` takes its subscription id. `subscriptions` lists armed slots, owners, handlers, last firing and last error.
+The `observe` tool accepts `{ sql, throttle_seconds, handler }`. `handler` is a space module path, often `/_/sessions/<your-id>/channel.js`. Unlike an observation inside `run_script`, this slot survives a server restart, compaction and Start over. Archive cancels running handler executions but preserves slots during grace. A firing while archived retires its slot without code or wake; unarchive before firing resumes it. `cancel` takes its subscription id (`obs.…`), from the tool or from a script via `wuhu:session`. `subscriptions` lists armed slots, owners, handlers, last firing and last error.
 
 A handler exports `default async ({ rows, state, wake }) => nextState`. `rows` contains objects, not deltas; `state` is null first and is the last successful JSON return thereafter (at most 16 KiB). A cursor avoids reconsidering old messages:
 

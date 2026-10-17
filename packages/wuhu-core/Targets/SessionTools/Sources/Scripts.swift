@@ -1,5 +1,6 @@
 import Dependencies
 import Fetch
+import enum JSONValue.JSONValue
 import Logging
 import SessionDomain
 import SpaceCore
@@ -14,6 +15,9 @@ public final class Scripts: Sendable {
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
+  // Scripts that ended here, so cancel can tell "already ended" from
+  // "unknown". Bounded and in-process: past either, an id reads as unknown.
+  private let ended = Mutex(EndedScripts())
 
   public init(owner: any ScriptOwnerClient) {
     self.owner = owner
@@ -26,6 +30,7 @@ public final class Scripts: Sendable {
       for await execution in launches {
         group.addTask {
           await execution.run(owner: self.owner)
+          self.ended.withLock { $0.record(execution.id, session: execution.session) }
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
@@ -48,7 +53,7 @@ public final class Scripts: Sendable {
 
   public static func announceRestart(owner ownerClient: any ScriptOwnerClient, owners: [ScriptExecOwner]) async {
     for owner in owners {
-      var text = "script \(owner.script) was killed by a server restart"
+      var text = "\(scriptHandle(owner.script)) was killed by a server restart"
       if !owner.live.isEmpty {
         let ids = owner.live.map(\.rawValue).joined(separator: ", ")
         text += "; the machine processes it left running (\(ids)) get killed about a minute after the restart, or when their machine reconnects if it is away then"
@@ -79,6 +84,11 @@ public final class Scripts: Sendable {
     running.withLock { $0[id] }.flatMap { $0.session == session ? $0 : nil }
   }
 
+  /// The cancel ids of `session`'s run_script executions running here.
+  public func running(of session: SessionID) -> [String] {
+    running.withLock { $0.values.filter { $0.session == session }.map { scriptHandle($0.id) } }.sorted()
+  }
+
   /// Sessions with a run_script execution running here; handler firings
   /// are not counted.
   var runningSessions: Set<SessionID> {
@@ -101,11 +111,14 @@ public final class Scripts: Sendable {
 
   public func stop(_ id: String, session: SessionID) async throws -> ToolResultPayload {
     guard let execution = execution(id, of: session) else {
-      throw ToolProblem("stop_script: you have no running script \(id)")
+      if ended.withLock({ $0.owners[id] == session }) {
+        return .failure(.init(message: "\(scriptHandle(id)) has already ended", code: "alreadyEnded"))
+      }
+      return .failure(.init(message: "you have no script \(scriptHandle(id))", code: "notFound"))
     }
     let output = switch await execution.stop() {
-    case let .killed(stop): "script \(execution.id) was killed: \(stop.killReason)"
-    case .released, .failed: "script \(execution.id) stopped"
+    case let .killed(stop): "\(scriptHandle(execution.id)) was killed: \(stop.killReason)"
+    case .released, .failed: "\(scriptHandle(execution.id)) stopped: its signal was aborted and it ended"
     }
     return .script(.init(output: output))
   }
@@ -117,29 +130,34 @@ public final class Scripts: Sendable {
 
 struct RunScriptArguments: Decodable {
   var source: String
-  var timeoutSeconds: Double?
-  var onTimeout: ScriptTimeoutAction?
+  var waitSeconds: Double?
+  /// Old names, decoded only to refuse them.
+  var timeoutSeconds: JSONValue?
+  var onTimeout: JSONValue?
   var maxLifetimeSeconds: Double?
 
   enum CodingKeys: String, CodingKey {
     case source
+    case waitSeconds = "wait_seconds"
     case timeoutSeconds = "timeout_seconds"
     case onTimeout = "on_timeout"
     case maxLifetimeSeconds = "max_lifetime_seconds"
   }
 }
 
-struct StopScriptArguments: Decodable {
-  var id: String
-}
-
 extension ToolExecutor {
   func runScript(_ session: SessionID, _ arguments: RunScriptArguments) async throws -> ToolResultPayload {
     guard let scripts else { throw ToolProblem("run_script is not available here") }
-    let timeout = min(arguments.timeoutSeconds ?? 60, scriptSecondsCeiling)
+    if arguments.timeoutSeconds != nil {
+      throw ToolProblem("run_script: timeout_seconds is renamed to wait_seconds", code: "invalidArgument")
+    }
+    if arguments.onTimeout != nil {
+      throw ToolProblem("run_script: on_timeout is gone; past wait_seconds a script always runs on, and cancel stops it", code: "invalidArgument")
+    }
+    let wait = min(arguments.waitSeconds ?? ToolLifetimes.waitDefault, scriptSecondsCeiling)
     let lifetime = arguments.maxLifetimeSeconds ?? ToolLifetimes.scriptDefault
-    guard timeout > 0 else {
-      throw ToolProblem("run_script: timeout_seconds must be positive")
+    guard wait > 0 else {
+      throw ToolProblem("run_script: wait_seconds must be more than 0", code: "invalidArgument")
     }
     guard lifetime > 0 else {
       throw ToolProblem("run_script: max_lifetime_seconds must be positive", code: "invalidArgument")
@@ -148,24 +166,37 @@ extension ToolExecutor {
       throw ToolProblem("run_script: max_lifetime_seconds is at most \(seconds(.seconds(ToolLifetimes.ceiling)))", code: "invalidArgument")
     }
     let execution = try await scripts.start(arguments.source, session: session, lifetime: .seconds(lifetime), tools: self)
-    switch try await execution.answer(within: .seconds(timeout), onTimeout: arguments.onTimeout ?? .detach) {
+    let arrivals = owner.pendingArrivals(session)
+    let waited = min(wait, lifetime + ToolLifetimes.lifetimeSlack)
+    switch try await execution.answer(until: { await WaitCut.first(wait: waited, arrivals: arrivals) }) {
     case let .result(text):
-      let note = "\n\n[script \(execution.id): any update() after this arrives as a message; stop_script ends it while it runs.]"
+      let note = "\n\n[\(scriptHandle(execution.id)): any update() after this arrives as a message; cancel(\"\(scriptHandle(execution.id))\") ends it while it runs.]"
       return .script(.init(output: text + note))
-    case .detached:
-      return .script(.init(output: """
-      script \(execution.id) has not called result() within \(seconds(.seconds(timeout))) s and keeps running; \
-      its result arrives as a message. stop_script ends it.
-      """))
+    case let .detached(cut):
+      let handle = scriptHandle(execution.id)
+      let after = switch cut {
+      case .waited: "no result() within \(seconds(.seconds(wait))) s"
+      case .arrival: "a message arrived, so the call gave the turn back before result()"
+      }
+      let note = "\(after); it keeps running, its result arrives as a message, and cancel(\"\(handle)\") stops it"
+      return .script(.init(output: runningJSON(handle, tail: execution.consoleTail, note: note)))
     case let .failure(message):
       return .failure(.init(message: message))
     }
   }
+}
 
-  func stopScript(_ session: SessionID, _ arguments: StopScriptArguments) async throws -> ToolResultPayload {
-    if let scripts, scripts.execution(arguments.id, of: session) != nil { return try await scripts.stop(arguments.id, session: session) }
-    guard let scripts else { throw ToolProblem("stop_script is not available here") }
-    return try await scripts.stop(arguments.id, session: session)
+/// How a script's id is shown and cancelled: `script.<id>`.
+public func scriptHandle(_ id: String) -> String { "script.\(id)" }
+
+struct EndedScripts {
+  static let capacity = 4096
+  private(set) var owners: [String: SessionID] = [:]
+  private var order: [String] = []
+
+  mutating func record(_ id: String, session: SessionID) {
+    if owners.updateValue(session, forKey: id) == nil { order.append(id) }
+    if order.count > Self.capacity { owners.removeValue(forKey: order.removeFirst()) }
   }
 }
 

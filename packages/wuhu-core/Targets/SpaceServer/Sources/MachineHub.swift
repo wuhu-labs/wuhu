@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import struct FoundationEssentials.UUID
 #else
@@ -28,6 +29,7 @@ public enum MachineHubError: Error, Equatable, Sendable {
 }
 
 public actor MachineHub {
+  nonisolated let callerScope = TaskScope()
   private struct Leg {
     let send: @Sendable ([UInt8]) async throws -> Void
     let close: @Sendable () -> Void
@@ -150,6 +152,7 @@ public actor MachineHub {
         }
       }
     }
+    callerScope.cancel()
   }
 
   // MARK: - Sessions

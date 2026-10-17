@@ -9,4 +9,4 @@ a fourth 20 MB body: fetch failed: response body does not fit in the 64 MB this 
 reading every body: ok
 1000 rows once they are read: ok
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]

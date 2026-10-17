@@ -2,7 +2,7 @@
 //
 // Called as
 //
-//   run_script({ source, timeout_seconds: 60, on_timeout: "detach" })
+//   run_script({ source, wait_seconds: 60 })
 //
 // What a v1 script has:
 //
@@ -18,7 +18,7 @@
 //   result(value)         the tool call's result. At most once.
 //   update(value)         only after result(). Reaches the session later as a
 //                         message, the way a timer message does.
-//   signal                AbortSignal for this execution: stop_script, kill on
+//   signal                AbortSignal for this execution: cancel, kill on
 //                         timeout, max lifetime. Every host call observes it by
 //                         default; pass { signal } to narrow it further.
 //   sleep(ms)             host timer on the server clock. Rejects on abort.
@@ -83,7 +83,7 @@ for (const { id, title } of await query`
 }
 
 while (watching.size > 0) {
-  await sleep(60_000) // stop_script lands here as an AbortError and ends the run
+  await sleep(60_000) // cancel lands here as an AbortError and ends the run
 
   const ids = JSON.stringify([...watching.keys()])
 

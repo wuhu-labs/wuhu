@@ -5,6 +5,7 @@ checks:
   build: [linux, mac, ios, visionos]
   test: [linux, mac]
 dependencies:
+  - TaskLifetime
   - ServerTelemetry
   - OperationProtocol
   - JSONValue

@@ -1,33 +1,32 @@
 import protocol MachineChannel.FrameTransport
 import Serve
 
-// Bridges a wuhu-serve WebSocket into MachineChannel's FrameTransport, both
-// for in-process caller legs (the session runtime's exec backend) and for
-// test harnesses driving real ChannelEndpoint / MachineAgent legs.
 public final class WebSocketTransport: FrameTransport, Sendable {
   public let inbound: AsyncStream<[UInt8]>
   private let socket: WebSocket
 
   public init(_ socket: WebSocket) {
     self.socket = socket
-    let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
-    inbound = stream
-    Task {
-      for await message in socket.inbound {
-        switch message {
-        case let .binary(bytes): continuation.yield(bytes)
-        case let .text(text): continuation.yield(Array(text.utf8))
-        }
-      }
-      continuation.finish()
+    let source = SocketFrames(socket)
+    inbound = AsyncStream(unfolding: { await source.next() }, onCancel: { socket.close() })
+  }
+
+  public func send(_ frame: [UInt8]) async throws { try await socket.send(.binary(frame)) }
+  public func close() { socket.close() }
+}
+
+private actor SocketFrames {
+  private var iterator: AsyncStream<WebSocketMessage>.Iterator?
+  private let socket: WebSocket
+  init(_ socket: WebSocket) { self.socket = socket; iterator = socket.inbound.makeAsyncIterator() }
+  func next() async -> [UInt8]? {
+    guard var iterator = self.iterator else { return nil }
+    self.iterator = nil
+    guard let message = await iterator.next(isolation: self) else { socket.close(); return nil }
+    self.iterator = iterator
+    switch message {
+    case let .binary(bytes): return bytes
+    case let .text(text): return Array(text.utf8)
     }
-  }
-
-  public func send(_ frame: [UInt8]) async throws {
-    try await socket.send(.binary(frame))
-  }
-
-  public func close() {
-    socket.close()
   }
 }

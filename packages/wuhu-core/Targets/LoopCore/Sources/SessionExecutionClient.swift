@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -41,7 +42,7 @@ public struct SessionExecution: SessionExecutionClient {
   }
 
   private func send(_ action: SessionActor.ExternalAction, to id: SessionID) {
-    Task { [registry] in await registry.post(action, to: id) }
+    registry.send(action, to: id)
   }
 
   public func wake(_ id: SessionID) async throws {

@@ -30,7 +30,7 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
         @Dependency(\.timeControl) var time
         return (clock, time)
       }
-      let response = conversationStreamResponse(space: harness.space, store: harness.store, conversation: ConversationID(id.rawValue), after: 0, viewer: .shared, clock: clock)
+      let response = conversationStreamResponse(space: harness.space, scope: harness.runtime.streamScope, store: harness.store, conversation: ConversationID(id.rawValue), after: 0, viewer: .shared, clock: clock)
       let received = Mutex<[String]>([])
       let reader = Task {
         for try await chunk in response.body.asyncBytes() {

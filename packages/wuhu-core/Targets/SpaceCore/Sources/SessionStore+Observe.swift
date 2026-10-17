@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -45,6 +46,7 @@ extension SessionStore {
     let key = id.rawValue
     let writer = writer
     return observation(
+      scope: taskScope,
       writer: writer,
       tables: ["session_pointers", "session_runtime"],
       state: TranscriptObservation(cursor: cursor),
@@ -100,7 +102,7 @@ extension SessionStore {
   ) -> AsyncThrowingStream<[MessageRecord], any Error> {
     let key = conversation.rawValue
     let writer = writer
-    return observation(writer: writer, tables: ["messages", "conversations", "conversation_members", "group_reads", "groups", "sessions"], state: n) { db, cursor in
+    return observation(scope: taskScope, writer: writer, tables: ["messages", "conversations", "conversation_members", "group_reads", "groups", "sessions"], state: n) { db, cursor in
       guard let record = try Conversations.record(key, in: db),
             try principal.map({ try Conversations.reads(record, reader: $0.member, group: $0.group, in: db) }) ?? true
       else {
@@ -125,13 +127,14 @@ private struct TranscriptObservation: Sendable {
 // and advances it, so the client-visible stream has no gaps and no duplicates
 // regardless of how the region observation coalesces commits.
 private func observation<State: Sendable, Element: Sendable>(
+  scope: TaskScope,
   writer: any DatabaseWriter,
   tables: [String],
   state: State,
   poll: @escaping @Sendable (Database, State) throws -> (Element?, State),
 ) -> AsyncThrowingStream<Element, any Error> {
   AsyncThrowingStream { continuation in
-    let task = Task {
+    let task = try? scope.run("session-observation") {
       let dirty = regionWakes(tables.map { Table($0) }, in: writer)
       var state = state
       do {
@@ -150,6 +153,7 @@ private func observation<State: Sendable, Element: Sendable>(
         continuation.finish(throwing: error)
       }
     }
-    continuation.onTermination = { _ in task.cancel() }
+    if task == nil { continuation.finish(throwing: TaskScopeClosed()) }
+    continuation.onTermination = { _ in task?.cancel() }
   }
 }

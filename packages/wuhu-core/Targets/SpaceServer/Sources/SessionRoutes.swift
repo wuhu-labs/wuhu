@@ -619,7 +619,7 @@ func addSessionRoutes(
     }
     switch try await readingSeat(id, request) {
     case let .success(viewer):
-      return conversationStreamResponse(space: space, store: store, conversation: id, after: after, viewer: viewer.group, reader: viewer.reader, clock: clock)
+      return conversationStreamResponse(space: space, scope: runtime.streamScope, store: store, conversation: id, after: after, viewer: viewer.group, reader: viewer.reader, clock: clock)
     case let .failure(refusal):
       return refusal.response
     }

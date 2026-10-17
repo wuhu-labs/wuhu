@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -199,6 +200,7 @@ actor ExecWorker {
   /// requests waiting for its answer.
   var claims: [UUID: [AsyncStream<Never>.Continuation]] = [:]
   var recorded: WorkerInventory?
+  private let taskScope = TaskScope()
   var recording: Task<Void, Never>?
 
   /// How long a launched worker waits for its first link before it gives up on an agent that is gone.
@@ -280,9 +282,9 @@ actor ExecWorker {
   /// Writes the inventory when it changed. Writes run one at a time, each reading the runtime afresh.
   func record() async {
     let previous = recording
-    let task = Task { await previous?.value; await self.write() }
+    let task = try? taskScope.run("worker-inventory") { await previous?.value; await self.write() }
     recording = task
-    await task.value
+    await task?.value
   }
 
   func write() async {
@@ -322,6 +324,7 @@ actor ExecWorker {
 
   /// Removes the directory, or leaves it with an inventory naming what it dropped unsettled.
   func finish() async {
+    await taskScope.close()
     let held = await agent.inventory()
     let dropped = held.unsettled.union(held.lost)
     guard !dropped.isEmpty else { WorkerDirectory.remove(directory); return }

@@ -1,4 +1,6 @@
 import Dependencies
+import Synchronization
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,7 +14,16 @@ actor SessionRegistry {
   private let liveness: LivenessTracker
 
   private(set) var sessions: [SessionID: SessionActor] = [:]
-  private var stopped = false
+  private enum State {
+    case active
+    case stopping(AsyncStream<Void>)
+    case stopped
+  }
+
+  private var state = State.active
+  private var stopped: Bool { if case .active = state { false } else { true } }
+  private nonisolated let taskScope = TaskScope()
+  private nonisolated let admission = Mutex(true)
   private var reaper: Task<Void, Never>?
 
   @Dependency(\.continuousClock) private var clock
@@ -30,7 +41,14 @@ actor SessionRegistry {
 
   func activate() {
     precondition(reaper == nil, "SessionRegistry activates once")
-    reaper = Task { await runReaper() }
+    reaper = try? taskScope.run("session-reaper") { await runReaper() }
+  }
+
+  nonisolated func send(_ action: SessionActor.ExternalAction, to id: SessionID) {
+    admission.withLock { open in
+      guard open else { return }
+      _ = try? taskScope.run("session-command") { await self.post(action, to: id) }
+    }
   }
 
   func post(_ action: SessionActor.ExternalAction, to id: SessionID) async {
@@ -54,19 +72,47 @@ actor SessionRegistry {
   }
 
   func discard(_ id: SessionID) async {
-    await sessions.removeValue(forKey: id)?.shutdown()
+    guard let session = sessions.removeValue(forKey: id) else { return }
+    await retire(session)
   }
 
   func stop() async {
-    stopped = true
+    switch state {
+    case let .stopping(finished):
+      await uncancellable("Join an already-running registry shutdown") { for await _ in finished {} }
+      return
+    case .stopped: return
+    case .active: break
+    }
+    let (finished, signal) = AsyncStream<Void>.makeStream()
+    state = .stopping(finished)
+    admission.withLock { $0 = false }
     let reaper = self.reaper
     reaper?.cancel()
     self.reaper = nil
     await reaper?.value
-    for session in sessions.values {
-      await session.shutdown()
-    }
+    let current = Array(sessions.values)
     sessions.removeAll()
+    for session in current { await retire(session) }
+    await taskScope.close()
+    state = .stopped
+    signal.finish()
+  }
+
+  private func retire(_ session: SessionActor) async {
+    let (dismounted, signal) = AsyncStream<Void>.makeStream()
+    do {
+      try taskScope.run("retired-session-drain") {
+        await session.shutdown()
+        signal.finish()
+        await session.taskScope.close()
+      }
+    } catch {
+      await session.shutdown()
+      signal.finish()
+      await session.taskScope.close()
+    }
+    for await _ in dismounted {}
   }
 
   // One eviction site, both policies: the periodic sweep retires settled
@@ -101,6 +147,7 @@ actor SessionRegistry {
     for entry in idle {
       guard await entry.session.tryRetire(ttl: ttl[entry.id]!, now: now) else { continue }
       sessions.removeValue(forKey: entry.id)
+      _ = try? taskScope.run("retired-session-drain") { await entry.session.taskScope.close() }
     }
   }
 }

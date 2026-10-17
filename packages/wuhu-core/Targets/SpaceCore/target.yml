@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - TaskLifetime
   - name: CImageCodec
     platforms: [linux]
   - Assertion

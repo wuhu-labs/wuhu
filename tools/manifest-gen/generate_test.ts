@@ -3332,3 +3332,56 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
     false,
   )
 })
+
+Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing Store or Direct', () => {
+  const target: AppManifest['targets'][number] = {
+    name: 'ExampleiOS',
+    platform: 'iOS',
+    bundleID: 'tech.example.app',
+    bundleName: 'Example',
+    entitlements: {
+      common: { 'com.apple.developer.icloud-services': ['CloudKit'] },
+    },
+    devIdentity: {
+      bundleID: 'tech.example.app.dev',
+      entitlements: {
+        'com.apple.developer.icloud-container-environment': 'Development',
+      },
+    },
+    families: ['iphone'],
+    appIcons: [],
+    infoPlist: 'Info.plist',
+    minimumOSVersion: '18.0',
+    dependencies: [],
+    info: {},
+  }
+  const key = 'com.apple.developer.icloud-container-environment'
+  assertEquals(
+    resolvedEntitlements(target, 'dev', 'TEAM123456')[key],
+    'Development',
+  )
+  assertEquals(
+    resolvedEntitlements(target, 'adhoc', 'TEAM123456')[key],
+    'Development',
+  )
+  assertEquals(
+    resolvedEntitlements(target, 'store', 'TEAM123456')[key],
+    'Production',
+  )
+  assertEquals(
+    resolvedEntitlements(
+      { ...target, devIdentity: undefined },
+      'adhoc',
+      'TEAM123456',
+    )[key],
+    'Production',
+  )
+  assertEquals(
+    resolvedEntitlements(
+      { ...target, platform: 'macOS', distribution: 'direct' },
+      'adhoc',
+      'TEAM123456',
+    )[key],
+    'Production',
+  )
+})

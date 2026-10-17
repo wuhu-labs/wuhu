@@ -9,7 +9,7 @@ A monitor is a `run_script` module that starts a process on a machine with `wuhu
 
 The shape is always the same:
 
-1. `result(...)` right away, before the long wait. It answers the `run_script` call; until you call it, the call blocks (up to `timeout_seconds`).
+1. `result(...)` right away, before the long wait. It answers the `run_script` call; until you call it, the call waits (up to `wait_seconds`, then it returns `running` and the script runs on).
 2. One `update(...)` per event. Every update is a message that wakes you and costs a turn, so send only what you would act on. Batch chatty sources.
 3. The script ends when nothing is pending: the process exits and you stop reading. Its processes die with it.
 
@@ -90,9 +90,9 @@ update(
 
 ## Stopping
 
-- `stop_script` with the script id aborts `signal`, the global `AbortSignal` every script has. Pending reads reject with an `AbortError`, the script ends, and every process it spawned is killed (TERM, then KILL after 5 s). Nothing extra to write: the processes never outlive the script.
+- `cancel` with the script id (`script.…`, also listed under `running:` in `<session-state>`) aborts `signal`, the global `AbortSignal` every script has. Pending reads reject with an `AbortError`, the script ends, and every process it spawned is killed (TERM, then KILL after 5 s). Nothing extra to write: the processes never outlive the script.
 - To stop on your own terms, `p.kill()` the process; the read loop then ends when its output does. Use `signal` for your own waits: `signal.addEventListener("abort", ...)`, or pass it to `fetch` and `sleep`.
-- A server restart kills running scripts too. Their processes are killed about a minute after the server comes back, and you get "script X was killed by a server restart". Re-run the monitor if you still need it.
+- A server restart kills running scripts too. Their processes are killed about a minute after the server comes back, and you get "script.X was killed by a server restart". Re-run the monitor if you still need it.
 
 ## Limits
 

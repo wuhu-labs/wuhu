@@ -1,0 +1,6 @@
+=== run_script
+[{"id":"timer.tc-1","message":"cancelled timer timer.tc-1"},{"code":"notFound","message":"timer.tc-1 is not armed: it already ended, or you never had it"},{"code":"notFound","message":"obs.nope is not armed: it already ended, or you never had it"},{"code":"invalidArgument","message":"cancel: a script id is written script.0a1b2c3d"},{"code":"notFound","message":"you have no script script.ffffffff"}]
+
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
+=== probe
+armed: []

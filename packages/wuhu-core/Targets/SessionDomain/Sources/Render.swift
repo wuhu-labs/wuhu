@@ -88,14 +88,17 @@ extension ToolResultItem {
 }
 
 extension StateSnapshot {
-  var rendered: String {
+  /// `running` is read live, never stored in the snapshot.
+  func rendered(running: [String]) -> String {
     let subs = subscriptions.isEmpty
       ? "none"
       : subscriptions.keys.map(\.rawValue).sorted().joined(separator: ", ")
     let reads = preReads.isEmpty ? "none" : preReads.joined(separator: ", ")
+    let work = running.isEmpty ? "none" : running.sorted().joined(separator: ", ")
     return """
     <session-state>
     active subscriptions: \(subs)
+    running: \(work)
     files to re-read (re-established below): \(reads)
     </session-state>
     """
@@ -106,8 +109,8 @@ extension GenerationHead {
   // Role and position are contract: the snapshot is the generation's first
   // user-role message; the summary follows it. A creation head has no summary
   // and gets no nudge.
-  func renderMessages(session: SessionID) -> [Message] {
-    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered)]))]
+  func renderMessages(session: SessionID, running: [String]) -> [Message] {
+    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: running))]))]
     if let note, !note.isEmpty {
       messages.append(.user(.init(content: [.text(note)])))
     }
@@ -142,7 +145,7 @@ extension Transcript {
         if let registeredSubscriptions {
           head.snapshot.subscriptions = registeredSubscriptionState(head.snapshot.subscriptions, registered: registeredSubscriptions)
         }
-        messages.append(contentsOf: head.renderMessages(session: session))
+        messages.append(contentsOf: head.renderMessages(session: session, running: runningWork ?? []))
       case let .direct(message):
         messages.append(.user(.init(content: message.content.blocks(header: message.header.attributing(handles, devices: devices)))))
       case let .message(message):

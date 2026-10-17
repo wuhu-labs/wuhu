@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - TaskLifetime
   - DeploymentAdmin
   - Logging
   - ComputerFiles
@@ -34,6 +35,7 @@ tests:
   exclude:
     - Recordings/**
   dependencies:
+    - TaskLifetime
     - ComputerFiles
     - NIOPosix
     - AsyncHTTPClient

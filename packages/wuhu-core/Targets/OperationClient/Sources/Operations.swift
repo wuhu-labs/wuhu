@@ -13,6 +13,7 @@ import struct OperationProtocol.OperationError
 import struct OperationProtocol.OperationTrace
 import struct OperationProtocol.StartRequest
 import struct OperationProtocol.Verdict
+import TaskLifetime
 
 /// A handle on one operation. Output arrives in arrival order across channels and stays retained, durably, until acknowledged;
 /// every call works the same before and after a server restart.
@@ -59,6 +60,7 @@ public enum ResumedOperation: Sendable {
 /// Every machine operation of one store: admission, one driver per operation, and machine descriptions. Deep inside, shallow
 /// outside: `open` is idempotent by owner and resumes after a restart.
 public actor MachineOperations {
+  private let taskScope = TaskScope()
   static let describeDeadline: Duration = .seconds(5)
 
   private struct Kept {
@@ -145,7 +147,7 @@ public actor MachineOperations {
     while let pending = opening[owner] { _ = try? await pending.value }
     // A shutdown that ran while this open waited fenced only the claims it saw.
     guard !closed else { throw OperationError(.requestCancelled) }
-    let task = Task {
+    let task = try taskScope.run("operation-claim") {
       // Cleared by the task itself, before any waiter resumes, so a waiter never finds a finished task still registered.
       defer { self.opening[owner] = nil }
       return try await self.claim(owner, machine: machine, start: start, consumer: consumer)
@@ -223,9 +225,13 @@ public actor MachineOperations {
   /// Starts a driver for every live record, once, before any caller can open one. A record the store cannot read is set aside
   /// instead, alone: the machine's lease ends its operation there.
   public func resume() async throws -> [ResumedOperation] {
+    guard !closed else { throw OperationError(.requestCancelled) }
     var resumed: [ResumedOperation] = []
     // An owner still opening registers its own driver: it alone may send the start.
-    for stored in try await store.live() where opening[stored.owner] == nil {
+    let live = try await store.live()
+    guard !closed else { throw OperationError(.requestCancelled) }
+    for stored in live where opening[stored.owner] == nil {
+      guard !closed else { throw OperationError(.requestCancelled) }
       switch stored.record {
       case let .success(record):
         resumed.append(.live(attach(record, owner: stored.owner)))
@@ -263,7 +269,7 @@ public actor MachineOperations {
     } else {
       tunnel.release(lanes, on: record.machine)
     }
-    Task { await driver.run() }
+    _ = try? taskScope.run("operation-driver") { await driver.run() }
     return Operation(id: record.id, owner: owner, driver: driver, operations: self)
   }
 
@@ -283,9 +289,14 @@ public actor MachineOperations {
     // `shutdown` or `setAside` may have ended the driver meanwhile: then nothing is to own a stop.
     guard try await driver.abandon(reason, consumer: consumer), !closed, let held = kept[id], held.driver === driver, held.stop == nil else { return }
     tunnel.hold(1, on: driver.machine)
-    kept[id]?.stop = Task {
-      await driver.cleanupStop()
-      self.stopped(id)
+    do {
+      kept[id]?.stop = try taskScope.run("operation-cleanup-stop") {
+        await driver.cleanupStop()
+        self.stopped(id)
+      }
+    } catch {
+      tunnel.release(1, on: driver.machine)
+      throw OperationError(.requestCancelled, operation: id)
     }
   }
 
@@ -325,5 +336,7 @@ public actor MachineOperations {
       tunnel.release(entry.lanes, on: entry.machine)
     }
     for id in Array(kept.keys) { await endKept(id) }
+    await taskScope.close()
+    link.taskScope.cancel()
   }
 }

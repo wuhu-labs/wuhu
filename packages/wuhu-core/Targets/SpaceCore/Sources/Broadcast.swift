@@ -23,6 +23,7 @@ final class FSBroadcast: Sendable {
   }
 
   private struct State {
+    var closed = false
     var nextID: UInt64 = 0
     var subscribers: [UInt64: Subscriber] = [:]
   }
@@ -41,13 +42,25 @@ final class FSBroadcast: Sendable {
 
   func subscribe(glob: String, group: GroupID) -> AsyncStream<FSCommit> {
     let (stream, continuation) = AsyncStream<FSCommit>.makeStream()
-    let id = state.withLock { current -> UInt64 in
+    let id = state.withLock { current -> UInt64? in
+      guard !current.closed else { return nil }
       current.nextID += 1
       current.subscribers[current.nextID] = Subscriber(group: group, glob: glob, continuation: continuation)
       return current.nextID
     }
-    continuation.onTermination = { [weak self] _ in self?.remove(id) }
+    if let id { continuation.onTermination = { [weak self] _ in self?.remove(id) } }
+    else { continuation.finish() }
     return stream
+  }
+
+  func close() {
+    let subscribers = state.withLock { state in
+      let current = Array(state.subscribers.values)
+      state.closed = true
+      state.subscribers.removeAll()
+      return current
+    }
+    for subscriber in subscribers { subscriber.continuation.finish() }
   }
 
   func emit(_ commits: [FSCommit]) {
@@ -82,14 +95,25 @@ final class FSBroadcast: Sendable {
 
 public extension AsyncStream where Element == FSCommit {
   var mutations: AsyncStream<MutationEvent> {
-    AsyncStream<MutationEvent> { continuation in
-      let task = Task {
-        for await commit in self {
-          for event in commit.events { continuation.yield(event) }
-        }
-        continuation.finish()
-      }
-      continuation.onTermination = { _ in task.cancel() }
+    let source = Mutations(commits: self)
+    return AsyncStream<MutationEvent>(unfolding: { await source.next() })
+  }
+}
+
+private actor Mutations {
+  private var commits: AsyncStream<FSCommit>.Iterator?
+  private var pending: Array<MutationEvent>.Iterator = [].makeIterator()
+
+  init(commits: AsyncStream<FSCommit>) { self.commits = commits.makeAsyncIterator() }
+
+  func next() async -> MutationEvent? {
+    while true {
+      if let event = pending.next() { return event }
+      guard var commits = self.commits else { return nil }
+      self.commits = nil
+      guard let commit = await commits.next(isolation: self) else { return nil }
+      self.commits = commits
+      pending = commit.events.makeIterator()
     }
   }
 }

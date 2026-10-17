@@ -76,6 +76,7 @@ public struct MessageHeader: Hashable, Sendable {
     case requestDeadline
     case requestStall
     case script
+    case exec
     case systemNotice
 
     var rendered: String {
@@ -95,6 +96,7 @@ public struct MessageHeader: Hashable, Sendable {
       case .requestDeadline: "request deadline"
       case .requestStall: "request stall"
       case .script: "script"
+      case .exec: "exec"
       case .systemNotice: "system notice"
       }
     }
@@ -224,6 +226,7 @@ extension SystemNotification {
         case .requestDeadline: .requestDeadline
         case .requestStall: .requestStall
         case .script: .script
+        case .exec: .exec
         case .context: .systemNotice
         }
       }(),

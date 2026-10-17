@@ -1,0 +1,5 @@
+=== run_script
+{"status":"running","id":"script.00000000","tail":"thinking","note":"a message arrived, so the call gave the turn back before result(); it keeps running, its result arrives as a message, and cancel(\"script.00000000\") stops it"}
+=== message
+result of script.00000000:
+done after two minutes

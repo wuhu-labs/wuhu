@@ -231,7 +231,7 @@ struct IdentityScriptRig {
   let executor: ToolExecutor
 
   func evaluate(_ source: String) async throws -> JSONValue {
-    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "timeout_seconds": 60, "on_timeout": "kill"])), state: ToolExecutionState())
+    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 60])), state: ToolExecutionState())
     guard case let .script(result) = payload else { Issue.record("unexpected script result: \(payload)"); return .null }
     let first = String(result.output.prefix { $0 != "\n" })
     return JSONValue.parse(first) ?? .string(first)

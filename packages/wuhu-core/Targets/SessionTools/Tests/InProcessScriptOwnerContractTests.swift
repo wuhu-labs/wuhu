@@ -34,17 +34,15 @@ import Testing
       group.addTask {
         entered.continuation.yield(())
         entered.continuation.finish()
-        do { for try await _ in relay.events {} } catch {}
+        do { for try await _ in relay {} } catch {}
         consumerEnded.withLock { $0 = true }
       }
       for await _ in entered.stream {}
       group.cancelAll()
     }
     try await until("parent observation terminated") { parentEnded.value }
-    await relay.pump.value
     #expect(parentEnded.value)
     #expect(consumerEnded.value)
-    #expect(relay.pump.isCancelled)
   }
 }
 
@@ -71,7 +69,10 @@ extension InProcessScriptOwnerContractTests {
       let execution = try await scripts.start("try { await fetch('https://identity.test', {identity:true}) } catch(e) { result(e.message) }", session: session, lifetime: .seconds(10), tools: tools)
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
-        let answer = try? await execution.answer(within: .seconds(10), onTimeout: .kill)
+        let answer = try? await execution.answer(until: {
+          do { try await Task.sleep(for: .seconds(10)) } catch { return nil }
+          return .waited(10)
+        })
         #expect(answer == .result("failed *** ***"))
         group.cancelAll()
       }

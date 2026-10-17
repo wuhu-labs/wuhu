@@ -1,4 +1,5 @@
 import Dependencies
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -155,6 +156,7 @@ public struct ForeignReceipt: Error, Equatable, Sendable {
 }
 
 public struct SessionStore: Sendable {
+  let taskScope: TaskScope
   let writer: any DatabaseWriter
   let blobs: BlobStore
   let dateGen: DateGenerator
@@ -166,7 +168,7 @@ public struct SessionStore: Sendable {
 
 extension Space {
   public nonisolated var sessions: SessionStore {
-    SessionStore(writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, archiveReservations: archiveReservations, rng: rng)
+    SessionStore(taskScope: taskScope, writer: writer, blobs: blobs, dateGen: dateGen, broadcast: broadcast, signals: workSignals, archiveReservations: archiveReservations, rng: rng)
   }
 }
 
@@ -243,6 +245,51 @@ extension SessionStore {
     let key = id.rawValue
     return try await writer.read { db in
       try Sessions.undrained(key, tail: try Sessions.runtime(key, in: db).queueTail, in: db)
+    }
+  }
+
+  /// For each urgency, the earliest item in the session's queue that the
+  /// model has not seen yet, most urgent first; empty while there is none:
+  /// now, and again after every change.
+  public func observePendingArrivals(_ id: SessionID) -> some AsyncSequence<[PendingArrival], any Error> & Sendable {
+    let key = id.rawValue
+    return ValueObservation
+      .tracking { db in try Self.pendingArrivals(key, in: db) }
+      .removeDuplicates()
+      .values(in: writer, bufferingPolicy: .bufferingNewest(1))
+  }
+
+  static func pendingArrivals(_ key: String, in db: Database) throws -> [PendingArrival] {
+    var earliest: [ArrivalUrgency: Date] = [:]
+    for row in try Row.fetchAll(
+      db,
+      sql: "SELECT payload, enqueued_at FROM session_queue WHERE session_id = ? AND id > ? ORDER BY id",
+      arguments: [key, try Sessions.runtime(key, in: db).queueTail],
+    ) {
+      guard let urgency = try urgency(of: try Sessions.decode(QueueInput.self, from: row["payload"]), to: key, in: db),
+            earliest[urgency] == nil
+      else { continue }
+      earliest[urgency] = try SQLiteDateFormat.date(from: row["enqueued_at"])
+    }
+    return earliest.map { PendingArrival(urgency: $0.key, arrivedAt: $0.value) }.sorted { $0.urgency < $1.urgency }
+  }
+
+  // A person's message in the session's own box or in a person's DM with it
+  // is direct; any other message or notification is other. Context
+  // deliveries are the session's own housekeeping and count as nothing.
+  private static func urgency(of input: QueueInput, to session: String, in db: Database) throws -> ArrivalUrgency? {
+    switch input {
+    case let .message(message):
+      guard message.senderSession == nil,
+            let conversation = try Conversations.record(message.conversationID.rawValue, in: db)
+      else { return .other }
+      switch conversation.kind {
+      case .box: return conversation.ownerSession?.rawValue == session ? .direct : .other
+      case .dmUser: return .direct
+      case .users, .dmSession: return .other
+      }
+    case let .notification(notification):
+      return notification.kind == .context ? nil : .other
     }
   }
 

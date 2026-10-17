@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -33,6 +34,8 @@ import typealias Serve.Handler
 /// the starts it forwarded and the inventories of workers it recovered) and the snapshots it forwards; leaving, departure and
 /// retirement are its own state, carried out with standard stops.
 actor ExecWorkers {
+  nonisolated let taskScope = TaskScope()
+  nonisolated let transportScope = TaskScope()
   let machine: String
   let operations: String
   let directory: String
@@ -276,8 +279,10 @@ actor ExecWorkers {
   func run() async {
     while !Task.isCancelled {
       await tick()
-      do { try await clock.sleep(.milliseconds(100)) } catch { return }
+      do { try await clock.sleep(.milliseconds(100)) } catch { break }
     }
+    await taskScope.close()
+    transportScope.cancel()
   }
 
   /// Judges every worker by its lock, records what the dead ones dropped
@@ -302,7 +307,7 @@ actor ExecWorkers {
         if let route = routes[id], route.settled, Self.released(route), !supervisor.retireAsked, let link = supervisor.link {
           supervisors[id]?.retireAsked = true
           let nonce = supervisor.manifest.nonce
-          Task { _ = try? await Self.exchange(Request(url: URL(string: "http://supervisor/retire")!, method: .put), client: link.client, nonce: nonce, deadline: Self.controlDeadline, operation: id) }
+          taskScope.bestEffort("supervisor-retire", within: Self.controlDeadline) { _ = try await Self.exchange(scope: self.transportScope, Request(url: URL(string: "http://supervisor/retire")!, method: .put), client: link.client, nonce: nonce, deadline: Self.controlDeadline, operation: id) }
         }
         continue
       }
@@ -463,14 +468,14 @@ actor ExecWorkers {
       guard let link = linked(route.owner, operation: id) else { continue }
       routes[id]?.phase = .running(stopping: true)
       let owner = route.owner
-      Task { await self.stop(id, owner: owner, link: link, reason: reason) }
+      taskScope.bestEffort("worker-operation-stop", within: Self.controlDeadline) { await self.stop(id, owner: owner, link: link, reason: reason) }
     }
   }
 
   func stop(_ id: UUID, owner: Owner, link: (client: FetchClient, nonce: String), reason: StopReason) async {
     do {
       let request = Request(url: try url(id, "/stop"), method: .put, body: try .json(StopRequest(reason: reason.rawValue)))
-      let (response, data) = try await Self.exchange(request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
+      let (response, data) = try await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
       try record(request, response, data, id, owner)
       if Self.unknownOperation(response, data) || response.status.code == 200 { return }
     } catch {}
@@ -507,7 +512,7 @@ actor ExecWorkers {
   /// One poll of a routed operation, recorded like any forwarded answer; nil unless it answered with a snapshot.
   func poll(_ id: UUID, _ query: String) async -> OperationSnapshot? {
     guard let route = routes[id], let link = linked(route.owner, operation: id), let request = try? Request(url: url(id, query)),
-          let (response, data) = try? await Self.exchange(request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
+          let (response, data) = try? await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id)
     else { return nil }
     try? record(request, response, data, id, route.owner)
     guard response.status.code == 200 else { return nil }
@@ -544,7 +549,7 @@ actor ExecWorkers {
     await withTaskGroup(of: Void.self) { group in
       for id in targets {
         guard let link = linked(.supervisor, operation: id) else { continue }
-        group.addTask { _ = try? await Self.exchange(Request(url: URL(string: "http://supervisor/retire")!, method: .put), client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id) }
+        group.addTask { _ = try? await Self.exchange(scope: self.transportScope, Request(url: URL(string: "http://supervisor/retire")!, method: .put), client: link.client, nonce: link.nonce, deadline: Self.controlDeadline, operation: id) }
       }
     }
     while routes.values.contains(where: { !$0.verdict }), clock.now() < until {
@@ -636,7 +641,7 @@ actor ExecWorkers {
   func forward(_ request: Request, _ id: UUID, to owner: Owner) async throws -> Response {
     guard let link = try await link(to: owner, operation: id) else { throw OperationError(.unknownOperation) }
     routes[id]?.lastRequest = clock.now()
-    let (response, data) = try await Self.exchange(request, client: link.client, nonce: link.nonce, deadline: Self.requestDeadline, operation: id)
+    let (response, data) = try await Self.exchange(scope: self.transportScope, request, client: link.client, nonce: link.nonce, deadline: Self.requestDeadline, operation: id)
     try record(request, response, data, id, owner)
     return response
   }
@@ -678,17 +683,30 @@ actor ExecWorkers {
   }
 
   /// One request over a link, its answer read whole, bounded by `deadline`.
-  static func exchange(_ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?) async throws -> (Response, Data) {
+  static func exchange(scope: TaskScope, _ request: Request, client: FetchClient, nonce: String, deadline: Duration, operation: UUID?) async throws -> (Response, Data) {
     let query = request.url.query.map { "?" + $0 } ?? ""
     guard let url = URL(string: "http://localhost" + request.url.path + query) else { throw OperationError(.invalidConfiguration) }
     var local = request; local.url = url
     local.headers["Host"] = "localhost"
     local.headers["X-Wuhu-Supervisor-Nonce"] = nonce
     let request = local
-    return try await withDeadline(deadline, operation: operation) {
-      let response = try await client(request)
-      let data = try await response.body.bytes(upTo: OperationLimits.responseBytes)
-      return (Response(status: response.status, headers: response.headers, body: .bytes(data, contentType: response.body.contentType)), Data(data))
+    let (answers, reply) = AsyncThrowingStream<(Response, Data), any Error>.makeStream(bufferingPolicy: .bufferingOldest(1))
+    let work = try scope.run("worker-exchange") {
+      do {
+        let response = try await client(request)
+        let data = try await response.body.bytes(upTo: OperationLimits.responseBytes)
+        reply.yield((Response(status: response.status, headers: response.headers, body: .bytes(data, contentType: response.body.contentType)), Data(data)))
+        reply.finish()
+      } catch { reply.finish(throwing: error) }
+    }
+    defer { work.cancel() }
+    do {
+      return try await withDeadline(deadline, clock: ContinuousClock()) {
+        for try await answer in answers { return answer }
+        throw CancellationError()
+      }
+    } catch is DeadlineExceeded {
+      throw Unavailable.supervisorTimeout.error(operation)
     }
   }
 }

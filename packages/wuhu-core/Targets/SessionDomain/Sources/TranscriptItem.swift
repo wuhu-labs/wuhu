@@ -101,6 +101,7 @@ public struct SystemNotification: Hashable, Sendable, Codable {
     case requestDeadline
     case requestStall
     case script
+    case exec
     case context
   }
 

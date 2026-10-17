@@ -357,7 +357,7 @@ extension ExecToolTests {
             await exec.exit(.signaled(signal: 15), timedOut: .killed)
           }
         }
-        var arguments: OrderedDictionary<String, JSONValue> = ["machine": .string(machine.rawValue), "cwd": "/work", "command": "sleep 7200"]
+        var arguments: OrderedDictionary<String, JSONValue> = ["machine": .string(machine.rawValue), "cwd": "/work", "command": "sleep 7200", "wait_seconds": 20000]
         if let explicit { arguments["max_lifetime_seconds"] = .number(explicit) }
         guard case let .exec(result) = try await world.run("exec", ToolArguments(.object(arguments)), id: "tc-timeout") else {
           throw Mismatch("timed-out exec failed")
@@ -391,7 +391,7 @@ extension ExecToolTests {
           }
         }
         guard case let .exec(result) = try await world.run(
-          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make"]), id: "tc-in-time",
+          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make", "wait_seconds": 14400]), id: "tc-in-time",
         ) else { throw Mismatch("exec failed") }
         #expect(result.output == "")
         #expect(result.exitCode == 0)
@@ -417,12 +417,12 @@ extension ExecToolTests {
         group.addTask { await scripted.pump() }
         group.addTask {
           await scripted.serve { exec in
-            await time.advance(by: 1900)
+            await time.advance(by: 1805)
             await exec.exit(.exited(code: 0))
           }
         }
         guard case let .exec(result) = try await world.run(
-          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make"]), id: "tc-late",
+          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "make", "wait_seconds": 14400]), id: "tc-late",
         ) else { throw Mismatch("exec failed") }
         #expect(result.output == "")
         #expect(result.exitCode == 0)

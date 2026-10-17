@@ -25,6 +25,7 @@ import enum PinnedTLS.PinnedTLS
 import enum PinnedTLS.SystemTrust
 import enum SpaceCore.UserRecovery
 import SpaceServer
+import TaskLifetime
 
 struct StandardInputEncodingError: Error, CustomStringConvertible {
   var description: String { "stdin is not valid UTF-8" }
@@ -87,6 +88,7 @@ enum Main {
       FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8))
       exit(1)
     }
+    let rootScope = TaskScope()
     let runner = CommandRunner(
       fetch: SpaceTransport.diagnosing(
         SpaceTransport.fetchClient(trust: trust, timeout: .seconds(30), plain: .asyncHTTPClient(client)),
@@ -97,7 +99,7 @@ enum Main {
         trust: trust,
       ),
       serve: { config in
-        let server = Task {
+        let server = try rootScope.run("space-server") {
           try await SpaceServer.serve(
             folder: URL(fileURLWithPath: config.folder, isDirectory: true),
             host: config.host,
@@ -183,6 +185,7 @@ enum Main {
       FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); code = MachineV2Runtime.exitStatus(for: error)
     }
     var shutdownFailed = false
+    await rootScope.close()
     for shutdown in [inferenceClient.shutdown, client.shutdown] {
       do {
         try await shutdown()

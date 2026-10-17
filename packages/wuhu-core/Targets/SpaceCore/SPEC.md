@@ -185,3 +185,5 @@ A `ModelRouteTransition` compares the held epoch and requires a changed group in
 ## Retired worker schema
 
 The existing `session_worker_incarnations`, `execution_worker_owners`, `session_worker_assignments` and `worker_script_owners` table declarations remain unchanged. Runtime code neither reads nor writes them; removal is deferred to a separately authorized schema change. Script restart cleanup consumes only `script_execs`.
+
+`Space.close()` finishes live filesystem subscriptions and cancels and drains the space-owned query, filesystem replay, and session observation workers. Hosts await this drain during shutdown. Observation admission after close returns a finished stream (or `TaskScopeClosed` for throwing observations); it does not start another worker.

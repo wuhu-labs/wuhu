@@ -71,6 +71,7 @@ private func renderedKernelItem(_ logItem: SessionLogItem, level: Int, clip: Int
     case .requestDeadline: "request deadline"
     case .requestStall: "request stall"
     case .script: "script"
+    case .exec: "exec"
     case .context: "context"
     }
     return "[\(ref)] \(kind) · \(notification.header.line)\n" + clipped(notification.content.text, to: clip)

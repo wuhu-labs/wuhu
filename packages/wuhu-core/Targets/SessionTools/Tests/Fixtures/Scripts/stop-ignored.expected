@@ -1,6 +1,6 @@
 === run_script
 stubborn
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
-=== stop_script
-script 00000000 was killed: it ignored stop_script for 5 s
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
+=== cancel
+script.00000000 was killed: it ignored the cancel for 5 s

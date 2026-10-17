@@ -1,4 +1,5 @@
 import Dependencies
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -55,6 +56,7 @@ public struct SubscriptionFiring: Sendable {
   }
 
   private func runRegistry() async throws {
+    let taskScope = TaskScope()
     let (events, post) = AsyncStream.makeStream(of: RegistryEvent.self)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask {
@@ -124,7 +126,7 @@ public struct SubscriptionFiring: Sendable {
             generation += 1
             let startedGeneration = generation
             let backoff = retries[arming] ?? 0
-            running[arming] = (startedGeneration, Task {
+            running[arming] = (startedGeneration, try taskScope.run("subscription-firing") {
               let outcome: Result<Void, any Error>
               do {
                 @Dependency(\.continuousClock) var clock
@@ -151,6 +153,7 @@ public struct SubscriptionFiring: Sendable {
       post.finish()
       for job in running.values { job.task.cancel() }
       for job in running.values { await job.task.value }
+      await taskScope.close()
       if let failure { throw failure }
     }
   }

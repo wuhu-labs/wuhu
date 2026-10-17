@@ -63,6 +63,7 @@ struct ExecArguments: Decodable {
   var env: [String: String]?
   var secrets: [String: String]?
   var maxLifetimeSeconds: Double?
+  var waitSeconds: Double?
   /// The old name of `max_lifetime_seconds`, decoded only to refuse it.
   var timeoutSeconds: JSONValue?
   var maxOutput: Int?
@@ -74,6 +75,7 @@ struct ExecArguments: Decodable {
     case env
     case secrets
     case maxLifetimeSeconds = "max_lifetime_seconds"
+    case waitSeconds = "wait_seconds"
     case timeoutSeconds = "timeout_seconds"
     case maxOutput = "max_output"
   }
@@ -106,11 +108,7 @@ struct TimerArguments: Decodable {
 }
 
 struct CancelArguments: Decodable {
-  var subscriptionID: String
-
-  enum CodingKeys: String, CodingKey {
-    case subscriptionID = "subscription_id"
-  }
+  var id: String
 }
 
 struct QueryArguments: Decodable {

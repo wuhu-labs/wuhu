@@ -71,58 +71,32 @@ extension InProcessToolOwnerClient {
     return .timer(.init(subscriptionID: subscriptionID, schedule: schedule, message: arguments.message))
   }
 
-  enum CancelKind {
-    case observation
-    case timer
-  }
-
-  func cancel(
-    _ kind: CancelKind,
-    _ session: SessionID,
-    _ arguments: CancelArguments,
-    state: ToolExecutionState,
-  ) async throws -> ToolResultPayload {
-    let subscriptionID = SubscriptionID(arguments.subscriptionID)
-    // The fold answers only so a cancel retried after a crash, its slot
-    // already deleted, stays idempotent.
+  // The subscription half of cancel(id). Only the caller's own slots are
+  // looked up, so another session's id is as unknown as a made-up one. A
+  // request's deadline and stall alert end with the request, never here.
+  func cancel(_ session: SessionID, _ arguments: CancelArguments) async throws -> ToolResultPayload {
+    let subscriptionID = SubscriptionID(arguments.id)
+    if subscriptionID.rawValue.hasPrefix("deadline.") { throw deadlineRefusal(subscriptionID) }
+    if subscriptionID.rawValue.hasPrefix("stall.") {
+      throw ToolProblem("\(subscriptionID.rawValue) is the stall alert of a request you opened; it ends with the task's final report", code: "invalidArgument")
+    }
     let armed = try await store.armedSubscriptions(session).first { $0.slot.id == subscriptionID }
-    if case .requestStall = armed?.slot.kind {
-      throw ToolProblem("\(subscriptionID.rawValue) is the stall alert of a request you opened; it ends with the task's final report")
-    }
-    let standing = if let armed { armed.subscription } else { state.subscriptions[subscriptionID] }
-    switch (standing, kind) {
-    case (.observe, .observation), (.timer, .timer):
-      break
-    case (.observe, .timer):
-      throw ToolProblem("\(subscriptionID.rawValue) is an observation; use cancel_observation")
-    case (.timer, .observation):
-      throw ToolProblem("\(subscriptionID.rawValue) is a timer; use cancel_timer")
-    case (.requestDeadline, _):
-      throw ToolProblem("\(subscriptionID.rawValue) is the deadline of a request you opened; it ends with the task's final report")
-    case (nil, _):
-      throw ToolProblem("unknown subscription: \(subscriptionID.rawValue)")
-    }
-    try await store.cancelSubscription(session, subscriptionID: subscriptionID)
-    return switch kind {
-    case .observation: .cancelObservation(.init(subscriptionID: subscriptionID))
-    case .timer: .cancelTimer(.init(subscriptionID: subscriptionID))
+    switch armed?.slot.kind {
+    case .observe?:
+      try await store.cancelSubscription(session, subscriptionID: subscriptionID)
+      return .cancelObservation(.init(subscriptionID: subscriptionID))
+    case .timer?:
+      try await store.cancelSubscription(session, subscriptionID: subscriptionID)
+      return .cancelTimer(.init(subscriptionID: subscriptionID))
+    case .requestDeadline?, .requestStall?, .parkReminder?, nil:
+      // Nothing remembers a subscription past its slot: one that ended (a
+      // fired one-shot, a second cancel) reads like one that never was.
+      throw ToolProblem("\(subscriptionID.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
     }
   }
-}
 
-extension ArmedSubscription {
-  fileprivate var subscription: Subscription? {
-    switch slot.kind {
-    case let .observe(sql, _):
-      return .observe(sql: sql)
-    case let .timer(schedule, _):
-      return .timer(schedule)
-    case .requestDeadline:
-      guard let nextFireAt else { preconditionFailure("a request deadline is armed with its fire time") }
-      return .requestDeadline(nextFireAt)
-    case .parkReminder, .requestStall:
-      return nil
-    }
+  private func deadlineRefusal(_ subscriptionID: SubscriptionID) -> ToolProblem {
+    ToolProblem("\(subscriptionID.rawValue) is the deadline of a request you opened; it ends with the task's final report", code: "invalidArgument")
   }
 }
 

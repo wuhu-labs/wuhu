@@ -1,6 +1,7 @@
 import Dependencies
 import Logging
 import Synchronization
+import TaskLifetime
 
 public final class SpanBuffer: Sendable {
   private struct State {
@@ -110,7 +111,8 @@ public final class SpanBuffer: Sendable {
     }
     guard first else { return }
     @Dependency(\.continuousClock) var clock
-    await Task {
+    // Flush the final spans even when shutdown arrived through cancellation.
+    await uncancellable("Flush final spans after shutdown cancellation") {
       await withTaskGroup(of: Void.self) { group in
         group.addTask {
           repeat { await self.flush(export: export) } while self.pending > 0 && !Task.isCancelled
@@ -123,6 +125,6 @@ public final class SpanBuffer: Sendable {
         state.dropped += state.spans.count
         state.spans.removeAll()
       }
-    }.value
+    }
   }
 }

@@ -8,10 +8,12 @@ import SessionDomain
 import SpaceContract
 import SpaceCore
 import Synchronization
+import TaskLifetime
 import struct WuhuAI.AssistantMessage
 
 func conversationStreamResponse(
   space: Space,
+  scope: TaskScope,
   store: SessionStore,
   conversation: ConversationID,
   after: Int64,
@@ -20,7 +22,7 @@ func conversationStreamResponse(
   clock: any Clock<Duration>,
 ) -> Response {
   let events = AsyncStream<SSEEvent> { continuation in
-    let task = Task {
+    let task = try? scope.run("conversation-events") {
       do {
         for try await batch in store.observeConversation(conversation, after: after, as: Principal(actor: reader.map { .person(persona: $0, account: AccountID(rawValue: $0)) } ?? .anonymous, group: viewer)) {
           for payload in try await messagePayloads(batch, sessions: store, space: space, viewer: viewer) {
@@ -30,7 +32,8 @@ func conversationStreamResponse(
       } catch {}
       continuation.finish()
     }
-    continuation.onTermination = { _ in task.cancel() }
+    if task == nil { continuation.finish() }
+    continuation.onTermination = { _ in task?.cancel() }
   }
   return .sse(events, heartbeat: .seconds(1), clock: clock)
 }
@@ -39,7 +42,8 @@ func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: T
   let store = runtime.store
   let hub = runtime.attempts
   let events = AsyncStream<SSEEvent> { continuation in
-    let task = Task {
+    let scope = runtime.streamScope
+    let task = try? scope.run("session-events") {
       let tracker = AttemptTracker()
       await withTaskGroup(of: Bool.self) { group in
         group.addTask {
@@ -109,7 +113,8 @@ func directStreamResponse(runtime: SessionRuntime, session: SessionID, cursor: T
       }
       continuation.finish()
     }
-    continuation.onTermination = { _ in task.cancel() }
+    if task == nil { continuation.finish() }
+    continuation.onTermination = { _ in task?.cancel() }
   }
   return .sse(events)
 }

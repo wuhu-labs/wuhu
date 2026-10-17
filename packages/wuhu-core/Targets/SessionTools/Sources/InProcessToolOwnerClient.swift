@@ -33,6 +33,7 @@ public struct InProcessToolOwnerClient: SessionOwnerClient {
   let secrets: SpaceSecretStores?
   let machines: MachineSeam?
   let execBackend: ExecBackend?
+  let execJobs: ExecJobs
   let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
   let resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)?
   let prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)?
@@ -52,6 +53,7 @@ public struct InProcessToolOwnerClient: SessionOwnerClient {
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
     completionMetrics: InferenceMetricsSink? = nil,
     control: SessionControl? = nil,
+    execJobs: ExecJobs = ExecJobs(),
   ) {
     self.identityFetch = identityFetch
     self.executionOwner = executionOwner
@@ -60,6 +62,7 @@ public struct InProcessToolOwnerClient: SessionOwnerClient {
     self.secrets = secrets
     self.machines = machines
     execBackend = exec
+    self.execJobs = execJobs
     self.resolveModelExecutor = resolveModelExecutor
     self.resolveModelGroup = resolveModelGroup
     self.prepareModelRoute = prepareModelRoute
@@ -126,10 +129,10 @@ public struct InProcessToolOwnerClient: SessionOwnerClient {
       return try await observe(session, callID, decoded(ObserveArguments.self, call))
     case .timer:
       return try await timer(session, callID, decoded(TimerArguments.self, call))
-    case .cancelObservation:
-      return try await cancel(.observation, session, decoded(CancelArguments.self, call), state: state)
-    case .cancelTimer:
-      return try await cancel(.timer, session, decoded(CancelArguments.self, call), state: state)
+    case .cancel:
+      let arguments = try decoded(CancelArguments.self, call)
+      if case let .exec(id) = try CancelTarget(arguments.id) { return try await cancelExec(session, id) }
+      return try await cancel(session, arguments)
     case .query:
       return try await query(session, decoded(QueryArguments.self, call))
     case .sendMessage:
@@ -147,7 +150,7 @@ public struct InProcessToolOwnerClient: SessionOwnerClient {
       return try await setTitle(session, decoded(SetTitleArguments.self, call))
     case .manipulateUI:
       return try await manipulateUI(session, decoded(ManipulateUIArguments.self, call))
-    case .generateImage, .runScript, .stopScript:
+    case .generateImage, .runScript:
       preconditionFailure("interpreter-owned tools must not enter the persistent dispatcher")
     }
   }

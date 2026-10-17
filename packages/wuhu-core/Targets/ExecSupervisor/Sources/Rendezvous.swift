@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -224,13 +225,20 @@ struct RendezvousLink: Sendable {
 
   /// A handshake frame, closing the connection when it does not arrive in time.
   func receive<T: Decodable>(_ type: T.Type) async throws -> T {
-    let watchdog = Task { [channel] in
+    let scope = TaskScope()
+    let watchdog = try? scope.run("rendezvous-handshake-watchdog") { [channel] in
       try await ContinuousClock().sleep(for: Rendezvous.handshakeTimeout)
       channel.close(promise: nil)
     }
-    defer { watchdog.cancel() }
-    guard let bytes = try await receiver.next() else { throw OperationError(.supervisorUnavailable, message: "Rendezvous closed during handshake") }
-    return try JSONDecoder().decode(T.self, from: bytes)
+    do {
+      guard let bytes = try await receiver.next() else { throw OperationError(.supervisorUnavailable, message: "Rendezvous closed during handshake") }
+      watchdog?.cancel()
+      await scope.close()
+      return try JSONDecoder().decode(T.self, from: bytes)
+    } catch {
+      await scope.close()
+      throw error
+    }
   }
 
   func peerUID() async throws -> UInt32 {

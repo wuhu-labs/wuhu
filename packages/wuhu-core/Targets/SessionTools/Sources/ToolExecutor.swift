@@ -62,8 +62,7 @@ enum RosterTool: String, CaseIterable {
   case templates
   case observe
   case timer
-  case cancelObservation = "cancel_observation"
-  case cancelTimer = "cancel_timer"
+  case cancel
   case query
   case sendMessage = "send_message"
   case request
@@ -73,7 +72,6 @@ enum RosterTool: String, CaseIterable {
   case generateImage = "generate_image"
   case manipulateUI = "manipulate_ui"
   case runScript = "run_script"
-  case stopScript = "stop_script"
 }
 
 public struct ToolExecutor: Sendable {
@@ -101,7 +99,7 @@ public struct ToolExecutor: Sendable {
     do {
       switch tool {
       case .runScript: return try await runScript(session, decoded(RunScriptArguments.self, call))
-      case .stopScript: return try await stopScript(session, decoded(StopScriptArguments.self, call))
+      case .cancel: return try await cancel(session, decoded(CancelArguments.self, call), call: call, state: state)
       case .generateImage: return try await generateImage(session, ToolCallID(call.id), decoded(GenerateImageArguments.self, call), state: state)
       default: return try await owner.execute(session: session, call: call, state: state)
       }

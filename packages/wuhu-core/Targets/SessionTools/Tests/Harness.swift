@@ -184,6 +184,13 @@ struct ToolWorld {
   }
 }
 
+func failure(_ payload: ToolResultPayload) throws -> ToolFailure {
+  guard case let .failure(failure) = payload else {
+    throw Mismatch("expected a failure, got \(payload)")
+  }
+  return failure
+}
+
 func failureMessage(_ payload: ToolResultPayload) throws -> String {
   guard case let .failure(failure) = payload else {
     throw Mismatch("expected a failure, got \(payload)")

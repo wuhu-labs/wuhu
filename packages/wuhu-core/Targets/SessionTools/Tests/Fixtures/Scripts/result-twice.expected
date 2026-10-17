@@ -1,8 +1,8 @@
 === run_script
 first
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === message
-script 00000000 failed after its result: Error: result() can be called only once
+script.00000000 failed after its result: Error: result() can be called only once
     at result (<prelude>:198:29)
     at <anonymous> (script:2:1)

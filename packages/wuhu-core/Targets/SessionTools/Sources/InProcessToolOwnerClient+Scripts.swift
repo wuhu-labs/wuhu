@@ -46,7 +46,7 @@ extension InProcessToolOwnerClient {
   public func watch(_ glob: String, from: Rev?, session: SessionID) async throws -> AsyncThrowingStream<JSONValue, any Error> {
     let watched = try await WatchedGlob(glob, as: principal(of: session), in: space)
     let events = await space.observeFS(glob: watched.pattern, from: from, group: watched.group)
-    return parentWatchRelay(events, prefix: watched.prefix).events
+    return parentWatchRelay(events, prefix: watched.prefix)
   }
 
   public func dataOperation(_ operation: ScriptDataOperation, input: JSONValue, session: SessionID) async throws -> JSONValue {
@@ -126,12 +126,29 @@ extension InProcessToolOwnerClient {
   }
 }
 
-func parentWatchRelay(_ source: AsyncStream<FSCommit>, prefix: String) -> (events: AsyncThrowingStream<JSONValue, any Error>, pump: Task<Void, Never>) {
-  let (events, continuation) = AsyncThrowingStream<JSONValue, any Error>.makeStream()
-  let pump = Task {
-    for await event in source.mutations { continuation.yield(Wire.mutationJSON(event, prefix: prefix)) }
-    continuation.finish()
+func parentWatchRelay(_ source: AsyncStream<FSCommit>, prefix: String) -> AsyncThrowingStream<JSONValue, any Error> {
+  let relay = ParentWatchRelay(source, prefix: prefix)
+  return AsyncThrowingStream(unfolding: { await relay.next() })
+}
+
+private actor ParentWatchRelay {
+  private var iterator: AsyncStream<FSCommit>.Iterator?
+  private var pending: Array<JSONValue>.Iterator = [].makeIterator()
+  private let prefix: String
+
+  init(_ source: AsyncStream<FSCommit>, prefix: String) {
+    iterator = source.makeAsyncIterator()
+    self.prefix = prefix
   }
-  continuation.onTermination = { _ in pump.cancel() }
-  return (events, pump)
+
+  func next() async -> JSONValue? {
+    while true {
+      if let event = pending.next() { return event }
+      guard var iterator = self.iterator else { return nil }
+      self.iterator = nil
+      guard let commit = await iterator.next(isolation: self) else { return nil }
+      self.iterator = iterator
+      pending = commit.events.map { Wire.mutationJSON($0, prefix: prefix) }.makeIterator()
+    }
+  }
 }

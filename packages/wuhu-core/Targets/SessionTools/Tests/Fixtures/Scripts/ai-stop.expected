@@ -1,11 +1,11 @@
 === run_script
 generating
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
-=== stop_script
-script 00000000 stopped
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
+=== cancel
+script.00000000 stopped: its signal was aborted and it ended
 === message
-["rejected: AbortError: stopped by stop_script","rejected: AbortError: stopped by stop_script","rejected: AbortError: stopped by stop_script","rejected: AbortError: stopped by stop_script","rejected: AbortError: stopped by stop_script","rejected: AbortError: stopped by stop_script"]
+["rejected: AbortError: stopped by cancel","rejected: AbortError: stopped by cancel","rejected: AbortError: stopped by cancel","rejected: AbortError: stopped by cancel","rejected: AbortError: stopped by cancel","rejected: AbortError: stopped by cancel"]
 === probe
 started: 4, cancelled: 4
 === probe

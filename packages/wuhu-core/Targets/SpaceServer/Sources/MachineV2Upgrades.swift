@@ -1,3 +1,4 @@
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -100,6 +101,7 @@ actor MachineV2Releases {
     Platform(key: "linux-amd64", archiveExtension: "tar.gz"),
   ]
 
+  private let taskScope = TaskScope()
   private let base: URL
   private let fetch: FetchClient
   private let clock: any Clock<Duration>
@@ -117,15 +119,17 @@ actor MachineV2Releases {
     self.retryAfter = retryAfter
   }
 
+  func close() async { await taskScope.close() }
+
   func resolve(_ version: String) async -> Resolution {
     if let artifacts = settled[version] { return .published(artifacts) }
     if let recent = recent[version], ContinuousClock.now - recent.at < retryAfter { return recent.resolution }
     if let task = inFlight[version] { return await task.value }
-    let task = Task { [base, fetch, clock, timeout] in
+    let task = try? taskScope.run("machine-release-lookup") { [base, fetch, clock, timeout] in
       await Self.lookup(version, base: base, fetch: fetch, clock: clock, timeout: timeout)
     }
     inFlight[version] = task
-    let resolution = await task.value
+    let resolution = await task?.value ?? .unreachable
     inFlight[version] = nil
     if case let .published(artifacts) = resolution, artifacts.count == Self.platforms.count {
       settled[version] = artifacts

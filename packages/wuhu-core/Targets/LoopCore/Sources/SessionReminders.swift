@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,6 +15,7 @@ actor SessionReminders {
   private var execution: (any SessionExecutionClient)?
   private var pending: [SessionID: UUID] = [:]
   private var tasks: [UUID: Task<Void, Never>] = [:]
+  private let taskScope = TaskScope()
   private var stopped = false
   @Dependency(\.continuousClock) private var clock
   @Dependency(\.date) private var date
@@ -33,7 +35,7 @@ actor SessionReminders {
     guard !stopped, let due else { return }
     let token = UUID()
     let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(date()))), clock: clock)
-    let task = Task {
+    let task = try? taskScope.run("session-reminder") {
       defer { tasks[token] = nil }
       do {
         try await sleep()
@@ -77,6 +79,7 @@ actor SessionReminders {
     for task in running { task.cancel() }
     for task in running { await task.value }
     tasks.removeAll()
+    await taskScope.close()
     execution = nil
   }
 }

@@ -535,7 +535,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     }
   }
 
-  @Test func cancelToolsCheckKindAndRetireTheSlot() async throws {
+  @Test func cancelRetiresSubscriptionsAndTypesWhatItCannot() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
@@ -544,29 +544,51 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       guard case let .timer(timer) = try await world.run(
         "timer", .object(["message": "x", "in_seconds": 600]),
       ) else { throw Mismatch("timer arming failed") }
+      guard case let .observe(observation) = try await world.run(
+        "observe", .object(["sql": "SELECT 1"]),
+      ) else { throw Mismatch("observe arming failed") }
 
-      let wrongKind = try await world.run(
-        "cancel_observation", .object(["subscription_id": .string(timer.subscriptionID.rawValue)]),
-      )
-      #expect(try failureMessage(wrongKind).contains("cancel_timer"))
+      let unknown = try await world.run("cancel", .object(["id": "timer.nope"]))
+      #expect(try failure(unknown).code == "notFound")
 
-      let unknown = try await world.run("cancel_timer", .object(["subscription_id": "timer.nope"]))
-      #expect(try failureMessage(unknown).contains("unknown subscription"))
+      let bare = try await world.run("cancel", .object(["id": "0a1b2c3d"]))
+      #expect(try failure(bare).code == "invalidArgument")
+      #expect(try failureMessage(bare).contains("script.0a1b2c3d"))
+      #expect(try failure(try await world.run("cancel", .object(["id": "exec.x"]))).code == "notFound")
+
+      // Another session's subscription reads as unknown.
+      let other = try await makeSession(space, name: "other")
+      var foreign = ToolWorld(executor: ToolExecutor(space: space), session: other)
+      let stranger = try await foreign.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)]))
+      #expect(try failure(stranger).code == "notFound")
 
       guard case .cancelTimer = try await world.run(
-        "cancel_timer", .object(["subscription_id": .string(timer.subscriptionID.rawValue)]),
-      ) else { throw Mismatch("cancel failed") }
+        "cancel", .object(["id": .string(timer.subscriptionID.rawValue)]),
+      ) else { throw Mismatch("cancel of the timer failed") }
+      guard case .cancelObservation = try await world.run(
+        "cancel", .object(["id": .string(observation.subscriptionID.rawValue)]),
+      ) else { throw Mismatch("cancel of the observation failed") }
       #expect(try await space.sessions.armedSubscriptions().isEmpty)
-      #expect(world.state.subscriptions.isEmpty, "the fold retires the cancelled subscription")
+      #expect(world.state.subscriptions.isEmpty, "the fold retires the cancelled subscriptions")
 
-      // A crash-retry of the cancel: the slot is already gone but the fold
-      // (result never committed) still shows the subscription — idempotent.
+      // An ended subscription reads as one that never was, for its owner as
+      // for another session.
+      for id in [timer.subscriptionID, observation.subscriptionID] {
+        let again = try failure(try await world.run("cancel", .object(["id": .string(id.rawValue)])))
+        #expect(again.code == "notFound")
+        #expect(again.message == "\(id.rawValue) is not armed: it already ended, or you never had it")
+      }
+      #expect(try failure(try await foreign.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)]))).code == "notFound")
+
+      // Still in the transcript but no longer armed: a fired one-shot timer,
+      // or a cancel retried after it committed.
       var stale = ToolWorld(executor: ToolExecutor(space: space), session: session)
       _ = try await stale.run("timer", .object(["message": "y", "in_seconds": 600]), id: "tc-t2")
       try await space.sessions.cancelSubscription(session, subscriptionID: .timer(.init("tc-t2")))
-      guard case .cancelTimer = try await stale.run(
-        "cancel_timer", .object(["subscription_id": .string(SubscriptionID.timer(.init("tc-t2")).rawValue)]),
-      ) else { throw Mismatch("retry cancel must absorb the already-deleted slot") }
+      let ended = try await stale.run(
+        "cancel", .object(["id": .string(SubscriptionID.timer(.init("tc-t2")).rawValue)]),
+      )
+      #expect(try failure(ended).code == "notFound")
     }
   }
 

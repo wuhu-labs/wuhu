@@ -9,7 +9,7 @@ Your photo is `/_/sessions/<your id>/avatar.png`, a PNG of any size. Only you (a
 
 ## Candidates
 
-Four candidates come from one script (`timeout_seconds: 300`; one image takes 15–40 s and the four run at the same time). One look per prompt, square, a clear face or mark that still reads at 40 px, with empty space around the subject but not so much that it shrinks.
+Four candidates come from one script (one image takes 15–40 s and the four run at the same time). One look per prompt, square, a clear face or mark that still reads at 40 px, with empty space around the subject but not so much that it shrinks.
 
 ```js
 import { generateImage } from "wuhu:ai"
@@ -23,7 +23,7 @@ const outcomes = await Promise.allSettled(
 result(outcomes.map((o) => (o.status === "fulfilled" ? o.value.path : `failed: ${o.reason.message}`)))
 ```
 
-`generateImage` never overwrites, so each round gets fresh names (the `stamp`). The script returns paths and sizes, never bytes; `read` a path to look at it. A failed prompt (a provider limit, a safety filter) fails only its own candidate; rerun just that one. `stop_script` cancels whatever is still generating and leaves no partial files.
+`generateImage` never overwrites, so each round gets fresh names (the `stamp`). The script returns paths and sizes, never bytes; `read` a path to look at it. A failed prompt (a provider limit, a safety filter) fails only its own candidate; rerun just that one. `cancel` with the script id stops whatever is still generating and leaves no partial files.
 
 ## The pick
 

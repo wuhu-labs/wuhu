@@ -11,7 +11,7 @@ stdin not asked for: process ex_acg7ja0l was spawned without { stdin: true }
 a ninth process: a script runs at most 8 machine processes at once; wait for one to exit or kill it first
 once one exits: ok
 
-[script 00000000: any update() after this arrives as a message; stop_script ends it while it runs.]
+[script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe
 killed when the script ended: 10 of 10
 === probe
