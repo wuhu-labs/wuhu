@@ -83,57 +83,6 @@ public struct ImageRetention {
     catch { throw ImageRetentionError.unsafeStorage }
   }
 
-  public func retain(source: String, id: UUID, owner: String) throws -> ImageReference {
-    let input = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
-    guard input >= 0 else { throw ImageRetentionError.imageChanged }
-    defer { _ = close(input) }
-    var state = stat()
-    guard fstat(input, &state) == 0, state.st_mode & S_IFMT == S_IFREG, state.st_mode & 0o022 == 0, state.st_mode & 0o100 != 0 else { throw ImageRetentionError.imageChanged }
-    let digest = try Self.digest(input)
-    let reference = ImageReference(id: id, digest: digest, owner: owner)
-    try reference.validate()
-    let name = id.uuidString + ".json"
-    var prior = stat()
-    guard fstatat(descriptor, name, &prior, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else { throw ImageRetentionError.invalidEvidence }
-    if fstatat(descriptor, digest, &prior, AT_SYMLINK_NOFOLLOW) == 0 {
-      try verifyImage(reference)
-      try save(reference, exclusive: true)
-      return reference
-    }
-    guard errno == ENOENT else { throw ImageRetentionError.unsafeStorage }
-    let temporary = ".stage-" + UUID().uuidString
-    let output = openat(descriptor, temporary, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-    guard output >= 0 else { throw ImageRetentionError.unsafeStorage }
-    defer { _ = close(output); _ = unlinkat(descriptor, temporary, 0) }
-    var buffer = [UInt8](repeating: 0, count: 65536)
-    var offset: off_t = 0
-    while true {
-      let count = pread(input, &buffer, buffer.count, offset)
-      if count < 0, errno == EINTR { continue }
-      guard count >= 0 else { throw ImageRetentionError.imageChanged }
-      if count == 0 { break }
-      try buffer.withUnsafeBytes { bytes in try Self.write(output, bytes: UnsafeRawBufferPointer(rebasing: bytes.prefix(count)), offset: offset) }
-      offset += off_t(count)
-    }
-    guard try Self.digest(output) == digest, fchmod(output, 0o500) == 0, fsync(output) == 0 else { throw ImageRetentionError.imageChanged }
-    if linkat(descriptor, temporary, descriptor, digest, 0) != 0 {
-      guard errno == EEXIST else { throw ImageRetentionError.unsafeStorage }
-    }
-    _ = unlinkat(descriptor, temporary, 0)
-    try verifyImage(reference)
-    try save(reference, exclusive: true)
-    return reference
-  }
-
-  public func bind(_ reference: ImageReference, processID: Int32, birth: String) throws -> ImageReference {
-    guard try read(reference.id.uuidString + ".json") == reference, reference.processID == nil,
-          try imageProcessBirth(processID) == birth else { throw ImageRetentionError.invalidEvidence }
-    let bound = ImageReference(id: reference.id, digest: reference.digest, owner: reference.owner, processID: processID, birth: birth)
-    try bound.validate()
-    try save(bound, exclusive: false)
-    return bound
-  }
-
   public func verify(_ reference: ImageReference) throws {
     guard try read(reference.id.uuidString + ".json") == reference else { throw ImageRetentionError.invalidEvidence }
     try verifyImage(reference)
@@ -191,38 +140,10 @@ public struct ImageRetention {
     catch { throw ImageRetentionError.invalidEvidence }
   }
 
-  private func save(_ reference: ImageReference, exclusive: Bool) throws {
-    let name = reference.id.uuidString + ".json"
-    let temporary = ".stage-" + UUID().uuidString
-    let file = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-    guard file >= 0 else { throw ImageRetentionError.unsafeStorage }
-    defer { _ = close(file); _ = unlinkat(descriptor, temporary, 0) }
-    try JSONEncoder().encode(reference).withUnsafeBytes { try Self.write(file, bytes: $0, offset: 0) }
-    guard fsync(file) == 0 else { throw ImageRetentionError.unsafeStorage }
-    if exclusive {
-      var state = stat()
-      guard fstatat(descriptor, name, &state, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else { throw ImageRetentionError.invalidEvidence }
-      guard renameat(descriptor, temporary, descriptor, name) == 0 else { throw ImageRetentionError.unsafeStorage }
-    } else {
-      guard renameat(descriptor, temporary, descriptor, name) == 0 else { throw ImageRetentionError.unsafeStorage }
-    }
-    guard fsync(descriptor) == 0 else { throw ImageRetentionError.unsafeStorage }
-  }
-
   static func validateFile(_ file: Int32, mode: mode_t, links: nlink_t = 1) throws {
     var state = stat()
     guard fstat(file, &state) == 0, state.st_uid == geteuid(), state.st_mode & S_IFMT == S_IFREG,
           state.st_mode & 0o7777 == mode, state.st_nlink == links else { throw ImageRetentionError.unsafeStorage }
-  }
-
-  private static func write(_ file: Int32, bytes: UnsafeRawBufferPointer, offset: off_t) throws {
-    var written = 0
-    while written < bytes.count {
-      let count = pwrite(file, bytes.baseAddress!.advanced(by: written), bytes.count - written, offset + off_t(written))
-      if count < 0, errno == EINTR { continue }
-      guard count > 0 else { throw ImageRetentionError.unsafeStorage }
-      written += count
-    }
   }
 
   static func digest(_ file: Int32) throws -> String {

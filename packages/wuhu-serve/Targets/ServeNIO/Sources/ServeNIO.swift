@@ -167,11 +167,6 @@ public final class ServeNIOServer: @unchecked Sendable {
     }
   }
 
-  /// Pauses only new accepts; established connections are unaffected and pending connects remain in the kernel backlog.
-  public func setAcceptingConnections(_ accepting: Bool) async throws {
-    try await self.serverChannel.setOption(ChannelOptions.autoRead, value: accepting).get()
-  }
-
   public func waitUntilShutdown() async {
     await self.state.waitUntilShutdown()
   }
@@ -223,11 +218,10 @@ public final class ServeNIOServer: @unchecked Sendable {
     options: ServeOptions,
     hooks: ServeNIOHooks,
     state: ServeNIOServerState,
-    reuseAddress: Bool = true,
     handler: @escaping UpgradingHandler,
   ) -> ServerBootstrap {
     self.validateOptions(options)
-    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state, reuseAddress: reuseAddress) { channel, connectionID, context in
+    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state) { channel, connectionID, context in
       channel.eventLoop.makeCompletedFuture {
         try self.configureHTTP1(
           channel: channel,
@@ -246,11 +240,10 @@ public final class ServeNIOServer: @unchecked Sendable {
     eventLoopGroup: EventLoopGroup,
     hooks: ServeNIOHooks,
     state: ServeNIOServerState,
-    reuseAddress: Bool = true,
     initializer: @escaping @Sendable (Channel, Int, ServeNIOConnectionContext) -> EventLoopFuture<Void>,
   ) -> ServerBootstrap {
     let bootstrap = ServerBootstrap(group: eventLoopGroup)
-    if reuseAddress { _ = bootstrap.serverChannelOption(.socketOption(.so_reuseaddr), value: 1) }
+    _ = bootstrap.serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
     return bootstrap.childChannelInitializer { channel in
       let connectionID = state.makeConnectionID()
       guard state.registerConnection(id: connectionID, channel: channel) else {

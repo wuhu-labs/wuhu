@@ -41,7 +41,6 @@ public actor SpaceHost {
     folder: URL, deployment: DeploymentRecord, configDirectory: URL?,
     allowEnvironmentCredentials: Bool = true, fallbackOrigin: String = "https://localhost", port: Int? = nil,
     dev: Bool = false, publicRead: Bool = false,
-    executionPlacement: ExecutionPlacement = .inProcess,
     contentHostPattern: String? = nil, aiDisclosure: AIDisclosure? = nil,
     version: String = SpaceServer.unstampedVersion, webApp: WebApp? = .embedded,
     devImport: URL? = nil, devExport: URL? = nil,
@@ -50,13 +49,6 @@ public actor SpaceHost {
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
     let id = try await space.identity().rawValue
     return try await SpaceLogContext.$spaceID.withValue(id) {
-      let bootFence: ExecutionWorkerBootFence.Result
-      if let controlled = try await AdminExecScope.current?.validateSpace(id, configDirectory: configDirectory, sessions: space.sessions) { bootFence = controlled }
-      else {
-        bootFence = try await ExecutionWorkerBootReconciliation.prepare(sessions: space.sessions) {
-          return await ExecutionWorkerBootReconciliation.run(configDirectory: configDirectory, space: id, executable: executionPlacement.executable)
-        }
-      }
       let advertisedOrigin = deployment.origin
       let logger = Logger(label: "wuhu.serve")
       let identityDirectory = folder.appendingPathComponent("identity")
@@ -76,9 +68,9 @@ public actor SpaceHost {
       }
       let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin)
       let secrets = try configDirectory.map { try secretStores(configDirectory: $0, spaceID: id) }
-      let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets, startupExcludedSessions: bootFence.blockedSessions)
+      let hub = MachineHub(space: space, tokens: execTokens, secrets: secrets)
       let v2Hub = MachineV2Hub(space: space)
-      let v2Service = await MachineV2Service.open(space: space, hub: v2Hub, directory: folder.appendingPathComponent("machine-v2"), startupExcludedSessions: bootFence.blockedSessions)
+      let v2Service = await MachineV2Service.open(space: space, hub: v2Hub, directory: folder.appendingPathComponent("machine-v2"))
       await hub.configureV2(v2Service)
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
@@ -92,10 +84,6 @@ public actor SpaceHost {
         credentials: credentials,
         secrets: secrets,
         usage: usage,
-        executionPlacement: executionPlacement,
-        credentialFence: bootFence.credentials,
-        startupFence: bootFence,
-        workerPersistence: configDirectory.map { .init(configDirectory: $0.path, space: id) },
         oidcToken: { audience, session in
           @Dependency(\.date) var date
           @Dependency(\.uuid) var uuid
@@ -161,8 +149,7 @@ public actor SpaceHost {
         pageFetch: PageFetch(controller: serverIdentity).response,
       )
       let sockets = HostSockets()
-      let requests = HostRequests(execPaused: AdminExecScope.current != nil)
-      await AdminExecScope.current?.installRequests(pause: { try await requests.pauseExec() }, resume: { await requests.resumeExec() })
+      let requests = HostRequests()
       let scoped = spaceScopedHandler(id: id, handler: handler)
       let owned = spaceOwnedHandler(handler: scoped, requests: requests, sockets: sockets)
       return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {

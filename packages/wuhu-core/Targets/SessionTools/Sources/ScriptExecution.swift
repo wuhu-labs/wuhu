@@ -254,18 +254,7 @@ final class ScriptExecution: Sendable {
 
   // MARK: The engine's side
 
-  func run(owner: any ScriptOwnerClient, lifecycle: ScriptLifecycle? = nil, registered: Bool = false) async {
-    do { if !registered { try await lifecycle?.started(session, id) } }
-    catch {
-      finish(.failed("execution registration failed"))
-      await deliver(to: owner)
-      return
-    }
-    await runTracing(owner: owner)
-    await lifecycle?.ended(session, id)
-  }
-
-  private func runTracing(owner: any ScriptOwnerClient) async {
+  func run(owner: any ScriptOwnerClient) async {
     guard ServerTracing.enabled else { return await runBody(owner: owner) }
     let group = try? await owner.moduleSnapshot(for: session).acting.rawValue
     await ServerTracing.$context.withValue(traceContext) {

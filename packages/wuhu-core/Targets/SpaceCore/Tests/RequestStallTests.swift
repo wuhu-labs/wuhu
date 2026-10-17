@@ -95,33 +95,6 @@ import Testing
     #expect(try await rig.check(3200).isEmpty)
   }
 
-  @Test func `a task waiting on a script raises nothing while the script runs`() async throws {
-    let rig = try await Rig()
-    let incarnation = UUID()
-    try await rig.store.beginWorkerOwnership(incarnation: incarnation)
-    rig.at(300)
-    try await rig.store.registerWorkerScript("ci-watch", session: rig.task, incarnation: incarnation)
-
-    for second in stride(from: 600.0, through: 4200, by: 600) {
-      #expect(try await rig.check(second).isEmpty)
-    }
-
-    // The script's update wakes the task, which is progress.
-    try await rig.store.releaseWorkerScript("ci-watch", session: rig.task, incarnation: incarnation)
-    try await rig.inference(on: rig.task, at: 4210)
-    #expect(try await rig.check(4260).isEmpty)
-    #expect(try await rig.check(4811).count == 1)
-  }
-
-  @Test func `a handler firing on a worker does not hold the clock`() async throws {
-    let rig = try await Rig()
-    let incarnation = UUID()
-    try await rig.store.beginWorkerOwnership(incarnation: incarnation)
-    try await rig.store.registerWorkerScript("handler-bridge-1", session: rig.task, incarnation: incarnation)
-    try await rig.store.registerWorkerScript("handler-1", session: rig.task, incarnation: incarnation)
-    #expect(try await rig.check(600).count == 1)
-  }
-
   @Test func `a script running in this process holds the clock`() async throws {
     let rig = try await Rig()
     for second in stride(from: 600.0, through: 1800, by: 600) {

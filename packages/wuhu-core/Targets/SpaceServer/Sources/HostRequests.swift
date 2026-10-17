@@ -9,13 +9,10 @@ import Serve
 actor HostRequests {
   private var requests: [UUID: Task<UpgradeResult, Error>] = [:]
   private var stopped = false
-  private var execPaused: Bool
-
-  init(execPaused: Bool = false) { self.execPaused = execPaused }
   private var bodies: [UUID: Task<Void, Never>] = [:]
 
   func run(_ body: @escaping UpgradingHandler, request: Request) async throws -> UpgradeResult {
-    guard !stopped, !execPaused else { return .response(Response(status: .serviceUnavailable)) }
+    guard !stopped else { return .response(Response(status: .serviceUnavailable)) }
     let id = UUID()
     let task = Task { try await body(request) }
     requests[id] = task
@@ -25,7 +22,7 @@ actor HostRequests {
     } onCancel: { task.cancel() }
     switch result {
     case var .response(response):
-      guard !stopped, !execPaused else { return .response(Response(status: .serviceUnavailable)) }
+      guard !stopped else { return .response(Response(status: .serviceUnavailable)) }
       if request.method != .head, response.body.contentLength != 0 { response.body = own(response.body) }
       return .response(response)
     case .webSocket, .boundedWebSocket: return result
@@ -51,13 +48,6 @@ actor HostRequests {
     output.onTermination = { _ in task.cancel() }
     return .stream(length: body.contentLength, contentType: body.contentType, HostBodyChunks(chunks: chunks, demand: input))
   }
-
-  func pauseExec() throws {
-    guard !stopped, !execPaused, requests.isEmpty else { throw AdminExecError.refused("httpRequestBusy") }
-    execPaused = true
-  }
-
-  func resumeExec() { execPaused = false }
 
   func shutdown(sockets: HostSockets) async {
     stopped = true

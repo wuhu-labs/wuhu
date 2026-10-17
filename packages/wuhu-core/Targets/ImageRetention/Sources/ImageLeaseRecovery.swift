@@ -9,28 +9,7 @@
   import Darwin
 #endif
 
-public final class ImagePreparation: Sendable {
-  public let reference: ImageReference
-  public let descriptor: Int32
-  init(reference: ImageReference, descriptor: Int32) { self.reference = reference; self.descriptor = descriptor }
-  deinit { _ = close(descriptor) }
-}
-
 extension ImageRetention {
-  public func prepare(source: String, id: UUID, owner: String) throws -> ImagePreparation {
-    let name = ".lease-" + id.uuidString
-    let file = openat(descriptor, name, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-    guard file >= 0 else { throw ImageRetentionError.unsafeStorage }
-    do {
-      guard flock(file, LOCK_EX | LOCK_NB) == 0, fsync(file) == 0, fsync(descriptor) == 0 else { throw ImageRetentionError.unsafeStorage }
-      let reference = try retain(source: source, id: id, owner: owner)
-      return ImagePreparation(reference: reference, descriptor: file)
-    } catch {
-      _ = close(file)
-      throw error
-    }
-  }
-
   func openRetiredPreparation(_ reference: ImageReference) throws -> Int32 {
     let file = try openLease(".lease-" + reference.id.uuidString)
     guard flock(file, LOCK_EX | LOCK_NB) == 0 else {

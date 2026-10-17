@@ -343,19 +343,15 @@ extension Space {
   // Owner rows outlive their script only when the server running it died, so
   // at boot every row left is a script that restart killed. Taking them clears
   // them: each script is reported once.
-  public func takeScriptExecOwners(excluding: Set<SessionID> = []) async throws -> [ScriptExecOwner] {
+  public func takeScriptExecOwners() async throws -> [ScriptExecOwner] {
     try await writer.write { db in
-      let rows = try ScriptExecRow.order { ($0.sessionID, $0.scriptID, $0.execID) }.fetchAll(db).filter { !excluding.contains(SessionID($0.sessionID)) }
-      let scripts = try WorkerScriptOwnerRow.fetchAll(db).filter { !excluding.contains(SessionID($0.sessionID)) }
-      guard !rows.isEmpty || !scripts.isEmpty else { return [] }
+      let rows = try ScriptExecRow.order { ($0.sessionID, $0.scriptID, $0.execID) }.fetchAll(db)
+      guard !rows.isEmpty else { return [] }
       let live = try Set(String.fetchAll(
         db,
         sql: "SELECT e.id FROM machine_execs e JOIN script_execs s ON s.exec_id = e.id WHERE e.terminal_state IS NULL",
       ))
       for row in rows { try ScriptExecRow.where { $0.execID.eq(row.execID) }.delete().execute(db) }
-      for row in scripts {
-        try WorkerScriptOwnerRow.where { $0.sessionID.eq(row.sessionID) && $0.scriptID.eq(row.scriptID) && $0.incarnation.eq(row.incarnation) }.delete().execute(db)
-      }
       var owners: [ScriptExecOwner] = []
       for row in rows {
         let exec = live.contains(row.execID) ? [ExecID(rawValue: row.execID)] : []
@@ -364,9 +360,6 @@ extension Space {
         } else {
           owners.append(ScriptExecOwner(script: row.scriptID, session: row.sessionID, live: exec))
         }
-      }
-      for row in scripts where !row.scriptID.hasPrefix("handler-") && !owners.contains(where: { $0.session == row.sessionID && $0.script == row.scriptID }) {
-        owners.append(ScriptExecOwner(script: row.scriptID, session: row.sessionID, live: []))
       }
       return owners
     }

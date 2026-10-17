@@ -27,7 +27,6 @@ public struct TraceContext: Codable, Equatable, Sendable {
 
 public enum SpanName: String, Codable, Sendable {
   case turn = "agent.turn", inference = "inference", tool = "tool.call"
-  case executionWorkerFence = "execution-worker.boot-fence"
   case machine = "machine.operation", script = "script.run"
 }
 

@@ -81,8 +81,6 @@ public struct SessionExecution: SessionExecutionClient {
     try await withCallback(of: SessionRestart.self) { send(.restart(executor, note, modelRoute, $0), to: id) }
   }
 
-  public func yieldAssignment(_ id: SessionID) async { await registry.yieldAssignment(id) }
-
   public func discard(_ id: SessionID) async { await registry.discard(id) }
   public func drain() async { await liveness.drain() }
   public func shutdown() async { await registry.stop() }

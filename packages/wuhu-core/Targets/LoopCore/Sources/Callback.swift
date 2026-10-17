@@ -2,11 +2,7 @@ import Synchronization
 
 // The retryable outcome of racing an eviction: a dropped Callback resolves to
 // this on deinit, and lazy materialization makes the caller's retry land.
-public struct SessionExecutionRetired: Error, Sendable {
-  public init() {}
-}
-
-typealias UnfulfilledError = SessionExecutionRetired
+struct UnfulfilledError: Error {}
 
 final class Callback<Value>: Sendable {
   typealias Continuation = CheckedContinuation<Value, any Error>

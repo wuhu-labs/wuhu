@@ -88,9 +88,6 @@ actor SessionActor {
   var retryPause: Task<Void, any Error>?
   private var retired = false
   private var archiveReservation: UUID?
-  private var pendingActions = 0
-  private(set) var yielding = false
-  private var yieldWaiters: [AsyncStream<Void>.Continuation] = []
 
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
@@ -127,65 +124,7 @@ actor SessionActor {
   }
 
   nonisolated func post(_ action: ExternalAction) {
-    Task { await accept(action) }
-  }
-
-  func accept(_ action: ExternalAction) {
-    guard !retired else {
-      Self.rejectRetired(action)
-      return
-    }
-    pendingActions += 1
     inbox.post(action)
-  }
-
-  func yieldAssignment() async {
-    guard !retired else { return }
-    let (completion, continuation) = AsyncStream<Void>.makeStream()
-    yieldWaiters.append(continuation)
-    yielding = true
-    retryPause?.cancel()
-    nudge()
-    await finishYieldIfReady()
-    for await _ in completion {}
-  }
-
-  nonisolated static func rejectRetired(_ action: ExternalAction) {
-    let error = SessionExecutionRetired()
-    switch action {
-    case .wake(let callback), .releaseArchive(_, let callback), .archive(_, let callback), .unarchive(let callback), .interrupt(let callback), .resume(let callback):
-      callback.resume(throwing: error)
-    case .enqueue(_, let callback): callback.resume(throwing: error)
-    case .prepareArchive(_, let callback): callback.resume(throwing: error)
-    case .restart(_, _, _, let callback): callback.resume(throwing: error)
-    }
-  }
-
-  private var finishingYield = false
-
-  private func finishYieldIfReady() async {
-    guard yielding, !retired, !finishingYield, pendingActions == 0, archiveReservation == nil,
-          longRunningTask == nil, !loopPassActive,
-          liveState == nil || liveState?.lastUpdatedByLoopAt != nil
-    else { return }
-    finishingYield = true
-    defer { finishingYield = false }
-    while !activityPending.isEmpty {
-      for pass in activityPending { await endExecutionActivity(pass) }
-      guard !retired, !Task.isCancelled else { return }
-      if !activityPending.isEmpty {
-        guard (try? await clock.sleep(for: .milliseconds(100))) != nil else { return }
-      }
-    }
-    guard pendingActions == 0, archiveReservation == nil else { return }
-    retired = true
-    handlerTask?.cancel()
-    handlerTask = nil
-    dismountLive()
-    await Task { [loopConfig, id] in await loopConfig.invalidateInference(id) }.value
-    let waiters = yieldWaiters
-    yieldWaiters.removeAll()
-    for waiter in waiters { waiter.finish() }
   }
 
   var idleSince: Date? {
@@ -199,7 +138,6 @@ actor SessionActor {
   }
 
   func tryRetire(ttl: Duration, now: Date) async -> Bool {
-    guard !yielding else { return false }
     guard let idleSince, now.timeIntervalSince(idleSince) >= ttl.timeInterval
     else { return false }
     // The park wake lives here; the process may end, the actor may not.
@@ -214,8 +152,6 @@ actor SessionActor {
     handlerTask = nil
     dismountLive()
     await loopConfig.invalidateInference(id)
-    for waiter in yieldWaiters { waiter.finish() }
-    yieldWaiters.removeAll()
   }
 
   private func dismountLive() {
@@ -238,10 +174,7 @@ actor SessionActor {
     while let action = await inbox.next() {
       lastCommandProcessedAt = nil
       await handle(action: action)
-      pendingActions -= 1
       lastCommandProcessedAt = date()
-      if yielding { nudge() }
-      await finishYieldIfReady()
     }
   }
 
@@ -350,64 +283,20 @@ actor SessionActor {
     nudges.post(())
   }
 
-  var inventory: SessionAssignmentInventory {
-    .init(session: id, passes: activityPending, effect: longRunningTask?.id, yielding: yielding, archiveReservation: archiveReservation)
-  }
-
-  private var activityPending: Set<UUID> = []
-  private var loopPassActive = false
-
   private func runLooper(nudges: Inbox<Void>) async {
     while await nudges.next() != nil {
-      if yielding {
-        if liveState != nil { try? await loop() }
-        await finishYieldIfReady()
-        if retired { return }
-        continue
-      }
-      loopPassActive = true
       let token = liveness.start()
       defer { liveness.end(token) }
-      let pass = UUID()
       do {
-        activityPending.insert(pass)
-        try await loopConfig.executionActivity(id, pass, true)
-        do {
-          try await loop()
-          await afterLoop()
-        } catch is StaleCompactClaim {
-          let hydration = try await repo.hydrate()
-          let current = try live
-          current.parkWake?.task.cancel()
-          var reloaded = LiveState(hydration: hydration, now: date(), mountID: current.mountID)
-          reloaded.sessionStatus = current.sessionStatus
-          reloaded.archiving = current.archiving
-          liveState = reloaded
-          nudge()
-        }
+        try await loop()
+        await afterLoop()
       } catch is CancellationError {
-        await endExecutionActivity(pass)
-        loopPassActive = false
-        await finishYieldIfReady()
         return
       } catch {
         if !Task.isCancelled { await markErrored(error: error) }
       }
-      await endExecutionActivity(pass)
-      loopPassActive = false
-      await finishYieldIfReady()
       if retired { return }
     }
-  }
-
-  private func endExecutionActivity(_ pass: UUID) async {
-    let activity = loopConfig.executionActivity
-    let id = id
-    let acknowledged = await Task {
-      do { try await activity(id, pass, false); return true }
-      catch { return false }
-    }.value
-    if acknowledged { activityPending.remove(pass) }
   }
 
   // Every queue writer signals the work bus and lands here: deliveries written

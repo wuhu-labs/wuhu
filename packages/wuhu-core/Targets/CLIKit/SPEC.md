@@ -96,10 +96,6 @@ Before models update writes provider defaults, it validates the proposed provide
 
 `wuhu auth set` and `auth login` replace the provider credential through the identity-aware store and retire its replay epoch even for an identical submitted value. `auth remove` and `auth logout` retire the stored identity with the credential. Epoch metadata remains private to the credentials file.
 
-## Execution worker placement
-
-`ServeCommand.executionPlacement` selects `.inProcess` or `.worker`; `wuhu serve --execution-placement in-process|worker` forwards that selection to the server placement boundary. The standalone CLI default is `.worker` on Linux and macOS; the hosted CLI and library runtime entry points retain `.inProcess`. The `in-process` value is an explicit operator escape hatch, never an automatic response to a worker failure. The removed `--execution-worker` spelling is a usage error naming `--execution-placement worker`, even alongside a valid placement option. Unknown/missing values refuse; startup/admission/runtime failures never change placement.
-
 ## Machine registration
 
 `wuhu machine add [--name N] [--group G]` sends optional `name` and `group` in the registration body. The verb-local `--group` and global `wuhu --group G machine add` select the same group; giving both is a usage error. Only an explicit flag sets the registration target: either spelling goes in the body, never into the acting-group `Wuhu-Group` header for this verb. Environment (`WUHU_GROUP`) and folder configuration still select the acting group but do not set the registration target. Without an explicit flag, the body omits `group` and a person's machine goes to their personal group. An explicit target requires an admin of that group (`403 adminRequired`); an absent target is `404 unknownGroup`. Sessions keep their principal's group.
@@ -107,10 +103,6 @@ Before models update writes provider defaults, it validates the proposed provide
 The server echoes the actual placement in `MachineAddOutput.group`. When a target was requested, a missing or different echo fails the command with an upgrade/machine-move remedy instead of reporting successful placement. Since registration already created the machine, its id and one-time join token remain printed for recovery. Without an explicit target, responses from older servers that omit the echo remain accepted.
 
 `wuhu machine-v2 add --name N [--group G]` uses the same explicit registration-target parsing, body, authorization and confirmed placement as `machine add`, at `/v1/machine-v2`. It appends `-v2` to names that do not already have the suffix. Both flag positions are supported; implicit environment/configuration groups never become registration targets.
-
-## Deployment-admin exec
-
-`serve --admin-exec` requires worker execution placement (the standalone default, or explicit `--execution-placement worker`), is Linux-only, defaults off and forwards explicit opt-in to the serving implementation. `admin-exec FOLDER [--rollback]` dispatches locally through the injected admin handler before wallet/network resolution; missing local support refuses instead of falling back remotely. Binary selectors and extra arguments are usage errors. The enable/trigger/retry paths refuse raw session execution markers even when the caller requests wallet identity; this is advisory early rejection, not authorization. The production handler verifies Unix peer UID against the fixed root-owned `/etc/wuhu/admin-exec.json` policy, so removing environment markers or choosing a wallet cannot authorize an agent OS user. Darwin enabled serve, trigger and rollback refuse `unsupportedPlatform` before changing server state. There is no CLI policy/test override. Machine-agent startup refuses allowed administrator UIDs. The operation has no run_script equivalent because it belongs to the deployment administrator. Immediate eligibility refusal does not wait for or cancel live work; explicit rollback retries prepare a fresh checkpoint into the server-owned digest-pinned last-good image.
 
 ## Minimal agent
 
@@ -123,3 +115,7 @@ The server echoes the actual placement in `MachineAddOutput.group`. When a targe
 ## Retained execution images
 
 Upgrade installation and version-directory pruning share the execution image store lock at `<config>/execution-images/lock` with worker image staging. SHA256 references protect matching version bytes in addition to current/previous and the mtime keep count. An existing retained version cannot be replaced even if its version name is reused. Corrupt, foreign-owned, substituted or unreadable reference evidence refuses replacement/pruning rather than assuming no live image; failed prune remains a reported warning after an otherwise completed installation. Rollback does not release image references. The private image copies survive version-directory removal by other software; external installers/pruners must use the same advisory lock and digest-reference gate before deleting or replacing source versions.
+
+## Server execution
+
+`wuhu serve` runs loops, inference, scripts and handlers in the server. There is no execution-placement flag, child-worker bootstrap or admin-exec command; unknown options use ordinary usage errors.

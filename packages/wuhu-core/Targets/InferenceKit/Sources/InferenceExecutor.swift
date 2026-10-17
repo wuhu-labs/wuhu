@@ -34,7 +34,6 @@ public struct InferenceExecutor: Sendable {
   public var systemPrompt: String
   public var tools: [Tool]
   public var compactToolName: String
-  public var eventSink: AttemptEventSink?
   public var hub: AttemptHub?
   public var trace: AttemptTraceClient?
   public var metrics: InferenceMetricsSink
@@ -49,7 +48,6 @@ public struct InferenceExecutor: Sendable {
     tools: [Tool],
     compactToolName: String = "compact",
     hub: AttemptHub? = nil,
-    eventSink: AttemptEventSink? = nil,
     trace: AttemptTraceClient? = nil,
     metrics: InferenceMetricsSink = .noop,
     webSocket: ResponsesWebSocketSession? = nil,
@@ -61,7 +59,6 @@ public struct InferenceExecutor: Sendable {
     self.systemPrompt = systemPrompt
     self.tools = tools
     self.compactToolName = compactToolName
-    self.eventSink = eventSink
     self.hub = hub
     self.trace = trace
     self.metrics = metrics
@@ -133,7 +130,7 @@ public struct InferenceExecutor: Sendable {
           reportedUsage = usage
           servedModel = reportedModel
         }
-        try await publish(.delta(attemptID: attemptID, event: event))
+        hub?.publish(session: session, .delta(attemptID: attemptID, event: event))
         if case let .done(message, metadata) = event {
           completed = CompletedInference(message: message, metadata: metadata)
         }
@@ -146,7 +143,7 @@ public struct InferenceExecutor: Sendable {
     let started = clock.now
     var ttftDuration: Duration?
     do {
-      try await publish(.started(attemptID: attemptID))
+      hub?.publish(session: session, .started(attemptID: attemptID))
       var iterator = endpoint.runInference(context: context, options: options, mediaResolver: nil).makeAsyncIterator()
       let firstResult = await iterator.next()
       ttftDuration = started.duration(to: clock.now)
@@ -161,17 +158,16 @@ public struct InferenceExecutor: Sendable {
     let elapsed = started.duration(to: clock.now)
     let ttft = firstEventSeen ? ttftDuration : nil
 
-    await trace?.close(attemptID)
     if let failure {
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "failed(\(failure))", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: failure, cancelled: false, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
-      try await publish(.finished(attemptID: attemptID, outcome: .failed(reason: String(describing: failure))))
+      hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .failed(reason: String(describing: failure))))
       throw failure
     }
     guard let completed else {
       logAttempt(attemptID: attemptID, mode: mode, sizes: sizes, status: "cancelled", usage: nil, elapsed: elapsed)
       await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: true, usage: reportedUsage, servedModel: servedModel, ttft: ttft, elapsed: elapsed))
-      try await publish(.finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
+      hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .failed(reason: "cancelled")))
       throw InferenceCancelled()
     }
     logAttempt(
@@ -183,13 +179,8 @@ public struct InferenceExecutor: Sendable {
       elapsed: elapsed,
     )
     await metrics.record(metric(timestamp: timestamp, error: nil, cancelled: false, usage: completed.metadata.usage, servedModel: completed.metadata.servedModel, ttft: ttft, elapsed: elapsed))
-    try await publish(.finished(attemptID: attemptID, outcome: .done(completed.message, completed.metadata)))
+    hub?.publish(session: session, .finished(attemptID: attemptID, outcome: .done(completed.message, completed.metadata)))
     return completed
-  }
-
-  private func publish(_ event: AttemptEvent) async throws {
-    hub?.publish(session: session, event)
-    try await eventSink?.publish(session: session, event)
   }
 
   public func acknowledge(entry: AssistantEntry, transcript: Transcript, handles: [String: String] = [:], devices: [String: String] = [:]) async {

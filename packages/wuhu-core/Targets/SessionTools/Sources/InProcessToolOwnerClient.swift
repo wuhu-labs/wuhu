@@ -20,7 +20,7 @@ import SpaceCore
 import SpaceTools
 import struct WuhuAI.ToolCall
 
-public struct InProcessToolOwnerClient: WorkerOwnerClient {
+public struct InProcessToolOwnerClient: SessionOwnerClient {
   let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
   let identityConfigurationProvider = InProcessIdentityConfiguration()
   let executionOwner: any ExecutionOwnerClient
@@ -69,8 +69,6 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
 
   var store: SessionStore { space.sessions }
 
-  // The owner binds the machine caller itself, at each entry that can reach a machine file: under an execution
-  // worker these run in the parent's RPC task, where the worker's task-locals never arrive.
   public func execute(
     session: SessionID,
     call: ToolCall,
@@ -150,7 +148,7 @@ public struct InProcessToolOwnerClient: WorkerOwnerClient {
     case .manipulateUI:
       return try await manipulateUI(session, decoded(ManipulateUIArguments.self, call))
     case .generateImage, .runScript, .stopScript:
-      preconditionFailure("worker execution must not enter the persistent dispatcher")
+      preconditionFailure("interpreter-owned tools must not enter the persistent dispatcher")
     }
   }
 

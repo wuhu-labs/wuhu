@@ -48,7 +48,7 @@ extension ServeNIOServer {
   ) async throws -> Self {
     let state = ServeNIOServerState()
     let bootstrap: ServerBootstrap
-    do { bootstrap = try makeTLSBootstrap(identity: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, state: state, reuseAddress: true, handler: handler) }
+    do { bootstrap = try makeTLSBootstrap(identity: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, state: state, handler: handler) }
     catch { hooks.onStartupFailure(error); throw error }
 
     do {
@@ -71,32 +71,6 @@ extension ServeNIOServer {
     }
   }
 
-  public static func adoptListeningSocket(
-    _ descriptor: Int32,
-    tls identity: TLSIdentity,
-    subdomains: [String: TLSIdentity] = [:],
-    options: ServeOptions = .init(),
-    hooks: ServeNIOHooks = .init(),
-    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
-    initiallyAccepting: Bool = true,
-    upgrading handler: @escaping UpgradingHandler,
-  ) async throws -> Self {
-    let state = ServeNIOServerState()
-    let bootstrap: ServerBootstrap
-    do {
-      let flags = fcntl(descriptor, F_GETFD)
-      guard flags >= 0, fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
-        throw IOError(errnoCode: errno, reason: "Cannot protect inherited TLS listener")
-      }
-      bootstrap = try makeTLSBootstrap(identity: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, state: state, reuseAddress: false, handler: handler)
-    } catch {
-      disposeListeningSocket(descriptor)
-      hooks.onStartupFailure(error)
-      throw error
-    }
-    return try await startListeningSocket(descriptor, bootstrap: bootstrap, state: state, hooks: hooks, initiallyAccepting: initiallyAccepting)
-  }
-
   private static func makeTLSBootstrap(
     identity: TLSIdentity,
     subdomains: [String: TLSIdentity],
@@ -104,7 +78,6 @@ extension ServeNIOServer {
     hooks: ServeNIOHooks,
     eventLoopGroup: EventLoopGroup,
     state: ServeNIOServerState,
-    reuseAddress: Bool,
     handler: @escaping UpgradingHandler,
   ) throws -> ServerBootstrap {
     self.validateOptions(options)
@@ -112,7 +85,7 @@ extension ServeNIOServer {
     options.scheme = "https"
     let secureOptions = options
     let sslContext = try makeSSLContext(identity: identity, subdomains: subdomains)
-    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state, reuseAddress: reuseAddress) { channel, connectionID, context in
+    return self.makeBootstrap(eventLoopGroup: eventLoopGroup, hooks: hooks, state: state) { channel, connectionID, context in
       channel.eventLoop.makeCompletedFuture {
         try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: sslContext))
       }.flatMap {

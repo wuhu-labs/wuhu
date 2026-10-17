@@ -9,7 +9,6 @@
   import Darwin
 #endif
 @testable import DeploymentAdmin
-import Subprocess
 import Testing
 
 @Suite(.serialized) struct DeploymentAdminPolicyTests {
@@ -48,18 +47,5 @@ import Testing
   @Test func admittedMachineAgentHoldsALifetimeCloseOnExecRoleLock() throws {
     let admission = try DeploymentAdminPolicy.admitMachineAgent()
     #expect(fcntl(admission.descriptor, F_GETFD) & FD_CLOEXEC != 0)
-    let policy = DeploymentAdminPolicy(allowedUIDs: [UInt32(geteuid())])
-    _ = withExtendedLifetime(admission) {
-      #expect(throws: DeploymentAdminPolicy.Refusal.machineAgentUID) { try policy.requireNoMachineAgents() }
-    }
-  }
-
-  @Test func serverRefusesAnExistingMachineAgentUnderAnAllowedUID() async throws {
-    let policy = DeploymentAdminPolicy(allowedUIDs: [UInt32(geteuid())])
-    let process = try await Subprocess.run(.path("/bin/sh"), arguments: ["-c", "sleep 30 & wait", "machine", "run"], input: .none, output: .discarded, error: .discarded) { child in
-      #expect(throws: DeploymentAdminPolicy.Refusal.machineAgentUID) { try policy.requireNoMachineAgents() }
-      _ = kill(child.processIdentifier.value, SIGTERM)
-    }
-    _ = process
   }
 }

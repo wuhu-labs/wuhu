@@ -4,8 +4,3 @@ sources: Sources
 checks:
   build: [linux, mac]
   test: [linux, mac]
-dependencies:
-  - CProcessIdentity
-tests:
-  dependencies:
-    - Subprocess

@@ -343,8 +343,6 @@ public enum SpaceServer {
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
     publicRead: Bool = false,
-    executionPlacement: ExecutionPlacement = .inProcess,
-    adminExec: Bool = false,
     devImport: URL? = nil,
     devExport: URL? = nil,
     certificate: URL? = nil,
@@ -357,122 +355,97 @@ public enum SpaceServer {
     otelEndpoint: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
-    let controller = adminExec ? try await AdminExecController.begin(folder: folder, placement: executionPlacement) : nil
-    try await AdminExecScope.$current.withValue(controller) {
-      do {
-        try await controller?.validateSuccessor(placement: executionPlacement)
-        let aiDisclosure: AIDisclosure?
-        if let aiDisclosureFile {
-          aiDisclosure = try await loadAIDisclosure(
-            from: NodeTreeVFS(root: DiskVFSNode(path: aiDisclosureFile.deletingLastPathComponent().path, isMutable: false)),
-            path: "/" + aiDisclosureFile.lastPathComponent, file: aiDisclosureFile.path,
-          )
-        } else { aiDisclosure = nil }
-        if let contentHostPattern {
-          guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }
-          guard let origin, ContentHost(origin: origin.absoluteString, pattern: contentHostPattern) != nil else {
-            throw ContentHostPatternError.invalid
-          }
-        }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        // Group hosts `<g>.<host>` get the group identity (a `*.<host>` leaf); the
-        // bare host and every other name keep `identity`.
-        let groupIdentity: TLSIdentity?
-        switch (groupCertificate, groupPrivateKey) {
-        case (nil, nil):
-          groupIdentity = nil
-        case let (groupPEM?, groupKey?):
-          guard origin != nil else { throw GroupTLSError.noOrigin }
-          // Invites pin the generated certificate, so it must be the one every
-          // host serves.
-          guard certificate != nil, privateKey != nil else { throw GroupTLSError.noCertificate }
-          let loaded = try pemIdentity(certificate: groupPEM, privateKey: groupKey)
-          // The TLS stack takes some identities it can't handshake with, and every
-          // group host would then fail with alert 80: refuse to start instead.
-          do {
-            try loaded.validate()
-          } catch {
-            throw GroupTLSError.unusable(certificate: groupPEM.path, reason: "\(error)")
-          }
-          groupIdentity = loaded
-        default:
-          throw GroupTLSError.unpaired
-        }
-        let (identity, certificateKind) = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
-        func groupHosts(_ origin: String?) -> [String: TLSIdentity] {
-          guard let groupIdentity, let host = origin.flatMap({ ContentHost(origin: $0) })?.host else { return [:] }
-          return [host: groupIdentity]
-        }
-        let fingerprint = try identity.fingerprint()
-        let logger = Logger(label: "wuhu.serve")
-        logger.notice("TLS certificate fingerprint: \(fingerprint)")
-        let advertisedOrigin = origin.map(normalizedOrigin)
-        let deployment = DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint, certificate: certificateKind)
-        let configDirectory: URL?
-        do { configDirectory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment) }
-        catch {
-          logger.warning("credential and secret stores unavailable (\(error)); using environment credentials only")
-          configDirectory = nil
-        }
-        let webApp: WebApp?
-        if let webAppDirectory {
-          webApp = try WebApp.load(directory: webAppDirectory)
-          logger.notice("web app override: \(webAppDirectory.path) (\(webApp!.files.count) files)")
-        } else { webApp = .embedded }
-        let spaceHost = try await SpaceHost.open(
-          folder: folder, deployment: deployment, configDirectory: configDirectory,
-          fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, executionPlacement: executionPlacement, contentHostPattern: contentHostPattern,
-          aiDisclosure: aiDisclosure, version: version, webApp: webApp,
-          devImport: devImport, devExport: devExport,
-        )
-        let directory = SingleSpaceDirectory(host: spaceHost)
-        var options = ServeOptions()
-        options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
-        options.maximumBodyBytes = maximumPostBodyBytes
-        let api: ServeNIOServer
-        do {
-          if let controller {
-            if let incoming = controller.incoming {
-              api = try await ServeNIOServer.adoptListeningSocket(incoming.listener, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, initiallyAccepting: false, upgrading: directory.handler)
-              try await controller.installPublic(api, descriptor: controller.rollbackPublicDescriptor())
-            } else {
-              let bound = try await ServeNIOServer.bindExportable(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, initiallyAccepting: false, upgrading: directory.handler)
-              api = bound.server
-              try await controller.installPublic(api, descriptor: bound.listener.descriptor)
-            }
-          } else {
-            api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
-          }
-        } catch {
-          try await controller?.rollbackIfReplacing()
-          try? await spaceHost.shutdown()
-          throw error
-        }
-        let telemetry: ServerTelemetryRuntime?
-        do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0, version: version) } }
-        catch {
-          try await controller?.rollbackIfReplacing()
-          await api.shutdown()
-          try? await spaceHost.shutdown()
-          throw error
-        }
-        try await controller?.ready()
-        await withTaskGroup(of: Void.self) { group in
-          if let controller { group.addTask { await controller.probation() }; group.addTask { await controller.runAdminSocket() } }
-          if let telemetry { group.addTask { await telemetry.run() } }
-          group.addTask { await spaceHost.run() }
-          await api.runUntilCancelled()
-          try? await spaceHost.shutdown()
-          group.cancelAll()
-        }
-        if let telemetry { await telemetry.shutdown() }
-        try await spaceHost.shutdown()
-        try await controller?.shutdown()
-      } catch {
-        try await controller?.rollbackIfReplacing()
-        throw error
+    let aiDisclosure: AIDisclosure?
+    if let aiDisclosureFile {
+      aiDisclosure = try await loadAIDisclosure(
+        from: NodeTreeVFS(root: DiskVFSNode(path: aiDisclosureFile.deletingLastPathComponent().path, isMutable: false)),
+        path: "/" + aiDisclosureFile.lastPathComponent, file: aiDisclosureFile.path,
+      )
+    } else { aiDisclosure = nil }
+    if let contentHostPattern {
+      guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }
+      guard let origin, ContentHost(origin: origin.absoluteString, pattern: contentHostPattern) != nil else {
+        throw ContentHostPatternError.invalid
       }
     }
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    // Group hosts `<g>.<host>` get the group identity (a `*.<host>` leaf); the
+    // bare host and every other name keep `identity`.
+    let groupIdentity: TLSIdentity?
+    switch (groupCertificate, groupPrivateKey) {
+    case (nil, nil):
+      groupIdentity = nil
+    case let (groupPEM?, groupKey?):
+      guard origin != nil else { throw GroupTLSError.noOrigin }
+      // Invites pin the generated certificate, so it must be the one every
+      // host serves.
+      guard certificate != nil, privateKey != nil else { throw GroupTLSError.noCertificate }
+      let loaded = try pemIdentity(certificate: groupPEM, privateKey: groupKey)
+      // The TLS stack takes some identities it can't handshake with, and every
+      // group host would then fail with alert 80: refuse to start instead.
+      do {
+        try loaded.validate()
+      } catch {
+        throw GroupTLSError.unusable(certificate: groupPEM.path, reason: "\(error)")
+      }
+      groupIdentity = loaded
+    default:
+      throw GroupTLSError.unpaired
+    }
+    let (identity, certificateKind) = try await tlsIdentity(folder: folder, certificate: certificate, privateKey: privateKey)
+    func groupHosts(_ origin: String?) -> [String: TLSIdentity] {
+      guard let groupIdentity, let host = origin.flatMap({ ContentHost(origin: $0) })?.host else { return [:] }
+      return [host: groupIdentity]
+    }
+    let fingerprint = try identity.fingerprint()
+    let logger = Logger(label: "wuhu.serve")
+    logger.notice("TLS certificate fingerprint: \(fingerprint)")
+    let advertisedOrigin = origin.map(normalizedOrigin)
+    let deployment = DeploymentRecord(origin: advertisedOrigin, tlsFingerprint: fingerprint, certificate: certificateKind)
+    let configDirectory: URL?
+    do { configDirectory = try UserConfig.directory(environment: ProcessInfo.processInfo.environment) }
+    catch {
+      logger.warning("credential and secret stores unavailable (\(error)); using environment credentials only")
+      configDirectory = nil
+    }
+    let webApp: WebApp?
+    if let webAppDirectory {
+      webApp = try WebApp.load(directory: webAppDirectory)
+      logger.notice("web app override: \(webAppDirectory.path) (\(webApp!.files.count) files)")
+    } else { webApp = .embedded }
+    let spaceHost = try await SpaceHost.open(
+      folder: folder, deployment: deployment, configDirectory: configDirectory,
+      fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
+      aiDisclosure: aiDisclosure, version: version, webApp: webApp,
+      devImport: devImport, devExport: devExport,
+    )
+    let directory = SingleSpaceDirectory(host: spaceHost)
+    var options = ServeOptions()
+    options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
+    options.maximumBodyBytes = maximumPostBodyBytes
+    let api: ServeNIOServer
+    do {
+      api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
+    } catch {
+      try? await spaceHost.shutdown()
+      throw error
+    }
+    let telemetry: ServerTelemetryRuntime?
+    do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0, version: version) } }
+    catch {
+      await api.shutdown()
+      try? await spaceHost.shutdown()
+      throw error
+    }
+    await withTaskGroup(of: Void.self) { group in
+      if let telemetry { group.addTask { await telemetry.run() } }
+      group.addTask { await spaceHost.run() }
+      await api.runUntilCancelled()
+      try? await spaceHost.shutdown()
+      group.cancelAll()
+    }
+    if let telemetry { await telemetry.shutdown() }
+    try await spaceHost.shutdown()
   }
 }
 

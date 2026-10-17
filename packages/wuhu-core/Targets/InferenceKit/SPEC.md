@@ -89,15 +89,12 @@ Each concrete provider model may declare `cacheWarming: { intervalSeconds?, maxP
 
 `InferenceExecutor.trace` accepts an optional semantic `AttemptTraceClient`; it never opens files or receives a filesystem directory. HTTP fetches open a fresh sink per fetch, then emit the raw request body, two newlines and raw response chunks in order. WebSocket attempts open once and emit the existing request/event framing, including malformed/binary wire events. Sink appends are awaited before response chunks advance, and cancellation still ends the response tee. File placement, truncation and best-effort append policy belong to the owner adapter.
 
-`AttemptTraceClient.close` is awaited once on completion, provider failure or cancellation of an attempt, after response consumption and before terminal publication. Its default is a no-op. This lets a remote trace client release its parent-held sink without relying on cross-process deinitialization.
 
 ## Compaction placement and last-resort route transitions
 
 Group runtime readiness keeps local declaration/credential-shape errors distinct from typed `credentialLoginRequired` refresh refusal and names the member. A held account's already-recorded login refusal may be tolerated while validating all alternate local credentials for a last-resort handoff; a missing key or malformed alternate remains a configuration error. Group placement uses the same headroom scorer at create, Start over and compaction. The runtime excludes the refusing member only when its fixed deadline expires; capabilities and complete remain concrete with no provider fallback.
 
 
-## Remote attempt publication
 
-`AttemptEventSink` is an async throwing publication seam accepted optionally by `InferenceExecutor`. Each start, full semantic inference delta and terminal event is awaited in order; without a sink the existing `AttemptHub` behavior is unchanged. A failed publication fails the attempt rather than silently dropping remote observation. The owner of a remote incarnation is responsible for terminating an attempt if its process dies before terminal publication. Metrics/attempt traces retain their existing parent-owned accounting.
 
 An unexpected OIDC signer failure resolves to `InferenceError.oidcSigningFailed(provider:)`, naming the configured provider without carrying the signer's diagnostic/private material. Cancellation and typed configuration hints retain their existing cases. No OIDC failure resolves stored credentials or another provider.

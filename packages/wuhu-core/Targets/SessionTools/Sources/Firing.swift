@@ -23,17 +23,14 @@ public struct SubscriptionFiring: Sendable {
 
   let handler: (any HandlerExecutionClient)?
   /// The scripts running in this process, which a request's stall check
-  /// counts as waits; worker-hosted scripts have owner rows instead.
+  /// counts as waits.
   private let scripts: Scripts?
-  private let startupExcludedSessions: Set<SessionID>
 
   public init(
     space: Space,
     handler: (any HandlerExecutionClient)?,
     scripts: Scripts? = nil,
-    startupExcludedSessions: Set<SessionID> = [],
   ) {
-    self.startupExcludedSessions = startupExcludedSessions
     self.space = space
     self.handler = handler
     self.scripts = scripts
@@ -95,7 +92,7 @@ public struct SubscriptionFiring: Sendable {
             throw error
           }
           let registrations = try await space.sessions.subscriptionRegistrations()
-          let current = registrations.filter { !startupExcludedSessions.contains($0.subscription.session) }.map { (Arming($0.subscription, callbackID: $0.callbackID, archived: $0.archived), $0.subscription) }
+          let current = registrations.map { (Arming($0.subscription, callbackID: $0.callbackID, archived: $0.archived), $0.subscription) }
           let keys = Set(current.map(\.0))
           stopped.formIntersection(keys)
           retries = retries.filter { keys.contains($0.key) }
@@ -354,7 +351,6 @@ public struct SubscriptionFiring: Sendable {
         subscriptionID: subscription.slot.id, content: .init(text: text),
       )
     }
-    var received: ScriptHandlerResult?
     let outcome: Result<Bool, any Error>
     do {
       do {
@@ -365,7 +361,6 @@ public struct SubscriptionFiring: Sendable {
           id: attempt.attemptID, path: path, session: subscription.session, rows: rows, fireTime: fireTime,
           stateJSON: attempt.stateJSON,
         ))
-        received = result
         try Task.checkCancellation()
         var wakes = result.wakes.map(notification)
         if advance == .retire {
@@ -393,7 +388,6 @@ public struct SubscriptionFiring: Sendable {
         outcome = .success(false)
       }
     } catch { outcome = .failure(error) }
-    await received?.acknowledge()
     return try outcome.get()
   }
 

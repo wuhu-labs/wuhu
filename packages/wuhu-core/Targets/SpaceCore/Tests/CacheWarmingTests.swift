@@ -28,22 +28,6 @@ private final class WarmingTime: Sendable {
     try await store.writer.read { try CacheWarmingRow.where { $0.sessionID.eq(id.rawValue) }.fetchOne($0) }
   }
 
-  @Test func overdueDeferralLeavesUnresolvedWorkerScheduleUnchanged() async throws {
-    let time = WarmingTime()
-    try await withSessionDeps {
-      try await withDependencies { $0.date = DateGenerator { time.now } } operation: {
-        let space = try Space.inMemory()
-        let blocked = try await space.sessions.createSession(group: .shared, title: "blocked", kind: .agent, createdBy: "owner", model: .test)
-        let safe = try await space.sessions.createSession(group: .shared, title: "safe", kind: .agent, createdBy: "owner", model: .test)
-        for id in [blocked, safe] { try await settle(space.sessions, id) }
-        time.advance()
-        try await space.sessions.deferOverdueCacheWarming(excluding: [blocked])
-        #expect(try await ping(space.sessions, blocked))
-        #expect(try await ping(space.sessions, safe) == false)
-      }
-    }
-  }
-
   @Test func twentyPingsEachOfferingCompactionThenStopUntilRealInput() async throws {
     let time = WarmingTime()
     try await withSessionDeps {

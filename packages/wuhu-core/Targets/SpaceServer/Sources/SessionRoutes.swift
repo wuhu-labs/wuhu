@@ -864,8 +864,6 @@ func sessionErrorResponse(_ error: any Error) -> Response {
         hint: String(title.prefix(80)),
       )
     }
-  case let error as SessionExecutionDeferred:
-    return errorResponse(.conflict, code: "sessionExecutionDeferred", message: error.description)
   case let busy as SubtreeArchiveBusy:
     return errorResponse(.conflict, code: "conflict", message: busy.message)
   case let SessionError.unreadableData(id):

@@ -68,7 +68,7 @@ func isSessionExec(_ environment: [String: String]) -> Bool {
 extension Command {
   var runsWithoutWallet: Bool {
     switch self {
-    case .serve, .adminExec, .upgrade, .user, .machineV2Install: true
+    case .serve, .upgrade, .user, .machineV2Install: true
     default: false
     }
   }
@@ -81,8 +81,6 @@ extension Command {
   // server's host it swaps the binary the server runs.
   var isRefusedToSessions: Bool {
     switch self {
-    case .adminExec: true
-    case let .serve(config): config.adminExec
     case let .upgrade(upgrade):
       !upgrade.check
     case .machineV2Install, .use, .trust, .untrust, .userAdd, .userInvite, .userAdmin, .userList, .userHandle, .userProfile, .userRemove,

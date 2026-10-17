@@ -21,7 +21,7 @@
       #expect(!FileManager.default.fileExists(atPath: root))
       #expect(try await gate() == .exited(0))
       #expect(try ImageRetention.transaction(root: root) { try $0.references().isEmpty })
-      let reference = try ImageRetention.transaction(root: root) { try $0.retain(source: binary.path, id: UUID(), owner: "prepared") }
+      let reference = try ImageRetention.transaction(root: root) { _ in try seedLegacyImage(root: root, source: binary.path) }
       #expect(try await gate() == .exited(1))
       for peer in [reference.id.uuidString + ".json", reference.digest] {
         let stage = root + "/.stage-" + UUID().uuidString
@@ -32,8 +32,11 @@
       try FileManager.default.removeItem(atPath: root + "/" + reference.id.uuidString + ".json")
       #expect(try await gate() == .exited(0))
       #expect(!FileManager.default.fileExists(atPath: root + "/" + reference.digest))
-      _ = try ImageRetention.transaction(root: root) { try $0.retain(source: binary.path, id: reference.id, owner: "prepared") }
-      var preparation: ImagePreparation? = try ImageRetention.transaction(root: root) { try $0.prepare(source: binary.path, id: UUID(), owner: "prepared") }
+      _ = try ImageRetention.transaction(root: root) { _ in try seedLegacyImage(root: root, source: binary.path, id: reference.id) }
+      var preparation: LegacyImageLease? = try ImageRetention.transaction(root: root) { _ in
+        let reference = try seedLegacyImage(root: root, source: binary.path)
+        return try LegacyImageLease(root: root, id: reference.id)
+      }
       #expect(preparation != nil)
       #expect(try await gate() == .exited(1))
       preparation = nil

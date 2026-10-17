@@ -66,41 +66,13 @@ struct SessionCommandTokenRow {
 }
 
 public struct CompactRequestClaim: Hashable, Sendable {
-  let row: SessionCommandRow?
+  let row: SessionCommandRow
   let token: String
   let generation: Int
   public let transcript: Transcript
-  public let opaqueHandle: String?
-  fileprivate var requiresCurrent = false
-
   init(row: SessionCommandRow, token: String, generation: Int, transcript: Transcript) {
     self.row = row; self.token = token; self.generation = generation; self.transcript = transcript
-    opaqueHandle = nil
   }
-
-  public func identifiesSameRequest(as other: Self) -> Bool {
-    row == other.row && token == other.token && generation == other.generation && opaqueHandle == nil && other.opaqueHandle == nil
-  }
-
-  public func requiringCurrentCompletion() -> Self {
-    var result = self
-    result.requiresCurrent = true
-    return result
-  }
-
-  public init(opaqueHandle: String, transcript: Transcript) {
-    precondition(!opaqueHandle.isEmpty)
-    self.opaqueHandle = opaqueHandle; self.transcript = transcript
-    row = nil; token = ""; generation = 0
-  }
-}
-
-public struct StaleCompactClaim: Error, Sendable {
-  public init() {}
-}
-
-public struct UnresolvedCompactClaim: Error, Sendable {
-  public init() {}
 }
 
 extension SessionStore {
@@ -182,14 +154,11 @@ extension Sessions {
 
   static func completeCompactRequest(_ claim: CompactRequestClaim?, key: String, generation: Int64, in db: Database) throws {
     guard let claim else { return }
-    guard let row = claim.row else { throw UnresolvedCompactClaim() }
+    let row = claim.row
     guard row.sessionID == key, claim.generation == generation else {
-      if claim.requiresCurrent { throw StaleCompactClaim() }
       throw CancellationError()
     }
-    if claim.requiresCurrent, try SessionCommandRow.find(key, in: db) != row { throw StaleCompactClaim() }
     guard try SessionCommandTokenRow.where({ $0.sessionID.eq(key) }).fetchOne(db)?.token == claim.token else {
-      if claim.requiresCurrent { throw StaleCompactClaim() }
       return
     }
     try discardCommand(key, in: db)

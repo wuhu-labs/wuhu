@@ -14,21 +14,9 @@ import Synchronization
 public struct ScriptHandlerResult: Sendable {
   public var stateJSON: String
   public var wakes: [String]
-  private let receipt: HandlerResultReceipt
-  public init(stateJSON: String, wakes: [String], acknowledge: @escaping @Sendable () async -> Void = {}) {
-    self.stateJSON = stateJSON; self.wakes = wakes; receipt = HandlerResultReceipt(acknowledge)
-  }
-
-  public func acknowledge() async { await receipt.consume() }
-}
-
-private actor HandlerResultReceipt {
-  let acknowledge: @Sendable () async -> Void
-  var task: Task<Void, Never>?
-  init(_ acknowledge: @escaping @Sendable () async -> Void) { self.acknowledge = acknowledge }
-  func consume() async {
-    if task == nil { task = Task { await acknowledge() } }
-    await task?.value
+  public init(stateJSON: String, wakes: [String]) {
+    self.stateJSON = stateJSON
+    self.wakes = wakes
   }
 }
 
@@ -164,7 +152,7 @@ extension Scripts {
     handlerInventory.withLock { $0[execution.id] = session }
     defer { handlerInventory.withLock { $0[execution.id] = nil } }
     await withTaskCancellationHandler {
-      await execution.run(owner: owner, lifecycle: lifecycle)
+      await execution.run(owner: owner)
     } onCancel: {
       execution.cancelHandler()
     }

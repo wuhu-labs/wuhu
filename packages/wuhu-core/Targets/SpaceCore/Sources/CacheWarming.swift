@@ -73,10 +73,10 @@ extension SessionStore {
     }
   }
 
-  public func deferOverdueCacheWarming(excluding: Set<SessionID> = []) async throws {
+  public func deferOverdueCacheWarming() async throws {
     let now = dateGen.now.timeIntervalSince1970
     try await writer.write { db in
-      for var row in try CacheWarmingRow.where({ $0.nextPingAt <= now }).fetchAll(db) where !excluding.contains(SessionID(row.sessionID)) {
+      for var row in try CacheWarmingRow.where({ $0.nextPingAt <= now }).fetchAll(db) {
         row.nextPingAt = now + Double(row.intervalSeconds)
         try CacheWarmingRow.upsert { row }.execute(db)
       }

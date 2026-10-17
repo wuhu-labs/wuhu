@@ -6,15 +6,14 @@
 
 `OwnerMediaResolver` leaves non-Wuhu media URLs to the provider adapter, and resolves Wuhu references through the owner before applying the existing image-fitting policy.
 
-Session placement, boot/work-signal admission and archive coordination remain parent services. Script/tool host calls extend the worker-facing semantic boundary; this slice introduces no worker process, transport, feature flag or lifecycle change.
+Session placement, boot/work-signal admission and archive coordination remain parent services. Script/tool host calls extend the in-process semantic boundary; there is no remote implementation or worker transport.
 
 The adapter contract suite takes an owner factory and checks queue/drain/append and compaction ordering, lifecycle/error parity, live model/frozen prompt inputs, media reads and awaited metric delivery. Existing loop/store/server tests remain the behavioral regression suite.
 
 Attempt trace files are parent-owned. `AttemptLogConfig` composes a sink in the parent; execution receives only `AttemptTraceClient`/`AttemptTraceSink`. Opening preserves truncation on each HTTP fetch and once per WebSocket attempt, append remains awaited best-effort, and each chunk is written before forwarding so partial trace evidence survives cancellation. No filesystem path enters inference execution.
 
-Model group declarations are a separate live `modelGroupDocument` read; absent `/model-groups.json` returns nil. `modelDocument` remains provider-only and is the only catalog input to concrete budget resolution. A malformed group file therefore cannot inflate a direct or already-pinned concrete member's usable budget. The owner supplies current route reads and binding establishment; group intent remains additive while persisted executor_config stays compatible with dev.114. Prepared Start-over routes cross the restart owner method and commit with the generation reset, preserving append-only placement history. `inferenceReadiness(audience:)` validates the parent-owned OIDC prerequisites without issuing inference or exposing signer material; production composition injects local signer validation. Group credentials/readiness and routing are not implemented with worker-local storage access.
+Model group declarations are a separate live `modelGroupDocument` read; absent `/model-groups.json` returns nil. `modelDocument` remains provider-only and is the only catalog input to concrete budget resolution. A malformed group file therefore cannot inflate a direct or already-pinned concrete member's usable budget. The owner supplies current route reads and binding establishment; group intent remains additive while persisted executor_config stays compatible with dev.114. Prepared Start-over routes cross the restart owner method and commit with the generation reset, preserving append-only placement history. `inferenceReadiness(audience:)` validates the parent-owned OIDC prerequisites without issuing inference or exposing signer material; production composition injects local signer validation. Group credentials/readiness and routing are implemented through the in-process owner.
 
-`closeAttemptTrace` releases a remotely held attempt sink after an inference attempt. Its default is a no-op for local owners whose sink lifetime already scopes the file handle. A remote owner closes the parent lease explicitly; it never opens trace files in the execution process.
 
 ## Compaction placement and last-resort route transitions
 

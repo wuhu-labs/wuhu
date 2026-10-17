@@ -65,14 +65,12 @@ extension SessionActor {
       case .healthy:
         break
       }
-      guard !yielding else { return }
 
       if (try live).transcript.hasPendingCacheWarming, try await !loopConfig.allowCacheWarming(id) {
         let transcript = try await repo.discardPendingCacheWarming()
         try modify { $0.transcript = transcript }
       }
       guard try await refreshRegisteredSubscriptions() else { return }
-      guard !yielding else { return }
       if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
@@ -81,7 +79,6 @@ extension SessionActor {
       let fullness = try live.transcript.contextFullness(budget: budget)
       try Task.checkCancellation()
       guard !(try live).archiving else { return }
-      guard !yielding else { return }
       if fullness >= loopConfig.thresholds.hard {
         try await runForcedCompaction()
       } else if (try live).queueHead > (try live).queueTail {
@@ -405,7 +402,6 @@ extension SessionActor {
     var idleTimeouts = 0
     var boundedFailures = 0
     while true {
-      guard try !yielding || live.compactRequestClaim != nil else { return }
       if case .interrupting = (try live).sessionStatus { return }
       guard try await refreshRegisteredSubscriptions() else { return }
 
@@ -477,7 +473,6 @@ extension SessionActor {
         guard await backoff(attempt: 1, until: waiting.retryAt) else { return }
 
       case .failure(let error):
-        if yielding, (try live).compactRequestClaim == nil { return }
         switch classify(error) {
         case .cancelled:
           return
@@ -646,14 +641,13 @@ extension SessionActor {
       }
       delay = raw * jitter
     }
-    guard !yielding else { return false }
     let sleep = deadlineSleep(after: .seconds(delay), clock: clock)
     let pause = Task { try await sleep() }
     retryPause = pause
     defer { retryPause = nil }
     return await withTaskCancellationHandler {
       if case .failure = await pause.result { return false }
-      return !yielding && !Task.isCancelled
+      return !Task.isCancelled
     } onCancel: { pause.cancel() }
   }
 

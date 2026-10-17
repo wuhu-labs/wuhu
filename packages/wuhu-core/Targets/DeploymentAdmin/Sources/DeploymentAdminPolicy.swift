@@ -8,7 +8,6 @@
 #else
   import Darwin
 #endif
-import CProcessIdentity
 
 public struct DeploymentAdminPolicy: Sendable {
   private struct PolicyFile: Decodable { let allowedUIDs: Set<UInt32> }
@@ -38,15 +37,6 @@ public struct DeploymentAdminPolicy: Sendable {
 
   func requireMachineAgentUser(uid: UInt32) throws {
     guard !allowedUIDs.contains(uid) else { throw Refusal.machineAgentUID }
-  }
-
-  public func requireNoMachineAgents() throws {
-    for uid in allowedUIDs {
-      try Self.requireMachineRoleIdle(uid)
-      let result = process_has_machine_agent(uid)
-      guard result >= 0 else { throw Refusal.machineInventory }
-      guard result == 0 else { throw Refusal.machineAgentUID }
-    }
   }
 }
 
@@ -81,14 +71,5 @@ extension DeploymentAdminPolicy {
     var state = stat()
     guard fstat(fd, &state) == 0, state.st_uid == uid, state.st_mode & S_IFMT == S_IFREG,
           state.st_mode & 0o777 == 0o600, state.st_nlink == 1 else { throw Refusal.machineInventory }
-  }
-
-  private static func requireMachineRoleIdle(_ uid: UInt32) throws {
-    let fd = open(machineRolePath(uid), O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-    if fd < 0, errno == ENOENT { return }
-    guard fd >= 0 else { throw Refusal.machineInventory }
-    defer { _ = close(fd) }
-    try validateRole(fd, uid: uid)
-    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Refusal.machineAgentUID }
   }
 }

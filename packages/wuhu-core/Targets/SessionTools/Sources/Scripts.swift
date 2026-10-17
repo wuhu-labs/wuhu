@@ -10,14 +10,12 @@ import Synchronization
 // tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
   let owner: any ScriptOwnerClient
-  let lifecycle: ScriptLifecycle?
   let discovery = Mutex(ScriptDiscoveryConfiguration())
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
 
-  public init(owner: any ScriptOwnerClient, lifecycle: ScriptLifecycle? = nil) {
-    self.lifecycle = lifecycle
+  public init(owner: any ScriptOwnerClient) {
     self.owner = owner
     (launches, launch) = AsyncStream.makeStream()
   }
@@ -27,7 +25,7 @@ public final class Scripts: Sendable {
     await withDiscardingTaskGroup { group in
       for await execution in launches {
         group.addTask {
-          await execution.run(owner: self.owner, lifecycle: self.lifecycle, registered: true)
+          await execution.run(owner: self.owner)
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
@@ -71,9 +69,7 @@ public final class Scripts: Sendable {
       tools: tools,
       machines: owner.scriptMachines(for: session),
     )
-    try await lifecycle?.started(session, id)
-    do { try Task.checkCancellation() }
-    catch { await lifecycle?.ended(session, id); throw error }
+    try Task.checkCancellation()
     running.withLock { $0[id] = execution }
     launch.yield(execution)
     return execution
@@ -90,7 +86,7 @@ public final class Scripts: Sendable {
   }
 
   /// Asks every run_script execution of `session` to stop, as archive does
-  /// on a worker, without waiting: a script may be the one archiving its own
+  /// without waiting: a script may be the one archiving its own
   /// session, and each ends within the stop grace regardless.
   public func stopScripts(of session: SessionID) {
     for execution in running.withLock({ $0.values.filter { $0.session == session } }) {
@@ -168,7 +164,6 @@ extension ToolExecutor {
 
   func stopScript(_ session: SessionID, _ arguments: StopScriptArguments) async throws -> ToolResultPayload {
     if let scripts, scripts.execution(arguments.id, of: session) != nil { return try await scripts.stop(arguments.id, session: session) }
-    if let stopScript = routedScriptStop { return try await stopScript(session, arguments.id) }
     guard let scripts else { throw ToolProblem("stop_script is not available here") }
     return try await scripts.stop(arguments.id, session: session)
   }

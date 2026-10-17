@@ -123,7 +123,6 @@ public struct LoopConfig: Sendable {
   public var invalidateInference: @Sendable (SessionID) async -> Void
   public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
   public var scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)?
-  public var executionActivity: @Sendable (SessionID, UUID, Bool) async throws -> Void
   // Fired after a session is archived, for the composition root to stop
   // what it runs for the session outside the loop.
   public var archived: @Sendable (SessionID) async -> Void
@@ -141,7 +140,6 @@ public struct LoopConfig: Sendable {
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
     scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)? = nil,
-    executionActivity: @escaping @Sendable (SessionID, UUID, Bool) async throws -> Void = { _, _, _ in },
     archived: @escaping @Sendable (SessionID) async -> Void = { _ in },
     thresholds: CompactionThresholds = .init(),
     archiveGrace: Duration = .seconds(24 * 3600),
@@ -156,7 +154,6 @@ public struct LoopConfig: Sendable {
     self.invalidateInference = invalidateInference
     self.allowCacheWarming = allowCacheWarming
     self.scheduleWake = scheduleWake
-    self.executionActivity = executionActivity
     self.archived = archived
     self.thresholds = thresholds
     self.archiveGrace = archiveGrace

@@ -10,39 +10,6 @@ import Testing
 import WuhuAI
 
 @Suite(.sessionFixtures(timeLimit: .minutes(1))) struct CacheWarmerTests {
-  @Test func deferredSessionWarmingTickAndPolicyLeaveItUntouched() async throws {
-    let time = Mutex(Date(timeIntervalSince1970: 100))
-    try await withSessionDeps {
-      try await withDependencies { $0.date = DateGenerator { time.withLock { $0 } } } operation: {
-        let space = try Space.inMemory()
-        var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
-        var enabled = try #require(document.providers["testing"]?.models["test-model"])
-        enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 1)
-        document.providers["testing"]?.models["warm-model"] = enabled
-        _ = try await space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: nil)
-        let store = space.sessions
-        let blocked = try await store.createSession(group: .shared, title: "Blocked", kind: .agent, createdBy: "morgan", model: .init(provider: "testing", model: "warm-model", effort: "high"))
-        let safe = try await store.createSession(group: .shared, title: "Safe", kind: .agent, createdBy: "morgan", model: .init(provider: "testing", model: "warm-model", effort: "high"))
-        for id in [blocked, safe] {
-          try await store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10)))
-          try await store.scheduleCacheWarming(id, intervalSeconds: 3300)
-        }
-        let before = try await store.record(blocked)
-        let transcript = try await store.transcript(blocked)
-        let warmer = CacheWarmer(space: space, usage: UsageBoard(), startupExcludedSessions: [blocked])
-        #expect(try await warmer.allows(blocked) == false)
-        #expect(try await warmer.allows(safe))
-        time.withLock { $0.addTimeInterval(3300) }
-        await warmer.tick()
-        #expect(try await store.hydrate(safe).undrained.last?.input.content.text.contains("<cache-warming-notice>") == true)
-        #expect(try await store.record(blocked) == before)
-        #expect(try await store.transcript(blocked) == transcript)
-        #expect(try await store.undrainedInputs(blocked).isEmpty)
-        #expect(try await store.enqueueCacheWarming(blocked, maxPings: 20, floorTokens: 1, images: .claude, quotaLow: false))
-      }
-    }
-  }
-
   @Test func onlyExplicitlyOptedInIdleAgentsReceiveOrdinaryNotices() async throws {
     let time = Mutex(Date(timeIntervalSince1970: 100))
     try await withSessionDeps {

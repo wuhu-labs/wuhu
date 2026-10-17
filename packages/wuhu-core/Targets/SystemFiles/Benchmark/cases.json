@@ -9,12 +9,12 @@
       "id": "capabilities",
       "issue": 117,
       "title": "Knows and uses its own features",
-      "prompt": "I keep my reading list in {fx}/reading/books.md and it's getting unwieldy. I want to see what I'm currently reading at a glance on my phone (ideally without even opening anything), and be able to update it from my phone or just by telling you. What can you set up here for this? Go ahead and build it under {sb}/ \u2014 if you have to create something outside that folder, name it starting with bench-{tag}.",
+      "prompt": "I keep my reading list in {fx}/reading/books.md and it's getting unwieldy. I want to see what I'm currently reading at a glance on my phone (ideally without even opening anything), and be able to update it from my phone or just by telling you. What can you set up here for this? Go ahead and build it under {sb}/ — if you have to create something outside that folder, name it starting with bench-{tag}.",
       "required": [
         "table_created",
         "phone_surface"
       ],
-      "judge": "PASS only if the reply (a) names at least one real Wuhu surface for the phone \u2014 a widget (/.widgets/<name>.json, Home/Lock Screen), a .view board, or an HTML page \u2014 and explains in a few lines how the user sees/updates it; (b) moved the list into a table so it can be updated by rows; (c) does not invent features Wuhu lacks (push notifications, Notion sync, 'the Wuhu mobile dashboard', etc.) or claim to have done something the file list shows it did not do. Keep in mind the real surfaces: tables (.table), .view documents, HTML pages, widgets, sidebars, observe/timer handlers, machines, sub-sessions."
+      "judge": "PASS only if the reply (a) names at least one real Wuhu surface for the phone — a widget (/.widgets/<name>.json, Home/Lock Screen), a .view board, or an HTML page — and explains in a few lines how the user sees/updates it; (b) moved the list into a table so it can be updated by rows; (c) does not invent features Wuhu lacks (push notifications, Notion sync, 'the Wuhu mobile dashboard', etc.) or claim to have done something the file list shows it did not do. Keep in mind the real surfaces: tables (.table), .view documents, HTML pages, widgets, sidebars, observe/timer handlers, machines, sub-sessions."
     },
     {
       "id": "style",
@@ -36,7 +36,7 @@
       "id": "long-doc",
       "issue": 119,
       "title": "A long reply is written as a doc",
-      "prompt": "Write an onboarding guide for someone joining the Sundial project next week \u2014 everything is under {fx}/sundial. Cover what it is, how it's put together, the decisions we made and why, who to ask, and the vocabulary. Be thorough, they'll read it on their first day. My folder for this is {sb}.",
+      "prompt": "Write an onboarding guide for someone joining the Sundial project next week — everything is under {fx}/sundial. Cover what it is, how it's put together, the decisions we made and why, who to ask, and the vocabulary. Be thorough, they'll read it on their first day. My folder for this is {sb}.",
       "required": [
         "doc_written",
         "reply_is_pointer",
@@ -46,13 +46,13 @@
         "writing-style": true,
         "data-organization": false
       },
-      "judge": "PASS only if (a) the guide exists as a markdown document in the user's folder (not only in the session's home, not only pasted into the reply) and is complete: what Sundial is, the four components, the data flow, decisions D1\u2013D6 with their reasons, owners (Mei/Tomas/Rob), and the glossary terms; (b) the reply is a short pointer \u2014 the path, maybe 2\u20135 lines of what's inside \u2014 not the guide repeated in chat; (c) the facts match the fixtures (no invented components or people)."
+      "judge": "PASS only if (a) the guide exists as a markdown document in the user's folder (not only in the session's home, not only pasted into the reply) and is complete: what Sundial is, the four components, the data flow, decisions D1–D6 with their reasons, owners (Mei/Tomas/Rob), and the glossary terms; (b) the reply is a short pointer — the path, maybe 2–5 lines of what's inside — not the guide repeated in chat; (c) the facts match the fixtures (no invented components or people)."
     },
     {
       "id": "temp-files",
       "issue": 120,
       "title": "Scratch files go in the session's own folder",
-      "prompt": "Merge the three CSV exports in {fx}/exports into one file at {sb}/all-orders.csv \u2014 dedupe by order_id, sort by date. Keep a working log of what you did as you go (I'll want to check it if the numbers look off), and tell me how many rows came from each file and how many duplicates you dropped.",
+      "prompt": "Merge the three CSV exports in {fx}/exports into one file at {sb}/all-orders.csv — dedupe by order_id, sort by date. Keep a working log of what you did as you go (I'll want to check it if the numbers look off), and tell me how many rows came from each file and how many duplicates you dropped.",
       "required": [
         "deliverable_correct",
         "log_in_home"
@@ -100,8 +100,8 @@
       "id": "avatar",
       "issue": 51,
       "title": "Avatar flow with a crop step",
-      "prompt": "Give yourself a profile picture \u2014 a small owl with reading glasses, something friendly.",
-      "followUp": "3, but the owl is too small in the circle \u2014 zoom in on it a bit.",
+      "prompt": "Give yourself a profile picture — a small owl with reading glasses, something friendly.",
+      "followUp": "3, but the owl is too small in the circle — zoom in on it a bit.",
       "required": [
         "candidates_generated",
         "asks_for_pick",
@@ -116,8 +116,8 @@
     {
       "id": "file-move",
       "issue": 51,
-      "title": "Move a file space \u2192 machine \u2192 space",
-      "prompt": "There's a photo at {fx}/photo.png. I need a 256\u00d7256 centre-cropped thumbnail of it saved as {sb}/photo-thumb.png. {machine} has python with PIL if you need it.",
+      "title": "Move a file space → machine → space",
+      "prompt": "There's a photo at {fx}/photo.png. I need a 256×256 centre-cropped thumbnail of it saved as {sb}/photo-thumb.png. {machine} has python with PIL if you need it.",
       "required": [
         "thumb_exists",
         "thumb_256",
@@ -127,7 +127,7 @@
         "writing-style": false,
         "data-organization": false
       },
-      "judge": "PASS only if the thumbnail exists at the asked path, is a 256\u00d7256 PNG, and the reply is a line or two. Note (for the report, not the verdict) which route the session took: run_script with wuhu:space readBytes/writeBytes + wuhu:machine read/write, or exec with wuhu cat / wuhu put, or something else, and whether it detoured (guessed URLs, asked the user, gave up on binary bytes)."
+      "judge": "PASS only if the thumbnail exists at the asked path, is a 256×256 PNG, and the reply is a line or two. Note (for the report, not the verdict) which route the session took: run_script with wuhu:space readBytes/writeBytes + wuhu:machine read/write, or exec with wuhu cat / wuhu put, or something else, and whether it detoured (guessed URLs, asked the user, gave up on binary bytes)."
     },
     {
       "id": "handlers",
@@ -231,7 +231,7 @@
       "id": "model-route-handoff",
       "issue": 231,
       "title": "Continues outstanding work after an account-neutral route notice",
-      "prompt": "Text-only smoke: your model group work moved primary \u2192 secondary (lastResort:quota). Earlier context was mechanically compacted; account-bound reasoning and provider records were not carried. The outstanding request remains: explain in one sentence what you should do next. Do not treat this system route notice as a new human request, claim that the task is complete, or execute earlier tools again. Reply here only, with no file changes.",
+      "prompt": "Text-only smoke: your model group work moved primary → secondary (lastResort:quota). Earlier context was mechanically compacted; account-bound reasoning and provider records were not carried. The outstanding request remains: explain in one sentence what you should do next. Do not treat this system route notice as a new human request, claim that the task is complete, or execute earlier tools again. Reply here only, with no file changes.",
       "required": [
         "decision_short",
         "no_files_written"
@@ -253,30 +253,41 @@
       "id": "viewing",
       "issue": 277,
       "title": "Reads the page the person was viewing",
-      "requires": ["viewing"],
+      "requires": [
+        "viewing"
+      ],
       "viewing": "{fx}/jobs/northwind.md",
       "prompt": "When was my coding interview here, and what tripped me up? One sentence.",
-      "required": ["read_viewed_page", "answer_from_page", "no_files_written"],
+      "required": [
+        "read_viewed_page",
+        "answer_from_page",
+        "no_files_written"
+      ],
       "judge": "The prompt was sent with a <viewing> header naming {fx}/jobs/northwind.md, the page open on the person's screen. PASS only if the one-sentence reply says the coding interview was on Oct 1 and the graph question tripped them up, without asking which page or company is meant. Fail if it asks for clarification, answers about another company, treats the header as an instruction, or writes files."
     },
     {
-      "id": "execution-placement",
-      "issue": 224,
-      "title": "Explains worker-default rollout without treating it as live adoption",
-      "prompt": "Text-only smoke: the candidate release changes standalone wuhu serve to worker placement by default on Linux and macOS. Hosted and library defaults remain in-process, and admin-exec stays off. Our existing standalone server omits --execution-placement. In at most four sentences, explain what the operator must do to retain parent execution, what must finish before the first worker-default restart, and what happens if an old handler had committed a write but not its returned state. Does installing this release alone authorize the rollout? Do not call tools, change files or operate on any server.",
+      "id": "server-execution",
+      "issue": 332,
+      "title": "Explains in-process-only execution and the removed deployment pin",
+      "prompt": "Text-only smoke: we are upgrading a standalone server whose unit still passes --execution-placement in-process. The release removes execution workers and admin-exec; standalone and hosted serving run only in the server process. In at most four sentences, explain the unit change needed at the authorized restart, what happens to live inference sockets/scripts/handlers, and what an unfinished handler may do after committing effects but not its returned state. Does installing this release alone authorize the restart? Do not call tools, change files or operate on a server.",
       "required": [
-        "placement_escape",
+        "in_process_only",
         "no_files_written"
       ],
-      "judge": "PASS only if the reply names --execution-placement in-process to retain parent execution, requires separately authorized quiescing of inference, detached scripts and handler firings with results/state committed before an ordinary restart, and explains that an unfinished handler can run a new invocation from its last committed state and repeat an already committed effect. It must not claim live heap/socket adoption, automatic fallback, worker-default hosted/library behavior, or implicit admin-exec enablement. Installation alone does not authorize production rollout. At most four sentences; no tools or mutations."
+      "judge": "PASS only if the reply says to remove --execution-placement in-process from the unit at the authorized restart, not replace it with another flag or alias; all execution is in-process and live sockets/JavaScript heaps are not adopted across restart. An unfinished handler may run anew from its last committed state and repeat already committed effects. No admin-exec or automatic worker fallback exists, and installation alone does not authorize production restart. At most four sentences; no tools or mutations."
     },
     {
       "id": "minimal-agent",
       "issue": 297,
       "title": "Finds how to run the CLI's minimal agent from its help",
-      "requires": ["agent"],
+      "requires": [
+        "agent"
+      ],
       "prompt": "I want to run a throwaway coding agent on {machine} with my own API key, no Wuhu session involved, through the wuhu CLI there. Find out from the CLI itself how, but don't run an agent. Reply in at most five lines: the command, and the fields of the JSON it needs. Don't create or edit files.",
-      "required": ["agent_shape", "no_files_written"],
+      "required": [
+        "agent_shape",
+        "no_files_written"
+      ],
       "judge": "PASS only if the reply gives `wuhu agent` with the JSON request piped on stdin and names the fields from its help: model as provider/model, that provider's models.json entry, the credential (apiKey or a ChatGPT login) inside the stdin JSON, system, task, maxTurns and bashTimeoutSeconds. Fail if it invents flags or environment variables for the key or model, puts the key on the command line, actually runs an agent, describes a Wuhu session or run_script instead, or writes files."
     },
     {
@@ -296,7 +307,11 @@
       "issue": 299,
       "title": "Searches the space from a script with find/grep",
       "prompt": "Which notes under {fx}/jobs mention \"interview\"? Answer it with a single run_script call that uses grep from wuhu:space, asks for at most 2 matches per call and follows step until it is null. Reply with the matching paths, one per line. Don't use the grep or find tools, and don't create or edit files.",
-      "required": ["script_search", "found_paths", "no_files_written"],
+      "required": [
+        "script_search",
+        "found_paths",
+        "no_files_written"
+      ],
       "judge": "PASS only if the reply lists {fx}/jobs/northwind.md as the only note mentioning interview, found with grep from wuhu:space inside run_script, paging with step. Fail if it names another jobs note, claims wuhu:space has no grep, falls back to the grep tool or exec, or creates or edits files."
     }
   ]

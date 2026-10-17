@@ -16,7 +16,6 @@ import struct SpaceCore.SessionHome
 public protocol ExecutionOwnerClient: SessionExecutionOwnerClient {
   var tracesAttempts: Bool { get }
   func openAttemptTrace(_ id: UUID) async throws -> AttemptTraceSink
-  func closeAttemptTrace(_ id: UUID) async
   func providerCredential(_ provider: String) async throws -> ProviderCredential?
   func providerCredentialBinding(_ provider: String) async throws -> CredentialBinding?
   func inferenceToken(audience: URL, session: SessionID) async throws -> String
@@ -29,8 +28,4 @@ public protocol ExecutionOwnerClient: SessionExecutionOwnerClient {
   func deviceNames() async throws -> [String: String]
   func mediaBytes(_ reference: MediaReference, group: GroupID) async throws -> Data
   func recordMetric(_ metric: InferenceMetric) async
-}
-
-extension ExecutionOwnerClient {
-  public func closeAttemptTrace(_ id: UUID) async {}
 }

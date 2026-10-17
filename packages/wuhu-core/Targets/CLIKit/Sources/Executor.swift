@@ -248,7 +248,7 @@ struct Executor {
     case let .observe(command):
       let space = try self.wallet.pinnedSpace()
       try await self.observe(command, space: space)
-    case .serve, .adminExec:
+    case .serve:
       preconditionFailure("serve is routed before the executor")
     case .user:
       preconditionFailure("user is routed before the executor")

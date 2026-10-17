@@ -13,5 +13,6 @@ tests:
   data:
     - Targets/ImageRetention/Tools
   dependencies:
+    - Crypto
     - Scratch
     - Subprocess

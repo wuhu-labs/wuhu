@@ -61,7 +61,7 @@ extension InProcessScriptOwnerContractTests {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      let owner: any WorkerOwnerClient = InProcessToolOwnerClient(space: space, identityFetch: { _, caller, protect in
+      let owner: any SessionOwnerClient = InProcessToolOwnerClient(space: space, identityFetch: { _, caller, protect in
         #expect(caller == session)
         protect("OWNER-TOKEN")
         throw ScriptIdentityUnavailable(message: "failed OWNER-TOKEN owner-token")
@@ -87,7 +87,7 @@ extension InProcessScriptOwnerContractTests {
       let killed = Box<[String]>([])
       backend.kill = { id in killed.withLock { $0.append(id.rawValue) } }
       let claim = try await backend.claim(machine, session, .init("interrupted"))
-      let owner: any WorkerOwnerClient = InProcessToolOwnerClient(space: space, exec: backend, scriptMachines: .init(files: FakeMachineFS().seam, exec: backend))
+      let owner: any SessionOwnerClient = InProcessToolOwnerClient(space: space, exec: backend, scriptMachines: .init(files: FakeMachineFS().seam, exec: backend))
       #expect(owner.scriptMachines(for: session) != nil)
       await owner.killInterruptedExec(session: session, toolCallID: .init("missing"))
       #expect(killed.value.isEmpty)

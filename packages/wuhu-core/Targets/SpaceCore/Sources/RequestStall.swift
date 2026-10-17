@@ -106,8 +106,7 @@ extension SessionStore {
   /// One look at a request's stall clock. It retires the slot once the
   /// request has its final or the task is archived, and otherwise advances
   /// the clock, enqueuing the parent's alert when the stall runs out.
-  /// `liveScripts` names the sessions with a script running in this process;
-  /// worker-hosted scripts are read from their owner rows.
+  /// `liveScripts` names sessions with an in-process script; handler firings are excluded.
   public func checkRequestStall(
     _ parent: SessionID,
     subscriptionID: SubscriptionID,
@@ -216,11 +215,7 @@ extension Sessions {
     if run == .tool {
       waits.append(try (row["run_progress_at"] as String?).map(SQLiteDateFormat.date(from:)))
     }
-    // A handler firing holds an owner row while it runs; it is not a wait.
-    let workerScript = try String.fetchAll(
-      db, sql: "SELECT script_id FROM worker_script_owners WHERE session_id = ?", arguments: [task],
-    ).contains { !$0.hasPrefix("handler-") }
-    if workerScript || liveScripts.contains(clock.task) { waits.append(nil) }
+    if liveScripts.contains(clock.task) { waits.append(nil) }
     var until: Date?
     for timer in try SubscriptionRow.where({ $0.sessionID.eq(task) }).fetchAll(db) {
       guard case .timer(.oneShot, _) = try Sessions.decode(SubscriptionSlot.self, from: timer.payload).kind,

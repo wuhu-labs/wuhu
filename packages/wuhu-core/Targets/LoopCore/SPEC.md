@@ -59,11 +59,10 @@ Start over optionally carries a prepared `SessionModelRoute` through service/act
 
 Each `SessionActor` is given a session-scoped repository backed only by `SessionExecutionOwnerClient`; subscription refreshes use that same repository instead of reaching through it to `SessionStore`. Parent `SessionService` composition may supply an owner client explicitly, or use the existing in-process store adapter. Session placement, boot admission and archive coordination stay in the parent. This changes dependencies, not durable boundaries or lifecycle behavior.
 
-## Execution placement seam
+## In-process execution
 
-`SessionExecutionClient` is the registry-facing execution/lifecycle contract. `SessionExecution` implements it with local `SessionRegistry`/`SessionActor` instances and their liveness tracker. `SessionService(sessions:execution:archiveGrace:)` keeps boot scanning, work signals, archive reservations, subtree admission and persisted lifecycle state in the parent store while delegating registry verbs. Its original initializers construct the local implementation and preserve in-process behavior. A remote service has no parent actor registry. `SessionExecutionRetired` is the retryable dropped-callback outcome; boot and work-signal wakes share the bounded retirement/backoff policy. `enqueue` commits directly to the parent store, then best-effort wakes execution: a post-commit wake failure never escapes to invite input replay.
+`SessionExecutionClient` is the registry-facing execution/lifecycle contract. `SessionExecution` implements it with local `SessionRegistry`/`SessionActor` instances and their liveness tracker. `SessionService(sessions:execution:archiveGrace:)` keeps boot scanning, work signals, archive reservations, subtree admission and persisted lifecycle state in the parent store while delegating registry verbs. Its original initializers construct the local implementation and preserve in-process behavior. `UnfulfilledError` is the retryable dropped-callback outcome; boot and work-signal wakes share the bounded retirement/backoff policy. `enqueue` commits directly to the parent store, then best-effort wakes execution: a post-commit wake failure never escapes to invite input replay.
 
-A strict `StaleCompactClaim` is command supersession, not a terminal session error: the loop reloads persisted hydration and continues with the replacement command. `LoopConfig.executionActivity` acknowledges active-pass admission before work and releases it through uncancelled cleanup; its default is a no-op for local execution.
 
 ## Compaction placement and last-resort route transitions
 
@@ -74,14 +73,6 @@ A strict `StaleCompactClaim` is command supersession, not a terminal session err
 `SessionService` owns park-reminder deadlines independently of its execution actors. A settled actor may be evicted while a reminder is pending; expiry wakes execution through the service's execution client and hydrates fresh state before deciding whether a nag is still owed. Deadlines are derived from durable transcript/environment state on boot, requiring no new stored schema. Interrupt, successful archive and Start over cancel pending reminders; service shutdown cancels and joins them. Wake transport failures retry with injected-clock backoff and visibly error the session after exhaustion; failure persistence is logged.
 
 `LoopConfig.scheduleWake`, when supplied, delegates scheduling and cancellation (`nil`) outside the actor. A standalone `SessionExecution` without this callback retains actor-local scheduling. Service-managed executions always use parent-owned reminders.
-
-## Execution assignment handoff
-
-`SessionExecution.yieldAssignment` closes admission for that session on this execution owner and waits until the current inference, tool or compaction operation and its durable writes finish. It does not cancel that work or start the next loop operation. Queued external lifecycle actions finish first; an archive reservation keeps the old assignment until released. End-of-pass owner activity must be acknowledged before release. Once released, later verbs are rejected as `SessionExecutionRetired` before any effect, rather than lazily rehydrating on the old execution owner. Cancelling a handoff waiter does not release a still-running assignment. Ordinary eviction remains independent of handoff.
-
-## Deferred execution ownership
-
-`SessionService(sessions:execution:archiveGrace:deferredSessions:)` may defer a fixed set of sessions until the space is reopened after another host is fenced. Wake and reminder scheduling are no-ops for those sessions; enqueue still persists ordinary input. Startup eligibility failures cannot mark them errored. Interrupt, resume, restart, unarchive and archive reject with `SessionExecutionDeferred` before execution or state mutation; archive preflights every descendant before reservations, so a deferred child cannot partially archive its parent subtree. Other sessions retain ordinary behavior.
 
 ## Cut model streams
 
