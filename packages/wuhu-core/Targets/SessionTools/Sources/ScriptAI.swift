@@ -101,6 +101,7 @@ export class CompletionError extends Error {
     super(payload.message)
     this.name = "CompletionError"
     this.code = payload.code
+    if (payload.provider !== undefined) this.provider = payload.provider
   }
 }
 const finish = __wuhu_complete

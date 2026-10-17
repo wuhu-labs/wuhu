@@ -1,3 +1,5 @@
+import Clocks
+import Dependencies
 import Foundation
 import JSONValue
 import SpaceContract
@@ -237,48 +239,72 @@ import Testing
     #expect(none.skipped == nil)
   }
 
-  @Test func aBacktrackingPatternEndsEachPageWithinTheBudget() async throws {
-    let context = try makeContext()
-    let costly = String(repeating: "a", count: 20) + "!"
-    _ = try await seedFile("/costly.txt", "fine\n" + String(repeating: "\(costly)\n", count: 200), context)
-    var step: String?
-    var pages = 0
-    repeat {
-      let started = ContinuousClock.now
-      let input: JSONValue = step.map { .object(["pattern": "^(a+)+$", "step": .string($0)]) } ?? .object(["pattern": "^(a+)+$"])
-      let page = try await run("grep", input, context, as: GrepOutput.self)
-      #expect(page.matches.isEmpty)
-      #expect(ContinuousClock.now - started < SearchBounds.pageBudget + SearchBounds.lineBudget, "page \(pages)")
-      step = page.cursor
-      pages += 1
-    } while step != nil && pages < 200
-    #expect(step == nil, "every page advances")
-  }
-
-  // A budget spent before the first line (listing, reading) still lets the
-  // page examine one line, so paging always advances.
-  @Test func aPageWhoseBudgetIsGoneBeforeMatchingStillAdvances() async throws {
+  // Pages end on counts only, so a loaded server pages exactly like an idle one.
+  @Test func pagesEndOnCountsNeverOnTime() async throws {
     let context = try makeContext()
     _ = try await seedFile("/a.txt", "foo 1\nbar\nfoo 2", context)
     _ = try await seedFile("/b.txt", "foo 3", context)
-    try await SearchBounds.$pageBudget.withValue(.zero) {
-      var found: [String] = []
-      var step: String?
-      var pages = 0
-      repeat {
-        let input: JSONValue = step.map { .object(["pattern": "foo", "step": .string($0)]) } ?? .object(["pattern": "foo"])
-        let page = try await run("grep", input, context, as: GrepOutput.self)
-        #expect(page.matches.count <= 1)
-        found += page.matches.map { "\($0.path):\($0.line)" }
-        step = page.cursor
-        pages += 1
-      } while step != nil && pages < 10
-      #expect(found == ["/a.txt:1", "/a.txt:3", "/b.txt:1"])
-      #expect(pages == 4, "one line a page: a.txt's three, then b.txt's")
+    var found: [String] = []
+    var step: String?
+    var pages = 0
+    repeat {
+      let input: JSONValue = step.map { .object(["pattern": "foo", "matchLimit": 1, "step": .string($0)]) } ?? .object(["pattern": "foo", "matchLimit": 1])
+      let page = try await run("grep", input, context, as: GrepOutput.self)
+      #expect(page.matches.count == 1)
+      found += page.matches.map { "\($0.path):\($0.line)" }
+      step = page.cursor
+      pages += 1
+    } while step != nil && pages < 10
+    #expect(found == ["/a.txt:1", "/a.txt:3", "/b.txt:1"])
 
-      let find = try await run("find", .object(["glob": "/*.txt"]), context, as: FindOutput.self)
-      #expect(find.paths == ["/a.txt"])
-      #expect(find.cursor != nil)
+    let all = try await run("grep", .object(["pattern": "foo"]), context, as: GrepOutput.self)
+    #expect(all.matches.count == 3 && all.cursor == nil)
+    let find = try await run("find", .object(["glob": "/*.txt"]), context, as: FindOutput.self)
+    #expect(find.paths == ["/a.txt", "/b.txt"] && find.cursor == nil)
+  }
+
+  // Past the deadline a search fails; it never hands back a partial page.
+  // The deadline races the whole search, so an await that never returns
+  // ends there too.
+  @Test func aSearchWhoseReadNeverReturnsFailsAtTheDeadline() async throws {
+    let target = SpaceToolContext.Target(backend: StalledReads(), path: "/", machine: nil)
+    let failure = try await failureAtDeadline { try await SpaceToolbox.spaceGrep(try grepInput("x"), target) }
+    #expect(failure.advanced >= SearchBounds.deadline)
+    #expect({ if case .failed(code: .unavailable, _, _, _) = failure.error { true } else { false } }(), "\(failure.error)")
+  }
+
+  @Test func aBacktrackingMatchFailsAtTheDeadline() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/costly.txt", "fine\n" + String(repeating: "a", count: 64) + "!\n", context)
+    let target = try context.resolve("/")
+    let failure = try await failureAtDeadline { try await SpaceToolbox.spaceGrep(try grepInput("^(a+)+$"), target) }
+    #expect({ if case .failed(code: .unavailable, _, _, _) = failure.error { true } else { false } }(), "\(failure.error)")
+  }
+
+  private func grepInput(_ pattern: String) throws -> GrepInput {
+    try JSONValueDecoder().decode(GrepInput.self, from: .object(["pattern": .string(pattern)]))
+  }
+
+  /// Runs `search` under a test clock, advancing it a second at a time until
+  /// the search ends; how far the clock went and how the search failed.
+  private func failureAtDeadline(
+    _ search: @escaping @Sendable () async throws -> JSONValue,
+  ) async throws -> (advanced: Duration, error: ToolRunError?) {
+    let clock = TestClock()
+    let done = Mutex(false)
+    let task = Task {
+      defer { done.withLock { $0 = true } }
+      return try await withDependencies { $0.continuousClock = clock } operation: { try await withSearchDeadline(search) }
+    }
+    var advanced = Duration.zero
+    while !done.withLock({ $0 }), advanced < .seconds(600) {
+      await clock.advance(by: .seconds(1))
+      advanced += .seconds(1)
+      for _ in 0 ..< 20 { await Task.yield() }
+    }
+    switch await task.result {
+    case .success: return (advanced, nil)
+    case let .failure(error): return (advanced, error as? ToolRunError)
     }
   }
 
@@ -365,18 +391,6 @@ import Testing
     #expect(tree.returned == SearchWalk.pageSize, "the page starts at the step")
   }
 
-  @Test func aPastDeadlineStopsTheWalkAfterOneLeaf() async throws {
-    let tree = ListingTree(["/": ["a", "b", "c"]])
-    var position: String?
-    var seen: [String] = []
-    repeat {
-      let late = SearchWalk(backend: tree, entryLimit: 10, deadline: .now - .seconds(1), resume: position)
-      try await late.run(root: "/") { path, _ in seen.append(path); return true }
-      position = late.next
-    } while position != nil && seen.count < 10
-    #expect(seen == ["/a", "/b", "/c"])
-  }
-
   // Full-path order: "/a-b" < "/a/z" because "-" < "/", the machine agent's order too.
   @Test func theWalkFollowsFullPathOrderAcrossDirectoryBoundaries() async throws {
     let tree = ListingTree(["/": ["a", "a-b", "a-c", "a0"], "/a": ["z"], "/a-c": ["y"]])
@@ -414,7 +428,7 @@ import Testing
   }
 
   private func walk(_ tree: ListingTree, entryLimit: Int, resume: String? = nil) -> SearchWalk {
-    SearchWalk(backend: tree, entryLimit: entryLimit, deadline: .now + .seconds(60), resume: resume)
+    SearchWalk(backend: tree, entryLimit: entryLimit, resume: resume)
   }
 }
 
@@ -473,6 +487,32 @@ private final class ListingTree: SpaceVFS {
   }
 
   func read(_ path: String) async throws -> (VersionToken, Data) { (VersionToken(Data("t".utf8)), content[path] ?? Data("x".utf8)) }
+  func write(_: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken { VersionToken(Data("t".utf8)) }
+  func delete(_: String, ifMatch _: VersionToken?) async throws {}
+  func move(_: String, to _: String) async throws {}
+}
+
+// A backend whose every read waits until its task is cancelled.
+private struct StalledReads: SpaceVFS {
+  private func entry(_ name: String, _ kind: SpaceFS.Entry.Kind) -> SpaceFS.Entry {
+    SpaceFS.Entry(name: name, kind: kind, size: 1, lineCount: nil, token: VersionToken(Data("t".utf8)), mtime: Date())
+  }
+
+  func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {
+    (VersionToken(Data("t".utf8)), path == "/" ? [entry("a.txt", .file)] : [])
+  }
+
+  func stat(_ path: String) async throws -> SpaceFS.Entry {
+    path == "/" ? entry("", .directory) : entry("a.txt", .file)
+  }
+
+  func read(_: String) async throws -> (VersionToken, Data) {
+    let (never, continuation) = AsyncStream<Never>.makeStream()
+    defer { withExtendedLifetime(continuation) {} }
+    for await _ in never {}
+    throw CancellationError()
+  }
+
   func write(_: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken { VersionToken(Data("t".utf8)) }
   func delete(_: String, ifMatch _: VersionToken?) async throws {}
   func move(_: String, to _: String) async throws {}

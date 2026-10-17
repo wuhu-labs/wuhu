@@ -69,6 +69,7 @@ func parseChatCompletionsStream(
           }
 
           guard let dict = parseChatJSON(sseEvent.data) else { continue }
+          if dict["error"]?.object?["code"]?.stringValue == "upstream_stream_cut" || dict["error"]?.object?["type"]?.stringValue == "upstream_stream_cut" { throw InferenceError.streamCut }
           if let reported = dict["model"]?.stringValue { servedModel = reported }
 
           // DashScope delivers usage in a trailing chunk whose choices array
@@ -242,9 +243,7 @@ func parseChatCompletionsStream(
         }
 
         guard sawDoneMarker else {
-          throw ProviderStreamError.invalidStream(
-            "Chat Completions stream ended before [DONE]",
-          )
+          throw InferenceError.streamCut
         }
 
         closeText()

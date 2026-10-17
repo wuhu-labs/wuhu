@@ -42,7 +42,7 @@ extension Command {
       switch action {
       case "install", "upgrade":
         guard let binary else { throw UsageError(message: "machine-v2 \(action): --binary <signed-wuhu> is required") }
-        return .machineV2Install(.install(machine: machine, binary: binary))
+        return .machineV2Install(action == "install" ? .install(machine: machine, binary: binary) : .upgrade(machine: machine, binary: binary))
       case "rollback", "uninstall":
         guard binary == nil else { throw UsageError(message: "machine-v2 \(action): --binary is not accepted") }
         return .machineV2Install(action == "rollback" ? .rollback(machine: machine) : .uninstall(machine: machine))

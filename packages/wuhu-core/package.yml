@@ -13,6 +13,8 @@ products:
   - DocIndex
   - SpaceClient
   - SpaceContract
+  - MachineContract
+  - ExecSupervisor
   - Assertion
   - CLIKit
   - wuhu

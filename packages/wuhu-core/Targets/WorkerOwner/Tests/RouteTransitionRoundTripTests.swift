@@ -86,7 +86,7 @@ import WuhuAI
     }
   }
 
-  @Test(arguments: [InferenceError.credentialRefreshRefused(provider: "offline"), .authenticationRefused(code: "account_banned"), .upstreamUnavailable(code: "server_overloaded")])
+  @Test(arguments: [InferenceError.oidcSigningFailed(provider: "offline"), .credentialRefreshRefused(provider: "offline"), .authenticationRefused(code: "account_banned"), .upstreamUnavailable(code: "server_overloaded"), .streamCut])
   func typedRoutingRefusalsRoundTrip(_ error: InferenceError) throws {
     #expect(try InferenceFailureSnapshot(error).error() == error)
   }

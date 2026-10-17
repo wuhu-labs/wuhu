@@ -296,6 +296,7 @@ func parseAnthropicStream(
             // into the right `InferenceError` case instead of the stream just
             // ending early with a truncated message.
             let providerError = dict["error"]?.object
+            if providerError?["code"]?.stringValue == "upstream_stream_cut" || providerError?["type"]?.stringValue == "upstream_stream_cut" { throw InferenceError.streamCut }
             throw ProviderStreamError(
               type: providerError?["type"]?.stringValue,
               message: providerError?["message"]?.stringValue,
@@ -307,9 +308,7 @@ func parseAnthropicStream(
         }
 
         guard sawMessageStop else {
-          throw ProviderStreamError.invalidStream(
-            "Anthropic stream ended before message_stop",
-          )
+          throw InferenceError.streamCut
         }
 
         if stopReason == .stop,

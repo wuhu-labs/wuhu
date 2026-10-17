@@ -56,10 +56,10 @@ changes here are contract changes.
   that issued it (tool, pattern or glob, the group or `wuhu://system/` the
   path resolved to, root path); any other step is `invalidArgument`. `cursor`
   is present **iff** the page stopped early: at `matchLimit` or `entryLimit`
-  (capped at 1000 and 100000, never refused), at 100 skipped files, or when
-  the page's 2 s budget ran out; a page always passes at least one file or
-  line first, and one line that alone takes over 2 s to match is
-  `invalidArgument`. The client passes it
+  (capped at 1000 and 100000, never refused) or at 100 skipped files; never
+  on time, so a query pages the same way however loaded the server is. A
+  search still running after 30 s fails `unavailable` rather than returning
+  a partial page. The client passes it
   back as the next `step`; absent `cursor` means the scan is complete.
 
 - **`GrepOutput.skipped`** (`[SkippedFile]`, absent when empty): files over

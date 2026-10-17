@@ -11,16 +11,17 @@
 
 enum MachineV2InstallCommand: Equatable {
   case install(machine: String, binary: String)
+  case upgrade(machine: String, binary: String)
   case rollback(machine: String)
   case uninstall(machine: String)
 
   var verb: String {
-    switch self { case .install: "install"; case .rollback: "rollback"; case .uninstall: "uninstall" }
+    switch self { case .install: "install"; case .upgrade: "upgrade"; case .rollback: "rollback"; case .uninstall: "uninstall" }
   }
 
   var machine: String {
     switch self {
-    case let .install(machine, _), let .rollback(machine), let .uninstall(machine): machine
+    case let .install(machine, _), let .upgrade(machine, _), let .rollback(machine), let .uninstall(machine): machine
     }
   }
 }
@@ -32,12 +33,17 @@ extension CommandRunner {
     let home = URL(fileURLWithPath: path)
     let installer = MachineV2Installer.local(home: home, machine: action.machine, environment: self.environment, command: command)
     switch action {
-    case let .install(_, binary):
+    case let .install(_, binary), let .upgrade(_, binary):
       let enrollment = try MachineV2Home.locate(environment: self.environment, machine: action.machine)
       _ = try enrollment.load()
       _ = try enrollment.loadKey()
       let candidate = URL(fileURLWithPath: binary, relativeTo: URL(fileURLWithPath: self.currentDirectory)).standardizedFileURL
-      try await installer.install(candidate: candidate)
+      guard case .upgrade = action else { try await installer.install(candidate: candidate); break }
+      // Upgrade keeps the installed service definition as it is, hand edits included; only install writes one.
+      do { try await installer.upgrade(candidate: candidate) }
+      catch let error as MachineV2InstallError where error.code == .notInstalled {
+        throw CLIError(message: "machine-v2 \(action.machine) is not installed: \(error.message)")
+      }
     case .rollback: try await installer.rollback()
     case .uninstall:
       try await installer.uninstall {

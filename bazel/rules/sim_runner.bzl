@@ -13,6 +13,9 @@ SIMULATOR_PLATFORM_DIRS = {
 
 def _wuhu_sim_test_runner_impl(ctx):
     runner = [f for f in ctx.files._sources if f.basename == "runner.ts"][0]
+    for argument in ctx.attr.host_arguments:
+        if "'" in argument or "%" in argument:
+            fail("host_arguments cannot contain ' or %: {}".format(argument))
     ctx.actions.expand_template(
         template = ctx.file._template,
         output = ctx.outputs.test_runner_template,
@@ -21,6 +24,7 @@ def _wuhu_sim_test_runner_impl(ctx):
             "%(platform_dir)s": SIMULATOR_PLATFORM_DIRS[ctx.attr.lane],
             "%(deno)s": ctx.file._deno.short_path,
             "%(runner)s": runner.short_path,
+            "%(host_arguments)s": json.encode(ctx.attr.host_arguments),
         },
     )
     return [
@@ -45,6 +49,8 @@ wuhu_sim_test_runner = rule(
     implementation = _wuhu_sim_test_runner_impl,
     attrs = {
         "lane": attr.string(mandatory = True, values = SIMULATOR_PLATFORM_DIRS.keys()),
+        # Launch arguments for a hosted test's application (tools/sim/runner.ts).
+        "host_arguments": attr.string_list(),
         "_sources": attr.label(default = Label("//tools:sim_runner_sources")),
         "_deno": attr.label(
             allow_single_file = True,

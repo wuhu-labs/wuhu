@@ -40,6 +40,33 @@ private func captureInferenceError<E: ModelEndpoint>(
 
 @Suite("InferenceError classification")
 struct InferenceErrorTests {
+  @Test(arguments: ["code", "type"])
+  func cutStreamCodeIsTyped(field: String) async throws {
+    let sse = "event: error\ndata: {\"type\":\"error\",\"error\":{\"\(field)\":\"upstream_stream_cut\",\"message\":\"cut\"}}\n\n"
+    let response = Response(status: .ok, body: .string(sse))
+    #expect(await captureInferenceError(fetch: stubFetch(response)) == .streamCut)
+    let responses = sse + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+    #expect(await captureInferenceError(fetch: stubFetch(Response(status: .ok, body: .string(responses))), endpoint: openAIEndpoint()) == .streamCut)
+    #expect(InferenceError.classify(status: 502, headers: Headers(), body: "{\"error\":{\"\(field)\":\"upstream_stream_cut\"}}") == .streamCut)
+    #expect(ResponsesWebSocketEvents.providerError(.object([field: .string("upstream_stream_cut")]), status: nil, headers: Headers()) == .streamCut)
+  }
+
+  @Test func anthropicTypeClassificationSurvivesUnrelatedCode() async {
+    let sse = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}\n\n"
+    #expect(await captureInferenceError(fetch: stubFetch(Response(status: .ok, body: .string(sse)))) == .rateLimited(retryAt: nil))
+  }
+
+  @Test(arguments: ["code", "type"])
+  func anthropicStreamCutRecognizesEitherField(field: String) async {
+    let other = field == "code" ? "type" : "code"
+    let sse = "event: error\ndata: {\"type\":\"error\",\"error\":{\"\(field)\":\"upstream_stream_cut\",\"\(other)\":\"unrelated_error\"}}\n\n"
+    #expect(await captureInferenceError(fetch: stubFetch(Response(status: .ok, body: .string(sse)))) == .streamCut)
+  }
+
+  @Test func cutMessageAloneDoesNotChangeClassification() {
+    #expect(ProviderStreamError(type: "unknown_error", message: "The model stream ended without a stop reason.").asInferenceError() == .other(status: nil, body: "unknown_error: The model stream ended without a stop reason."))
+  }
+
   @Test("429 with Retry-After delta-seconds maps to .rateLimited carrying retryAt")
   func rateLimitedDeltaSeconds() async throws {
     var headers = Headers()
@@ -275,8 +302,8 @@ struct InferenceErrorTests {
     #expect(inferenceError == .cancelled)
   }
 
-  @Test("a Responses stream truncated before response.completed maps to .transient")
-  func truncatedResponsesStreamIsTransient() async throws {
+  @Test("a Responses stream truncated before response.completed maps to .streamCut")
+  func truncatedResponsesStreamIsCut() async throws {
     let sse = """
     event: response.output_item.added
     data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}
@@ -300,14 +327,7 @@ struct InferenceErrorTests {
     )
     let inferenceError = try #require(error)
 
-    guard case let .transient(status, body) = inferenceError else {
-      Issue.record("expected .transient, got \(inferenceError)")
-      return
-    }
-
-    #expect(status == nil)
-    #expect(body?.contains("invalid_stream") == true)
-    #expect(body?.contains("response.completed") == true)
+    #expect(inferenceError == .streamCut)
   }
 }
 

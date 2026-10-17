@@ -208,6 +208,15 @@ interface TestConfig {
   // of the bare `xctest` agent: a real UIApplication with a connected scene.
   // Bazel-only, like `env`.
   host?: Partial<Record<CheckPlatform, string>>
+  // Package-relative paths the test's host carries in its own bundle. The
+  // generator builds a copy of each named host with these resources added, so
+  // `Bundle.main` (which a hosted test runs in) resolves them, as the app
+  // does: a String Catalog here localizes `Text` under `\.locale`. Bazel-only.
+  hostResources?: string[]
+  // Launch arguments the test's host receives, as `simctl launch` passes them
+  // to the app: `-AppleLanguages (zh-Hans)` runs the whole process, and so
+  // `String(localized:)` and `Locale.current`, in that language. Bazel-only.
+  hostArguments?: string[]
   // false keeps the test target, folder and references included, out of the
   // public tree (tools/public/tree.ts dropPrivateTests). Generation ignores it.
   public?: boolean
@@ -2598,11 +2607,29 @@ ${
           })\n`,
         )
       }
+      if (config.hostResources?.length && !config.host) {
+        throw new Error(`${location} names hostResources but no test host`)
+      }
+      if (config.hostArguments?.length && !config.host) {
+        throw new Error(`${location} names hostArguments but no test host`)
+      }
       for (const { lane, minimumOSVersion } of simulatorLanes) {
+        let host = config.host?.[lane]
+        if (host && config.hostResources?.length) {
+          const name = `${test.name}.${lane}.host`
+          chunks.push(
+            await testHostVariant(name, host, config.hostResources, location),
+          )
+          host = `:${name}`
+        }
         chunks.push(
           `wuhu_sim_test(\n    name = "${test.name}.${lane}",\n    lane = "${lane}",\n    module_name = "${test.name}",\n    package_name = "${pkg.packageName}",\n    minimum_os_version = "${minimumOSVersion}",\n${
-            config.host?.[lane]
-              ? `    test_host = "${config.host[lane]}",\n`
+            host ? `    test_host = "${host}",\n` : ''
+          }${
+            host && config.hostArguments?.length
+              ? `    host_arguments = ${
+                quotedStarlarkList(config.hostArguments)
+              },\n`
               : ''
           }${sharedAttrs}${testRuntimeAttrs(config, lane)}${
             config.tags?.length
@@ -3616,6 +3643,53 @@ function appResourcePatterns(paths: string[]): string[] {
   return paths.flatMap((path) => [path, `${path}/**`])
 }
 
+// A copy of the application `base` names (`//packages/<package>:<target>`)
+// that also bundles `resources`. It builds for the simulator only: no
+// entitlements and no provisioning profile, which a hosted test needs neither of.
+export async function testHostVariant(
+  name: string,
+  base: string,
+  resources: string[],
+  location: string,
+  root = '.',
+): Promise<string> {
+  const match = base.match(/^\/\/(packages\/[^:]+):([^:]+)$/)
+  if (!match) {
+    throw new Error(
+      `${location} hostResources needs a //packages/<package>:<app> host, not ${base}`,
+    )
+  }
+  const [, packageDir, targetName] = match
+  for (const appDir of await discoverAppDirs(join(root, packageDir!))) {
+    const app = await readYaml<AppManifest>(join(appDir, 'app.yml'))
+    const target = app.targets.find((target) => target.name === targetName)
+    if (!target) continue
+    if (target.platform === 'macOS' || target.platform === 'watchOS') {
+      throw new Error(`${location} names ${base}, which is not a simulator app`)
+    }
+    const prefix = `//${packageDir}:${
+      relative(join(root, packageDir!), appDir)
+    }`
+    const deps = target.dependencies.map((dep) =>
+      dep.startsWith(':') ? `//${packageDir}${dep}` : dep
+    )
+    return `${appLoad(target.platform, false)}\n\n${
+      appRule(target.platform)
+    }(\n    name = "${name}",\n    testonly = True,\n    bundle_id = "${target.bundleID}",\n    bundle_name = "${target.bundleName}",\n    families = ${
+      quotedStarlarkList(target.families)
+    },\n    infoplists = ["${prefix}/${
+      infoPlistPaths(target, false).store
+    }"],\n    minimum_os_version = "${target.minimumOSVersion}",\n    resources = glob(${
+      quotedStarlarkList(appResourcePatterns(resources))
+    }, allow_empty = True),\n    tags = ["manual"],\n    deps = ${
+      quotedStarlarkList(deps)
+    },\n${platformsAttr([appTargetPlatform(target)], location)})\n`
+  }
+  throw new Error(
+    `${location} names host ${base}, which no app.yml in ${packageDir} declares`,
+  )
+}
+
 export type SigningVariant = 'dev' | 'adhoc' | 'store'
 
 export function isPreviewBundle(bundle: { bundleID: string }): boolean {
@@ -4190,6 +4264,19 @@ export function generateAppBuildBazel(
     ...[...new Set(loads)].sort(),
     `\npackage(default_visibility = ["//visibility:public"])\n`,
     `exports_files(["${shellPath(pathPrefix, 'app.yml')}"])\n`,
+    // A test host variant (testHostVariant) builds from its base's Info.plist.
+    ...(app.targets.length
+      ? [`exports_files(${
+        quotedStarlarkList(
+          [
+            ...new Set(
+              app.targets.map((target) => infoPlistPaths(target, false).store),
+            ),
+          ].map((path) => shellPath(pathPrefix, path)),
+          '    ',
+        )
+      })\n`]
+      : []),
     ...(emitReleaseManifest
       ? [
         releaseManifestFilegroup(

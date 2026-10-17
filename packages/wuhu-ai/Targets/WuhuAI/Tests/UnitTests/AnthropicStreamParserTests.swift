@@ -201,9 +201,8 @@ import Testing
     do {
       for try await _ in stream {}
       Issue.record("Expected stream to throw")
-    } catch let error as ProviderStreamError {
-      #expect(error.type == "invalid_stream")
-      #expect(error.message == "Anthropic stream ended before message_stop")
+    } catch {
+      #expect(InferenceError.normalize(error) == .streamCut)
     }
   }
 }

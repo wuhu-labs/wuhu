@@ -34,6 +34,7 @@ import {
   swiftPMIdentityFromUrl,
   type TargetKind,
   type TargetManifest,
+  testHostVariant,
   validateAppEntitlements,
   validateAppExtensions,
   validateAppIntents,
@@ -1981,6 +1982,89 @@ Deno.test('generateBuildBazel threads execution tags into host and simulator tes
   assertIncludes(
     build,
     `    tags = [\n        "resources:simulators:1",\n        "no-sandbox",\n        "no-remote-exec",\n        "requires-network",\n    ],`,
+  )
+})
+
+Deno.test('testHostVariant copies a host app and bundles extra resources', async () => {
+  const root = await Deno.makeTempDir()
+  try {
+    const shell = join(root, 'packages/kit/Apps/host')
+    await Deno.mkdir(shell, { recursive: true })
+    await Deno.writeTextFile(
+      join(shell, 'app.yml'),
+      `name: Host
+targets:
+  - name: HostiOS
+    platform: iOS
+    bundleID: tech.example.host
+    bundleName: Host
+    entitlements: {}
+    families: [iphone]
+    appIcons: []
+    infoPlist: Sources/Info.plist
+    minimumOSVersion: "18.4"
+    dependencies: [":HostLibrary"]
+    info: {}
+`,
+    )
+    const rule = await testHostVariant(
+      'LibTests.ios.host',
+      '//packages/kit:HostiOS',
+      ['Apps/shell/Localizations'],
+      'target.yml',
+      root,
+    )
+    assertIncludes(
+      rule,
+      `ios_application(\n    name = "LibTests.ios.host",\n    testonly = True,\n    bundle_id = "tech.example.host",`,
+    )
+    assertIncludes(
+      rule,
+      `    infoplists = ["//packages/kit:Apps/host/Sources/Info.plist"],`,
+    )
+    assertIncludes(
+      rule,
+      `    resources = glob([\n        "Apps/shell/Localizations",\n        "Apps/shell/Localizations/**",\n    ], allow_empty = True),`,
+    )
+    assertIncludes(rule, `"//packages/kit:HostLibrary",`)
+    await assertRejects(
+      () =>
+        testHostVariant(
+          'X',
+          '//packages/kit:Missing',
+          ['R'],
+          'target.yml',
+          root,
+        ),
+      'which no app.yml',
+    )
+  } finally {
+    await Deno.remove(root, { recursive: true })
+  }
+})
+
+Deno.test('hostResources requires a test host', async () => {
+  await assertRejects(
+    () =>
+      generateBuildBazel(applePkg, [{
+        ...minimalTarget('Unhosted', 'library'),
+        tests: { checks: { test: ['ios'] }, hostResources: ['Apps/a/R'] },
+      }]),
+    'names hostResources but no test host',
+  )
+})
+
+Deno.test('hostArguments requires a test host', async () => {
+  await assertRejects(
+    () =>
+      generateBuildBazel(applePkg, [{
+        ...minimalTarget('Unhosted', 'library'),
+        tests: {
+          checks: { test: ['ios'] },
+          hostArguments: ['-AppleLanguages'],
+        },
+      }]),
+    'names hostArguments but no test host',
   )
 })
 

@@ -99,3 +99,5 @@ Group runtime readiness keeps local declaration/credential-shape errors distinct
 ## Remote attempt publication
 
 `AttemptEventSink` is an async throwing publication seam accepted optionally by `InferenceExecutor`. Each start, full semantic inference delta and terminal event is awaited in order; without a sink the existing `AttemptHub` behavior is unchanged. A failed publication fails the attempt rather than silently dropping remote observation. The owner of a remote incarnation is responsible for terminating an attempt if its process dies before terminal publication. Metrics/attempt traces retain their existing parent-owned accounting.
+
+An unexpected OIDC signer failure resolves to `InferenceError.oidcSigningFailed(provider:)`, naming the configured provider without carrying the signer's diagnostic/private material. Cancellation and typed configuration hints retain their existing cases. No OIDC failure resolves stored credentials or another provider.

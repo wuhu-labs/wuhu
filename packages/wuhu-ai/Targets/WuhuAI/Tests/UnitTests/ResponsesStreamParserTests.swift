@@ -354,9 +354,8 @@ private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
     do {
       for try await _ in stream {}
       Issue.record("Expected stream to throw")
-    } catch let error as ProviderStreamError {
-      #expect(error.type == "invalid_stream")
-      #expect(error.message == "Responses stream ended before response.completed")
+    } catch {
+      #expect(InferenceError.normalize(error) == .streamCut)
     }
   }
 }

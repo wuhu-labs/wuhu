@@ -203,7 +203,7 @@ public struct ProviderCatalog: Sendable {
       } catch {
         let failure = InferenceError.normalize(error)
         // Unknown signer diagnostics may contain private key or credential material.
-        if case let .other(status, _) = failure { throw .other(status: status, body: nil) }
+        if case .other = failure { throw .oidcSigningFailed(provider: specifier.provider) }
         throw failure
       }
       let epoch = if let identity { identity } else {

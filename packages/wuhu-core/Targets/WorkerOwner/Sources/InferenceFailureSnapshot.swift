@@ -17,11 +17,13 @@ struct InferenceFailureSnapshot: Codable, Sendable {
   var reason: String?
   init(_ error: InferenceError) {
     switch error {
+    case let .oidcSigningFailed(provider): kind = "oidc-signing-failed"; code = provider
     case let .credentialRefreshRefused(provider): kind = "credential-refresh-refused"; code = provider
     case let .authenticationRefused(code): kind = "authentication-refused"; self.code = code
     case let .upstreamUnavailable(code): kind = "upstream-unavailable"; self.code = code
     case let .rateLimited(retryAt): kind = "rate-limited"; self.retryAt = retryAt
     case let .capacityExceeded(code, message, status): kind = "capacity-exceeded"; self.code = code; self.message = message; self.status = status
+    case .streamCut: kind = "stream-cut"
     case .contextTooLong: kind = "context-too-long"
     case let .requestTooLarge(limit): kind = "request-too-large"; self.limit = limit
     case let .requestTooLargeAfterCompaction(limit): kind = "request-too-large-after-compaction"; self.limit = limit
@@ -36,11 +38,13 @@ struct InferenceFailureSnapshot: Codable, Sendable {
 
   func error() throws -> InferenceError {
     switch kind {
+    case "oidc-signing-failed": if let code { return .oidcSigningFailed(provider: code) }
     case "credential-refresh-refused": if let code { return .credentialRefreshRefused(provider: code) }
     case "authentication-refused": if let code { return .authenticationRefused(code: code) }
     case "upstream-unavailable": if let code { return .upstreamUnavailable(code: code) }
     case "rate-limited": return .rateLimited(retryAt: retryAt)
     case "capacity-exceeded": if let code, let message { return .capacityExceeded(code: code, message: message, status: status) }
+    case "stream-cut": return .streamCut
     case "context-too-long": return .contextTooLong
     case "request-too-large": if let limit { return .requestTooLarge(limitBytes: limit) }
     case "request-too-large-after-compaction": if let limit { return .requestTooLargeAfterCompaction(limitBytes: limit) }

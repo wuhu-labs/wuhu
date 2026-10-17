@@ -1,3 +1,4 @@
+import Dependencies
 import Foundation
 import JSONValue
 import MachineContract
@@ -17,11 +18,10 @@ public enum SearchBounds {
   public static let fileBytes = 4 << 20
   /// A page stops once it has skipped this many files.
   public static let skippedFiles = 100
-  /// Wall time a page may spend before it hands back a step; a page always
-  /// advances past at least one file or line first.
-  @TaskLocal static var pageBudget: Duration = .seconds(2)
-  /// Wall time one line may take to match; a line that needs longer is refused.
-  public static let lineBudget: Duration = .seconds(2)
+  /// Wall time a search may take before it fails, on the injected continuous
+  /// clock. A page ends only on the counts above, never on time, so the same
+  /// query pages the same way however loaded the server is.
+  public static let deadline: Duration = .seconds(30)
 }
 
 extension SpaceToolbox {
@@ -50,6 +50,10 @@ extension SpaceToolbox {
         ("cursor", cursor.map(JSONValue.string)),
       ])
     }
+    return try await withSearchDeadline { try await spaceGrep(input, target) }
+  }
+
+  static func spaceGrep(_ input: GrepInput, _ target: SpaceToolContext.Target) async throws -> JSONValue {
     let matchLimit = try boundedLimit(input.matchLimit, name: "matchLimit", default: 50, max: SearchBounds.matchLimit)
     let entryLimit = try boundedLimit(input.entryLimit, name: "entryLimit", default: 1000, max: SearchBounds.entryLimit)
     let regex: NSRegularExpression
@@ -60,13 +64,10 @@ extension SpaceToolbox {
     }
     let scope = SearchScope(kind: "grep", query: input.pattern, target: target)
     let resume = try input.step.map(scope.resume)
-    let walk = SearchWalk(
-      backend: target.backend, entryLimit: entryLimit, deadline: ContinuousClock.now + SearchBounds.pageBudget, resume: resume?.path,
-    )
+    let walk = SearchWalk(backend: target.backend, entryLimit: entryLimit, resume: resume?.path)
 
     var matches: [JSONValue] = []
     var skipped: [JSONValue] = []
-    var examined = 0
     var next: SearchCursor?
     // Records a file it will not read; false once the page holds enough of them.
     func skip(_ file: String, bytes: Int) -> Bool {
@@ -78,6 +79,7 @@ extension SpaceToolbox {
       return true
     }
     try await walk.run(root: target.path) { file, entry in
+      try Task.checkCancellation()
       guard entry.kind == .file else { return true }
       let data: Data
       switch try await searchable(target.backend, file, listedSize: entry.size) {
@@ -88,29 +90,11 @@ extension SpaceToolbox {
       let lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
       for (index, line) in lines.enumerated() where index + 1 >= startLine {
         let text = String(line)
-        // The page's first line gets a budget of its own, so listing and
-        // reading cannot use it all up and every page examines a line.
-        let outcome = firstMatch(regex, text, before: examined == 0 ? ContinuousClock.now + SearchBounds.lineBudget : walk.deadline)
-        switch outcome {
-        case .match: break
-        case .noMatch:
-          examined += 1
-          continue
-        case .outOfTime where examined == 0:
-          throw ToolRunError.failed(
-            code: .invalidArgument,
-            message: "matching \(target.rendered(file)):\(index + 1) took longer than \(SearchBounds.lineBudget)",
-            hint: "simplify the pattern (nested quantifiers backtrack)",
-          )
-        case .outOfTime:
-          next = scope.cursor(file, line: index + 1)
-          return false
-        }
+        guard try firstMatch(regex, text) else { continue }
         if matches.count == matchLimit {
           next = scope.cursor(file, line: index + 1)
           return false
         }
-        examined += 1
         matches.append(Wire.object([
           ("path", .string(target.rendered(file))),
           ("line", .integer(index + 1)),
@@ -143,17 +127,20 @@ extension SpaceToolbox {
         ("cursor", cursor.map(JSONValue.string)),
       ])
     }
+    return try await withSearchDeadline { try await spaceFind(input, target) }
+  }
+
+  static func spaceFind(_ input: FindInput, _ target: SpaceToolContext.Target) async throws -> JSONValue {
     let matchLimit = try boundedLimit(input.matchLimit, name: "matchLimit", default: 50, max: SearchBounds.matchLimit)
     let entryLimit = try boundedLimit(input.entryLimit, name: "entryLimit", default: 1000, max: SearchBounds.entryLimit)
     let scope = SearchScope(kind: "find", query: input.glob, target: target)
     let resume = try input.step.map(scope.resume)
-    let walk = SearchWalk(
-      backend: target.backend, entryLimit: entryLimit, deadline: ContinuousClock.now + SearchBounds.pageBudget, resume: resume?.path,
-    )
+    let walk = SearchWalk(backend: target.backend, entryLimit: entryLimit, resume: resume?.path)
 
     var paths: [JSONValue] = []
     var next: String?
     try await walk.run(root: target.path) { path, _ in
+      try Task.checkCancellation()
       guard Glob.matches(input.glob, path) else { return true }
       if paths.count == matchLimit {
         next = path
@@ -195,28 +182,42 @@ private func boundedLimit(_ value: Int?, name: String, default defaultValue: Int
   return min(value, max)
 }
 
-private enum MatchOutcome: Equatable {
-  case match
-  case noMatch
-  /// The budget ran out; `inMatch` when ICU's progress report caught it
-  /// inside this line's match rather than before it started.
-  case outOfTime(inMatch: Bool)
+/// Runs a whole search against the deadline: whichever ends first cancels the
+/// other, so a backend await that stalls cannot keep a search alive.
+func withSearchDeadline(_ search: @escaping @Sendable () async throws -> JSONValue) async throws -> JSONValue {
+  @Dependency(\.continuousClock) var continuousClock
+  let clock = continuousClock
+  return try await withThrowingTaskGroup(of: JSONValue?.self) { group in
+    defer { group.cancelAll() }
+    group.addTask { try await search() }
+    group.addTask {
+      try await clock.sleep(for: SearchBounds.deadline)
+      return nil
+    }
+    guard let result = try await group.next(), let output = result else {
+      throw ToolRunError.failed(
+        code: .unavailable,
+        message: "search took longer than \(SearchBounds.deadline)",
+        hint: "narrow the path, or simplify the pattern (nested quantifiers backtrack)",
+      )
+    }
+    return output
+  }
 }
 
-private func firstMatch(_ regex: NSRegularExpression, _ text: String, before deadline: ContinuousClock.Instant) -> MatchOutcome {
-  guard ContinuousClock.now < deadline else { return .outOfTime(inMatch: false) }
+// Cancellation (the deadline's included) stops a match that backtracks.
+private func firstMatch(_ regex: NSRegularExpression, _ text: String) throws -> Bool {
   var found = false
-  var expired = false
   regex.enumerateMatches(in: text, options: [.reportProgress], range: NSRange(text.startIndex..., in: text)) { result, _, stop in
     if result != nil {
       found = true
       stop.pointee = true
-    } else if ContinuousClock.now >= deadline {
-      expired = true
+    } else if Task.isCancelled {
       stop.pointee = true
     }
   }
-  return found ? .match : expired ? .outOfTime(inMatch: true) : .noMatch
+  try Task.checkCancellation()
+  return found
 }
 
 // A step is opaque: it names the search it continues (tool, query, the
@@ -306,8 +307,7 @@ extension String {
 // Leaves stream in the byte order of their full paths, the order the
 // machine agent's traversal gives. Only leaves count against the bound (space
 // directories are implicit, so each one holds a leaf), and the walk stops
-// before a leaf once the bound or the deadline is reached, the deadline only
-// after at least one leaf so every page advances. Positions are keys: a leaf's
+// before a leaf once the bound is reached. Positions are keys: a leaf's
 // path, a directory's path plus "/". Directories are listed a page at a time,
 // from the resume position on; subtrees wholly before it are never listed.
 // Concurrent writes are best effort: an entry created before the position is
@@ -317,16 +317,14 @@ final class SearchWalk {
 
   let backend: any SpaceVFS
   let entryLimit: Int
-  let deadline: ContinuousClock.Instant
   private let resume: String?
   private var scanned = 0
-  /// Where the next page starts, when the bound or the deadline stopped the walk.
+  /// Where the next page starts, when the bound stopped the walk.
   private(set) var next: String?
 
-  init(backend: any SpaceVFS, entryLimit: Int, deadline: ContinuousClock.Instant, resume: String?) {
+  init(backend: any SpaceVFS, entryLimit: Int, resume: String?) {
     self.backend = backend
     self.entryLimit = entryLimit
-    self.deadline = deadline
     self.resume = resume
   }
 
@@ -344,7 +342,7 @@ final class SearchWalk {
   }
 
   private func leaf(_ path: String, _ entry: SpaceFS.Entry, _ visit: (String, SpaceFS.Entry) async throws -> Bool) async throws -> Bool {
-    guard scanned < entryLimit, scanned == 0 || ContinuousClock.now < deadline else {
+    guard scanned < entryLimit else {
       next = path
       return false
     }

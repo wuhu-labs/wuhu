@@ -82,3 +82,7 @@ A strict `StaleCompactClaim` is command supersession, not a terminal session err
 ## Deferred execution ownership
 
 `SessionService(sessions:execution:archiveGrace:deferredSessions:)` may defer a fixed set of sessions until the space is reopened after another host is fenced. Wake and reminder scheduling are no-ops for those sessions; enqueue still persists ordinary input. Startup eligibility failures cannot mark them errored. Interrupt, resume, restart, unarchive and archive reject with `SessionExecutionDeferred` before execution or state mutation; archive preflights every descendant before reservations, so a deferred child cannot partially archive its parent subtree. Other sessions retain ordinary behavior.
+
+## Cut model streams
+
+`InferenceError.streamCut` uses the bounded transient retry schedule, without escalating the idle-timeout schedule. The cut attempt commits no assistant message or tool calls; a successful retry completes the turn without a human resume.

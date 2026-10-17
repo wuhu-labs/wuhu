@@ -88,8 +88,12 @@ extension InferenceMetric {
     switch error {
     case .cancelled:
       return (.cancelled, nil, nil)
+    case .streamCut:
+      return (.networkError, "streamCut", nil)
     case .upstreamUnavailable:
       return (.httpError, "upstreamUnavailable", nil)
+    case .oidcSigningFailed:
+      return (.httpError, "oidcSigningFailed", nil)
     case .credentialRefreshRefused:
       return (.httpError, "credentialRefreshRefused", 401)
     case .authenticationRefused:

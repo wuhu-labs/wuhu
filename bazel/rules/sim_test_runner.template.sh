@@ -20,6 +20,7 @@ exec "$PWD/%(deno)s" run \
   --platform-dir "%(platform_dir)s" \
   --bundle "%(test_bundle_path)s" \
   --host "%(test_host_path)s" \
+  --host-arguments '%(host_arguments)s' \
   --filter "%(test_filter)s" \
   --env "%(test_env)s" \
   -- ${test_env_inherit[@]+"${test_env_inherit[@]}"}

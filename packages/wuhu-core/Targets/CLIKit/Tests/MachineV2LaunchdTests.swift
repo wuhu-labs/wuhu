@@ -69,12 +69,16 @@ import Testing
     try Data("existing service".utf8).write(to: installer.serviceFile)
     if action == "upgrade" {
       guard case let .machineV2Install(command) = try Command.parse(["machine-v2", "upgrade", installer.machine, "--binary", fixture.3.path]) else { Issue.record("upgrade did not select installer"); return }
-      #expect(command == .install(machine: installer.machine, binary: fixture.3.path))
+      #expect(command == .upgrade(machine: installer.machine, binary: fixture.3.path))
     }
     try await withDependencies { $0.continuousClock = ImmediateClock() } operation: {
-      if action.hasPrefix("rollback") { try await installer.rollback() }
-      else { try await installer.install(candidate: fixture.3) }
+      switch action {
+      case "upgrade": try await installer.upgrade(candidate: fixture.3)
+      case "install-over-existing": try await installer.install(candidate: fixture.3)
+      default: try await installer.rollback()
+      }
     }
+    #expect(try (Data(contentsOf: installer.serviceFile) == Data("existing service".utf8)) == (action != "install-over-existing"))
     let commands = launchctl.state.withLock { $0.commands.filter { !$0.last!.contains(".preflight") } }
     #expect(commands.map { $0[1] } == (action == "rollback-unloaded" ? ["bootout", "print", "bootstrap", "bootstrap", "bootstrap"] : ["bootout", "print", "print", "print", "bootstrap", "bootstrap", "bootstrap"]))
     #expect(commands.first?.last == "gui/501/" + installer.label)

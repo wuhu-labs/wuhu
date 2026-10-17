@@ -1,4 +1,6 @@
 @testable import CLIKit
+import Crypto
+import Fetch
 import Foundation
 import Scratch
 import Synchronization
@@ -139,81 +141,106 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: lockPath))
   }
 
-  @Test func reconcileRewritesOnlyAStaleInstalledDefinition() async throws {
+  @Test(arguments: [MachineV2Installer.Platform.linux, .macOS]) func anUpgradeSwapsTheBinaryAndLeavesTheDefinitionAsInstalled(_ platform: MachineV2Installer.Platform) async throws {
     let effects = Effects()
-    let (scratch, _, installer, candidate) = try self.fixture(effects)
+    let (scratch, _, original, candidate) = try self.fixture(effects)
     defer { scratch.remove() }
-    #expect(try await installer.reconcile() == .missing)
+    var installer = original
+    installer.platform = platform
+    installer.command = { arguments in
+      let output = try effects.run(arguments)
+      if arguments.count == 4, arguments[1] == "bootstrap", arguments[3].hasSuffix(".preflight.plist") {
+        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: arguments[3])), format: nil) as! [String: Any]
+        try Data(#"{"ok":true}"#.utf8).write(to: URL(fileURLWithPath: (plist["ProgramArguments"] as! [String]).last!))
+      }
+      return output
+    }
+    try FileManager.default.createDirectory(at: installer.serviceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let edited = Data("an older definition, edited by hand".utf8)
+    try edited.write(to: installer.serviceFile)
+    try await installer.upgrade(candidate: candidate)
+    #expect(try Data(contentsOf: installer.binary) == Data("new signed artifact".utf8))
+    #expect(try Data(contentsOf: installer.serviceFile) == edited)
+    let service = effects.commands.withLock { $0 }.filter { ["/usr/bin/systemctl", "/bin/launchctl"].contains($0[0]) && !["show-environment", "print"].contains($0.last!) && $0[1] != "print" }
+    switch platform {
+    case .linux: #expect(service == [["/usr/bin/systemctl", "--user", "restart", installer.unit]])
+    case .macOS: #expect(service.suffix(2) == [["/bin/launchctl", "bootout", "gui/501/\(installer.label)"], ["/bin/launchctl", "bootstrap", "gui/501", installer.serviceFile.path]])
+    }
+  }
+
+  /// `wuhu machine-v2 upgrade` is the installer's upgrade, not an alias of install: a hand edit to the definition
+  /// survives it. Once an uninstall has removed the definition, as one can between the verb starting and the
+  /// installer taking its lock, it refuses under that lock, names install, and leaves `bin/` and the service alone.
+  @Test func theUpgradeVerbKeepsAHandEditedDefinition() async throws {
+    let effects = Effects()
+    let (scratch, home, _, candidate) = try self.fixture(effects)
+    defer { scratch.remove() }
+    let enrollment = MachineV2Home(root: home.appendingPathComponent(".wuhu/machine-v2"), machine: "mc_test-v2")
+    try enrollment.save(.init(machine: "mc_test-v2", name: "box-v2", server: "https://example.test"), key: .init())
+    let runner = CommandRunner(
+      fetch: FetchClient { _ in Response(status: .ok) }, stdin: { "" }, stdout: { _ in }, stderr: { _ in },
+      environment: ["HOME": home.path], currentDirectory: home.path,
+      machineV2ServiceCommand: { arguments in
+        // The Linux installer runs every service-manager command under `/usr/bin/env XDG_RUNTIME_DIR=…`.
+        let arguments = arguments.first == "/usr/bin/env" ? Array(arguments.dropFirst(2)) : arguments
+        let output = try effects.run(arguments)
+        if arguments.count == 4, arguments[1] == "bootstrap", arguments[3].hasSuffix(".preflight.plist") {
+          let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: arguments[3])), format: nil) as! [String: Any]
+          try Data(#"{"ok":true}"#.utf8).write(to: URL(fileURLWithPath: (plist["ProgramArguments"] as! [String]).last!))
+        }
+        return output
+      },
+    )
+    let installer = MachineV2Installer.local(home: home, machine: "mc_test-v2", environment: [:], command: { _ in "" })
+    func run(_ verb: String) async throws -> MachineV2InstallCommand {
+      guard case let .machineV2Install(command) = try Command.parse(["machine-v2", verb, "mc_test-v2", "--binary", candidate.path]) else {
+        throw CLIError(message: "\(verb) did not select the installer")
+      }
+      try await runner.runMachineV2Install(command)
+      return command
+    }
+    #expect(try await run("install") == .install(machine: "mc_test-v2", binary: candidate.path))
+    let edited = Data((try String(contentsOf: installer.serviceFile, encoding: .utf8) + (installer.platform == .linux ? "# edited by hand\n" : "<!-- edited by hand -->\n")).utf8)
+    try edited.write(to: installer.serviceFile)
+    try Data("an upgrade".utf8).write(to: candidate)
+    effects.commands.withLock { $0.removeAll() }
+    #expect(try await run("upgrade") == .upgrade(machine: "mc_test-v2", binary: candidate.path))
+    #expect(try Data(contentsOf: installer.serviceFile) == edited)
+    #expect(try Data(contentsOf: installer.binary) == Data("an upgrade".utf8))
+    #expect(try Data(contentsOf: installer.previous) == Data("new signed artifact".utf8))
+    #expect(!effects.commands.withLock { $0 }.contains { $0.contains("daemon-reload") || $0.contains("enable") })
+
+    try FileManager.default.removeItem(at: installer.serviceFile)
+    try Data("never installed".utf8).write(to: candidate)
+    let bin = installer.binary.deletingLastPathComponent()
+    func snapshot() throws -> [String: Data] {
+      try Dictionary(uniqueKeysWithValues: FileManager.default.contentsOfDirectory(atPath: bin.path).map { ($0, try Data(contentsOf: bin.appendingPathComponent($0))) })
+    }
+    let before = try snapshot()
+    effects.commands.withLock { $0.removeAll() }
+    do { _ = try await run("upgrade"); Issue.record("upgrade without a definition succeeded") }
+    catch let error as CLIError { #expect(error.message.contains("wuhu machine-v2 install mc_test-v2")) }
+    #expect(try snapshot() == before)
     #expect(!FileManager.default.fileExists(atPath: installer.serviceFile.path))
-    try await installer.install(candidate: candidate)
-    var count = effects.commands.withLock { $0.count }
-    #expect(try await installer.reconcile() == .current)
-    #expect(effects.commands.withLock { $0.count } == count)
-    let previous = installer.serviceDefinition.replacingOccurrences(of: "RestartPreventExitStatus=0\n", with: "")
-    try Data(previous.utf8).write(to: installer.serviceFile)
-    let lockPath = installer.root.appendingPathComponent(".install-lock").path
-    let fd = open(lockPath, O_RDWR | O_CLOEXEC)
-    try #require(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0)
-    do { _ = try await installer.reconcile(); Issue.record("reconciled under a held installation lock") }
-    catch let error as MachineV2InstallError { #expect(error.code == .busy) }
-    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == previous)
-    _ = flock(fd, LOCK_UN); close(fd)
-    count = effects.commands.withLock { $0.count }
-    #expect(try await installer.reconcile() == .rewritten)
-    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == installer.serviceDefinition)
-    #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/systemctl", "--user", "daemon-reload"]])
-    count = effects.commands.withLock { $0.count }
-    #expect(try await installer.reconcile() == .current)
-    #expect(effects.commands.withLock { $0.count } == count)
-    var mac = installer
-    mac.platform = .macOS
-    try FileManager.default.createDirectory(at: mac.serviceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try Data("<plist/>".utf8).write(to: mac.serviceFile)
-    count = effects.commands.withLock { $0.count }
-    #expect(try await mac.reconcile() == .rewritten)
-    #expect(try String(contentsOf: mac.serviceFile, encoding: .utf8) == mac.serviceDefinition)
-    #expect(effects.commands.withLock { $0.count } == count)
+    #expect(effects.commands.withLock { $0 }.isEmpty)
   }
 
-  @Test func aReloadThatFailedAfterTheRewriteIsRetriedOnlyWhenAsked() async throws {
-    let effects = Effects()
-    let (scratch, _, installer, candidate) = try self.fixture(effects)
-    defer { scratch.remove() }
-    try await installer.install(candidate: candidate)
-    try Data(installer.serviceDefinition.replacingOccurrences(of: "RestartPreventExitStatus=0\n", with: "").utf8).write(to: installer.serviceFile)
-    effects.fail.withLock { $0 = true }
-    do { _ = try await installer.reconcile(); Issue.record("failed reload reported success") }
-    catch let error as MachineV2InstallError { #expect(error.code == .serviceFailure) }
-    #expect(try String(contentsOf: installer.serviceFile, encoding: .utf8) == installer.serviceDefinition)
-    effects.fail.withLock { $0 = false }
-    var count = effects.commands.withLock { $0.count }
-    #expect(try await installer.reconcile() == .current)
-    #expect(effects.commands.withLock { $0.count } == count)
-    count = effects.commands.withLock { $0.count }
-    #expect(try await installer.reconcile(reloading: true) == .current)
-    #expect(effects.commands.withLock { Array($0.dropFirst(count)) } == [["/usr/bin/systemctl", "--user", "daemon-reload"]])
-  }
-
-  @Test func onlyTheInstalledJobStopsItselfAndASystemdReloadAloneSettlesIt() async throws {
+  @Test func onlyTheInstalledJobStopsItself() async throws {
     let effects = Effects()
     let (scratch, _, installer, _) = try self.fixture(effects)
     defer { scratch.remove() }
     let unit = "0::/user.slice/user-501.slice/user@501.service/app.slice/wuhu-machine-v2@mc_test-v2.service\n"
-    let linux = MachineV2Service(installer, environment: [:], controlGroups: unit)
-    #expect(linux.reloadApplies)
-    let stopUnit = try #require(linux.stopRunningJob)
-    try await stopUnit()
+    let linux = try #require(MachineV2Service(installer, environment: [:], controlGroups: unit))
+    try await linux.stop()
     #expect(effects.commands.withLock { $0 } == [["/usr/bin/systemctl", "--user", "stop", "wuhu-machine-v2@mc_test-v2.service"]])
-    #expect(MachineV2Service(installer, environment: [:], controlGroups: "0::/user.slice/user-501.slice/session-1.scope\n").stopRunningJob == nil)
-    #expect(MachineV2Service(installer, environment: [:], controlGroups: nil).stopRunningJob == nil)
+    #expect(MachineV2Service(installer, environment: [:], controlGroups: "0::/user.slice/user-501.slice/session-1.scope\n") == nil)
+    #expect(MachineV2Service(installer, environment: [:], controlGroups: nil) == nil)
     var mac = installer
     mac.platform = .macOS
-    #expect(MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": "0"], controlGroups: unit).stopRunningJob == nil)
-    let job = MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": mac.label], controlGroups: nil)
-    #expect(!job.reloadApplies)
+    #expect(MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": "0"], controlGroups: unit) == nil)
+    let job = try #require(MachineV2Service(mac, environment: ["XPC_SERVICE_NAME": mac.label], controlGroups: nil))
     effects.commands.withLock { $0 = [] }
-    let bootout = try #require(job.stopRunningJob)
-    try await bootout()
+    try await job.stop()
     #expect(effects.commands.withLock { $0.first } == ["/bin/launchctl", "bootout", "gui/501/\(mac.label)"])
   }
 
@@ -319,6 +346,7 @@ import Testing
     #expect(plist["Label"] as? String == "ai.wuhu.machine-v2.mc_test-v2")
     #expect(plist["ProgramArguments"] as? [String] == [installer.binary.path, "machine-v2", "run", installer.machine])
     #expect(plist["KeepAlive"] as? [String: Bool] == ["SuccessfulExit": false])
+    #expect(plist["EnvironmentVariables"] as? [String: String] == ["PATH": installer.home.path + "/.wuhu/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin"])
   }
 
   @Test func unsafeIDAndSymlinkCannotTouchOtherInstallations() async throws {

@@ -153,7 +153,7 @@ enum MachineV2AutoUpgrade {
       outcome(&state)
       do { try home.saveUpgradeState(state) } catch { home.logUpgrade("cannot record the outcome of \(target): \(error)") }
     }
-    do { try await installer.install(candidate: candidate) }
+    do { try await installer.upgrade(candidate: candidate) }
     catch let error as MachineV2InstallError where error.code == .busy || (error.code == .preflightFailed && installer.platform == .linux) {
       home.logUpgrade("\(error); \(target) waits for the next check")
       finish { _ in }

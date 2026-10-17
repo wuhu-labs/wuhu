@@ -37,7 +37,10 @@ import WuhuAI
     struct SecretError: Error, CustomStringConvertible { var description: String { "private-key-do-not-print" } }
     let catalog = try catalog(provider: "openai", signer: { _, _ in throw SecretError() })
     let spec = try catalog.defaultSpecifier(provider: "openai", model: "gpt-5.4")
-    await #expect(throws: InferenceError.other(status: nil, body: nil)) {
+    let diagnostic = String(describing: InferenceError.oidcSigningFailed(provider: "openai"))
+    #expect(diagnostic.contains("openai") && diagnostic.contains("SigningFailed"))
+    #expect(!diagnostic.contains("private-key"))
+    await #expect(throws: InferenceError.oidcSigningFailed(provider: "openai")) {
       try await catalog.resolve(spec, session: .init("s"))
     }
   }

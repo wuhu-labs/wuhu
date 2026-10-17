@@ -168,6 +168,39 @@ data: {}
     }
   }
 
+  @Test func oidcSigningFailureReachesJavaScriptWithProviderAndWithoutSecrets() async throws {
+    struct SigningFailure: Error, CustomStringConvertible {
+      var description: String { "private-signing-material" }
+    }
+    let fetch = FetchClient { _ in
+      Issue.record("signing failure must not reach a provider")
+      return Response(status: .internalServerError)
+    }
+    try await withRig(fetch: fetch) { rig in
+      let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
+      let tools = ToolExecutor(space: rig.space, completionCatalog: {
+        .init(document: try .init(json: Data(models.utf8)), credentials: .init { _ in
+          Issue.record("OIDC must not resolve a stored credential")
+          return nil
+        }, oidcToken: { _, _ in throw SigningFailure() })
+      })
+      try await rig.write("/signing-handler.js", #"""
+      import {complete, CompletionError} from 'wuhu:ai'
+      export default async () => {
+        try { await complete('hello', {model:'offline/small'}) }
+        catch (error) { return {typed:error instanceof CompletionError,name:error.name,code:error.code,provider:error.provider,message:error.message} }
+        throw new Error('expected signing failure')
+      }
+      """#)
+      let result = try await rig.scripts.runHandler(path: "/signing-handler.js", session: rig.session, stateJSON: "null", tools: tools)
+      #expect(JSONValue.parse(result.stateJSON) == .object([
+        "typed": .bool(true), "name": .string("CompletionError"), "code": .string("oidcSigningFailed"), "provider": .string("offline"),
+        "message": .string("OIDC signing failed for provider offline; no fallback was attempted."),
+      ]))
+      #expect(!result.stateJSON.contains("private-signing-material"))
+    }
+  }
+
   @Test func configuredOIDCAndMetricsSeamsKeepCallerIdentity() async throws {
     let seen = Box<[String]>([])
     let fetch = FetchClient { request in

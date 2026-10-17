@@ -14,9 +14,11 @@ import JSONValue
 public enum InferenceError: Error, Sendable, Equatable {
   case rateLimited(retryAt: Date?)
   case credentialRefreshRefused(provider: String)
+  case oidcSigningFailed(provider: String)
   case authenticationRefused(code: String)
   case upstreamUnavailable(code: String)
   case capacityExceeded(code: String, message: String, status: Int?)
+  case streamCut
   case contextTooLong
   case requestTooLarge(limitBytes: Int)
   case requestTooLargeAfterCompaction(limitBytes: Int)
@@ -39,6 +41,7 @@ extension InferenceError {
     if let body, let value = JSONValue.parse(body) {
       let object = (value.object?["error"] ?? value).object
       let code = object?["code"]?.stringValue ?? object?["type"]?.stringValue
+      if code == "upstream_stream_cut" { return .streamCut }
       if ["invalid_api_key", "authentication_error", "unauthorized", "account_deactivated", "account_banned"].contains(code ?? ""), status == 401 || status == 403 {
         return .authenticationRefused(code: code!)
       }
@@ -177,10 +180,6 @@ struct ProviderStreamError: Error, Sendable, Equatable {
     self.message = message
   }
 
-  static func invalidStream(_ message: String) -> Self {
-    Self(type: "invalid_stream", message: message)
-  }
-
   func asInferenceError() -> InferenceError {
     switch type {
     case "authentication_error":
@@ -191,6 +190,9 @@ struct ProviderStreamError: Error, Sendable, Equatable {
 
     case "overloaded_error", "api_error":
       .upstreamUnavailable(code: type!)
+
+    case "upstream_stream_cut":
+      .streamCut
 
     case "invalid_stream":
       .transient(status: nil, body: diagnosticBody)

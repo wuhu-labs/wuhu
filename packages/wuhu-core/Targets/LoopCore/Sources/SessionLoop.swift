@@ -729,13 +729,13 @@ private func classify(_ error: any Error) -> FailureClass {
   // one transport failure that re-burned the prompt to learn nothing.
   case .transport(.idleTimeout): .transient(timedOut: true)
   case .transport: .outage(retryAt: nil)
-  case .transient, .upstreamUnavailable: .transient(timedOut: false)
+  case .streamCut, .transient, .upstreamUnavailable: .transient(timedOut: false)
   case .contextTooLong: .contextTooLong
   case .requestTooLarge: .requestTooLarge(normalized)
   case let .capacityExceeded(code, _, _):
     code == "response_too_large" || code == "websocket_message_too_large"
       ? .requestTooLarge(normalized) : .capacity
-  case .requestTooLargeAfterCompaction, .credentialRefreshRefused, .authenticationRefused, .invalidInput, .other: .terminal
+  case .requestTooLargeAfterCompaction, .oidcSigningFailed, .credentialRefreshRefused, .authenticationRefused, .invalidInput, .other: .terminal
   }
 }
 

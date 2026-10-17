@@ -238,67 +238,36 @@ private actor EnrollmentEffects {
     try home.clearRevoked()
   }
 
-  @Test func revocationBringsTheServiceDefinitionCurrentThenStopsAJobAReloadCannotSettle() async throws {
+  /// Inside its job a revoked agent never trusts the loaded definition to keep a clean exit down: it stops the job, or
+  /// parks idle until a signal ends it. Any other failure leaves the job alone.
+  @Test(arguments: [true, false]) func aRevokedJobStopsItselfOrParks(stops: Bool) async throws {
     let fixture = try fixture(); defer { fixture.scratch.remove() }
     let home = MachineV2Home(root: fixture.root, machine: "test")
     try home.prepare()
     let steps = Mutex<[String]>([])
-    let clock = OperationClock(now: { .zero }, sleep: { _ in steps.withLock { $0.append("sleep") } })
-    for launchd in [false, true] {
-      steps.withLock { $0 = [] }
-      let busy = Mutex(2)
-      let service = MachineV2Service(reconcile: { reloading in
-        #expect(reloading)
-        steps.withLock { $0.append("reconcile") }
-        if busy.withLock({ $0 -= 1; return $0 >= 0 }) { throw MachineV2InstallError(code: .busy, message: "held") }
-        return .rewritten
-      }, reloadApplies: !launchd, stopRunningJob: { steps.withLock { $0.append("stop") } })
-      do {
-        try await MachineV2Runtime.retiringOnRevoke(home: home, service: service, clock: clock, retire: { steps.withLock { $0.append("retire") } }) { throw MachineV2RuntimeError(.revoked) }
-        Issue.record("revocation swallowed")
-      } catch let error as MachineV2RuntimeError { #expect(error.code == .revoked) }
-      #expect(steps.withLock { $0 } == ["retire", "reconcile", "sleep", "reconcile", "sleep", "reconcile"] + (launchd ? ["stop"] : []))
-      #expect(home.isRevoked)
-    }
-    steps.withLock { $0 = [] }
-    let untouched = MachineV2Service(reconcile: { _ in steps.withLock { $0.append("reconcile") }; return .current }, reloadApplies: false, stopRunningJob: { steps.withLock { $0.append("stop") } })
-    do {
-      try await MachineV2Runtime.retiringOnRevoke(home: home, service: untouched, clock: clock, retire: {}) { throw MachineV2RuntimeError(.serverUnavailable) }
-    } catch let error as MachineV2RuntimeError { #expect(error.code == .serverUnavailable) }
-    #expect(steps.withLock { $0 }.isEmpty)
-  }
-
-  /// Under a loaded definition that restarts every exit, a revoked agent whose reload keeps failing, or whose unit file
-  /// is gone, never exits on its own: it stops its job, or parks idle until a signal ends it.
-  @Test(arguments: [false, true], [true, false]) func aRevokedJobWhoseReloadKeepsFailingStopsItselfOrParks(missing: Bool, stops: Bool) async throws {
-    let fixture = try fixture(); defer { fixture.scratch.remove() }
-    let home = MachineV2Home(root: fixture.root, machine: "test")
-    try home.prepare()
-    let steps = Mutex<[String]>([])
-    let clock = OperationClock(now: { .zero }, sleep: { duration in
+    let clock = OperationClock(now: { .zero }, sleep: { _ in
       try steps.withLock {
-        $0.append(duration == .seconds(1) ? "sleep" : "park")
+        $0.append("park")
         if $0.count(where: { $0 == "park" }) == 3 { throw CancellationError() }
       }
     })
-    let failures = Mutex(0)
-    let service = MachineV2Service(reconcile: { _ in
-      steps.withLock { $0.append("reconcile") }
-      if missing { return .missing }
-      throw failures.withLock { $0 += 1; return $0 } == 1 ? MachineV2InstallError(code: .busy, message: "held") : MachineV2InstallError(code: .serviceFailure, message: "daemon-reload: no bus")
-    }, reloadApplies: true, stopRunningJob: {
+    let service = MachineV2Service(stop: {
       steps.withLock { $0.append("stop") }
       if !stops { throw MachineV2InstallError(code: .serviceFailure, message: "systemctl stop: no bus") }
     })
     do {
-      try await MachineV2Runtime.retiringOnRevoke(home: home, service: service, clock: clock, retire: {}) { throw MachineV2RuntimeError(.revoked) }
+      try await MachineV2Runtime.retiringOnRevoke(home: home, service: service, clock: clock, retire: {}) { throw MachineV2RuntimeError(.serverUnavailable) }
+    } catch let error as MachineV2RuntimeError { #expect(error.code == .serverUnavailable) }
+    #expect(steps.withLock { $0 }.isEmpty)
+    do {
+      try await MachineV2Runtime.retiringOnRevoke(home: home, service: service, clock: clock, retire: { steps.withLock { $0.append("retire") } }) { throw MachineV2RuntimeError(.revoked) }
       Issue.record("revocation swallowed")
     } catch let error as MachineV2RuntimeError {
       #expect(stops && error.code == .revoked)
     } catch is CancellationError {
       #expect(!stops)
     }
-    #expect(steps.withLock { $0 } == (missing ? ["reconcile"] : ["reconcile", "sleep", "reconcile"]) + ["stop"] + (stops ? [] : ["park", "park", "park"]))
+    #expect(steps.withLock { $0 } == ["retire", "stop"] + (stops ? [] : ["park", "park", "park"]))
     #expect(home.isRevoked)
     let log = try String(contentsOf: home.upgradeLog, encoding: .utf8)
     #expect(log.contains("revoked; stopping the service job"))

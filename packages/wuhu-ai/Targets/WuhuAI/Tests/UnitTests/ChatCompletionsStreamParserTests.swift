@@ -315,6 +315,20 @@ private enum UsageProbeFailure: Error { case streamDidNotComplete }
     }
   }
 
+  @Test(arguments: ["code", "type"])
+  func cutStreamErrorIsNotCompletedByDoneMarker(field: String) async throws {
+    let events = [
+      SSEEvent(data: "{\"error\":{\"\(field)\":\"upstream_stream_cut\"}}"),
+      SSEEvent(data: "[DONE]"),
+    ]
+    do {
+      for try await _ in parseChatCompletionsStream(sse(events), providerID: "test", model: "m") {}
+      Issue.record("Expected stream cut")
+    } catch {
+      #expect(InferenceError.normalize(error) == .streamCut)
+    }
+  }
+
   @Test func throwsOnEOFBeforeDoneMarker() async throws {
     let events = [SSEEvent(data: chatChoiceDelta(content: "Hello", finishReason: "stop"))]
     let stream = parseChatCompletionsStream(sse(events), providerID: "test", model: "m")
@@ -322,9 +336,8 @@ private enum UsageProbeFailure: Error { case streamDidNotComplete }
     do {
       for try await _ in stream {}
       Issue.record("Expected stream to throw")
-    } catch let error as ProviderStreamError {
-      #expect(error.type == "invalid_stream")
-      #expect(error.message == "Chat Completions stream ended before [DONE]")
+    } catch {
+      #expect(InferenceError.normalize(error) == .streamCut)
     }
   }
 

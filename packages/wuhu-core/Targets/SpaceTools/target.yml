@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - Dependencies
   - DocIndex
   - MachineContract
   - SessionDomain
@@ -23,6 +24,7 @@ tests:
     - SpaceFS
     - SystemFiles
     - JSONValue
+    - Clocks
     - Dependencies
     - DependenciesTestSupport
     - SpaceToolReference

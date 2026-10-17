@@ -214,9 +214,7 @@ func parseGeminiStream(
         }
 
         guard sawFinishReason else {
-          throw ProviderStreamError.invalidStream(
-            "Gemini stream ended before finishReason",
-          )
+          throw InferenceError.streamCut
         }
 
         if let idx = currentTextIndex, idx < content.count,

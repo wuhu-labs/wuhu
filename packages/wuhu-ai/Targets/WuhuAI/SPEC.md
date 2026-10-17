@@ -120,3 +120,7 @@ Responses SSE and WebSocket provider failures share status extraction: top-level
 ## Typed upstream refusal provenance
 
 `InferenceError.authenticationRefused(code:)` is emitted only for recognized account authentication/revocation codes (HTTP 401/403 or typed stream/WebSocket events), not generic permission/status failures. `upstreamUnavailable(code:)` preserves recognized provider service-outage codes separately from malformed streams and generic transient errors. Rate-limit/quota errors retain reset evidence. `credentialRefreshRefused(provider:)` names an account whose typed refresh denial requires re-login, without conflating it with malformed/local credentials. Local catalog/credential-shape configuration errors are not upstream refusal events; normalization never invents an account refusal from prose. These typed cases enable declared session-group routing without adding implicit provider fallback to inference adapters.
+
+A provider `upstream_stream_cut` error or EOF before the dialect’s terminal event is `InferenceError.streamCut`. No completed assistant message is emitted for that attempt.
+
+`InferenceError.oidcSigningFailed(provider:)` is a terminal local authentication failure: it names the provider and identifies OIDC signing failure, without an underlying error string that might contain private key material. Worker inference-failure snapshots preserve this case across the worker boundary.

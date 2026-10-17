@@ -225,9 +225,8 @@ import Testing
     do {
       for try await _ in stream {}
       Issue.record("Expected stream to throw")
-    } catch let error as ProviderStreamError {
-      #expect(error.type == "invalid_stream")
-      #expect(error.message == "Gemini stream ended before finishReason")
+    } catch {
+      #expect(InferenceError.normalize(error) == .streamCut)
     }
   }
 }

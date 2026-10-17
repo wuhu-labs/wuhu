@@ -160,6 +160,7 @@ struct ResponsesWebSocketEvents {
     if let capacity = InferenceError.capacityError(code: code, message: message, status: status) { return capacity }
     if InferenceError.bodyIndicatesContextOverflow(code + " " + message) { return .contextTooLong }
     switch code {
+    case "upstream_stream_cut": return .streamCut
     case "rate_limit_exceeded", "rate_limit_error", "insufficient_quota", "usage_limit_reached": return .rateLimited(retryAt: InferenceError.parseRetryAfter(headers))
     case "server_error", "internal_server_error", "overloaded_error", "temporarily_unavailable":
       return .upstreamUnavailable(code: code)

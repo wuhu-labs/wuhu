@@ -81,7 +81,7 @@ public enum MachineV2Runtime {
       let installed = serviceCommand.flatMap { command in CommandLine.arguments.first == home.binary.path ? command : nil }
       let upgrader = installed.flatMap { liveUpgrader(home: home, version: version, fetch: fetch, command: $0) }
       let service = installed.flatMap { command in
-        environment["HOME"].map { MachineV2Service(MachineV2Installer.local(home: URL(fileURLWithPath: $0), machine: home.machine, environment: environment, command: command), environment: environment, controlGroups: try? String(contentsOfFile: "/proc/self/cgroup", encoding: .utf8)) }
+        environment["HOME"].flatMap { MachineV2Service(MachineV2Installer.local(home: URL(fileURLWithPath: $0), machine: home.machine, environment: environment, command: command), environment: environment, controlGroups: try? String(contentsOfFile: "/proc/self/cgroup", encoding: .utf8)) }
       }
       try await run(home: home, trust: trust, fetch: fetch, recording: environment["WUHU_MACHINE_V2_RECORDING"].map { URL(fileURLWithPath: $0) }, upgrader: upgrader, service: service)
     case "apply-upgrade":
@@ -229,70 +229,36 @@ public enum MachineV2Runtime {
     }
     try home.clearRevoked()
     try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, controlSocket: home.socket.path, executable: home.binary.path) { handler, acknowledged, retire in
-      try await retiringOnRevoke(home: home, service: service, clock: clock, retire: { await retire(.revoked) }) {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-          if let service { group.addTask { await reconcile(service, home: home, clock: clock, final: false) } }
-          group.addTask { try await serve(handler, acknowledged) }
-          try await group.waitForAll()
-        }
-      }
+      try await retiringOnRevoke(home: home, service: service, clock: clock, retire: { await retire(.revoked) }) { try await serve(handler, acknowledged) }
     }
   }
 
-  /// Runs `serve`; when the server revokes the machine, retires every supervisor, records the revocation and rethrows,
-  /// but only once the exit is final for the installed service: its reloaded definition keeps a clean exit down, or the
-  /// job stopped itself. Otherwise it parks. The home stays: it holds the key, configuration and executable the
-  /// uninstall still uses.
+  /// Runs `serve`; when the server revokes the machine, retires every supervisor, records the revocation and rethrows.
+  /// Inside its installed job it first stops the job, whatever the loaded definition says about a clean exit, and parks
+  /// if it cannot. The home stays: it holds the key, configuration and executable the uninstall still uses.
   static func retiringOnRevoke(home: MachineV2Home, service: MachineV2Service? = nil, clock: OperationClock = .continuous, retire: () async -> Void, _ serve: () async throws -> Void) async throws {
     do { try await serve() }
     catch let error as MachineV2RuntimeError where error.code == .revoked {
       await retire()
       // Best effort: without the marker the uninstall asks a stopped agent to leave and reports drainFailed.
       try? home.markRevoked()
-      if let service, await !endsJob(service, home: home, clock: clock) { try await park(home: home, clock: clock) }
+      if let service, await !stops(service, home: home) { try await park(home: home, clock: clock) }
       throw error
     }
   }
 
-  /// Whether exiting now ends the installed job for good. The loaded definition may predate `RestartPreventExitStatus`
-  /// or `SuccessfulExit` (a launchd job keeps the definition it was loaded with; a systemd reload may fail), and under
-  /// it every exit restarts, so the job stops itself unless a reload has applied the current definition.
-  static func endsJob(_ service: MachineV2Service, home: MachineV2Home, clock: OperationClock) async -> Bool {
-    let reconciled = await reconcile(service, home: home, clock: clock, final: true)
-    guard let stop = service.stopRunningJob else { return true }
-    if reconciled, service.reloadApplies { return true }
+  /// Whether the service manager has stopped the job for good.
+  static func stops(_ service: MachineV2Service, home: MachineV2Home) async -> Bool {
     home.logUpgrade("revoked; stopping the service job")
-    do { try await stop(); return true }
+    do { try await service.stop(); return true }
     catch { home.logUpgrade("cannot stop the service job: \(error)"); return false }
   }
 
-  /// A revoked agent that cannot make its exit final stays alive and idle: no network, no reconnect, no exec. A signal
+  /// A revoked agent that cannot stop its job stays alive and idle: no network, no reconnect, no exec. A signal
   /// (uninstall stops the job) ends it.
   static func park(home: MachineV2Home, clock: OperationClock) async throws {
     home.logUpgrade("revoked; parked: the service manager would restart an exit")
     while true { try await clock.sleep(.seconds(3600)) }
-  }
-
-  /// Brings the installed service definition up to this binary's, waiting out an installer that holds the lock (the
-  /// upgrade helper that started this agent does, until its install returns), and reports whether the definition is
-  /// now current (and reloaded, under systemd). A missing definition is not: a loaded unit can outlive its file.
-  /// `final` is the revoke path: the exit that follows is final only if the loaded definition is, so it always reloads.
-  @discardableResult
-  static func reconcile(_ service: MachineV2Service, home: MachineV2Home, clock: OperationClock, final: Bool) async -> Bool {
-    for _ in 0 ..< 120 {
-      do {
-        let outcome = try await service.reconcile(final)
-        if outcome == .rewritten { home.logUpgrade("service definition updated") }
-        return outcome != .missing
-      } catch let error as MachineV2InstallError where error.code == .busy {
-        do { try await clock.sleep(.seconds(1)) } catch { return false }
-      } catch {
-        home.logUpgrade("cannot update the service definition: \(error)")
-        return false
-      }
-    }
-    home.logUpgrade("service definition not updated: the installation stayed locked")
-    return false
   }
 
   /// How `wuhu` exits after `machine-v2` fails. A revoked machine is the one clean end of `run`: it exits 0, which the
@@ -383,28 +349,21 @@ public enum MachineV2Runtime {
   }
 }
 
-/// The service manager an installed agent runs under.
+/// The installed job an agent runs as.
 struct MachineV2Service: Sendable {
-  /// Takes whether to reload even a current definition.
-  var reconcile: @Sendable (Bool) async throws -> MachineV2Installer.Reconciliation
-  /// Whether a reload applies the definition to the running job (systemd; launchd only at the next load).
-  var reloadApplies: Bool
-  /// Present only inside the installed job. Returns once the service manager will not start the job again.
-  var stopRunningJob: (@Sendable () async throws -> Void)?
+  /// Returns once the service manager will not start the job again.
+  var stop: @Sendable () async throws -> Void
 
-  init(reconcile: @escaping @Sendable (Bool) async throws -> MachineV2Installer.Reconciliation, reloadApplies: Bool, stopRunningJob: (@Sendable () async throws -> Void)? = nil) {
-    self.reconcile = reconcile; self.reloadApplies = reloadApplies; self.stopRunningJob = stopRunningJob
-  }
+  init(stop: @escaping @Sendable () async throws -> Void) { self.stop = stop }
 
-  /// `controlGroups` is `/proc/self/cgroup`.
-  init(_ installer: MachineV2Installer, environment: [String: String], controlGroups: String?) {
-    self.reconcile = { try await installer.reconcile(reloading: $0) }
-    self.reloadApplies = installer.platform == .linux
+  /// Nil outside the installed job (a foreground `run`). `controlGroups` is `/proc/self/cgroup`.
+  init?(_ installer: MachineV2Installer, environment: [String: String], controlGroups: String?) {
     let inJob = switch installer.platform {
     // launchd names each job's process by its label.
     case .macOS: environment["XPC_SERVICE_NAME"] == installer.label
     case .linux: controlGroups?.split(separator: "\n").contains { $0.hasSuffix("/" + installer.unit) } ?? false
     }
-    if inJob { self.stopRunningJob = { try await installer.stopRunningJob() } } else { self.stopRunningJob = nil }
+    guard inJob else { return nil }
+    self.stop = { try await installer.stopRunningJob() }
   }
 }

@@ -46,6 +46,8 @@ import Testing
       self.announcement = Mutex(announcement)
       installer = MachineV2Installer(home: root, machine: "mc_test-v2", platform: .linux, userID: 501, command: { _ in "" })
       try home.prepare()
+      try FileManager.default.createDirectory(at: installer.serviceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try Data("installed unit".utf8).write(to: installer.serviceFile)
       try Self.executable("0.1.0", at: home.binary)
     }
 
@@ -470,20 +472,22 @@ import Testing
     #expect(box.launches.withLock { $0 }.count == 1)
   }
 
+  /// A busy installer (`replaced` false) and a Linux preflight failing under the lock (`replaced` true, the trial
+  /// replaced meanwhile) both defer to the next check, clearing the trial only while it is still this helper's.
   @Test(arguments: [false, true])
-  func aBusyInstallerClearsOnlyItsOwnTrial(_ replaced: Bool) async throws {
+  func aDeferredInstallClearsOnlyItsOwnTrial(_ replaced: Bool) async throws {
     let box = try Box(Self.ready("0.2.0"))
     defer { box.scratch.remove() }
     await box.upgrader().check()
     let launch = try #require(box.launches.withLock { $0 }.first)
     let lock = open(box.installer.root.appendingPathComponent(".install-lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
     defer { close(lock) }
-    #expect(flock(lock, LOCK_EX | LOCK_NB) == 0)
+    if !replaced { #expect(flock(lock, LOCK_EX | LOCK_NB) == 0) }
     let other = MachineV2UpgradeState.Trial(version: "0.2.0", from: "0.1.0", startedAt: 1, owner: "other")
     let installer = MachineV2Installer(home: box.installer.home, machine: box.installer.machine, platform: .linux, userID: 501, command: { arguments in
       if arguments.first == "/usr/bin/loginctl" {
-        if replaced { try box.home.saveUpgradeState(.init(trial: other)) }
-        return "yes\n"
+        try box.home.saveUpgradeState(.init(trial: other))
+        return "no\n"
       }
       return arguments == ["/usr/bin/id", "-un"] ? "agent\n" : ""
     })

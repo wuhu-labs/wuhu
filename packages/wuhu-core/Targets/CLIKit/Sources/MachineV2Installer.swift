@@ -11,7 +11,7 @@
 import Dependencies
 
 struct MachineV2InstallError: Error, CustomStringConvertible, Equatable {
-  enum Code: String { case invalidMachine, busy, missingBinary, serviceFailure, localNetworkDenied, preflightFailed, drainFailed }
+  enum Code: String { case invalidMachine, busy, missingBinary, notInstalled, serviceFailure, localNetworkDenied, preflightFailed, drainFailed }
   var code: Code
   var message: String
   var description: String { "\(self.code.rawValue): \(self.message)" }
@@ -49,14 +49,28 @@ struct MachineV2Installer {
     })
   }
 
-  func install(candidate: URL) async throws {
+  /// Installs `candidate` and writes its service definition, replacing an installed one.
+  func install(candidate: URL) async throws { try await self.swap(candidate, writingDefinition: true) }
+
+  /// Swaps `candidate` in and restarts the job under the installed service definition, which stays as it is: only an
+  /// explicit `install` writes it. Without an installed definition it refuses, checked under the lock so a concurrent
+  /// uninstall can't leave it swapping and restarting a job that has none.
+  func upgrade(candidate: URL) async throws { try await self.swap(candidate, writingDefinition: false) }
+
+  private func swap(_ candidate: URL, writingDefinition: Bool) async throws {
     try self.validate()
     guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
       throw MachineV2InstallError(code: .missingBinary, message: candidate.path)
     }
-    if self.platform == .linux { try await self.linuxPreflight() }
+    if writingDefinition, self.platform == .linux { try await self.linuxPreflight() }
     let lock = try self.lock()
     defer { self.releaseLock(lock) }
+    if !writingDefinition {
+      guard FileManager.default.fileExists(atPath: self.serviceFile.path) else {
+        throw MachineV2InstallError(code: .notInstalled, message: "\(self.serviceFile.path) is missing; run wuhu machine-v2 install \(self.machine) --binary <signed-wuhu>")
+      }
+      if self.platform == .linux { try await self.linuxPreflight() }
+    }
     let pending = self.root.appendingPathComponent("bin/.pending-\(UUID().uuidString)")
     try FileManager.default.copyItem(at: candidate, to: pending)
     defer { try? FileManager.default.removeItem(at: pending) }
@@ -70,6 +84,7 @@ struct MachineV2Installer {
       }
       try self.replace(pending, self.binary)
     }
+    guard writingDefinition else { return try await self.control(.restart) }
     try FileManager.default.createDirectory(at: self.serviceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
     let existed = FileManager.default.fileExists(atPath: self.serviceFile.path)
     try Data(self.serviceDefinition.utf8).write(to: self.serviceFile, options: .atomic)
@@ -102,26 +117,6 @@ struct MachineV2Installer {
     if FileManager.default.fileExists(atPath: self.serviceFile.path) { try FileManager.default.removeItem(at: self.serviceFile) }
     if self.platform == .linux { _ = try await self.run(["/usr/bin/systemctl", "--user", "daemon-reload"]) }
     if let unacknowledged { throw unacknowledged }
-  }
-
-  enum Reconciliation: Equatable { case current, rewritten, missing }
-
-  /// Rewrites an installed service definition that differs from this binary's, and reports what it found. An
-  /// auto-upgrade installs through the outgoing agent's installer, so only the incoming agent can bring its own
-  /// definition. systemd applies it to the running unit at the reload; launchd keeps a loaded job's definition until
-  /// the job is next loaded. A missing definition is not recreated, and a held installation lock throws `busy`.
-  /// `reloading` reloads systemd even when the file is already current: an earlier rewrite whose reload failed or was
-  /// cancelled leaves a current file and a stale loaded unit.
-  func reconcile(reloading: Bool = false) async throws -> Reconciliation {
-    try self.validate()
-    guard FileManager.default.fileExists(atPath: self.serviceFile.path) else { return .missing }
-    let lock = try self.lock()
-    defer { self.releaseLock(lock) }
-    guard FileManager.default.fileExists(atPath: self.serviceFile.path) else { return .missing }
-    let stale = (try? Data(contentsOf: self.serviceFile)) != Data(self.serviceDefinition.utf8)
-    if stale { try Data(self.serviceDefinition.utf8).write(to: self.serviceFile, options: .atomic) }
-    if self.platform == .linux, stale || reloading { _ = try await self.run(["/usr/bin/systemctl", "--user", "daemon-reload"]) }
-    return stale ? .rewritten : .current
   }
 
   /// Stops the job from inside it: the service manager terminates the caller and, the stop being requested, does not
@@ -279,6 +274,9 @@ struct MachineV2Installer {
     }
   }
 
+  /// The v1 agent's launchd PATH: this user's `wuhu` first, then Homebrew's, then the system's.
+  var path: String { self.home.appendingPathComponent(".wuhu/bin").path + ":/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin" }
+
   private func launchdDefinition(label: String, arguments: [String], keepAlive: Bool) -> String {
     func xml(_ value: String) -> String { value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;") }
     return """
@@ -289,6 +287,7 @@ struct MachineV2Installer {
     <key>ProgramArguments</key><array>\(arguments.map { "<string>\(xml($0))</string>" }.joined())</array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key>\(keepAlive ? "<dict><key>SuccessfulExit</key><false/></dict>" : "<false/>")
+    <key>EnvironmentVariables</key><dict><key>PATH</key><string>\(xml(self.path))</string></dict>
     <key>AbandonProcessGroup</key><true/>
     <key>Umask</key><integer>63</integer>
     <key>StandardOutPath</key><string>\(xml(self.root.appendingPathComponent("agent.log").path))</string>
