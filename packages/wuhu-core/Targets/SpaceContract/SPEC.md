@@ -52,20 +52,24 @@ changes here are contract changes.
   to read the whole file.
 
 - **Search pagination** (`GrepInput.step`/`FindInput.step`, `.cursor`): an
-  **opaque** continuation cursor string. A space cursor is bound to the search
-  that issued it (tool, pattern or glob, the group or `wuhu://system/` the
-  path resolved to, root path); any other step is `invalidArgument`. `cursor`
-  is present **iff** the page stopped early: at `matchLimit` or `entryLimit`
-  (capped at 1000 and 100000, never refused) or at 100 skipped files; never
-  on time, so a query pages the same way however loaded the server is. A
+  **opaque** continuation cursor string, FileSearch's. It is bound to the
+  query that issued it (find or grep, pattern or glob, the backend — space
+  group, machine or system files — and the root path in it, `hidden`,
+  `noIgnore`; not the limit); any other step is `invalidArgument`. `cursor`
+  is present **iff** the page stopped early: at `matchLimit` (capped at
+  1000, never refused) or at one of FileSearch's page budgets (entries
+  visited, bytes read, result bytes); never on time, so a query pages the
+  same way however loaded the server is. A
   search still running after 30 s fails `unavailable` rather than returning
   a partial page. The client passes it
   back as the next `step`; absent `cursor` means the scan is complete.
 
-- **`GrepOutput.skipped`** (`[SkippedFile]`, absent when empty): files over
-  4 MiB the space grep listed instead of reading, `{path, bytes, reason:
-  "tooLarge"}`. Machine grep never sets it. Matched `text` is clamped past
-  500 bytes.
+- **`skipped`** (`[SearchSkipped]`, always present): what the walk passed
+  over, one `{reason, count, example}` per `SearchSkipReason` (hidden,
+  ignored, binary, longLine, unreadable), `example` the first such path.
+  Hidden means a dot-name anywhere, and `/_` and `/users` at a space root;
+  `hidden` and `noIgnore` inputs search those too. `scanned` counts the
+  entries the page visited. Matched `text` is clamped past 500 bytes.
 
 - **`HistoryEntry`**: `to` is present on `move` entries (the destination path);
   `fromRev` is present on `checkout` entries (the revision the content was
@@ -361,3 +365,7 @@ Requested group targets are conceptual API values: sessions.executor_config stay
 Catalog storage is split for rollback compatibility: /models.json is providers-only and /model-groups.json contains group entries. ProvidersOutput still returns separate providers/groups discovery arrays. Provider/group IDs cannot collide; groups retain their discriminated kind: group declaration shape.
 
 Normal machine tools use `unknownKind` when a registered v2 machine does not advertise the requested operation kind. The message names that kind. No v1 fallback or successful truncated result is implied.
+
+## Session query state
+
+`SessionLifecyclePayload`, `SessionHoldPayload` and `SessionWorkPayload` name the session query columns: lifecycle is `live` or `archived`, hold is `normal` or `interrupted`, and work is `no_work`, `has_work` or `errored`. Each type includes `unknown` for clients that encounter a future value. The app maps unrecognized or missing query cells to that fallback. These types do not change query-cell JSON encoding.

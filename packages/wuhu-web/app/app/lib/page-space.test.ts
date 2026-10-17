@@ -111,17 +111,21 @@ Deno.test('writes post JSON naming the page, and read attributes by path', async
 
 Deno.test('find and grep read their routes with the tool input as the query', async () => {
   const sent = page([
-    () => json({ paths: ['/a.md'], cursor: '/b c.md' }),
-    () => json({ matches: [], cursor: null }),
+    () =>
+      json({ paths: ['/a.md'], cursor: '/b c.md', scanned: 1, skipped: [] }),
+    () => json({ matches: [], cursor: null, scanned: 0, skipped: [] }),
     () => json({ code: 'notFound', message: 'not found: /' }, 404),
   ])
   assertEquals(await find('**/*.md', { path: '/notes', limit: 1 }), {
     paths: ['/a.md'],
     step: '/b c.md',
+    scanned: 1,
+    skipped: [],
   })
-  assertEquals(await grep('a+b', { step: '1@/b c.md', entryLimit: 5 }), {
+  assertEquals(await grep('a+b', { step: '1@/b c.md', noIgnore: true }), {
     matches: [],
     step: null,
+    scanned: 0,
     skipped: [],
   })
   assertEquals(
@@ -130,7 +134,7 @@ Deno.test('find and grep read their routes with the tool input as the query', as
   )
   assertEquals(
     sent[1]!.url.href,
-    `${origin}/_/space/grep?pattern=a%2Bb&entryLimit=5&step=1%40%2Fb%20c.md`,
+    `${origin}/_/space/grep?pattern=a%2Bb&noIgnore=true&step=1%40%2Fb%20c.md`,
   )
   const error = await assertRejects(
     () => grep('x', { path: 'wuhu://other.localspace/' }),

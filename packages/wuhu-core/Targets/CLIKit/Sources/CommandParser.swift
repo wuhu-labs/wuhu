@@ -232,20 +232,22 @@ extension Command {
       return .stat(path: path)
     case "grep":
       let matchLimit = try parser.intOption("--match-limit", verb: verb)
-      let entryLimit = try parser.intOption("--entry-limit", verb: verb)
+      let hidden = parser.flag("--hidden")
+      let noIgnore = parser.flag("--no-ignore")
       let step = try parser.option("--step", verb: verb)
       let pattern = try parser.required("pattern", verb: verb)
       let path = parser.pop()
       try parser.finish(verb: verb)
-      return .grep(pattern: pattern, path: path, matchLimit: matchLimit, entryLimit: entryLimit, step: step)
+      return .grep(pattern: pattern, path: path, matchLimit: matchLimit, hidden: hidden, noIgnore: noIgnore, step: step)
     case "find":
       let matchLimit = try parser.intOption("--match-limit", verb: verb)
-      let entryLimit = try parser.intOption("--entry-limit", verb: verb)
+      let hidden = parser.flag("--hidden")
+      let noIgnore = parser.flag("--no-ignore")
       let step = try parser.option("--step", verb: verb)
       let glob = try parser.required("glob", verb: verb)
       let path = parser.pop()
       try parser.finish(verb: verb)
-      return .find(glob: glob, path: path, matchLimit: matchLimit, entryLimit: entryLimit, step: step)
+      return .find(glob: glob, path: path, matchLimit: matchLimit, hidden: hidden, noIgnore: noIgnore, step: step)
     case "history":
       let path = try parser.required("path", verb: verb)
       try parser.finish(verb: verb)
@@ -1199,15 +1201,17 @@ extension Command {
     \(exitCodes)
     """,
     "grep": """
-    usage: wuhu grep <pattern> [path] [--match-limit N] [--entry-limit N] [--step cursor]
+    usage: wuhu grep <pattern> [path] [--match-limit N] [--hidden] [--no-ignore] [--step cursor]
 
-    searches file contents.
+    searches file contents with an ICU regular expression, line by line.
+    skips hidden entries and what .gitignore excludes unless --hidden / --no-ignore.
     \(exitCodes)
     """,
     "find": """
-    usage: wuhu find <glob> [path] [--match-limit N] [--entry-limit N] [--step cursor]
+    usage: wuhu find <glob> [path] [--match-limit N] [--hidden] [--no-ignore] [--step cursor]
 
-    finds paths matching <glob> under [path].
+    finds paths matching <glob> (.gitignore dialect) under [path].
+    skips hidden entries and what .gitignore excludes unless --hidden / --no-ignore.
     \(exitCodes)
     """,
     "history": """

@@ -13,6 +13,8 @@ public enum Opcode: String, Codable, Equatable, Sendable {
   case kill
   case vfsRequest = "vfs-request"
   case vfsResponse = "vfs-response"
+  /// Retired: v1 search. Still decoded so a peer that sends it does not
+  /// sever the leg; a search-request is answered with an error result.
   case searchRequest = "search-request"
   case searchResponse = "search-response"
 }

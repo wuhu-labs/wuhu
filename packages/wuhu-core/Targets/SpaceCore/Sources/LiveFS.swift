@@ -37,6 +37,17 @@ struct LiveFS: SpaceVFS {
     }
   }
 
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    let p = try Self.validated(path)
+    let group = group
+    let hash = try await writer.read { db in
+      guard let head = try Substrate.head(p, group: group, in: db) else { throw SpaceError.notFound(p.rawValue) }
+      guard head.kind == "file", let hash = head.blobHash else { throw SpaceError.notAFile(p.rawValue) }
+      return hash
+    }
+    return BlobReader(blobs: blobs, database: writer, hash: hash)
+  }
+
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {
     try await write(path, data, ifMatch: ifMatch, createOnly: false)
   }

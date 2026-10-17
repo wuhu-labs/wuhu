@@ -14,7 +14,7 @@ contract: changes here are contract changes.
 ## Encoding conventions
 
 - **Discriminated unions** (`ControlMessage`, `ExitStatus`, `ExecEvent`,
-  `VFSOp`, `VFSResult`, `SearchQuery`, `SearchResult`) are
+  `VFSOp`, `VFSResult`) are
   **internally tagged**: `{"kind": "<case>", …flattened labeled values}`,
   never externally tagged, never a `_0` key.
 - **Optional fields** are omitted when absent (never explicit `null`) and are
@@ -34,13 +34,18 @@ contract: changes here are contract changes.
 A connection carries `Frame` values: `{streamID, opcode, body}` where `body`
 is the opcode's payload type. Stream 0 is control (`ControlMessage`); each
 exec gets a fresh nonzero `streamID` assigned by the initiating side; VFS
-and search traffic demux by their payload's request `id`, not by stream.
+traffic demuxes by its payload's request `id`, not by stream.
 
 Opcode → payload: `control`→`ControlMessage`, `exec-start`→`ExecStart`,
 `stdin`→`StdinChunk`, `stdin-eof`→`StdinEOF`, `output`→`OutputChunk`,
 `exec-exit`→`ExecExit`, `ack`→`Ack`, `kill`→`Kill`,
-`vfs-request`→`VFSRequest`, `vfs-response`→`VFSResponse`,
-`search-request`→`SearchRequest`, `search-response`→`SearchResponse`.
+`vfs-request`→`VFSRequest`, `vfs-response`→`VFSResponse`.
+
+`search-request` and `search-response` are retired: v1 machines
+no longer search. An endpoint answers a `search-request` with a
+`search-response` carrying `{id, result: {kind: "error", error: {code:
+"invalidArgument", …}}}`, so an old server gets a typed refusal instead of a
+hang. Machine search is the v2 `search.v1` operation (ComputerFiles SPEC).
 
 There are no secret opcodes: a machine keeps no secrets of its own, and a
 secret's value reaches it only inside the `ExecStart` that needs it.
@@ -135,7 +140,7 @@ secret's value reaches it only inside the `ExecStart` that needs it.
 - `ExecExit.outputCut = true` means stopping the command forcibly cut off output admission; unsent bytes are discarded, and unread pipe data may be lost. Its cursor still counts bytes admitted to the wire, preserving replay for older consumers; the unsent suffix cannot hold kill/timeout behind a full window. New event consumers emit `.truncated(limit: cursor)` before the exit. Absent `outputCut` means the peer made no cutoff claim.
 - `ExecExit.timedOut` says the start's `timeout` ended the exec: `killed` when the process group was killed and `status` is its own; `statusUnknown` when it was stopped but its status never came back, so `status` is a placeholder. New event consumers emit `.timedOut(outcome:)` after any `.truncated` and before the exit. Absent means the timeout did not end it, however long it ran.
 
-## VFS and search
+## VFS
 
 - Machine fs is raw: **version token = mtime**, opaque on the wire
   (`MachineEntry.token`, `VFSResult.file/written` tokens; `ifMatch` gates
@@ -154,11 +159,6 @@ secret's value reaches it only inside the `ExecStart` that needs it.
   that as "upgrade the machine agent". Attachments from a machine are read
   this way (up to the 50 MiB attachment limit); other big files still stream
   through exec.
-- `SearchQuery` runs the whole traversal machine-side with the agent's own
-  matcher. `matchLimit` caps results, `entryLimit` caps entries traversed,
-  `step`/`cursor` is an opaque resume cursor over a deterministic traversal
-  order: `cursor` is present iff the page was truncated, and passing it back
-  as `step` continues.
 
 ## Machine v2 dial credential
 

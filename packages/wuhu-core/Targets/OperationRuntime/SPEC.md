@@ -12,7 +12,7 @@ The finite receipt cache rejects duplicates while retained. At-most-once across 
 
 Linux/macOS tests run the production Handler, registered no-process kinds, client, store and reducers with injected faults. The same test kinds compile in the iOS CI test lane. The test README maps named examples, seed sweeps and later-slice fault rows. Real pipes/process groups/supervisor recovery, filesystem faults, tunnel framing/authentication, SQLite, services and rollouts are explicitly not proven by these process-free simulations.
 
-A kind can request an irreversible stopped verdict with `OperationCancellation.stop(reason:)`; it sets stop intent and throws cooperative cancellation. This is how filesystem scan caps end honestly without per-kind verbs. Typed OperationErrors raised during input preparation are preserved (for example unsupportedDialect), not flattened to invalidInput. Other decode failures remain invalidInput.
+A kind can request an irreversible stopped verdict with `OperationCancellation.stop(reason:)`; it sets stop intent and throws cooperative cancellation. Typed OperationErrors raised during input preparation are preserved (for example search.v1's `details.search`), not flattened to invalidInput. Other decode failures remain invalidInput.
 
 `admissionUsage()` returns a swept snapshot of retained receipts and reserved channel bytes for a composed owner to apply one shared machine budget. The snapshot is not an atomic reservation; the owner must serialize or version its admissions across awaited probes. `departureSettled()` is true only after leave, every pending terminal acknowledgement and output offset has settled, and no receipt expiry destroyed required departure evidence. It does not itself renew leases or discard output.
 

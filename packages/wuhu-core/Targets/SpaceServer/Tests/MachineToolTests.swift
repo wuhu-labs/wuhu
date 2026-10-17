@@ -1,13 +1,17 @@
+import ComputerFiles
+import Crypto
 import Fetch
 import Foundation
 import JSONValue
 import MachineChannel
 import MachineContract
+import OperationRuntime
 import Scratch
 import Serve
 import SpaceContract
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
+import SpaceTools
 import Testing
 
 @Suite struct MachineToolTests {
@@ -215,12 +219,12 @@ import Testing
   }
 }
 
+// One engine walks both backends (FileSearch): a space tree and the same tree
+// on a v2 machine page identically, modulo the address prefix.
 @Suite struct SearchParityTests {
   @Test func grepAndFindPagesAreIdenticalAcrossBackendsModuloTheAddressPrefix() async throws {
     let space = try makeMachineSpace()
-    let server = TestServer(space: space, clock: ContinuousClock())
-    let (machine, key) = try await addMachine(server)
-    let scratch = try ScratchFolder("m5-fixture")
+    let scratch = try ScratchFolder("search-parity")
     defer { scratch.remove() }
     let root = scratch.path
     let fixture: [(String, String)] = [
@@ -230,62 +234,74 @@ import Testing
       ("/readme.md", "foo four"),
       ("/src/deep/nested.txt", "foo five\nfoo six"),
     ]
-
-    try await runScenario(server: server) { dialer, _ in
-      dialer.offer(try await connectMachine(server, key: key))
-      try await awaitAttached(server, machine)
+    let (record, _) = try await space.addMachineV2(name: "parity-v2", group: .shared)
+    let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
+    let hub = MachineHub(space: space)
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
+    await hub.configureV2(service)
+    let context = SpaceToolContext(space: space, machines: machineSeam(hub: hub), principal: .shared(.anonymous))
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { tasks.cancelAll() }
       for (path, content) in fixture {
-        _ = try await call(server, "write", ["path": .string(path), "content": .string(content)], as: WriteOutput.self)
-        _ = try await call(
-          server, "write",
-          ["path": .string("machines://\(machine.rawValue)\(root)\(path)"), "content": .string(content)],
-          as: WriteOutput.self,
-        )
+        _ = try await run(context, "write", ["path": .string(path), "content": .string(content)])
+        _ = try await run(context, "write", ["path": .string("machines://\(record.id.rawValue)\(root)\(path)"), "content": .string(content)])
       }
-      let machineRoot = "machines://\(machine.rawValue)\(root)"
-      let limitRuns: [(matchLimit: Int?, entryLimit: Int?)] = [
-        (nil, nil), (1, nil), (nil, 1), (nil, 2), (2, 2),
-      ]
+      let machineRoot = "machines://\(record.id.rawValue)\(root)"
 
-      for run in limitRuns {
-        let spacePages = try await grepPages(
-          server, path: "/", strip: [], pattern: "foo \\w+", matchLimit: run.matchLimit, entryLimit: run.entryLimit,
-        )
-        let machinePages = try await grepPages(
-          server, path: machineRoot, strip: [machineRoot, root], pattern: "foo \\w+",
-          matchLimit: run.matchLimit, entryLimit: run.entryLimit,
-        )
-        #expect(spacePages == machinePages, "grep \(run)")
-        #expect(spacePages.last?.hasCursor == false)
-        if run.matchLimit == nil, run.entryLimit == nil {
-          #expect(spacePages.count == 1)
-          #expect(spacePages[0].items == [
-            "/docs/a.txt:1:foo one",
-            "/docs/a.txt:3:foo two",
-            "/docs/c.txt:1:foo three",
-            "/readme.md:1:foo four",
-            "/src/deep/nested.txt:1:foo five",
-            "/src/deep/nested.txt:2:foo six",
-          ])
-        }
-      }
-
-      for run in limitRuns {
-        let spacePages = try await findPages(
-          server, path: "/", strip: [], glob: "**/*.txt", matchLimit: run.matchLimit, entryLimit: run.entryLimit,
-        )
-        let machinePages = try await findPages(
-          server, path: machineRoot, strip: [machineRoot, root], glob: "**/*.txt",
-          matchLimit: run.matchLimit, entryLimit: run.entryLimit,
-        )
-        #expect(spacePages == machinePages, "find \(run)")
-        #expect(spacePages.last?.hasCursor == false)
+      for limit in [nil, 1, 2] as [Int?] {
+        let spacePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": "/"], limit: limit, strip: [])
+        let machinePages = try await pages(context, "grep", ["pattern": "foo \\w+", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
+        #expect(spacePages == machinePages, "grep \(String(describing: limit))")
         #expect(spacePages.flatMap(\.items) == [
-          "/docs/a.txt", "/docs/b.txt", "/docs/c.txt", "/src/deep/nested.txt",
+          "/docs/a.txt:1:foo one",
+          "/docs/a.txt:3:foo two",
+          "/docs/c.txt:1:foo three",
+          "/readme.md:1:foo four",
+          "/src/deep/nested.txt:1:foo five",
+          "/src/deep/nested.txt:2:foo six",
         ])
+
+        let spaceFind = try await pages(context, "find", ["glob": "**/*.txt", "path": "/"], limit: limit, strip: [])
+        let machineFind = try await pages(context, "find", ["glob": "**/*.txt", "path": .string(machineRoot)], limit: limit, strip: [machineRoot])
+        #expect(spaceFind == machineFind, "find \(String(describing: limit))")
+        #expect(spaceFind.flatMap(\.items) == ["/docs/a.txt", "/docs/b.txt", "/docs/c.txt", "/src/deep/nested.txt"])
       }
+      await agent.shutdown()
     }
+    await service.shutdown()
   }
+}
+
+private func run(_ context: SpaceToolContext, _ tool: String, _ input: JSONValue) async throws -> JSONValue {
+  try await SpaceToolbox.all.first { $0.name == tool }!.run(context, input: input)
+}
+
+/// Every page of a grep or find, as `path[:line:text]` items with `strip` removed.
+private func pages(_ context: SpaceToolContext, _ tool: String, _ input: JSONValue, limit: Int?, strip: [String]) async throws -> [Page] {
+  var pages: [Page] = []
+  var step: String?
+  for _ in 0 ..< 50 {
+    var input = input
+    input.set("matchLimit", limit.map(JSONValue.integer))
+    input.set("step", step.map(JSONValue.string))
+    let output = try await run(context, tool, input)
+    let items: [String]
+    if tool == "grep" {
+      let grep = try JSONValueDecoder().decode(GrepOutput.self, from: output)
+      items = grep.matches.map { "\(stripPrefix($0.path, strip)):\($0.line):\($0.text)" }
+      step = grep.cursor
+    } else {
+      let find = try JSONValueDecoder().decode(FindOutput.self, from: output)
+      items = find.paths.map { stripPrefix($0, strip) }
+      step = find.cursor
+    }
+    pages.append(Page(items: items, hasCursor: step != nil))
+    if step == nil { return pages }
+  }
+  Issue.record("\(tool) did not exhaust in 50 pages")
+  return pages
 }
 
 // MARK: - Helpers
@@ -296,7 +312,7 @@ private struct ToolFailure {
   let hint: String?
 }
 
-// Space steps are opaque and machine steps are raw paths, so a page compares
+// Steps name their root, which differs across backends, so a page compares
 // whether it hands back a step, not the step itself.
 private struct Page: Equatable {
   let items: [String]
@@ -351,48 +367,4 @@ private extension JSONValue {
     fields[key] = value
     self = .object(fields)
   }
-}
-
-private func grepPages(
-  _ server: TestServer, path: String, strip: [String], pattern: String, matchLimit: Int?, entryLimit: Int?,
-) async throws -> [Page] {
-  var pages: [Page] = []
-  var step: String?
-  for _ in 0 ..< 50 {
-    var input: JSONValue = .object(["pattern": .string(pattern), "path": .string(path)])
-    input.set("matchLimit", matchLimit.map(JSONValue.integer))
-    input.set("entryLimit", entryLimit.map(JSONValue.integer))
-    input.set("step", step.map(JSONValue.string))
-    let output = try await call(server, "grep", input, as: GrepOutput.self)
-    pages.append(Page(
-      items: output.matches.map { "\(stripPrefix($0.path, strip)):\($0.line):\($0.text)" },
-      hasCursor: output.cursor != nil,
-    ))
-    guard let next = output.cursor else { return pages }
-    step = next
-  }
-  Issue.record("grep did not exhaust in 50 pages")
-  return pages
-}
-
-private func findPages(
-  _ server: TestServer, path: String, strip: [String], glob: String, matchLimit: Int?, entryLimit: Int?,
-) async throws -> [Page] {
-  var pages: [Page] = []
-  var step: String?
-  for _ in 0 ..< 50 {
-    var input: JSONValue = .object(["glob": .string(glob), "path": .string(path)])
-    input.set("matchLimit", matchLimit.map(JSONValue.integer))
-    input.set("entryLimit", entryLimit.map(JSONValue.integer))
-    input.set("step", step.map(JSONValue.string))
-    let output = try await call(server, "find", input, as: FindOutput.self)
-    pages.append(Page(
-      items: output.paths.map { stripPrefix($0, strip) },
-      hasCursor: output.cursor != nil,
-    ))
-    guard let next = output.cursor else { return pages }
-    step = next
-  }
-  Issue.record("find did not exhaust in 50 pages")
-  return pages
 }

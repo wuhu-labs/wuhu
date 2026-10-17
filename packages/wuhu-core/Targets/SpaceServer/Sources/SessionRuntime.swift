@@ -2,6 +2,7 @@ import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecretStores
 import Dependencies
 import ExecutionOwner
+import struct FileSearch.SearchError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -379,6 +380,7 @@ func machineSeam(hub: MachineHub) -> MachineSeam {
       do { return try await hub.search(machine: machine, query: query, caller: MachineSeam.caller) }
       catch let error as MachineHubError { throw toolFailure(error, machine: machine) }
       catch let error as OperationError { throw machineOperationFailure(error) }
+      catch let error as SearchError { throw searchFailure(error) }
     },
     attached: { await hub.attachedMachines() },
   )
@@ -471,7 +473,7 @@ private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
   let code: ErrorCode = switch error.code {
   case .unknownKind: .unknownKind
   case .invalidInput, .invalidOffset, .inputTooLarge: .invalidArgument
-  case .unsupportedDialect, .unsupportedProtocol: .unsupported
+  case .unsupportedProtocol: .unsupported
   case .machineNotAuthorized, .credentialExpired: .unauthorized
   case .fileChanged, .operationExists, .invocationConflict: .conflict
   case .unknownMachine: .notFound

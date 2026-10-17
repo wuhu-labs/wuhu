@@ -3,180 +3,46 @@
 #else
   import Foundation
 #endif
-import Fetch
 import FetchExchangeRecording
-import enum JSONValue.JSONValue
-import OperationClient
-import enum OperationProtocol.ComputerKindSchemas
-import struct OperationProtocol.MachineDescription
 import struct OperationProtocol.OperationSnapshot
-import struct OperationProtocol.StartRequest
-import struct OperationProtocol.StopRequest
-import struct OperationProtocol.WriteRequest
 import Testing
 
-private func canonicalBody(_ bytes: Data?) throws -> Data? {
-  guard let bytes else { return nil }
-  let value = try JSONDecoder().decode(JSONValue.self, from: bytes)
-  let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-  return try encoder.encode(value)
-}
-
-private func canonicalAddress(_ url: URL) -> String {
-  var address = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-  address.scheme = "http"; address.host = "recording"
-  address.queryItems = address.queryItems?.filter { $0.name != "holdMs" && $0.name != "limit" }.sorted { $0.name < $1.name }
-  if address.queryItems?.isEmpty == true { address.queryItems = nil }
-  return address.url!.absoluteString
-}
-
-private actor ClientReplayTransport {
-  let replay: FetchExchangeRecorder
-  let description: MachineDescription
-  init(_ recording: ExchangeRecording) throws {
-    let exchanges = try recording.exchanges.map { exchange in
-      RecordedExchange(request: .init(method: exchange.request.method, url: canonicalAddress(URL(string: exchange.request.url!)!), headers: exchange.request.headers, body: try canonicalBody(exchange.request.body)), response: exchange.response)
-    }
-    replay = FetchExchangeRecorder(replay: .init(exchanges: exchanges))
-    description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec])
-  }
-
-  nonisolated var client: FetchClient { FetchClient { try await self.fetch($0) } }
-  func fetch(_ request: Request) async throws -> Response {
-    var response: Response
-    if request.url.path.split(separator: "/").count == 4 { response = try .json(description) }
-    else {
-      let body = try await request.body?.bytes(upTo: 128 * 1024)
-      var headers = Headers()
-      if body != nil { headers[.contentType] = request.body?.contentType }
-      let normalized = Request(url: URL(string: canonicalAddress(request.url))!, method: request.method, headers: headers, body: try canonicalBody(body).map { .bytes($0, contentType: request.body?.contentType) })
-      response = try await replay.client(normalized)
-    }
-    response.headers[.init("X-Wuhu-Correlation-ID")!] = request.headers["X-Wuhu-Correlation-ID"]
-    response.headers[.init("X-Wuhu-Request-ID")!] = request.headers["X-Wuhu-Request-ID"]
-    response.headers[.init("X-Wuhu-Agent-Instance")!] = response.headers[.init("X-Wuhu-Agent-Instance")!] ?? description.instance.uuidString
-    return response
-  }
-
-  func replayControl(_ exchange: RecordedExchange) async throws {
-    var headers = Headers()
-    if exchange.request.body != nil { headers[.contentType] = "application/json" }
-    let request = Request(url: URL(string: canonicalAddress(URL(string: exchange.request.url!)!))!, method: try #require(.init(rawValue: exchange.request.method!)), headers: headers, body: try canonicalBody(exchange.request.body).map { .bytes($0, contentType: "application/json") })
-    let response = try await replay.client(request)
-    #expect(response.status.code == exchange.response.status)
-    #expect(try canonicalBody(await response.body.bytes(upTo: 128 * 1024)) == canonicalBody(exchange.response.body))
-  }
-
-  func complete() async throws { try await replay.assertComplete() }
-}
-
 @Suite struct RecordingReplayTests {
-  @Test(arguments: ["backpressure", "daemon-detach", "process-group-stop", "agent-restart", "coordinator-cursor-handoff", "lease-expiry", "old-supervisor-new-agent", "service-manager", "launchd-service-manager", "recovery-isolation"])
-  func productionClientCommitsRecordedOutputAndEvidenceOffline(_ name: String) async throws {
+  @Test(arguments: ["backpressure", "daemon-detach", "process-group-stop", "agent-restart", "coordinator-cursor-handoff", "lease-expiry", "service-manager", "launchd-service-manager", "recovery-isolation"])
+  func recordedAgentAnswersCarryTheOutputAndEvidence(_ name: String) async throws {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Recordings/" + name + ".json")
     let recording = try JSONDecoder().decode(ExchangeRecording.self, from: Data(contentsOf: url))
-    let transport = try ClientReplayTransport(recording)
-    let first = try #require(recording.exchanges.first)
-    let id = try #require(UUID(uuidString: URL(string: first.request.url!)!.path.split(separator: "/")[5].description))
-    let machine = URL(string: first.request.url!)!.path.split(separator: "/")[3].description
-    let store = MemoryOperationStore()
-    let owner = OperationOwner(scope: "recordings", key: name)
-    func newClient() throws -> OperationClient {
-      try OperationClient(origin: URL(string: "http://recording")!, fetch: transport.client, store: store, ids: { id }, abort: { _ in }, trace: { _ in })
+    var output = Data(); var committed: UInt64 = 0; var terminal: OperationSnapshot?
+    for exchange in recording.exchanges where exchange.response.status == 200 {
+      let address = try #require(URLComponents(string: exchange.request.url!))
+      guard address.path.contains("/operations/"), !address.path.contains("/inputs/"), let body = exchange.response.body else { continue }
+      let snapshot = try JSONDecoder().decode(OperationSnapshot.self, from: body)
+      if snapshot.verdict != nil { terminal = snapshot }
+      guard snapshot.channel == "stdout", let from = snapshot.from?.rawValue, let through = snapshot.through?.rawValue, through > committed else { continue }
+      #expect(from <= committed)
+      let data = try #require(snapshot.payload?.data)
+      output.append(data.suffix(Int(through - committed)))
+      committed = through
     }
-    var client = try newClient(); let description = try await client.describe(machine)
-    if first.request.method != "POST" {
-      _ = try await store.claim(owner, record: ClientRecord(id: id, correlation: id, machine: machine, start: StartRequest(kind: "exec.v1", input: [:]), description: description))
-    }
-    var output = Data(); var terminal: OperationSnapshot?; var coordinatorRestarted = false
-    do {
-      for exchange in recording.exchanges {
-        let address = URLComponents(string: exchange.request.url!)!
-        let channel = address.queryItems?.first { $0.name == "channel" }?.value
-        if !address.path.contains("/operations/") {
-          try await transport.replayControl(exchange)
-          continue
-        }
-        if exchange.request.method == "POST" {
-          let start = try JSONDecoder().decode(StartRequest.self, from: exchange.request.body!)
-          #expect(try await client.start(machine, request: start, owner: owner) == id)
-        } else if address.path.contains("/inputs/") {
-          let write = try JSONDecoder().decode(WriteRequest.self, from: exchange.request.body!)
-          let receipt = try await client.write(id, channel: "stdin", payload: write.payload, end: write.end)
-          #expect(try await store.read(id).accepted["stdin"] == receipt.acceptedThrough)
-        } else {
-          let snapshot: OperationSnapshot
-          if address.path.hasSuffix("/stop") {
-            let stop = try JSONDecoder().decode(StopRequest.self, from: exchange.request.body!)
-            snapshot = try await client.stop(id, reason: stop.reason)
-          } else { snapshot = try await client.poll(id, channel: channel, terminalAck: address.queryItems?.contains { $0.name == "terminalAck" } == true) }
-          if snapshot.verdict != nil { terminal = snapshot }
-          if channel == "stdout" {
-            #expect(try await store.read(id).committed["stdout"] == snapshot.through)
-            for payload in try await client.takeOutput(id, channel: "stdout") { output.append(payload.data ?? Data()) }
-            if name == "coordinator-cursor-handoff" && !output.isEmpty && !coordinatorRestarted {
-              await client.shutdown(); client = try newClient(); _ = try await client.describe(machine); coordinatorRestarted = true
-            }
-          }
-        }
-      }
-      try await transport.complete()
-      await client.shutdown()
-    } catch { await client.shutdown(); throw error }
     #expect(terminal?.verdict != nil)
     switch name {
     case "backpressure": #expect(output == Data(repeating: 0, count: 320_000))
     case "daemon-detach": #expect(output == Data("direct".utf8))
     case "agent-restart": #expect(output == Data("***hello-after-restart".utf8))
-    case "coordinator-cursor-handoff": #expect(output == Data("coordinatortail".utf8)); #expect(coordinatorRestarted)
+    case "coordinator-cursor-handoff": #expect(output == Data("coordinatortail".utf8))
     case "recovery-isolation": #expect(output == Data("recoverabletail".utf8))
-    case "old-supervisor-new-agent":
-      #expect(output == Data(repeating: 0, count: 300_000) + Data(String(repeating: "pending-input-", count: 3000).utf8))
-      let provenance = try #require(recording.effects.first { $0.name == "oldSupervisor" })
-      #expect(provenance.output["sha"]?.count == 40)
-      #expect(provenance.output["newAgent"]?.count == 40)
-      #expect(provenance.output["sha"] != provenance.output["newAgent"])
-      let oldSHA = try #require(provenance.output["sha"])
-      let legacy = provenance.output["oldStampPolicy"] == "publishedLegacyAllowlist"
-      #expect(provenance.output["oldVersion"]?.contains("(" + (legacy ? String(oldSHA.prefix(9)) : oldSHA) + ",") == true)
-      if legacy {
-        #expect(oldSHA == "cf3dd34cef44e25c900b1babe690a07550d6895e")
-        #expect(provenance.output["oldVersion"]?.hasPrefix("wuhu 0.1.0-dev.113 ") == true)
-        let capability = try #require(recording.effects.first { $0.name == "legacySupervisorDeparture" })
-        #expect(capability.output["leaveStatus"] == "404")
-        #expect(capability.output["departureStatus"] == "404")
-      }
-      let pending = try #require(recording.effects.first { $0.name == "pendingDrainBlocksLeave" })
-      #expect(pending.output["pendingStdout"] == "True")
-      #expect(pending.output["pendingStderr"] == "True")
-      let leave = try #require(recording.effects.first { $0.name == "logicalLeaveDrain" })
-      #expect(leave.output["terminal"] == "True")
-      #expect(leave.output["terminalAcknowledged"] == "True")
-      #expect(leave.output["outputConsumed"] == "True")
-      #expect(leave.output["serverAcknowledged"] == "True")
-      #expect(leave.output["terminalAckAccepted"] == "True")
-      let held = try #require(recording.effects.first { $0.name == "terminalAckBlocksLeave" })
-      #expect(held.output["outputConsumed"] == "True")
-      #expect(held.output["terminalAcknowledged"] == "False")
-      #expect(held.output["serviceLoaded"] == "True")
-      #expect(held.output["serviceDefinitionPresent"] == "True")
-      let uninstall = try #require(recording.effects.first { $0.name == "realUninstall" })
-      #expect(uninstall.output["cliExit"] == "0")
-      #expect(uninstall.output["serviceStopped"] == "True")
-      #expect(uninstall.output["serviceDefinitionRemoved"] == "True")
-      #expect(provenance.output["oldBinarySHA256"]?.count == 64)
-      #expect(provenance.output["newBinarySHA256"]?.count == 64)
-      #expect(provenance.output["oldBinarySHA256"] != provenance.output["newBinarySHA256"])
     case "service-manager":
       #expect(output == Data(repeating: 0, count: 300_000) + Data("systemd-pending-input".utf8))
       let effect = try #require(recording.effects.first { $0.name == "systemdRestart" })
       #expect(effect.output["killMode"] == "process")
-      #expect(effect.output["sameSupervisor"] == "True")
+      // Recorded before exec workers replaced per-operation supervisors.
+      #expect((effect.output["sameWorker"] ?? effect.output["sameSupervisor"]) == "True")
     case "launchd-service-manager":
       #expect(output == Data(repeating: 0, count: 300_000) + Data("launchd-pending-input".utf8))
       let effect = try #require(recording.effects.first { $0.name == "launchdRestart" })
       #expect(effect.output["abandonProcessGroup"] == "True")
-      #expect(effect.output["sameSupervisor"] == "True")
+      // Recorded before exec workers replaced per-operation supervisors.
+      #expect((effect.output["sameWorker"] ?? effect.output["sameSupervisor"]) == "True")
       #expect(effect.output["fullStdout"] == "True")
       #expect(effect.output["pendingStdin"] == "True")
       let exact = try #require(recording.effects.first { $0.name == "outputExact" })

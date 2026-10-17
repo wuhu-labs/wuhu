@@ -61,6 +61,17 @@ struct BlobCache: Sendable {
   }
 }
 
+/// One blob, read a range at a time: the file a path named when it was opened.
+struct BlobReader: SpaceFileReader {
+  let blobs: BlobStore
+  let database: any DatabaseReader
+  let hash: String
+
+  func read(at offset: Int, count: Int) async throws -> Data {
+    try await blobs.read(hash, at: offset, count: count, in: database)
+  }
+}
+
 struct BlobStore: Sendable {
   static let inlineThreshold = 256 * 1024
 
@@ -159,6 +170,32 @@ struct BlobStore: Sendable {
       } catch let deferred as Deferred {
         loaded[deferred.hash] = try await fetch(deferred.key)
       }
+    }
+  }
+
+  /// At most `count` bytes of blob `hash` from `offset`, without loading the
+  /// rest of it: an inline blob is cut in SQLite, an external one fetched as a
+  /// range.
+  func read(_ hash: String, at offset: Int, count: Int, in reader: any DatabaseReader) async throws -> Data {
+    precondition(offset >= 0 && count >= 0)
+    enum Part: Sendable {
+      case inline(Data)
+      case external(ObjectKey)
+    }
+    let part = try await reader.read { db -> Part in
+      if let key = try Substrate.externalKey(hash, in: db) { return .external(key) }
+      guard let row = try Row.fetchOne(
+        db, sql: "SELECT substr(content, ?, ?) AS part FROM blobs WHERE hash = ?", arguments: [offset + 1, count, hash],
+      ) else { throw SpaceError.notFound(hash) }
+      let bytes: Data? = row["part"]
+      return .inline(bytes ?? Data())
+    }
+    switch part {
+    case let .inline(data):
+      return data
+    case let .external(key):
+      guard let objects else { throw SpaceError.notFound(key.raw) }
+      return try await objects.get(key, bytes: Int64(offset) ..< Int64(offset) + Int64(count))
     }
   }
 

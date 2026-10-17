@@ -138,6 +138,9 @@ enum Sessions {
       """,
       arguments: [key],
     ) else { throw SessionStoreError.unknownSession(key) }
+    guard let hold = SessionHold(rawValue: row["hold"]), hold != .unknown,
+          let work = SessionWork(rawValue: row["work"]), work != .unknown
+    else { preconditionFailure("Unknown stored session state") }
     let lifecycle: SessionLifecycle = if row["lifecycle"] as String == "live" {
       .live
     } else {
@@ -161,8 +164,8 @@ enum Sessions {
       executor: executor,
       createdAt: try SQLiteDateFormat.date(from: row["created_at"]),
       lastActivityAt: try SQLiteDateFormat.date(from: row["last_activity_at"]),
-      hold: SessionHold(rawValue: row["hold"])!,
-      work: SessionWork(rawValue: row["work"])!,
+      hold: hold,
+      work: work,
       errorMessage: row["error_message"],
       lifecycle: lifecycle,
       group: GroupID(rawValue: row["grp"]),

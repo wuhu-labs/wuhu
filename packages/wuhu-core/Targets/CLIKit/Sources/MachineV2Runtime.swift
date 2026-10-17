@@ -16,6 +16,7 @@ import Dependencies
 import enum ExecSupervisor.ExecSupervisor
 import Fetch
 import FetchAsyncHTTPClient
+import struct FetchTunnel.TunnelLimits
 import struct FetchTunnel.TunnelTransport
 import enum FetchTunnelWebSocket.TunnelWebSocket
 import enum FetchWebSocket.ClientTLS
@@ -138,7 +139,8 @@ public enum MachineV2Runtime {
     let config = try home.load(); let key = try home.loadKey()
     let url = URL(string: config.server + "/v1/machine-v2/connect")!
     let tls: ClientTLS? = config.fingerprint.map { .pinned(fingerprint: $0) }
-    let headers = try await authentication(server: config.server, machine: config.machine, key: key, fetch: pinnedFetch(config.fingerprint, plain: fetch))
+    var headers = try await authentication(server: config.server, machine: config.machine, key: key, fetch: pinnedFetch(config.fingerprint, plain: fetch))
+    headers[MachineV2Connect.tunnelStreamsHeader] = String(MachineV2Connect.tunnelStreams)
     do { return try await TunnelWebSocket.connect(WebSocketRequest(url: url, headers: headers, tls: tls, connectTimeout: .seconds(5)), connector: connector) }
     catch let WebSocketError.refused(status, _, body) {
       // Only the server's definitive 401 says the key is dead (revoked, or a machine it no longer knows); a rejected handshake may be a stale challenge.
@@ -228,7 +230,12 @@ public enum MachineV2Runtime {
       }
     }
     try home.clearRevoked()
-    try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, controlSocket: home.socket.path, executable: home.binary.path) { handler, acknowledged, retire in
+    if home.hasLeft {
+      // A leave outlives the process that acknowledged it: a restarted job neither dials nor serves.
+      home.logUpgrade("left; parked until join or install")
+      while true { try await clock.sleep(.seconds(3600)) }
+    }
+    try await ExecSupervisor.runComputerAgent(machine: home.machine, operationsDirectory: home.operationsDirectory.path, controlSocket: home.socket.path, executable: home.binary.path, left: { try home.markLeft() }) { handler, acknowledged, retire in
       try await retiringOnRevoke(home: home, service: service, clock: clock, retire: { await retire(.revoked) }) { try await serve(handler, acknowledged) }
     }
   }
@@ -268,7 +275,7 @@ public enum MachineV2Runtime {
     (error as? MachineV2RuntimeError)?.code == .revoked ? 0 : 1
   }
 
-  /// The drain the uninstall runs first. A revoked agent has retired its supervisors and exited, so there is no
+  /// The drain the uninstall runs first. A revoked agent has retired its workers and exited, so there is no
   /// control socket and nothing to drain.
   static func leaveForUninstall(home: MachineV2Home) async throws {
     if home.isRevoked { return }
@@ -285,7 +292,7 @@ public enum MachineV2Runtime {
         let transport = try await connect()
         defer { transport.abort() }
         await connected()
-        try await ServeTunnel.run(handler: handler, over: transport)
+        try await ServeTunnel.run(handler: handler, over: transport, limits: TunnelLimits(streams: MachineV2Connect.tunnelStreams))
       } catch is CancellationError { throw CancellationError() }
       catch let error as MachineV2RuntimeError { if error.code != .serverUnavailable { throw error } }
       catch { try Task.checkCancellation() }
@@ -293,8 +300,10 @@ public enum MachineV2Runtime {
     }
   }
 
+  /// Asks the running agent to leave. A recorded leave is final until `join` or `install`, so it answers at once.
   static func leave(home: MachineV2Home) async throws {
     try home.validate()
+    if home.hasLeft { return }
     var state = stat()
     guard lstat(home.socket.path, &state) == 0, state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK, state.st_mode & 0o777 == 0o600,
           let encoded = home.socket.path.addingPercentEncoding(withAllowedCharacters: .alphanumerics), let url = URL(string: "http+unix://" + encoded + "/leave") else { throw MachineV2RuntimeError(.drainFailed, message: "No owner-private v2 control socket") }

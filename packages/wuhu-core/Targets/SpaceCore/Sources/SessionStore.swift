@@ -7,17 +7,11 @@ import Dependencies
 import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
+import enum SpaceContract.SessionHoldPayload
+import enum SpaceContract.SessionWorkPayload
 
-public enum SessionHold: String, Hashable, Sendable {
-  case normal
-  case interrupted
-}
-
-public enum SessionWork: String, Hashable, Sendable {
-  case noWork = "no_work"
-  case hasWork = "has_work"
-  case errored
-}
+public typealias SessionHold = SpaceContract.SessionHoldPayload
+public typealias SessionWork = SpaceContract.SessionWorkPayload
 
 public enum SessionLifecycle: Hashable, Sendable {
   case live

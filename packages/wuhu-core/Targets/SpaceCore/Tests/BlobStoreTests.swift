@@ -147,4 +147,21 @@ struct BlobStoreTests {
     #expect(try await reopened.readText("/after.bin") == large)
     #expect(try await reopened.readText("/legacy.md") == legacy)
   }
+
+  @Test(arguments: [1024, BlobStore.inlineThreshold + 1])
+  func aReaderReadsRangesOfTheFileAsItWasOpened(_ size: Int) async throws {
+    let folder = try folder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let space = try open(folder)
+    let content = Data((0 ..< size).map { UInt8(truncatingIfNeeded: $0 * 7) })
+    let token = try await space.fs(.shared).write("/file.bin", content, ifMatch: nil)
+    let reader = try await space.fs(.shared).reader("/file.bin")
+    _ = try await space.fs(.shared).write("/file.bin", Data("later".utf8), ifMatch: nil)
+    #expect(try await reader.read(at: 0, count: 5) == content.prefix(5))
+    #expect(try await reader.read(at: size - 3, count: 10) == content.suffix(3))
+    #expect(try await reader.read(at: size, count: 10).isEmpty)
+    #expect(try await reader.read(at: 100, count: 0).isEmpty)
+    let past = try await space.fs(.shared, at: Rev(try #require(token.rev))).reader("/file.bin")
+    #expect(try await past.read(at: 500, count: 200) == content.dropFirst(500).prefix(200))
+  }
 }

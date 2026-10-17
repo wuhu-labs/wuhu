@@ -18,8 +18,8 @@ import Testing
 }
 
 @Test func firstComputerSchemasDoNotImportPlatformEffects() throws {
-  let kinds = [ComputerKindSchemas.exec, ComputerKindSchemas.read, ComputerKindSchemas.find, ComputerKindSchemas.grep]
-  #expect(kinds.map(\.name) == ["exec.v1", "read.v1", "find.v1", "grep.v1"])
+  let kinds = [ComputerKindSchemas.exec, ComputerKindSchemas.read, ComputerKindSchemas.search]
+  #expect(kinds.map(\.name) == ["exec.v1", "read.v1", "search.v1"])
   for descriptor in kinds {
     #expect(try JSONDecoder().decode(KindDescriptor.self, from: JSONEncoder().encode(descriptor)) == descriptor)
   }

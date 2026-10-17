@@ -49,4 +49,5 @@ struct S3ObjectStoreMinIOContractTests {
   @Test func missingKeyError() async throws { try await self.contract().missingKeyError() }
   @Test func existence() async throws { try await self.contract().existence() }
   @Test func listOrderingAndPagination() async throws { try await self.contract().listOrderingAndPagination() }
+  @Test func rangedGet() async throws { try await self.contract().rangedGet() }
 }

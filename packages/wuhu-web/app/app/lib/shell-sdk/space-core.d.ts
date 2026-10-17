@@ -42,14 +42,18 @@ export interface Search {
   pattern?: string
   path?: string
   matchLimit?: number
-  entryLimit?: number
+  hidden?: boolean
+  noIgnore?: boolean
   step?: string
 }
 
 export interface SearchOptions {
   path?: string | null
   limit?: number | bigint | null
-  entryLimit?: number | bigint | null
+  // Search hidden entries too: dot-names, `/_` and `/users` at a space root.
+  hidden?: boolean | null
+  // Search what `.gitignore` files exclude too.
+  noIgnore?: boolean | null
   step?: string | null
 }
 
@@ -59,11 +63,20 @@ export interface GrepMatch {
   text: string
 }
 
-// A file grep did not read; reason `tooLarge` is over the per-file bound.
-export interface SkippedFile {
-  path: string
-  bytes: number
-  reason: string
+// Why a search passed an entry over; `ignored` is a `.gitignore` exclusion,
+// `longLine` a file with a line over 64 KiB.
+export type SearchSkipReason =
+  | 'hidden'
+  | 'ignored'
+  | 'binary'
+  | 'longLine'
+  | 'unreadable'
+
+// Entries a search passed over for one reason: how many, and the first.
+export interface SearchSkipped {
+  reason: SearchSkipReason
+  count: number
+  example: string
 }
 
 export interface Stream<T> {
@@ -86,13 +99,19 @@ export interface Transport {
     path: string,
     patch: AttributePatch,
   ): Promise<{ token: string }>
-  find(search: Search): Promise<{ paths: string[]; cursor?: string | null }>
+  find(search: Search): Promise<{
+    paths: string[]
+    cursor?: string | null
+    scanned: number
+    skipped: SearchSkipped[]
+  }>
   grep(
     search: Search,
   ): Promise<{
     matches: GrepMatch[]
     cursor?: string | null
-    skipped?: SkippedFile[] | null
+    scanned: number
+    skipped: SearchSkipped[]
   }>
 }
 
@@ -126,12 +145,24 @@ export interface Space {
   find(
     glob: string,
     options?: SearchOptions,
-  ): Promise<{ paths: string[]; step: string | null }>
+  ): Promise<
+    {
+      paths: string[]
+      step: string | null
+      scanned: number
+      skipped: SearchSkipped[]
+    }
+  >
   grep(
     pattern: string,
     options?: SearchOptions,
   ): Promise<
-    { matches: GrepMatch[]; step: string | null; skipped: SkippedFile[] }
+    {
+      matches: GrepMatch[]
+      step: string | null
+      scanned: number
+      skipped: SearchSkipped[]
+    }
   >
 }
 

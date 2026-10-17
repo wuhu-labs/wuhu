@@ -43,12 +43,15 @@ extension MachineV2StoreTests {
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/private-secret-marker"]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read]))
     _ = try await store.claim(.init(scope: "restart", key: "one"), record: record)
-    _ = try await store.transaction(record.id) { $0.output["data"] = [.init(data: Data("private-output-marker".utf8))]; $0.committed["data"] = .init(rawValue: 21) }
+    var written = record
+    let chunk = OutputChunk(sequence: 0, channel: "data", from: .zero, payload: .init(data: Data("private-output-marker".utf8)))
+    written.output = [chunk]; written.committed["data"] = chunk.through; written.nextSequence = 1
+    try await store.save(written, appending: chunk)
     let encrypted = try await space.writer.read { db in try #require(try MachineV2OperationRow.where { $0.id.eq(record.id.uuidString) }.fetchOne(db)).record }
     #expect(!encrypted.contains("private-secret-marker"))
     let reopened = try Space.open(file: url)
     let restored = try await reopened.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-    #expect(try await restored.read(record.id).output["data"]?.first?.data == Data("private-output-marker".utf8))
+    #expect(try await restored.read(record.id).output.first?.payload.data == Data("private-output-marker".utf8))
     let wrong = try await reopened.machineV2Store(group: .shared, key: .init(size: .bits256), problemsGroup: .shared)
     await #expect(throws: OperationError.self) { try await wrong.read(record.id) }
   }
@@ -61,13 +64,51 @@ extension MachineV2StoreTests {
       var count = 0; for try await winner in group { if winner { count += 1 } }; return count
     }
     #expect(dispatches == 1)
-    for index in 1 ..< 8 {
+    // Admission counts bytes, never operations: one owner scope claims as many as the machine's buffer holds, and the claim
+    // past it is refused by the buffer.
+    let fits = record.description.limits.bufferBytes / record.reservation
+    for index in 1 ..< fits {
       let next = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: record.start, description: record.description)
       _ = try await store.claim(.init(scope: "race", key: String(index)), record: next)
     }
-    let ninth = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: record.start, description: record.description)
-    await #expect(throws: OperationError.self) { try await store.claim(.init(scope: "race", key: "ninth"), record: ninth) }
-    #expect(try await store.lookup(.init(scope: "race", key: "ninth")) == nil)
+    let past = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: record.start, description: record.description)
+    await #expect { try await store.claim(.init(scope: "race", key: "past"), record: past) } throws: {
+      ($0 as? OperationError)?.details?.object?["reason"] == "machineBufferBytes"
+    }
+    #expect(try await store.lookup(.init(scope: "race", key: "past")) == nil)
+  }
+
+  /// Retained output is either this server's chunks or an earlier server's per-channel rows: a chunk that does not open is a
+  /// store failure, never output skipped; an earlier server's rows drop the operation's output and go with its next write.
+  @Test func damagedOutputFailsAndEarlierOutputIsDropped() async throws {
+    let space = try Space.inMemory()
+    let key = SymmetricKey(size: .bits256)
+    let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let description = MachineDescription(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.read])
+    let damaged = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+    _ = try await store.claim(.init(scope: "output", key: "damaged"), record: damaged)
+    var written = damaged
+    let chunk = OutputChunk(sequence: 0, channel: "data", from: .zero, payload: .init(data: Data("kept".utf8)))
+    written.output = [chunk]; written.committed["data"] = chunk.through; written.nextSequence = 1
+    try await store.save(written, appending: chunk)
+    try await space.writer.write { db in
+      try MachineV2OutputRow.where { $0.operationID.eq(damaged.id.uuidString) }.update { $0.payload = "damaged" }.execute(db)
+    }
+    await #expect { try await store.read(damaged.id) } throws: { ($0 as? OperationError)?.code == .storeUnavailable }
+
+    let earlier = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
+    _ = try await store.claim(.init(scope: "output", key: "earlier"), record: earlier)
+    try await space.writer.write { db in
+      let id = earlier.id.uuidString + "/data/0"
+      let row = try MachineV2OutputRow(id: id, operationID: earlier.id.uuidString, channel: "data", sequence: 0, payload: V2Records.seal(ChannelPayload(data: Data("old".utf8)), key: key, context: "shared" + id))
+      try MachineV2OutputRow.insert { row }.execute(db)
+    }
+    let loaded = try await store.read(earlier.id)
+    #expect(loaded.discard)
+    #expect(loaded.output.isEmpty)
+    try await store.save(loaded, appending: nil)
+    let left = try await space.writer.read { db in try MachineV2OutputRow.where { $0.operationID.eq(earlier.id.uuidString) }.fetchCount(db) }
+    #expect(left == 0)
   }
 
   @Test func tracesAreOneRowPerRoundTripAndGroupFiltered() async throws {
@@ -150,15 +191,24 @@ extension MachineV2StoreTests {
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "duplex.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [kind]))
     _ = try await store.claim(.init(scope: "budgets", key: "one"), record: record)
     let bytes = Data(repeating: 42, count: 65536)
-    _ = try await store.transaction(record.id) {
-      $0.output["out"] = [.init(data: bytes), .init(data: bytes)]
-      $0.pendingInputs["in"] = .init(offset: .zero, payload: .init(data: bytes), end: false)
+    var next = record
+    func append(_ payload: Data, to record: inout ClientRecord) -> OutputChunk {
+      let chunk = OutputChunk(sequence: record.nextSequence, channel: "out", from: record.committed["out"] ?? .zero, payload: .init(data: payload))
+      record.output.append(chunk); record.committed["out"] = chunk.through; record.nextSequence += 1
+      return chunk
     }
+    for _ in 0 ..< 2 { let chunk = append(bytes, to: &next); try await store.save(next, appending: chunk) }
+    next.pendingInputs["in"] = .init(offset: .zero, payload: .init(data: bytes), end: false)
+    try await store.save(next, appending: nil)
     let restored = try await store.read(record.id)
-    #expect(restored.output["out"]?.map(\.byteCount) == [65536, 65536])
+    #expect(restored.output.map(\.payload.byteCount) == [65536, 65536])
     #expect(restored.pendingInputs["in"]?.payload.data == bytes)
-    await #expect(throws: OperationError.self) { try await store.transaction(record.id) { $0.output["out", default: []].append(.init(data: Data([1]))) } }
-    await #expect(throws: OperationError.self) { try await store.transaction(record.id) { $0.pendingInputs["other"] = .init(offset: .zero, payload: .init(data: bytes), end: false) } }
+    var over = next
+    let excess = append(Data([1]), to: &over)
+    await #expect(throws: OperationError.self) { try await store.save(over, appending: excess) }
+    var stray = next
+    stray.pendingInputs["other"] = .init(offset: .zero, payload: .init(data: bytes), end: false)
+    await #expect(throws: OperationError.self) { try await store.save(stray, appending: nil) }
   }
 }
 
@@ -174,15 +224,18 @@ extension MachineV2StoreTests {
         let id = UUID(); if first == nil { first = id }
         let record = ClientRecord(id: id, correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
         _ = try await store.claim(.init(scope: "lifetime", key: String(index)), record: record)
-        _ = try await store.transaction(id) { $0.snapshot = .init(operation: id, verdict: .init(.completed, result: .null), terminalToken: UUID(), finalOffsets: ["data": .init(rawValue: 1)], outputConsumed: false) }
+        var terminal = record
+        terminal.snapshot = .init(operation: id, verdict: .init(.completed, result: .null), terminalToken: UUID(), finalOffsets: ["data": .init(rawValue: 1)], outputConsumed: true)
+        terminal.terminalAcknowledged = true
+        try await store.save(terminal, appending: nil)
       }
-      #expect(try await space.machineV2Recovery(group: .shared, key: key).count == 4100)
+      #expect(try await store.live().isEmpty)
       let reservations = try await space.writer.read { db in try MachineV2OperationRow.all.fetchAll(db).reduce(0) { $0 + $1.reservedBytes } }
       #expect(reservations == 0)
       time.withLock { $0 = $0.addingTimeInterval(8 * 86400) }
       let next = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "read.v1", input: [:]), description: description)
       _ = try await store.claim(.init(scope: "lifetime", key: "after-retention"), record: next)
-      #expect(try await space.machineV2Recovery(group: .shared, key: key).count == 1)
+      #expect(try await store.live().count == 1)
       await #expect(throws: OperationError.self) { try await store.read(first!) }
     }
   }
@@ -193,7 +246,9 @@ extension MachineV2StoreTests {
     let owner = OperationOwner(scope: "numeric", key: "reuse")
     _ = try await store.claim(owner, record: record)
     #expect(try await store.claim(owner, record: record).dispatch == false)
-    _ = try await store.transaction(record.id) { $0.stopReason = "test" }
+    var stopped = record
+    stopped.stopReason = "test"
+    try await store.save(stopped, appending: nil)
   }
 }
 

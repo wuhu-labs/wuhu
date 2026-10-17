@@ -35,6 +35,9 @@ public struct Entry: Hashable, Sendable {
 
 public protocol SpaceVFS: Sendable {
   func read(_ path: String) async throws -> (VersionToken, Data)
+  /// The file at `path` as it is now, read a range at a time: a later write
+  /// to `path` does not change what it reads.
+  func reader(_ path: String) async throws -> any SpaceFileReader
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken
   func delete(_ path: String, ifMatch: VersionToken?) async throws
   func move(_ path: String, to destination: String) async throws
@@ -43,6 +46,26 @@ public protocol SpaceVFS: Sendable {
   /// and the name the following page starts at, nil when none remain.
   func list(_ path: String, from: String, limit: Int) async throws -> (entries: [Entry], next: String?)
   func stat(_ path: String) async throws -> Entry
+}
+
+public protocol SpaceFileReader: Sendable {
+  /// At most `count` bytes from `offset`; fewer only at the end of the file.
+  func read(at offset: Int, count: Int) async throws -> Data
+}
+
+/// A file already in memory.
+public struct SpaceDataReader: SpaceFileReader {
+  public let data: Data
+
+  public init(_ data: Data) {
+    self.data = data
+  }
+
+  public func read(at offset: Int, count: Int) async throws -> Data {
+    guard offset < data.count else { return Data() }
+    let start = data.startIndex + offset
+    return Data(data[start ..< min(start + count, data.endIndex)])
+  }
 }
 
 extension SpaceVFS {

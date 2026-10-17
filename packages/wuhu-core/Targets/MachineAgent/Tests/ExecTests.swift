@@ -212,7 +212,7 @@ struct ExecTests {
     #expect(!logs.messages.contains { $0.contains("vault.json") })
   }
 
-  @Test func vfsAndSearchServeOverTheWire() async throws {
+  @Test func vfsServesOverTheWire() async throws {
     let scratch = try ScratchFolder("machine-agent-tests")
     defer { scratch.remove() }
     let root = scratch.path
@@ -230,11 +230,6 @@ struct ExecTests {
         return
       }
       #expect(data.bytes == Array("alpha".utf8))
-      guard case let .matches(matches, _) = try await h.caller.search(.grep(pattern: "alp", path: root, matchLimit: nil, entryLimit: nil, step: nil)) else {
-        Issue.record("expected matches")
-        return
-      }
-      #expect(matches.map(\.path) == [root + "/wire.txt"])
     }
   }
 }

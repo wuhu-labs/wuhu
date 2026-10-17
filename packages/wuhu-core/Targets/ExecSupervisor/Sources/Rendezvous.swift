@@ -10,13 +10,16 @@
 #endif
 import Fetch
 import FetchTunnel
+import enum MachineContract.MachineV2Connect
 import NIOCore
 import NIOPosix
 import struct OperationProtocol.OperationError
 import typealias Serve.Handler
+import Synchronization
 
-/// The machine's one rendezvous socket. The agent listens on `<machine directory>/ctl.sock`; every version-2 supervisor dials it,
-/// proves its operation with the manifest nonce, and then serves its operation over a Fetch tunnel on that connection.
+/// The machine's one rendezvous socket. The agent listens on `<machine directory>/ctl.sock`; every exec worker (and every
+/// version-2 supervisor an older agent launched) dials it, proves itself with its manifest nonce, and then serves the operation
+/// protocol over a Fetch tunnel on that connection.
 enum Rendezvous {
   static let protocolName = "wuhu-supervisor-rendezvous.v1"
   static let frameBytes = 64 * 1024
@@ -26,21 +29,29 @@ enum Rendezvous {
   /// Darwin's `sun_path` minus its terminating NUL; NIO binds no longer path on any platform.
   static let maximumSocketPathBytes = 103
 
+  /// A worker names itself, a legacy supervisor its one operation.
   struct Hello: Codable, Equatable, Sendable {
     var `protocol`: String
     var machine: String
-    var operation: UUID
+    var operation: UUID?
+    var worker: UUID?
     var nonce: String
   }
 
+  /// Every refusal is permanent: the dialer stops its operations and never redials.
   enum Refusal: String, Codable, Error, Sendable {
-    case peerCredentials, unsupportedProtocol, malformedHello, unknownOperation, manifestVersion, machineMismatch, nonceMismatch
+    case peerCredentials, unsupportedProtocol, malformedHello, unknownOperation, manifestVersion, machineMismatch, nonceMismatch, unknownWorker
   }
 
+  /// `current` tells a worker whether it takes new starts.
   struct Reply: Codable, Equatable, Sendable {
     var accepted: Bool
     var refused: Refusal?
+    var current: Bool?
   }
+
+  /// Worker links carry many operations, each holding output polls, so their tunnels admit as many streams as the server's.
+  static let workerLimits = TunnelLimits(streams: MachineV2Connect.tunnelStreams)
 
   /// `ctl.sock` sits beside the operations directory, in the machine's private directory.
   static func socketPath(operationsDirectory: String) -> String {
@@ -87,7 +98,7 @@ enum Rendezvous {
       }
     }
     let server = try await ServerBootstrap(group: group).bind(unixDomainSocketPath: path) { channel in
-      channel.eventLoop.makeCompletedFuture { try framed(channel) }
+      channel.eventLoop.makeCompletedFuture { try accepted(channel) }
     }
     guard chmod(path, 0o600) == 0 else {
       try? await server.channel.close()
@@ -98,18 +109,18 @@ enum Rendezvous {
 
   static func accept(
     _ server: NIOAsyncChannel<NIOAsyncChannel<ByteBuffer, ByteBuffer>, Never>,
-    registry: ExecSupervisorRegistry,
+    workers: ExecWorkers,
   ) async {
     try? await server.executeThenClose { inbound in
       try await withThrowingDiscardingTaskGroup { group in
         for try await connection in inbound {
-          group.addTask { await admit(connection, registry: registry) }
+          group.addTask { await admit(connection, workers: workers) }
         }
       }
     }
   }
 
-  static func admit(_ channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>, registry: ExecSupervisorRegistry) async {
+  static func admit(_ channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>, workers: ExecWorkers) async {
     try? await channel.executeThenClose { inbound, outbound in
       let link = RendezvousLink(channel.channel, inbound, outbound)
       let hello: Hello
@@ -120,53 +131,76 @@ enum Rendezvous {
         try? await link.send(Reply(accepted: false, refused: error as? Refusal ?? .peerCredentials))
         return
       }
-      let tunnel = try Tunnel(over: link.transport)
-      let generation: UInt64
-      do { generation = try await registry.link(hello, client: tunnel.client, abort: link.abort) }
+      let tunnel = try Tunnel(over: link.transport, limits: hello.worker == nil ? .init() : workerLimits)
+      let admitted: (generation: UInt64, reply: Reply)
+      do { admitted = try await workers.link(hello, client: tunnel.client, abort: link.abort) }
       catch {
         try? await link.send(Reply(accepted: false, refused: error as? Refusal ?? .unknownOperation))
         return
       }
       do {
-        try await link.send(Reply(accepted: true, refused: nil))
+        try await link.send(admitted.reply)
         try await tunnel.run()
       } catch {}
-      await registry.unlink(hello.operation, generation: generation)
+      await workers.unlink(hello, generation: admitted.generation)
     }
   }
 
-  // MARK: Supervisor side
+  // MARK: Dialer side
 
-  /// One dial: handshake, then serve the operation until the agent goes away. Returns whether the agent accepted this supervisor.
-  static func dial(path: String, hello: Hello, group: any EventLoopGroup, handler: @escaping Handler) async throws -> Bool {
+  /// One dial: handshake, then serve until the agent goes away. `accepted` sees the agent's reply before serving starts.
+  /// Throws the agent's refusal, or the transport's failure.
+  static func dial(path: String, hello: Hello, group: any EventLoopGroup, limits: TunnelLimits = .init(), handler: @escaping Handler, accepted: @Sendable (Reply) async -> Void = { _ in }) async throws {
     let channel = try await ClientBootstrap(group: group).connect(unixDomainSocketPath: path) { channel in
       channel.eventLoop.makeCompletedFuture { try framed(channel) }
     }
-    return try await channel.executeThenClose { inbound, outbound in
+    try await channel.executeThenClose { inbound, outbound in
       let link = RendezvousLink(channel.channel, inbound, outbound)
       guard peerAllowed(try await link.peerUID()) else { throw Refusal.peerCredentials }
       try await link.send(hello)
       let reply = try await link.receive(Reply.self)
       guard reply.accepted else { throw reply.refused ?? .unknownOperation }
-      try? await Tunnel.serve(over: link.transport, handler: handler)
-      return true
+      await accepted(reply)
+      try? await Tunnel.serve(over: link.transport, limits: limits, handler: handler)
     }
   }
 
-  /// Redials `ctl.sock` with backoff for as long as the caller runs it; the command keeps running while the agent is away.
-  static func redial(path: String, hello: Hello, group: any EventLoopGroup, handler: @escaping Handler) async {
+  /// Redials `ctl.sock` with backoff while the agent is away, and returns the agent's refusal once it refuses: a refusal is
+  /// permanent. `unlinked` runs whenever an accepted link ends.
+  static func redial(
+    path: String, hello: @Sendable () async -> Hello, group: any EventLoopGroup, limits: TunnelLimits = .init(), handler: @escaping Handler,
+    accepted: @Sendable (Reply) async -> Void = { _ in }, unlinked: @Sendable () async -> Void = {},
+  ) async -> Refusal? {
     var delay = redialFloor
     while !Task.isCancelled {
-      let accepted = (try? await dial(path: path, hello: hello, group: group, handler: handler)) ?? false
-      delay = accepted ? redialFloor : min(delay * 2, redialCeiling)
-      do { try await ContinuousClock().sleep(for: delay) } catch { return }
+      let linked = Mutex(false)
+      do {
+        try await dial(path: path, hello: hello(), group: group, limits: limits, handler: handler) { reply in
+          linked.withLock { $0 = true }
+          await accepted(reply)
+        }
+      } catch let refusal as Refusal { return refusal }
+      catch {}
+      let wasLinked = linked.withLock { $0 }
+      if wasLinked { await unlinked() }
+      delay = wasLinked ? redialFloor : min(delay * 2, redialCeiling)
+      do { try await ContinuousClock().sleep(for: delay) } catch { return nil }
     }
+    return nil
   }
 
   private static func framed(_ channel: any Channel) throws -> NIOAsyncChannel<ByteBuffer, ByteBuffer> {
     try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(FrameDecoder()))
     try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(FrameEncoder()))
     return try NIOAsyncChannel(wrappingChannelSynchronously: channel)
+  }
+
+  /// An accepted connection is closed when it is dropped: NIO drops one that arrives as the listener closes, and the
+  /// non-deprecated wrapper traps on that instead.
+  private static func accepted(_ channel: any Channel) throws -> NIOAsyncChannel<ByteBuffer, ByteBuffer> {
+    try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(FrameDecoder()))
+    try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(FrameEncoder()))
+    return try NIOAsyncChannel(synchronouslyWrapping: channel)
   }
 }
 

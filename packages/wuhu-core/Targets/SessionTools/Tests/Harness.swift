@@ -1,6 +1,7 @@
 import Clocks
 import ControlledTime
 import Dependencies
+import FileSearch
 import Foundation
 import JSONValue
 import MachineChannel
@@ -323,7 +324,7 @@ final class FakeMachineFS: Sendable {
         }
       },
       search: { _, _ in
-        .error(error: .init(code: .invalidArgument, message: "unsupported in fake"))
+        throw SearchError(.notFound, "search is unsupported in the fake")
       },
       attached: { [attached] in attached.value },
     )

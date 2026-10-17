@@ -37,6 +37,8 @@ extension CommandRunner {
       let enrollment = try MachineV2Home.locate(environment: self.environment, machine: action.machine)
       _ = try enrollment.load()
       _ = try enrollment.loadKey()
+      // Installing is the person putting this machine back on: a recorded leave no longer holds.
+      try enrollment.clearLeft()
       let candidate = URL(fileURLWithPath: binary, relativeTo: URL(fileURLWithPath: self.currentDirectory)).standardizedFileURL
       guard case .upgrade = action else { try await installer.install(candidate: candidate); break }
       // Upgrade keeps the installed service definition as it is, hand edits included; only install writes one.

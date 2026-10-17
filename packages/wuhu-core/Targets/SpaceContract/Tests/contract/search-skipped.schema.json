@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SearchSkipped","type":"object","properties":{"reason":{"type":"string","enum":["hidden","ignored","binary","longLine","unreadable"]},"count":{"type":"integer"},"example":{"type":"string"}},"required":["reason","count","example"],"additionalProperties":false}

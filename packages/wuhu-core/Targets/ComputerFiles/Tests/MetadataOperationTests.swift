@@ -16,13 +16,13 @@ import Scratch
 import Synchronization
 import Testing
 
-@Suite struct MetadataOperationTests {
-  func withClient<T: Sendable>(files: ComputerFileSystem = .local, fetch: (@Sendable (Request, @escaping @Sendable (Request) async throws -> Response) async throws -> Response)? = nil, body: (OperationClient) async throws -> T) async throws -> T {
+@Suite(.timeLimit(.minutes(2))) struct MetadataOperationTests {
+  func withClient<T: Sendable>(files: ComputerFileSystem = .local, fetch: (@Sendable (Request, @escaping @Sendable (Request) async throws -> Response) async throws -> Response)? = nil, body: (MachineOperations) async throws -> T) async throws -> T {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init { request in
+    let client = try machineOperations { request in
       if let fetch { return try await fetch(request, agent.handler) }
       return try await agent.handler(request)
-    }, store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    }
     return try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
       do { _ = try await client.describe("disk"); let result = try await body(client); await client.shutdown(); await agent.shutdown(); return result }
@@ -119,16 +119,18 @@ import Testing
 extension MetadataOperationTests {
   @Test func injectedFilesystemReplaysExactEffectsThroughProductionHandlers() async throws {
     let events = Mutex<[String]>([])
+    // An operation's verdict is out before its handle closes, so a close may land after the next operation's first effect.
+    let (closes, closed) = AsyncStream<Void>.makeStream()
     let cursor = Mutex(0)
     let entry = MachineEntry(name: "file", kind: .file, size: 3, token: "recorded-token", mtime: 123)
     let operations = ComputerFileOperations(stat: { path in events.withLock { $0.append("stat \(path)") }; return entry }, list: { path in
       events.withLock { $0.append("list \(path)") }
-      return .init(next: { cursor.withLock { count in defer { count += 1 }; return count == 0 ? entry : nil } }, close: { events.withLock { $0.append("list close") } })
+      return .init(next: { cursor.withLock { count in defer { count += 1 }; return count == 0 ? entry : nil } }, close: { events.withLock { $0.append("list close") }; closed.yield() })
     }, write: { path, token in
       events.withLock { $0.append("write \(path) \(token ?? "nil")") }
-      return .init(append: { data in events.withLock { $0.append("append \(data.base64EncodedString())") } }, commit: { events.withLock { $0.append("commit") }; return "new-token" }, close: { events.withLock { $0.append("write close") } })
+      return .init(append: { data in events.withLock { $0.append("append \(data.base64EncodedString())") } }, commit: { events.withLock { $0.append("commit") }; return "new-token" }, close: { events.withLock { $0.append("write close") }; closed.yield() })
     }, mkdir: { path in events.withLock { $0.append("mkdir \(path)") } }, remove: { path, token in events.withLock { $0.append("remove \(path) \(token ?? "nil")") } }, move: { from, to in events.withLock { $0.append("move \(from) \(to)") } })
-    let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, walk: { _, _ in throw OperationError(.fileUnavailable) }, operations: operations)
+    let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, search: { _ in NoFiles() }, operations: operations)
     try await withClient(files: files) { client in
       #expect(try await client.stat(machine: "disk", path: "/file", owner: owner()) == entry)
       #expect(try await client.list(machine: "disk", path: "/", owner: owner()) == [entry])
@@ -137,7 +139,12 @@ extension MetadataOperationTests {
       try await client.remove(machine: "disk", path: "/file", ifMatch: "new-token", owner: owner())
       try await client.move(machine: "disk", from: "/a", to: "/b", owner: owner())
     }
-    #expect(events.withLock { $0 } == ["stat /file", "list /", "list close", "write /file recorded-token", "append AQID", "commit", "write close", "mkdir /dir", "remove /file new-token", "move /a /b"])
+    var count = 0
+    for await _ in closes { count += 1; if count == 2 { break } }
+    let recorded = events.withLock { $0 }
+    #expect(recorded.filter { !$0.hasSuffix(" close") } == ["stat /file", "list /", "write /file recorded-token", "append AQID", "commit", "mkdir /dir", "remove /file new-token", "move /a /b"])
+    #expect(try #require(recorded.firstIndex(of: "list close")) > #require(recorded.firstIndex(of: "list /")))
+    #expect(try #require(recorded.firstIndex(of: "write close")) > #require(recorded.firstIndex(of: "commit")))
   }
 
   @Test(arguments: ["stop", "lease", "digest"])
@@ -146,20 +153,17 @@ extension MetadataOperationTests {
     let path = folder.url.appending(path: "file").path
     try Data("original".utf8).write(to: URL(fileURLWithPath: path))
     let time = MetadataTime()
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(), clock: time.clock, authorize: { _, _ in })
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
+    let client = try machineOperations(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      _ = try await client.describe("disk")
-      let id = try await client.start("disk", request: .init(kind: "write.v1", input: ["path": .string(path), "bytes": "4", "digest": .string(String(repeating: "0", count: 64))]), owner: owner())
-      _ = try await client.write(id, channel: "data", payload: .init(data: Data([1, 2, 3, 4])), end: action == "digest")
-      if action == "stop" { _ = try await client.stop(id, reason: "testStop") }
+      let operation = try await client.open(owner(), machine: "disk", start: .init(kind: "write.v1", input: ["path": .string(path), "bytes": "4", "digest": .string(String(repeating: "0", count: 64))]))
+      try await operation.write("data", .init(data: Data([1, 2, 3, 4])), end: action == "digest")
+      if action == "stop" { try await operation.stop("testStop") }
       if action == "lease" { time.advance(.seconds(61)) }
-      var end = try await client.reconcile(id)
-      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-      while end.verdict == nil && ContinuousClock().now < deadline { await Task.yield(); end = try await client.reconcile(id) }
-      #expect(end.verdict?.tag == (action == "digest" ? .failed : .stopped))
-      #expect(end.verdict?.error?.code == (action == "digest" ? .invalidInput : nil))
+      let end = try await operation.verdict()
+      #expect(end.tag == (action == "digest" ? .failed : .stopped))
+      #expect(end.error?.code == (action == "digest" ? .invalidInput : nil))
       await client.shutdown(); await agent.shutdown()
     }
     #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("original".utf8))
@@ -284,28 +288,33 @@ extension MetadataOperationTests {
         }, close: writer.close)
       }, mkdir: local.mkdir, remove: local.remove, move: local.move)
     }
-    let files = ComputerFileSystem(status: ComputerFileSystem.local.status, read: ComputerFileSystem.local.read, walk: ComputerFileSystem.local.walk, operations: operations)
+    let files = ComputerFileSystem(status: ComputerFileSystem.local.status, read: ComputerFileSystem.local.read, search: ComputerFileSystem.local.search, operations: operations)
     let time = MetadataTime()
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, authorize: { _, _ in })
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
+    // A stop is durable intent; the commit is released only once the machine holds it.
+    let (stopped, stopAnswered) = AsyncStream<Void>.makeStream()
+    let client = try machineOperations { request in
+      let response = try await agent.handler(request)
+      if request.method == .put, request.url.lastPathComponent == "stop" { stopAnswered.yield() }
+      return response
+    }
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      _ = try await client.describe("disk")
       let bytes = Data("replacement".utf8)
       let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-      let id = try await client.start("disk", request: .init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(digest)]), owner: owner())
-      _ = try await client.write(id, channel: "data", payload: .init(data: bytes), end: true)
+      let operation = try await client.open(owner(), machine: "disk", start: .init(kind: "write.v1", input: ["path": .string(path), "bytes": .string(String(bytes.count)), "digest": .string(digest)]))
+      try await operation.write("data", .init(data: bytes), end: true)
       for await _ in reached.stream { break }
-      if action.hasSuffix("stop") { _ = try await client.stop(id, reason: "commitStop") }
-      else { time.advance(.seconds(61)); _ = try await client.reconcile(id) }
+      if action.hasSuffix("stop") {
+        try await operation.stop("commitStop")
+        for await _ in stopped { break }
+      } else { time.advance(.seconds(61)) }
       release.signal()
-      var snapshot = try await client.reconcile(id)
-      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-      while snapshot.verdict == nil && ContinuousClock().now < deadline { await Task.yield(); snapshot = try await client.reconcile(id) }
-      #expect(snapshot.verdict?.tag == (action.hasPrefix("sync") ? .stopped : .completed))
+      let verdict = try await operation.verdict()
+      #expect(verdict.tag == (action.hasPrefix("sync") ? .stopped : .completed))
       if action.hasPrefix("rename") {
-        #expect(snapshot.verdict?.reason == nil)
-        #expect(snapshot.verdict?.result != nil)
+        #expect(verdict.reason == nil)
+        #expect(verdict.result != nil)
       }
       await client.shutdown(); await agent.shutdown()
     }

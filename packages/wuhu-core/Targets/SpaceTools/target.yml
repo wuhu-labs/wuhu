@@ -8,6 +8,7 @@ dependencies:
   - Dependencies
   - DocIndex
   - MachineContract
+  - FileSearch
   - SessionDomain
   - SpaceContract
   - SpaceCore
@@ -19,6 +20,7 @@ tests:
   dependencies:
     - OrderedCollections
     - MachineContract
+    - FileSearch
     - SpaceContract
     - SpaceCore
     - SpaceFS

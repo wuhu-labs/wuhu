@@ -15,7 +15,7 @@ import Synchronization
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct MachineLivenessTests {
-  @Test func attachedButSilentMachineFailsExecAndPendingReadGrepFind() async throws {
+  @Test func attachedButSilentMachineFailsExecAndPendingFileCalls() async throws {
     let space = try makeMachineSpace()
     let time = LivenessTime()
     let server = time.server(space: space)
@@ -43,8 +43,8 @@ import Testing
             let path = "machines://\(machine.rawValue)/missing"
             let inputs: [(String, JSONValue)] = [
               ("read", .object(["path": .string(path)])),
-              ("grep", .object(["path": .string(path), "pattern": "missing"])),
-              ("find", .object(["path": .string(path), "glob": "**/*"])),
+              ("stat", .object(["path": .string(path)])),
+              ("ls", .object(["path": .string(path)])),
             ]
             for (tool, input) in inputs {
               calls.addTask {
@@ -66,8 +66,10 @@ import Testing
               switch frame.opcode {
               case .control: callerBound = true
               case .vfsRequest:
-                if case .read = try frame.payload(VFSRequest.self).op { requests += 1 }
-              case .searchRequest: requests += 1
+                switch try frame.payload(VFSRequest.self).op {
+                case .read, .stat, .ls: requests += 1
+                default: break
+                }
               default: break
               }
               if requests == 3, callerBound { break }

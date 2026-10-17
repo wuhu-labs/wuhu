@@ -11,10 +11,10 @@
 //   mutateRows(path, ops)          -> Promise<{ rev, ids }>
 //   readAttributes(path)           -> Promise<{ attributes, token }>
 //   patchAttributes(path, patch)   -> Promise<{ token }>
-//   find(search)                   -> Promise<{ paths, cursor? }>
-//   grep(search)                   -> Promise<{ matches, cursor?, skipped? }>
+//   find(search)                   -> Promise<{ paths, cursor?, scanned, skipped }>
+//   grep(search)                   -> Promise<{ matches, cursor?, scanned, skipped }>
 // A search is the find or grep tool's input: `{ glob | pattern, path?,
-// matchLimit?, entryLimit?, step? }`, unset fields omitted.
+// matchLimit?, hidden?, noIgnore?, step? }`, unset fields omitted.
 // A snapshot is `{ columns, rows }`, each cell a scalar, `{ blob: base64 }` or
 // `{ json: value }`. A stream is `{ next(): Promise<value | null>, close() }`,
 // opened when iteration starts; `null` ends it. A transport rejects with a
@@ -302,6 +302,22 @@ const limit = (value, what) => {
   return count
 }
 
+const flag = (value, what) => {
+  if (value === undefined || value === null) return false
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${what} must be a boolean`)
+  }
+  return value
+}
+
+// What a search passed over: one `{ reason, count, example }` per reason.
+const skips = (found) =>
+  (found.skipped ?? []).map(({ reason, count, example }) => ({
+    reason,
+    count,
+    example,
+  }))
+
 // The find or grep tool's input. Range checks, a bad pattern, path or step
 // are the server's, so they reject as the same SpaceError the tool raises.
 function search(key, value, options) {
@@ -311,9 +327,10 @@ function search(key, value, options) {
   }
   if (options === undefined || options === null) options = {}
   if (!plain(options)) {
-    throw new TypeError(`${verb} takes { path, limit, entryLimit, step }`)
+    throw new TypeError(`${verb} takes { path, limit, hidden, noIgnore, step }`)
   }
-  const { path: where, limit: matches, entryLimit, step, ...extra } = options
+  const { path: where, limit: matches, hidden, noIgnore, step, ...extra } =
+    options
   const unknown = Object.keys(extra)
   if (unknown.length > 0) {
     throw new TypeError(`${verb} has unexpected options: ${unknown.join(', ')}`)
@@ -322,8 +339,8 @@ function search(key, value, options) {
   if (where !== undefined && where !== null) out.path = path(where)
   const matchLimit = limit(matches, 'limit')
   if (matchLimit !== undefined) out.matchLimit = matchLimit
-  const entries = limit(entryLimit, 'entryLimit')
-  if (entries !== undefined) out.entryLimit = entries
+  if (flag(hidden, 'hidden')) out.hidden = true
+  if (flag(noIgnore, 'noIgnore')) out.noIgnore = true
   if (step !== undefined && step !== null) {
     if (typeof step !== 'string' || step === '') {
       throw new TypeError('step must be the step a previous call returned')
@@ -370,7 +387,12 @@ export function createSpace(transport) {
     },
     async find(glob, options) {
       const found = await transport.find(search('glob', glob, options))
-      return { paths: found.paths, step: found.cursor ?? null }
+      return {
+        paths: found.paths,
+        step: found.cursor ?? null,
+        scanned: found.scanned,
+        skipped: skips(found),
+      }
     },
     async grep(pattern, options) {
       const found = await transport.grep(search('pattern', pattern, options))
@@ -381,11 +403,8 @@ export function createSpace(transport) {
           text,
         })),
         step: found.cursor ?? null,
-        skipped: (found.skipped ?? []).map(({ path, bytes, reason }) => ({
-          path,
-          bytes,
-          reason,
-        })),
+        scanned: found.scanned,
+        skipped: skips(found),
       }
     },
   }

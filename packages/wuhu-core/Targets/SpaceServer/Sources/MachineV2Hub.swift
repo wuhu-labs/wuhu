@@ -20,6 +20,7 @@ actor MachineV2Hub {
     let connection: UUID
     let credential: Credential
     let client: FetchClient
+    let streams: Int
     let abort: @Sendable () -> Void
   }
 
@@ -54,11 +55,11 @@ actor MachineV2Hub {
     try checkAvailable()
   }
 
-  func attach(_ credential: Credential, client: FetchClient, abort: @escaping @Sendable () -> Void) async throws -> UUID {
+  func attach(_ credential: Credential, client: FetchClient, streams: Int = TunnelLimits().streams, abort: @escaping @Sendable () -> Void) async throws -> UUID {
     try await authorize(credential)
     let connection = UUID()
     let replaced = credential.machines.compactMap { routes[$0] }
-    for machine in credential.machines { routes[machine] = Route(connection: connection, credential: credential, client: client, abort: abort) }
+    for machine in credential.machines { routes[machine] = Route(connection: connection, credential: credential, client: client, streams: streams, abort: abort) }
     for route in replaced { route.abort() }
     return connection
   }
@@ -72,6 +73,9 @@ actor MachineV2Hub {
     route.abort()
     remove(route.connection)
   }
+
+  /// How many exchanges the machine's live tunnel carries at once; nil without one.
+  func streams(_ machine: String) -> Int? { routes[machine]?.streams }
 
   func fetch(_ request: Request, usableFrom group: GroupID) async throws -> Response {
     try checkAvailable()
@@ -93,10 +97,10 @@ actor MachineV2Hub {
     return try await route.client(request)
   }
 
-  func run(_ credential: Credential, transport: TunnelTransport) async {
+  func run(_ credential: Credential, transport: TunnelTransport, streams: Int = TunnelLimits().streams) async {
     do {
-      let tunnel = try Tunnel(over: transport)
-      let connection = try await attach(credential, client: tunnel.client, abort: transport.abort)
+      let tunnel = try Tunnel(over: transport, limits: .init(streams: streams))
+      let connection = try await attach(credential, client: tunnel.client, streams: streams, abort: transport.abort)
       do { try await tunnel.run() } catch {}
       remove(connection)
     } catch { transport.abort() }

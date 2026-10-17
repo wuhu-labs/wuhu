@@ -333,14 +333,25 @@ import Testing
     try await installer.uninstall {}
   }
 
-  @Test func launchdDefinitionPreservesSupervisorGroupsAndEscapesPaths() throws {
+  @Test func launchdInstallPreservesSupervisorGroupsAndEscapesPaths() async throws {
     let effects = Effects()
-    let (scratch, home, original, _) = try self.fixture(effects)
+    let (scratch, home, original, candidate) = try self.fixture(effects)
     defer { scratch.remove() }
     var installer = original
     installer.platform = .macOS
     installer.home = home.appendingPathComponent("space & name")
-    let data = Data(installer.serviceDefinition.utf8)
+    installer.command = { arguments in
+      _ = try effects.run(arguments)
+      if arguments[1] == "bootstrap", arguments.last!.hasSuffix(".preflight.plist") {
+        let definition = try Data(contentsOf: URL(fileURLWithPath: arguments.last!))
+        let plist = try PropertyListSerialization.propertyList(from: definition, format: nil) as! [String: Any]
+        let argv = plist["ProgramArguments"] as! [String]
+        try Data(#"{"ok":true}"#.utf8).write(to: URL(fileURLWithPath: argv.last!))
+      }
+      return ""
+    }
+    try await installer.install(candidate: candidate)
+    let data = try Data(contentsOf: installer.serviceFile)
     let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as! [String: Any]
     #expect(plist["AbandonProcessGroup"] as? Bool == true)
     #expect(plist["Label"] as? String == "ai.wuhu.machine-v2.mc_test-v2")

@@ -1,6 +1,11 @@
+import enum FileSearch.SearchLimits
 import JSONValue
 import OrderedCollections
 import SessionDomain
+import struct SpaceContract.FindOutput
+import struct SpaceContract.GrepOutput
+import struct SpaceContract.SearchSkipped
+import enum SpaceContract.SearchSkipReason
 import SpaceCore
 import SpaceTools
 
@@ -27,31 +32,14 @@ extension InProcessToolOwnerClient {
       ("pattern", .string(arguments.pattern)),
       ("path", .string(address.rendered)),
       ("matchLimit", arguments.matchLimit.map(JSONValue.integer)),
-      ("entryLimit", arguments.entryLimit.map(JSONValue.integer)),
+      ("hidden", arguments.hidden.map(JSONValue.bool)),
+      ("noIgnore", arguments.noIgnore.map(JSONValue.bool)),
       ("step", arguments.step.map(JSONValue.string)),
     ])
-    let output = try await grepTool.run(SpaceToolContext(space: space, machines: machines, principal: try await space.principal(of: session)), input: input)
-    guard case let .object(fields) = output, case let .array(matches)? = fields["matches"] else {
-      throw ToolProblem("grep returned an unexpected result shape")
-    }
-    var lines: [String] = matches.compactMap { match in
-      guard case let .object(entry) = match,
-            case let .string(path)? = entry["path"],
-            case let .integer(line)? = entry["line"],
-            case let .string(text)? = entry["text"]
-      else { return nil }
-      return "\(path):\(line): \(text)"
-    }
+    let output = try await searchOutput(GrepOutput.self, grepTool, input, session)
+    var lines = output.matches.map { "\($0.path):\($0.line): \($0.text)" }
     if lines.isEmpty { lines.append("no matches") }
-    if case let .array(skipped)? = fields["skipped"] {
-      for case let .object(entry) in skipped {
-        guard case let .string(path)? = entry["path"], case let .integer(bytes)? = entry["bytes"] else { continue }
-        lines.append("skipped \(path): \(bytes) bytes, over the \(SearchBounds.fileBytes >> 20) MiB search bound")
-      }
-    }
-    if case let .string(cursor)? = fields["cursor"] {
-      lines.append("more results available; pass step: \"\(cursor)\" to continue")
-    }
+    lines += searchFooter(skipped: output.skipped, cursor: output.cursor)
     try await deliverContext(session, callID, touching: address, state: state)
     return .grep(.init(output: lines.joined(separator: "\n")))
   }
@@ -67,23 +55,32 @@ extension InProcessToolOwnerClient {
       ("glob", .string(arguments.glob)),
       ("path", .string(address.rendered)),
       ("matchLimit", arguments.matchLimit.map(JSONValue.integer)),
-      ("entryLimit", arguments.entryLimit.map(JSONValue.integer)),
+      ("hidden", arguments.hidden.map(JSONValue.bool)),
+      ("noIgnore", arguments.noIgnore.map(JSONValue.bool)),
       ("step", arguments.step.map(JSONValue.string)),
     ])
-    let output = try await findTool.run(SpaceToolContext(space: space, machines: machines, principal: try await space.principal(of: session)), input: input)
-    guard case let .object(fields) = output, case let .array(paths)? = fields["paths"] else {
-      throw ToolProblem("find returned an unexpected result shape")
-    }
-    var lines: [String] = paths.compactMap { path in
-      guard case let .string(found) = path else { return nil }
-      return found
-    }
+    let output = try await searchOutput(FindOutput.self, findTool, input, session)
+    var lines = output.paths
     if lines.isEmpty { lines.append("no matches") }
-    if case let .string(cursor)? = fields["cursor"] {
-      lines.append("more results available; pass step: \"\(cursor)\" to continue")
-    }
+    lines += searchFooter(skipped: output.skipped, cursor: output.cursor)
     try await deliverContext(session, callID, touching: address, state: state)
     return .find(.init(output: lines.joined(separator: "\n")))
+  }
+
+  private func searchOutput<Output: Decodable>(
+    _: Output.Type, _ tool: SpaceTool, _ input: JSONValue, _ session: SessionID,
+  ) async throws -> Output {
+    let context = SpaceToolContext(space: space, machines: machines, principal: try await space.principal(of: session))
+    return try JSONValueDecoder().decode(Output.self, from: try await tool.run(context, input: input))
+  }
+
+  /// What the page passed over, one line per reason, then the step to resume.
+  private func searchFooter(skipped: [SearchSkipped], cursor: String?) -> [String] {
+    var lines = skipped.map { "skipped \($0.count) \(phrase($0.reason)), e.g. \($0.example)" }
+    if let cursor {
+      lines.append("more results available; pass step: \"\(cursor)\" to continue")
+    }
+    return lines
   }
 
   func query(_ session: SessionID, _ arguments: QueryArguments) async throws -> ToolResultPayload {
@@ -109,4 +106,14 @@ func renderedRows(_ rows: Rows) -> String {
     output += "\n(showing the first \(queryRowCap) of \(rows.rows.count) rows)"
   }
   return output
+}
+
+private func phrase(_ reason: SearchSkipReason) -> String {
+  switch reason {
+  case .hidden: "hidden (pass hidden: true to include)"
+  case .ignored: "ignored by .gitignore (pass no_ignore: true to include)"
+  case .binary: "binary"
+  case .longLine: "with a line over \(SearchLimits.lineBytes >> 10) KiB"
+  case .unreadable: "unreadable"
+  }
 }

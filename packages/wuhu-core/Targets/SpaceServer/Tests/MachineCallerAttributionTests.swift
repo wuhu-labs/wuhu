@@ -6,6 +6,7 @@
 import ComputerFiles
 import Crypto
 import Fetch
+import FileSearch
 import enum JSONValue.JSONValue
 import MachineChannel
 import MachineContract
@@ -40,9 +41,7 @@ private struct SilentExec: OperationKind {
     let seen = Mutex<[AdmittedStart]>([])
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { start in seen.withLock { $0.append(start) } })
     let hub = MachineHub(space: space)
-    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { try await agent.handler($0) } }, abort: { _, _ in })
-    try await coordinator.prepare()
-    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
     await hub.configureV2(service)
     let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
     try await withThrowingTaskGroup(of: Void.self) { tasks in
@@ -52,11 +51,11 @@ private struct SilentExec: OperationKind {
       let seam = machineSeam(hub: hub)
       // A tool call (the executor sets the task-local) and a script (an attributed seam) both name the session.
       _ = try await MachineSeam.$caller.withValue(session) { try await seam.vfs(record.id, .read(path: file.path)) }
-      _ = try await seam.attributed(to: session).search(record.id, .grep(pattern: "needle", path: file.path, matchLimit: nil, entryLimit: nil, step: nil))
+      _ = try await seam.attributed(to: session).search(record.id, SearchQuery(mode: .grep, pattern: "needle", root: file.path, scope: "test"))
       // No session: no caller, and a session that can't be read doesn't fail the start.
       _ = try await seam.vfs(record.id, .stat(path: file.path))
       _ = try await seam.attributed(to: SessionID(rawValue: "gone-gone-gone")).vfs(record.id, .stat(path: file.path))
-      #expect(seen.withLock { $0.map(\.kind) } == ["read.v1", "grep.v1", "stat.v1", "stat.v1"])
+      #expect(seen.withLock { $0.map(\.kind) } == ["read.v1", "search.v1", "stat.v1", "stat.v1"])
       #expect(seen.withLock { $0.map(\.caller) } == [expected, expected, nil, nil])
 
       // Exec: the relay attributes the exec record's caller.
@@ -152,9 +151,7 @@ private struct SilentExec: OperationKind {
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
     let hub = MachineHub(space: space, tokens: ExecTokens(spaceURL: "https://test.invalid"))
-    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { try await agent.handler($0) } }, abort: { _, _ in })
-    try await coordinator.prepare()
-    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
     await hub.configureV2(service)
     let minted = try await space.mintExec(machine: record.id, caller: caller ? session.rawValue : nil, group: .shared)
     try await withThrowingTaskGroup(of: Void.self) { tasks in

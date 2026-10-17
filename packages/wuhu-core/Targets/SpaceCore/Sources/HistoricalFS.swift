@@ -32,6 +32,20 @@ struct HistoricalFS: SpaceVFS {
     }
   }
 
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    let p = try LiveFS.validated(path)
+    let (group, ceiling) = (group, ceiling)
+    let hash = try await writer.read { db in
+      try Self.requireRevision(ceiling, in: db)
+      guard let node = try Self.resolve(p.rawValue, group: group, ceiling: ceiling, in: db) else {
+        throw SpaceError.notFound(p.rawValue)
+      }
+      guard node.kind == "file", let hash = node.blobHash else { throw SpaceError.notAFile(p.rawValue) }
+      return hash
+    }
+    return BlobReader(blobs: blobs, database: writer, hash: hash)
+  }
+
   func write(_ path: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken {
     throw SpaceError.readOnlyView(path)
   }

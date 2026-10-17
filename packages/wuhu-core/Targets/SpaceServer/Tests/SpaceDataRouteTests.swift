@@ -410,21 +410,24 @@ import Testing
     let first = try await get(r, r.aliceHost, "/_/space/grep", ["pattern": "^TODO", "path": "/notes", "matchLimit": "1"], cookie: alices)
     #expect(first.status == .ok)
     let page = try await json(first)
-    #expect(page.object?["matches"] == [["path": "/notes/a.md", "line": 1, "text": "TODO one", "context": []]])
+    #expect(page.object?["matches"] == [["path": "/notes/a.md", "line": 1, "text": "TODO one"]])
     let step = try #require(page.object?["cursor"]?.stringValue)
     let second = try await json(get(
       r, r.aliceHost, "/_/space/grep", ["pattern": "^TODO", "path": "/notes", "matchLimit": "1", "step": step], cookie: alices,
     ))
-    #expect(second == ["matches": [["path": "/notes/a.md", "line": 2, "text": "TODO two", "context": []]]])
+    #expect(second.object?["matches"] == [["path": "/notes/a.md", "line": 2, "text": "TODO two"]])
+    #expect(second.object?["cursor"] == nil)
+    #expect(second.object?["skipped"] == [])
 
     let shared = try await get(r, r.aliceHost, "/_/space/find", ["glob": "**/*.md", "path": "wuhu://shared.localspace/docs"], cookie: alices)
-    #expect(try await json(shared) == ["paths": ["wuhu://shared.localspace/docs/s.md"]])
+    #expect(try await json(shared).object?["paths"] == ["wuhu://shared.localspace/docs/s.md"])
 
     let refusals: [(String, [String: String], Status, String)] = [
       ("grep", ["pattern": "TODO", "path": "wuhu://\(r.bobGroup.rawValue).localspace/"], .notFound, "notFound"),
       ("find", ["glob": "*", "path": "machines://mc_abcdefgh/tmp"], .serviceUnavailable, "unavailable"),
       ("grep", ["pattern": "(", "path": "/notes"], .badRequest, "invalidArgument"),
       ("find", ["glob": "*", "matchLimit": "two"], .badRequest, "invalidArgument"),
+      ("find", ["glob": "*", "hidden": "yes"], .badRequest, "invalidArgument"),
       ("find", ["path": "/notes"], .badRequest, "invalidArgument"),
     ]
     for (route, query, status, code) in refusals {

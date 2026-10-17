@@ -44,6 +44,10 @@ enum Main {
       do { try await ExecSupervisor.run(directory: CommandLine.arguments[3]); exit(0) }
       catch { FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); exit(1) }
     }
+    if CommandLine.arguments.count == 4, Array(CommandLine.arguments[1 ... 2]) == ["machine-v2", "exec-worker"] {
+      do { try await ExecSupervisor.runWorker(directory: CommandLine.arguments[3]); exit(0) }
+      catch { FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8)); exit(1) }
+    }
     if CommandLine.arguments.dropFirst() == ["--version"] {
       print("wuhu \(BuildStamp.version) (\(BuildStamp.commit), \(BuildStamp.date))")
       exit(0)

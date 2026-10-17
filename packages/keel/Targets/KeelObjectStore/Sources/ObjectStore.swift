@@ -92,11 +92,18 @@ public enum ObjectStoreError: Error, Sendable, Equatable {
   case notFound(ObjectKey)
   case unexpectedStatus(code: Int, message: String?)
   case malformedResponse(String)
+  /// A ranged get answered with bytes other than the range asked for: the
+  /// whole object, or another range.
+  case rangeNotHonored(ObjectKey, String)
 }
 
 public protocol ObjectStore: Sendable {
   func put(_ key: ObjectKey, body: Body) async throws
   func get(_ key: ObjectKey) async throws -> GetResult
+  /// The object's bytes at offsets `range`: fewer when the object ends inside
+  /// it, none when it ends before it or the range is empty. A missing key is
+  /// ``ObjectStoreError/notFound(_:)`` whatever the range.
+  func get(_ key: ObjectKey, bytes range: Range<Int64>) async throws -> Data
   func head(_ key: ObjectKey) async throws -> ObjectMetadata?
   func delete(_ key: ObjectKey) async throws
   func list(_ query: ListQuery) async throws -> ObjectListing

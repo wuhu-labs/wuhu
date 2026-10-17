@@ -1,0 +1,14 @@
+--- a/swift/internal/swift_autoconfiguration.bzl
++++ b/swift/internal/swift_autoconfiguration.bzl
+@@ -212,6 +212,11 @@
+ toolchain.
+ """
+ 
++    # Executing swiftc does not record its contents as a repository dependency.
++    if repository_ctx.os.name == "linux":
++        repository_ctx.watch(path_to_swiftc.realpath)
++        repository_ctx.watch(path_to_swiftc.dirname.get_child("swift-frontend").realpath)
++
+     root = path_to_swiftc.dirname.dirname
+     feature_values = _compute_feature_values(repository_ctx, path_to_swiftc)
+     version_file = _write_swift_version(repository_ctx, path_to_swiftc)

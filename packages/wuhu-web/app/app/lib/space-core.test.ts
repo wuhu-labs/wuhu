@@ -52,8 +52,8 @@ function fake(snapshots: Snapshot[] = []) {
       calls.push({ find: search })
       return Promise.resolve(
         search.step === undefined
-          ? { paths: ['/a.md'], cursor: '/b.md' }
-          : { paths: ['/b.md'] },
+          ? { paths: ['/a.md'], cursor: '/b.md', scanned: 2, skipped: [] }
+          : { paths: ['/b.md'], scanned: 1, skipped: [] },
       )
     },
     grep(search) {
@@ -64,9 +64,10 @@ function fake(snapshots: Snapshot[] = []) {
         )
       }
       return Promise.resolve({
-        matches: [{ path: '/a.md', line: 2, text: 'TODO', context: [] }],
+        matches: [{ path: '/a.md', line: 2, text: 'TODO' }],
         cursor: '2@/b.md',
-        skipped: [{ path: '/big.log', bytes: 5 << 20, reason: 'tooLarge' }],
+        scanned: 3,
+        skipped: [{ reason: 'binary', count: 1, example: '/a.png' }],
       })
     },
   }
@@ -241,23 +242,36 @@ Deno.test('patchAttributes needs ifMatch and rejects as a SpaceError', async () 
 Deno.test('find and grep send the tool input and hand back step', async () => {
   const { space, calls } = fake()
   const first = await space.find('**/*.md', { path: '/notes', limit: 1 })
-  assertEquals(first, { paths: ['/a.md'], step: '/b.md' })
+  assertEquals(first, {
+    paths: ['/a.md'],
+    step: '/b.md',
+    scanned: 2,
+    skipped: [],
+  })
   assertEquals(await space.find('**/*.md', { step: first.step }), {
     paths: ['/b.md'],
     step: null,
+    scanned: 1,
+    skipped: [],
   })
   assertEquals(
-    await space.grep('TODO', { limit: 1n, entryLimit: 10, path: null }),
+    await space.grep('TODO', {
+      limit: 1n,
+      hidden: true,
+      noIgnore: false,
+      path: null,
+    }),
     {
       matches: [{ path: '/a.md', line: 2, text: 'TODO' }],
       step: '2@/b.md',
-      skipped: [{ path: '/big.log', bytes: 5 << 20, reason: 'tooLarge' }],
+      scanned: 3,
+      skipped: [{ reason: 'binary', count: 1, example: '/a.png' }],
     },
   )
   assertEquals(calls, [
     { find: { glob: '**/*.md', path: '/notes', matchLimit: 1 } },
     { find: { glob: '**/*.md', step: '/b.md' } },
-    { grep: { pattern: 'TODO', matchLimit: 1, entryLimit: 10 } },
+    { grep: { pattern: 'TODO', matchLimit: 1, hidden: true } },
   ])
   const error = await assertRejects(() => space.grep('('), SpaceError)
   assertEquals(error.code, 'invalidArgument')
@@ -278,6 +292,11 @@ Deno.test('find and grep refuse malformed arguments before sending', async () =>
     'max',
   )
   await assertRejects(() => space.grep('x', { step: '' }), TypeError, 'step')
+  await assertRejects(
+    () => space.grep('x', { hidden: 'yes' } as never),
+    TypeError,
+    'hidden',
+  )
   assertEquals(calls, [])
 })
 

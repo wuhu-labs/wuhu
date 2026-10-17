@@ -20,6 +20,7 @@ import Testing
   @Test func missingKeyError() async throws { try await self.withContract { try await $0.missingKeyError() } }
   @Test func existence() async throws { try await self.withContract { try await $0.existence() } }
   @Test func listOrderingAndPagination() async throws { try await self.withContract { try await $0.listOrderingAndPagination() } }
+  @Test func rangedGet() async throws { try await self.withContract { try await $0.rangedGet() } }
 }
 
 @Suite struct FileSystemObjectStoreBehaviorTests {

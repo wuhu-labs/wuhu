@@ -129,7 +129,6 @@ func serveRequestsOK(_ endpoint: ChannelEndpoint) async {
   for await request in endpoint.inboundRequests {
     switch request {
     case let .vfs(request): await endpoint.respond(.vfs(VFSResponse(id: request.id, result: .ok)))
-    case let .search(request): await endpoint.respond(.search(SearchResponse(id: request.id, result: .paths(paths: [], cursor: nil))))
     }
   }
 }

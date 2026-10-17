@@ -1,36 +1,46 @@
+import ClockTesting
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 @testable import ComputerFiles
+import Dispatch
 import Fetch
+import FileSearch
 import enum JSONValue.JSONValue
 import OperationClient
 import OperationProtocol
 import OperationRuntime
+import Scratch
+import Synchronization
 import Testing
 
-@Suite struct FileOperationTests {
-  func run(_ input: JSONValue, kind: String, channel: String, files: ComputerFileSystem) async throws -> (Data, [JSONValue], OperationSnapshot) {
+@Suite(.timeLimit(.minutes(2))) struct FileOperationTests {
+  /// Runs one operation of `kind` to its end and returns its output on its one output channel.
+  func run(_ input: JSONValue, kind: String, channel _: String, files: ComputerFileSystem) async throws -> (Data, [JSONValue], Ending) {
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
-    let store = MemoryOperationStore()
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: FetchClient { try await agent.handler($0) }, store: store, abort: { _ in }, trace: { _ in })
+    let operations = try machineOperations(agent.handler)
     return try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
-      _ = try await client.describe("disk")
-      let id = try await client.start("disk", request: .init(kind: kind, input: input), owner: .init(scope: "test", key: UUID().uuidString))
-      var data = Data(); var records: [JSONValue] = []
-      var snapshot = try await client.poll(id)
-      while true {
-        snapshot = try await client.poll(id, channel: channel, holdMs: 10)
-        for payload in try await client.takeOutput(id, channel: channel) { data.append(payload.data ?? Data()); records += payload.records ?? [] }
-        if snapshot.channelEnd { break }
-      }
-      await agent.shutdown()
-      return (data, records, snapshot)
+      let operation = try await operations.open(.init(scope: "test", key: UUID().uuidString), machine: "disk", start: .init(kind: kind, input: input))
+      let result = try await operation.drain()
+      await operations.shutdown(); await agent.shutdown()
+      return result
     }
+  }
+
+  /// One `search.v1` to its verdict.
+  func search(_ query: SearchQuery, files: ComputerFileSystem = .local) async throws -> Verdict {
+    let (_, _, end) = try await run(json(query), kind: "search.v1", channel: "", files: files)
+    return try #require(end.verdict)
+  }
+
+  func page(_ query: SearchQuery, files: ComputerFileSystem = .local) async throws -> SearchPage {
+    let verdict = try await search(query, files: files)
+    #expect(verdict.tag == .completed, "\(String(describing: verdict.error))")
+    return try JSONDecoder().decode(SearchPage.self, from: Data(try #require(verdict.result).jsonString().utf8))
   }
 
   @Test func readStreamsRangeAndDetectsMutation() async throws {
@@ -43,233 +53,129 @@ import Testing
     #expect(changed.verdict?.error?.code == .fileChanged)
   }
 
-  @Test func grepIncrementalAndOversizeIsExplicit() async throws {
-    let files = FakeFiles(data: Data("needle\nother\nneedle tail".utf8), chunk: 3)
-    let (_, records, end) = try await run(["root": "/file", "pattern": "needle", "dialect": "literal", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: files.system)
-    #expect(records.count == 2); #expect(end.verdict?.tag == .completed)
-    let (_, _, tooLarge) = try await run(["root": "/file", "pattern": "needle", "dialect": "literal", "maxLineBytes": 4], kind: "grep.v1", channel: "matches", files: files.system)
-    #expect(tooLarge.verdict?.tag == .completed)
-    guard case let .object(result)? = tooLarge.verdict?.result else { Issue.record("missing skipped count"); return }
-    #expect(result["skipped"] == ["oversized": 1])
-  }
-
-  @Test func grepMatchesTrailingEmptyLineAndEmptyFilesLikeV1() async throws {
-    for (text, expectedLine) in [("line\n", "2"), ("", "1")] {
-      let files = FakeFiles(data: Data(text.utf8))
-      let (_, records, end) = try await run(["root": "/file", "pattern": "^$", "dialect": "regex", "maxLineBytes": 32, "matchLimit": 10], kind: "grep.v1", channel: "matches", files: files.system)
-      #expect(end.verdict?.tag == .completed)
-      #expect(records == [["path": "/file", "line": .string(expectedLine), "text": ""]])
-    }
-  }
-
-  @Test func findPagesInTraversalOrderAndResumesAcrossTreeChanges() async throws {
-    let files = FakeFiles(data: Data(), entries: [.init(path: "/z.txt", kind: "file"), .init(path: "/a.txt", kind: "file"), .init(path: "/b.txt", kind: "file")])
-    let (_, first, end) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "matchLimit": 1], kind: "find.v1", channel: "entries", files: files.system)
-    #expect(first.first?.object?["path"] == "/z.txt"); #expect(end.verdict?.tag == .completed)
-    #expect(end.verdict?.result?.object?["nextEntry"] == 1)
-    let changed = FakeFiles(data: Data(), entries: [.init(path: "/z.txt", kind: "file"), .init(path: "/new.txt", kind: "file"), .init(path: "/a.txt", kind: "file")])
-    let (_, second, next) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "matchLimit": 2, "resumeEntries": 1], kind: "find.v1", channel: "entries", files: changed.system)
-    #expect(second.compactMap { $0.object?["path"]?.stringValue } == ["/new.txt", "/a.txt"])
-    #expect(next.verdict?.result?.object?["nextEntry"] == nil)
-  }
-
-  @Test(arguments: ["find.v1", "grep.v1"])
-  func directoryEntriesConsumeSearchBudgetAndCursorPositions(_ kind: String) async throws {
-    let entries = (0 ..< 1001).map { ComputerEntry(path: "/dir\($0)", kind: "directory") } + [.init(path: "/file.txt", kind: "file")]
-    let input: JSONValue = kind == "find.v1"
-      ? ["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "entryLimit": 1000]
-      : ["root": "/", "pattern": "needle", "dialect": "literal", "maxLineBytes": 32, "entryLimit": 1000]
-    let channel = kind == "find.v1" ? "entries" : "matches"
-    let limitedFiles = FakeFiles(data: Data("needle".utf8), entries: entries)
-    let (_, limited, stopped) = try await run(input, kind: kind, channel: channel, files: limitedFiles.system)
-    #expect(limited.isEmpty); #expect(stopped.verdict?.tag == .stopped); #expect(stopped.verdict?.reason == "entryLimit")
-    #expect(await limitedFiles.walked == 1000); #expect(await limitedFiles.reads == 0)
-    var paged = try #require(input.object)
-    paged["matchLimit"] = 10
-    let files = FakeFiles(data: Data("needle".utf8), entries: entries)
-    let (_, first, page) = try await run(.object(paged), kind: kind, channel: channel, files: files.system)
-    #expect(first.isEmpty); #expect(page.verdict?.tag == .completed)
-    #expect(page.verdict?.result?.object?["scanned"] == "1000")
-    #expect(page.verdict?.result?.object?["nextEntry"] == 1000)
-    #expect(await files.walked == 1000); #expect(await files.reads == 0)
-    paged["resumeEntries"] = 1000
-    let resumedFiles = FakeFiles(data: Data("needle".utf8), entries: entries)
-    let (_, remaining, end) = try await run(.object(paged), kind: kind, channel: channel, files: resumedFiles.system)
-    #expect(remaining.count == 1); #expect(remaining.first?.object?["path"] == "/file.txt")
-    #expect(end.verdict?.tag == .completed); #expect(end.verdict?.result?.object?["scanned"] == "2")
-    #expect(end.verdict?.result?.object?["nextEntry"] == nil)
-  }
-
-  @Test func findLimitsStopRatherThanPage() async throws {
-    let files = FakeFiles(data: Data(), entries: [.init(path: "/b.txt", kind: "file"), .init(path: "/a.txt", kind: "file")])
-    let (_, records, end) = try await run(["root": "/", "glob": "**/*.txt", "includeSymlinks": false, "entryLimit": 1], kind: "find.v1", channel: "entries", files: files.system)
-    #expect(records.count == 1); #expect(end.verdict?.tag == .stopped); #expect(end.verdict?.reason == "entryLimit")
-    #expect(await files.walked == 1)
-  }
-}
-
-actor FakeFiles {
-  let data: Data; let chunk: Int; let entries: [ComputerEntry]
-  var reads = 0; var largestRead = 0; var walked = 0; var changed = false; var mutate = false
-  init(data: Data, chunk: Int = 65536, entries: [ComputerEntry] = [.init(path: "/file", kind: "file")]) { self.data = data; self.chunk = chunk; self.entries = entries }
-  func mutateAfterRead() { mutate = true }
-  func status() -> ComputerFileStatus { .init(version: changed ? "v2" : "v1", size: UInt64(data.count), kind: "file") }
-  func read(offset: UInt64, count: Int) -> Data { reads += 1; largestRead = max(largestRead, count); if mutate { changed = true }; let start = min(Int(offset), data.count); return data.subdata(in: start ..< min(data.count, start + min(chunk, count))) }
-  func next(_ index: Int) -> ComputerEntry? { guard index < entries.count else { return nil }; walked += 1; return entries[index] }
-  nonisolated var system: ComputerFileSystem {
-    .init(status: { _ in await self.status() }, read: { _, offset, count in await self.read(offset: offset, count: count) }, walk: { _, _ in
-      let cursor = FakeCursor(files: self)
-      return .init(next: { await cursor.next() }, close: {})
-    })
-  }
-}
-
-actor FakeCursor {
-  let files: FakeFiles; var index = 0
-  init(files: FakeFiles) { self.files = files }
-  func next() async -> ComputerEntry? { let item = await files.next(index); if item != nil { index += 1 }; return item }
-}
-
-import Scratch
-
-extension FileOperationTests {
-  @Test func liveRegularFilesUseTheSameHandlersOnDesktop() async throws {
-    let folder = try ScratchFolder("computer-files")
-    let path = folder.url.appending(path: "a.txt")
-    try Data("first\nneedle\nlast".utf8).write(to: path)
-    let version = try await ComputerFileSystem.local.status(path.path).version
-    let (data, _, end) = try await run(["path": .string(path.path), "offset": "6", "length": "6", "ifMatch": .string(version)], kind: "read.v1", channel: "data", files: .local)
-    #expect(data == Data("needle".utf8)); #expect(end.verdict?.tag == .completed)
-    let (_, entries, found) = try await run(["root": .string(folder.url.path), "glob": "**/*.txt", "includeSymlinks": false], kind: "find.v1", channel: "entries", files: .local)
-    #expect(entries.count == 1); #expect(found.verdict?.tag == .completed)
-    let (_, matches, grepped) = try await run(["root": .string(folder.url.path), "pattern": "needle", "dialect": "literal", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: .local)
-    #expect(matches == [["path": .string(path.path), "line": "2", "text": "needle"]]); #expect(grepped.verdict?.tag == .completed)
-  }
-
-  @Test func unsupportedDialectRefusesBeforeAnyFilesystemEffect() async throws {
-    let files = FakeFiles(data: Data())
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
-    let id = UUID()
-    let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(id)")!
-    let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "grep.v1", input: ["root": "/", "pattern": "(a+)+$", "dialect": "pcre", "maxLineBytes": 65536]))))
-    #expect(response.status.code == 400)
-    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .unsupportedDialect)
-    #expect(await files.walked == 0)
-  }
-
   @Test func fullReadWindowSuspendsEffectsAndControlStopStillAnswers() async throws {
     let files = FakeFiles(data: Data(repeating: 42, count: 1024 * 1024))
     let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
-    let store = MemoryOperationStore()
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: FetchClient { try await agent.handler($0) }, store: store, abort: { _ in }, trace: { _ in })
+    let operations = try machineOperations(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      _ = try await client.describe("disk")
-      let id = try await client.start("disk", request: .init(kind: "read.v1", input: ["path": "/file"]), owner: .init(scope: "full", key: "one"))
-      let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(2))
-      while await files.reads < 5 && clock.now < deadline { try await clock.sleep(for: .milliseconds(1)) }
-      #expect(await files.reads == 5)
+      // Nobody reads the output: the machine's window and the server's retained window fill, then reads stop.
+      let operation = try await operations.open(.init(scope: "full", key: "one"), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/file"]))
+      let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(10))
+      // The server's window is full once it has no room for another poll; the machine's then fills, and reads hold still.
+      func serverFull() async -> Bool {
+        let record = await operation.record
+        guard let window = record.outputChannels.first?.windowBytes else { return false }
+        return record.retainedBytes("data") + min(record.description.limits.pollBytes, window) > window
+      }
+      while await !serverFull(), clock.now < deadline { try await clock.sleep(for: .milliseconds(10)) }
+      #expect(await serverFull())
+      var reads = -1; var steady = 0
+      while steady < 3, clock.now < deadline {
+        let now = await files.reads
+        steady = now == reads ? steady + 1 : 0
+        reads = now
+        try await clock.sleep(for: .milliseconds(50))
+      }
+      #expect(reads >= 5)
       try await clock.sleep(for: .milliseconds(25))
-      #expect(await files.reads == 5)
-      #expect(try await client.poll(id).verdict == nil)
-      _ = try await client.stop(id, reason: "testStop")
-      var snapshot = try await client.reconcile(id)
-      while snapshot.verdict == nil && clock.now < deadline { snapshot = try await client.reconcile(id) }
-      #expect(snapshot.verdict?.tag == .stopped)
-      await agent.shutdown()
+      #expect(await files.reads == reads)
+      #expect(await operation.record.snapshot?.verdict == nil)
+      try await operation.stop("testStop")
+      #expect(try await operation.verdict().tag == .stopped)
+      await operations.shutdown(); await agent.shutdown()
     }
   }
 
-  @Test func globHasBoundedNonRegexSemantics() {
-    #expect(globMatches("**/*.txt", "a.txt")); #expect(globMatches("**/*.txt", "a/b/c.txt"))
-    #expect(!globMatches("*.txt", "a/b.txt")); #expect(globMatches("a/?.txt", "a/b.txt"))
-  }
-}
-
-import Dispatch
-import Synchronization
-
-extension FileOperationTests {
-  @Test func grepRejectsAFileReplacedBySymlinkBeforeRead() async throws {
-    let reads = Mutex(0)
-    let files = ComputerFileSystem(status: { _ in .init(version: "link", size: 5, kind: "symlink") }, read: { _, _, _ in reads.withLock { $0 += 1 }; return Data() }, walk: { _, _ in
-      let remaining = Mutex(true)
-      return .init(next: { remaining.withLock { if !$0 { return nil }; $0 = false; return .init(path: "/file", kind: "file") } }, close: {})
-    })
-    let (_, records, end) = try await run(["root": "/file", "pattern": "x", "dialect": "literal", "maxLineBytes": 20], kind: "grep.v1", channel: "matches", files: files)
-    #expect(records.isEmpty); #expect(end.verdict?.tag == .completed); #expect(reads.withLock { $0 } == 0)
-  }
-
-  @Test(arguments: [false, true])
-  func noFollowOpenRejectsSwappedFileOrDirectory(_ directory: Bool) async throws {
+  @Test func readRejectsAFileSwappedForASymlink() async throws {
     let folder = try ScratchFolder("computer-files-race")
     let original = folder.url.appending(path: "original")
-    let moved = folder.url.appending(path: "moved")
     let target = folder.url.appending(path: "target")
-    if directory {
-      try FileManager.default.createDirectory(at: original, withIntermediateDirectories: false)
-      try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
-      try Data("secret".utf8).write(to: target.appending(path: "secret"))
-    } else {
-      try Data("ordinary".utf8).write(to: original); try Data("secret".utf8).write(to: target)
-    }
+    try Data("ordinary".utf8).write(to: original); try Data("secret".utf8).write(to: target)
     let swapped = Mutex(false)
     let files = ComputerFileSystem.local(beforeOpen: { path in
       if path == original.path && swapped.withLock({ if $0 { return false }; $0 = true; return true }) {
-        try FileManager.default.moveItem(at: original, to: moved)
+        try FileManager.default.moveItem(at: original, to: folder.url.appending(path: "moved"))
         try FileManager.default.createSymbolicLink(at: original, withDestinationURL: target)
       }
     })
-    if directory {
-      let walk = try await files.walk(original.path, false)
-      await #expect(throws: OperationError.self) { try await walk.next() }
-      await walk.close()
-    } else { await #expect(throws: OperationError.self) { try await files.read(original.path, 0, 64) } }
+    await #expect(throws: OperationError.self) { try await files.read(original.path, 0, 64) }
     #expect(swapped.withLock { $0 })
-  }
-
-  @Test func cancellationInterruptsExcludedEntryScanningWithinOneNext() async throws {
-    let folder = try ScratchFolder("computer-files-cancel")
-    for index in 0 ..< 500 { try FileManager.default.createSymbolicLink(atPath: folder.url.appending(path: String(index)).path, withDestinationPath: "/missing") }
-    let inspected = Mutex(0)
-    let blocked = DispatchSemaphore(value: 0)
-    let (entered, writer) = AsyncStream<Void>.makeStream()
-    let files = ComputerFileSystem.local(didInspect: { _ in
-      let first = inspected.withLock { $0 += 1; return $0 == 1 }
-      if first { writer.yield(()); writer.finish(); blocked.wait() }
-    })
-    let walk = try await files.walk(folder.url.path, false)
-    let call = Task { try await walk.next() }
-    for await _ in entered {}
-    call.cancel(); blocked.signal()
-    await #expect(throws: CancellationError.self) { try await call.value }
-    #expect(inspected.withLock { $0 } == 1)
-    await walk.close()
   }
 }
 
 extension FileOperationTests {
-  @Test func grepSkipsBinaryOversizedChangedAndUnreadableFilesAndKeepsMatches() async throws {
-    let paths = ["binary", "oversized", "changed", "unreadable", "good"]
-    let versions = Mutex(0)
-    let cursor = Mutex(0)
-    let files = ComputerFileSystem(status: { path in
-      if path.hasSuffix("unreadable") { throw OperationError(.fileUnavailable) }
-      let changed = path.hasSuffix("changed") ? versions.withLock { $0 += 1; return $0 } : 0
-      return .init(version: String(changed), size: 20, kind: "file")
-    }, read: { path, offset, _ in
-      if offset > 0 { return Data() }
-      if path.hasSuffix("binary") { return Data([255, 10]) }
-      if path.hasSuffix("oversized") { return Data(repeating: 65, count: 30) }
-      return Data("needle\n".utf8)
-    }, walk: { _, _ in .init(next: {
-      cursor.withLock { index in guard index < paths.count else { return nil }; defer { index += 1 }; return .init(path: "/" + paths[index], kind: "file") }
-    }, close: {}) })
-    let (_, records, end) = try await run(["root": "/", "pattern": "needle", "dialect": "literal", "maxLineBytes": 20], kind: "grep.v1", channel: "matches", files: files)
-    #expect(records == [["path": "/good", "line": "1", "text": "needle"]])
-    #expect(end.verdict?.tag == .completed)
-    guard case let .object(result)? = end.verdict?.result else { Issue.record("missing result"); return }
-    #expect(result["skipped"] == ["binary": 1, "oversized": 1, "changed": 1, "unreadable": 1])
+  @Test func searchFindsAndGrepsTheDiskAndPages() async throws {
+    let folder = try ScratchFolder("computer-files-search")
+    let root = folder.url.path
+    try FileManager.default.createDirectory(at: folder.url.appending(path: "sub"), withIntermediateDirectories: false)
+    try Data("first\nneedle\n".utf8).write(to: folder.url.appending(path: "a.txt"))
+    try Data("needle\n".utf8).write(to: folder.url.appending(path: "sub/b.txt"))
+    try Data("x".utf8).write(to: folder.url.appending(path: "c.md"))
+    let found = try await page(.init(mode: .find, pattern: "**/*.txt", root: root, scope: "test"))
+    #expect(found.hits.map(\.path) == [root + "/a.txt", root + "/sub/b.txt"])
+    #expect(found.cursor == nil)
+    let grepped = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test", limit: 1))
+    #expect(grepped.hits == [.init(path: root + "/a.txt", line: 2, text: "needle")])
+    let rest = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test", limit: 1, step: try #require(grepped.cursor)))
+    #expect(rest.hits == [.init(path: root + "/sub/b.txt", line: 1, text: "needle")])
+    #expect(rest.cursor == nil)
+  }
+
+  @Test func searchHonorsGitignoreAndHiddenNames() async throws {
+    let folder = try ScratchFolder("computer-files-ignore")
+    let root = folder.url.path
+    try FileManager.default.createDirectory(at: folder.url.appending(path: ".git"), withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: folder.url.appending(path: "build"), withIntermediateDirectories: false)
+    try Data("build/\n".utf8).write(to: folder.url.appending(path: ".gitignore"))
+    try Data("x".utf8).write(to: folder.url.appending(path: "build/out.txt"))
+    try Data("x".utf8).write(to: folder.url.appending(path: "kept.txt"))
+    let found = try await page(.init(mode: .find, pattern: "**/*.txt", root: root, scope: "test"))
+    #expect(found.hits.map(\.path) == [root + "/kept.txt"])
+    #expect(found.skipped.map(\.reason) == [.hidden, .ignored])
+    let everything = try await page(.init(mode: .find, pattern: "**/*.txt", root: root, scope: "test", hidden: true, noIgnore: true))
+    #expect(everything.hits.map(\.path) == [root + "/build/out.txt", root + "/kept.txt"])
+  }
+
+  @Test func symlinkRootIsFollowedAndSymlinksBelowItAreNot() async throws {
+    let folder = try ScratchFolder("computer-files-root")
+    let tree = folder.url.appending(path: "tree")
+    try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: false)
+    try Data("needle\n".utf8).write(to: tree.appending(path: "a.txt"))
+    try FileManager.default.createSymbolicLink(atPath: tree.appending(path: "loop").path, withDestinationPath: tree.path)
+    let link = folder.url.appending(path: "link").path
+    try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: tree.path)
+    for root in [link, link + "/"] {
+      let found = try await page(.init(mode: .find, pattern: "**", root: root, scope: "test"))
+      #expect(found.hits.map(\.path) == [link + "/a.txt", link + "/loop"])
+      let grepped = try await page(.init(mode: .grep, pattern: "needle", root: root, scope: "test"))
+      #expect(grepped.hits.map(\.path) == [link + "/a.txt"])
+    }
+  }
+
+  @Test(arguments: ["list", "open"])
+  func searchNeverLeavesTheRootThroughADirectorySwappedForASymlink(_ phase: String) async throws {
+    let folder = try ScratchFolder("computer-files-parent-race")
+    let root = folder.url.appending(path: "root")
+    let child = root.appending(path: "dir")
+    let outside = folder.url.appending(path: "outside")
+    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    let file = child.appending(path: "file.txt")
+    try Data("inside needle\n".utf8).write(to: file)
+    try Data("outside needle\n".utf8).write(to: outside.appending(path: "file.txt"))
+    let swapped = Mutex(false)
+    let trigger = phase == "list" ? child.path : file.path
+    let files = ComputerFileSystem.local(beforeOpen: { path in
+      if path == trigger && swapped.withLock({ if $0 { return false }; $0 = true; return true }) {
+        try FileManager.default.moveItem(at: child, to: root.appending(path: "moved"))
+        try FileManager.default.createSymbolicLink(at: child, withDestinationURL: outside)
+      }
+    })
+    let grepped = try await page(.init(mode: .grep, pattern: "needle", root: root.path, scope: "test"), files: files)
+    #expect(swapped.withLock { $0 })
+    #expect(!grepped.hits.contains { $0.text?.contains("outside") ?? false })
+    #expect(grepped.skipped.map(\.reason) == [.unreadable])
   }
 
   @Test func unreadableNestedDirectoryIsSkippedButNeighborStillFound() async throws {
@@ -278,140 +184,187 @@ extension FileOperationTests {
     try FileManager.default.createDirectory(at: bad, withIntermediateDirectories: false)
     try Data("needle\n".utf8).write(to: folder.url.appending(path: "good.txt"))
     let files = ComputerFileSystem.local(beforeOpen: { if $0 == bad.path { throw OperationError(.fileUnavailable) } })
-    let (_, entries, end) = try await run(["root": .string(folder.url.path), "glob": "**/*.txt", "includeSymlinks": false], kind: "find.v1", channel: "entries", files: files)
-    #expect(entries.count == 1); #expect(end.verdict?.tag == .completed)
-    guard case let .object(result)? = end.verdict?.result else { Issue.record("missing result"); return }
-    #expect(result["skipped"] == ["unreadable": 1])
+    let found = try await page(.init(mode: .find, pattern: "**/*.txt", root: folder.url.path, scope: "test"), files: files)
+    #expect(found.hits.map(\.path) == [folder.url.path + "/good.txt"])
+    #expect(found.skipped == [.init(reason: .unreadable, count: 1, example: bad.path)])
   }
 
-  @Test func excludedSymlinkRootIsTypedRatherThanEmptySuccess() async throws {
-    let folder = try ScratchFolder("computer-files-root")
-    let link = folder.url.appending(path: "link")
-    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: folder.url.path)
-    let walk = try await ComputerFileSystem.local.walk(link.path, false)
-    await #expect(throws: OperationError.self) { try await walk.next() }
-    await walk.close()
+  @Test func regexUsesICUSyntaxAndUnicode() async throws {
+    let folder = try ScratchFolder("computer-files-regex")
+    let path = folder.url.appending(path: "file").path
+    try Data("abc12\n你好42\nabc\nABC99\n".utf8).write(to: URL(filePath: path))
+    let grepped = try await page(.init(mode: .grep, pattern: "^\\p{L}+[0-9]{2}$", root: path, scope: "test"))
+    #expect(grepped.hits.map(\.line) == [1, 2, 4])
+    #expect(grepped.hits[1] == .init(path: path, line: 2, text: "你好42"))
+    #expect(try await page(.init(mode: .grep, pattern: "(?i)^abc[0-9]+$", root: path, scope: "test")).hits.count == 2)
   }
-}
 
-private final class FileLocalTime: Sendable {
-  let value = Mutex<Duration>(.zero)
-  var clock: OperationClock { .init(now: { self.value.withLock { $0 } }, sleep: { _ in throw CancellationError() }) }
-  func advance(_ duration: Duration) { value.withLock { $0 += duration } }
-}
-
-extension FileOperationTests {
-  @Test(arguments: ["stop", "lease"])
-  func protocolStopOrLeaseInterruptsOneExcludedEntryNext(_ action: String) async throws {
-    let folder = try ScratchFolder("computer-files-protocol-stop")
-    for index in 0 ..< 500 { try FileManager.default.createSymbolicLink(atPath: folder.url.appending(path: String(index)).path, withDestinationPath: "/missing") }
-    let inspected = Mutex(0); let blocked = DispatchSemaphore(value: 0)
-    let (entered, writer) = AsyncStream<Void>.makeStream()
-    let files = ComputerFileSystem.local(didInspect: { _ in
-      let first = inspected.withLock { $0 += 1; return $0 == 1 }
-      if first { writer.yield(()); writer.finish(); blocked.wait() }
-    })
-    let time = FileLocalTime()
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, authorize: { _, _ in })
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await agent.run() }; defer { group.cancelAll() }
-      _ = try await client.describe("disk")
-      let id = try await client.start("disk", request: .init(kind: "find.v1", input: ["root": .string(folder.url.path), "glob": "**/*", "includeSymlinks": false]), owner: .init(scope: "protocol-stop", key: action))
-      for await _ in entered {}
-      if action == "stop" { _ = try await client.stop(id, reason: "testStop") }
-      else { time.advance(.seconds(61)) }
-      blocked.signal()
-      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-      var end = try await client.reconcile(id)
-      while end.verdict == nil && ContinuousClock().now < deadline { await Task.yield(); end = try await client.reconcile(id) }
-      #expect(end.verdict?.tag == .stopped)
-      #expect(end.verdict?.reason == (action == "stop" ? "testStop" : "leaseExpired"))
-      #expect(inspected.withLock { $0 } == 1)
-      await agent.shutdown(); await client.shutdown()
+  @Test func queryErrorsRefuseAtAdmissionWithTheirCode() async throws {
+    let touched = Mutex(0)
+    let files = ComputerFileSystem.local(beforeOpen: { _ in touched.withLock { $0 += 1 } })
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), authorize: { _, _ in })
+    for (query, code) in [(SearchQuery(mode: .grep, pattern: "[", root: "/", scope: "test"), "invalidPattern"), (.init(mode: .find, pattern: "[", root: "/", scope: "test"), "invalidGlob"), (.init(mode: .find, pattern: "*", root: "/", scope: "test", limit: 0), "invalidLimit"), (.init(mode: .find, pattern: "*", root: "/", scope: "test", step: "nope"), "invalidStep")] {
+      let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(UUID())")!
+      let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "search.v1", input: json(query)))))
+      #expect(response.status.code == 400)
+      let error = try await response.body.json(ErrorEnvelope.self).error
+      #expect(error.code == .invalidInput); #expect(error.details?.object?["search"] == .string(code))
     }
+    let unknown = try await agent.handler(Request(url: URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(UUID())")!, method: .post, body: .json(StartRequest(kind: "search.v1", input: ["mode": "find", "pattern": "*", "root": "/", "scope": "disk", "entryLimit": 5]))))
+    #expect(unknown.status.code == 400)
+    #expect(touched.withLock { $0 } == 0)
   }
 
-  @Test(arguments: ["inspect", "yield"])
-  func grepNeverReadsOutsideWhenAYieldedFilesParentBecomesASymlink(_ phase: String) async throws {
-    let folder = try ScratchFolder("computer-files-parent-race")
-    let root = folder.url.appending(path: "root")
-    let child = root.appending(path: "dir")
-    let moved = root.appending(path: "moved")
-    let outside = folder.url.appending(path: "outside")
-    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
-    let path = child.appending(path: "file.txt")
-    try Data("inside needle\n".utf8).write(to: path)
-    try Data("outside needle\n".utf8).write(to: outside.appending(path: "file.txt"))
-    let swapped = Mutex(false)
-    let swap: @Sendable (String) throws -> Void = { addressed in
-      if addressed == path.path && swapped.withLock({ if $0 { return false }; $0 = true; return true }) {
-        try FileManager.default.moveItem(at: child, to: moved)
-        try FileManager.default.createSymbolicLink(at: child, withDestinationURL: outside)
+  @Test func missingRootFailsNotFound() async throws {
+    let folder = try ScratchFolder("computer-files-missing")
+    let verdict = try await search(.init(mode: .find, pattern: "*", root: folder.url.path + "/absent", scope: "test"))
+    #expect(verdict.tag == .failed)
+    #expect(verdict.error?.code == .fileUnavailable); #expect(verdict.error?.details?.object?["search"] == "notFound")
+  }
+}
+
+/// Stalls on the real disk: a read that never returns must not hold a search
+/// past its deadline, a stop, or a lease.
+extension FileOperationTests {
+  /// A disk whose first effect on `path` blocks until released, telling `entered` when it does.
+  final class StalledDisk: Sendable {
+    let path: String
+    let (entered, writer) = AsyncStream<Void>.makeStream()
+    private let gate = DispatchSemaphore(value: 0)
+    private let first = Mutex(true)
+    init(_ path: String) { self.path = path }
+    var files: ComputerFileSystem { .local(beforeOpen: hook) }
+    var hook: @Sendable (String) throws -> Void {
+      { [self] addressed in
+        guard addressed == path, first.withLock({ let was = $0; $0 = false; return was }) else { return }
+        writer.yield(()); writer.finish(); gate.wait()
       }
     }
-    let files = ComputerFileSystem.local(didInspect: { if phase == "inspect" { try! swap($0) } }, didYield: { if phase == "yield" { try swap($0) } })
-    let (_, matches, end) = try await run(["root": .string(root.path), "pattern": "needle", "dialect": "literal", "maxLineBytes": 64], kind: "grep.v1", channel: "matches", files: files)
-    #expect(swapped.withLock { $0 }); #expect(end.verdict?.tag == .completed)
-    #expect(!matches.contains { $0.jsonString().contains("outside needle") })
-    #expect(matches.contains(["path": .string(path.path), "line": "1", "text": "inside needle"]))
+
+    func release() { gate.signal() }
   }
 
-  @Test func trailingSlashDoesNotHideASymlinkRoot() async throws {
-    let folder = try ScratchFolder("computer-files-trailing-symlink")
-    let link = folder.url.appending(path: "link")
-    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: folder.url.path)
-    let (_, entries, end) = try await run(["root": .string(link.path + "/"), "glob": "**/*", "includeSymlinks": false], kind: "find.v1", channel: "entries", files: .local)
-    #expect(entries.isEmpty); #expect(end.verdict?.tag == .failed); #expect(end.verdict?.error?.code == .invalidInput)
-  }
-}
-
-extension FileOperationTests {
-  @Test func regexUsesICUSyntaxAndUnicodeOnIncrementalLines() async throws {
-    let files = FakeFiles(data: Data("abc12\n你好42\nabc\nABC99\n".utf8), chunk: 2)
-    let (_, records, end) = try await run(["root": "/file", "pattern": "^\\p{L}+[0-9]{2}$", "dialect": "regex", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: files.system)
-    #expect(records.count == 3)
-    #expect(records[1] == ["path": "/file", "line": "2", "text": "你好42"])
-    #expect(end.verdict?.tag == .completed)
-    let (_, insensitive, _) = try await run(["root": "/file", "pattern": "(?i)^abc[0-9]+$", "dialect": "regex", "maxLineBytes": 32], kind: "grep.v1", channel: "matches", files: files.system)
-    #expect(insensitive.count == 2)
+  func stalledFolder(_ name: String) throws -> (ScratchFolder, StalledDisk) {
+    let folder = try ScratchFolder(name)
+    let file = folder.url.appending(path: "stuck.txt")
+    try Data("needle\n".utf8).write(to: file)
+    return (folder, StalledDisk(file.path))
   }
 
-  @Test func invalidRegexRefusesBeforeAnyFilesystemEffect() async throws {
-    let files = FakeFiles(data: Data())
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), authorize: { _, _ in })
-    let url = URL(string: "https://test.invalid/machine/v2/machines/disk/operations/\(UUID())")!
-    let response = try await agent.handler(Request(url: url, method: .post, body: .json(StartRequest(kind: "grep.v1", input: ["root": "/", "pattern": "[", "dialect": "regex", "maxLineBytes": 65536]))))
-    #expect(response.status.code == 400)
-    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .invalidInput)
-    #expect(await files.walked == 0)
-    #expect(await files.reads == 0)
+  @Test func stalledReadEndsAtTheDeadline() async throws {
+    let (folder, disk) = try stalledFolder("computer-files-stall-deadline")
+    defer { disk.release() }
+    let clock = VirtualClock()
+    let source = LocalSearchSource(root: folder.url.path, effects: DiskEffects(), beforeIO: disk.hook)
+    let search = Task {
+      try await SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test").run(in: source, clock: clock)
+    }
+    for await _ in disk.entered {}
+    // Time cannot pass the deadline, so a search that outlives it waits for good.
+    let error = await #expect(throws: SearchError.self) {
+      try await clock.run(through: VirtualClock.at(SearchLimits.deadline)) { try await search.value }
+    }
+    #expect(error?.code == .timeout)
+    #expect(clock.now == VirtualClock.at(SearchLimits.deadline))
   }
-}
 
-extension FileOperationTests {
   @Test(arguments: ["stop", "lease"])
-  func pathologicalRegexStopsDuringICUBacktracking(_ action: String) async throws {
-    let files = FakeFiles(data: Data((String(repeating: "a", count: 32000) + "!\n").utf8))
+  func stopOrLeaseEndsASearchStalledOnARead(_ action: String) async throws {
+    let (folder, disk) = try stalledFolder("computer-files-stall-\(action)")
+    defer { disk.release() }
     let time = FileLocalTime()
-    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files.system), clock: time.clock, authorize: { _, _ in })
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: .init(fetch: agent.handler), store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: disk.files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
+    let operations = try machineOperations(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }; defer { group.cancelAll() }
-      _ = try await client.describe("disk")
-      let id = try await client.start("disk", request: .init(kind: "grep.v1", input: ["root": "/file", "pattern": "(a+)+$", "dialect": "regex", "maxLineBytes": 65536]), owner: .init(scope: "regex-stop", key: action))
-      while await files.reads < 2 { await Task.yield() }
-      try await OperationClock.continuous.sleep(.milliseconds(100))
-      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-      if action == "stop" { _ = try await client.stop(id, reason: "callerDeadline") }
-      else { time.advance(.seconds(61)) }
-      var end = try await client.reconcile(id)
-      while end.verdict == nil && ContinuousClock().now < deadline { await Task.yield(); end = try await client.reconcile(id) }
-      #expect(end.verdict?.tag == .stopped)
-      #expect(end.verdict?.reason == (action == "stop" ? "callerDeadline" : "leaseExpired"))
-      await agent.shutdown(); await client.shutdown()
-      #expect(ContinuousClock().now < deadline)
+      let operation = try await operations.open(.init(scope: "stall", key: action), machine: "disk", start: .init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test"))))
+      for await _ in disk.entered {}
+      if action == "stop" { try await operation.stop("testStop") } else { time.advance(.seconds(61)) }
+      let end = try await operation.verdict()
+      #expect(end.tag == .stopped)
+      #expect(end.reason == (action == "stop" ? "testStop" : "leaseExpired"))
+      await agent.shutdown(); await operations.shutdown()
     }
   }
+
+  /// The line reaches the matcher only once the stop has cancelled the search, so the stop is met inside ICU's backtracking:
+  /// a matcher that did not abandon it would never end.
+  @Test(arguments: ["stop", "lease"])
+  func pathologicalRegexStopsDuringICUBacktracking(_ action: String) async throws {
+    let source = PathologicalLine()
+    let files = ComputerFileSystem(status: { _ in throw OperationError(.fileUnavailable) }, read: { _, _, _ in throw OperationError(.fileUnavailable) }, search: { _ in source })
+    let time = FileLocalTime()
+    let agent = try OperationAgent(machine: "disk", kinds: fileOperationKinds(files: files), clock: time.clock, receiptRetention: leaseJumpRetention, authorize: { _, _ in })
+    let operations = try machineOperations(agent.handler)
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await agent.run() }; defer { group.cancelAll() }
+      let operation = try await operations.open(.init(scope: "regex-stop", key: action), machine: "disk", start: .init(kind: "search.v1", input: json(SearchQuery(mode: .grep, pattern: "(a+)+$", root: PathologicalLine.path, scope: "test"))))
+      await source.reading.wait()
+      if action == "stop" { try await operation.stop("callerDeadline") } else { time.advance(.seconds(61)) }
+      let end = try await operation.verdict()
+      #expect(end.tag == .stopped)
+      #expect(end.reason == (action == "stop" ? "callerDeadline" : "leaseExpired"))
+      await agent.shutdown(); await operations.shutdown()
+    }
+  }
+}
+
+/// One file holding a line ICU backtracks on for good, read only once the reading search is cancelled.
+private struct PathologicalLine: SearchSource, SearchReader {
+  static let path = "/regex/file"
+  let reading = Signal(), cancelled = Signal()
+  func kind(_ path: String) async throws -> SearchEntryKind? { path == Self.path ? .file : nil }
+  func children(of _: String, from _: String, limit _: Int) async throws -> SearchListing { .init(children: [], next: nil) }
+  func open(_: String) async throws -> any SearchReader { self }
+  func isHidden(_: String) -> Bool { false }
+  func read(at offset: Int, count _: Int) async throws -> Data {
+    guard offset == 0 else { return Data() }
+    await withTaskCancellationHandler {
+      reading.fire()
+      await cancelled.wait()
+    } onCancel: { cancelled.fire() }
+    return Data((String(repeating: "a", count: 32000) + "!\n").utf8)
+  }
+
+  func close() async {}
+}
+
+/// Opens once, for every waiter, now and later.
+private final class Signal: Sendable {
+  private let stream: AsyncStream<Void>
+  private let continuation: AsyncStream<Void>.Continuation
+  init() { (stream, continuation) = AsyncStream.makeStream() }
+  func fire() { continuation.finish() }
+  func wait() async { for await _ in stream {} }
+}
+
+func json(_ query: SearchQuery) -> JSONValue {
+  try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(query))
+}
+
+actor FakeFiles {
+  let data: Data; let chunk: Int
+  var reads = 0; var largestRead = 0; var changed = false; var mutate = false
+  init(data: Data, chunk: Int = 65536) { self.data = data; self.chunk = chunk }
+  func mutateAfterRead() { mutate = true }
+  func status() -> ComputerFileStatus { .init(version: changed ? "v2" : "v1", size: UInt64(data.count), kind: "file") }
+  func read(offset: UInt64, count: Int) -> Data { reads += 1; largestRead = max(largestRead, count); if mutate { changed = true }; let start = min(Int(offset), data.count); return data.subdata(in: start ..< min(data.count, start + min(chunk, count))) }
+  nonisolated var system: ComputerFileSystem {
+    .init(status: { _ in await self.status() }, read: { _, offset, count in await self.read(offset: offset, count: count) }, search: { _ in NoFiles() })
+  }
+}
+
+/// A search source with nothing in it.
+struct NoFiles: SearchSource {
+  func kind(_: String) async throws -> SearchEntryKind? { nil }
+  func children(of _: String, from _: String, limit _: Int) async throws -> SearchListing { .init(children: [], next: nil) }
+  func open(_: String) async throws -> any SearchReader { throw SearchUnreadable("none") }
+  func isHidden(_: String) -> Bool { false }
+}
+
+final class FileLocalTime: Sendable {
+  let value = Mutex<Duration>(.zero)
+  /// Agent time that jumps only when told; held polls still wait in real time.
+  var clock: OperationClock { .init(now: { self.value.withLock { $0 } }, sleep: { try await OperationClock.continuous.sleep($0) }) }
+  func advance(_ duration: Duration) { value.withLock { $0 += duration } }
 }

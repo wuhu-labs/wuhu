@@ -24,6 +24,7 @@ dependencies:
 
   - Credentials
   - MachineContract
+  - FileSearch
   - FetchTunnel
   - OperationClient
   - OperationProtocol
@@ -71,6 +72,7 @@ tests:
     - Credentials
     - Crypto
     - MachineContract
+    - FileSearch
     - FetchTunnel
     - OperationClient
     - OperationProtocol
@@ -107,6 +109,7 @@ tests:
     - Dependencies
     - DependenciesTestSupport
     - Clocks
+    - ClockTesting
     - ControlledTime
     - WuhuRecordReplay
     - Logging

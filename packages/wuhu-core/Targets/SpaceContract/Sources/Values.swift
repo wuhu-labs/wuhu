@@ -30,7 +30,6 @@ public struct Match: Codable, Equatable, Sendable {
   public let path: String
   public let line: Int
   public let text: String
-  public let context: [String]
 }
 
 @Contract

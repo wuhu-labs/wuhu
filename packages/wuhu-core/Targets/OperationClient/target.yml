@@ -11,6 +11,7 @@ dependencies:
   - Fetch
   - MachineContract
   - Crypto
+  - FileSearch
 tests:
   dependencies:
     - ServerTelemetry
@@ -20,3 +21,4 @@ tests:
     - OperationProtocol
     - JSONValue
     - Fetch
+    - FileSearch

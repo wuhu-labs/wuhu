@@ -1,3 +1,5 @@
+import struct FileSearch.SearchPage
+import struct FileSearch.SearchQuery
 import struct Foundation.Data
 import JSONValue
 import MachineContract
@@ -145,7 +147,7 @@ public struct SpaceToolContext: Sendable {
     return (group, path, target.qualified)
   }
 
-  func machineSearch(_ machine: MachineID, _ query: SearchQuery) async throws -> SearchResult {
+  func machineSearch(_ machine: MachineID, _ query: SearchQuery) async throws -> SearchPage {
     guard let machines else {
       throw ToolRunError.failed(code: .unavailable, message: "machine backends are not available on this surface", hint: nil)
     }
@@ -243,6 +245,10 @@ struct SpaceView: SpaceVFS {
 
   func read(_ path: String) async throws -> (VersionToken, Data) {
     try await view(path).read(path)
+  }
+
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    try await view(path).reader(path)
   }
 
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {

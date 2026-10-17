@@ -554,5 +554,7 @@ func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
     .failed(code: .unavailable, message: "machine \(machine.rawValue) stopped responding", hint: nil)
   case .machineUnattached, .execNotFound, .severed:
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
+  case .searchNeedsV2:
+    .failed(code: .unsupported, message: "machine \(machine.rawValue) runs the v1 agent; find and grep need a machine v2 agent", hint: "enroll the box as a machine v2 to search it")
   }
 }

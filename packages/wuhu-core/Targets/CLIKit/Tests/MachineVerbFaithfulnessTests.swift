@@ -152,7 +152,7 @@ import Testing
     }
   }
 
-  @Test func fsToolsAndSearchRouteOverMachinesAddresses() async throws {
+  @Test func fsToolsRouteOverMachinesAddresses() async throws {
     let harness = try MachineCLIHarness()
     try await harness.runScenario { h in
       let machine = try await h.addAndJoin()
@@ -182,13 +182,14 @@ import Testing
         #expect(await h.run(["ls", base], io: lsIO) == 0)
         #expect(await lsIO.stdoutText().contains("a.md"))
 
+        // Search runs only on a machine v2 agent: a v1 box is refused, typed.
         let grepIO = CLIIO()
-        #expect(await h.run(["grep", "hi", base], io: grepIO) == 0)
-        #expect(await grepIO.stdoutText().contains("\(base)/a.md:1:hi"))
+        #expect(await h.run(["grep", "hi", base], io: grepIO) == 1)
+        #expect(await grepIO.stderrText().contains("need a machine v2 agent"))
 
         let findIO = CLIIO()
-        #expect(await h.run(["find", "**/*.md", base], io: findIO) == 0)
-        #expect(await findIO.stdoutText().contains("\(base)/a.md"))
+        #expect(await h.run(["find", "**/*.md", base], io: findIO) == 1)
+        #expect(await findIO.stderrText().contains("need a machine v2 agent"))
 
         let revIO = CLIIO()
         #expect(await h.run(["read", "\(base)/a.md@1"], io: revIO) == 1)

@@ -125,13 +125,13 @@ struct RequestMappingTests {
       #expect(input == ["path": "/a"])
     }
 
-    try await assertRequest(["grep", "needle", "/", "--match-limit", "5", "--entry-limit", "7", "--step", "c"], response: .object(["matches": [], "cursor": .null])) { request in
+    try await assertRequest(["grep", "needle", "/", "--match-limit", "5", "--hidden", "--no-ignore", "--step", "c"], response: .object(["matches": [], "cursor": .null, "scanned": 0, "skipped": []])) { request in
       #expect(request.url.path == "/v1/tools/grep")
       let input = try await requestBodyJSON(request)
-      #expect(input == ["pattern": "needle", "path": "/", "matchLimit": 5, "entryLimit": 7, "step": "c"])
+      #expect(input == ["pattern": "needle", "path": "/", "matchLimit": 5, "hidden": true, "noIgnore": true, "step": "c"])
     }
 
-    try await assertRequest(["find", "**/*.md", "/notes"], response: .object(["paths": []])) { request in
+    try await assertRequest(["find", "**/*.md", "/notes"], response: .object(["paths": [], "scanned": 0, "skipped": []])) { request in
       #expect(request.url.path == "/v1/tools/find")
       let input = try await requestBodyJSON(request)
       #expect(input == ["glob": "**/*.md", "path": "/notes"])

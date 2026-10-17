@@ -1,0 +1,5 @@
+name: ClockTesting
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]

@@ -8,11 +8,9 @@
 #else
   import Darwin
 #endif
-import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
 import class ComputerFiles.ComputerAgent
 import Fetch
-import FetchAsyncHTTPClient
 import class NIOPosix.MultiThreadedEventLoopGroup
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationClock
@@ -44,8 +42,10 @@ public enum ExecSupervisor {
     }
   }
 
+  /// `wuhu machine-v2 supervise <directory>`: one operation's supervisor, as agents before exec workers launched them. Kept so a
+  /// supervisor such an agent launches from an upgraded executable still runs; this agent launches workers instead.
   public static func run(directory: String) async throws {
-    let manifest = try await SupervisorFiles.live.load(directory)
+    let manifest = try loadSupervisorManifest(directory)
     try validateManifest(manifest, directory: directory)
     _ = signal(SIGPIPE, SIG_IGN)
     let clock = OperationClock.continuous
@@ -54,22 +54,20 @@ public enum ExecSupervisor {
       guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { throw OperationError(.machineNotAuthorized) }
     })
     defer {
-      if manifest.version == 1 { _ = unlink(manifest.socket) }
       _ = unlink(directory + "/manifest.json")
       _ = rmdir(directory)
     }
     let (retirements, retired) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let gate = SupervisorGate(manifest: manifest, agent: agent, retired: { retired.yield() })
-    // Version 2 dials the machine's rendezvous socket and creates no socket of its own. Version 1 manifests come only from an older
-    // agent that launched this executable; they keep their own listening socket so that agent can still reach them.
-    let server = manifest.version == 1 ? try await ServeNIOServer.bind(unixDomainSocketPath: manifest.socket, handler: gate.handler) : nil
-    if let server, chmod(manifest.socket, 0o600) != 0 { await server.shutdown(); throw OperationError(.invalidConfiguration) }
     let hello = Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: manifest.machine, operation: manifest.operation, nonce: manifest.nonce)
     let events = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
-      // The redial loop returns only once cancelled.
-      if server == nil { group.addTask { await Rendezvous.redial(path: manifest.socket, hello: hello, group: events, handler: gate.handler) } }
+      group.addTask {
+        // A refusal is permanent: the supervisor retires rather than redial forever.
+        if await Rendezvous.redial(path: manifest.socket, hello: { hello }, group: events, handler: gate.handler) != nil { await gate.retire() }
+        while !Task.isCancelled { do { try await clock.sleep(.seconds(3600)) } catch { return } }
+      }
       // Retired: the exec is stopping (SIGTERM, then SIGKILL after five seconds). The supervisor exits once it has ended, or at the bound.
       group.addTask {
         for await _ in retirements { break }
@@ -87,7 +85,7 @@ public enum ExecSupervisor {
         }
       }
       _ = await group.next()
-      await agent.shutdown(); await server?.shutdown(); group.cancelAll()
+      await agent.shutdown(); group.cancelAll()
     }
     try? await events.shutdownGracefully()
   }
@@ -108,6 +106,12 @@ actor SupervisorGate {
     started ? !hasOperations : now >= lease
   }
 
+  func retire() async {
+    retiring = true
+    await agent.stopRunning(reason: "retired")
+    retired()
+  }
+
   func handle(_ request: Request) async throws -> Response {
     guard request.headers["X-Wuhu-Supervisor-Nonce"] == manifest.nonce else { return try .json(ErrorEnvelope(.init(.machineNotAuthorized)), status: .forbidden) }
     if request.url.path == "/leave", request.method == .put {
@@ -117,9 +121,7 @@ actor SupervisorGate {
     // The agent stops serving this machine: stop the exec, refuse a start, and exit, dropping the receipts. The reply may not
     // outlive an idle supervisor; the agent takes the operation directory's removal as the answer.
     if request.url.path == "/retire", request.method == .put {
-      retiring = true
-      await agent.stopRunning(reason: "retired")
-      retired()
+      await retire()
       return try .json(true)
     }
     if request.url.path == "/departure", request.method == .get {
@@ -129,7 +131,7 @@ actor SupervisorGate {
       var response = try Response.json(manifest)
       if let snapshot = await agent.inspect(manifest.operation) {
         response.headers[.init("X-Wuhu-Supervisor-Active")!] = snapshot.verdict == nil ? "1" : "0"
-        response.headers[.init("X-Wuhu-Supervisor-Reservation")!] = String(snapshot.bufferReservationBytes! + (snapshot.finalOffsets.count == 2 ? 0 : ExecSupervisorRegistry.stagingReservation))
+        response.headers[.init("X-Wuhu-Supervisor-Reservation")!] = String(snapshot.bufferReservationBytes! + (snapshot.finalOffsets.count == 2 ? 0 : ExecWorkers.readStaging))
       }
       return response
     }

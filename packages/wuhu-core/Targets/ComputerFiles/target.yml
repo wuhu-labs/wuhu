@@ -12,6 +12,7 @@ dependencies:
   - Crypto
   - Fetch
   - Serve
+  - FileSearch
 tests:
   dependencies:
     - OperationClient
@@ -22,3 +23,5 @@ tests:
     - Scratch
     - MachineContract
     - Crypto
+    - FileSearch
+    - ClockTesting

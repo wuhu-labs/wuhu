@@ -174,28 +174,26 @@ struct Executor {
       let entry: Entry = try await self.tool("stat", input, space: route.space)
       try self.wallet.record(token: entry.token, space: route.space, path: route.path)
       await self.runner.stdout(formatStat(entry) + "\n")
-    case let .grep(pattern, path, matchLimit, entryLimit, step):
+    case let .grep(pattern, path, matchLimit, hidden, noIgnore, step):
       let route = try self.routeOptional(path)
       var input: JSONValue = ["pattern": .string(pattern)]
       input.set("path", route.path.map(JSONValue.string))
       input.set("matchLimit", matchLimit.map(JSONValue.integer))
-      input.set("entryLimit", entryLimit.map(JSONValue.integer))
+      input.set("hidden", hidden ? .bool(true) : nil)
+      input.set("noIgnore", noIgnore ? .bool(true) : nil)
       input.set("step", step.map(JSONValue.string))
       let output: GrepOutput = try await self.tool("grep", input, space: route.space)
       await self.runner.stdout(formatGrep(output))
-    case let .find(glob, path, matchLimit, entryLimit, step):
+    case let .find(glob, path, matchLimit, hidden, noIgnore, step):
       let route = try self.routeOptional(path)
       var input: JSONValue = ["glob": .string(glob)]
       input.set("path", route.path.map(JSONValue.string))
       input.set("matchLimit", matchLimit.map(JSONValue.integer))
-      input.set("entryLimit", entryLimit.map(JSONValue.integer))
+      input.set("hidden", hidden ? .bool(true) : nil)
+      input.set("noIgnore", noIgnore ? .bool(true) : nil)
       input.set("step", step.map(JSONValue.string))
       let output: FindOutput = try await self.tool("find", input, space: route.space)
-      var text = output.paths.map { $0 + "\n" }.joined()
-      if let cursor = output.cursor {
-        text += "cursor \(cursor)\n"
-      }
-      await self.runner.stdout(text)
+      await self.runner.stdout(formatFind(output))
     case let .history(path):
       let route = try self.route(path)
       var after: Int?

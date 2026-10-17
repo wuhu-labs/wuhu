@@ -5,6 +5,13 @@
 #endif
 
 import Fetch
+#if canImport(Glibc)
+  import Glibc
+#elseif canImport(Musl)
+  import Musl
+#else
+  import Darwin
+#endif
 
 public struct FileSystemObjectStore: ObjectStore {
   let root: URL
@@ -28,6 +35,38 @@ public struct FileSystemObjectStore: ObjectStore {
     guard self.isRegularFile(fileURL.path) else { throw ObjectStoreError.notFound(key) }
     let data = try Data(contentsOf: fileURL)
     return GetResult(body: .bytes(data), metadata: ObjectMetadata(contentLength: Int64(data.count)))
+  }
+
+  public func get(_ key: ObjectKey, bytes range: Range<Int64>) async throws -> Data {
+    precondition(range.lowerBound >= 0, "a byte range starts at a nonnegative offset")
+    let fileURL = self.fileURL(key)
+    guard self.isRegularFile(fileURL.path) else { throw ObjectStoreError.notFound(key) }
+    guard !range.isEmpty else { return Data() }
+    let fd = open(fileURL.path, O_RDONLY | O_CLOEXEC)
+    guard fd >= 0 else { throw Self.posixError() }
+    defer { close(fd) }
+    var info = stat()
+    guard fstat(fd, &info) == 0 else { throw Self.posixError() }
+    let end = min(range.upperBound, Int64(info.st_size))
+    guard end > range.lowerBound else { return Data() }
+    let count = Int(end - range.lowerBound)
+    var data = Data(count: count)
+    var filled = 0
+    while filled < count {
+      let n = data.withUnsafeMutableBytes { buffer in
+        pread(fd, buffer.baseAddress! + filled, count - filled, off_t(range.lowerBound) + off_t(filled))
+      }
+      if n < 0, errno == EINTR { continue }
+      guard n >= 0 else { throw Self.posixError() }
+      if n == 0 { break }
+      filled += n
+    }
+    data.removeSubrange(filled...)
+    return data
+  }
+
+  private static func posixError() -> POSIXError {
+    POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
   }
 
   public func head(_ key: ObjectKey) async throws -> ObjectMetadata? {

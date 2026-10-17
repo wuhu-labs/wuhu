@@ -20,6 +20,10 @@ struct MachineFolders: SpaceVFS {
     try await base.read(stored(path))
   }
 
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    try await base.reader(stored(path))
+  }
+
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {
     try await base.write(stored(path, mutating: true), data, ifMatch: ifMatch)
   }

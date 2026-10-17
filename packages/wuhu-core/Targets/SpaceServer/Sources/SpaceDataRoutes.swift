@@ -92,7 +92,7 @@ func spaceDataResponse(
     guard let input = searchInput(key, query) else {
       return errorResponse(
         .badRequest, code: "invalidArgument",
-        message: "\(route) takes ?\(key)=[&path=][&matchLimit=][&entryLimit=][&step=], limits as integers",
+        message: "\(route) takes ?\(key)=[&path=][&matchLimit=][&hidden=][&noIgnore=][&step=], matchLimit an integer, hidden and noIgnore true or false",
       )
     }
     let context = SpaceToolContext(space: space, principal: try await webPrincipal(viewer, group: caller.group, space: space))
@@ -138,16 +138,21 @@ private func boundParameters(_ raw: String?) -> [JSONValue]? {
 }
 
 /// The find or grep tool's input from a page's query string; nil when the
-/// glob or pattern is missing or a limit is not an integer. The context has
+/// glob or pattern is missing, the limit is not an integer or a flag is not
+/// `true` or `false`. The context has
 /// no machine seam, so a `machines://` path is the tool's `unavailable`.
 private func searchInput(_ key: String, _ query: [String: String]) -> JSONValue? {
   guard let value = query[key] else { return nil }
   var input: OrderedDictionary<String, JSONValue> = [key: .string(value)]
   if let path = query["path"] { input["path"] = .string(path) }
-  for name in ["matchLimit", "entryLimit"] {
-    guard let raw = query[name] else { continue }
+  if let raw = query["matchLimit"] {
     guard let limit = Int(raw) else { return nil }
-    input[name] = .integer(limit)
+    input["matchLimit"] = .integer(limit)
+  }
+  for name in ["hidden", "noIgnore"] {
+    guard let raw = query[name] else { continue }
+    guard let flag = Bool(raw) else { return nil }
+    input[name] = .bool(flag)
   }
   if let step = query["step"] { input["step"] = .string(step) }
   return .object(input)

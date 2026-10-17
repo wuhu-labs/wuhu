@@ -13,6 +13,7 @@ dependencies:
   - ServerTelemetry
   - Credentials
   - ExecutionOwner
+  - FileSearch
   - InferenceKit
   - Fetch
   - SessionDomain

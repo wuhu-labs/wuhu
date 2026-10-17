@@ -2,12 +2,10 @@ import MachineContract
 
 public enum InboundRequest: Sendable, Equatable {
   case vfs(VFSRequest)
-  case search(SearchRequest)
 }
 
 public enum OutboundResponse: Sendable, Equatable {
   case vfs(VFSResponse)
-  case search(SearchResponse)
 }
 
 extension ChannelEndpoint {
@@ -15,14 +13,9 @@ extension ChannelEndpoint {
     try await roundTrip(.vfsRequest, VFSResponse.self) { VFSRequest(id: $0, op: op) }.result
   }
 
-  public func search(_ query: SearchQuery) async throws -> SearchResult {
-    try await roundTrip(.searchRequest, SearchResponse.self) { SearchRequest(id: $0, query: query) }.result
-  }
-
   public func respond(_ response: OutboundResponse) {
     let frame: Frame = switch response {
     case let .vfs(payload): Frame(streamID: 0, opcode: .vfsResponse, payload: payload)
-    case let .search(payload): Frame(streamID: 0, opcode: .searchResponse, payload: payload)
     }
     outbound?.yield(frame)
   }

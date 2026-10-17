@@ -3,6 +3,7 @@
 #else
   import Foundation
 #endif
+import ClockTesting
 import Crypto
 import Dependencies
 import Fetch
@@ -22,8 +23,8 @@ enum ExecRetrySite: String, CaseIterable, Sendable {
   case describe, reconcile
   /// An external kill (`MachineHub.kill`) of a running exec.
   case kill
-  /// The cleanup stop of a start the client claimed but that then failed.
-  case claimed
+  /// A start the machine refused: nothing runs, so nothing is stopped.
+  case refused
   /// The stop for a kill that landed while the start was in flight.
   case race
   /// The stop after the relay itself failed the exec.
@@ -34,8 +35,8 @@ enum ExecRetrySite: String, CaseIterable, Sendable {
 
   var stopReason: String? {
     switch self {
-    case .describe, .reconcile: nil
-    case .kill, .claimed, .race, .relay, .cancel: "callerCancelled"
+    case .describe, .reconcile, .refused: nil
+    case .kill, .race, .relay, .cancel: "callerCancelled"
     case .timeout, .outputLimit, .callerGone: rawValue
     }
   }
@@ -63,8 +64,10 @@ private struct LostExchange: Error {}
 /// `release`, so a retry cannot be pre-empted by the exec ending after an applied stop.
 private final class MachineSide: Sendable {
   let stopped = Mutex<String?>(nil)
-  let released = Mutex(false)
-  func release() { released.withLock { $0 = true } }
+  /// Opens once `stopped` is set.
+  let stop = Gate()
+  let released = Gate()
+  func release() { released.open() }
 }
 
 private struct HeldEcho: OperationKind {
@@ -78,7 +81,8 @@ private struct HeldEcho: OperationKind {
     } catch {
       let reason = await cancellation.reason()
       side.stopped.withLock { $0 = reason ?? "unknown" }
-      for _ in 0 ..< 1000 where !side.released.withLock({ $0 }) { try? await Task.sleep(for: .milliseconds(10)) }
+      side.stop.open()
+      await side.released.wait()
       throw error
     }
     return ["termination": ["tag": "exit", "code": 7]]
@@ -92,10 +96,18 @@ private struct Fault {
   var retried = false
   /// The exec's terminal state when the retry reached the machine ("live" while none).
   var terminalAtRetry: String?
-  /// The coordinator's own presence probe has been answered.
-  var probed = false
+  /// Stop requests sent to the machine.
+  var stops = 0
+}
+
+/// What the machine has been asked so far.
+private struct Seen {
+  /// The service's own presence probe has been answered.
+  let probed = Gate()
   /// The relay's stdout poll after the first five bytes is held on the machine.
-  var heldPoll = false
+  let heldPoll = Gate()
+  /// The lost exchange was retried.
+  let retried = Gate()
 }
 
 private func refusal(_ code: OperationError.Code, for request: Request) throws -> Response {
@@ -106,18 +118,31 @@ private func refusal(_ code: OperationError.Code, for request: Request) throws -
   return response
 }
 
-private func eventually(_ seconds: Double = 15, _ condition: () async throws -> Bool) async throws -> Bool {
-  let end = Date().addingTimeInterval(seconds)
-  while Date() < end {
-    if try await condition() { return true }
-    try await Task.sleep(for: .milliseconds(10))
+/// The relay's wall clock. Once the caller is gone, every reading is two minutes past the one before, so the relay counts the
+/// caller's disconnect, whenever it records it, as long ago at its next look.
+private final class Wall: Sendable {
+  let state = Mutex<(gone: Bool, offset: TimeInterval)>((false, 0))
+  func now() -> Date {
+    Date().addingTimeInterval(state.withLock { state in
+      if state.gone { state.offset += 120 }
+      return state.offset
+    })
   }
-  return try await condition()
 }
 
-/// The relay's wall clock, moved forward to make a disconnected caller count as gone.
-private final class Wall: Sendable {
-  let offset = Mutex<TimeInterval>(0)
+/// The stops the machine never got, counted once the caller has been answered.
+private final class LostStops: Sendable {
+  private let state = Mutex<(answered: Bool, lost: Int)>((false, 0))
+  /// Opens on the second stop lost after the answer.
+  let twiceAfterTheAnswer = Gate()
+  func answered() { state.withLock { $0.answered = true } }
+  func lost() {
+    let count = state.withLock { state -> Int in
+      if state.answered { state.lost += 1 }
+      return state.lost
+    }
+    if count >= 2 { twiceAfterTheAnswer.open() }
+  }
 }
 
 private final class Collected: Sendable {
@@ -128,22 +153,21 @@ private final class Collected: Sendable {
   var status: MachineContract.ExitStatus? { value.withLock { $0.status } }
 }
 
-@Suite struct MachineV2ExecRetryTests {
+@Suite(.timeLimit(.minutes(3))) struct MachineV2ExecRetryTests {
   /// Each case loses one exchange, as a transport failure or a request deadline, before or after the machine applied it. The relay
   /// must retry that exchange (and only it) while the exec is live, and the exec must end the way it would have without the loss.
   @Test(arguments: ExecRetryCase.all)
   func transientExchangeFailureIsRetriedNotFatal(_ c: ExecRetryCase) async throws {
     let wall = Wall()
-    try await withDependencies { $0.date = DateGenerator { Date().addingTimeInterval(wall.offset.withLock { $0 }) } } operation: {
-      try await MachineV2ExecRetry.$reconcileTicks.withValue(c.site == .reconcile ? 1 : 20) {
-        try await run(c, wall: wall)
-      }
+    try await withDependencies { $0.date = DateGenerator { wall.now() } } operation: {
+      try await run(c, wall: wall)
     }
   }
 
   private func run(_ c: ExecRetryCase, wall: Wall) async throws {
     let side = MachineSide()
     let fault = Mutex(Fault())
+    let seen = Seen()
     let execID = Mutex<ExecID?>(nil)
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "retry-v2", group: .shared)
@@ -153,17 +177,19 @@ private final class Collected: Sendable {
     @Sendable func targeted(_ request: Request) -> Bool {
       let operation = request.url.path.contains("/operations/")
       switch c.site {
+      case .refused: return false
       case .describe: return request.method == .get && !operation && request.url.path.hasSuffix(record.id.rawValue)
       case .reconcile: return request.method == .get && operation && request.url.query?.contains("channel=") != true
       default: return request.method == .put && request.url.path.hasSuffix("/stop")
       }
     }
-    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { request in
-      if request.method == .get, request.url.query?.contains("channel=stdout&after=5") == true { fault.withLock { $0.heldPoll = true } }
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
+      if request.method == .get, request.url.query?.contains("channel=stdout&after=5") == true { seen.heldPoll.open() }
       let isStart = request.method == .post && request.url.path.contains("/operations/")
       if c.site == .race, isStart, let id = execID.withLock({ $0 }) { try await hub.kill(id) }
-      if c.site == .claimed, isStart {
-        _ = try await agent.handler(request)
+      if request.method == .put, request.url.path.hasSuffix("/stop") { fault.withLock { $0.stops += 1 } }
+      if c.site == .refused, isStart {
+        fault.withLock { $0.fired = true }
         return try refusal(.capacityExceeded, for: request)
       }
       if c.site == .relay, request.method == .get, request.url.query?.contains("channel=stdout") == true,
@@ -174,7 +200,7 @@ private final class Collected: Sendable {
       }
       guard targeted(request) else {
         let response = try await agent.handler(request)
-        if request.method == .get, request.url.path.hasSuffix(record.id.rawValue) { fault.withLock { $0.probed = true } }
+        if request.method == .get, request.url.path.hasSuffix(record.id.rawValue) { seen.probed.open() }
         return response
       }
       let step = fault.withLock { value -> Int in
@@ -190,29 +216,29 @@ private final class Collected: Sendable {
       if step == 2 {
         let terminal = try await execID.withLock({ $0 }).asyncMap { try await space.execRecord($0)?.terminal.map { "\($0)" } ?? "live" }
         fault.withLock { $0.retried = true; $0.terminalAtRetry = terminal }
+        seen.retried.open()
       }
       let response = try await agent.handler(request)
-      if step == 0, c.site == .describe { fault.withLock { $0.probed = true } }
+      if step == 0, c.site == .describe { seen.probed.open() }
       return response
-    } }, abort: { _, _ in })
-    try await coordinator.prepare()
-    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    } })
     await hub.configureV2(service)
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     execID.withLock { $0 = minted.id }
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(
       id: minted.id, cwd: "/tmp", command: ["echo-test"],
-      maxOutput: c.site == .outputLimit ? 3 : nil, timeout: c.site == .timeout ? 1 : 15,
+      maxOutput: c.site == .outputLimit ? 3 : nil, timeout: c.site == .timeout ? 1 : nil,
     ))
     let backend = execBackend(space: space, hub: hub)
     let collected = Collected()
+    let echoed = Gate()
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      // Arm after the coordinator's own presence probe, so the injected loss lands on the relay's exchange.
-      #expect(try await eventually { fault.withLock { $0.probed } })
+      // Arm after the service's own presence probe, so the injected loss lands on the relay's exchange.
+      await seen.probed.wait()
       fault.withLock { $0.armed = true }
       let transport = try await backend.connect(minted.id)
       let caller = Task { await endpoint.run(transport) }
@@ -222,6 +248,7 @@ private final class Collected: Sendable {
             switch event {
             case let .output(stream, _, bytes):
               if stream == .stdout { value.stdout.append(contentsOf: bytes.bytes) } else { value.stderr.append(contentsOf: bytes.bytes) }
+              if value.stdout == Data("input".utf8) { echoed.open() }
             case let .exit(status): value.status = status
             case .failed, .truncated, .timedOut: break
             }
@@ -233,44 +260,42 @@ private final class Collected: Sendable {
       if c.site != .timeout { try await outgoing.sendStdin(Array("input".utf8)) }
       // A stop is recorded before it is sent, and a poll begun after it refuses locally, so the stop paths below first wait for the
       // relay's next stdout poll to be held on the machine: the exec can then end only by the stop's verdict.
-      if [.kill, .cancel, .callerGone].contains(c.site) { #expect(try await eventually { fault.withLock { $0.heldPoll } }) }
+      if [.kill, .cancel, .callerGone].contains(c.site) { await seen.heldPoll.wait() }
       switch c.site {
       case .describe:
         await outgoing.closeStdin()
       case .reconcile:
-        #expect(try await eventually { fault.withLock { $0.retried } })
+        await seen.retried.wait()
         await outgoing.closeStdin()
       case .kill:
-        #expect(try await eventually { collected.stdout == "input" })
+        await echoed.wait()
         do { try await hub.kill(minted.id) } catch { Issue.record("external kill failed: \(error)") }
-        side.release()
       case .cancel:
-        #expect(try await eventually { collected.stdout == "input" })
+        await echoed.wait()
         await outgoing.kill()
       case .callerGone:
-        #expect(try await eventually { collected.stdout == "input" })
+        await echoed.wait()
+        wall.state.withLock { $0.gone = true }
         transport.close(); caller.cancel()
-        #expect(try await eventually { await service.execEndpoints[minted.id.rawValue]?.disconnected != nil })
-        wall.offset.withLock { $0 = 120 }
-      case .claimed, .race, .relay, .timeout, .outputLimit:
+      case .refused, .race, .relay, .timeout, .outputLimit:
         break
       }
       if c.site.stopReason != nil {
-        #expect(try await eventually { fault.withLock { $0.retried } })
+        await seen.retried.wait()
         side.release()
       }
       if c.site == .callerGone {
-        #expect(try await eventually { try await space.execRecord(minted.id)?.terminal != nil })
+        await side.stop.wait()
       } else {
-        #expect(try await eventually { collected.status != nil })
+        try await events.value
       }
       let outcome = fault.withLock { $0 }
-      #expect(outcome.fired); #expect(outcome.retried)
+      #expect(outcome.fired); #expect(outcome.retried == (c.site != .refused))
       switch c.site {
       case .describe, .reconcile:
         #expect(collected.stdout == "input"); #expect(collected.stderr == "stderr"); #expect(collected.status == .exited(code: 7))
-      case .claimed:
-        #expect(collected.stderr.contains("capacityExceeded")); #expect(collected.status == .exited(code: 1))
+      case .refused:
+        #expect(collected.stderr.contains("capacityExceeded")); #expect(collected.status == .exited(code: 1)); #expect(outcome.stops == 0)
       case .race:
         // Ended by the stop, not by the lost exchange.
         #expect(!collected.stderr.isEmpty); #expect(!collected.stderr.contains("transport")); #expect(!collected.stderr.contains("requestDeadline"))
@@ -288,11 +313,10 @@ private final class Collected: Sendable {
         break
       }
       // A retry of a lost stop, reconcile or describe happens inside the exchange that lost it, before the exec ends. Only the race
-      // (the kill already ended the exec record), the relay failure and the failed start (both reported before their cleanup stop)
-      // retry after.
-      if ![.race, .relay, .claimed].contains(c.site) { #expect(outcome.terminalAtRetry == "live" || outcome.terminalAtRetry == "cancelled", "retried after the exec ended: \(outcome.terminalAtRetry ?? "-")") }
+      // (the kill already ended the exec record) and the relay failure (reported before its cleanup stop) retry after.
+      if ![.race, .relay, .refused].contains(c.site) { #expect(outcome.terminalAtRetry == "live" || outcome.terminalAtRetry == "cancelled", "retried after the exec ended: \(outcome.terminalAtRetry ?? "-")") }
       if let reason = c.site.stopReason {
-        #expect(try await eventually { side.stopped.withLock { $0 } != nil })
+        await side.stop.wait()
         #expect(side.stopped.withLock { $0 } == reason)
       } else {
         #expect(side.stopped.withLock { $0 } == nil)
@@ -316,74 +340,95 @@ private final class Collected: Sendable {
   }
 
   /// A failure before any operation was claimed keeps its own message even when it comes after the timeout: nothing was stopped,
-  /// so the exit status is not unknown.
+  /// so the exit status is not unknown. The relay runs on a `VirtualClock`; the admission's describe is answered with a refusal
+  /// only once that clock is past the exec's timeout.
   @Test func aSetupFailureAfterTheTimeoutKeepsItsOwnMessage() async throws {
-    let probed = Mutex(false)
+    let clock = VirtualClock()
+    try await withDependencies { $0.continuousClock = clock } operation: { try await runSetupFailure(clock: clock) }
+  }
+
+  private func runSetupFailure(clock: VirtualClock) async throws {
+    let probed = Gate(), describing = Gate(), overdue = Gate()
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "slow-describe-v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: MachineSide()))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
-    let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { request in
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
       let describe = request.method == .get && !request.url.path.contains("/operations/") && request.url.path.hasSuffix(record.id.rawValue)
-      if describe, probed.withLock({ $0 }) {
-        try await Task.sleep(for: .milliseconds(1500))
-        return try refusal(.machineUnavailable, for: request)
+      if describe, probed.isOpen {
+        describing.open()
+        await overdue.wait()
+        return try refusal(.machineNotAuthorized, for: request)
       }
       let response = try await agent.handler(request)
-      if describe { probed.withLock { $0 = true } }
+      if describe { probed.open() }
       return response
-    } }, abort: { _, _ in })
-    try await coordinator.prepare()
-    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    } })
     await hub.configureV2(service)
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["echo-test"], timeout: 1))
     let backend = execBackend(space: space, hub: hub)
-    try await MachineV2Service.$timeoutStopGrace.withValue(.seconds(5)) {
-      try await withThrowingTaskGroup(of: Void.self) { tasks in
-        tasks.addTask { await agent.run() }
-        tasks.addTask { try await service.run() }
-        defer { tasks.cancelAll() }
-        #expect(try await eventually { probed.withLock { $0 } })
-        let transport = try await backend.connect(minted.id)
-        let caller = Task { await endpoint.run(transport) }
-        defer { caller.cancel() }
-        var stderr = Data(); var status: MachineContract.ExitStatus?; var timedOut = false
-        for try await event in outgoing.events {
-          switch event {
-          case let .output(stream, _, bytes): if stream == .stderr { stderr.append(contentsOf: bytes.bytes) }
-          case let .exit(value): status = value
-          case .timedOut: timedOut = true
-          case .failed, .truncated: break
-          }
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { tasks.cancelAll() }
+      await probed.wait()
+      let transport = try await backend.connect(minted.id)
+      let caller = Task { await endpoint.run(transport) }
+      defer { caller.cancel() }
+      await describing.wait()
+      let past = VirtualClock.at(.milliseconds(1500))
+      try await clock.run(through: past) { try await clock.sleep(until: past) }
+      overdue.open()
+      var stderr = Data(); var status: MachineContract.ExitStatus?; var timedOut = false
+      for try await event in outgoing.events {
+        switch event {
+        case let .output(stream, _, bytes): if stream == .stderr { stderr.append(contentsOf: bytes.bytes) }
+        case let .exit(value): status = value
+        case .timedOut: timedOut = true
+        case .failed, .truncated: break
         }
-        #expect(String(decoding: stderr, as: UTF8.self).hasPrefix("machineUnavailable: "), "\(String(decoding: stderr, as: UTF8.self))")
-        #expect(status == .exited(code: 1))
-        #expect(!timedOut)
-        #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 1))
-        await agent.shutdown(); await service.shutdown()
       }
+      #expect(String(decoding: stderr, as: UTF8.self).hasPrefix("machineNotAuthorized: "), "\(String(decoding: stderr, as: UTF8.self))")
+      #expect(status == .exited(code: 1))
+      #expect(!timedOut)
+      #expect(try await space.execRecord(minted.id)?.terminal == .exited(code: 1))
+      await agent.shutdown(); await service.shutdown()
     }
   }
 
+  /// Runs the relay on a `VirtualClock`, so the bounds hold however slow the host is: time moves only from one of the relay's
+  /// sleeps to the next and never past the bound under test, so a relay that needed longer would never answer.
   private func runLostStops(_ path: String) async throws {
+    let clock = VirtualClock()
+    try await withDependencies { $0.continuousClock = clock } operation: { try await runLostStops(path, clock: clock) }
+  }
+
+  private func runLostStops(_ path: String, clock: VirtualClock) async throws {
     let execID = Mutex<ExecID?>(nil)
     let losing = Mutex(true)
+    let lostStops = LostStops()
+    let started = Gate()
+    let polled = Gate()
     let side = MachineSide()
     let space = try Space.inMemory()
     let key = SymmetricKey(size: .bits256)
-    let grace = MachineV2Service.timeoutStopGrace.components.seconds
+    // The clock stands still until the start has reached the machine, after the exec was admitted with its deadline: its caller
+    // must be answered by its timeout plus the stop grace from there.
+    let answerBy = VirtualClock.at(.seconds(1) + MachineV2Service.timeoutStopGrace)
     let (record, _) = try await space.addMachineV2(name: "retry-bound-v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: side))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
-    let coordinator = MachineV2Coordinator(space: space, key: key, problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in FetchClient { request in
-      if request.method == .put, request.url.path.hasSuffix("/stop"), losing.withLock({ $0 }) { throw LostExchange() }
-      if path == "race", request.method == .post, request.url.path.contains("/operations/"), let id = execID.withLock({ $0 }) { try await hub.kill(id) }
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: key, failure: nil, fetch: { _ in FetchClient { request in
+      if request.method == .put, request.url.path.hasSuffix("/stop"), losing.withLock({ $0 }) { lostStops.lost(); throw LostExchange() }
+      if request.method == .post, request.url.path.contains("/operations/") {
+        started.open()
+        if path == "race", let id = execID.withLock({ $0 }) { try await hub.kill(id) }
+      }
+      if request.method == .get, request.url.query?.contains("channel=stdout") == true { polled.open() }
       return try await agent.handler(request)
-    } }, abort: { _, _ in })
-    try await coordinator.prepare()
-    let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+    } })
     await hub.configureV2(service)
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     execID.withLock { $0 = minted.id }
@@ -394,28 +439,29 @@ private final class Collected: Sendable {
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let began = Date()
       let transport = try await backend.connect(minted.id)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
+      await started.wait()
+      // The kill lands on a running operation, once the relay polls its output, before time moves.
       if path == "kill" {
-        #expect(try await eventually { await service.execOperations[minted.id.rawValue] != nil })
+        await polled.wait()
         try? await hub.kill(minted.id)
-        let killed = Date().timeIntervalSince(began)
-        #expect(killed < Double(1 + grace + 4), "an external kill outlived the exec's deadline: \(killed) s")
       }
-      var status: MachineContract.ExitStatus?
-      for try await event in outgoing.events { if case let .exit(value) = event { status = value } }
-      let elapsed = Date().timeIntervalSince(began)
+      let status = try await clock.run(through: answerBy) {
+        var status: MachineContract.ExitStatus?
+        for try await event in outgoing.events { if case let .exit(value) = event { status = value } }
+        return status
+      }
       #expect(status == .exited(code: 1))
-      if path == "timeout" || path == "late" { #expect(elapsed >= 1) }
-      #expect(elapsed < Double(1 + grace + 4), "a timed exec outlived its timeout plus the stop grace: \(elapsed) s")
+      if path == "timeout" || path == "late" { #expect(clock.now >= VirtualClock.at(.seconds(1))) }
       #expect(side.stopped.withLock { $0 } == nil)
       if path == "late" {
-        // Still lost past the answer for longer than a stop bound by the spent deadline would keep trying.
-        try await Task.sleep(for: .seconds(2))
+        // Still lost past the answer, so the stop's retries outlast the exec's spent deadline.
+        lostStops.answered()
+        await lostStops.twiceAfterTheAnswer.wait()
         losing.withLock { $0 = false }
-        #expect(try await eventually { side.stopped.withLock { $0 } != nil }, "the relay's stop after the answer never reached the machine")
+        await side.stop.wait()
         #expect(side.stopped.withLock { $0 } == MachineV2Service.timeoutStop)
         let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
         let operation = try await store.lookup(OperationOwner(scope: "exec/" + minted.id.rawValue, key: minted.id.rawValue))

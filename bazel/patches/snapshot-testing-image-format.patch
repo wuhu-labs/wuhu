@@ -1,0 +1,97 @@
+diff --git a/Sources/SnapshotTesting/Snapshotting/UIImage.swift b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+--- a/Sources/SnapshotTesting/Snapshotting/UIImage.swift
++++ b/Sources/SnapshotTesting/Snapshotting/UIImage.swift
+@@ -123,7 +123,10 @@
+     let pixelCount = oldCgImage.width * oldCgImage.height
+     let byteCount = imageContextBytesPerPixel * pixelCount
+     var oldBytes = [UInt8](repeating: 0, count: byteCount)
+-    guard let oldData = context(for: oldCgImage, data: &oldBytes)?.data else {
++    guard
++      let oldContext = context(for: oldCgImage, data: &oldBytes),
++      let oldData = oldContext.data
++    else {
+       return "Reference image's data could not be loaded."
+     }
+     if let newContext = context(for: newCgImage), let newData = newContext.data {
+@@ -143,9 +146,12 @@
+       return "Newly-taken snapshot does not match reference."
+     }
+     if perceptualPrecision < 1, #available(iOS 11.0, tvOS 11.0, *) {
++      guard let oldImage = oldContext.makeImage(), let newImage = newerContext.makeImage() else {
++        return "Snapshot images could not be normalized."
++      }
+       return perceptuallyCompare(
+-        CIImage(cgImage: oldCgImage),
+-        CIImage(cgImage: newCgImage),
++        CIImage(cgImage: oldImage),
++        CIImage(cgImage: newImage),
+         pixelPrecision: precision,
+         perceptualPrecision: perceptualPrecision
+       )
+@@ -213,8 +219,10 @@
+         let newCgImage = UIImage(data: pngData)?.cgImage,
+         oldCgImage.width == newCgImage.width,
+         oldCgImage.height == newCgImage.height,
+-        let oldData = oldCgImage.dataProvider?.data,
+-        let newData = newCgImage.dataProvider?.data
++        let oldContext = context(for: oldCgImage),
++        let newContext = context(for: newCgImage),
++        let oldData = oldContext.data,
++        let newData = newContext.data
+   else {
+     return nil
+   }
+@@ -235,8 +243,8 @@
+   let pixelCount = width * height
+   let scale = old.scale
+   
+-  let oldBytes = CFDataGetBytePtr(oldData)!
+-  let newBytes = CFDataGetBytePtr(newData)!
++  let oldBytes = oldData.assumingMemoryBound(to: UInt8.self)
++  let newBytes = newData.assumingMemoryBound(to: UInt8.self)
+   var diffBytes = [UInt8](repeating: 0, count: pixelCount)
+   
+   var index = 0
+diff --git a/Sources/SnapshotTesting/Snapshotting/NSImage.swift b/Sources/SnapshotTesting/Snapshotting/NSImage.swift
+--- a/Sources/SnapshotTesting/Snapshotting/NSImage.swift
++++ b/Sources/SnapshotTesting/Snapshotting/NSImage.swift
+@@ -104,15 +104,18 @@
+       return "Newly-taken snapshot does not match reference."
+     }
+     if perceptualPrecision < 1, #available(macOS 10.13, *) {
++      guard let oldImage = oldContext.makeImage(), let newImage = newerContext.makeImage() else {
++        return "Snapshot images could not be normalized."
++      }
+       return perceptuallyCompare(
+-        CIImage(cgImage: oldCgImage),
+-        CIImage(cgImage: newCgImage),
++        CIImage(cgImage: oldImage),
++        CIImage(cgImage: newImage),
+         pixelPrecision: precision,
+         perceptualPrecision: perceptualPrecision
+       )
+     } else {
+-      let oldRep = NSBitmapImageRep(cgImage: oldCgImage).bitmapData!
+-      let newRep = NSBitmapImageRep(cgImage: newerCgImage).bitmapData!
++      let oldRep = oldData.assumingMemoryBound(to: UInt8.self)
++      let newRep = newerData.assumingMemoryBound(to: UInt8.self)
+       let byteCountThreshold = Int((1 - precision) * Float(byteCount))
+       var differentByteCount = 0
+       // NB: We are purposely using a verbose 'while' loop instead of a 'for in' loop.  When the
+@@ -136,13 +139,13 @@
+ 
+   private func context(for cgImage: CGImage) -> CGContext? {
+     guard
+-      let space = cgImage.colorSpace,
++      let space = CGColorSpace(name: CGColorSpace.sRGB),
+       let context = CGContext(
+         data: nil,
+         width: cgImage.width,
+         height: cgImage.height,
+-        bitsPerComponent: cgImage.bitsPerComponent,
+-        bytesPerRow: cgImage.bytesPerRow,
++        bitsPerComponent: 8,
++        bytesPerRow: cgImage.width * 4,
+         space: space,
+         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+       )

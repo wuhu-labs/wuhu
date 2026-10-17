@@ -9,6 +9,7 @@ dependencies:
   - Logging
   - ComputerFiles
   - CExecSupervisor
+  - MachineContract
   - OperationProtocol
   - OperationRuntime
   - JSONValue
@@ -34,7 +35,6 @@ tests:
     - Recordings/**
   dependencies:
     - ComputerFiles
-    - OperationClient
     - NIOPosix
     - AsyncHTTPClient
     - CExecSupervisor

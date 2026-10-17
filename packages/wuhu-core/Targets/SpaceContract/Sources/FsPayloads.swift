@@ -93,35 +93,58 @@ public struct StatInput: Codable, Equatable, Sendable {
 
 @Contract
 public struct GrepInput: Codable, Equatable, Sendable {
+  /// An ICU regular expression, matched against each line.
   public let pattern: String
   public let path: String?
+  /// Most matches in a page: default 50, capped at 1000.
   public let matchLimit: Int?
-  public let entryLimit: Int?
+  /// Search hidden entries too (dot-names, and `/_` and `/users` at a space root).
+  public let hidden: Bool?
+  /// Search what `.gitignore` files exclude too.
+  public let noIgnore: Bool?
   public let step: String?
 }
 
 @Contract
 public struct GrepOutput: Codable, Equatable, Sendable {
   public let matches: [Match]
+  /// Present iff the page stopped early; pass it back as `step`.
   public let cursor: String?
-  /// Files the search did not read, with the reason; absent when none.
-  public let skipped: [SkippedFile]?
+  /// Entries this page visited.
+  public let scanned: Int
+  /// What the walk passed over, one row per reason.
+  public let skipped: [SearchSkipped]
 }
 
+/// Why a search passed an entry over.
 @Contract
-public struct SkippedFile: Codable, Equatable, Sendable {
-  public let path: String
-  public let bytes: Int
-  /// `tooLarge`: over the search's per-file size bound.
-  public let reason: String
+public enum SearchSkipReason: String, Codable, Equatable, Sendable {
+  case hidden
+  /// Excluded by a `.gitignore`.
+  case ignored
+  case binary
+  /// A file with a line over 64 KiB; the rest of it is not read.
+  case longLine
+  case unreadable
+}
+
+/// Entries a search passed over for one reason: how many, and the first.
+@Contract
+public struct SearchSkipped: Codable, Equatable, Sendable {
+  public let reason: SearchSkipReason
+  public let count: Int
+  public let example: String
 }
 
 @Contract
 public struct FindInput: Codable, Equatable, Sendable {
+  /// A glob in the `.gitignore` dialect, matched against paths relative to `path`.
   public let glob: String
   public let path: String?
+  /// Most paths in a page: default 50, capped at 1000.
   public let matchLimit: Int?
-  public let entryLimit: Int?
+  public let hidden: Bool?
+  public let noIgnore: Bool?
   public let step: String?
 }
 
@@ -129,4 +152,6 @@ public struct FindInput: Codable, Equatable, Sendable {
 public struct FindOutput: Codable, Equatable, Sendable {
   public let paths: [String]
   public let cursor: String?
+  public let scanned: Int
+  public let skipped: [SearchSkipped]
 }

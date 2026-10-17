@@ -30,13 +30,22 @@ public struct IncomingExec: Sendable {
   public let start: ExecStart
   public let stdin: StdinStream
   public let kills: AsyncStream<Void>
+  /// The caller's output acknowledgements as combined cursors, keeping only the newest: everything through it reached the caller.
+  public let acknowledgements: AsyncStream<Int>
   let endpoint: ChannelEndpoint
+
+  /// Acknowledges stdin through `cursor` under an `IncomingResume`, once it is durable.
+  public func acknowledgeStdin(through cursor: Int) async {
+    await endpoint.acknowledgeConsumption(exec: start.id, through: cursor)
+  }
 
   public func send(_ stream: ExecOutputStream, _ bytes: [UInt8], waitForCapacity: Bool = true) async throws {
     try await endpoint.sendData(exec: start.id, stream: stream, bytes: bytes, waitForCapacity: waitForCapacity)
   }
 
-  public func stopOutput() async {
+  /// Returns the combined cursor the caller's output ends at; nil once the exec is retired.
+  @discardableResult
+  public func stopOutput() async -> Int? {
     await endpoint.stopOutput(exec: start.id)
   }
 
@@ -175,16 +184,19 @@ public struct StdinStream: AsyncSequence, Sendable {
   let endpoint: ChannelEndpoint
   let id: ExecID
   let frames: AsyncStream<Frame>
+  var initialConsumed = 0
+  var autoAcknowledge = true
 
   public func makeAsyncIterator() -> Iterator {
-    Iterator(endpoint: endpoint, id: id, frames: frames.makeAsyncIterator())
+    Iterator(endpoint: endpoint, id: id, frames: frames.makeAsyncIterator(), consumed: initialConsumed, autoAcknowledge: autoAcknowledge)
   }
 
   public struct Iterator: AsyncIteratorProtocol {
     let endpoint: ChannelEndpoint
     let id: ExecID
     var frames: AsyncStream<Frame>.AsyncIterator
-    var consumed: Int = 0
+    var consumed: Int
+    let autoAcknowledge: Bool
     var finished: Bool = false
 
     public mutating func next() async throws -> [UInt8]? {
@@ -204,13 +216,13 @@ public struct StdinStream: AsyncSequence, Sendable {
           guard chunk.cursor <= consumed else { continue }
           let end = chunk.cursor + chunk.data.count
           guard end > consumed else {
-            await endpoint.acknowledgeConsumption(exec: id, through: consumed)
+            if autoAcknowledge { await endpoint.acknowledgeConsumption(exec: id, through: consumed) }
             continue
           }
           let skip = consumed - chunk.cursor
           let bytes = skip == 0 ? chunk.data.bytes : Array(chunk.data.bytes[skip...])
           consumed = end
-          await endpoint.acknowledgeConsumption(exec: id, through: end)
+          if autoAcknowledge { await endpoint.acknowledgeConsumption(exec: id, through: end) }
           return bytes
         case .stdinEof:
           let eof: StdinEOF

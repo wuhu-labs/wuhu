@@ -22,6 +22,9 @@ import Testing
         (alice, "/notes/c.txt", "TODO not markdown\n"),
         (.shared, "/docs/s.md", "TODO shared\n"),
         (GroupID(rawValue: "bob"), "/secret.md", "TODO bob\n"),
+        (alice, "/ignored/.gitignore", "skip.md\n"),
+        (alice, "/ignored/keep.md", ""),
+        (alice, "/ignored/skip.md", ""),
       ]
       for (group, path, text) in files {
         _ = try await space.fs(group).write(path, Data(text.utf8), ifMatch: nil)
@@ -36,7 +39,8 @@ import Testing
       const own = await find("**/*.md", { path: "/notes" })
       const first = await find("**/*.md", { path: "/notes", limit: 1 })
       const second = await find("**/*.md", { path: "/notes", limit: 1, step: first.step })
-      const scanned = await find("**/*.md", { path: "/notes", entryLimit: 1 })
+      const ignored = await find("*.md", { path: "/ignored" })
+      const unignored = await find("*.md", { path: "/ignored", noIgnore: true })
       const shared = await find("**/*.md", { path: "wuhu://shared.localspace/docs" })
       const page1 = await grep("^TODO", { path: "/notes", limit: 2 })
       const page2 = await grep("^TODO", { path: "/notes", limit: 2, step: page1.step })
@@ -50,41 +54,52 @@ import Testing
       await attempt(() => find("*", { path: "machines://mc_abcdefgh/tmp" }))
       await attempt(() => find("*", { limit: "2" }))
       await attempt(() => find("*", { max: 1 }))
+      await attempt(() => find("*", { entryLimit: 1 }))
+      await attempt(() => find("*", { hidden: 1 }))
       await attempt(() => find(""))
       await attempt(() => grep("TODO", { path: "/notes", step: first.step }))
       await attempt(() => find("**/*.md", { path: "/", step: first.step }))
       // steps are opaque: only whether there is one is compared
-      const shape = (r) => ({ ...r, step: r.step === null ? null : typeof r.step })
+      const shape = (r) => ({ ...r, step: r.step === null ? null : typeof r.step, scanned: typeof r.scanned })
       result({
-        own: shape(own), first: shape(first), second: shape(second), scanned: shape(scanned), shared: shape(shared),
+        own: shape(own), first: shape(first), second: shape(second), ignored: shape(ignored), unignored: shape(unignored), shared: shape(shared),
         page1: shape(page1), page2: shape(page2), sharedGrep: shape(sharedGrep), codes,
       })
       """#)
       let object = try #require(value.object)
-      #expect(object["own"] == ["paths": ["/notes/a.md", "/notes/b.md"], "step": .null])
-      #expect(object["first"] == ["paths": ["/notes/a.md"], "step": "string"])
-      #expect(object["second"] == ["paths": ["/notes/b.md"], "step": .null])
-      #expect(object["scanned"] == ["paths": ["/notes/a.md"], "step": "string"], "an exhausted entry budget hands back a step")
-      #expect(object["shared"] == ["paths": ["wuhu://shared.localspace/docs/s.md"], "step": .null])
+      #expect(object["own"] == ["paths": ["/notes/a.md", "/notes/b.md"], "step": .null, "scanned": "number", "skipped": []])
+      #expect(object["first"] == ["paths": ["/notes/a.md"], "step": "string", "scanned": "number", "skipped": []])
+      #expect(object["second"] == ["paths": ["/notes/b.md"], "step": .null, "scanned": "number", "skipped": []])
+      #expect(object["ignored"] == [
+        "paths": ["/ignored/keep.md"], "step": .null, "scanned": "number",
+        "skipped": [["reason": "hidden", "count": 1, "example": "/ignored/.gitignore"], ["reason": "ignored", "count": 1, "example": "/ignored/skip.md"]],
+      ])
+      #expect(object["unignored"] == [
+        "paths": ["/ignored/keep.md", "/ignored/skip.md"], "step": .null, "scanned": "number",
+        "skipped": [["reason": "hidden", "count": 1, "example": "/ignored/.gitignore"]],
+      ])
+      #expect(object["shared"] == ["paths": ["wuhu://shared.localspace/docs/s.md"], "step": .null, "scanned": "number", "skipped": []])
       #expect(object["page1"] == [
         "matches": [
           ["path": "/notes/a.md", "line": 2, "text": "TODO one"],
           ["path": "/notes/b.md", "line": 1, "text": "TODO two"],
         ],
         "step": "string",
+        "scanned": "number",
         "skipped": [],
       ])
       #expect(object["page2"] == [
         "matches": [["path": "/notes/b.md", "line": 2, "text": "TODO three"], ["path": "/notes/c.txt", "line": 1, "text": "TODO not markdown"]],
         "step": .null,
+        "scanned": "number",
         "skipped": [],
       ])
       #expect(object["sharedGrep"] == [
-        "matches": [["path": "wuhu://shared.localspace/docs/s.md", "line": 1, "text": "TODO shared"]], "step": .null, "skipped": [],
+        "matches": [["path": "wuhu://shared.localspace/docs/s.md", "line": 1, "text": "TODO shared"]], "step": .null, "scanned": "number", "skipped": [],
       ])
       #expect(object["codes"] == [
         "invalidArgument", "invalidArgument", "invalidArgument", "invalidPath", "notFound", "notFound", "unavailable",
-        "TypeError", "TypeError", "TypeError", "invalidArgument", "invalidArgument",
+        "TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "invalidArgument", "invalidArgument",
       ])
     }
   }

@@ -1,4 +1,5 @@
 import Clocks
+import ClockTesting
 import Dependencies
 import Foundation
 @testable import MachineAgent
@@ -6,14 +7,6 @@ import MachineChannel
 import MachineContract
 import Scratch
 import Testing
-
-private func yieldUntil(attempts: Int = 10000, _ condition: @Sendable () -> Bool) async -> Bool {
-  for _ in 0 ..< attempts {
-    if condition() { return true }
-    await Task.yield()
-  }
-  return condition()
-}
 
 // Advances the injected TestClock while polling a real-world condition (a child
 // process dying), giving the agent's clock-driven grace a chance to arm and
@@ -33,10 +26,12 @@ private func pollUntilAdvancing(
   return condition()
 }
 
-@Suite
+@Suite(.timeLimit(.minutes(2)))
 struct LifecycleTests {
+  /// Runs on a `VirtualClock`: time moves only from one pending sleep to the next, so the dial instants are the backoff schedule
+  /// itself, however slow the host is.
   @Test func reconnectLoopBacksOffOnTheInjectedClock() async throws {
-    let clock = TestClock()
+    let clock = VirtualClock()
     let scratch = try ScratchFolder("machine-agent-tests")
     defer { scratch.remove() }
     let agent = withDependencies {
@@ -45,15 +40,20 @@ struct LifecycleTests {
       MachineAgent(stateDirectory: scratch.path)
     }
     let caller = ChannelEndpoint()
-    let dials = Box(0)
+    let dials = Box<[Duration]>([])
     let (callerFeed, callerContinuation) = AsyncStream<InMemoryTransport>.makeStream()
+    let (connected, connectedContinuation) = AsyncStream<Void>.makeStream()
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask {
         await agent.run { @Sendable in
-          let attempt = dials.increment()
+          let attempt = dials.update { dials in
+            dials.append(clock.now.offset)
+            return dials.count
+          }
           guard attempt > 3 else { throw ChannelError.severed }
           let (a, b) = InMemoryTransport.pair()
           callerContinuation.yield(b)
+          connectedContinuation.finish()
           return a
         }
       }
@@ -63,20 +63,11 @@ struct LifecycleTests {
         }
       }
       group.addTask {
-        #expect(await yieldUntil { dials.value == 1 })
-        // Without advancing the clock the loop must not redial.
-        for _ in 0 ..< 200 { await Task.yield() }
-        #expect(dials.value == 1)
-        // 1s + 2s + 4s of backoff before the fourth (successful) dial.
-        var advanced = 0
-        while advanced < 50 {
-          for _ in 0 ..< 100 { await Task.yield() }
-          if dials.value >= 4 { break }
-          await clock.advance(by: .seconds(1))
-          advanced += 1
+        // 1s + 2s + 4s of backoff before the fourth (successful) dial; time cannot pass 7s, so a dial off the schedule shows.
+        try await clock.run(through: VirtualClock.at(.seconds(7))) {
+          for await _ in connected {}
         }
-        #expect(dials.value == 4)
-        #expect(advanced == 7)
+        #expect(dials.value == [.zero, .seconds(1), .seconds(3), .seconds(7)])
         let exec = await caller.startExec(makeStart(execID(1), command: ["echo", "reconnected"]))
         let collected = try await collect(exec)
         #expect(collected.stdoutText == "reconnected\n")

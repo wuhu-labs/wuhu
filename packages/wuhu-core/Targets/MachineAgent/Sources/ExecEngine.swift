@@ -189,6 +189,10 @@ struct ExecEngine: Sendable {
         } catch {}
       }
       await withTaskGroup(of: Void.self) { pumps in
+        if let queue {
+          // The kill comes after the queue has drained: killing stops the output.
+          pumps.addTask { if (try? await queue.run()) == true { kill.yield(()) } }
+        }
         pumps.addTask {
           await relay(execution.standardOutput, as: .stdout, exec: exec, secrets: secrets, budget: budget, queue: queue, kill: kill)
         }
@@ -211,21 +215,15 @@ struct ExecEngine: Sendable {
     queue: ExecOutputQueue?,
     kill: AsyncStream<Void>.Continuation,
   ) async {
-    await withTaskGroup(of: Void.self) { group in
-      if let queue {
-        // The kill comes after both queues have drained: killing stops the output.
-        group.addTask { if (try? await queue.run(stream)) == true { kill.yield(()) } }
+    var masker = SecretMasker(secrets: secrets)
+    do {
+      for try await buffer in output {
+        let bytes = buffer.withUnsafeBytes { Array($0) }
+        try await forward(masker.mask(bytes), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
       }
-      var masker = SecretMasker(secrets: secrets)
-      do {
-        for try await buffer in output {
-          let bytes = buffer.withUnsafeBytes { Array($0) }
-          try await forward(masker.mask(bytes), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
-        }
-      } catch {}
-      try? await forward(masker.flush(), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
-      queue?.finish(stream)
-    }
+    } catch {}
+    try? await forward(masker.flush(), as: stream, exec: exec, budget: budget, queue: queue, kill: kill)
+    queue?.finish(stream)
   }
 
   private func forward(

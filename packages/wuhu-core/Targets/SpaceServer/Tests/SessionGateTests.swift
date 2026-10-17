@@ -466,25 +466,23 @@ extension SessionGateTests {
       let t = try await tree()
       let key = SymmetricKey(size: .bits256)
       let store = try await t.harness.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
-      let coordinator = MachineV2Coordinator(space: t.harness.space, key: key, problemsGroup: .shared, origin: URL(string: "https://memory.test")!, fetch: { _ in .init { _ in throw OperationError(.transport) } }, abort: { _, _ in })
+      let service = MachineV2Service(space: t.harness.space, hub: MachineV2Hub(space: t.harness.space), key: key, failure: nil, fetch: { _ in .init { _ in throw OperationError(.transport) } })
       let owner = OperationOwner(scope: "script", key: "exec")
-      let credential = try t.tokens.credential(session: t.parent, group: .shared, scope: owner.scope, key: owner.key, timeout: .seconds(60), now: Date(), active: { try await coordinator.credentialActive(group: .shared, owner: owner) })
+      let credential = try await service.credential(tokens: t.tokens, session: t.parent, group: .shared, owner: owner, timeout: .seconds(60))
       let token = try #require(credential.object?["token"]?.stringValue)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
-      #expect(try await coordinator.credentialIssued(group: .shared, owner: owner) == false)
+      var record = ClientRecord(id: UUID(), correlation: UUID(), machine: "disk", start: .init(kind: "exec.v1", input: ["sessionCredential": credential]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [ComputerKindSchemas.exec]))
       _ = try await store.claim(owner, record: record)
-      #expect(try await coordinator.credentialIssued(group: .shared, owner: owner))
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .ok)
-      _ = try await store.transaction(record.id) { $0.stopReason = "scriptEnded" }
+      record.stopReason = "scriptEnded"; try await store.save(record, appending: nil)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      _ = try await store.transaction(record.id) { $0.stopReason = nil; $0.unknown = OperationError(.unknownOperation) }
+      record.stopReason = nil; record.diagnostic = OperationError(.unknownOperation); try await store.save(record, appending: nil)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
-      _ = try await store.transaction(record.id) { $0.unknown = nil; $0.snapshot = .init(operation: record.id, verdict: .init(.completed, result: [:]), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true) }
+      record.diagnostic = nil; record.snapshot = .init(operation: record.id, verdict: .init(.completed, result: [:]), terminalToken: UUID(), finalOffsets: [:], outputConsumed: true); try await store.save(record, appending: nil)
       #expect(try await t.harness.get("/v1/server", bearer: token).status == .unauthorized)
       let mismatch = try t.tokens.credential(session: t.parent, group: .init(rawValue: "another"), scope: "script", key: "other", timeout: .seconds(60), now: Date(), active: { true })
       #expect(try await t.harness.get("/v1/server", bearer: try #require(mismatch.object?["token"]?.stringValue)).status == .forbidden)
-      await coordinator.shutdown()
+      await service.shutdown()
     }
   }
 }

@@ -136,3 +136,9 @@ _Afterwards:_ deterministic checks require a detached start (`setsid`/`nohup`, o
 _Prompt:_ "Which notes under {fx}/jobs mention "interview"? Answer it with a single run_script call that uses grep from wuhu:space, asks for at most 2 matches per call and follows step until it is null…"
 
 _Afterwards:_ the log has a `run_script` whose source imports `wuhu:space` and calls `grep(` with `limit` 1 or 2, passing `step` back in a loop, and no `grep` or `find` tool call; the reply names `northwind.md` and no other jobs note; no files changed. Scored runs need a release whose `wuhu:space` has `find` and `grep`.
+
+## search-skips
+
+_Prompt:_ "Which note under {sb}/planning says when the release freeze starts? Reply with its path and the date…" The `ignored-draft` setup writes `planning/.gitignore` (`drafts/`), `roadmap.md` and `drafts/q4.md`, the only note naming the freeze.
+
+_Afterwards:_ the log has a `grep` or `find` call with `no_ignore: true` (a default search finds nothing and lists the folder under `skipped`, reason `ignored`); the reply names `drafts/q4.md` and not `roadmap.md`; nothing beyond the seeded files is written. Scored runs need a release whose search reports `skipped` reasons and takes `no_ignore`.

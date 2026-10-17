@@ -2,6 +2,14 @@ import Dependencies
 import JSONValue
 import MachineContract
 
+/// Where an incoming exec picks up when its relay already holds part of it durably: output starts at `output`, stdin is taken
+/// from `stdin`, and stdin is acknowledged only by `IncomingExec.acknowledgeStdin`, once the relay made it durable.
+public struct IncomingResume: Sendable {
+  public let output: Int
+  public let stdin: Int
+  public init(output: Int, stdin: Int) { self.output = output; self.stdin = stdin }
+}
+
 public actor ChannelEndpoint {
   public nonisolated let incomingExecs: AsyncStream<IncomingExec>
   public nonisolated let inboundRequests: AsyncStream<InboundRequest>
@@ -27,7 +35,10 @@ public actor ChannelEndpoint {
   private let expirationContinuation: AsyncStream<(ExecID, @Sendable () async throws -> Void, AsyncStream<Void>)>.Continuation
   private var terminalWaiters: [ExecID: [AsyncStream<Void>.Continuation]] = [:]
 
-  public init() {
+  private let incomingResume: IncomingResume?
+
+  public init(incomingResume: IncomingResume? = nil) {
+    self.incomingResume = incomingResume
     @Dependency(\.continuousClock) var clock
     self.clock = clock
     (expirations, expirationContinuation) = AsyncStream.makeStream()
@@ -107,11 +118,12 @@ public actor ChannelEndpoint {
         precondition(exec.sender.eofCursor == nil, "stdin after closeStdin")
         if exec.exitReceived { return }
       case .incoming:
+        // A send that waited for capacity while the exit was sent ends with it.
+        if exec.sender.exit != nil { return }
         if exec.outputStopped {
           exec.outputCut = true
           return
         }
-        precondition(exec.sender.exit == nil, "output after exit")
       }
       let room = exec.sender.room
       guard room > 0 else {
@@ -198,14 +210,17 @@ public actor ChannelEndpoint {
     exec.sender.resumeWaiters()
     exec.framesContinuation.finish()
     exec.killsContinuation.finish()
+    exec.acksContinuation.finish()
     for waiter in terminalWaiters.removeValue(forKey: id) ?? [] { waiter.finish() }
   }
 
-  func stopOutput(exec id: ExecID) {
-    guard let exec = execs[id], exec.role == .incoming else { return }
+  @discardableResult
+  func stopOutput(exec id: ExecID) -> Int? {
+    guard let exec = execs[id], exec.role == .incoming else { return nil }
     exec.outputStopped = true
     exec.outputCut = true
     exec.sender.resumeWaiters()
+    return exec.sender.nextCursor
   }
 
   func drainOutput(exec id: ExecID) {
@@ -399,14 +414,19 @@ public actor ChannelEndpoint {
       yieldControl(.error(error: MachineError(code: .protocolViolation, message: "stream id \(frame.streamID) in use")))
       return
     }
-    let exec = ExecState(role: .incoming, streamID: frame.streamID, start: start)
+    let exec = ExecState(role: .incoming, streamID: frame.streamID, start: start, cursor: incomingResume?.output ?? 0)
+    exec.acknowledgedInbound = incomingResume?.stdin ?? 0
     execs[start.id] = exec
     execsByStream[frame.streamID] = exec
     nextStreamID = max(nextStreamID, frame.streamID + 1)
+    if exec.acknowledgedInbound > 0 {
+      outbound?.yield(Frame(streamID: exec.streamID, opcode: .ack, payload: Ack(id: start.id, cursor: exec.acknowledgedInbound)))
+    }
     incomingExecsContinuation.yield(IncomingExec(
       start: start,
-      stdin: StdinStream(endpoint: self, id: start.id, frames: exec.frames),
+      stdin: StdinStream(endpoint: self, id: start.id, frames: exec.frames, initialConsumed: exec.acknowledgedInbound, autoAcknowledge: incomingResume == nil),
       kills: exec.kills,
+      acknowledgements: exec.acks,
       endpoint: self,
     ))
   }
@@ -415,6 +435,7 @@ public actor ChannelEndpoint {
     guard let exec = execsByStream[frame.streamID], let ack = try? frame.payload(Ack.self) else { return }
     guard ack.id == exec.start.id else { return }
     exec.sender.acknowledge(through: ack.cursor)
+    if exec.role == .incoming { exec.acksContinuation.yield(exec.sender.ackedThrough) }
     if exec.role == .incoming, exec.sender.exit != nil, ack.terminal == true, ack.cursor == exec.sender.nextCursor {
       retire(ack.id)
     }
@@ -427,9 +448,18 @@ public actor ChannelEndpoint {
   }
 
   private func routeRequest(_ frame: Frame) {
+    if frame.opcode == .searchRequest {
+      // v1 search is retired: answer with an error result rather than leave the caller waiting.
+      guard let id = frame.requestID else {
+        yieldControl(.error(error: MachineError(code: .protocolViolation, message: "malformed \(frame.opcode.rawValue)")))
+        return
+      }
+      let refusal: JSONValue = ["id": .integer(id), "result": ["kind": "error", "error": ["code": "invalidArgument", "message": "this machine agent no longer serves v1 search; search runs over machine v2 (search.v1)"]]]
+      outbound?.yield(Frame(streamID: 0, opcode: .searchResponse, body: refusal))
+      return
+    }
     let request: InboundRequest? = switch frame.opcode {
     case .vfsRequest: (try? frame.payload(VFSRequest.self)).map(InboundRequest.vfs)
-    case .searchRequest: (try? frame.payload(SearchRequest.self)).map(InboundRequest.search)
     default: nil
     }
     guard let request else {
@@ -458,6 +488,8 @@ private final class ExecState {
   let framesContinuation: AsyncStream<Frame>.Continuation
   let kills: AsyncStream<Void>
   let killsContinuation: AsyncStream<Void>.Continuation
+  let acks: AsyncStream<Int>
+  let acksContinuation: AsyncStream<Int>.Continuation
   var acknowledgedInbound: Int = 0
   var exitReceived: Bool = false
   var exitCursor: Int?
@@ -470,12 +502,13 @@ private final class ExecState {
   var killRequested: Bool = false
   var killDelivered: Bool = false
 
-  init(role: Role, streamID: Int, start: ExecStart) {
+  init(role: Role, streamID: Int, start: ExecStart, cursor: Int = 0) {
     self.role = role
     self.streamID = streamID
     self.start = start
-    sender = SendState(window: start.window ?? ExecDefaults.window)
+    sender = SendState(window: start.window ?? ExecDefaults.window, cursor: cursor)
     (frames, framesContinuation) = AsyncStream.makeStream()
     (kills, killsContinuation) = AsyncStream.makeStream()
+    (acks, acksContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
 }

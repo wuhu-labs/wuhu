@@ -23,5 +23,6 @@ tests:
     - Dependencies
     - DependenciesTestSupport
     - Clocks
+    - ClockTesting
     - Scratch
     - Logging

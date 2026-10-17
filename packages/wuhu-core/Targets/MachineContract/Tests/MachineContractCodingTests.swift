@@ -89,27 +89,6 @@ struct MachineContractCodingTests {
     #expect(try encoder.encode(VFSResult.ok) == .object(["kind": "ok"]))
   }
 
-  @Test func searchQueryEncodesInternallyTagged() throws {
-    #expect(try encoder.encode(
-      SearchQuery.grep(pattern: "TODO", path: nil, matchLimit: 100, entryLimit: nil, step: nil),
-    ) == .object(["kind": "grep", "pattern": "TODO", "matchLimit": 100]))
-    #expect(try encoder.encode(
-      SearchQuery.find(glob: "**/*.md", path: "/p", matchLimit: nil, entryLimit: 50, step: "s1"),
-    ) == .object(["kind": "find", "glob": "**/*.md", "path": "/p", "entryLimit": 50, "step": "s1"]))
-  }
-
-  @Test func searchResultEncodesInternallyTagged() throws {
-    let match = SearchMatch(path: "/a", line: 3, text: "TODO x", context: ["ctx"])
-    #expect(try encoder.encode(SearchResult.matches(matches: [match], cursor: "c1")) == .object([
-      "kind": "matches",
-      "matches": .array([.object(["path": "/a", "line": 3, "text": "TODO x", "context": .array(["ctx"])])]),
-      "cursor": "c1",
-    ]))
-    #expect(try encoder.encode(SearchResult.paths(paths: ["/a"], cursor: nil)) == .object([
-      "kind": "paths", "paths": .array(["/a"]),
-    ]))
-  }
-
   @Test func absentOptionalDecodesNilAndReEncodesAbsent() throws {
     let json: JSONValue = .object([
       "id": "ex_a1b2c3d4", "cwd": "/work", "command": .array(["make", "test"]),

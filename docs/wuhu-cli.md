@@ -19,8 +19,8 @@
 | `wuhu mv <from> <to> [--replace]` | Move a path and migrate recorded wallet tokens under that path. An existing `<to>` refuses the move; `--replace` replaces an existing file there in the same revision. |
 | `wuhu ls [path] [--rev N]` | List entries with compact `d`, `-`, and `t` markers. |
 | `wuhu stat <path>` | Print labeled metadata: kind, size, optional line count, token, mtime. |
-| `wuhu grep <pattern> [path] [--match-limit N] [--entry-limit N] [--step cursor]` | Search file contents; paged by an opaque continuation cursor. |
-| `wuhu find <glob> [path] [--match-limit N] [--entry-limit N] [--step cursor]` | Find paths by glob, same paging contract as grep. |
+| `wuhu grep <pattern> [path] [--match-limit N] [--hidden] [--no-ignore] [--step cursor]` | Search file contents (ICU regex), skipping hidden and `.gitignore`d entries unless asked; paged by an opaque continuation cursor. |
+| `wuhu find <glob> [path] [--match-limit N] [--hidden] [--no-ignore] [--step cursor]` | Find paths by `.gitignore`-style glob relative to path, same skips and paging as grep. |
 | `wuhu history <path>` | Print revision history. |
 | `wuhu checkout <path> <rev>` | Restore content from a prior revision. Identical file bytes keep the current revision/token without history or events; other successful checkouts, including tables, mint a new revision. History never rewinds. |
 

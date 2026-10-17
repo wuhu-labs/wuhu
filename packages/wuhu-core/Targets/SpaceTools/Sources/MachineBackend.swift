@@ -1,3 +1,5 @@
+import struct FileSearch.SearchPage
+import struct FileSearch.SearchQuery
 import struct Foundation.Data
 import struct Foundation.Date
 import MachineContract
@@ -6,12 +8,12 @@ import SpaceFS
 
 public struct MachineSeam: Sendable {
   public let vfs: @Sendable (MachineID, VFSOp) async throws -> VFSResult
-  public let search: @Sendable (MachineID, SearchQuery) async throws -> SearchResult
+  public let search: @Sendable (MachineID, SearchQuery) async throws -> SearchPage
   public let attached: @Sendable () async -> Set<MachineID>
 
   public init(
     vfs: @escaping @Sendable (MachineID, VFSOp) async throws -> VFSResult,
-    search: @escaping @Sendable (MachineID, SearchQuery) async throws -> SearchResult,
+    search: @escaping @Sendable (MachineID, SearchQuery) async throws -> SearchPage,
     attached: @escaping @Sendable () async -> Set<MachineID>,
   ) {
     self.vfs = vfs
@@ -43,6 +45,12 @@ struct MachineBackend: SpaceVFS {
     case let .error(error): throw machineFailure(error)
     default: throw unexpectedResult("read", path)
     }
+  }
+
+  /// The v1 machine VFS reads a file whole; search, the one ranged reader,
+  /// runs on the machine itself (`search.v1`) and never comes here.
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    SpaceDataReader(try await read(path).1)
   }
 
   func write(_ path: String, _ data: Data, ifMatch: VersionToken?) async throws -> VersionToken {

@@ -76,8 +76,6 @@ public final class MachineAgent: Sendable {
     switch request {
     case let .vfs(request):
       await endpoint.respond(.vfs(VFSResponse(id: request.id, result: MachineVFS.execute(request.op))))
-    case let .search(request):
-      await endpoint.respond(.search(SearchResponse(id: request.id, result: MachineSearch.execute(request.query))))
     }
   }
 

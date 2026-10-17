@@ -31,10 +31,17 @@ func formatGrep(_ output: GrepOutput) -> String {
   var text = output.matches.map { match in
     "\(match.path):\(match.line):\(match.text)\n"
   }.joined()
-  for file in output.skipped ?? [] {
-    text += "skipped \(file.path) \(file.reason) bytes=\(file.bytes)\n"
-  }
-  if let cursor = output.cursor {
+  text += formatSearchTail(skipped: output.skipped, cursor: output.cursor)
+  return text
+}
+
+func formatFind(_ output: FindOutput) -> String {
+  output.paths.map { $0 + "\n" }.joined() + formatSearchTail(skipped: output.skipped, cursor: output.cursor)
+}
+
+private func formatSearchTail(skipped: [SearchSkipped], cursor: String?) -> String {
+  var text = skipped.map { "skipped \($0.reason.rawValue) count=\($0.count) example=\($0.example)\n" }.joined()
+  if let cursor {
     text += "cursor \(cursor)\n"
   }
   return text

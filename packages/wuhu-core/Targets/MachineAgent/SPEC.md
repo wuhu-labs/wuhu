@@ -2,7 +2,7 @@
 
 The daemon side of the machine domain: one `MachineAgent` owns one
 `ChannelEndpoint`, dials the server forever, runs execs as real subprocesses,
-serves VFS/search requests, and enforces the output policy machine-side.
+serves VFS requests, and enforces the output policy machine-side.
 MachineContract pins the wire vocabulary; MachineChannel pins channel behavior;
 this file pins the agent semantics on top.
 
@@ -118,25 +118,8 @@ granularity can share a token — accepted for a raw box.
 
 ## Search
 
-Machine-side matcher, no shelled-out grep, mirroring SpaceTools semantics so
-M5 can assert space/machine parity for identical contract inputs:
-
-- **grep**: pattern is an `NSRegularExpression`, matched per line; defaults
-  `matchLimit` 50, `entryLimit` 1000 (files scanned per page); limits must be
-  ≥ 1 else `invalidArgument`. Cursor is `line@path`, parsed at the first `@`.
-  A page stops with a cursor when the entry limit is reached (next unscanned
-  file, line 1) or the match limit is hit (that match's position, re-emitted
-  on resume). Unreadable files fail the page with `io`. `path` omitted means
-  `/`; a file root scans just that file. Symlinks are skipped.
-- **find**: glob (SpaceFS `Glob`, the space-side dialect) matched against the
-  absolute path; same defaults and cursor discipline, the cursor being the
-  next path to consider. Files and symlinks are leaves; directories are not
-  emitted.
-- **Traversal order** is the lexicographic order of absolute paths (what a
-  flat `.sorted()` over the tree yields), streamed without materializing the
-  tree: sibling sort keys append `/` to directory names, and resume prunes
-  subtrees below the cursor. Every page is bounded by `entryLimit` regardless
-  of tree size.
+The v1 agent does not search; `search-request` gets the retired-opcode
+refusal (MachineContract SPEC). Machine search is v2's `search.v1`.
 
 ## Deployment administration separation
 

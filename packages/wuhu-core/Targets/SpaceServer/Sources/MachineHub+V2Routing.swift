@@ -16,7 +16,7 @@ extension MachineHub {
   func requireExecKind(_ machine: MachineID) async throws {
     guard let group = try await v2Group(machine) else { return }
     guard let v2 else { throw OperationError(.machineUnavailable, message: "Machine v2 is unavailable") }
-    let description = try await v2.client(group: group).describe(machine.rawValue)
+    let description = try await v2.operations(group: group).describe(machine.rawValue)
     guard description.kinds.contains(where: { $0.name == "exec.v1" }) || description.availability?["exec.v1"] != nil else {
       throw OperationError(.unknownKind, message: "Machine does not support exec.v1", details: ["kind": "exec.v1"])
     }

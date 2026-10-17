@@ -54,11 +54,11 @@ public enum ToolReference {
     ),
     Entry(
       tool: "grep", input: "GrepInput", output: "GrepOutput",
-      summary: "Search file contents under `path` (default `/`) for an ICU regular expression. Files over 4 MiB are listed in `skipped`, not searched. A non-null `cursor` in the answer is the `step` that continues the search.",
+      summary: "Search file contents under `path` (default `/`), or in that one file, line by line for an ICU regular expression. Hidden entries (dot-names, `/_` and `/users` at a space root) and what `.gitignore` files exclude are passed over unless `hidden` or `noIgnore` asks for them, as are binary files and files with a line over 64 KiB; `skipped` counts each reason with one example. A page stops at `matchLimit` (default 50, at most 1000) or its scan budget, never on time; a non-null `cursor` in the answer is the `step` that continues the search. A search still running after 30 s fails `unavailable`.",
     ),
     Entry(
       tool: "find", input: "FindInput", output: "FindOutput",
-      summary: "Find paths under `path` (default `/`) matching a glob, paged like `grep`.",
+      summary: "Find files under `path` (default `/`) whose path relative to `path` matches a glob in the `.gitignore` dialect, passing over and paging like `grep`.",
     ),
     Entry(
       tool: "history", input: "HistoryInput", output: "HistoryOutput",

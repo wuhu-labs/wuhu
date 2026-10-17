@@ -26,9 +26,9 @@ import Synchronization
 import Testing
 
 @Suite struct ComputerAgentTests {
-  func fixture(clock: OperationClock = .continuous, supervisorFiles: SupervisorFiles? = nil) throws -> (ComputerAgent, ExecSupervisorRegistry) {
-    let registry = try ExecSupervisorRegistry(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", fetch: FetchClient { _ in throw OperationError(.supervisorUnavailable) }, authorize: { _, _ in }, files: supervisorFiles ?? .init(create: { _, _ in }, load: { _ in throw OperationError(.invalidConfiguration) }, list: { _ in [] }), clock: clock, launch: { _, _ in nil })
-    return (try ComputerAgent(machine: "test", external: registry.external, clock: clock), registry)
+  func fixture(clock: OperationClock = .continuous) throws -> (ComputerAgent, ExecWorkers) {
+    let workers = try ExecWorkers(machine: "test", operationsDirectory: "/tmp/ops", executable: "/tmp/wuhu", launch: { _ in nil }, authorize: { _, _ in })
+    return (try ComputerAgent(machine: "test", external: workers.external, clock: clock), workers)
   }
 
   func describe(ack: Bool = false) -> Request { Request(url: URL(string: "https://agent/machine/v2/machines/test" + (ack ? "?leaveAck=true" : ""))!) }
@@ -36,7 +36,7 @@ import Testing
   @Test func combinesKindsAndRejectsOtherMachineBeforeDispatch() async throws {
     let (agent, _) = try fixture()
     let description = try await agent.handler(describe()).body.json(MachineDescription.self)
-    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1"])
+    #expect(Set(description.kinds.map(\.name)) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1"])
     #expect(description.acceptingStarts)
     let response = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/not-authorized")!))
     #expect(try await response.body.json(ErrorEnvelope.self).error.code == .machineNotAuthorized)
@@ -56,10 +56,10 @@ import Testing
   }
 
   @Test func localLeaveWaitsForLogicalAcknowledgementNotConnectionClose() async throws {
-    let (agent, registry) = try fixture()
+    let (agent, workers) = try fixture()
     let leave = Task { try await agent.controlHandler(Request(url: URL(string: "http://local/leave")!, method: .put)) }
     defer { leave.cancel() }
-    while !(await registry.leaving) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    while await workers.service == .serving { try await ContinuousClock().sleep(for: .milliseconds(1)) }
     #expect(!(await agent.leaveAcknowledged))
     #expect(try await agent.handler(describe()).body.json(ErrorEnvelope.self).error.code == .leaving)
     #expect(!(await agent.leaveAcknowledged))
@@ -90,14 +90,26 @@ import Testing
     #expect(!(await agent.leaveAcknowledged))
   }
 
-  @Test func timeoutDuringPendingSupervisorCreationIsDrainFailedNotMissingAck() async throws {
+  @Test func timeoutDuringAStartOnItsWayToItsWorkerIsDrainFailedNotMissingAck() async throws {
+    let home = try MachineHome(); defer { home.remove() }
     let now = Mutex(Duration.zero)
     let clock = OperationClock(now: { now.withLock { $0 } }, sleep: { duration in
       if duration >= .seconds(1) { now.withLock { $0 += duration }; return }
       try await ContinuousClock().sleep(for: .milliseconds(1))
     })
-    let files = SupervisorFiles(create: { _, _ in try await ContinuousClock().sleep(for: .seconds(300)) }, load: { _ in throw OperationError(.invalidConfiguration) }, list: { _ in [] })
-    let (agent, _) = try fixture(clock: clock, supervisorFiles: files)
+    let parked = Mutex<[CheckedContinuation<Void, Never>]>([])
+    defer { for continuation in parked.withLock({ $0 }) { continuation.resume() } }
+    let workers = try ExecWorkers(machine: "test", operationsDirectory: home.operations, executable: "/bin/false", launch: { _ in nil }, authorize: { _, _ in })
+    try await workers.recover()
+    await workers.launchWorker()
+    let worker = try #require(await workers.current)
+    let manifest = try #require(await workers.workers[worker]?.manifest)
+    // The worker takes the start and never answers it.
+    _ = try await workers.link(Rendezvous.Hello(protocol: Rendezvous.protocolName, machine: "test", worker: worker, nonce: manifest.nonce), client: FetchClient { _ in
+      await withCheckedContinuation { continuation in parked.withLock { $0.append(continuation) } }
+      throw CancellationError()
+    }, abort: {})
+    let agent = try ComputerAgent(machine: "test", external: workers.external, clock: clock)
     let request = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "exec.v1", input: ["argv": ["/bin/true"], "cwd": "/tmp", "stdin": false])))
     let start = Task { try await agent.handler(request) }
     defer { start.cancel() }
@@ -112,6 +124,18 @@ import Testing
     start.cancel(); _ = try await start.value
   }
 
+  @Test func aLeaveWhoseRecordFailsFailsItsReply() async throws {
+    let (agent, workers) = try fixture()
+    struct Unrecorded: Error {}
+    let leave = Task { try await agent.controlHandler(afterLeave: { throw Unrecorded() })(Request(url: URL(string: "http://local/leave")!, method: .put)) }
+    while await workers.service == .serving { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    #expect(try await agent.handler(describe()).body.json(ErrorEnvelope.self).error.code == .leaving)
+    #expect(try await agent.handler(describe(ack: true)).body.json(ErrorEnvelope.self).error.code == .leaving)
+    let response = try await leave.value
+    #expect(response.status.code != 200)
+    #expect(try await response.body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
+  }
+
   @Test func withComputerAgentServesInjectedBackendsHoldsTheLockAndUnwindsOnSuccessAndThrow() async throws {
     // ctl.sock lands beside the operations root, so the home must be short and private.
     let home = try MachineHome()
@@ -121,7 +145,7 @@ import Testing
     let files = ComputerFileSystem(
       status: { path in statused.withLock { $0.append(path) }; throw OperationError(.fileUnavailable) },
       read: { _, _, _ in throw OperationError(.fileUnavailable) },
-      walk: { _, _ in throw OperationError(.fileUnavailable) },
+      search: ComputerFileSystem.local.search,
     )
     struct Boom: Error {}
     for fails in [false, true] {
@@ -140,7 +164,7 @@ import Testing
           if second >= 0 { exec_close(second) }
           let description = try await agent.handler(Request(url: URL(string: "https://agent/machine/v2/machines/test")!)).body.json(MachineDescription.self)
           #expect(description.acceptingStarts)
-          #expect(description.kinds.map(\.name) == ["exec.v1", "read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "note.v1"])
+          #expect(description.kinds.map(\.name) == ["exec.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "note.v1"])
           let path = "/injected-\(fails)"
           let read = Request(url: URL(string: "https://agent/machine/v2/machines/test/operations/" + UUID().uuidString)!, method: .post, body: try .json(StartRequest(kind: "read.v1", input: ["path": .string(path)])))
           #expect(try await agent.handler(read).status.code == 201)
@@ -163,22 +187,30 @@ import Testing
     }
   }
 
-  @Test func composedRegistryRunLoopLivesExactlyAsLongAsTheBody() async throws {
+  @Test func composedWorkersRunLoopLivesExactlyAsLongAsTheBody() async throws {
     // ctl.sock lands beside the operations root, so the home must be short and private.
     let home = try MachineHome()
     defer { home.remove() }
-    let root = home.operations
-    // Not our child: the run loop's nonblocking reap fails ECHILD and drops it, which is how a live loop shows without spawning anything.
-    let registry = try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: root, executable: "/bin/false", files: .local, kinds: []) { _, registry in
-      await registry.track(Int32.max)
+    let launched = Mutex<[String]>([])
+    @Sendable func waitForLaunches(_ count: Int) async throws {
       let deadline = ContinuousClock.now + .seconds(10)
-      while await registry.childPIDs.contains(Int32.max), ContinuousClock.now < deadline { try await ContinuousClock().sleep(for: .milliseconds(10)) }
-      #expect(!(await registry.childPIDs.contains(Int32.max)), "registry.run() polls tracked children while the body runs")
-      return registry
+      while launched.withLock({ $0.count }) < count {
+        guard ContinuousClock.now < deadline else { throw TestFailure.timeout }
+        try await ContinuousClock().sleep(for: .milliseconds(10))
+      }
     }
-    await registry.track(Int32.max)
-    try await ContinuousClock().sleep(for: .milliseconds(400))
-    #expect(await registry.childPIDs.contains(Int32.max), "registry.run() stopped with the body")
+    try await ExecSupervisor.composeComputerAgent(machine: "test", operationsDirectory: home.operations, executable: "/bin/false", files: .local, kinds: [], launch: { arguments in
+      launched.withLock { $0.append(arguments[3]) }
+      return nil
+    }) { _, _ in
+      // A launched worker whose directory is gone is gone; the run loop launches the next.
+      try await waitForLaunches(1)
+      WorkerDirectory.remove(launched.withLock { $0[0] })
+      try await waitForLaunches(2)
+    }
+    WorkerDirectory.remove(launched.withLock { $0[1] })
+    try await ContinuousClock().sleep(for: .milliseconds(500))
+    #expect(launched.withLock { $0.count } == 2, "the run loop stopped with the body")
   }
 }
 
@@ -186,10 +218,6 @@ private struct NoteKind: OperationKind {
   struct Input: Decodable, Sendable {}
   let descriptor = KindDescriptor("note.v1", inputSchema: ["type": "object"], resultSchema: ["type": "string"], deliveryPolicy: .boundedResult)
   func run(_ input: Input, channels: OperationChannels, cancellation: OperationCancellation) async throws -> String { "" }
-}
-
-extension ExecSupervisorRegistry {
-  func track(_ pid: Int32) { childPIDs.insert(pid) }
 }
 
 private func retainAgentLock(_ root: String) throws -> Int32 {

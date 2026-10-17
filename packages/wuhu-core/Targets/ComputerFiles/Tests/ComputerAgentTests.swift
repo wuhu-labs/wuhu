@@ -5,10 +5,12 @@
 #endif
 @testable import ComputerFiles
 import Fetch
+import FileSearch
 import enum JSONValue.JSONValue
 import OperationClient
 import OperationProtocol
 import OperationRuntime
+import Scratch
 import Synchronization
 import Testing
 
@@ -19,7 +21,7 @@ private struct EchoKind: OperationKind {
 }
 
 private final class FakeExternal: Sendable {
-  let usage = Mutex((receipts: 0, bufferBytes: 0))
+  let usage = Mutex(ExternalUsage())
   let owned = Mutex<Set<UUID>>([])
   let left = Mutex(false)
   var kind: ExternalKind { kind() }
@@ -50,25 +52,17 @@ private final class FakeExternal: Sendable {
   @Test func extraKindsAndInjectedFilesShareOneMachine() async throws {
     let files = FakeFiles(data: Data("injected".utf8))
     let agent = try ComputerAgent(machine: "disk", files: files.system, kinds: [AnyOperationKind(EchoKind())])
-    let client = try OperationClient(origin: URL(string: "https://test.invalid")!, fetch: FetchClient { try await agent.handler($0) }, store: MemoryOperationStore(), abort: { _ in }, trace: { _ in })
+    let operations = try machineOperations(agent.handler)
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { await agent.run() }
       defer { group.cancelAll() }
-      let description = try await client.describe("disk")
-      #expect(description.kinds.map(\.name) == ["read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
-      let echo = try await client.start("disk", request: .init(kind: "echo.v1", input: ["text": "hi"]), owner: .init(scope: "test", key: "echo"))
-      var snapshot = try await client.poll(echo, holdMs: 1000)
-      while snapshot.verdict == nil { snapshot = try await client.poll(echo, holdMs: 1000) }
-      #expect(snapshot.verdict?.result == "hi")
-      let read = try await client.start("disk", request: .init(kind: "read.v1", input: ["path": "/file"]), owner: .init(scope: "test", key: "read"))
-      var bytes = Data()
-      while true {
-        snapshot = try await client.poll(read, channel: "data", holdMs: 10)
-        for payload in try await client.takeOutput(read, channel: "data") { bytes.append(payload.data ?? Data()) }
-        if snapshot.channelEnd { break }
-      }
-      #expect(bytes == Data("injected".utf8))
-      await agent.shutdown()
+      let description = try await operations.describe("disk")
+      #expect(description.kinds.map(\.name) == ["read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
+      let echo = try await operations.open(.init(scope: "test", key: "echo"), machine: "disk", start: .init(kind: "echo.v1", input: ["text": "hi"]))
+      #expect(try await echo.drain().end.verdict?.result == "hi")
+      let read = try await operations.open(.init(scope: "test", key: "read"), machine: "disk", start: .init(kind: "read.v1", input: ["path": "/file"]))
+      #expect(try await read.drain().data == Data("injected".utf8))
+      await operations.shutdown(); await agent.shutdown()
     }
   }
 
@@ -76,7 +70,7 @@ private final class FakeExternal: Sendable {
     let external = FakeExternal()
     let agent = try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind())], external: external.kind)
     let description = try await agent.handler(Request(url: URL(string: base)!)).body.json(MachineDescription.self)
-    #expect(description.kinds.map(\.name) == ["external.v1", "read.v1", "find.v1", "grep.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
+    #expect(description.kinds.map(\.name) == ["external.v1", "read.v1", "search.v1", "stat.v1", "list.v1", "write.v1", "mkdir.v1", "remove.v1", "move.v1", "echo.v1"])
     let id = UUID()
     #expect(try await start(agent, id, kind: "external.v1", input: [:]).body.json([String: String].self) == ["routed": "external"])
     let poll = try await agent.handler(Request(url: URL(string: base + "/operations/" + id.uuidString)!))
@@ -122,17 +116,88 @@ private final class FakeExternal: Sendable {
   @Test func externalUsageMustBeNonnegativeAndCannotOverflowTheBudget() async throws {
     let external = FakeExternal()
     let agent = try ComputerAgent(machine: "disk", kinds: [AnyOperationKind(EchoKind())], external: external.kind)
-    for usage in [(receipts: -1, bufferBytes: 0), (receipts: 0, bufferBytes: -OperationLimits().bufferBytes)] {
+    for usage in [ExternalUsage(receipts: -1), ExternalUsage(bufferBytes: -OperationLimits().bufferBytes), ExternalUsage(operations: [UUID(): -1])] {
       external.usage.withLock { $0 = usage }
       #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
       #expect(try await agent.handler(Request(url: URL(string: base)!)).body.json(ErrorEnvelope.self).error.code == .supervisorUnavailable)
     }
-    for usage in [(receipts: Int.max, bufferBytes: 0), (receipts: 0, bufferBytes: Int.max)] {
+    for usage in [ExternalUsage(receipts: Int.max), ExternalUsage(bufferBytes: Int.max), ExternalUsage(operations: [UUID(): Int.max, UUID(): Int.max])] {
       external.usage.withLock { $0 = usage }
       #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error.code == .capacityExceeded)
     }
-    external.usage.withLock { $0 = (0, 0) }
+    external.usage.withLock { $0 = ExternalUsage() }
     #expect(try await start(agent, kind: "echo.v1", input: ["text": "x"]).status.code == 201)
+    await agent.shutdown()
+  }
+
+  /// Concurrent starts see each other's reservations, and a start the backend already routes is charged once.
+  @Test func concurrentExternalStartsShareOneBudget() async throws {
+    let reservation = OperationLimits().bufferBytes * 2 / 5
+    let routed = Mutex<Set<UUID>>([])
+    let held = Mutex(true)
+    let descriptor = KindDescriptor("external.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
+    let external = ExternalKind(
+      descriptor: descriptor, reservation: reservation,
+      handler: { request in
+        routed.withLock { _ = $0.insert(UUID(uuidString: request.url.lastPathComponent)!) }
+        while held.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+        return try .json(["routed": "external"], status: .created)
+      },
+      usage: { ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) })) },
+      owns: { id in routed.withLock { $0.contains(id) } },
+      leave: {}, departure: { .drained },
+    )
+    let agent = try ComputerAgent(machine: "disk", external: external)
+    let first = Task { try await start(agent, kind: "external.v1", input: [:]) }
+    while routed.withLock({ $0.isEmpty }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    // The first is both pending and routed: charged once, so the second fits; a third does not.
+    let second = Task { try await start(agent, kind: "external.v1", input: [:]) }
+    while routed.withLock({ $0.count < 2 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    let third = try await start(agent, kind: "external.v1", input: [:]).body.json(ErrorEnvelope.self).error
+    #expect(third.code == .capacityExceeded)
+    #expect(third.message.hasPrefix("bufferBytes "))
+    held.withLock { $0 = false }
+    #expect(try await first.value.status.code == 201)
+    #expect(try await second.value.status.code == 201)
+    await agent.shutdown()
+  }
+
+  /// Starts that arrive while the usage probe is parked are each checked after it, against the starts already admitted: the
+  /// ones that fit are admitted, and only the one past the budget is refused.
+  @Test func startsDuringASlowUsageProbeAreRefusedOnlyPastTheBudget() async throws {
+    let reservation = OperationLimits().bufferBytes * 2 / 5
+    let routed = Mutex<Set<UUID>>([])
+    let parked = Mutex(0)
+    let gate = Mutex(true)
+    let descriptor = KindDescriptor("external.v1", inputSchema: ["type": "object"], resultSchema: ["type": "object"])
+    let external = ExternalKind(
+      descriptor: descriptor, reservation: reservation,
+      handler: { request in
+        routed.withLock { _ = $0.insert(UUID(uuidString: request.url.lastPathComponent)!) }
+        return try .json(["routed": "external"], status: .created)
+      },
+      usage: {
+        parked.withLock { $0 += 1 }
+        while gate.withLock({ $0 }) { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+        return ExternalUsage(operations: Dictionary(uniqueKeysWithValues: routed.withLock { $0 }.map { ($0, reservation) }))
+      },
+      owns: { id in routed.withLock { $0.contains(id) } },
+      leave: {}, departure: { .drained },
+    )
+    let agent = try ComputerAgent(machine: "disk", external: external)
+    let starts = (0 ..< 3).map { _ in Task { try await start(agent, kind: "external.v1", input: [:]) } }
+    while parked.withLock({ $0 }) < 3 { try await ContinuousClock().sleep(for: .milliseconds(1)) }
+    gate.withLock { $0 = false }
+    var admitted = 0
+    for start in starts {
+      let response = try await start.value
+      if response.status.code == 201 { admitted += 1; continue }
+      let refusal = try await response.body.json(ErrorEnvelope.self).error
+      #expect(refusal.code == .capacityExceeded)
+      #expect(refusal.message.hasPrefix("bufferBytes "))
+    }
+    #expect(admitted == 2)
+    #expect(routed.withLock { $0.count } == 2)
     await agent.shutdown()
   }
 
@@ -171,5 +236,51 @@ extension ComputerAgentTests {
     #expect(starts.first?.input == ["text": "x"])
     #expect(starts.map(\.caller) == [caller, nil])
     await agent.shutdown()
+  }
+}
+
+extension ComputerAgentTests {
+  @Test func anAbandonedDiskEffectHoldsAReceiptUntilItEnds() async throws {
+    let folder = try ScratchFolder("computer-agent-abandoned-effect")
+    let file = folder.url.appending(path: "stuck.txt")
+    try Data("needle\n".utf8).write(to: file)
+    let disk = FileOperationTests.StalledDisk(file.path)
+    defer { disk.release() }
+    let external = FakeExternal()
+    let agent = try ComputerAgent(machine: "disk", files: disk.files, kinds: [AnyOperationKind(EchoKind())], external: external.kind)
+    // The driver sends the terminal acknowledgement after the verdict; the agent releases the stopped operation on the last one.
+    let (released, releasedNow) = AsyncStream<Void>.makeStream()
+    let operations = try machineOperations { request in
+      let response = try await agent.handler(request)
+      if request.url.query?.contains("terminalAck") == true, await !agent.runtime.hasRetainedOperations() { releasedNow.yield() }
+      return response
+    }
+    func usedReceipts() async throws -> Int? {
+      let refusal = try await start(agent, kind: "echo.v1", input: ["text": "x"]).body.json(ErrorEnvelope.self).error
+      switch refusal.details?.object?["used"] {
+      case let .integer(used)?: return used
+      case let .number(used)?: return Int(used)
+      default: return nil
+      }
+    }
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await agent.run() }
+      defer { group.cancelAll() }
+      _ = try await operations.describe("disk")
+      let query = SearchQuery(mode: .grep, pattern: "needle", root: folder.url.path, scope: "test")
+      let operation = try await operations.open(.init(scope: "test", key: "abandoned"), machine: "disk", start: .init(kind: "search.v1", input: json(query)))
+      for await _ in disk.entered {}
+      try await operation.stop("testStop")
+      _ = try await operation.drain()
+      for await _ in released { break }
+      external.usage.withLock { $0.receipts = OperationLimits().receipts }
+      let hung = try #require(try await usedReceipts())
+      disk.release()
+      let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+      var used = hung
+      while used == hung, ContinuousClock().now < deadline { used = try #require(try await usedReceipts()) }
+      #expect(used == hung - 1)
+      await operations.shutdown(); await agent.shutdown()
+    }
   }
 }

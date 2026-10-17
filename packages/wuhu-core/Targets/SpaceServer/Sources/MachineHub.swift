@@ -6,6 +6,8 @@
 import enum Credentials.SecretError
 import struct Credentials.SpaceSecretStores
 import Dependencies
+import struct FileSearch.SearchPage
+import struct FileSearch.SearchQuery
 import JSONValue
 import Logging
 import MachineChannel
@@ -21,6 +23,8 @@ public enum MachineHubError: Error, Equatable, Sendable {
   case execNotFound(ExecID)
   case severed
   case frameTooLarge
+  /// Search runs only over machine v2 (`search.v1`); a v1 machine refuses it.
+  case searchNeedsV2(MachineID)
 }
 
 public actor MachineHub {
@@ -132,7 +136,7 @@ public actor MachineHub {
 
   public func run() async {
     for record in (try? await space.liveExecs()) ?? [] where callerLegs[record.id] == nil {
-      if (try? await v2Group(record.machine)) != nil { try? await space.finishExec(record.id, .machineLost); continue }
+      if (try? await v2Group(record.machine)) != nil { await v2?.noteMinted(record, space: space); continue }
       remember(record)
       timersContinuation.yield((callerGrace, .callerGone(record.id, generation: callerGenerations[record.id, default: 0])))
     }
@@ -267,19 +271,16 @@ public actor MachineHub {
   public func vfs(machine: MachineID, op: VFSOp, caller: SessionID? = nil) async throws -> VFSResult {
     if let group = try await v2Group(machine) {
       guard let v2 else { throw OperationError(.machineUnavailable) }
-      return try await v2.client(group: group).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"), caller: space.startCaller(caller))
+      return try await v2.operations(group: group).vfs(machine: machine.rawValue, op: op, owner: .init(scope: "machine-tools/" + UUID().uuidString, key: "operation"), caller: space.startCaller(caller))
     }
     let response: VFSResponse = try await roundTrip(machine, .vfsRequest) { VFSRequest(id: $0, op: op) }
     return response.result
   }
 
-  public func search(machine: MachineID, query: SearchQuery, caller: SessionID? = nil) async throws -> SearchResult {
-    if let group = try await v2Group(machine) {
-      guard let v2 else { throw OperationError(.machineUnavailable) }
-      return try await v2.client(group: group).search(machine: machine.rawValue, query: query, caller: space.startCaller(caller))
-    }
-    let response: SearchResponse = try await roundTrip(machine, .searchRequest) { SearchRequest(id: $0, query: query) }
-    return response.result
+  public func search(machine: MachineID, query: SearchQuery, caller: SessionID? = nil) async throws -> SearchPage {
+    guard let group = try await v2Group(machine) else { throw MachineHubError.searchNeedsV2(machine) }
+    guard let v2 else { throw OperationError(.machineUnavailable) }
+    return try await v2.operations(group: group).search(machine: machine.rawValue, query: query, caller: space.startCaller(caller))
   }
 
   private func roundTrip<Response: Decodable>(

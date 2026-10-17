@@ -54,6 +54,26 @@ struct MachineV2Home: Sendable {
     guard unlink(revokedMarker.path) == 0 || errno == ENOENT else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot clear revocation: \(revokedMarker.path)") }
   }
 
+  /// Written once a local leave is acknowledged; the next run stays off the network until `join` or `install` clears it.
+  var leftMarker: URL { directory.appendingPathComponent("left") }
+
+  var hasLeft: Bool {
+    var state = stat()
+    return lstat(leftMarker.path, &state) == 0 && state.st_mode & S_IFMT == S_IFREG && state.st_uid == getuid()
+  }
+
+  func markLeft() throws {
+    try validate()
+    let descriptor = open(leftMarker.path, O_CREAT | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    guard descriptor >= 0 else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot record leave: \(leftMarker.path)") }
+    guard fsync(descriptor) == 0 else { close(descriptor); throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot record leave: \(leftMarker.path)") }
+    close(descriptor)
+  }
+
+  func clearLeft() throws {
+    guard unlink(leftMarker.path) == 0 || errno == ENOENT else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot clear leave: \(leftMarker.path)") }
+  }
+
   static func locate(environment: [String: String], machine: String) throws -> Self {
     guard let home = environment["HOME"], home.hasPrefix("/") else { throw MachineV2RuntimeError(.invalidConfiguration, message: "HOME must be absolute") }
     return Self(root: URL(fileURLWithPath: home).appendingPathComponent(".wuhu/machine-v2"), machine: machine)
@@ -111,6 +131,7 @@ struct MachineV2Home: Sendable {
     try Ed25519KeyFile.write(key, to: keyFile)
     try JSONEncoder().encode(config).write(to: configFile, options: .atomic)
     guard chmod(configFile.path, 0o600) == 0 else { throw MachineV2RuntimeError(.invalidConfiguration) }
+    try clearLeft()
   }
 
   private func privateFile(_ file: URL) throws {

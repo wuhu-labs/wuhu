@@ -76,7 +76,12 @@ struct ExecKind: OperationKind {
     var escalation: Duration?
     var result: JSONValue?
     var reaped = false
-    defer { if !reaped { _ = exec_signal_group(child.pid, SIGKILL); _ = exec_reap(child.pid) } }
+    defer {
+      if !reaped { _ = exec_signal_group(child.pid, SIGKILL); _ = exec_reap(child.pid) }
+      // Dropped mid-tail: the group's survivors (a background job holding the pipes) go with it. The group cannot have been
+      // reused while they live.
+      else if !pipes.allSatisfy(\.finished) { _ = exec_signal_group(child.pid, SIGKILL) }
+    }
     while true {
       if result == nil {
         var tag: Int32 = 0; var value: Int32 = 0

@@ -17,8 +17,10 @@ struct SendState {
   var exit: ExitStatus?
   private var waiters: [AsyncStream<Void>.Continuation] = []
 
-  init(window: Int) {
+  init(window: Int, cursor: Int = 0) {
     self.window = window
+    nextCursor = cursor
+    ackedThrough = cursor
   }
 
   var room: Int { window - (nextCursor - ackedThrough) }

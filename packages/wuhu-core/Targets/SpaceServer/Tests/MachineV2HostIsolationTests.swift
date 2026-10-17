@@ -14,7 +14,7 @@ import Serve
 import Testing
 
 @Suite struct MachineV2HostIsolationTests {
-  enum Damage: CaseIterable, Sendable { case missingKey, corruptKey, corruptRecord }
+  enum Damage: CaseIterable, Sendable { case missingKey, corruptKey }
 
   @Test(arguments: Damage.allCases) func unusableV2StateDoesNotPreventOpeningTheSpace(_ damage: Damage) async throws {
     let folder = try ScratchFolder("machine-v2-host-isolation")
@@ -30,10 +30,6 @@ import Testing
     switch damage {
     case .missingKey: try FileManager.default.removeItem(at: keyFile)
     case .corruptKey: try Data([42]).write(to: keyFile)
-    case .corruptRecord:
-      try await first.space.writer.write { db in
-        try db.execute(sql: "UPDATE machine_v2_operations SET record = ? WHERE id = ?", arguments: ["corrupt", record.id.uuidString])
-      }
     }
     let before = try? Data(contentsOf: keyFile)
     let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
@@ -53,11 +49,38 @@ import Testing
     }
     let hub = MachineV2Hub(space: reopened.space)
     let service = await MachineV2Service.open(space: reopened.space, hub: hub, directory: state)
-    do { _ = try await service.client(group: .shared); Issue.record("unavailable v2 script client admitted") }
+    do { _ = try await service.operations(group: .shared); Issue.record("unavailable v2 script client admitted") }
     catch let error as OperationError { #expect(error.code == .storeUnavailable) }
     do { _ = try await hub.fetch(Request(url: URL(string: "https://isolated.test/machine/v2/machines/offline")!), usableFrom: .shared); Issue.record("unavailable v2 route admitted") }
     catch let error as OperationError { #expect(error.code == .storeUnavailable) }
     #expect((try? Data(contentsOf: keyFile)) == before)
+    await service.shutdown()
+    try await reopened.shutdown()
+  }
+
+  /// One record that does not open is that record's damage, not the store's: machine v2 stays available, and boot sets the
+  /// record aside instead of resuming it.
+  @Test func aCorruptRecordLeavesMachineV2Available() async throws {
+    let folder = try ScratchFolder("machine-v2-corrupt-record")
+    let state = folder.url.appendingPathComponent("machine-v2")
+    let deployment = DeploymentRecord(origin: "https://isolated.test", tlsFingerprint: "test", certificate: .provided)
+    let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    let key = try await MachineV2KeyStore.loadOrCreate(directory: state, space: first.space)
+    let store = try await first.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
+    let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
+    _ = try await store.claim(.init(scope: "old-script", key: "one"), record: record)
+    try await first.shutdown()
+    try await first.space.writer.write { db in
+      try db.execute(sql: "UPDATE machine_v2_operations SET record = ? WHERE id = ?", arguments: ["corrupt", record.id.uuidString])
+    }
+    let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    guard case let .response(response) = try await reopened.handler(Request(url: URL(string: "https://isolated.test/v1/machine-v2/challenge")!)) else {
+      Issue.record("challenge upgraded"); return
+    }
+    #expect(response.status != .serviceUnavailable)
+    let service = await MachineV2Service.open(space: reopened.space, hub: MachineV2Hub(space: reopened.space), directory: state)
+    _ = try await service.operations(group: .shared)
+    #expect(try await reopened.space.machineV2RecoveryGroups().isEmpty)
     await service.shutdown()
     try await reopened.shutdown()
   }

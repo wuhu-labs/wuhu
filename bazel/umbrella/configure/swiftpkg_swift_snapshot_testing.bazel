@@ -13,5 +13,9 @@ swift_deps.configure_package(
     patches = [
         "//bazel/patches:snapshot-testing-visionos-image.patch",
         "//bazel/patches:snapshot-testing-coreimage-extent.patch",
+        # Compare/diff UIKit and AppKit inputs in 8-bit sRGB. Deliberately omit #1119's gamma change.
+        # https://github.com/pointfreeco/swift-snapshot-testing/issues/1117
+        # https://github.com/pointfreeco/swift-snapshot-testing/pull/1119
+        "//bazel/patches:snapshot-testing-image-format.patch",
     ],
 )

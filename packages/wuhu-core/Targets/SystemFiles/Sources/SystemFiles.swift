@@ -96,6 +96,10 @@ struct SystemVFS: SpaceVFS {
     return (Self.token, data)
   }
 
+  func reader(_ path: String) async throws -> any SpaceFileReader {
+    SpaceDataReader(try await read(path).1)
+  }
+
   func write(_ path: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken {
     throw SpaceError.systemReadOnly(SystemFiles.address(path))
   }

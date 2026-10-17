@@ -50,11 +50,5 @@ public enum MachineContractSchemas {
     ("VFSRequest", VFSRequest.jsonSchema),
     ("VFSResult", VFSResult.jsonSchema),
     ("VFSResponse", VFSResponse.jsonSchema),
-
-    ("SearchMatch", SearchMatch.jsonSchema),
-    ("SearchQuery", SearchQuery.jsonSchema),
-    ("SearchRequest", SearchRequest.jsonSchema),
-    ("SearchResult", SearchResult.jsonSchema),
-    ("SearchResponse", SearchResponse.jsonSchema),
   ]
 }

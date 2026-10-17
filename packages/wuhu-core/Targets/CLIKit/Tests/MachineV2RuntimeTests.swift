@@ -284,6 +284,23 @@ private actor EnrollmentEffects {
     try await MachineV2Runtime.leaveForUninstall(home: home)
   }
 
+  /// A leave outlives the agent that acknowledged it: with it recorded, leaving again answers at once without an agent, and
+  /// joining again clears it.
+  @Test func aRecordedLeaveHoldsUntilTheMachineJoinsAgain() async throws {
+    let fixture = try fixture(); defer { fixture.scratch.remove() }
+    let home = MachineV2Home(root: fixture.root, machine: "test")
+    try home.prepare()
+    #expect(!home.hasLeft)
+    try home.markLeft()
+    #expect(home.hasLeft)
+    try await MachineV2Runtime.leave(home: home)
+    try await MachineV2Runtime.leaveForUninstall(home: home)
+    try home.save(.init(machine: "test", name: "box-v2", server: "https://example.test"), key: .init())
+    #expect(!home.hasLeft)
+    do { try await MachineV2Runtime.leave(home: home); Issue.record("missing agent drained") }
+    catch let error as MachineV2RuntimeError { #expect(error.code == .drainFailed) }
+  }
+
   @Test func refusedV1TokenNeverWritesEitherMachineHome() async throws {
     let fixture = try fixture(); defer { fixture.scratch.remove() }; let root = fixture.root
     let effects = EnrollmentEffects(refuseV2: true)

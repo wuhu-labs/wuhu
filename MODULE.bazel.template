@@ -46,6 +46,7 @@ single_version_override(
     patch_strip = 1,
     patches = [
         "//bazel/patches:rules-swift-swift-testing-quiet.patch",
+        "//bazel/patches:rules-swift-linux-toolchain-watch.patch",
         "//bazel/patches:rules-swift-test-runner-completion.patch",
         "//bazel/patches:rules-swift-stalled-test-watchdog.patch",
     ],

@@ -170,9 +170,16 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     guard let credential = machineV2Credential(request, challenges: challenges) else {
       return .response(errorResponse(.unauthorized, code: "keyInvalid", message: "Machine v2 key handshake rejected"))
     }
+    var streams = TunnelLimits().streams
+    if let advertised = request.headers[MachineV2Connect.tunnelStreamsHeader] {
+      guard let value = Int(advertised), (1 ... MachineV2Connect.tunnelStreams).contains(value) else {
+        return .response(errorResponse(.badRequest, code: "invalidTunnelStreams", message: "Tunnel streams must be 1 through \(MachineV2Connect.tunnelStreams)"))
+      }
+      streams = value
+    }
     if let refusal = await authorizationRefusal(hub, credential, message: "Credential cannot serve the addressed machines") { return .response(refusal) }
-    return .boundedWebSocket(limits: .init(), subprotocol: TunnelTransport.webSocketSubprotocol) { transport in
-      await hub.run(credential, transport: transport)
+    return .boundedWebSocket(limits: .init(), subprotocol: TunnelTransport.webSocketSubprotocol) { [streams] transport in
+      await hub.run(credential, transport: transport, streams: streams)
     }
   }
 }

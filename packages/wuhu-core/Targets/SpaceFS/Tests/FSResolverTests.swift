@@ -5,6 +5,7 @@ import Testing
 private struct TaggedVFS: SpaceVFS {
   let id: Int
   func read(_: String) async throws -> (VersionToken, Data) { throw CancellationError() }
+  func reader(_: String) async throws -> any SpaceFileReader { throw CancellationError() }
   func write(_: String, _: Data, ifMatch _: VersionToken?) async throws -> VersionToken { throw CancellationError() }
   func delete(_: String, ifMatch _: VersionToken?) async throws { throw CancellationError() }
   func move(_: String, to _: String) async throws { throw CancellationError() }

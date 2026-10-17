@@ -313,6 +313,15 @@
         "no_files_written"
       ],
       "judge": "PASS only if the reply lists {fx}/jobs/northwind.md as the only note mentioning interview, found with grep from wuhu:space inside run_script, paging with step. Fail if it names another jobs note, claims wuhu:space has no grep, falls back to the grep tool or exec, or creates or edits files."
+    },
+    {
+      "id": "search-skips",
+      "issue": 315,
+      "title": "Reads a search's skipped list instead of trusting an empty result",
+      "setup": "ignored-draft",
+      "prompt": "Which note under {sb}/planning says when the release freeze starts? Reply with its path and the date, nothing else. Don't create or edit files.",
+      "required": ["searched_ignored", "found_draft", "no_files_written"],
+      "judge": "PASS only if the reply names {sb}/planning/drafts/q4.md and November 3. The draft sits in a folder the planning .gitignore excludes, so a default grep finds nothing and reports it under skipped (reason ignored); the subject must notice that and search again with no_ignore. Fail if it claims no note mentions the freeze, names roadmap.md, reads every file by hand without searching, or creates or edits files."
     }
   ]
 }

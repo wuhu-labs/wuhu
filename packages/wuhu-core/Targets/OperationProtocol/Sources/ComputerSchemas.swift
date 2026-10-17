@@ -24,33 +24,22 @@ public enum ComputerKindSchemas {
     resultSchema: object(["version": string, "bytes": offset, "reachedEOF": ["type": "boolean"]], required: ["version", "bytes", "reachedEOF"]),
     outputChannels: [.init("data")],
   )
-  public static let find = KindDescriptor(
-    "find.v1",
-    inputSchema:
-    object([
-      "root": ["type": "string", "pattern": "^/"],
-      "glob": string,
-      "includeSymlinks": ["type": "boolean"],
-      "entryLimit": positive, "matchLimit": positive, "resumeEntries": ["type": "integer", "minimum": 0], "resumeLine": positive,
-    ], required: ["root", "glob", "includeSymlinks"]),
-    resultSchema: counts,
-    outputChannels: [.init("entries", unit: .records, schema: object(["path": string, "kind": string], required: ["path", "kind"]))],
-  )
-  public static let grep = KindDescriptor(
-    "grep.v1",
-    inputSchema:
-    object(
-      [
-        "root": ["type": "string", "pattern": "^/"],
-        "pattern": string,
-        "dialect": ["enum": ["literal", "regex"]],
-        "maxLineBytes": ["type": "integer", "minimum": 1, "maximum": 65536],
-        "entryLimit": positive, "matchLimit": positive, "resumeEntries": ["type": "integer", "minimum": 0], "resumeLine": positive,
-      ],
-      required: ["root", "pattern", "dialect", "maxLineBytes"],
-    ),
-    resultSchema: counts,
-    outputChannels: [.init("matches", unit: .records, schema: object(["path": string, "line": offset, "text": string], required: ["path", "line", "text"]))],
+  /// One page of a find (glob over paths) or grep (ICU regex over lines) under `root`; the result is the whole page. A cursor continues only under the `scope` (the caller's name for this machine) that made it.
+  public static let search = KindDescriptor(
+    "search.v1",
+    inputSchema: object([
+      "mode": ["enum": ["find", "grep"]], "pattern": string, "root": ["type": "string", "pattern": "^/"], "scope": string,
+      "hidden": ["type": "boolean"], "noIgnore": ["type": "boolean"], "limit": ["type": "integer"], "step": string,
+    ], required: ["mode", "pattern", "root", "scope"]),
+    resultSchema: object([
+      "hits": ["type": "array", "items": object(["path": string, "line": positive, "text": string], required: ["path"])],
+      "cursor": string,
+      "scanned": ["type": "integer", "minimum": 0],
+      "skipped": ["type": "array", "items": object([
+        "reason": ["enum": ["hidden", "ignored", "binary", "longLine", "unreadable"]], "count": positive, "example": string,
+      ], required: ["reason", "count", "example"])],
+    ], required: ["hits", "scanned", "skipped"]),
+    deliveryPolicy: .boundedResult,
   )
   public static let stat = KindDescriptor("stat.v1", inputSchema: pathInput, resultSchema: entry, deliveryPolicy: .boundedResult)
   public static let list = KindDescriptor("list.v1", inputSchema: pathInput, resultSchema: object(["count": offset], required: ["count"]), outputChannels: [.init("entries", unit: .records, schema: entry)])
@@ -64,7 +53,6 @@ public enum ComputerKindSchemas {
   private static let strings: JSONValue = ["type": "object", "additionalProperties": ["type": "string"]]
   private static let offset: JSONValue = ["type": "string", "pattern": "^[0-9]+$"]
   private static let positive: JSONValue = ["type": "integer", "minimum": 1]
-  private static let counts = object(["nextEntry": ["type": "integer", "minimum": 0], "nextLine": positive, "scanned": offset, "matched": offset, "skipped": ["type": "object", "additionalProperties": ["type": "integer", "minimum": 0]]], required: ["scanned", "matched", "skipped"])
   private static func object(_ properties: [String: JSONValue], required: [String]) -> JSONValue {
     [
       "type": "object",

@@ -1,6 +1,6 @@
 # KeelObjectStore
 
-Thin object-storage seam: put / get / head / delete / prefix-list
+Thin object-storage seam: put / get / ranged get / head / delete / prefix-list
 over opaque, slash-delimited keys. Two backends implement one `ObjectStore`
 protocol; both pass the `ObjectStoreContract` suite in this target's tests.
 
@@ -54,6 +54,20 @@ error code inside it: a genuinely missing key (`NoSuchKey`) and a misconfigured
 or absent bucket (`NoSuchBucket`) are indistinguishable to callers here. Verify
 the bucket/endpoint at configuration time; do not read a `notFound` as proof the
 bucket exists.
+
+## Ranged get
+
+`get(key, bytes:)` returns the bytes at a range of offsets, cut at the object's
+end, empty past it or for an empty range; a missing key is `notFound` either way.
+S3 sends `Range: bytes=first-last` and reads only a 206 whose `Content-Range` is
+that range (or that range cut at the stated total), inside its stated total; a
+200, another range, or a body longer than its `Content-Range` is
+`rangeNotHonored`, never read as the range. A refused answer's body is not read
+at all: the response is dropped, which cancels it at the transport. The file
+system store reads no more than the file holds, however large the range. A 416
+is a range past the end. An empty range is a HEAD. Both backends pass the
+contract's `rangedGet` case; S3's also runs against an in-memory fake, which
+misbehaves to prove the refusals.
 
 ## Addressing
 

@@ -438,7 +438,7 @@ import Testing
   @Test func aSessionsV2ExecRefusesEveryOtherActorsDial() async throws {
     try await withSessionDeps {
       try await world { w in
-        await w.harness.hub.configureV2(MachineV2Service(hub: MachineV2Hub(space: w.harness.space), coordinator: nil, failure: nil))
+        await w.harness.hub.configureV2(MachineV2Service(space: w.harness.space, hub: MachineV2Hub(space: w.harness.space), key: nil, failure: nil))
         let (machine, _) = try await w.harness.space.addMachineV2(name: "common-v2", group: .shared)
         let exec = try await w.harness.space.mintExec(machine: machine.id, caller: w.s.rawValue, group: .shared)
         #expect(try await dialRefusal(w, exec.id, bearer: w.bob) == .conflict)

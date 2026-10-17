@@ -60,6 +60,66 @@ public struct S3ObjectStore: ObjectStore {
     }
   }
 
+  /// A `Range` GET. Only a 206 whose `Content-Range` is the range asked for
+  /// (cut at the object's end) is read; a 200 or any other range is
+  /// ``ObjectStoreError/rangeNotHonored(_:_:)``. A 416 is a range past the
+  /// end. An empty range is a HEAD, so a missing key still fails.
+  ///
+  /// A refused answer's body is never read: the response is dropped, which
+  /// cancels it at the transport, so a server sending the whole object (or
+  /// never ending) costs nothing past its headers.
+  public func get(_ key: ObjectKey, bytes range: Range<Int64>) async throws -> Data {
+    precondition(range.lowerBound >= 0, "a byte range starts at a nonnegative offset")
+    guard !range.isEmpty else {
+      guard try await self.head(key) != nil else { throw ObjectStoreError.notFound(key) }
+      return Data()
+    }
+    var request = try self.makeRequest(
+      method: .get,
+      rawPath: self.configuration.rawKeyPath(key),
+      queryItems: [],
+      contentType: nil,
+      payloadHash: SigV4.emptyPayloadHash,
+      body: nil,
+    )
+    request.headers.set("range", "bytes=\(range.lowerBound)-\(range.upperBound - 1)")
+    let response = try await self.fetch(request)
+    let contentRange = response.headers[.contentRange]
+    switch response.status.code {
+    case 206:
+      guard let served = contentRange.flatMap(ContentRange.init), let first = served.first, let last = served.last,
+            first == range.lowerBound, last < range.upperBound, served.total.map({ last < $0 }) ?? true,
+            last == range.upperBound - 1 || served.total.map({ last == $0 - 1 }) == true
+      else {
+        throw ObjectStoreError.rangeNotHonored(key, "206 with Content-Range \(contentRange ?? "missing")")
+      }
+      let expected = Int(last - first + 1)
+      let data: Data
+      do {
+        data = try await response.body.bytes(upTo: expected)
+      } catch FetchError.bodyLimitExceeded {
+        throw ObjectStoreError.rangeNotHonored(key, "a body longer than Content-Range \(contentRange ?? "")")
+      }
+      guard data.count == expected else {
+        throw ObjectStoreError.rangeNotHonored(key, "\(data.count) bytes for Content-Range \(contentRange ?? "")")
+      }
+      return data
+    case 416:
+      try? await response.body.discard()
+      if let total = contentRange.flatMap(ContentRange.init)?.total, total > range.lowerBound {
+        throw ObjectStoreError.rangeNotHonored(key, "416 for an object of \(total) bytes")
+      }
+      return Data()
+    case 404:
+      try? await response.body.discard()
+      throw ObjectStoreError.notFound(key)
+    case 200 ... 299:
+      throw ObjectStoreError.rangeNotHonored(key, "status \(response.status.code)")
+    default:
+      throw await self.statusError(response)
+    }
+  }
+
   public func head(_ key: ObjectKey) async throws -> ObjectMetadata? {
     let request = try self.makeRequest(
       method: .head,
@@ -200,6 +260,32 @@ public struct S3ObjectStore: ObjectStore {
     }
 
     return Request(url: url, method: method, headers: headers, body: body)
+  }
+
+  /// `Content-Range: bytes first-last/total` (RFC 9110 14.4): `first`/`last`
+  /// absent for `bytes */total`, `total` absent for `/*`.
+  struct ContentRange: Equatable {
+    var first: Int64?
+    var last: Int64?
+    var total: Int64?
+
+    init?(_ value: String) {
+      guard value.hasPrefix("bytes ") else { return nil }
+      let parts = value.dropFirst("bytes ".count).split(separator: "/", omittingEmptySubsequences: false)
+      guard parts.count == 2 else { return nil }
+      if parts[1] != "*" {
+        guard let total = Int64(parts[1]), total >= 0 else { return nil }
+        self.total = total
+      }
+      if parts[0] != "*" {
+        let bounds = parts[0].split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2, let first = Int64(bounds[0]), let last = Int64(bounds[1]), first >= 0, first <= last else { return nil }
+        self.first = first
+        self.last = last
+      } else if total == nil {
+        return nil
+      }
+    }
   }
 
   private func metadata(from response: Response) -> ObjectMetadata {

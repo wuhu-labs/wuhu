@@ -125,8 +125,10 @@ struct OperationState: Sendable {
       + outputs.values.reduce(0) { $0 + (!$1.end || $1.payload.count > 0 ? $1.descriptor.windowBytes : 0) }
   }
 
+  /// A request inside the lease extends it; one after the lease lapsed finds it expired, whether or not a sweep ran since.
   mutating func renew(now: Duration, lease: Duration) {
     lastRequest = now
+    expire(now: now)
     if verdict == nil && stopReason == nil { leaseDeadline = now + lease }
   }
 

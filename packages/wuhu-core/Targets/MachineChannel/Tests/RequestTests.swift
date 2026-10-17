@@ -1,10 +1,11 @@
+import JSONValue
 import MachineChannel
 import MachineContract
 import Testing
 
 @Suite(.timeLimit(.minutes(2)))
 struct RequestTests {
-  @Test func vfsAndSearchRoundTrip() async throws {
+  @Test func vfsRoundTrip() async throws {
     let caller = ChannelEndpoint()
     let machine = ChannelEndpoint()
     try await withThrowingTaskGroup(of: Void.self) { group in
@@ -12,8 +13,6 @@ struct RequestTests {
       group.addTask { await serveRequestsOK(machine) }
       let stat = try await vfsRetryingUntilBound(caller, .stat(path: "/"))
       #expect(stat == .ok)
-      let found = try await caller.search(.find(glob: "*", path: nil, matchLimit: nil, entryLimit: nil, step: nil))
-      #expect(found == .paths(paths: [], cursor: nil))
       group.cancelAll()
     }
   }
@@ -104,6 +103,35 @@ struct RequestTests {
       }
       #expect(protocolError?.code == .protocolViolation)
       #expect(response == VFSResponse(id: 7, result: .ok))
+      group.cancelAll()
+    }
+  }
+
+  @Test func retiredSearchRequestGetsAnErrorResultNotSilence() async throws {
+    let machine = ChannelEndpoint()
+    let (raw, machineSide) = InMemoryTransport.pair()
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { await machine.run(machineSide) }
+      group.addTask { await serveRequestsOK(machine) }
+      let query: JSONValue = ["kind": "find", "glob": "*"]
+      try await raw.send(FrameCodec.encode(Frame(streamID: 0, opcode: .searchRequest, body: ["id": .integer(9), "query": query])))
+      var answer: JSONValue?
+      for await bytes in raw.inbound {
+        let frame = try FrameCodec.decode(bytes)
+        if frame.opcode == .searchResponse {
+          answer = frame.body
+          break
+        }
+      }
+      guard case let .object(fields)? = answer, case let .object(result)? = fields["result"],
+            case let .object(error)? = result["error"]
+      else {
+        Issue.record("no search response: \(String(describing: answer))")
+        return
+      }
+      #expect(fields["id"] == .integer(9))
+      #expect(result["kind"] == .string("error"))
+      #expect(error["code"] == .string("invalidArgument"))
       group.cancelAll()
     }
   }

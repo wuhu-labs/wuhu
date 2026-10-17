@@ -42,7 +42,7 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     public var description: String { rawValue }
     /// Whether this build defines the code.
     public var isKnown: Bool { Self.known.contains(self) }
-    public static let known: Set<Self> = [.unknownMachine, .unknownKind, .unknownOperation, .unknownChannel, .unsupportedProtocol, .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invalidInput, .inputTooLarge, .recordTooLarge, .resultTooLarge, .capacityExceeded, .invocationConflict, .machineUnavailable, .callerDeadline, .requestDeadline, .requestCancelled, .transport, .invalidResponse, .kindFailed, .machineNotAuthorized, .traceUnavailable, .storeUnavailable, .fileChanged, .unsupportedDialect, .fileUnavailable, .credentialExpired, .spawnFailed, .supervisorUnavailable, .supervisorIdentityMismatch, .invalidConfiguration, .kindUnavailable, .permissionDenied, .deviceLocked]
+    public static let known: Set<Self> = [.unknownMachine, .unknownKind, .unknownOperation, .unknownChannel, .unsupportedProtocol, .operationExists, .invalidOffset, .offsetExpired, .operationEnded, .leaving, .invalidInput, .inputTooLarge, .recordTooLarge, .resultTooLarge, .capacityExceeded, .invocationConflict, .machineUnavailable, .callerDeadline, .requestDeadline, .requestCancelled, .transport, .invalidResponse, .kindFailed, .machineNotAuthorized, .traceUnavailable, .storeUnavailable, .fileChanged, .fileUnavailable, .credentialExpired, .spawnFailed, .supervisorUnavailable, .supervisorIdentityMismatch, .invalidConfiguration, .kindUnavailable, .permissionDenied, .deviceLocked]
     public static let unknownMachine = Self("unknownMachine")
     public static let unknownKind = Self("unknownKind")
     public static let unknownOperation = Self("unknownOperation")
@@ -70,7 +70,6 @@ public struct OperationError: Error, Codable, Equatable, Sendable {
     public static let traceUnavailable = Self("traceUnavailable")
     public static let storeUnavailable = Self("storeUnavailable")
     public static let fileChanged = Self("fileChanged")
-    public static let unsupportedDialect = Self("unsupportedDialect")
     public static let fileUnavailable = Self("fileUnavailable")
     public static let credentialExpired = Self("credentialExpired")
     public static let spawnFailed = Self("spawnFailed")

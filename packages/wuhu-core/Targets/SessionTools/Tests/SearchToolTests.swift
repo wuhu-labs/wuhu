@@ -31,23 +31,26 @@ import Testing
     }
   }
 
-  @Test func findHonorsEntryLimit() async throws {
+  @Test func findSaysWhatItSkippedAndIncludesItOnRequest() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      for name in ["a", "b", "c", "d"] {
-        _ = try await space.fs(.shared).write("/src/\(name).txt", Data("x".utf8), ifMatch: nil)
-      }
+      _ = try await space.fs(.shared).write("/src/.gitignore", Data("gen/\n".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/src/a.txt", Data("x".utf8), ifMatch: nil)
+      _ = try await space.fs(.shared).write("/src/gen/b.txt", Data("x".utf8), ifMatch: nil)
       var world = ToolWorld(executor: ToolExecutor(space: space), session: try await makeSession(space))
 
-      guard case let .find(capped) = try await world.run(
-        "find", .object(["glob": "**/*.txt", "path": "/src", "entry_limit": 3]),
+      guard case let .find(plain) = try await world.run(
+        "find", .object(["glob": "**/*.txt", "path": "/src"]),
       ) else { throw Mismatch("find failed") }
-      let paths = capped.output.split(separator: "\n").map(String.init).filter { $0.hasPrefix("/") }
-      #expect(paths == ["/src/a.txt", "/src/b.txt", "/src/c.txt"], "the entry budget stops the scan")
-      #expect(capped.output.contains("step:"), "an exhausted entry budget must hand back a cursor")
+      #expect(plain.output == "/src/a.txt\nskipped 1 hidden (pass hidden: true to include), e.g. /src/.gitignore\nskipped 1 ignored by .gitignore (pass no_ignore: true to include), e.g. /src/gen")
 
-      let bad = try await world.run("find", .object(["glob": "*", "entry_limit": 0]))
-      #expect(try failureMessage(bad).contains("entryLimit"))
+      guard case let .find(all) = try await world.run(
+        "find", .object(["glob": "**/*.txt", "path": "/src", "no_ignore": true]),
+      ) else { throw Mismatch("find failed") }
+      #expect(all.output == "/src/a.txt\n/src/gen/b.txt\nskipped 1 hidden (pass hidden: true to include), e.g. /src/.gitignore")
+
+      let bad = try await world.run("find", .object(["glob": "*", "match_limit": 0]))
+      #expect(try failureMessage(bad).contains("positive"))
     }
   }
 

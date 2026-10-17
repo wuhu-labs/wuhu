@@ -33,7 +33,8 @@ public actor OperationAgent {
   var operations: [UUID: OperationState] = [:]
   var leaving = false
   var pendingDeparture: Set<UUID> = []
-  var departureEvidenceLost = false
+  /// Finished operations dropped before they settled: their departure evidence is gone.
+  public private(set) var lostOperations: Set<UUID> = []
   var closed = false
   var running = false
   let starts: AsyncStream<UUID>
@@ -116,7 +117,14 @@ public actor OperationAgent {
 
   public func departureSettled() -> Bool {
     sweep()
-    return leaving && pendingDeparture.isEmpty && !departureEvidenceLost
+    return leaving && pendingDeparture.isEmpty && lostOperations.isEmpty
+  }
+
+  /// Every retained operation, the ones among them a caller may still need (no verdict yet, or a verdict not yet settled), and
+  /// the operations dropped before they settled.
+  public func inventory() -> (retained: Set<UUID>, unsettled: Set<UUID>, lost: Set<UUID>) {
+    sweep()
+    return (Set(operations.keys), Set(operations.values.filter { !$0.departureSettled }.map(\.id)), lostOperations)
   }
 
   public func hasRetainedOperations() -> Bool { sweep(); return !operations.isEmpty }
@@ -160,7 +168,7 @@ public actor OperationAgent {
       if op.departureSettled { pendingDeparture.remove(id) }
       let expired = now - op.lastRequest >= receiptRetention
       guard op.released || expired else { continue }
-      if !op.departureSettled { departureEvidenceLost = true }
+      if !op.departureSettled { lostOperations.insert(id) }
       operations.removeValue(forKey: id)
     }
   }
@@ -292,7 +300,7 @@ public actor OperationAgent {
     try await authorize(request, machine)
     sweep()
     if path.count == 4 && request.method == .get {
-      if leaving && pendingDeparture.isEmpty && !departureEvidenceLost { throw OperationError(.leaving) }
+      if leaving && pendingDeparture.isEmpty && lostOperations.isEmpty { throw OperationError(.leaving) }
       let gates = await availability?.describe(linked: kinds.keys)
       return try .json(MachineDescription(
         instance: instance,

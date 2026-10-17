@@ -247,7 +247,12 @@ final class Gate: Sendable {
     (stream, continuation) = AsyncStream.makeStream()
   }
 
+  private let opened = Mutex(false)
+
+  var isOpen: Bool { opened.withLock { $0 } }
+
   func open() {
+    opened.withLock { $0 = true }
     continuation.finish()
   }
 

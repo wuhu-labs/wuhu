@@ -24,7 +24,8 @@ public enum ContractSchemas {
     ("StatInput", StatInput.jsonSchema),
     ("GrepInput", GrepInput.jsonSchema),
     ("GrepOutput", GrepOutput.jsonSchema),
-    ("SkippedFile", SkippedFile.jsonSchema),
+    ("SearchSkipReason", SearchSkipReason.jsonSchema),
+    ("SearchSkipped", SearchSkipped.jsonSchema),
     ("FindInput", FindInput.jsonSchema),
     ("FindOutput", FindOutput.jsonSchema),
 

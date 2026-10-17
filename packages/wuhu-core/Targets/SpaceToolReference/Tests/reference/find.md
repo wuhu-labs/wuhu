@@ -1,6 +1,6 @@
 # `find`
 
-Find paths under `path` (default `/`) matching a glob, paged like `grep`.
+Find files under `path` (default `/`) whose path relative to `path` matches a glob in the `.gitignore` dialect, passing over and paging like `grep`.
 
 `POST /v1/tools/find` takes a [`FindInput`](../../../SpaceContract/Tests/contract/find-input.schema.json) body and answers `200` with a [`FindOutput`](../../../SpaceContract/Tests/contract/find-output.schema.json).
 
@@ -11,7 +11,8 @@ Find paths under `path` (default `/`) matching a glob, paged like `grep`.
 | `glob` | string | yes |
 | `path` | string or null | no |
 | `matchLimit` | integer or null | no |
-| `entryLimit` | integer or null | no |
+| `hidden` | boolean or null | no |
+| `noIgnore` | boolean or null | no |
 | `step` | string or null | no |
 
 ## Output
@@ -20,6 +21,11 @@ Find paths under `path` (default `/`) matching a glob, paged like `grep`.
 | --- | --- | --- |
 | `paths` | array of string | yes |
 | `cursor` | string or null | no |
+| `scanned` | integer | yes |
+| `skipped` | array of object | yes |
+| `skipped[].reason` | one of `"hidden"`, `"ignored"`, `"binary"`, `"longLine"`, `"unreadable"` | yes |
+| `skipped[].count` | integer | yes |
+| `skipped[].example` | string | yes |
 
 ## Errors
 

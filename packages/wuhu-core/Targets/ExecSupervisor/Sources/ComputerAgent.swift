@@ -8,7 +8,6 @@
 #else
   import Darwin
 #endif
-import class AsyncHTTPClient.HTTPClient
 import CExecSupervisor
 import struct ComputerFiles.AdmittedStart
 import class ComputerFiles.ComputerAgent
@@ -16,17 +15,17 @@ import struct ComputerFiles.ComputerFileSystem
 import struct ComputerFiles.ExternalKind
 import DeploymentAdmin
 import Fetch
-import FetchAsyncHTTPClient
 import struct Logging.Logger
 import enum OperationProtocol.ComputerKindSchemas
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import struct OperationRuntime.AnyOperationKind
+import class OperationRuntime.OperationAgent
 import typealias Serve.Handler
 import class ServeNIO.ServeNIOServer
 import Synchronization
 
-/// Why an agent stops serving its machine. Either way every exec supervisor it owns is retired: its exec stops, its receipts go and it exits.
+/// Why an agent stops serving its machine. Either way every running exec is stopped and every adopted supervisor retired; each worker exits once its receipts lapse.
 public enum SupervisorRetirement: Sendable, Equatable {
   /// The person or the app turned the machine off. The machine's private directory stays, so turning it back on resumes.
   case turnedOff
@@ -44,24 +43,30 @@ extension ExecSupervisor {
     operationsDirectory: String,
     controlSocket: String,
     executable: String,
+    left: @escaping @Sendable () throws -> Void = {},
     serve: @escaping @Sendable (@escaping Handler, @escaping @Sendable () async -> Bool, @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> Void,
   ) async throws {
     guard controlSocket.hasPrefix("/"), controlSocket.utf8.count < 104 else { throw OperationError(.invalidConfiguration) }
     var state = stat()
     let parent = URL(fileURLWithPath: controlSocket).deletingLastPathComponent().path
     guard lstat(parent, &state) == 0, state.st_uid == getuid(), state.st_mode & 0o777 == 0o700 else { throw OperationError(.invalidConfiguration) }
-    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, registry in
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: .local, kinds: [], disclaimResponsibility: boxAgentDisclaimsResponsibility()) { agent, workers in
       var state = stat()
       if lstat(controlSocket, &state) == 0 {
         guard state.st_uid == getuid(), state.st_mode & S_IFMT == S_IFSOCK, unlink(controlSocket) == 0 else { throw OperationError(.invalidConfiguration) }
       }
-      let server = try await ServeNIOServer.bind(unixDomainSocketPath: controlSocket, handler: agent.controlHandler(afterLeave: { _ = await registry.retire(.turnedOff) }))
+      let server = try await ServeNIOServer.bind(unixDomainSocketPath: controlSocket, handler: agent.controlHandler(afterLeave: {
+        // The leave is recorded before the workers retire, so a restart after any crash stays left; the workers retire either way.
+        let recorded = Result { try left() }
+        _ = await workers.retire(.turnedOff)
+        try recorded.get()
+      }))
       guard chmod(controlSocket, 0o600) == 0 else { await server.shutdown(); throw OperationError(.invalidConfiguration) }
       defer { _ = unlink(controlSocket) }
       do {
         try await withThrowingTaskGroup(of: Void.self) { group in
           group.addTask { await server.runUntilCancelled() }
-          group.addTask { try await serve(agent.handler, { await agent.leaveAcknowledged }, { _ = await registry.retire($0) }) }
+          group.addTask { try await serve(agent.handler, { await agent.leaveAcknowledged }, { _ = await workers.retire($0) }) }
           do { _ = try await group.next() }
           catch { await server.shutdown(); group.cancelAll(); throw error }
           await server.shutdown(); group.cancelAll()
@@ -70,9 +75,9 @@ extension ExecSupervisor {
     }
   }
 
-  /// Holds the exclusive lock on `operationsDirectory`, recovers its supervisors and runs the composed agent for the duration of `body`. The caller serves `agent.handler` and calls `agent.leave()` itself; no control socket is opened.
+  /// Holds the exclusive lock on `operationsDirectory`, recovers its exec workers and runs the composed agent for the duration of `body`. The caller serves `agent.handler` and calls `agent.leave()` itself; no control socket is opened.
   ///
-  /// When the machine stops serving, the body calls the second argument, `retire`, before it returns. It waits at most ten seconds for the supervisors to exit.
+  /// When the machine stops serving, the body calls the second argument, `retire`, before it returns. It waits at most ten seconds for the stopped execs' verdicts.
   /// After a revocation the machine's private directory, the parent of `operationsDirectory`, is removed once the lock is released.
   public static func withComputerAgent<R: Sendable>(
     machine: String,
@@ -83,12 +88,12 @@ extension ExecSupervisor {
     audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     _ body: @escaping @Sendable (ComputerAgent, _ retire: @escaping @Sendable (SupervisorRetirement) async -> Void) async throws -> R,
   ) async throws -> R {
-    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: files, kinds: kinds, audit: audit, forgetsRevokedMachine: true) { agent, registry in
-      try await body(agent, { _ = await registry.retire($0) })
+    try await composeComputerAgent(machine: machine, operationsDirectory: operationsDirectory, executable: executable, files: files, kinds: kinds, audit: audit, forgetsRevokedMachine: true) { agent, workers in
+      try await body(agent, { _ = await workers.retire($0) })
     }
   }
 
-  /// The composition itself; tests also get the registry to observe its run loop.
+  /// The composition itself; tests also get the workers to observe them.
   static func composeComputerAgent<R: Sendable>(
     machine: String,
     operationsDirectory: String,
@@ -98,7 +103,9 @@ extension ExecSupervisor {
     audit: (@Sendable (AdmittedStart) -> Void)? = nil,
     disclaimResponsibility: Bool = false,
     forgetsRevokedMachine: Bool = false,
-    _ body: @escaping @Sendable (ComputerAgent, ExecSupervisorRegistry) async throws -> R,
+    retention: Duration = OperationAgent.receiptRetention,
+    launch: (@Sendable ([String]) async throws -> Int32?)? = nil,
+    _ body: @escaping @Sendable (ComputerAgent, ExecWorkers) async throws -> R,
   ) async throws -> R {
     let admission = try DeploymentAdminPolicy.admitMachineAgent()
     defer { withExtendedLifetime(admission) {} }
@@ -114,40 +121,26 @@ extension ExecSupervisor {
       _ = flock(lock, LOCK_UN)
       exec_close(lock)
     }
-    return try await withUnixHTTP { http, events in
-      let registry = try ExecSupervisorRegistry(machine: machine, operationsDirectory: operationsDirectory, executable: executable, fetch: .asyncHTTPClient(http, timeout: .seconds(25)), identityFetch: .asyncHTTPClient(http, timeout: .seconds(2)), disclaimResponsibility: disclaimResponsibility, authorize: { _, id in
+    return try await withEventLoop { events in
+      let workers = try ExecWorkers(machine: machine, operationsDirectory: operationsDirectory, executable: executable, disclaimResponsibility: disclaimResponsibility, retention: retention, launch: launch ?? { try ExecSupervisor.launchReaped($0) }, authorize: { _, id in
         guard id == machine else { throw OperationError(.machineNotAuthorized) }
       })
-      try await registry.recover()
-      // Holding the lock entitles this agent to replace a stale ctl.sock; supervisors that outlived the last agent redial it.
+      try await workers.recover()
+      // Holding the lock entitles this agent to replace a stale ctl.sock; workers that outlived the last agent redial it.
       let listener = try await Rendezvous.listen(path: rendezvous, group: events)
       defer { _ = unlink(rendezvous) }
-      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: registry.external, audit: audit)
+      let agent = try ComputerAgent(machine: machine, files: files, kinds: kinds, external: workers.external, audit: audit)
       return try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await registry.run() }
+        group.addTask { await workers.run() }
         group.addTask { await agent.run() }
-        group.addTask { await Rendezvous.accept(listener, registry: registry) }
+        group.addTask { await Rendezvous.accept(listener, workers: workers) }
         let outcome: Result<R, any Error>
-        do { outcome = .success(try await body(agent, registry)) } catch { outcome = .failure(error) }
+        do { outcome = .success(try await body(agent, workers)) } catch { outcome = .failure(error) }
         await agent.shutdown(); group.cancelAll()
-        if await registry.retirement == .revoked { revoked.withLock { $0 = true } }
+        if await workers.service == .retired(.revoked) { revoked.withLock { $0 = true } }
         return try outcome.get()
       }
     }
-  }
-}
-
-extension ExecSupervisorRegistry {
-  nonisolated var external: ExternalKind {
-    ExternalKind(
-      descriptor: ComputerKindSchemas.exec,
-      reservation: Self.fullReservation,
-      handler: handler,
-      usage: { try await self.admissionUsage() },
-      owns: { await self.owns($0) },
-      leave: { try await self.leave() },
-      departure: { try await self.departureEvidence() },
-    )
   }
 }
 
@@ -163,13 +156,13 @@ func removeMachineDirectory(operationsDirectory: String) {
 extension ComputerAgent {
   nonisolated var controlHandler: Handler { controlHandler(afterLeave: {}) }
 
-  /// `PUT /leave`; `afterLeave` runs once the leave has succeeded, before the reply.
-  nonisolated func controlHandler(afterLeave: @escaping @Sendable () async -> Void) -> Handler {
+  /// `PUT /leave`; `afterLeave` runs once the leave has succeeded, before the reply, and its failure fails the reply.
+  nonisolated func controlHandler(afterLeave: @escaping @Sendable () async throws -> Void) -> Handler {
     { request in
       do {
         guard request.method == .put, request.url.path == "/leave" else { throw OperationError(.invalidInput) }
         try await self.leave()
-        await afterLeave()
+        try await afterLeave()
         return try .json(true)
       } catch {
         let error = error as? OperationError ?? .init(.supervisorUnavailable)

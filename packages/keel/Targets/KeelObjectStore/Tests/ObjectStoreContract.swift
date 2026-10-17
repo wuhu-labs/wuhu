@@ -39,6 +39,34 @@ struct ObjectStoreContract: Sendable {
     try await self.missingKeyError()
     try await self.existence()
     try await self.listOrderingAndPagination()
+    try await self.rangedGet()
+  }
+
+  func rangedGet() async throws {
+    let store = try await self.makeStore()
+    let key = try self.key("ranged", in: Self.freshNamespace())
+    try await store.put(key, bytes: Data("0123456789".utf8))
+
+    try expectEqual(try await store.get(key, bytes: 2 ..< 5), Data("234".utf8), "in range")
+    try expectEqual(try await store.get(key, bytes: 0 ..< 10), Data("0123456789".utf8), "the whole object")
+    try expectEqual(try await store.get(key, bytes: 8 ..< 20), Data("89".utf8), "cut at the end")
+    try expectEqual(try await store.get(key, bytes: 10 ..< 20), Data(), "from the end")
+    try expectEqual(try await store.get(key, bytes: 50 ..< 60), Data(), "past the end")
+    try expectEqual(try await store.get(key, bytes: 3 ..< 3), Data(), "empty")
+    try expectEqual(try await store.get(key, bytes: 2 ..< Int64.max), Data("23456789".utf8), "a range far past the end")
+    try expectEqual(try await store.get(key, bytes: 50 ..< Int64.max), Data(), "a range far past the end, from past the end")
+
+    let absent = try self.key("absent", in: Self.freshNamespace())
+    for range: Range<Int64> in [0 ..< 4, 2 ..< 2] {
+      do {
+        _ = try await store.get(absent, bytes: range)
+        throw Failure(message: "ranged get \(range) on a missing key should throw notFound")
+      } catch let error as ObjectStoreError {
+        guard case .notFound = error else { throw Failure(message: "expected notFound, got \(error)") }
+      }
+    }
+
+    try? await store.delete(key)
   }
 
   func putGetRoundTrip() async throws {

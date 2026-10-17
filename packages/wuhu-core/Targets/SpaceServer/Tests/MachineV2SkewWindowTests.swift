@@ -6,6 +6,7 @@
 import ComputerFiles
 import Crypto
 import Fetch
+import FileSearch
 import enum JSONValue.JSONValue
 import MachineContract
 import OperationProtocol
@@ -16,9 +17,10 @@ import Scratch
 import Synchronization
 import Testing
 
-/// What an agent of a given release advertises. dev.120 and dev.121 ship
-/// today's ComputerSchemas byte for byte, so the previous release is the
-/// current descriptor set; dev.119 predates the filesystem kinds and paged search.
+/// What an agent of a given release advertises, of the kinds this server
+/// speaks. dev.120 and dev.121 ship today's filesystem kinds but search through
+/// find.v1/grep.v1, which search.v1 replaced; dev.119 predates the
+/// filesystem kinds too.
 enum SkewAgentRelease: String, CaseIterable, Sendable {
   case dev119 = "0.1.0-dev.119"
   case dev120 = "0.1.0-dev.120"
@@ -29,8 +31,6 @@ enum SkewAgentRelease: String, CaseIterable, Sendable {
     case .dev120, .dev121:
       [
         ComputerKindSchemas.read,
-        ComputerKindSchemas.find,
-        ComputerKindSchemas.grep,
         ComputerKindSchemas.stat,
         ComputerKindSchemas.list,
         ComputerKindSchemas.write,
@@ -39,16 +39,8 @@ enum SkewAgentRelease: String, CaseIterable, Sendable {
         ComputerKindSchemas.move,
       ]
     case .dev119:
-      [ComputerKindSchemas.read, unpaged(ComputerKindSchemas.find), unpaged(ComputerKindSchemas.grep)]
+      [ComputerKindSchemas.read]
     }
-  }
-
-  private func unpaged(_ descriptor: KindDescriptor) -> KindDescriptor {
-    var schema = descriptor.inputSchema.object!
-    var properties = schema["properties"]!.object!
-    for key in ["matchLimit", "resumeEntries", "resumeLine"] { properties.removeValue(forKey: key) }
-    schema["properties"] = .object(properties)
-    return KindDescriptor(descriptor.name, inputSchema: .object(schema), resultSchema: descriptor.resultSchema, inputChannels: descriptor.inputChannels, outputChannels: descriptor.outputChannels, deliveryPolicy: descriptor.deliveryPolicy)
   }
 }
 
@@ -76,8 +68,7 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
     return try .json(MachineDescription(instance: description.instance, acceptingStarts: description.acceptingStarts, limits: description.limits, kinds: kinds, availability: description.availability?.filter { names.contains($0.key) }), headers: headers)
   }
   let hub = MachineHub(space: space)
-  let coordinator = MachineV2Coordinator(space: space, key: SymmetricKey(size: .bits256), problemsGroup: .shared, origin: URL(string: "https://test.invalid")!, fetch: { _ in proxy }, abort: { _, _ in })
-  let service = MachineV2Service(hub: MachineV2Hub(space: space), coordinator: coordinator, failure: nil)
+  let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in proxy })
   await hub.configureV2(service)
   try await withThrowingTaskGroup(of: Void.self) { tasks in
     tasks.addTask { await agent.run() }
@@ -89,9 +80,10 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
 }
 
 @Suite struct MachineV2SkewWindowTests {
-  /// A server one release ahead of its machines keeps every machine tool working.
+  /// A server one release ahead of its machines keeps every file tool working;
+  /// search, which those agents do not speak as search.v1, is refused typed before anything starts.
   @Test(arguments: [SkewAgentRelease.dev120, .dev121])
-  func previousReleaseKeepsFilesAndSearchWorking(_ release: SkewAgentRelease) async throws {
+  func previousReleaseKeepsFilesWorkingAndRefusesSearch(_ release: SkewAgentRelease) async throws {
     let folder = try ScratchFolder("v2-skew-\(release.rawValue)")
     let file = folder.url.appending(path: "notes.txt")
     try Data("needle one\nneedle two".utf8).write(to: file)
@@ -104,13 +96,9 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
       guard case .ok = try await hub.vfs(machine: machine, op: .mv(from: file.path, to: folder.url.appending(path: "sub/moved.txt").path)) else { Issue.record("move"); return }
       guard case let .entries(entries) = try await hub.vfs(machine: machine, op: .ls(path: folder.url.appending(path: "sub").path)) else { Issue.record("list"); return }
       #expect(entries.map(\.name) == ["moved.txt"])
-      let page = try await hub.search(machine: machine, query: .grep(pattern: "needle", path: folder.path, matchLimit: 1, entryLimit: 100, step: nil))
-      guard case let .matches(matches, _) = page else { Issue.record("grep"); return }
-      #expect(matches.map(\.line) == [1])
-      guard case let .paths(paths, _) = try await hub.search(machine: machine, query: .find(glob: "**/*.txt", path: folder.path, matchLimit: nil, entryLimit: nil, step: nil)) else { Issue.record("find"); return }
-      #expect(paths.count == 1)
+      try await expectSearchRefused(hub, machine, folder.path)
       guard case .ok = try await hub.vfs(machine: machine, op: .rm(path: folder.url.appending(path: "sub/moved.txt").path, ifMatch: nil)) else { Issue.record("remove"); return }
-      #expect(starts.value.withLock { $0 } == 9)
+      #expect(starts.value.withLock { $0 } == 7)
     }
   }
 
@@ -133,18 +121,22 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
           #expect(error.message.contains("agent too old, upgrade"))
         }
       }
-      for query: SearchQuery in [.grep(pattern: "needle", path: folder.path, matchLimit: nil, entryLimit: nil, step: nil), .find(glob: "*", path: folder.path, matchLimit: nil, entryLimit: nil, step: nil)] {
-        do {
-          _ = try await hub.search(machine: machine, query: query)
-          Issue.record("dev.119 admitted unpaged search")
-        } catch let error as OperationError {
-          #expect(error.code == .kindUnavailable)
-          #expect(error.details?.object?["reason"] == "agentTooOld")
-        }
-      }
+      try await expectSearchRefused(hub, machine, folder.path)
       #expect(starts.value.withLock { $0 } == 0)
       guard case let .file(_, bytes) = try await hub.vfs(machine: machine, op: .read(path: file.path)) else { Issue.record("read"); return }
       #expect(String(decoding: bytes.bytes, as: UTF8.self) == "needle")
+    }
+  }
+}
+
+private func expectSearchRefused(_ hub: MachineHub, _ machine: MachineID, _ root: String) async throws {
+  for mode in [SearchQuery.Mode.grep, .find] {
+    do {
+      _ = try await hub.search(machine: machine, query: SearchQuery(mode: mode, pattern: "needle", root: root, scope: "test"))
+      Issue.record("an agent without search.v1 admitted \(mode)")
+    } catch let error as OperationError {
+      #expect(error.code == .kindUnavailable)
+      #expect(error.details?.object?["reason"] == "agentTooOld")
     }
   }
 }
