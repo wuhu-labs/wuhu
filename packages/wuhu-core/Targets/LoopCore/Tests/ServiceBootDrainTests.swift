@@ -42,19 +42,19 @@ import Testing
         throw CancellationError()
       })
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
-      let service = await SessionService(sessions: sessions, loopConfig: config) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
-          if id == second {
-            for await _ in entered.stream { break }
-            let parking = AsyncStream<Void>.makeStream()
-            bootEntered.continuation.yield(())
-            for await _ in parking.stream {}
-            parking.continuation.finish()
-            throw CancellationError()
-          }
-          return try await store.queueHead(id)
-        })
-      }
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
+        if id == second {
+          for await _ in entered.stream { break }
+          let parking = AsyncStream<Void>.makeStream()
+          bootEntered.continuation.yield(())
+          for await _ in parking.stream {}
+          parking.continuation.finish()
+          throw CancellationError()
+        }
+        return try await store.send(.read(id, .queueHead))
+      }, loopConfig: config)
       let start = Task {
         defer { returned.withLock { $0 = true }; order.withLock { $0.append("start") } }
         try await service.start()

@@ -73,7 +73,7 @@ private func resolvedPlacement(_ held: SessionModelRoute, session: SessionID, ca
 func compactionPlacement(owner: any ExecutionOwnerClient, catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
   { id, transcript, target in
     if let target { return try await requestedTransition(target, session: id, transcript: transcript, owner: owner, catalog: catalog(), usage: usage) }
-    guard let held = try await owner.modelRoute(id), let group = held.group else { return nil }
+    guard let held = try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self), let group = held.group else { return nil }
     let catalog = try await catalog()
     _ = try catalog.validateRoute(held, group: group, effort: held.specifier.effort)
     guard let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
@@ -108,7 +108,7 @@ struct CompactionTargetRefused: Error, CustomStringConvertible {
 /// the catalog and credential readiness before anything folds; a throw is the
 /// tool's refusal. Nil when the target is where the session already is.
 func requestedTransition(_ target: CompactionTarget, session id: SessionID, transcript: Transcript, owner: any ExecutionOwnerClient, catalog: ProviderCatalog, usage: UsageBoard) async throws -> ModelRouteTransition? {
-  guard let held = try await owner.modelRoute(id) else { throw CompactionTargetRefused(description: "this session has no model route yet") }
+  guard let held = try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self) else { throw CompactionTargetRefused(description: "this session has no model route yet") }
   let name = target.model.trimmingCharacters(in: .whitespacesAndNewlines)
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
@@ -193,7 +193,7 @@ func routeWaitOrSwitch(_ route: SessionModelRoute, session: SessionID, catalog: 
 }
 
 func recordRouteFailure(_ error: any Error, session: SessionID, owner: any ExecutionOwnerClient, catalog: ProviderCatalog, usage: UsageBoard? = nil, inferenceStarted: Bool = true) async throws -> ModelRouteFailure? {
-  guard let route = try await owner.modelRoute(session), let group = route.group, let definition = catalog.document.groups[group], case let .quotaAware(seconds) = definition.policy else { return nil }
+  guard let route = try await owner.send(.read(session, .modelRoute)).value(SessionModelRoute?.self), let group = route.group, let definition = catalog.document.groups[group], case let .quotaAware(seconds) = definition.policy else { return nil }
   if !inferenceStarted, !credentialLoginRefusal(error, provider: route.specifier.provider) { return nil }
   let reason: ModelRouteFailure.Reason
   let retryAt: Date?
@@ -218,7 +218,7 @@ func recordRouteFailure(_ error: any Error, session: SessionID, owner: any Execu
   }
   let old = route.failure
   let failure = ModelRouteFailure(reason: reason, firstFailureAt: old?.firstFailureAt ?? now, deadline: old?.deadline ?? now.addingTimeInterval(Double(seconds)), retryAt: retryAt, consecutiveFailures: (old?.consecutiveFailures ?? 0) + 1, source: source, code: code, lastFailureAt: now)
-  try await owner.updateModelRouteFailure(session, expectedEpoch: route.epoch, failure: failure)
+  _ = try await owner.send(.append(session, .modelRouteFailureUpdated(expectedEpoch: route.epoch, failure: failure)))
   return failure
 }
 

@@ -23,17 +23,19 @@ import Testing
       defer { entered.continuation.finish(); release.continuation.finish(); gate.cancel() }
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, compactClaimWrite: { store, id, generation in
+        main: InProcessMainClient { message in
+          let store = InProcessMainClient(sessions: sessions)
+          guard case .effect(let id, .claimCompactRequest(let generation)) = message else { return try await store.send(message) }
           if beforeWrite {
             entered.continuation.yield(())
             await gate.value
-            return try await store.claimCompactRequest(id, generation: generation)
+            return try await store.send(.effect(id, .claimCompactRequest(generation: generation)))
           }
-          let command = try await store.claimCompactRequest(id, generation: generation)
+          let command = try await store.send(.effect(id, .claimCompactRequest(generation: generation))).value(CompactRequestClaim?.self)
           entered.continuation.yield(())
           await gate.value
-          return command
-        }),
+          return .compactClaim(command)
+        },
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
       )
@@ -80,12 +82,14 @@ import Testing
       let claims = Box(0)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, compactClaimWrite: { _, _, _ in
+        main: InProcessMainClient { message in
+          let store = InProcessMainClient(sessions: sessions)
+          guard case .effect(_, .claimCompactRequest(_)) = message else { return try await store.send(message) }
           let claim = claims.withLock { $0 += 1; return $0 }
           entered.continuation.yield(claim)
           if claim == 1 { await oldGate.value } else { await newGate.value }
-          return nil
-        }),
+          return .compactClaim(nil)
+        },
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         afterLoop: { settled.continuation.yield(()) },
@@ -148,7 +152,7 @@ func verifyLegacyCompactToken(space: Space, id: SessionID, replacement: Bool) as
   defer { entered.continuation.finish(); release.continuation.finish(); settled.continuation.finish(); gate.cancel() }
   let actor = SessionActor(
     id: id,
-    repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id),
+    main: InProcessMainClient(sessions: sessions),
     loopConfig: makeConfig(inference: { request in
       if request.mode == .forcedCompact {
         entered.continuation.yield(())

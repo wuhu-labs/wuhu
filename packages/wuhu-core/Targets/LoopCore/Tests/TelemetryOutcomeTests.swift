@@ -29,7 +29,7 @@ import WuhuAI
       }
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.outcome] == "error" })
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.bytesOut] != nil })
-      let actor = SessionActor(id: id, repo: .init(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id), loopConfig: makeConfig(), liveness: LivenessTracker())
+      let actor = SessionActor(id: id, main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(), liveness: LivenessTracker())
       await #expect(throws: (any Error).self) { try await actor.execute(calls[3]) }
       #expect(spans.value.last?.attributes[.outcome] == "cancelled")
     }

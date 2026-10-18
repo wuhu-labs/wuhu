@@ -7,7 +7,7 @@ import Dependencies
 import GRDB
 import SessionDomain
 
-public struct SessionRestart: Hashable, Sendable {
+public struct SessionRestart: Hashable, Sendable, Codable {
   public var generation: Int
   public var executor: SessionExecutor
 

@@ -7,9 +7,10 @@ import TaskLifetime
   import Foundation
 #endif
 import struct SessionDomain.SessionID
+import protocol SpaceCore.MainClient
 
 actor SessionRegistry {
-  private let makeRepo: @Sendable (SessionID) -> SessionRepo
+  private let main: any MainClient
   private let loopConfig: LoopConfig
   private let liveness: LivenessTracker
 
@@ -30,11 +31,11 @@ actor SessionRegistry {
   @Dependency(\.date) private var date
 
   init(
-    makeRepo: @escaping @Sendable (SessionID) -> SessionRepo,
+    main: any MainClient,
     loopConfig: LoopConfig,
     liveness: LivenessTracker,
   ) {
-    self.makeRepo = makeRepo
+    self.main = main
     self.loopConfig = loopConfig
     self.liveness = liveness
   }
@@ -59,7 +60,7 @@ actor SessionRegistry {
     } else {
       // Unknown ids surface as unknownSession from the verb's first repo
       // call; the placeholder actor is reaped like any idle session.
-      session = SessionActor(id: id, repo: makeRepo(id), loopConfig: loopConfig, liveness: liveness)
+      session = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
       sessions[id] = session
       await session.activate()
     }

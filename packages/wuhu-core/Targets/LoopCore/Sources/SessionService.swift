@@ -26,14 +26,14 @@ public struct SessionService: Sendable {
   private let log: Logger
 
   public init(sessions: SessionStore, loopConfig: LoopConfig) async {
-    await self.init(sessions: sessions, owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: loopConfig)
+    await self.init(sessions: sessions, main: InProcessMainClient(sessions: sessions), loopConfig: loopConfig)
   }
 
-  public init(sessions: SessionStore, owner: any SessionExecutionOwnerClient, loopConfig: LoopConfig) async {
-    await self.init(sessions: sessions, loopConfig: loopConfig) { SessionRepo(owner: owner, id: $0) }
+  public init(sessions: SessionStore, main: any MainClient, loopConfig: LoopConfig) async {
+    await self.init(sessions: sessions, main: main, loopConfig: loopConfig, log: Logger(label: "wuhu.session-service"))
   }
 
-  init(sessions: SessionStore, loopConfig: LoopConfig, log: Logger = Logger(label: "wuhu.session-service"), makeRepo: @escaping @Sendable (SessionID) -> SessionRepo) async {
+  init(sessions: SessionStore, main: any MainClient, loopConfig: LoopConfig, log: Logger) async {
     self.sessions = sessions
     self.log = log
     archiveGrace = loopConfig.archiveGrace
@@ -41,7 +41,7 @@ public struct SessionService: Sendable {
     self.reminders = reminders
     var loopConfig = loopConfig
     loopConfig.scheduleWake = { id, due in await reminders.schedule(id, at: due) }
-    let execution = await SessionExecution(makeRepo: makeRepo, loopConfig: loopConfig)
+    let execution = await SessionExecution(main: main, loopConfig: loopConfig)
     await reminders.bind(execution)
     self.execution = execution
     localExecution = execution

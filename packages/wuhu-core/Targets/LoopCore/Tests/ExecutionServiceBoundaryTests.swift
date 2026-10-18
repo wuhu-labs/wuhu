@@ -32,7 +32,7 @@ private struct FaultingExecution: SessionExecutionClient {
       let sessions = try Space.inMemory().sessions
       let id = try await sessions.createSession(group: .shared, title: "enqueue", kind: .agent, createdBy: "morgan", model: .test)
       let enqueues = Box(0), wakes = Box(0)
-      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         wakes.withLock { $0 += 1 }
         throw ReplyLost()
@@ -58,7 +58,7 @@ private struct FaultingExecution: SessionExecutionClient {
       let id = try await sessions.createSession(group: .shared, title: "boot", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(id, input: Fix.message("boot"))
       let wakes = Box(0)
-      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
+      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
       let execution = FaultingExecution(base: base, wakeCall: { id in
         let count = wakes.withLock { $0 += 1; return $0 }
         if count <= 2 { throw UnfulfilledError() }
@@ -83,7 +83,7 @@ private struct FaultingExecution: SessionExecutionClient {
     } operation: {
       let sessions = try Space.inMemory().sessions
       let wakes = Box<[Date]>([])
-      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         @Dependency(\.date) var date
         wakes.withLock { $0.append(date.now) }
@@ -112,7 +112,7 @@ private struct FaultingExecution: SessionExecutionClient {
       let sessions = try Space.inMemory().sessions
       let id = SessionID("fixture")
       let wakes = Box(0)
-      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in wakes.withLock { $0 += 1 } }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
       let service = SessionService(sessions: sessions, execution: execution, archiveGrace: .seconds(60))
       await service.scheduleWake(id, at: anchor.addingTimeInterval(10))
@@ -142,7 +142,7 @@ private struct FaultingExecution: SessionExecutionClient {
       let sessions = try Space.inMemory().sessions
       let id = try await sessions.createSession(group: .shared, title: "reminder", kind: .task, createdBy: "morgan", model: .test)
       let wakes = Box(0)
-      let base = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         let attempt = wakes.withLock { $0 += 1; return $0 }
         if exhausted || attempt < 4 { throw ReplyLost() }

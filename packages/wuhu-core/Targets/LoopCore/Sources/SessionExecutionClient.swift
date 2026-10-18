@@ -8,7 +8,7 @@ import enum SessionDomain.QueueInput
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
-import protocol SpaceCore.SessionExecutionOwnerClient
+import protocol SpaceCore.MainClient
 import struct SpaceCore.SessionRestart
 
 public protocol SessionExecutionClient: Sendable {
@@ -31,13 +31,9 @@ public struct SessionExecution: SessionExecutionClient {
   private let liveness = LivenessTracker()
   private let archived: @Sendable (SessionID) async -> Void
 
-  public init(owner: any SessionExecutionOwnerClient, loopConfig: LoopConfig) async {
-    await self.init(makeRepo: { SessionRepo(owner: owner, id: $0) }, loopConfig: loopConfig)
-  }
-
-  init(makeRepo: @escaping @Sendable (SessionID) -> SessionRepo, loopConfig: LoopConfig) async {
+  public init(main: any MainClient, loopConfig: LoopConfig) async {
     archived = loopConfig.archived
-    registry = SessionRegistry(makeRepo: makeRepo, loopConfig: loopConfig, liveness: liveness)
+    registry = SessionRegistry(main: main, loopConfig: loopConfig, liveness: liveness)
     await registry.activate()
   }
 

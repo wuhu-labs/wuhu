@@ -14,7 +14,7 @@ import enum SpaceContract.SessionWorkPayload
 public typealias SessionHold = SpaceContract.SessionHoldPayload
 public typealias SessionWork = SpaceContract.SessionWorkPayload
 
-public enum SessionLifecycle: Hashable, Sendable {
+public enum SessionLifecycle: Hashable, Sendable, Codable {
   case live
   case archived(graceExpiresAt: Date)
 }
@@ -24,7 +24,7 @@ public enum SessionKind: String, Hashable, Sendable, Codable {
   case task
 }
 
-public struct SessionRecord: Hashable, Sendable {
+public struct SessionRecord: Hashable, Sendable, Codable {
   public var id: SessionID
   public var kind: SessionKind
   public var parent: SessionID?
@@ -73,7 +73,7 @@ public struct SessionRecord: Hashable, Sendable {
   }
 }
 
-public struct SessionQueueEntry: Hashable, Sendable {
+public struct SessionQueueEntry: Hashable, Sendable, Codable {
   public var id: Int
   public var input: QueueInput
 
@@ -83,7 +83,7 @@ public struct SessionQueueEntry: Hashable, Sendable {
   }
 }
 
-public struct QueueDrain: Hashable, Sendable {
+public struct QueueDrain: Hashable, Sendable, Codable {
   public var items: [TranscriptItem]
   public var queueTail: Int
 
@@ -93,11 +93,11 @@ public struct QueueDrain: Hashable, Sendable {
   }
 }
 
-public enum SessionTranscript: Hashable, Sendable {
+public enum SessionTranscript: Hashable, Sendable, Codable {
   case kernel(Transcript)
 }
 
-public struct SessionHydration: Hashable, Sendable {
+public struct SessionHydration: Hashable, Sendable, Codable {
   public var generation: Int
   public var record: SessionRecord
   public var transcript: SessionTranscript

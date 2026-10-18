@@ -11,102 +11,14 @@ import SpaceContract
 import SpaceCore
 
 extension InProcessToolOwnerClient {
+  public func send(_ message: ToMain) async throws -> MainReply { try await executionOwner.send(message) }
+
+  public func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext? { try await store.scopeContext(id, toolCallID: toolCallID) }
+
   public var tracesAttempts: Bool { executionOwner.tracesAttempts }
 
   public func openAttemptTrace(_ id: UUID) async throws -> AttemptTraceSink {
     try await executionOwner.openAttemptTrace(id)
-  }
-
-  public func record(_ id: SessionID) async throws -> SessionRecord {
-    try await executionOwner.record(id)
-  }
-
-  public func modelRoute(_ id: SessionID) async throws -> SessionModelRoute? {
-    try await executionOwner.modelRoute(id)
-  }
-
-  public func updateModelRouteFailure(_ id: SessionID, expectedEpoch: String, failure: ModelRouteFailure?) async throws {
-    try await executionOwner.updateModelRouteFailure(id, expectedEpoch: expectedEpoch, failure: failure)
-  }
-
-  public func establishModelRoute(_ id: SessionID, route: SessionModelRoute) async throws -> SessionModelRoute {
-    try await executionOwner.establishModelRoute(id, route: route)
-  }
-
-  public func hydrate(_ id: SessionID) async throws -> SessionHydration {
-    try await executionOwner.hydrate(id)
-  }
-
-  public func enqueue(_ id: SessionID, input: QueueInput) async throws -> Int {
-    try await executionOwner.enqueue(id, input: input)
-  }
-
-  public func drainQueue(_ id: SessionID) async throws -> QueueDrain {
-    try await executionOwner.drainQueue(id)
-  }
-
-  public func discardPendingCacheWarming(_ id: SessionID) async throws -> Transcript {
-    try await executionOwner.discardPendingCacheWarming(id)
-  }
-
-  public func append(_ id: SessionID, items: [TranscriptItem], transcript: Transcript, completingCompactRequest: CompactRequestClaim?) async throws {
-    try await executionOwner.append(id, items: items, transcript: transcript, completingCompactRequest: completingCompactRequest)
-  }
-
-  public func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext? {
-    try await executionOwner.scopeContext(id, toolCallID: toolCallID)
-  }
-
-  public func queueHead(_ id: SessionID) async throws -> Int {
-    try await executionOwner.queueHead(id)
-  }
-
-  public func pendingCommand(_ id: SessionID) async throws -> SessionCommand? {
-    try await executionOwner.pendingCommand(id)
-  }
-
-  public func claimCompactRequest(_ id: SessionID, generation: Int) async throws -> CompactRequestClaim? {
-    try await executionOwner.claimCompactRequest(id, generation: generation)
-  }
-
-  public func writePortableHandoff(_ id: SessionID, expectedGeneration: Int, source: Transcript, transcript: Transcript, transition: ModelRouteTransition? = nil) async throws -> Transcript {
-    try await executionOwner.writePortableHandoff(id, expectedGeneration: expectedGeneration, source: source, transcript: transcript, transition: transition)
-  }
-
-  public func writeCompaction(_ id: SessionID, closing: ToolResultItem?, head: GenerationHead, kept: Range<Int>?, completingCompactRequest: CompactRequestClaim?, transition: ModelRouteTransition? = nil) async throws -> Transcript {
-    try await executionOwner.writeCompaction(id, closing: closing, head: head, kept: kept, completingCompactRequest: completingCompactRequest, transition: transition)
-  }
-
-  public func markInterrupted(_ id: SessionID) async throws {
-    try await executionOwner.markInterrupted(id)
-  }
-
-  public func markResumed(_ id: SessionID) async throws {
-    try await executionOwner.markResumed(id)
-  }
-
-  public func markErrored(_ id: SessionID, message: String) async throws {
-    try await executionOwner.markErrored(id, message: message)
-  }
-
-  public func markCompacting(_ id: SessionID, active: Bool) async throws {
-    try await executionOwner.markCompacting(id, active: active)
-  }
-
-  public func archive(_ id: SessionID, grace: Duration) async throws -> Date {
-    try await executionOwner.archive(id, grace: grace)
-  }
-
-  public func unarchive(_ id: SessionID) async throws {
-    try await executionOwner.unarchive(id)
-  }
-
-  public func restart(_ id: SessionID, executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute? = nil) async throws -> SessionRestart {
-    try await executionOwner.restart(id, executor: executor, note: note, modelRoute: modelRoute)
-  }
-
-  public func registeredSubscriptions(_ id: SessionID) async throws -> (ids: Set<SubscriptionID>, handlers: Set<SubscriptionID>) {
-    try await executionOwner.registeredSubscriptions(id)
   }
 
   public func providerCredential(_ provider: String) async throws -> ProviderCredential? {

@@ -100,25 +100,6 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     }
   }
 
-  @Test func `a person's mention of a task reaches everyone else and skips the task`() async throws {
-    let rig = try MovingClockSpace()
-    let owner = try await agent(rig.store)
-    let task = try await task(rig.store, parent: owner)
-    let delivery = try await rig.store.post(
-      .box(owner), messageID: MessageID("m1"), sender: human("carol"),
-      content: .init(text: "@\(task.rawValue) status?"),
-    )
-    #expect(delivery.enqueued == [owner])
-
-    let group = try await rig.store.createConversation(members: ["carol", "dave"], in: .shared)
-    let grouped = try await rig.store.post(
-      .conversation(group), messageID: MessageID("m2"), sender: human("carol"),
-      content: .init(text: "@\(task.rawValue) status?"),
-    )
-    #expect(grouped.enqueued.isEmpty)
-    #expect(try await rig.store.notifications(recipient: "dave").count == 1)
-  }
-
   @Test func `a person's post that would reach only tasks is refused`() async throws {
     let rig = try MovingClockSpace()
     let parent = try await agent(rig.store)
@@ -135,29 +116,6 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
       )
     }
     #expect(try await rig.store.message(MessageID("m1")) == nil)
-  }
-
-  @Test func `a mention forwards to the named session`() async throws {
-    let rig = try MovingClockSpace()
-    let owner = try await agent(rig.store, "owner")
-    let mentioned = try await agent(rig.store, "mentioned")
-    let delivery = try await rig.store.post(
-      .box(owner),
-      messageID: MessageID("m1"),
-      sender: human("carol"),
-      content: .init(text: "hey @\(mentioned.rawValue) look at this"),
-    )
-    #expect(Set(delivery.enqueued) == [owner, mentioned])
-  }
-
-  @Test func `an at-sign that is not a session id forwards to nobody`() async throws {
-    let rig = try MovingClockSpace()
-    let owner = try await agent(rig.store)
-    let delivery = try await rig.store.post(
-      .box(owner), messageID: MessageID("m1"), sender: human("carol"),
-      content: .init(text: "mail me at a@b-c-d.example"),
-    )
-    #expect(delivery.enqueued == [owner])
   }
 
   @Test func `a reply target forwards to whoever posted it`() async throws {
@@ -216,21 +174,34 @@ private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
     #expect(try await carol(rig, owner, "late") == [owner])
   }
 
-  @Test func `a task posting in a box never enters the attention window`() async throws {
+  @Test(arguments: [false, true]) func attentionDeliveryOrder(reversePosts: Bool) async throws {
     let rig = try MovingClockSpace()
-    let owner = try await agent(rig.store, "owner")
-    let task = try await rig.store.createSession(
-      group: .shared,
-      title: "t", kind: .task, parent: owner, createdBy: owner.rawValue, executor: .kernel(.test),
-    )
-    _ = try await rig.store.post(
-      .box(owner), messageID: MessageID("t1"), sender: human(task.rawValue),
-      senderSession: task, content: .init(text: "on it"),
-    )
+    let a = try await agent(rig.store)
+    let b = try await agent(rig.store)
+    let sessions = [a, b].sorted { $0.rawValue < $1.rawValue }
+    let channel = try await rig.store.createConversation(members: ["carol"], in: .shared)
+    for session in reversePosts ? sessions.reversed().map({ $0 }) : sessions {
+      _ = try await rig.store.post(
+        .conversation(channel), messageID: MessageID(session.rawValue), sender: human(session.rawValue),
+        senderSession: session, content: .init(text: "here"),
+      )
+    }
     let delivery = try await rig.store.post(
-      .box(owner), messageID: MessageID("m1"), sender: human("carol"), content: .init(text: "status?"),
+      .conversation(channel), messageID: MessageID("human"), sender: human("carol"), content: .init(text: "hello"),
     )
-    #expect(delivery.enqueued == [owner])
+    #expect(delivery.enqueued == sessions)
+  }
+
+  @Test func `attention uses the latest post timestamp after the clock moves backward`() async throws {
+    let rig = try MovingClockSpace()
+    let (owner, visitor) = try await visited(rig)
+    rig.advance(-1000)
+    _ = try await rig.store.post(
+      .box(owner), messageID: MessageID("rewound"), sender: human(visitor.rawValue),
+      senderSession: visitor, content: .init(text: "again"),
+    )
+    rig.advance(1001)
+    #expect(try await carol(rig, owner, "later") == [owner])
   }
 
   @Test func `a DM is created once and both posts land in the same conversation`() async throws {

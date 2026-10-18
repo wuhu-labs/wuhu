@@ -28,61 +28,59 @@ private struct OwnerContract {
 
   func queueAndCompaction() async throws {
     let (space, owner, id) = try await fixture()
-    let initial = try await owner.hydrate(id)
-    #expect(initial.record == (try await owner.record(id)))
+    let initial = try await owner.send(.read(id, .hydration)).value(SessionHydration.self)
+    #expect(initial.record == (try await owner.send(.read(id, .record)).value(SessionRecord.self)))
     #expect(initial.queueHead == 0)
     let input = QueueInput.notification(.init(
       id: UUID(), timestamp: now, kind: .timer,
       subscriptionID: .init("timer"), content: .init(text: "wake"),
     ))
-    #expect(try await owner.enqueue(id, input: input) == 1)
-    #expect(try await owner.queueHead(id) == 1)
-    let drain = try await owner.drainQueue(id)
+    #expect(try await owner.send(.append(id, .inputEnqueued(input))).value(Int.self) == 1)
+    #expect(try await owner.send(.read(id, .queueHead)).value(Int.self) == 1)
+    let drain = try await owner.send(.effect(id, .drainQueue)).value(QueueDrain.self)
     #expect(drain.items == [input.transcriptItem])
     #expect(drain.queueTail == 1)
-    #expect(try await owner.drainQueue(id).items.isEmpty)
-    guard case var .kernel(transcript) = try await owner.hydrate(id).transcript else {
+    #expect(try await owner.send(.effect(id, .drainQueue)).value(QueueDrain.self).items.isEmpty)
+    guard case var .kernel(transcript) = try await owner.send(.read(id, .hydration)).value(SessionHydration.self).transcript else {
       Issue.record("kernel session must hydrate a kernel transcript")
       return
     }
     let marker = TranscriptItem.bookmark(.init(id: UUID(), timestamp: now, name: "boundary"))
     transcript.append(marker)
-    try await owner.append(id, items: [marker], transcript: transcript, completingCompactRequest: nil)
-    #expect(try await owner.hydrate(id).transcript == .kernel(transcript))
+    try await owner.send(.append(id, .transcriptAppended(items: [marker], transcript: transcript, completing: nil))).value(Void.self)
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).transcript == .kernel(transcript))
     try await space.sessions.requestCommand(id, .compact(instructions: "keep the boundary"))
-    #expect(try await owner.pendingCommand(id) == .compact(instructions: "keep the boundary"))
-    let claim = try #require(try await owner.claimCompactRequest(id, generation: 0))
-    #expect(try await owner.claimCompactRequest(id, generation: 0) == claim)
+    #expect(try await owner.send(.read(id, .pendingCommand)).value(SessionCommand?.self) == .compact(instructions: "keep the boundary"))
+    let claim = try #require(try await owner.send(.effect(id, .claimCompactRequest(generation: 0))).value(CompactRequestClaim?.self))
+    #expect(try await owner.send(.effect(id, .claimCompactRequest(generation: 0))).value(CompactRequestClaim?.self) == claim)
     let head = GenerationHead(id: UUID(), timestamp: now, summary: "compacted", snapshot: .init(), settle: .init())
-    let compacted = try await owner.writeCompaction(
-      id, closing: nil, head: head, kept: nil, completingCompactRequest: claim,
-    )
-    #expect(try await owner.pendingCommand(id) == nil)
-    #expect(try await owner.hydrate(id).generation == 1)
-    #expect(try await owner.hydrate(id).transcript == .kernel(compacted))
-    #expect(try await owner.scopeContext(id, toolCallID: .init("unknown")) == nil)
-    let registered = try await owner.registeredSubscriptions(id)
+    let compacted = try await owner.send(.append(id, .compacted(closing: nil, head: head, kept: nil, completing: claim, transition: nil))).value(Transcript.self)
+    #expect(try await owner.send(.read(id, .pendingCommand)).value(SessionCommand?.self) == nil)
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).generation == 1)
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).transcript == .kernel(compacted))
+    #expect(try await owner.send(.read(id, .scopeContext(.init("unknown")))).value(ScopeContext?.self) == nil)
+    let registered = try await owner.send(.read(id, .registeredSubscriptions)).value(RegisteredSubscriptions.self)
     #expect(registered.ids.isEmpty)
     #expect(registered.handlers.isEmpty)
   }
 
   func lifecycleAndErrors() async throws {
     let (_, owner, id) = try await fixture()
-    try await owner.markInterrupted(id)
-    #expect(try await owner.record(id).hold == .interrupted)
-    try await owner.markResumed(id)
-    #expect(try await owner.record(id).hold == .normal)
-    try await owner.markErrored(id, message: "contract failure")
-    #expect(try await owner.record(id).errorMessage == "contract failure")
-    let expiry = try await owner.archive(id, grace: .seconds(60))
-    #expect(try await owner.record(id).lifecycle == .archived(graceExpiresAt: expiry))
-    try await owner.unarchive(id)
-    #expect(try await owner.record(id).lifecycle == .live)
-    let restart = try await owner.restart(id, executor: nil, note: "new start")
-    #expect(try await owner.hydrate(id).generation == restart.generation)
+    try await owner.send(.append(id, .interrupted)).value(Void.self)
+    #expect(try await owner.send(.read(id, .record)).value(SessionRecord.self).hold == .interrupted)
+    try await owner.send(.append(id, .resumed)).value(Void.self)
+    #expect(try await owner.send(.read(id, .record)).value(SessionRecord.self).hold == .normal)
+    try await owner.send(.append(id, .errored("contract failure"))).value(Void.self)
+    #expect(try await owner.send(.read(id, .record)).value(SessionRecord.self).errorMessage == "contract failure")
+    let expiry = try await owner.send(.append(id, .archived(grace: .seconds(60)))).value(Date.self)
+    #expect(try await owner.send(.read(id, .record)).value(SessionRecord.self).lifecycle == .archived(graceExpiresAt: expiry))
+    try await owner.send(.append(id, .unarchived)).value(Void.self)
+    #expect(try await owner.send(.read(id, .record)).value(SessionRecord.self).lifecycle == .live)
+    let restart = try await owner.send(.append(id, .restarted(executor: nil, note: "new start", modelRoute: nil))).value(SessionRestart.self)
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).generation == restart.generation)
     let missing = SessionID("missing")
     await #expect(throws: SessionStoreError.unknownSession(missing.rawValue)) {
-      _ = try await owner.hydrate(missing)
+      _ = try await owner.send(.read(missing, .hydration)).value(SessionHydration.self)
     }
   }
 
@@ -196,13 +194,13 @@ extension InProcessOwnerContractTests {
     let spec = ModelSpecifier(provider: "test", model: "test", effort: "high")
     let first = SessionModelRoute(group: "work", member: "a", specifier: spec, bindingFingerprint: "fixture", epoch: "first", reason: .create, placedAt: Date(), evidence: [])
     let id = try await space.sessions.createSession(group: .shared, title: "group", kind: .agent, createdBy: "owner", executor: .modelGroup(id: "work", effort: "high"), modelRoute: first)
-    #expect(try await owner.modelRoute(id) == first)
+    #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self) == first)
     var next = first
     next.member = "b"
     next.epoch = "next"
     next.reason = .startOver
-    _ = try await owner.restart(id, executor: .modelGroup(id: "work", effort: "high"), note: nil, modelRoute: next)
-    #expect(try await owner.modelRoute(id) == next)
+    _ = try await owner.send(.append(id, .restarted(executor: .modelGroup(id: "work", effort: "high"), note: nil, modelRoute: next))).value(SessionRestart.self)
+    #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self) == next)
     #expect(try await space.sessions.modelRouteHistory(id) == [first, next])
     await #expect(throws: InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.")) {
       try await owner.inferenceReadiness(audience: URL(string: "https://provider.example")!)

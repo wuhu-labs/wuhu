@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS "session_command_tokens" (
 );
 """
 
-public enum SessionCommand: Hashable, Sendable {
+public enum SessionCommand: Hashable, Sendable, Codable {
   case compact(instructions: String?)
 
   var kind: String {
@@ -46,7 +46,7 @@ public enum SessionCommand: Hashable, Sendable {
 }
 
 @Table("session_commands")
-struct SessionCommandRow: Hashable, Sendable {
+struct SessionCommandRow: Hashable, Sendable, Codable {
   @Column("session_id", primaryKey: true) var sessionID: String
   var kind: String
   var instructions: String?
@@ -65,7 +65,7 @@ struct SessionCommandTokenRow {
   var token: String
 }
 
-public struct CompactRequestClaim: Hashable, Sendable {
+public struct CompactRequestClaim: Hashable, Sendable, Codable {
   let row: SessionCommandRow
   let token: String
   let generation: Int

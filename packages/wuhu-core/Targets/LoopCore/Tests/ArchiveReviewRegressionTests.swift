@@ -12,12 +12,12 @@ import WuhuAI
       let sessions = try Space.inMemory().sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig()) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
-          if id == child { _ = try await store.restart(root, executor: .kernel(.test), note: nil) }
-          return try await store.archive(id, grace: grace)
-        })
-      }
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
+        if id == child { _ = try await store.send(.append(root, .restarted(executor: .kernel(.test), note: nil, modelRoute: nil))).value(SessionRestart.self) }
+        return try await store.send(.append(id, .archived(grace: grace)))
+      }, loopConfig: makeConfig())
       do {
         await #expect(throws: SessionError.archiveReservationLost) { try await service.archive(root) }
         #expect(try await sessions.record(root).lifecycle == .live)
@@ -47,19 +47,19 @@ import WuhuAI
       let outsideRan = Box(false)
       let enqueued = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
+        if id == child {
+          writing.withLock { $0 = true }
+          await gate.wait(unless: { Task.isCancelled })
+        }
+        return try await store.send(.append(id, .archived(grace: grace)))
+      }, loopConfig: makeConfig(inference: { request in
         #expect(request.sessionID == outside)
         outsideRan.withLock { $0 = true }
         return Fix.reply("done")
-      })) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
-          if id == child {
-            writing.withLock { $0 = true }
-            await gate.wait(unless: { Task.isCancelled })
-          }
-          return try await store.archive(id, grace: grace)
-        })
-      }
+      }))
       try await runService(service) { service in
         let archive = Task { try await service.archive(root, force: true) }
         let enqueue = Task {
@@ -94,16 +94,16 @@ import WuhuAI
       let writing = Box(false)
       let ran = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: { _ in
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .append(_, .archived(_)) = message else { return try await store.send(message) }
+        writing.withLock { $0 = true }
+        await gate.wait(unless: { Task.isCancelled })
+        throw UnexpectedCall("archive write failed")
+      }, loopConfig: makeConfig(inference: { _ in
         ran.withLock { $0 = true }
         return Fix.reply("done")
-      })) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { _, _, _ in
-          writing.withLock { $0 = true }
-          await gate.wait(unless: { Task.isCancelled })
-          throw UnexpectedCall("archive write failed")
-        })
-      }
+      }))
       let archive = Task { try await service.archive(root) }
       do {
         try await until("archive write held") { writing.value }
@@ -132,13 +132,13 @@ import WuhuAI
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let writing = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig()) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
-          writing.withLock { $0 = true }
-          await gate.wait(unless: { Task.isCancelled })
-          return try await store.archive(id, grace: grace)
-        })
-      }
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
+        writing.withLock { $0 = true }
+        await gate.wait(unless: { Task.isCancelled })
+        return try await store.send(.append(id, .archived(grace: grace)))
+      }, loopConfig: makeConfig())
       let archive = Task { try await service.archive(root) }
       do {
         try await until("parent reserved") { writing.value }
@@ -182,29 +182,30 @@ import WuhuAI
       let compactRan = Box(false)
       let pendingGate = Latch()
       let busyGate = Latch()
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        if case .read(let id, .pendingCommand) = message {
+          let command = try await store.send(message)
+          if id == compact, !pendingRead.value {
+            pendingRead.withLock { $0 = true }
+            await pendingGate.wait(unless: { Task.isCancelled })
+          }
+          return command
+        }
+        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
+        if id == busy, !busyRead.value {
+          busyRead.withLock { $0 = true }
+          await busyGate.wait(unless: { Task.isCancelled })
+        }
+        return try await store.send(.read(id, .queueHead))
+      }, loopConfig: makeConfig(inference: { request in
         guard request.sessionID == compact else { return try await Fix.hanging(request) }
         if request.mode == .forcedCompact {
           compactRan.withLock { $0 = true }
           return Fix.reply("folded", calls: [.init(id: "archive-compact", name: "compact", arguments: .object(["summary": .string("kept")]))])
         }
         return Fix.reply("done")
-      })) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
-          if id == busy, !busyRead.value {
-            busyRead.withLock { $0 = true }
-            await busyGate.wait(unless: { Task.isCancelled })
-          }
-          return try await store.queueHead(id)
-        }, pendingCommandRead: { store, id in
-          let command = try await store.pendingCommand(id)
-          if id == compact, !pendingRead.value {
-            pendingRead.withLock { $0 = true }
-            await pendingGate.wait(unless: { Task.isCancelled })
-          }
-          return command
-        })
-      }
+      }))
       try await service.wake(compact)
       let archive = Task {
         try await until("compact pending read held") { pendingRead.value }

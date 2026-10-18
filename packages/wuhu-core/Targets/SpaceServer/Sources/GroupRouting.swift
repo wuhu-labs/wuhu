@@ -75,10 +75,10 @@ func groupCatalog(owner: any ExecutionOwnerClient) -> @Sendable () async throws 
   }
 }
 
-func activeModelSpecifier(_ record: SessionRecord, owner: any SessionExecutionOwnerClient) async -> ModelSpecifier? {
+func activeModelSpecifier(_ record: SessionRecord, owner: any MainClient) async -> ModelSpecifier? {
   switch record.executor {
   case let .kernel(model), let .claudeCode(model): model
-  case .modelGroup: try? await owner.modelRoute(record.id)?.specifier
+  case .modelGroup: try? await owner.send(.read(record.id, .modelRoute)).value(SessionModelRoute?.self)?.specifier
   case .contractor: nil
   }
 }

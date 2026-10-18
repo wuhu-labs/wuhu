@@ -85,8 +85,8 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let id = try await harness.createSession(provider: provider, model: modelName)
         let owner = InProcessExecutionOwnerClient(space: harness.space, credentials: harness.credentials)
         let initialCatalog = try await groupCatalog(owner: owner)()
-        guard case let .kernel(specifier) = try await owner.record(id).executor else { Issue.record("expected kernel"); return }
-        let held = try await owner.establishModelRoute(id, route: .init(group: nil, member: nil, specifier: specifier, bindingFingerprint: initialCatalog.document.providers[provider]!.routeFingerprint, epoch: UUID().uuidString, reason: .create, placedAt: Date(), evidence: []))
+        guard case let .kernel(specifier) = try await owner.send(.read(id, .record)).value(SessionRecord.self).executor else { Issue.record("expected kernel"); return }
+        let held = try await owner.send(.append(id, .modelRouteEstablished(.init(group: nil, member: nil, specifier: specifier, bindingFingerprint: initialCatalog.document.providers[provider]!.routeFingerprint, epoch: UUID().uuidString, reason: .create, placedAt: Date(), evidence: [])))).value(SessionModelRoute.self)
         let old = try await initialCatalog.resolve(held.specifier, session: id, routeEpoch: held.epoch)
         let oldBinding: ReplayBinding? = boundary == .legacyAdoption ? nil : .init(identity: old.bindingIdentity, epoch: old.routeEpoch)
         if boundary == .credentialIdentity { identity.withLock { $0 = "new-account" } }
@@ -105,7 +105,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let infer = kernelInference(owner: owner, catalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var adopted: Transcript
         if boundary == .compaction {
-          adopted = try await owner.writeCompaction(id, closing: nil, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target), kept: 0 ..< source.items.count, completingCompactRequest: nil, transition: nil)
+          adopted = try await owner.send(.append(id, .compacted(closing: nil, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target), kept: 0 ..< source.items.count, completing: nil, transition: nil))).value(Transcript.self)
         } else {
           do {
             _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: source, mode: .normal))
@@ -114,7 +114,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
           } catch let required as ReplayBoundaryRequired {
             #expect(bodies.withLock { $0.isEmpty })
             let portable = try source.portableHandoff(binding: required.binding, budget: required.budget)
-            adopted = try await owner.writePortableHandoff(id, expectedGeneration: 0, source: source, transcript: portable, transition: nil)
+            adopted = try await owner.send(.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: nil))).value(Transcript.self)
           }
         }
         // Rehydrate to prove the decision is not ephemeral executor state.
@@ -156,7 +156,7 @@ extension PortableThinkingTests {
         }
       } operation: {
         let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup(model: "claude-test-model")
-        let held = try #require(await owner.modelRoute(id))
+        let held = try #require(await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self))
         let resolved = try await catalog.resolve(held.specifier, session: id, routeEpoch: held.epoch)
         var source = try await harness.store.transcript(id)
         let items = thinkingHistory(binding: .init(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), scope: resolved.replayScope)
@@ -167,8 +167,8 @@ extension PortableThinkingTests {
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
         if lastResort {
           let failure = ModelRouteFailure(reason: .quota, firstFailureAt: Date().addingTimeInterval(-1900), deadline: Date().addingTimeInterval(-100), retryAt: nil)
-          try await owner.updateModelRouteFailure(id, expectedEpoch: held.epoch, failure: failure)
-          let refusing = try #require(await owner.modelRoute(id))
+          try await owner.send(.append(id, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: failure))).value(Void.self)
+          let refusing = try #require(await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self))
           do {
             try await routeWaitOrSwitch(refusing, session: id, catalog: catalog, usage: harness.runtime.usage)
             Issue.record("expected last-resort boundary")
@@ -176,15 +176,15 @@ extension PortableThinkingTests {
           } catch let boundary as ReplayBoundaryRequired {
             let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget)
             let route = try #require(boundary.route)
-            _ = try await owner.writePortableHandoff(id, expectedGeneration: 0, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: route, transcript: portable))
+            _ = try await owner.send(.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: route, transcript: portable)))).value(Transcript.self)
           }
         } else {
           let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init())
           let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
           let transition = try #require(await compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)(id, compacted, nil))
-          _ = try await owner.writeCompaction(id, closing: nil, head: head, kept: 0 ..< source.items.count, completingCompactRequest: nil, transition: transition)
+          _ = try await owner.send(.append(id, .compacted(closing: nil, head: head, kept: 0 ..< source.items.count, completing: nil, transition: transition))).value(Transcript.self)
         }
-        #expect(try await owner.modelRoute(id)?.member == "b")
+        #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self)?.member == "b")
         let infer = kernelInference(owner: owner, catalog: { catalog }, groupCatalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var adopted = try await harness.store.transcript(id)
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
@@ -193,7 +193,7 @@ extension PortableThinkingTests {
         adopted.append(.direct(.init(id: UUID(), sender: .init(id: "owner", timeZone: TimeZone(identifier: "UTC")!), timestamp: Date(), content: .init(text: "new turn"))))
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
         #expect(bodies.withLock { $0.last?.object?["thinking"]?.object?["type"]?.stringValue } == "adaptive")
-        #expect(try await owner.modelRoute(id)?.member == "b")
+        #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self)?.member == "b")
       }
     }
   }

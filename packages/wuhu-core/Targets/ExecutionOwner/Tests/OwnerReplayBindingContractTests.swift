@@ -66,7 +66,7 @@ import Testing
     let space = try Space.inMemory()
     let id = try await space.sessions.createSession(group: .shared, title: "owner handoff", kind: .agent, createdBy: "fixture", model: .init(provider: "fixture", model: "model", effort: "high"))
     let owner: any ExecutionOwnerClient = InProcessExecutionOwnerClient(space: space)
-    let hydration = try await owner.hydrate(id)
+    let hydration = try await owner.send(.read(id, .hydration)).value(SessionHydration.self)
     guard case let .kernel(source) = hydration.transcript else { Issue.record("expected kernel transcript"); return }
     let binding = ReplayBinding(identity: "owner-binding", epoch: "owner-route")
     let projected = try withDependencies {
@@ -75,9 +75,9 @@ import Testing
     } operation: {
       try source.portableHandoff(binding: binding, budget: .init(maxInput: 10000, maxOutput: 1000))
     }
-    let committed = try await owner.writePortableHandoff(id, expectedGeneration: hydration.generation, source: source, transcript: projected)
+    let committed = try await owner.send(.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: projected, transition: nil))).value(Transcript.self)
     #expect(committed == projected)
-    #expect(try await owner.hydrate(id).generation == hydration.generation + 1)
-    #expect(try await owner.hydrate(id).transcript == .kernel(projected))
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).generation == hydration.generation + 1)
+    #expect(try await owner.send(.read(id, .hydration)).value(SessionHydration.self).transcript == .kernel(projected))
   }
 }

@@ -57,7 +57,7 @@ Start over optionally carries a prepared `SessionModelRoute` through service/act
 
 ## Owner boundary
 
-Each `SessionActor` is given a session-scoped repository backed only by `SessionExecutionOwnerClient`; subscription refreshes use that same repository instead of reaching through it to `SessionStore`. Parent `SessionService` composition may supply an owner client explicitly, or use the existing in-process store adapter. Session placement, boot admission and archive coordination stay in the parent. This changes dependencies, not durable boundaries or lifecycle behavior.
+Each `SessionActor` holds its session ID and a `MainClient`, sending typed `ToMain` values directly; there is no session repository or operation-specific interception surface. `SessionExecution` passes that same endpoint to its registry and actors. Tests inject a fake main through the same in-process codec, intercepting typed requests rather than actor/repository implementation calls. Parent `SessionService` owns placement, admission, boot and archive coordination, with its existing store dependency. Lifecycle, queue, compact claim and transcript behavior is unchanged.
 
 ## In-process execution
 

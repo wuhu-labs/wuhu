@@ -7,7 +7,7 @@ import SystemFiles
 
 func budgetResolver(owner: any ExecutionOwnerClient) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
-    guard let record = try? await owner.record(id),
+    guard let record = try? await owner.send(.read(id, .record)).value(SessionRecord.self),
           let specifier = await activeModelSpecifier(record, owner: owner),
           let data = try? await owner.modelDocument(),
           let document = try? ModelsDocument(json: data),

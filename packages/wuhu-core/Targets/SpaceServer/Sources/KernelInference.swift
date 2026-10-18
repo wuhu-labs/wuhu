@@ -33,7 +33,7 @@ func kernelInference(
     let warmingPolicy: CacheWarmingPolicy?
     var routingCatalog: ProviderCatalog?
     do {
-      record = try await owner.record(request.sessionID)
+      record = try await owner.send(.read(request.sessionID, .record)).value(SessionRecord.self)
       let selectedCatalog: ProviderCatalog
       if case .modelGroup = record.executor, let groupCatalog {
         selectedCatalog = try await groupCatalog()
@@ -47,7 +47,7 @@ func kernelInference(
       case let .kernel(specifier):
         model = specifier
         _ = try selectedCatalog.validate(specifier)
-        let held = try await owner.modelRoute(request.sessionID)
+        let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self)
         let fingerprint = selectedCatalog.document.providers[specifier.provider]!.routeFingerprint
         if held == nil || held?.bindingFingerprint != fingerprint {
           let prepared = SessionModelRoute(
@@ -60,12 +60,12 @@ func kernelInference(
             placedAt: date.now,
             evidence: [],
           )
-          route = try await owner.establishModelRoute(request.sessionID, route: prepared)
+          route = try await owner.send(.append(request.sessionID, .modelRouteEstablished(prepared))).value(SessionModelRoute.self)
         } else {
           route = held!
         }
       case let .modelGroup(id, effort):
-        guard let held = try await owner.modelRoute(request.sessionID) else {
+        guard let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self) else {
           throw CatalogError.modelRouteInvalid(group: id, member: "<missing>")
         }
         route = held
@@ -121,8 +121,8 @@ func kernelInference(
         handles: try await owner.handlesByPrincipal(),
         devices: try await owner.deviceNames(),
       )
-      if let held = try await owner.modelRoute(request.sessionID), held.failure != nil {
-        try await owner.updateModelRouteFailure(request.sessionID, expectedEpoch: held.epoch, failure: nil)
+      if let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self), held.failure != nil {
+        try await owner.send(.append(request.sessionID, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil))).value(Void.self)
       }
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
       return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry, transcript in

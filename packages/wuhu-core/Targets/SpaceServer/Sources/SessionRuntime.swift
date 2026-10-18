@@ -255,7 +255,7 @@ extension SessionRuntime {
       await toolOwner.cancelExecJobs(of: session)
     }
     config.runningWork = { scripts.running(of: $0) + toolOwner.runningExecJobs(of: $0) }
-    let execution = await SessionExecution(owner: owner, loopConfig: config)
+    let execution = await SessionExecution(main: owner, loopConfig: config)
     let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace)
     serviceSlot.bind(service)
     return SessionRuntime(

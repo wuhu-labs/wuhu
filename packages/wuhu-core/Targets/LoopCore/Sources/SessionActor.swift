@@ -71,7 +71,7 @@ actor SessionActor {
   }
 
   nonisolated let id: SessionID
-  let repo: SessionRepo
+  let main: any MainClient
   let loopConfig: LoopConfig
   let liveness: LivenessTracker
   let beforeCompactRequest: @Sendable () async -> Void
@@ -96,9 +96,9 @@ actor SessionActor {
   @Dependency(\.continuousClock) var clock
   @Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
-  init(id: SessionID, repo: SessionRepo, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
+  init(id: SessionID, main: any MainClient, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
     self.id = id
-    self.repo = repo
+    self.main = main
     self.loopConfig = loopConfig
     self.liveness = liveness
     self.beforeCompactRequest = beforeCompactRequest
@@ -212,7 +212,7 @@ actor SessionActor {
           archiveReservation = reservation
           return true
         }
-        let head = try await repo.queueHead()
+        let head = try await main.send(.read(id, .queueHead)).value(Int.self)
         try modify { $0.queueHead = max($0.queueHead, head) }
         guard try live.hasSettled else { return false }
         try modify { $0.archiving = true }
@@ -260,7 +260,7 @@ actor SessionActor {
       return lifecycle
     }
 
-    let hydration = try await repo.hydrate()
+    let hydration = try await main.send(.read(id, .hydration)).value(SessionHydration.self)
     try Task.checkCancellation()
     switch hydration.record.lifecycle {
     case .archived(let graceExpiresAt):
@@ -303,10 +303,10 @@ actor SessionActor {
   }
 
   // Every queue writer signals the work bus and lands here: deliveries written
-  // straight to the repo bypass handleEnqueue, so a wake re-syncs the queue
+  // straight to the store bypass handleEnqueue, so a wake re-syncs the queue
   // head or the loop's drain check stays stale.
   private func handleWake() async throws {
-    let head = try await repo.queueHead()
+    let head = try await main.send(.read(id, .queueHead)).value(Int.self)
     try modify { $0.queueHead = max($0.queueHead, head) }
     nudge()
   }
@@ -314,7 +314,7 @@ actor SessionActor {
   private func handleEnqueue(_ item: QueueInput) async throws -> Int {
     switch try await ensureLifecycle() {
     case .live:
-      let id = try await repo.enqueue(input: item)
+      let id = try await main.send(.append(id, .inputEnqueued(item))).value(Int.self)
       try modify {
         $0.queueHead = max($0.queueHead, id)
       }
@@ -325,7 +325,7 @@ actor SessionActor {
       guard date() < deadline else {
         throw SessionError.archiveGraceExpired
       }
-      return try await repo.enqueue(input: item)
+      return try await main.send(.append(id, .inputEnqueued(item))).value(Int.self)
     }
   }
 
@@ -335,7 +335,7 @@ actor SessionActor {
     // An owed idle check is no work, but no pass may start a turn while the
     // archive is written: the turn would land in the archived session.
     try modify { $0.archiving = true }
-    let deadline = try await repo.archive(grace: loopConfig.archiveGrace)
+    let deadline = try await main.send(.append(id, .archived(grace: loopConfig.archiveGrace))).value(Date.self)
     try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
     dismountLive()
@@ -346,7 +346,7 @@ actor SessionActor {
   // materializing here would run a loop pass on a session about to be wiped.
   private func handleRestart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     // Its frames would land in the fresh generation.
-    let restart = try await repo.restart(executor: executor, note: note, modelRoute: modelRoute)
+    let restart = try await main.send(.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute))).value(SessionRestart.self)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
@@ -359,7 +359,7 @@ actor SessionActor {
     guard date() < deadline else {
       throw SessionError.archiveGraceExpired
     }
-    try await repo.unarchive()
+    try await main.send(.append(id, .unarchived)).value(Void.self)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
@@ -387,7 +387,7 @@ actor SessionActor {
       nudge()
     }
 
-    try await repo.markInterrupted()
+    try await main.send(.append(id, .interrupted)).value(Void.self)
     try modify { $0.sessionStatus = .interrupted }
   }
 
@@ -399,7 +399,7 @@ actor SessionActor {
     case .healthy:
       return
     case .interrupted, .errored(_):
-      try await repo.markResumed()
+      try await main.send(.append(id, .resumed)).value(Void.self)
       try modify {
         $0.sessionStatus = .healthy
       }

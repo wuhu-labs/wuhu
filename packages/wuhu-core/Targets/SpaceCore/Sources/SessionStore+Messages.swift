@@ -135,7 +135,6 @@ extension SessionStore {
     let broadcast = broadcast
     let delivery = try await Substrate.writeEmitting(writer, to: broadcast) { [staged] db, pending in
       let existing = try Conversations.message(id: messageID.rawValue, in: db)
-      // A session posts from its own group, a person from the one it acts in.
       let poster = Poster(
         actor: senderSession.map(Actor.session) ?? acting?.actor,
         persona: sender.id,
@@ -253,15 +252,11 @@ extension SessionStore {
   }
 }
 
-// Who posts, as delivery needs it: the actor (nil for a caller that named no
-// principal), the persona a person posts as, and the group posted from.
 struct Poster {
   var actor: Actor?
   var persona: String
   var group: GroupID
 
-  // A person the caller did not name resolves through its persona; the
-  // --dev seat is unrestricted.
   func isAdmin(of group: GroupID, in db: Database) throws -> Bool {
     switch actor {
     case .anonymous:
@@ -364,19 +359,14 @@ extension SessionStore {
     now: String,
     in db: Database,
   ) throws -> [SessionID] {
-    var seen: Set<String> = []
-    let senderKey = message.senderSession?.rawValue
-    let readable = try Groups.reads(poster.group, in: db)
-    var woken = try recipients(message, conversation: conversation, readable: readable, nowDate: nowDate, in: db)
-      .filter { $0 != senderKey && seen.insert($0).inserted }
-    let notified = conversation.members.filter { $0.kind == .user && $0.member != message.sender.id }
-    if message.senderSession == nil {
-      woken = try sparingTasks(woken, reachesPeople: !notified.isEmpty, in: db)
-    }
+    let routingDate = try SQLiteDateFormat.date(from: now)
+    let snapshot = try routingSnapshot(message, conversation: conversation, poster: poster, in: db)
+    let routed = try recipients(snapshot: snapshot, message: message, now: routingDate)
 
     var enqueued: [SessionID] = []
-    for recipient in woken {
-      let owes = try owesReply(recipient, message: message, conversation: conversation, in: db)
+    for key in routed.woken {
+      let recipient = key.rawValue
+      let owes = message.kind == .message && snapshot.sessions[key]?.kind == .agent && conversation.ownerSession == key
       let home = try Sessions.group(of: recipient, in: db)
       let input = QueueInput.message(ConversationMessage(
         id: .deterministic("deliver", message.id.rawValue, recipient),
@@ -402,9 +392,9 @@ extension SessionStore {
     }
 
     let group = try Conversations.group(of: conversation.id.rawValue, in: db)
-    for member in notified {
+    for member in routed.notified {
       try Notifications.append(
-        recipient: member.member,
+        recipient: member,
         source: conversation.id.rawValue,
         group: group,
         kind: .conversationMessage,
@@ -420,131 +410,55 @@ extension SessionStore {
     return enqueued
   }
 
-  // A person never wakes a task. A post whose only recipients are tasks is
-  // refused rather than stored undelivered; one that also reaches anyone else
-  // goes to them alone.
-  private func sparingTasks(_ keys: [String], reachesPeople: Bool, in db: Database) throws -> [String] {
-    guard !keys.isEmpty else { return keys }
-    let tasks = try Set(String.fetchAll(
-      db,
-      sql: "SELECT id FROM sessions WHERE kind = ? AND id IN (\(databaseQuestionMarks(count: keys.count)))",
-      arguments: StatementArguments([SessionKind.task.rawValue] + keys),
-    ))
-    let others = keys.filter { !tasks.contains($0) }
-    if let task = keys.first, others.isEmpty, !reachesPeople {
-      throw SessionStoreError.taskTakesNoHumanInput(task)
+  private func routingSnapshot(
+    _ message: MessageRecord, conversation: ConversationRecord, poster: Poster, in db: Database,
+  ) throws -> RoutingSnapshot {
+    let audience: RoutingSnapshot.Audience
+    switch conversation.kind {
+    case .box:
+      guard let owner = conversation.ownerSession else { throw SessionStoreError.unknownConversation(conversation.id.rawValue) }
+      audience = .box(owner, messages: conversation.windowMessages, seconds: conversation.windowSeconds)
+    case .users:
+      audience = .channel(messages: conversation.windowMessages, seconds: conversation.windowSeconds)
+    case .dmUser, .dmSession:
+      audience = .direct(conversation.members.filter { $0.kind == .session }.map { SessionID($0.member) })
     }
-    return others
-  }
-
-  // An @mention or a reply-target wakes a session only where the poster
-  // reaches it (see reaches); the box owner, DM members and the attention
-  // window are reached by construction.
-  private func recipients(
-    _ message: MessageRecord,
-    conversation: ConversationRecord,
-    readable: Set<GroupID>,
-    nowDate: Date,
-    in db: Database,
-  ) throws -> [String] {
-    var keys: [String] = []
-    if let owner = conversation.ownerSession {
-      keys.append(owner.rawValue)
-    }
-    if conversation.kind == .dmUser || conversation.kind == .dmSession {
-      keys.append(contentsOf: conversation.members.filter { $0.kind == .session }.map(\.member))
-    }
-    var addressed = try mentioned(message.content.text, in: db)
-    if let replyTarget = message.replyTarget,
-       let parent = try Conversations.message(id: replyTarget.rawValue, in: db),
-       let session = parent.senderSession
+    let replySender: RoutingSnapshot.ReplySender
+    if let reply = message.replyTarget,
+       let parent = try Conversations.message(id: reply.rawValue, in: db)?.senderSession
     {
-      addressed.append(session.rawValue)
+      replySender = .session(parent)
+    } else {
+      replySender = .unaddressed
     }
-    for key in addressed where try reaches(key, from: readable, in: conversation, in: db) {
-      keys.append(key)
+    let conversationID = conversation.id.rawValue
+    let before = message.n
+    let tail = try #sql("""
+    SELECT sender_session_id, created_at FROM messages
+    WHERE \(conversation.kind.isOpen) AND conversation_id = \(bind: conversationID) AND n < \(bind: before)
+    ORDER BY n DESC LIMIT \(bind: max(0, conversation.windowMessages))
+    """, as: RoutingMessage.self).fetchAll(db)
+    var seen: Set<String> = []
+    let recent = try tail.enumerated().compactMap { index, row -> RoutingSnapshot.RecentSender? in
+      guard let session = row.session, seen.insert(session).inserted else { return nil }
+      return (SessionID(session), try SQLiteDateFormat.date(from: row.createdAt), index)
+    }.sorted { $0.session.rawValue < $1.session.rawValue }
+    var candidates = MentionScanner.candidates(in: message.content.text)
+    candidates += conversation.members.filter { $0.kind == .session }.map(\.member)
+    candidates += recent.map { $0.session.rawValue }
+    if let owner = conversation.ownerSession { candidates.append(owner.rawValue) }
+    if case let .session(parent) = replySender { candidates.append(parent.rawValue) }
+    let readable = try Groups.reads(poster.group, in: db)
+    let sessions = try RoutingSessionRow.where { $0.id.in(candidates) }.fetchAll(db).map { row in
+      (SessionID(row.id), (
+        kind: row.kind,
+        reachable: try reaches(row.id, from: readable, in: conversation, in: db),
+      ))
     }
-    if conversation.kind.isOpen {
-      keys.append(contentsOf: try attentive(conversation, before: message.n, nowDate: nowDate, in: db))
-    }
-    return keys
-  }
-
-  // The attention window is an intersection: an agent stays addressable only
-  // while BOTH the message count AND the elapsed time are inside their bounds,
-  // so it closes at whichever bound passes first. Tasks never
-  // enter it: a task talks to its parent through their DM, and sweeping one
-  // into a box turns every box post into a fan-out to the whole swarm.
-  private func attentive(
-    _ conversation: ConversationRecord,
-    before n: Int64,
-    nowDate: Date,
-    in db: Database,
-  ) throws -> [String] {
-    let horizon = SQLiteDateFormat.string(from: nowDate.addingTimeInterval(-Double(conversation.windowSeconds)))
-    return try String.fetchAll(
-      db,
-      sql: """
-      SELECT last.sender_session_id FROM (
-        SELECT sender_session_id, MAX(n) AS n, MAX(created_at) AS created_at
-        FROM messages
-        WHERE conversation_id = :conversation AND sender_session_id IS NOT NULL AND n < :before
-        GROUP BY sender_session_id
-      ) AS last
-      JOIN sessions ON sessions.id = last.sender_session_id AND sessions.kind = 'agent'
-      WHERE last.created_at >= :horizon
-        AND (SELECT COUNT(*) FROM messages
-             WHERE conversation_id = :conversation AND n > last.n AND n < :before) < :window
-      """,
-      arguments: [
-        "conversation": conversation.id.rawValue, "before": n,
-        "horizon": horizon, "window": conversation.windowMessages,
-      ],
+    return RoutingSnapshot(
+      audience: audience, people: conversation.members.filter { $0.kind == .user }.map(\.member),
+      sessions: Dictionary(uniqueKeysWithValues: sessions), replySender: replySender, recentSenders: recent,
     )
-  }
-
-  private func mentioned(_ text: String, in db: Database) throws -> [String] {
-    var found: [String] = []
-    for candidate in MentionScanner.candidates(in: text) where try Sessions.exists(candidate, in: db) {
-      found.append(candidate)
-    }
-    return found
-  }
-
-  private func owesReply(
-    _ recipient: String,
-    message: MessageRecord,
-    conversation: ConversationRecord,
-    in db: Database,
-  ) throws -> Bool {
-    guard message.kind == .message else { return false }
-    guard try Sessions.record(recipient, in: db).kind == .agent else { return false }
-    return conversation.ownerSession?.rawValue == recipient
-  }
-}
-
-enum MentionScanner {
-  // An @ mention is a whole token: a hyphenated allocation name bounded by
-  // anything outside [A-Za-z0-9_-].
-  static func candidates(in text: String) -> [String] {
-    var names: [String] = []
-    var index = text.startIndex
-    while let at = text[index...].firstIndex(of: "@") {
-      let before = at == text.startIndex ? nil : text[text.index(before: at)]
-      var end = text.index(after: at)
-      while end < text.endIndex, isNameByte(text[end]) { end = text.index(after: end) }
-      let name = String(text[text.index(after: at) ..< end])
-      if before.map({ !isNameByte($0) }) ?? true, name.contains("-") {
-        names.append(name)
-      }
-      index = end
-      if index >= text.endIndex { break }
-    }
-    return names
-  }
-
-  private static func isNameByte(_ character: Character) -> Bool {
-    character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "_")
   }
 }
 
@@ -566,3 +480,17 @@ private func fileConversation(_ path: String, in group: GroupID, db: Database) t
         let record = try Conversations.record(String(parts[2]), in: db), record.group == group else { return nil }
   return record
 }
+
+@Table("sessions")
+private struct RoutingSessionRow {
+  var id: String
+  var kind: SessionKind
+}
+
+@Selection
+private struct RoutingMessage {
+  var session: String?
+  var createdAt: String
+}
+
+extension SessionKind: QueryBindable {}

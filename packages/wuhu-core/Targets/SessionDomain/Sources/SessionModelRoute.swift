@@ -98,7 +98,7 @@ public struct ModelRouteFailure: Hashable, Sendable, Codable {
   public var evidenceExpiresAt: Date { retryAt ?? max(deadline, (lastFailureAt ?? firstFailureAt).addingTimeInterval(60)) }
 }
 
-public struct ModelRouteTransition: Sendable {
+public struct ModelRouteTransition: Sendable, Codable {
   public var expectedEpoch: String
   public var route: SessionModelRoute
   public var transcript: Transcript

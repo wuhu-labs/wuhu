@@ -33,25 +33,25 @@ import Testing
       let commits = AsyncStream<SessionID>.makeStream()
       defer { commits.continuation.finish() }
       let logs = RecordedLogs()
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
+        if missing, id == first, removed.withLock({ value in
+          guard !value else { return false }
+          value = true
+          return true
+        }) {
+          try await space.writer.write { db in
+            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [bad.rawValue])
+          }
+        }
+        return try await store.send(.read(id, .queueHead))
+      }, loopConfig: makeConfig(inference: { request in
         calls.withLock { $0.append(request.sessionID) }
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
         return reply
-      }), log: logs.logger) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, queueHeadRead: { store, id in
-          if missing, id == first, removed.withLock({ value in
-            guard !value else { return false }
-            value = true
-            return true
-          }) {
-            try await space.writer.write { db in
-              try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [bad.rawValue])
-            }
-          }
-          return try await store.queueHead(id)
-        })
-      }
+      }), log: logs.logger)
       try await runService(service) { service in
         var iterator = commits.stream.makeAsyncIterator()
         let bootCommits = [await iterator.next(), await iterator.next()]

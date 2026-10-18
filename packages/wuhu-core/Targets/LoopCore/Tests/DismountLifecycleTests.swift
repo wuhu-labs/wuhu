@@ -38,10 +38,12 @@ import Testing
       let passes = Box(0)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, pendingCommandRead: { store, id in
+        main: InProcessMainClient { message in
+          let store = InProcessMainClient(sessions: sessions)
+          guard case .read(let id, .pendingCommand) = message else { return try await store.send(message) }
           pendingReads.withLock { $0 += 1 }
-          return try await store.pendingCommand(id)
-        }),
+          return try await store.send(.read(id, .pendingCommand))
+        },
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         beforeCompactRequest: {
@@ -126,7 +128,7 @@ import Testing
       let actorReference = Box<SessionActor?>(nil)
       let actor = SessionActor(
         id: id,
-        repo: SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id),
+        main: InProcessMainClient(sessions: sessions),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         beforeCompactRequest: {

@@ -12,7 +12,7 @@ import Testing
   try await withKernelDeps { _ in
     let sessions = try Space.inMemory().sessions
     let id = try await sessions.createSession(group: .shared, title: "shutdown", kind: .agent, createdBy: "morgan", model: .test)
-    let execution = await SessionExecution(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), loopConfig: makeConfig())
+    let execution = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
     try await execution.wake(id)
     async let first: Void = execution.shutdown()
     async let second: Void = execution.shutdown()

@@ -10,10 +10,10 @@ import struct InferenceKit.InferenceMetric
 import enum SessionDomain.MediaReference
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
-import protocol SpaceCore.SessionExecutionOwnerClient
+import protocol SpaceCore.MainClient
 import struct SpaceCore.SessionHome
 
-public protocol ExecutionOwnerClient: SessionExecutionOwnerClient {
+public protocol ExecutionOwnerClient: MainClient {
   var tracesAttempts: Bool { get }
   func openAttemptTrace(_ id: UUID) async throws -> AttemptTraceSink
   func providerCredential(_ provider: String) async throws -> ProviderCredential?

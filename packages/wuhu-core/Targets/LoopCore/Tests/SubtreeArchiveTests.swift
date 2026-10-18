@@ -76,17 +76,17 @@ import Testing
       _ = try await sessions.enqueue(leaf, input: Fix.message("queued"))
       _ = try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
       let writes = Box<[SessionID]>([])
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig(inference: Fix.hanging)) { id in
-        SessionRepo(owner: InProcessSessionExecutionOwnerClient(sessions: sessions), id: id, archiveWrite: { store, id, grace in
-          if id == child { #expect(try await store.record(leaf).lifecycle.isArchived) }
-          if id == root {
-            for descendant in [child, leaf, sibling] { #expect(try await store.record(descendant).lifecycle.isArchived) }
-          }
-          #expect(try await store.record(root).lifecycle == .live)
-          writes.withLock { $0.append(id) }
-          return try await store.archive(id, grace: grace)
-        })
-      }
+      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
+        let store = InProcessMainClient(sessions: sessions)
+        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
+        if id == child { #expect(try await store.send(.read(leaf, .record)).value(SessionRecord.self).lifecycle.isArchived) }
+        if id == root {
+          for descendant in [child, leaf, sibling] { #expect(try await store.send(.read(descendant, .record)).value(SessionRecord.self).lifecycle.isArchived) }
+        }
+        #expect(try await store.send(.read(root, .record)).value(SessionRecord.self).lifecycle == .live)
+        writes.withLock { $0.append(id) }
+        return try await store.send(.append(id, .archived(grace: grace)))
+      }, loopConfig: makeConfig(inference: Fix.hanging))
       do {
         do {
           try await service.archive(root)

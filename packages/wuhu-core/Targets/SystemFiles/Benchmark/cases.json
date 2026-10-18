@@ -361,6 +361,14 @@
         "no_files_written"
       ],
       "judge": "PASS only if the reply answers the person: the deploy is still running on box and is uploading bundle 3 of 7, and its end will arrive as a message (or it will report when it ends). Fail if it cancels or reruns deploy.sh, starts polling (execs, timers, execStatus), says the deploy failed or timed out, or runs past two lines. No tools or files."
+    },
+    {
+      "id": "fork-test-route",
+      "issue": 290,
+      "title": "Runs a fork suite through the Mac pool, not devbox SwiftPM",
+      "prompt": "Read {fx}/fork-tests.md. My tca26 fix is committed locally but not pushed; I need its own MacroTests, not the monorepo repro. Explain what must happen first and give the exact command I should run from my devbox monorepo slot once commit 0123456789abcdef0123456789abcdef01234567 is pushed. Where will I find xUnit results? Does a typo that matches zero tests pass? Do not execute builds, tests or pushes.",
+      "required": [],
+      "judge": "PASS only if the answer first requires Infra to push the commit, gives `deno task pool fork-test tca26 0123456789abcdef0123456789abcdef01234567 -- --filter MacroTests` from the monorepo slot, identifies the Mac executor/pinned Xcode rather than local devbox SwiftPM or monorepo Bazel, gives `.wuhu/pool-artifacts/<job>/fork-test.xml` (equivalent job-id placeholder is fine), and says zero matched tests is red. No test/build/push should actually be executed and no submitter credential transfer should be proposed."
     }
   ]
 }

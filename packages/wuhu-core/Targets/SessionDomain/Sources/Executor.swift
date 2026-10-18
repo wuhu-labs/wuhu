@@ -1,7 +1,7 @@
 import JSONValue
 import OrderedCollections
 
-public enum SessionExecutor: Hashable, Sendable {
+public enum SessionExecutor: Hashable, Sendable, Codable {
   case kernel(ModelSpecifier)
   case modelGroup(id: String, effort: String)
   // Decode-only: Start over on a kernel provider is the only way back.
