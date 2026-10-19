@@ -1,6 +1,6 @@
 import Dependencies
 import GRDB
-import SessionTools
+import protocol MainHub.Worker
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,48 +9,34 @@ import SessionTools
 import JSONValue
 import Logging
 import SessionDomain
+import func SessionTools.scriptHandle
 import SpaceCore
 import Synchronization
 
-public struct SessionService: Sendable {
-  let execution: any SessionExecutionClient
-  let localExecution: SessionExecution?
-  var registry: SessionRegistry {
-    precondition(localExecution != nil, "remote services have no parent actor registry")
-    return localExecution!.registry
-  }
-
+public final class SessionService: Sendable {
+  private let worker: any Worker
+  private let beforeArchive: @Sendable (SessionID) async throws -> Void
+  private let archived: @Sendable (SessionID) async -> Void
   let sessions: SessionStore
   let archiveGrace: Duration
   private let reminders: SessionReminders
-  private let archives = ArchiveCoordinator()
+  private let lifecycle = LifecycleCoordinator()
+  private let runningWork: @Sendable (SessionID) async throws -> [String]
   private let log: Logger
 
-  public init(sessions: SessionStore, main: any Main, loopConfig: LoopConfig) async {
-    await self.init(sessions: sessions, main: main, loopConfig: loopConfig, log: Logger(label: "wuhu.session-service"))
+  public convenience init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration = .seconds(24 * 3600), runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] }, archived: @escaping @Sendable (SessionID) async -> Void = { _ in }) {
+    self.init(sessions: sessions, worker: worker, archiveGrace: archiveGrace, runningWork: runningWork, archived: archived, log: Logger(label: "wuhu.session-service"))
   }
 
-  init(sessions: SessionStore, main: any Main, loopConfig: LoopConfig, log: Logger) async {
+  init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration, runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] }, archived: @escaping @Sendable (SessionID) async -> Void = { _ in }, beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in }, log: Logger) {
     self.sessions = sessions
-    self.log = log
-    archiveGrace = loopConfig.archiveGrace
-    let reminders = SessionReminders(sessions: sessions)
-    self.reminders = reminders
-    var loopConfig = loopConfig
-    loopConfig.scheduleWake = { [weak reminders] id, due in await reminders?.schedule(id, at: due) }
-    let execution = await SessionExecution(main: main, loopConfig: loopConfig)
-    await reminders.bind(execution)
-    self.execution = execution
-    localExecution = execution
-  }
-
-  public init(sessions: SessionStore, execution: any SessionExecutionClient, archiveGrace: Duration) {
-    self.sessions = sessions
-    self.execution = execution
-    reminders = SessionReminders(sessions: sessions, execution: execution)
+    self.runningWork = runningWork
+    self.worker = worker
+    self.archived = archived
+    self.beforeArchive = beforeArchive
     self.archiveGrace = archiveGrace
-    localExecution = nil
-    log = Logger(label: "wuhu.session-service")
+    self.log = log
+    reminders = SessionReminders(sessions: sessions, execution: worker)
   }
 
   public func scheduleWake(_ id: SessionID, at due: Date?) async {
@@ -59,19 +45,19 @@ public struct SessionService: Sendable {
 
   public func shutdown() async {
     await reminders.shutdown()
-    await execution.shutdown()
+    await worker.shutdown()
   }
 
   public func start() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { [execution] in
-        await execution.drain()
+      group.addTask { [worker] in
+        await worker.drain()
       }
       group.addTask {
         let (parking, continuation) = AsyncStream<Void>.makeStream()
         for await _ in parking {}
         continuation.finish()
-        await shutdown()
+        await self.shutdown()
       }
       let signals = sessions.workSignals()
       let boot: [SessionID]
@@ -109,7 +95,7 @@ public struct SessionService: Sendable {
             guard admitted else { continue }
             wakes.addTask {
               while !Task.isCancelled {
-                let succeeded = await wakeWithRetry(session)
+                let succeeded = await self.wakeWithRetry(session)
                 let repeatWake = pending.state.withLock { state in
                   if succeeded, state[session] == true {
                     state[session] = false
@@ -164,12 +150,12 @@ public struct SessionService: Sendable {
 
   private func failSession(_ id: SessionID, error: any Error, phase: String) async {
     log.error("\(phase) failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
-    await execution.discard(id)
     do {
       try await sessions.markErrored(id, message: error is ExecutorUnavailableError ? "executor no longer supported" : "\(phase) failed: \(error)")
     } catch {
       log.error("could not mark session errored", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
     }
+    _ = try? await worker.revoke(id, policy: .cancel)
   }
 
   // UnfulfilledError is the retryable outcome of racing a retirement; one
@@ -197,9 +183,9 @@ public struct SessionService: Sendable {
     }
     if case .contractor = record.executor { return }
     guard record.work != .errored else { return }
-    try await retryingEviction {
-      try await execution.wake(sessionID)
-    }
+    do {
+      try await retryingEviction { try await worker.deliver(sessionID, .wake) }
+    } catch ExecutionHydrationError.reservedForArchive { return }
   }
 
   public func enqueue(item: QueueInput, to sessionID: SessionID) async throws -> Int {
@@ -218,7 +204,7 @@ public struct SessionService: Sendable {
       return
     }
     try await retryingEviction {
-      try await execution.interrupt(sessionID)
+      try await worker.deliver(sessionID, .interrupt)
     }
     await reminders.schedule(sessionID, at: nil)
   }
@@ -231,36 +217,38 @@ public struct SessionService: Sendable {
         return
       }
       try await retryingEviction {
-        try await execution.resume(sessionID)
+        try await worker.deliver(sessionID, .resume)
       }
     } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting {
-      await execution.discard(sessionID)
+      await failSession(sessionID, error: SessionError.unreadableData(sessionID), phase: "resume")
       throw SessionError.unreadableData(sessionID)
     }
   }
 
   public func archive(_ sessionID: SessionID, force: Bool = false) async throws {
-    try await archives.run { try await archiveSubtree(sessionID, force: force) }
+    try await lifecycle.run { try await archiveSubtree(sessionID, force: force) }
   }
 
   private func archiveSubtree(_ sessionID: SessionID, force: Bool) async throws {
     var subtree = try await sessions.archiveSubtree(sessionID)
     let reservation = UUID()
     var prepared: [SessionID] = []
+    var inactive: Set<SessionID> = []
     var busy: [ArchiveBusySession] = []
     do {
       var checked: Set<SessionID> = []
       while true {
         for record in subtree where !checked.contains(record.id) {
-          var settled = try await prepareArchive(record.id, reservation: reservation)
+          let settled = try await prepareArchive(record.id)
           if !settled, force {
             try await interrupt(record.id)
-            settled = try await prepareArchive(record.id, reservation: reservation)
           }
           checked.insert(record.id)
-          if settled {
+          if settled || force {
             prepared.append(record.id)
+            if record.executor.isRemoved { inactive.insert(record.id) }
             try await sessions.reserveForArchive(record.id, token: reservation)
+            if !settled { _ = try await retryingEviction { try await worker.revoke(record.id, policy: .cancel) } }
           } else {
             busy.append(ArchiveBusySession(id: record.id, title: record.title))
           }
@@ -274,12 +262,14 @@ public struct SessionService: Sendable {
       }
       for member in subtree {
         let record = try await sessions.record(member.id)
-        if record.executor.isRemoved {
-          if case .live = record.lifecycle { _ = try await sessions.archive(record.id, grace: archiveGrace) }
-        } else {
-          try await retryingEviction {
-            try await execution.archive(record.id, reservation: reservation)
-          }
+        if inactive.contains(record.id), !record.executor.isRemoved { throw SessionError.archiveReservationLost }
+        if case .live = record.lifecycle {
+          try await beforeArchive(record.id)
+          _ = try await sessions.archive(record.id, grace: archiveGrace)
+        }
+        if !record.executor.isRemoved {
+          try await worker.deliver(record.id, .archived)
+          await archived(record.id)
         }
         await reminders.schedule(member.id, at: nil)
       }
@@ -290,10 +280,10 @@ public struct SessionService: Sendable {
     await releaseArchive(prepared, reservation: reservation)
   }
 
-  private func prepareArchive(_ id: SessionID, reservation: UUID) async throws -> Bool {
+  private func prepareArchive(_ id: SessionID) async throws -> Bool {
     if try await inactiveExecutorRecord(id) != nil { return true }
     return try await retryingEviction {
-      try await execution.prepareArchive(id, reservation: reservation)
+      try await worker.revoke(id, policy: .whenSettled)
     }
   }
 
@@ -301,7 +291,9 @@ public struct SessionService: Sendable {
     for id in ids {
       sessions.releaseArchiveReservation(id, token: reservation)
       guard (try? await inactiveExecutorRecord(id)) == nil else { continue }
-      try? await execution.releaseArchive(id, reservation: reservation)
+      if let record = try? await sessions.record(id), record.lifecycle == .live {
+        try? await worker.deliver(id, .reload)
+      }
     }
   }
 
@@ -311,15 +303,48 @@ public struct SessionService: Sendable {
     note: String?,
     modelRoute: SessionModelRoute? = nil,
   ) async throws -> SessionRestart {
+    try await lifecycle.run {
+      try await restartSettled(sessionID, executor: executor, note: note, modelRoute: modelRoute)
+    }
+  }
+
+  private func restartSettled(_ sessionID: SessionID, executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     if try await inactiveExecutorRecord(sessionID) != nil {
-      return try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
+      let result = try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
+      await reloadCommitted(sessionID)
+      return result
     }
-    let result = try await retryingEviction {
-      try await execution.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
+    guard try await sessions.record(sessionID).lifecycle == .live else {
+      throw SessionStoreError.restartOfArchivedSession(sessionID.rawValue)
     }
+    guard try await retryingEviction({ try await worker.revoke(sessionID, policy: .whenSettled) }) else {
+      throw SessionStoreError.busyForRestart(sessionID.rawValue)
+    }
+    let result: SessionRestart
+    do {
+      let scripts = await worker.activity().scripts.filter { $0.value == sessionID }.keys.map { scriptHandle($0.rawValue) }.sorted()
+      result = try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute, runningWork: scripts + (try await runningWork(sessionID)))
+    } catch {
+      await reloadCommitted(sessionID)
+      throw error
+    }
+    await reloadCommitted(sessionID)
     await reminders.schedule(sessionID, at: nil)
     return result
+  }
+
+  private func reloadCommitted(_ id: SessionID) async {
+    do {
+      try await retryingEviction { try await worker.deliver(id, .reload) }
+    } catch {
+      switch error {
+      case is CancellationError, is UnfulfilledError, SessionError.archiveInProgress, ExecutionHydrationError.reservedForArchive:
+        log.warning("committed reload deferred", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
+      default:
+        await failSession(id, error: error, phase: "committed reload")
+      }
+    }
   }
 
   public func unarchive(_ sessionID: SessionID) async throws {
@@ -331,9 +356,9 @@ public struct SessionService: Sendable {
       }
       return
     }
-    try await retryingEviction {
-      try await execution.unarchive(sessionID)
-    }
+    guard case .archived = try await sessions.record(sessionID).lifecycle else { return }
+    try await sessions.unarchive(sessionID)
+    await reloadCommitted(sessionID)
   }
 }
 
@@ -389,11 +414,11 @@ final class LivenessTracker: Sendable {
   }
 }
 
-private actor ArchiveCoordinator {
+private actor LifecycleCoordinator {
   private var active = false
   private var waiting: [Callback<Void>] = []
 
-  func run(_ operation: @Sendable () async throws -> Void) async throws {
+  func run<Value: Sendable>(_ operation: @Sendable () async throws -> Value) async throws -> Value {
     if active {
       try await withCallback(of: Void.self) { waiting.append($0) }
     } else {
@@ -407,7 +432,7 @@ private actor ArchiveCoordinator {
       }
     }
     try Task.checkCancellation()
-    try await operation()
+    return try await operation()
   }
 }
 

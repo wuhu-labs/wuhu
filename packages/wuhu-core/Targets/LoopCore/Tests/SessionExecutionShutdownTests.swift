@@ -1,3 +1,4 @@
+import class MainHub.Hub
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -15,11 +16,11 @@ import Testing
     let sessions = space.sessions
     let id = try await sessions.createSession(group: .shared, title: "shutdown", kind: .agent, createdBy: "morgan", model: .test)
     let execution = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
-    try await execution.wake(id)
+    try await execution.deliver(id, .wake)
     async let first: Void = execution.shutdown()
     async let second: Void = execution.shutdown()
     _ = await (first, second)
     await execution.shutdown()
-    await #expect(throws: (any Error).self) { try await execution.wake(id) }
+    await #expect(throws: (any Error).self) { try await execution.deliver(id, .wake) }
   }
 }

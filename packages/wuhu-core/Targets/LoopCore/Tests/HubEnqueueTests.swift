@@ -1,3 +1,5 @@
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -14,7 +16,7 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "fake main", kind: .agent, createdBy: "morgan", model: .test)
+      let id = try await sessions.createSession(group: .shared, title: "archived delivery", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.archive(id, grace: .seconds(60))
       let input = Fix.message("queued")
       let requests = Box<[String]>([])
@@ -25,9 +27,10 @@ import Testing
         return access
       }())
       let execution = await SessionExecution(main: main, loopConfig: makeConfig())
-      #expect(try await execution.enqueue(input, to: id) == 1)
-      #expect(requests.value == ["hydrate", "enqueue"])
-      await execution.shutdown()
+      let service = SessionService(sessions: sessions, worker: execution, archiveGrace: .seconds(60))
+      #expect(try await service.enqueue(item: input, to: id) == 1)
+      #expect(requests.value == ["hydrate"])
+      await service.shutdown()
       #expect(try await sessions.undrainedInputs(id).count == 1)
     }
   }

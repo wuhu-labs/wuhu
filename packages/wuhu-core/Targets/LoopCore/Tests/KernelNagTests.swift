@@ -2,6 +2,8 @@ import Dependencies
 import Foundation
 import GRDB
 @testable import LoopCore
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionDomain
 @testable import SpaceCore
 import Synchronization
@@ -156,22 +158,31 @@ private final class WorkFlips: TransactionObserver, Sendable {
       var config = makeConfig(executeTool: { _ in
         .report(.init(messageID: .init("final"), requestID: .init("r1"), conversationID: .init("dm"), kind: .final))
       }, inference: { try await script($0) })
+      let evicted = Box(false)
+      config.invalidateInference = { _ in evicted.withLock { $0 = true } }
       config.eviction = .init(idleTTL: .seconds(1), maxIdle: 0, sweepInterval: .seconds(1))
-      try await runService(space, config) { service in
+      let hydrations = Box(0)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeHydrate = { _ in hydrations.withLock { $0 += 1 } }
+        return access
+      }()), loopConfig: config)
+      try await runService(service) { service in
         _ = try await service.enqueue(item: Self.request, to: sid)
         try await until("parked") { try await sessions.settledWork(sid) && script.count == 2 }
-        try await until("idle") { await service.registry.sessions[sid]?.idleSince != nil }
         try await time.asleep("parent reminder", dueIn: 60)
-        // A queued work-signal wake can make a sweep observe an active actor.
-        try await until("parked actor evicted") {
-          if await service.registry.sessions.isEmpty { return true }
+        try await until("parked execution evicted before its reminder") {
+          if evicted.value { return true }
           @Dependency(\.date) var date
-          try #require(date.now < anchor.addingTimeInterval(59), "evict before the parent reminder fires")
-          try await time.wake("reaper", after: 1)
-          return await service.registry.sessions.isEmpty
+          try #require(date.now < anchor.addingTimeInterval(59))
+          try await time.wake("idle sweep", after: 1)
+          return evicted.value
         }
+        try await time.asleep("next idle sweep", dueIn: 1)
+        #expect(hydrations.value == 1)
         await time.advance(to: anchor.addingTimeInterval(60.000001))
         try await until("parent wakes a freshly hydrated actor") { try await sessions.settledWork(sid) && script.count == 4 }
+        #expect(hydrations.value == 2)
         #expect(Self.parkNotices(try await sessions.hydrate(sid).transcript.kernel) == 2)
       }
     }

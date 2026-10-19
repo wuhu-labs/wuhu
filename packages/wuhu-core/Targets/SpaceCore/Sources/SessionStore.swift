@@ -151,6 +151,10 @@ public enum SessionStoreError: Error, Equatable, Sendable {
   case mayNotArchive(String, actor: String)
 }
 
+public enum ExecutionHydrationError: Error, Equatable, Sendable {
+  case reservedForArchive(SessionID)
+}
+
 public struct ForeignReceipt: Error, Equatable, Sendable {
   public var toolCallID: ToolCallID
 }
@@ -191,25 +195,14 @@ extension SessionStore {
   }
 
   public func hydrate(_ id: SessionID) async throws -> SessionHydration {
-    let key = id.rawValue
-    let hydration = try await writer.read { db in
-      let record = try Sessions.record(key, in: db)
-      let runtime = try Sessions.runtime(key, in: db)
-      let transcript: SessionTranscript = switch record.executor {
-      case .kernel, .modelGroup: .kernel(try Sessions.kernelTranscript(key, in: db))
-      case .contractor: .kernel(try Sessions.transcript(key, in: db))
-      case .claudeCode: throw ExecutorUnavailableError()
-      }
-      return SessionHydration(
-        generation: Int(runtime.generation),
-        record: record,
-        transcript: transcript,
-        undrained: try Sessions.undrained(key, tail: runtime.queueTail, in: db),
-        queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, in: db)),
-        queueTail: Int(runtime.queueTail),
-      )
+    try await writer.read { db in try Sessions.hydrate(id.rawValue, in: db) }
+  }
+
+  public func hydrateForExecution(_ id: SessionID) async throws -> SessionHydration {
+    try await writer.read { db in
+      guard !self.archiveReservations.contains(id) else { throw ExecutionHydrationError.reservedForArchive(id) }
+      return try Sessions.hydrate(id.rawValue, in: db)
     }
-    return hydration
   }
 
   /// Failure handling runs in the read snapshot: collect errors here and handle them after the scan, without reentering the store. Returning skips the failed session; throwing aborts the scan.
@@ -312,5 +305,25 @@ extension SessionStore {
 extension SessionStore {
   public func workSignals() -> WorkSignalSubscription {
     signals.subscribe()
+  }
+}
+
+private extension Sessions {
+  static func hydrate(_ key: String, in db: Database) throws -> SessionHydration {
+    let record = try Sessions.record(key, in: db)
+    let runtime = try Sessions.runtime(key, in: db)
+    let transcript: SessionTranscript = switch record.executor {
+    case .kernel, .modelGroup: .kernel(try Sessions.kernelTranscript(key, in: db))
+    case .contractor: .kernel(try Sessions.transcript(key, in: db))
+    case .claudeCode: throw ExecutorUnavailableError()
+    }
+    return SessionHydration(
+      generation: Int(runtime.generation),
+      record: record,
+      transcript: transcript,
+      undrained: try Sessions.undrained(key, tail: runtime.queueTail, in: db),
+      queueHead: Int(try Sessions.queueHead(key, tail: runtime.queueTail, in: db)),
+      queueTail: Int(runtime.queueTail),
+    )
   }
 }

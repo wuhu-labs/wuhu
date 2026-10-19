@@ -1,9 +1,14 @@
-import MachineChannel
 import struct MachineContract.ExecID
 import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineID
+import protocol MainHub.Main
+import struct MainHub.ScriptError
+import enum MainHub.ScriptExecEvent
+import enum MainHub.ScriptExecInput
+import struct MainHub.ScriptRunID
 import ServerTelemetry
+import SessionDomain
 import SpaceCore
 import Synchronization
 
@@ -143,9 +148,10 @@ final class ScriptProcess: Sendable {
   let machine: MachineID
   let acceptsStdin: Bool
   private let span = ServerTracing.enabled ? ServerSpan(.machine) : nil
-  private let outgoing: OutgoingExec
-  private let endpoint: ChannelEndpoint
-  private let backend: ExecBackend
+  private let events: AsyncThrowingStream<ScriptExecEvent, any Error>
+  private let owner: any Main
+  private let session: SessionID
+  private let script: ScriptRunID
   private let giveBack: @Sendable (Int) -> Void
   private let state = Mutex(State())
 
@@ -153,17 +159,19 @@ final class ScriptProcess: Sendable {
     id: ExecID,
     machine: MachineID,
     acceptsStdin: Bool,
-    outgoing: OutgoingExec,
-    endpoint: ChannelEndpoint,
-    backend: ExecBackend,
+    events: AsyncThrowingStream<ScriptExecEvent, any Error>,
+    owner: any Main,
+    session: SessionID,
+    script: ScriptRunID,
     giveBack: @escaping @Sendable (Int) -> Void,
   ) {
     self.id = id
     self.machine = machine
     self.acceptsStdin = acceptsStdin
-    self.outgoing = outgoing
-    self.endpoint = endpoint
-    self.backend = backend
+    self.events = events
+    self.owner = owner
+    self.session = session
+    self.script = script
     self.giveBack = giveBack
     state.withLock { $0.stdinClosed = !acceptsStdin }
   }
@@ -191,24 +199,14 @@ final class ScriptProcess: Sendable {
         span.finish(attributes)
       }
     }
-    await withTaskGroup(of: Void.self) { group in
-      group.addTask { [self] in
-        guard let reason = try? await holdExecLeg(id, endpoint: endpoint, backend: backend) else {
-          return
-        }
-        finish(.lost(reason))
-      }
-      group.addTask { await self.pump() }
-      _ = await group.next()
-      group.cancelAll()
-    }
+    await pump()
   }
 
   private func pump() async {
     do {
-      for try await event in outgoing.events {
+      for try await event in events {
         switch event {
-        case let .output(stream, cursor, data):
+        case let .event(.output(stream, cursor, data)):
           let through = change { state -> Int? in
             state.received = cursor + data.count
             guard state.discarding else {
@@ -218,14 +216,17 @@ final class ScriptProcess: Sendable {
             state.acknowledged = state.received
             return state.received
           }
-          if let through { await outgoing.acknowledge(through: through) }
-        case let .exit(status):
+          if let through { try? await input(.acknowledge(through: through)) }
+        case let .event(.exit(status)):
           finish(.exited(status))
           return
-        case .truncated, .timedOut:
+        case .event(.truncated), .event(.timedOut):
           continue
-        case let .failed(error):
+        case let .event(.failed(error)):
           finish(.lost(error.message))
+          return
+        case let .lost(reason):
+          finish(.lost(reason))
           return
         }
       }
@@ -324,7 +325,7 @@ final class ScriptProcess: Sendable {
   func write(_ bytes: [UInt8]) async throws {
     guard acceptsStdin else { throw ScriptError("process \(id.rawValue) was spawned without { stdin: true }") }
     guard !state.withLock(\.stdinClosed) else { throw ScriptError("stdin of process \(id.rawValue) is closed") }
-    try await outgoing.sendStdin(bytes)
+    try await input(.write(bytes))
   }
 
   func end() async throws {
@@ -333,11 +334,11 @@ final class ScriptProcess: Sendable {
       defer { state.stdinClosed = true }
       return !state.stdinClosed
     }
-    if closing { await outgoing.closeStdin() }
+    if closing { try await input(.closeStdin) }
   }
 
   func kill() async {
-    await outgoing.kill()
+    try? await input(.kill(.caller))
   }
 
   // The reader went away before the end (it broke out, or threw): with one
@@ -354,7 +355,11 @@ final class ScriptProcess: Sendable {
       state.acknowledged = state.received
       return state.received
     }
-    if let through { await outgoing.acknowledge(through: through) }
+    if let through { try? await input(.acknowledge(through: through)) }
+  }
+
+  private func input(_ input: ScriptExecInput) async throws {
+    try await owner.scriptExecInput(session: session, script: script, exec: id, input: input)
   }
 
   private func lostError(_ reason: String) -> ScriptError {
@@ -381,7 +386,7 @@ final class ScriptProcess: Sendable {
       }
       if freed > 0 { giveBack(freed) }
       if let (value, cursor) = outcome {
-        if let cursor { await outgoing.acknowledge(through: cursor) }
+        if let cursor { try? await input(.acknowledge(through: cursor)) }
         return value
       }
       for await _ in signal {}

@@ -1,3 +1,4 @@
+import protocol MainHub.Main
 import SessionDomain
 import struct SpaceContract.GroupID
 import enum SpaceCore.ImageFitting

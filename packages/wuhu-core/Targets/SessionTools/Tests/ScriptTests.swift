@@ -10,6 +10,11 @@ import GRDB
 import JSONValue
 import MachineChannel
 import struct MachineContract.MachineID
+import class MainHub.Hub
+import func MainHub.resolveScriptModule
+import struct MainHub.ScriptError
+import struct MainHub.ScriptMachineAccess
+import struct MainHub.SessionControl
 import OrderedCollections
 import Scratch
 import SessionDomain
@@ -617,6 +622,7 @@ private func fixture(_ name: String) throws -> String {
 final class ScriptRig: Sendable {
   let space: Space
   let scripts: Scripts
+  let main: Hub
   /// The rig session's own group's secrets.
   let secrets: SpaceSecrets
   let stores: SpaceSecretStores
@@ -628,10 +634,11 @@ final class ScriptRig: Sendable {
   private let calls = Box(0)
 
   init(
-    space: Space, scripts: Scripts, stores: SpaceSecretStores, group: GroupID, session: SessionID, time: TimeControl,
+    space: Space, main: Hub, scripts: Scripts, stores: SpaceSecretStores, group: GroupID, session: SessionID, time: TimeControl,
     executor: ToolExecutor,
   ) throws {
     self.space = space
+    self.main = main
     self.scripts = scripts
     self.stores = stores
     secrets = try stores.group(group.rawValue)
@@ -736,7 +743,7 @@ final class ScriptRig: Sendable {
   }
 
   func released() async throws {
-    try await untilAdvancing("the execution is released", time) { scripts.isIdle }
+    try await untilAdvancing("the execution is released", time) { scripts.activity.scripts.isEmpty }
   }
 
   // Runs `body` while nudging the clock a second at a time, for a call that
@@ -900,10 +907,13 @@ func withRig(
         owner: main, credentials: credentials, scripts: scripts,
       )
       let rig = try ScriptRig(
-        space: space, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
+        space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await scripts.run() }
+        group.addTask {
+          await main.announceScriptRestart()
+          await scripts.run()
+        }
         if let world {
           group.addTask { await world.execs.pump() }
           group.addTask { await world.execs.serve { await playbook($0, world.execs) } }

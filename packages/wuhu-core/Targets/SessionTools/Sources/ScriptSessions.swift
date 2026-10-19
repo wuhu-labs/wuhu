@@ -1,4 +1,13 @@
 import Dependencies
+import func MainHub.renderedFailure
+import struct MainHub.RequestArguments
+import struct MainHub.ScriptError
+import func MainHub.seconds
+import struct MainHub.SendMessageArguments
+import struct MainHub.SessionControl
+import struct MainHub.Spawned
+import struct MainHub.SpawnOrder
+import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

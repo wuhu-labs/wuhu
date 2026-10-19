@@ -42,18 +42,10 @@ extension SessionActor {
     // every `live` access — a buffered nudge can re-enter after dismount.
     try Task.checkCancellation()
 
-    // nil = pass in flight (idleSince suppressed); restored on every exit so
-    // a settled session is evictable.
-    let mountID = try live.mountID
-    try modify { $0.lastUpdatedByLoopAt = nil }
-    defer {
-      if liveState?.mountID == mountID { liveState?.lastUpdatedByLoopAt = date() }
-    }
-
     while true {
       try Task.checkCancellation()
 
-      guard !(try live).archiving else { return }
+      guard !(try live).revoking else { return }
       switch (try live).sessionStatus {
       case .interrupted, .errored:
         return
@@ -79,17 +71,17 @@ extension SessionActor {
       let budget = await loopConfig.budget(id)
       let fullness = try live.transcript.contextFullness(budget: budget)
       try Task.checkCancellation()
-      guard !(try live).archiving else { return }
+      guard !(try live).revoking else { return }
       if fullness >= loopConfig.thresholds.hard {
         try await runForcedCompaction()
       } else if (try live).queueHead > (try live).queueTail {
         try await drainQueue()
       } else {
-        guard !(try live).archiving else { return }
+        guard !(try live).revoking else { return }
         await beforeCompactRequest()
         let forced = try await takeCompactRequest()
         try Task.checkCancellation()
-        guard !(try live).archiving else { return }
+        guard !(try live).revoking else { return }
         if forced {
           try await runForcedCompaction()
         } else if (try live).transcript.hasWork {
@@ -127,10 +119,10 @@ extension SessionActor {
   // Code's `/compact` command: instructions land as one system
   // notification, and the turn that follows is tool-choice-pinned to compact.
   func takeCompactRequest() async throws -> Bool {
-    guard !(try live).archiving else { return false }
+    guard !(try live).revoking else { return false }
     guard try await main.pendingCommand(id) != nil else { return false }
     try Task.checkCancellation()
-    guard !(try live).archiving else { return false }
+    guard !(try live).revoking else { return false }
     let mountID = try live.mountID
     try modify { $0.claimingCompactRequest = true }
     defer {
@@ -154,7 +146,7 @@ extension SessionActor {
   private func reconcileSubscriptions() async throws -> Bool {
     let registered = try await main.registeredSubscriptions(id)
     try Task.checkCancellation()
-    guard !(try live).archiving else { return false }
+    guard !(try live).revoking else { return false }
     try modify {
       $0.transcript.registeredSubscriptions = registered.ids
       $0.transcript.handlerSubscriptions = registered.handlers
@@ -381,7 +373,7 @@ extension SessionActor {
     let fullness = try live.transcript.contextFullness(budget: budget)
     try Task.checkCancellation()
     let state = try live
-    guard !state.archiving else { return }
+    guard !state.revoking else { return }
     if fullness >= loopConfig.thresholds.soft, !state.transcript.hasPendingPressureNotice {
       let percent = Int((fullness * 100).rounded())
       try await appended([.notification(.init(

@@ -5,6 +5,7 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - MainHub
   - TaskLifetime
   - ServerTelemetry
   - Assertion
@@ -51,6 +52,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - MainHub
     - ServeTLS
     - Subprocess
     - ServerTelemetry

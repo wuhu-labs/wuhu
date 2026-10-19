@@ -47,9 +47,13 @@ public actor Space {
     self.log = log
   }
 
-  public func close() async {
+  public func close() async throws {
     broadcast.close()
     await taskScope.close()
+    var failure: (any Error)?
+    do { try await reads.close() } catch { failure = error }
+    do { try writer.close() } catch { if failure == nil { failure = error } }
+    if let failure { throw failure }
   }
 
   public static func open(

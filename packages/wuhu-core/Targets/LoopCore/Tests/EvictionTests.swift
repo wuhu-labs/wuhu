@@ -1,6 +1,8 @@
 import Dependencies
 import Foundation
 @testable import LoopCore
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionDomain
 import SpaceCore
 import Testing
@@ -23,33 +25,33 @@ import WuhuAI
         Fix.replying("first"),
         Fix.replying("second"),
       ])
-      let config = makeConfig(
+      let invalidated = Box<[SessionID]>([])
+      var config = makeConfig(
         inference: { try await script($0) },
         eviction: .init(idleTTL: .seconds(300), maxIdle: 32, sweepInterval: .seconds(30)),
       )
 
-      try await runService(space, config) { service in
+      config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
+      let hydrations = Box(0)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeHydrate = { _ in hydrations.withLock { $0 += 1 } }
+        return access
+      }()), loopConfig: config)
+      try await runService(service) { service in
         _ = try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
-        // idleSince set = the loop pass fully ended; advancing earlier would
-        // sweep a session that still looks in-flight.
-        try await until("idle") {
-          await service.registry.sessions[sid]?.idleSince != nil
+        try await until("idle eviction invalidates inference") {
+          if !invalidated.value.isEmpty { return true }
+          try await time.wake("idle sweep", after: 30)
+          return !invalidated.value.isEmpty
         }
-
-        // Sweep by sweep until evicted: the reaper sleeps again after each one,
-        // and a redundant work-signal wake may refresh idleSince mid-way, so
-        // no fixed sweep count is enough.
-        try await until("evicted") {
-          if await service.registry.sessions.isEmpty { return true }
-          try await time.wake("the reaper", after: 30)
-          return await service.registry.sessions.isEmpty
-        }
-
-        // Write-through made eviction safe: the verb lands on a lazily
-        // rehydrated session with the full transcript intact.
+        try await time.asleep("next idle sweep", dueIn: 30)
+        #expect(invalidated.value == [sid])
+        #expect(hydrations.value == 1)
         _ = try await service.enqueue(item: Fix.message("two"), to: sid)
-        try await until("settled again") { try await sessions.settledWork(sid) }
+        try await until("settled again") { try await sessions.settledWork(sid) && script.count == 2 }
+        #expect(hydrations.value == 2)
       }
 
       let transcript = try await sessions.hydrate(sid).transcript.kernel

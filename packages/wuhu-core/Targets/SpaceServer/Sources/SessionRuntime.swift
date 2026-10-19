@@ -3,6 +3,14 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import ExecutionOwner
 import struct FileSearch.SearchError
+import struct MainHub.ExecBackend
+import class MainHub.Hub
+import protocol MainHub.Main
+import struct MainHub.ScriptMachineAccess
+import struct MainHub.SessionControl
+import struct MainHub.SessionControlRefusal
+import struct MainHub.SubscriptionFiring
+import protocol MainHub.Worker
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -30,12 +38,12 @@ import WuhuAI
 public struct SessionRuntime: Sendable {
   let streamScope = TaskScope()
   public let service: SessionService
+  public let worker: any Worker
   public let attempts: AttemptHub
   let store: SessionStore
   let firing: SubscriptionFiring
-  let scripts: Scripts?
   let sockets: ResponsesSocketRegistry?
-  private let discoveryOwner: Hub?
+  private let discoveryOwner: Hub
   private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
@@ -45,30 +53,24 @@ public struct SessionRuntime: Sendable {
   let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?
   let budget: @Sendable (SessionID) async -> ContextBudget
 
-  public init(space: Space, service: SessionService, attempts: AttemptHub, credentials: CredentialResolver = .environmentOnly) {
+  public init(space: Space, service: SessionService, worker: any Worker, attempts: AttemptHub, owner: Hub) {
     startup = nil
     self.service = service
+    self.worker = worker
     self.attempts = attempts
     store = space.sessions
     sockets = ResponsesSocketRegistry()
     usage = UsageBoard()
     refresher = nil
     warmer = CacheWarmer(space: space, usage: usage)
-    let executionOwner = Hub(space: space, credentials: credentials)
-    let catalog = groupCatalog(owner: executionOwner)
+    let catalog = groupCatalog(owner: owner)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
-    let owner: any Main = Hub(
-      space: space, credentials: credentials,
-      resolveModelExecutor: modelExecutorResolver(space: space),
-      resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute,
-    )
-    discoveryOwner = owner as? Hub
+    discoveryOwner = owner
+    owner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
-    scripts = Scripts(owner: owner)
-    firing = SubscriptionFiring(space: space, scripts: scripts, tools: ToolExecutor(owner: owner, scripts: scripts))
-    scripts?.configureDiscovery(toolRosters: sessionToolRosters())
+    firing = SubscriptionFiring(space: space, worker: worker)
   }
 
   init(
@@ -78,32 +80,30 @@ public struct SessionRuntime: Sendable {
     usage: UsageBoard,
     sockets: ResponsesSocketRegistry?,
     refresher: UsageRefresher?,
-    scripts: Scripts?,
-    handler: any HandlerExecutionClient,
+    worker: any Worker,
     startup: (@Sendable () async -> Void)? = nil,
-    owner: any Main,
+    owner: Hub,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
   ) {
     self.startup = startup
     self.service = service
+    self.worker = worker
     self.attempts = attempts
     store = space.sessions
     self.usage = usage
     self.sockets = sockets
     self.refresher = refresher
     warmer = CacheWarmer(space: space, usage: usage)
-    discoveryOwner = owner as? Hub
+    discoveryOwner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, handler: handler, scripts: scripts)
-    self.scripts = scripts
+    firing = SubscriptionFiring(space: space, worker: worker)
   }
 
   func configureDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
-    scripts?.configureDiscovery(contentHost: contentHost)
-    discoveryOwner?.configureScriptDiscovery(contentHost: contentHost, identity: identity)
+    discoveryOwner.configureScriptDiscovery(contentHost: contentHost, identity: identity)
   }
 
   public func run() async {
@@ -119,7 +119,6 @@ public struct SessionRuntime: Sendable {
       }
       group.addTask { await firing.run() }
       group.addTask { await warmer.run() }
-      if let scripts { group.addTask { await scripts.run(announceRestart: startup == nil) } }
       if let sockets { group.addTask { await sockets.run() } }
       if let refresher {
         group.addTask { await refresher.run() }
@@ -127,7 +126,7 @@ public struct SessionRuntime: Sendable {
       await group.waitForAll()
     }
     await streamScope.close()
-    await discoveryOwner?.closeExecJobs()
+    await discoveryOwner.closeExecJobs()
   }
 }
 
@@ -213,58 +212,50 @@ extension SessionRuntime {
     )
     let owner: any Main = toolOwner
     let startup: @Sendable () async -> Void = {
-      do {
-        let owners = try await space.takeScriptExecOwners()
-        await Scripts.announceRestart(owner: owner, owners: owners)
-      } catch { Logger(label: "wuhu.execution-boot").error("Could not read restart script owners") }
+      await toolOwner.announceScriptRestart()
       await toolOwner.adoptExecJobs()
     }
     let sockets = ResponsesSocketRegistry()
-    let scripts = Scripts(owner: owner)
-    scripts.configureDiscovery(toolRosters: sessionToolRosters())
+    toolOwner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(owner: owner)
-    let executor = ToolExecutor(
-      owner: owner, credentials: executionCredentials,
-      completionCatalog: catalog, scripts: scripts,
-    )
-
-    var config = LoopConfig(
-      executeTool: { invocation in
-        try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
-      },
-      inference: kernelInference(
-        owner: owner, catalog: providerCatalog, groupCatalog: catalog, sockets: sockets, attempts: attempts,
-        usage: usage,
-        committedWarming: { id, policy in
-          do { try await space.sessions.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds) }
-          catch { Logger(label: "wuhu.cache-warmer").error("could not schedule cache warming", metadata: ["session": "\(id.rawValue)", "error": "\(error)"]) }
+    let execution = await SessionExecution(main: owner, credentials: executionCredentials, completionCatalog: catalog) { executor in
+      var config = LoopConfig(
+        executeTool: { invocation in
+          try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
         },
-      ),
+        inference: kernelInference(
+          owner: owner, catalog: providerCatalog, groupCatalog: catalog, sockets: sockets, attempts: attempts,
+          usage: usage,
+          committedWarming: { id, policy in
+            do { try await space.sessions.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds) }
+            catch { Logger(label: "wuhu.cache-warmer").error("could not schedule cache warming", metadata: ["session": "\(id.rawValue)", "error": "\(error)"]) }
+          },
+        ),
 
-      compact: { id, transcript in
-        await mechanicalCompaction(of: transcript, images: budget(id).images)
-      },
-      budget: budget,
-      prepareCompaction: compactionPlacement(owner: owner, catalog: catalog, usage: usage),
-      killInterruptedTool: { invocation in
-        guard invocation.call.name == "exec" else { return }
-        await owner.killInterruptedExec(
-          session: invocation.sessionID, toolCallID: ToolCallID(invocation.call.id),
-        )
-      },
-      invalidateInference: { await sockets.invalidate($0) },
-      allowCacheWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) },
-      thresholds: thresholds,
-    )
+        compact: { id, transcript in
+          await mechanicalCompaction(of: transcript, images: budget(id).images)
+        },
+        budget: budget,
+        prepareCompaction: compactionPlacement(owner: owner, catalog: catalog, usage: usage),
+        killInterruptedTool: { invocation in
+          guard invocation.call.name == "exec" else { return }
+          await owner.killInterruptedExec(
+            session: invocation.sessionID, toolCallID: ToolCallID(invocation.call.id),
+          )
+        },
+        invalidateInference: { await sockets.invalidate($0) },
+        allowCacheWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) },
+        thresholds: thresholds,
+      )
 
-    config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
-    config.archived = { session in
-      scripts.stopScripts(of: session)
-      await toolOwner.cancelExecJobs(of: session)
+      config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
+      config.runningWork = { toolOwner.runningExecJobs(of: $0) }
+      return config
     }
-    config.runningWork = { scripts.running(of: $0) + toolOwner.runningExecJobs(of: $0) }
-    let execution = await SessionExecution(main: owner, loopConfig: config)
-    let service = SessionService(sessions: space.sessions, execution: execution, archiveGrace: config.archiveGrace)
+    let service = SessionService(
+      sessions: space.sessions, worker: execution, runningWork: { toolOwner.runningExecJobs(of: $0) },
+      archived: { await toolOwner.cancelExecJobs(of: $0) },
+    )
     serviceSlot.bind(service)
     return SessionRuntime(
       space: space,
@@ -273,54 +264,25 @@ extension SessionRuntime {
       usage: usage,
       sockets: sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
-      scripts: scripts,
-      handler: ScriptHandlerExecutor(scripts: scripts, tools: executor),
+      worker: execution,
       startup: startup,
-      owner: owner, catalog: catalog,
+      owner: toolOwner, catalog: catalog,
     )
   }
-}
-
-func sessionToolExecutor(
-  space: Space,
-  hub: MachineHub,
-  credentials: CredentialResolver,
-  scripts: Scripts?,
-  control: SessionControl?,
-  completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
-  completionMetrics: InferenceMetricsSink? = nil,
-  usage: UsageBoard = UsageBoard(),
-  resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
-  prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
-) -> ToolExecutor {
-  let owner = Hub(space: space, credentials: credentials)
-  let catalog = completionCatalog ?? groupCatalog(owner: owner)
-  return ToolExecutor(
-    space: space,
-    machines: machineSeam(hub: hub),
-    exec: execBackend(space: space, hub: hub),
-    resolveModelExecutor: modelExecutorResolver(space: space),
-    resolveModelGroup: resolveModelGroup ?? modelGroupExecutorResolver(catalog: catalog),
-    prepareModelRoute: prepareModelRoute ?? modelRoutePreparer(catalog: catalog, usage: usage),
-    credentials: credentials,
-    completionCatalog: completionCatalog,
-    completionMetrics: completionMetrics,
-    scripts: scripts,
-    control: control,
-  )
 }
 
 // The kernel's tool executor is built before the service that runs the
 // loops, so its session verbs reach the service through this slot.
 final class SessionServiceSlot: Sendable {
-  private let slot = Mutex<SessionService?>(nil)
+  private struct State: Sendable { weak var service: SessionService? }
+  private let slot = Mutex(State())
 
   func bind(_ service: SessionService) {
-    slot.withLock { $0 = service }
+    slot.withLock { $0.service = service }
   }
 
   var service: SessionService? {
-    slot.withLock { $0 }
+    slot.withLock { $0.service }
   }
 }
 

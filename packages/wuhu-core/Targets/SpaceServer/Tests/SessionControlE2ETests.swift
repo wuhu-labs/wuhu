@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import JSONValue
+import struct MainHub.SessionControl
 import SessionDomain
 @testable import SpaceCore
 import SpaceServer

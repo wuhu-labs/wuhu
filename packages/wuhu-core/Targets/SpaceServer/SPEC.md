@@ -2,7 +2,7 @@
 
 ## In-process execution ownership
 
-`SessionRuntime.assemble` composes one directly conforming Hub actor for the session loop, inference, tool execution, QuickJS scripts and handler execution. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `HandlerExecutionClient` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process without in-memory serialization. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
+`SessionRuntime.assemble` composes one directly conforming Hub actor for the session loop, inference, tool execution, QuickJS scripts and handler execution. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `Worker.fire` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process without in-memory serialization. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
 
 ## Person–session DM refusal
 
@@ -783,7 +783,7 @@ Sessions read, post and manage without joining the channel; legacy session membe
 
 `SpaceLogContext` carries the space id in a task-local during assembly, request dispatch, deferred WebSocket sessions and background work. Executables install its swift-log metadata provider so all logs emitted in those scopes include `space`. Listener/process diagnostics outside a space scope have no tenant id.
 
-Host shutdown owns and cancels response-body forwarding through completion, with demand-driven bounded buffering; SSE from an old host closes before stop/delete returns. Host assembly owns the web-push HTTP transport and asynchronously shuts it down even before run or after listener bind failure. Session registry disposal also occurs on the never-run path.
+Host shutdown owns and cancels response-body forwarding through completion, with demand-driven bounded buffering; SSE from an old host closes before stop/delete returns. Host assembly owns the web-push HTTP transport and asynchronously shuts it down even before run or after listener bind failure. Session registry disposal also occurs on the never-run path. Shutdown drains in-process machine exec callers before closing the space database. Development export, database close, and HTTP transport shutdown are all attempted even if an earlier step fails; shutdown rethrows the first error, including on repeated calls.
 
 ## Live account creation and admin
 

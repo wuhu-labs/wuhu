@@ -1,6 +1,7 @@
 import struct InferenceKit.CapabilityError
 import struct InferenceKit.CapabilityOptions
 import JSONValue
+import struct MainHub.ToolProblem
 import QuickJSKit
 import SessionDomain
 import SpaceTools

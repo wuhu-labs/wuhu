@@ -1,6 +1,7 @@
 import Foundation
 import JSONValue
 @testable import LoopCore
+import class MainHub.Hub
 import ServerTelemetry
 import SessionDomain
 import SessionTools
@@ -31,9 +32,6 @@ import WuhuAI
       }
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.outcome] == "error" })
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.bytesOut] != nil })
-      let actor = SessionActor(id: id, main: Hub(space: space), loopConfig: makeConfig(), liveness: LivenessTracker())
-      await #expect(throws: (any Error).self) { try await actor.execute(calls[3]) }
-      #expect(spans.value.last?.attributes[.outcome] == "cancelled")
     }
   }
 }

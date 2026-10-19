@@ -18,7 +18,7 @@ import enum WuhuAI.Tool
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('hidden', '2026-01-01T00:00:00.000Z')")
       }
       for host in ["https://{group}.space.test:443", "https://{group}--tenant.space.test"] {
-        rig.scripts.configureDiscovery(contentHost: host)
+        rig.main.configureScriptDiscovery(contentHost: host)
         let principal = try await rig.space.principal(of: rig.session)
         let service = SpaceToolContext(space: rig.space, principal: principal)
         let expectedContext = try await service.discoveryContext(contentHost: host)
@@ -58,7 +58,7 @@ import enum WuhuAI.Tool
         guard case let .function(name, description, parameters) = $0 else { preconditionFailure() }
         return ToolDescriptor(name: name, description: description, parameters: parameters)
       })])
-      rig.scripts.configureDiscovery(toolRosters: roster)
+      rig.main.configureScriptDiscovery(toolRosters: roster)
       #expect(try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())") == JSONValueEncoder().encode(roster))
       let context = try await rig.evaluate("import {context} from 'wuhu:space';result(await context())")
       #expect(context.object?["contentHost"] == .null)

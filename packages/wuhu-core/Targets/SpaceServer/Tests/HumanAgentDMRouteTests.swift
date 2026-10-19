@@ -1,3 +1,4 @@
+import class MainHub.Hub
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -82,13 +83,14 @@ import struct WuhuAI.ToolCall
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
       let person = try await t.harness.mintPersona()
-      let scripts = Scripts(space: t.harness.space, identityFetch: { request, session, _ in
+      let owner = Hub(space: t.harness.space, identityFetch: { request, session, _ in
         #expect(session == t.parent)
         var request = request
         request.headers[.authorization] = "Bearer " + t.token
         return try await t.harness.api(request)
       })
-      let executor = ToolExecutor(space: t.harness.space, scripts: scripts)
+      let scripts = Scripts(owner: owner)
+      let executor = ToolExecutor(owner: owner, scripts: scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
         defer { group.cancelAll() }

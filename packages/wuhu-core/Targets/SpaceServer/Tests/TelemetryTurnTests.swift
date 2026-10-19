@@ -1,3 +1,4 @@
+import class MainHub.Hub
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -39,7 +40,9 @@ import WuhuAI
         let blocks: [ContentBlock] = attempt == 1 ? [.toolCall(.init(id: "call", name: "exec", arguments: .init(.object(["machine": "devbox", "command": "secret command"]))))] : [.text("secret response")]
         return .init(message: .init(content: blocks), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
       }, compact: { _, _ in .init(summary: "") }, budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) })
-      let service = await SessionService(sessions: space.sessions, main: Hub(space: space), loopConfig: config)
+      let owner = Hub(space: space)
+      let worker = await SessionExecution(main: owner) { _ in config }
+      let service = SessionService(sessions: space.sessions, worker: worker)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { try await service.start() }
         defer { group.cancelAll() }

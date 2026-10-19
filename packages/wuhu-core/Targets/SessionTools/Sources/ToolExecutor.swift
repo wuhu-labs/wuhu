@@ -1,4 +1,9 @@
 import struct Credentials.CredentialResolver
+import struct MainHub.CancelArguments
+import protocol MainHub.Main
+import func MainHub.renderedFailure
+import enum MainHub.RosterTool
+import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,7 +12,6 @@ import struct Credentials.CredentialResolver
 import struct InferenceKit.CapabilityError
 import struct InferenceKit.ProviderCatalog
 import JSONValue
-import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import struct OperationProtocol.OperationError
@@ -15,64 +19,6 @@ import SessionDomain
 import SpaceCore
 import SpaceTools
 import struct WuhuAI.ToolCall
-
-// A model-facing failure: rendered into the transcript as a typed tool
-// failure, never thrown past the executor.
-struct ToolProblem: Error {
-  var message: String
-  var code: String?
-
-  init(_ message: String, code: String? = nil) {
-    self.message = message
-    self.code = code
-  }
-}
-
-public struct ExecBackend: Sendable {
-  public var claim: @Sendable (MachineID, SessionID, ToolCallID) async throws -> ExecClaim
-  public var connect: @Sendable (ExecID) async throws -> any FrameTransport
-  public var status: @Sendable (ExecID) async throws -> ExecRecord?
-  // Mints an exec owned by a run_script execution: (machine, session, script id).
-  public var mintScript: @Sendable (MachineID, SessionID, String) async throws -> ExecRecord
-  public var kill: @Sendable (ExecID) async throws -> Void
-
-  public init(
-    claim: @escaping @Sendable (MachineID, SessionID, ToolCallID) async throws -> ExecClaim,
-    connect: @escaping @Sendable (ExecID) async throws -> any FrameTransport,
-    status: @escaping @Sendable (ExecID) async throws -> ExecRecord?,
-    mintScript: @escaping @Sendable (MachineID, SessionID, String) async throws -> ExecRecord,
-    kill: @escaping @Sendable (ExecID) async throws -> Void,
-  ) {
-    self.claim = claim
-    self.connect = connect
-    self.status = status
-    self.mintScript = mintScript
-    self.kill = kill
-  }
-}
-
-enum RosterTool: String, CaseIterable {
-  case read
-  case write
-  case edit
-  case grep
-  case find
-  case exec
-  case machines
-  case templates
-  case observe
-  case timer
-  case cancel
-  case query
-  case sendMessage = "send_message"
-  case request
-  case report
-  case createSession = "create_session"
-  case setTitle = "set_title"
-  case generateImage = "generate_image"
-  case manipulateUI = "manipulate_ui"
-  case runScript = "run_script"
-}
 
 public struct ToolExecutor: Sendable {
   let owner: any Main
@@ -121,14 +67,4 @@ public struct ToolExecutor: Sendable {
       throw ToolProblem("\(call.name): arguments do not match the tool schema: \(error)")
     }
   }
-}
-
-func renderedFailure(_ error: ToolRunError) -> String {
-  guard case let .object(fields) = error.payload else { return "tool failed" }
-  var text = ""
-  if case let .string(code)? = fields["code"] { text += "\(code): " }
-  if case let .string(message)? = fields["message"] { text += message }
-  if case let .string(hint)? = fields["hint"] { text += " (\(hint))" }
-  if case let .string(token)? = fields["token"] { text += " [current token: \(token)]" }
-  return text
 }

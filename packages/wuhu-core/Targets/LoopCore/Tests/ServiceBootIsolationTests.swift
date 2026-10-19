@@ -1,3 +1,5 @@
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -60,7 +62,6 @@ import Testing
         #expect(Set(bootCommits.compactMap { $0 }) == Set([first, last]))
         #expect(!calls.value.contains(bad))
         #expect(logs.all.contains { $0.level == .error && $0.message == "boot wake failed" && $0.metadata["session"] == bad.rawValue && $0.metadata["error"]?.isEmpty == false })
-        #expect(await service.registry.existing(bad) == nil)
         if missing {
           await #expect(throws: SessionStoreError.self) { try await sessions.record(bad) }
           #expect(logs.all.contains { $0.message == "could not mark session errored" && $0.metadata["session"] == bad.rawValue })
@@ -78,7 +79,6 @@ import Testing
           #expect(errorNotice.message == nil)
           #expect(errorNotice.error == record.errorMessage)
           try await service.wake(bad)
-          #expect(await service.registry.existing(bad) == nil)
         }
         try await service.wake(first)
         _ = try await service.enqueue(item: Fix.message("more", message: "healthy-more"), to: first)
@@ -87,14 +87,16 @@ import Testing
         try await service.resume(first)
         try await service.archive(first, force: true)
         try await service.unarchive(first)
-        _ = try await service.restart(first, executor: nil, note: nil)
+        try await until("unarchived pass permits restart") {
+          do { _ = try await service.restart(first, executor: nil, note: nil); return true }
+          catch SessionStoreError.busyForRestart { return false }
+        }
         _ = try await service.enqueue(item: Fix.message("after verbs", message: "healthy-verbs"), to: first)
         #expect(await iterator.next() == first)
         let fresh = try await sessions.createSession(group: .shared, title: "fresh", kind: .agent, createdBy: "morgan", model: .test)
         _ = try await service.enqueue(item: Fix.message("new session", message: "fresh"), to: fresh)
         #expect(await iterator.next() == fresh)
       }
-      #expect(await service.registry.sessions.isEmpty)
     }
   }
 }

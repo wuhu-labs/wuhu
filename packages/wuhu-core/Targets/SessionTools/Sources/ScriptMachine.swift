@@ -1,14 +1,20 @@
+import struct MainHub.ExecEnvironment
+import func MainHub.execEnvironment
+import protocol MainHub.Main
+import func MainHub.renderedFailure
+import struct MainHub.ScriptError
+import struct MainHub.ScriptExecStream
+import struct MainHub.ScriptRunID
+import func MainHub.spaceAnswer
+import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
 import JSONValue
-import MachineChannel
 import struct MachineContract.Base64Data
-import struct MachineContract.ExecID
 import enum MachineContract.ExecOutputStream
-import struct MachineContract.ExecStart
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineError
 import struct MachineContract.MachineID
@@ -20,16 +26,6 @@ import SpaceTools
 
 // What wuhu:machine reaches: the machines' files, and execs minted for the
 // script that runs them.
-public struct ScriptMachineAccess: Sendable {
-  public let files: MachineSeam
-  public let exec: ExecBackend
-
-  public init(files: MachineSeam, exec: ExecBackend) {
-    self.files = files
-    self.exec = exec
-  }
-}
-
 let scriptExecOutputBytes = 1 << 20
 let scriptExecOutputLimit = 4 << 20
 // A write crosses the wire as one base64 frame under the hub's 16 MiB ceiling.
@@ -38,12 +34,10 @@ let scriptWriteBytes = (12 << 20) - (64 << 10)
 final class ScriptMachineBindings: Sendable {
   private let execution: ScriptExecution
   private let owner: any Main
-  private let access: ScriptMachineAccess?
 
-  init(execution: ScriptExecution, owner: any Main, access: ScriptMachineAccess?) {
+  init(execution: ScriptExecution, owner: any Main) {
     self.execution = execution
     self.owner = owner
-    self.access = access
   }
 
   func install(in engine: JSEngine) {
@@ -54,7 +48,7 @@ final class ScriptMachineBindings: Sendable {
         case "status": return try JSONValueEncoder().encode(try await owner.ownExecStatus(string(arguments, 1), session: execution.session))
         case "kill":
           let id = try await owner.ownExecStatus(string(arguments, 1), session: execution.session).id
-          do { try await available().exec.kill(id) }
+          do { try await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: id, input: .kill(.recorded)) }
           catch { throw Wire.failure(error) }
           return .null
         default: throw ToolRunError.failed(code: .invalidArgument, message: "unknown exec operation", hint: nil)
@@ -92,20 +86,17 @@ final class ScriptMachineBindings: Sendable {
   // MARK: Machines and files
 
   private func machines() async throws -> JSONValue {
-    let access = try available()
-    let attached = await access.files.attached()
-    return .array(try await owner.usableMachines(session: execution.session).map { record in
+    return .array(try await owner.scriptMachines(session: execution.session).map { record in
       .object([
         "id": .string(record.id.rawValue),
         "name": record.name.map(JSONValue.string) ?? .null,
-        "attached": .bool(attached.contains(record.id)),
+        "attached": .bool(record.attached),
       ])
     })
   }
 
   private func files(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let access = try available()
-    let machine = try await attachedMachine(string(arguments, 0), access)
+    let machine = try await attachedMachine(string(arguments, 0))
     let operation = string(arguments, 1)
     guard case let .object(fields)? = arguments[safe: 2] else { throw ScriptError("malformed \(operation) call") }
     func path(_ key: String = "path") throws -> String {
@@ -116,7 +107,7 @@ final class ScriptMachineBindings: Sendable {
     }
     func vfs(_ op: VFSOp) async throws -> VFSResult {
       do {
-        return try await access.files.vfs(machine, op)
+        return try await owner.scriptMachineFile(session: execution.session, machine: machine, operation: op)
       } catch let error as ScriptError {
         throw error
       } catch {
@@ -220,9 +211,8 @@ final class ScriptMachineBindings: Sendable {
 
   private func start(
     _ arguments: [JSONValue],
-    _ access: ScriptMachineAccess,
   ) async throws -> (MachineID, String, Options, ExecEnvironment) {
-    let machine = try await attachedMachine(string(arguments, 0), access)
+    let machine = try await attachedMachine(string(arguments, 0))
     guard case let .string(command)? = arguments[safe: 1], !command.isEmpty else {
       throw ScriptError("the command must be a non-empty string")
     }
@@ -241,45 +231,24 @@ final class ScriptMachineBindings: Sendable {
   }
 
   private func exec(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let access = try available()
-    let (machine, command, options, environment) = try await start(arguments, access)
+    let (machine, command, options, environment) = try await start(arguments)
     try execution.buffers.withLock { try $0.claim(options.maxOutput, for: .execOutput) }
     defer { execution.buffers.withLock { $0.unclaim(options.maxOutput) } }
-    let record = try await mint(machine, access)
-    let endpoint = ChannelEndpoint()
-    let outgoing = await endpoint.startExec(ExecStart(
-      id: record.id,
-      cwd: options.cwd,
-      command: ["sh", "-c", command],
-      env: environment.env,
-      secrets: environment.secrets,
-      window: scriptProcessWindow,
-      maxOutput: options.maxOutput,
-      timeout: options.timeout,
-    ))
-    await outgoing.closeStdin()
-    let outcome = try await withThrowingTaskGroup(of: ExecOutcome?.self, returning: ExecOutcome.self) { group in
-      group.addTask {
-        try await holdExecLeg(record.id, endpoint: endpoint, backend: access.exec).map(ExecOutcome.lost)
-      }
-      group.addTask {
-        var output: [ExecOutputStream: [UInt8]] = [:]
-        for try await event in outgoing.events {
-          switch event {
-          case let .output(stream, _, data): output[stream, default: []] += data.bytes
-          case let .exit(status): return .exited(status, stdout: output[.stdout] ?? [], stderr: output[.stderr] ?? [])
-          case .truncated, .timedOut: continue
-          case let .failed(error): return .lost(error.message)
-          }
+    let run = try await mint(machine, command: command, options: options, environment: environment, spawn: false)
+    let outcome: ExecOutcome = try await {
+      var output: [ExecOutputStream: [UInt8]] = [:]
+      for try await event in run.events {
+        switch event {
+        case let .event(.output(stream, _, data)): output[stream, default: []] += data.bytes
+        case let .event(.exit(status)): return .exited(status, stdout: output[.stdout] ?? [], stderr: output[.stderr] ?? [])
+        case .event(.truncated), .event(.timedOut): continue
+        case let .event(.failed(error)): return .lost(error.message)
+        case let .lost(reason): return .lost(reason)
         }
-        return nil
-      }
-      defer { group.cancelAll() }
-      while let outcome = try await group.next() {
-        if let outcome { return outcome }
       }
       throw CancellationError()
-    }
+    }()
+    try await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .release)
     switch outcome {
     case let .exited(status, stdout, stderr):
       guard case var .object(fields) = self.status(status) else { preconditionFailure("status is an object") }
@@ -288,7 +257,7 @@ final class ScriptMachineBindings: Sendable {
       fields["truncated"] = .bool(stdout.count + stderr.count >= options.maxOutput)
       return .object(fields)
     case let .lost(reason):
-      throw ScriptError("\(reason) while exec \(record.id.rawValue) ran; it gets killed if the machine comes back")
+      throw ScriptError("\(reason) while exec \(run.id.rawValue) ran; it gets killed if the machine comes back")
     }
   }
 
@@ -298,39 +267,24 @@ final class ScriptMachineBindings: Sendable {
   }
 
   private func spawn(_ arguments: [JSONValue]) async throws -> JSONValue {
-    let access = try available()
-    let (machine, command, options, environment) = try await start(arguments, access)
+    let (machine, command, options, environment) = try await start(arguments)
     try execution.processes.admit()
     var process: ScriptProcess?
     defer { execution.processes.settle(process) }
     try execution.buffers.withLock { try $0.claim(scriptProcessWindow, for: .processOutput) }
     do {
-      let record = try await mint(machine, access)
-      let endpoint = ChannelEndpoint()
-      let outgoing = await endpoint.startExec(
-        ExecStart(
-          id: record.id,
-          cwd: options.cwd,
-          command: ["sh", "-c", command],
-          env: environment.env,
-          secrets: environment.secrets,
-          window: scriptProcessWindow,
-          maxOutput: nil,
-          timeout: nil,
-        ),
-        autoAcknowledge: false,
-      )
-      if !options.stdin { await outgoing.closeStdin() }
+      let run = try await mint(machine, command: command, options: options, environment: environment, spawn: true)
       process = ScriptProcess(
-        id: record.id,
+        id: run.id,
         machine: machine,
         acceptsStdin: options.stdin,
-        outgoing: outgoing,
-        endpoint: endpoint,
-        backend: access.exec,
+        events: run.events,
+        owner: owner,
+        session: execution.session,
+        script: ScriptRunID(execution.id),
         giveBack: { [execution] bytes in execution.buffers.withLock { $0.unclaim(bytes) } },
       )
-      return .object(["id": .string(record.id.rawValue)])
+      return .object(["id": .string(run.id.rawValue)])
     } catch {
       execution.buffers.withLock { $0.unclaim(scriptProcessWindow) }
       throw error
@@ -359,36 +313,28 @@ final class ScriptMachineBindings: Sendable {
 
   // MARK: Helpers
 
-  private func mint(_ machine: MachineID, _ access: ScriptMachineAccess) async throws -> ExecRecord {
-    let record = try await access.exec.mintScript(machine, execution.session, execution.id)
-    guard execution.processes.minted(record.id) else {
-      try? await access.exec.kill(record.id)
+  private func mint(_ machine: MachineID, command: String, options: Options, environment: ExecEnvironment, spawn: Bool) async throws -> ScriptExecStream {
+    let run = try await owner.startScriptExec(session: execution.session, script: ScriptRunID(execution.id), request: .init(
+      machine: machine, cwd: options.cwd, command: command, environment: environment, window: scriptProcessWindow,
+      maxOutput: spawn ? nil : options.maxOutput, timeout: spawn ? nil : options.timeout,
+      acceptsStdin: spawn && options.stdin, autoAcknowledge: !spawn,
+    ))
+    guard execution.processes.minted(run.id) else {
+      try? await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .kill(.recorded))
+      try? await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .release)
       throw CancellationError()
     }
-    return record
+    return run
   }
 
-  private func available() throws -> ScriptMachineAccess {
-    guard let access else { throw ScriptError("this server gives scripts no machine access") }
-    return access
-  }
-
-  private func attachedMachine(_ reference: String, _ access: ScriptMachineAccess) async throws -> MachineID {
-    try await attached(usableMachine(reference), reference, access)
-  }
-
-  private func usableMachine(_ reference: String) async throws -> MachineRecord {
-    guard let record = try await owner.resolveMachine(reference, session: execution.session) else {
+  private func attachedMachine(_ reference: String) async throws -> MachineID {
+    let machines = try await owner.scriptMachines(session: execution.session)
+    let resolved = try await owner.resolveMachine(reference, session: execution.session)
+    guard let machine = machines.first(where: { $0.id == resolved?.id }) else {
       throw ScriptError("no machine named \(reference)")
     }
-    return record
-  }
-
-  private func attached(_ record: MachineRecord, _ reference: String, _ access: ScriptMachineAccess) async throws -> MachineID {
-    guard await access.files.attached().contains(record.id) else {
-      throw ScriptError("machine \(reference) is not attached")
-    }
-    return record.id
+    guard machine.attached else { throw ScriptError("machine \(reference) is not attached") }
+    return machine.id
   }
 
   private func refusePlaceholders(_ bytes: [UInt8], in place: String) throws {

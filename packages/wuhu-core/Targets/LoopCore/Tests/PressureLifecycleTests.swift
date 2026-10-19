@@ -1,4 +1,5 @@
 import Dependencies
+import class MainHub.Hub
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -11,8 +12,7 @@ import SpaceCore
 import Testing
 
 @Suite(.timeLimit(.minutes(1))) struct PressureLifecycleTests {
-  @Test(arguments: [false, true])
-  func cancelledBudgetResolutionCannotReadDismountedState(serviceShutdown: Bool) async throws {
+  @Test func cancelledBudgetResolutionCannotReadDismountedState() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -24,6 +24,7 @@ import Testing
       defer { release.continuation.finish(); resolver.cancel(); entered.continuation.finish() }
       let resolutions = Box(0)
       let inferences = Box(0)
+      let cancelled = Box(false)
       var config = makeConfig(inference: { _ in
         inferences.withLock { $0 += 1 }
         return Fix.reply("must not run")
@@ -34,21 +35,19 @@ import Testing
         if count == 3 {
           entered.continuation.yield(())
           // Like production resolution, this deliberately returns despite cancellation.
-          await resolver.value
+          await withTaskCancellationHandler {
+            await resolver.value
+          } onCancel: {
+            cancelled.withLock { $0 = true }
+          }
         }
         return .init(maxInput: 1_001_000, maxOutput: 1000)
       }
       let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: config)
       let start = Task { try await service.start() }
       for await _ in entered.stream { break }
-      if serviceShutdown {
-        start.cancel()
-        try await until("actor dismounted by shutdown") { await service.registry.existing(sid) == nil }
-      } else {
-        let actor = try #require(await service.registry.existing(sid))
-        await actor.shutdown()
-        start.cancel()
-      }
+      start.cancel()
+      try await until("budget resolution cancelled") { cancelled.value }
       release.continuation.yield(())
       try await start.value
       #expect(inferences.value == 0)

@@ -3,6 +3,7 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import class MainHub.Hub
 import SessionDomain
 import SessionTools
 import SpaceCore

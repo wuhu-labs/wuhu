@@ -1,3 +1,7 @@
+@testable import MainHub
+import class MainHub.Hub
+import protocol MainHub.Main
+import struct MainHub.ScriptIdentityUnavailable
 @testable import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -89,7 +93,7 @@ extension HubScriptContractTests {
       backend.kill = { id in killed.withLock { $0.append(id.rawValue) } }
       let claim = try await backend.claim(machine, session, .init("interrupted"))
       let owner: any Main = Hub(space: space, exec: backend, scriptMachines: .init(files: FakeMachineFS().seam, exec: backend))
-      #expect(owner.scriptMachines(for: session) != nil)
+      #expect(try await owner.scriptMachines(session: session).contains { $0.id == machine })
       await owner.killInterruptedExec(session: session, toolCallID: .init("missing"))
       #expect(killed.value.isEmpty)
       await owner.killInterruptedExec(session: session, toolCallID: .init("interrupted"))

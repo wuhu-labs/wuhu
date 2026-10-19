@@ -5,9 +5,9 @@
 #endif
 import Dependencies
 import Fetch
+import struct MainHub.ScriptIdentityUnavailable
 import NIOCore
 import SessionDomain
-import struct SessionTools.ScriptIdentityUnavailable
 import SpaceCore
 
 struct ScriptFetch: Sendable {

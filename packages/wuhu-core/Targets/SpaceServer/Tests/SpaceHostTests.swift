@@ -84,6 +84,29 @@ import Testing
     #expect(try await iterator.next() == nil)
   }
 
+  #if os(Linux)
+    @Test func exportFailureStillClosesDatabaseAndRetainsFirstError() async throws {
+      let folder = try scratchURL("space-host-export-failure")
+      defer { try? FileManager.default.removeItem(at: folder) }
+      let blocked = folder.appendingPathComponent("not-a-directory")
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try Data().write(to: blocked)
+      let host = try await SpaceHost.open(folder: folder, deployment: DeploymentRecord(origin: "https://export.test", tlsFingerprint: "test", certificate: .provided), configDirectory: nil, allowEnvironmentCredentials: false, devExport: blocked.appendingPathComponent("export"))
+      func databaseDescriptors() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd").compactMap {
+          try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/" + $0)
+        }.filter { $0.hasPrefix(folder.appendingPathComponent("space.sqlite").path) }
+      }
+      #expect(try !databaseDescriptors().isEmpty)
+      var first: String?
+      do { try await host.shutdown(); Issue.record("expected export failure") }
+      catch { first = String(reflecting: error) }
+      #expect(try databaseDescriptors().isEmpty)
+      do { try await host.shutdown(); Issue.record("expected cached export failure") }
+      catch { #expect(String(reflecting: error) == first) }
+    }
+  #endif
+
   @Test func shutdownBeforeRunPreventsStarting() async throws {
     let folder = try scratchURL("space-host-stopped")
     defer { try? FileManager.default.removeItem(at: folder) }

@@ -446,12 +446,13 @@ extension SessionStore {
     }
   }
 
-  public func recordReceipt(_ id: SessionID, toolCallID: ToolCallID, payload: ToolResultPayload) async throws {
+  public func recordReceipt(_ id: SessionID, toolCallID: ToolCallID, payload: ToolResultPayload, onCommit: @escaping @Sendable () -> Void = {}) async throws {
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
     let encoded = try Sessions.encode(payload)
     try await writer.write { db in
       try Sessions.recordReceipt(key, toolCallID: toolCallID.rawValue, payload: encoded, now: now, in: db)
+      db.afterNextTransaction { _ in onCommit() }
     }
   }
 

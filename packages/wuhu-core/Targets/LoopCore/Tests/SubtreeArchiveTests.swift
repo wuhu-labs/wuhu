@@ -1,5 +1,7 @@
 import Foundation
 @testable import LoopCore
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -55,10 +57,10 @@ import Testing
         try await service.unarchive(child)
         #expect(try await sessions.record(child).lifecycle == .live)
       } catch {
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 
@@ -80,19 +82,14 @@ import Testing
       _ = try await sessions.enqueue(leaf, input: Fix.message("queued"))
       _ = try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
       let writes = Box<[SessionID]>([])
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeAppend = { id, event async throws in
-          guard case .archived = event else { return }
-          if id == child { #expect(try await space.sessions.record(leaf).lifecycle.isArchived) }
-          if id == root {
-            for descendant in [child, leaf, sibling] { #expect(try await space.sessions.record(descendant).lifecycle.isArchived) }
-          }
-          #expect(try await space.sessions.record(root).lifecycle == .live)
-          writes.withLock { $0.append(id) }
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: Fix.hanging), beforeArchive: { id async throws in
+        if id == child { #expect(try await space.sessions.record(leaf).lifecycle.isArchived) }
+        if id == root {
+          for descendant in [child, leaf, sibling] { #expect(try await space.sessions.record(descendant).lifecycle.isArchived) }
         }
-        return access
-      }()), loopConfig: makeConfig(inference: Fix.hanging))
+        #expect(try await space.sessions.record(root).lifecycle == .live)
+        writes.withLock { $0.append(id) }
+      })
       do {
         do {
           try await service.archive(root)
@@ -116,10 +113,10 @@ import Testing
         #expect(try await sessions.record(root).lifecycle == .live)
         #expect(try await sessions.record(child).lifecycle.isArchived)
       } catch {
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 
@@ -186,10 +183,10 @@ import Testing
         #expect(try await sessions.armedSubscriptions(requester).isEmpty)
         #expect(try await sessions.armedSubscriptions(root).isEmpty)
       } catch {
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 }

@@ -176,15 +176,18 @@ public actor SpaceHost {
       }, shutdownBody: {
         await keyStreams.close()
         await releases.close()
-        await space.close()
         await v2Service.shutdown()
         await sessions.service.shutdown()
         await metricsWriter.close()
-        try await webPushHTTPClient.shutdown()
+        var failure: (any Error)?
         if let devExport {
-          // The export must survive cancellation of serve.
-          try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
+          do {
+            try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
+          } catch { failure = error }
         }
+        do { try await space.close() } catch { if failure == nil { failure = error } }
+        do { try await webPushHTTPClient.shutdown() } catch { if failure == nil { failure = error } }
+        if let failure { throw failure }
       })
     }
   }

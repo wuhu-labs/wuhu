@@ -6,29 +6,25 @@ import Dependencies
   import Foundation
 #endif
 import Logging
+import protocol MainHub.Worker
 import struct SessionDomain.SessionID
 import struct SpaceCore.SessionStore
 
 actor SessionReminders {
   private let sessions: SessionStore
-  private var execution: (any SessionExecutionClient)?
+  private let execution: any Worker
   private var pending: [SessionID: UUID] = [:]
   private var tasks: [UUID: Task<Void, Never>] = [:]
   private var stopped = false
   @Dependency(\.continuousClock) private var clock
   @Dependency(\.date) private var date
 
-  init(sessions: SessionStore, execution: (any SessionExecutionClient)? = nil) {
+  init(sessions: SessionStore, execution: any Worker) {
     self.sessions = sessions
     self.execution = execution
   }
 
   deinit { for task in tasks.values { task.cancel() } }
-
-  func bind(_ execution: any SessionExecutionClient) {
-    precondition(self.execution == nil)
-    self.execution = execution
-  }
 
   func schedule(_ id: SessionID, at due: Date?) {
     if let token = pending.removeValue(forKey: id) { tasks[token]?.cancel() }
@@ -51,11 +47,10 @@ actor SessionReminders {
 
   private func fire(_ id: SessionID, token: UUID) async {
     guard !stopped, pending[id] == token else { return }
-    guard let execution else { preconditionFailure("Reminder execution must be bound before scheduling") }
     for attempt in 0 ..< 4 {
       do {
         try Task.checkCancellation()
-        try await execution.wake(id)
+        try await execution.deliver(id, .wake)
         break
       } catch is CancellationError { break }
       catch {
@@ -81,7 +76,6 @@ actor SessionReminders {
     for task in running { task.cancel() }
     for task in running { await task.value }
     tasks.removeAll()
-    execution = nil
   }
 }
 

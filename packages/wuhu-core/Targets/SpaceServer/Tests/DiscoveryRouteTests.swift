@@ -11,21 +11,12 @@ import Synchronization
 import Testing
 
 private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ source: String) async throws -> JSONValue {
-  let scripts = try #require(harness.runtime.scripts)
-  let tools = ToolExecutor(space: harness.space, scripts: scripts)
   return try await withThrowingTaskGroup(of: Void.self) { group in
-    group.addTask { await scripts.run() }
+    group.addTask { await harness.runtime.worker.drain() }
     defer { group.cancelAll() }
-    let execution = try await scripts.start(source, session: session, lifetime: .seconds(30), tools: tools)
-    let answer = try await execution.answer(until: {
-      do { try await Task.sleep(for: .seconds(30)) } catch { return nil }
-      return .waited(30)
-    })
-    guard case let .result(text) = answer else {
-      Issue.record("Discovery script failed: \(answer)")
-      return .null
-    }
-    return try #require(JSONValue.parse(text))
+    let response = try await callResult(harness, session.rawValue, tool: "run_script", .object(["source": .string(source)]))
+    let text = try #require(resultText(response))
+    return try #require(JSONValue.parse(String(text.prefix { $0 != "\n" })))
   }
 }
 

@@ -1,3 +1,6 @@
+import protocol MainHub.Main
+import enum MainHub.ScriptDiscoveryOperation
+import func MainHub.spaceAnswer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,11 +12,6 @@ import SessionDomain
 import struct SpaceContract.ToolRostersOutput
 import SpaceCore
 import SpaceTools
-
-struct ScriptDiscoveryConfiguration: Sendable {
-  var contentHost: String?
-  var toolRosters: ToolRostersOutput?
-}
 
 struct ScriptDiscovery: Sendable {
   let execution: ScriptExecution
@@ -37,22 +35,16 @@ struct ScriptDiscovery: Sendable {
     }
     engine.define("__wuhu_discovery", promising: { arguments in
       return await spaceAnswer {
-        let result: JSONValue
+        let operation: ScriptDiscoveryOperation
         switch arguments.first {
-        case .string("identity"):
-          result = try await owner.identityConfiguration()
-        case .string("context"):
-          result = try await owner.discoveryContext(session: execution.session, contentHost: execution.tools.scripts?.discovery.withLock(\.contentHost))
-        case .string("groups"):
-          result = try await owner.discoveryGroups(session: execution.session)
-        case .string("toolRoster"):
-          guard let roster = execution.tools.scripts?.discovery.withLock(\.toolRosters) else {
-            throw ToolRunError.failed(code: .unsupported, message: "The session roster is not configured on this script host.", hint: nil)
-          }
-          result = try JSONValueEncoder().encode(roster)
+        case .string("identity"): operation = .identity
+        case .string("context"): operation = .context
+        case .string("groups"): operation = .groups
+        case .string("toolRoster"): operation = .toolRosters
         default:
           throw ToolRunError.failed(code: .invalidArgument, message: "Unknown discovery operation.", hint: nil)
         }
+        let result = try await owner.discovery(operation, session: execution.session)
         return result
       }
     })

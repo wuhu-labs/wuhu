@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import protocol MainHub.Main
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

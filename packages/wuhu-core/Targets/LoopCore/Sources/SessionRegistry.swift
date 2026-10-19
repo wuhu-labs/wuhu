@@ -1,5 +1,4 @@
 import Dependencies
-import SessionTools
 import Synchronization
 import TaskLifetime
 #if canImport(FoundationEssentials)
@@ -7,15 +6,29 @@ import TaskLifetime
 #else
   import Foundation
 #endif
+import protocol MainHub.Main
+import enum MainHub.RevocationPolicy
 import struct SessionDomain.SessionID
-import protocol SessionTools.Main
 
 actor SessionRegistry {
   private let main: any Main
   private let loopConfig: LoopConfig
   private let liveness: LivenessTracker
 
-  private(set) var sessions: [SessionID: SessionActor] = [:]
+  private enum Slot {
+    case mounted(SessionActor)
+    case revoking(SessionActor?)
+    case revoked
+
+    var actor: SessionActor? {
+      switch self {
+      case let .mounted(actor), let .revoking(actor?): actor
+      case .revoking(nil), .revoked: nil
+      }
+    }
+  }
+
+  private var slots: [SessionID: Slot] = [:]
   private enum State {
     case active
     case stopping(AsyncStream<Void>)
@@ -59,32 +72,95 @@ actor SessionRegistry {
     }
   }
 
+  private func admits(_ id: SessionID) -> Bool {
+    switch slots[id] {
+    case nil, .mounted: return true
+    case .revoking, .revoked: return false
+    }
+  }
+
   func post(_ action: SessionActor.ExternalAction, to id: SessionID) async {
     guard !stopped else { return }
-    if sessions[id] == nil {
+    guard admits(id) else { action.acknowledgeRevocation(); return }
+    if slots[id] == nil {
       do { _ = try await main.record(id) }
       catch { action.fail(error); return }
     }
     guard !stopped else { return }
+    guard admits(id) else { action.acknowledgeRevocation(); return }
     let session: SessionActor
-    if let existing = sessions[id] {
+    if case let .mounted(existing)? = slots[id] {
       session = existing
     } else {
       session = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
-      sessions[id] = session
+      slots[id] = .mounted(session)
       await session.activate(in: taskScope)
     }
     guard !stopped else { return }
     session.post(action)
   }
 
-  func existing(_ id: SessionID) -> SessionActor? {
-    sessions[id]
+  func revoke(_ id: SessionID, policy: RevocationPolicy) async throws -> Bool {
+    guard !stopped else { throw CancellationError() }
+    if case .revoked? = slots[id] {
+      return true
+    }
+    if case .revoking? = slots[id] { throw SessionError.archiveInProgress }
+    var session = slots[id]?.actor
+    slots[id] = .revoking(session)
+    do {
+      switch policy {
+      case .cancel: break
+      case .whenSettled:
+        let mounted: SessionActor
+        if let existing = session { mounted = existing }
+        else {
+          let record = try await main.record(id)
+          guard !stopped else { throw CancellationError() }
+          if record.hold == .interrupted || record.work == .errored {
+            slots[id] = .revoked
+            return true
+          }
+          mounted = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
+          session = mounted
+          slots[id] = .revoking(mounted)
+          await mounted.activate(in: taskScope)
+        }
+        let settled = try await withCallback(of: Bool.self) { mounted.post(.prepareRevoke($0)) }
+        guard settled else {
+          guard !stopped else { throw CancellationError() }
+          slots[id] = .mounted(mounted)
+          try await withCallback(of: Void.self) { mounted.post(.wake($0)) }
+          return false
+        }
+      }
+      if let session {
+        await session.shutdown()
+        await session.taskScope.close()
+      }
+      guard !stopped else { throw CancellationError() }
+      switch policy {
+      case .whenSettled: slots[id] = .revoked
+      case .cancel: slots[id] = nil
+      }
+      return true
+    } catch {
+      if !stopped, case let .revoking(mounted)? = slots[id] {
+        slots[id] = mounted.map(Slot.mounted)
+      }
+      throw error
+    }
   }
 
-  func discard(_ id: SessionID) async {
-    guard let session = sessions.removeValue(forKey: id) else { return }
-    await retire(session)
+  func archived(_ id: SessionID) {
+    if case .revoked? = slots[id] { slots[id] = nil }
+  }
+
+  func reload(_ id: SessionID) async throws {
+    if case .revoking? = slots[id] { throw SessionError.archiveInProgress }
+    if case .revoked? = slots[id] { slots[id] = nil }
+    _ = try await revoke(id, policy: .cancel)
+    try await withCallback(of: Void.self) { send(.wake($0), to: id) }
   }
 
   func stop() async {
@@ -99,8 +175,8 @@ actor SessionRegistry {
     state = .stopping(finished)
     admission.withLock { $0 = false }
     taskScope.cancel()
-    let current = Array(sessions.values)
-    sessions.removeAll()
+    let current = slots.values.compactMap(\.actor)
+    slots.removeAll()
     for session in current { await retire(session) }
     await taskScope.close()
     state = .stopped
@@ -123,6 +199,11 @@ actor SessionRegistry {
     for await _ in dismounted {}
   }
 
+  private func isMounted(_ actor: SessionActor, at id: SessionID) -> Bool {
+    guard case let .mounted(current)? = slots[id] else { return false }
+    return current === actor
+  }
+
   // One eviction site, both policies: the periodic sweep retires settled
   // sessions idle past the TTL, and past maxIdle it retires oldest-idle
   // first. The verdict is the session's own (tryRetire refuses while busy);
@@ -130,7 +211,8 @@ actor SessionRegistry {
   private func sweep(policy: EvictionPolicy) async {
     let now = date()
     var idle: [(id: SessionID, session: SessionActor, since: Date)] = []
-    for (id, session) in sessions {
+    for (id, slot) in slots {
+      guard case let .mounted(session) = slot else { continue }
       guard let since = await session.idleSince else { continue }
       idle.append((id: id, session: session, since: since))
     }
@@ -145,8 +227,9 @@ actor SessionRegistry {
     }
 
     for entry in idle {
+      guard isMounted(entry.session, at: entry.id) else { continue }
       guard await entry.session.tryRetire(ttl: ttl[entry.id]!, now: now) else { continue }
-      sessions.removeValue(forKey: entry.id)
+      if isMounted(entry.session, at: entry.id) { slots[entry.id] = nil }
       _ = try? taskScope.run("retired-session-drain") { await entry.session.taskScope.close() }
     }
   }

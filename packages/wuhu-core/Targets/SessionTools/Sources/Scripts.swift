@@ -1,17 +1,26 @@
+#if canImport(FoundationEssentials)
+  import FoundationEssentials
+#else
+  import Foundation
+#endif
 import Dependencies
 import Fetch
 import enum JSONValue.JSONValue
 import Logging
+import protocol MainHub.Main
+import func MainHub.runningJSON
+import struct MainHub.ScriptRunID
+import func MainHub.seconds
+import enum MainHub.ToolLifetimes
+import struct MainHub.ToolProblem
+import enum MainHub.WaitCut
+import struct MainHub.WorkerActivity
 import SessionDomain
 import SpaceCore
 import Synchronization
 
-// Executions live in this process only: a restarted server has none. The
-// machine processes a script started outlive it only by a crash; at boot `run`
-// tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
   let owner: any Main
-  let discovery = Mutex(ScriptDiscoveryConfiguration())
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
   private let running = Mutex<[String: ScriptExecution]>([:])
@@ -24,8 +33,7 @@ public final class Scripts: Sendable {
     (launches, launch) = AsyncStream.makeStream()
   }
 
-  public func run(announceRestart: Bool = true) async {
-    if announceRestart { await self.announceRestart() }
+  public func run() async {
     await withDiscardingTaskGroup { group in
       for await execution in launches {
         group.addTask {
@@ -34,31 +42,6 @@ public final class Scripts: Sendable {
           _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
         }
       }
-    }
-  }
-
-  public func announceRestart() async { await Self.announceRestart(owner: owner) }
-
-  public static func announceRestart(owner: any Main) async {
-    let ownerClient = owner
-    let owners: [ScriptExecOwner]
-    do {
-      owners = try await owner.takeScriptExecOwners()
-    } catch {
-      Logger(label: "wuhu.run-script").warning("could not read the scripts a restart killed: \(error)")
-      return
-    }
-    await announceRestart(owner: ownerClient, owners: owners)
-  }
-
-  public static func announceRestart(owner ownerClient: any Main, owners: [ScriptExecOwner]) async {
-    for owner in owners {
-      var text = "\(scriptHandle(owner.script)) was killed by a server restart"
-      if !owner.live.isEmpty {
-        let ids = owner.live.map(\.rawValue).joined(separator: ", ")
-        text += "; the machine processes it left running (\(ids)) get killed about a minute after the restart, or when their machine reconnects if it is away then"
-      }
-      await notify(ownerClient, SessionID(rawValue: owner.session), script: owner.script, text)
     }
   }
 
@@ -72,7 +55,6 @@ public final class Scripts: Sendable {
       lifetime: lifetime,
       secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
-      machines: owner.scriptMachines(for: session),
     )
     try Task.checkCancellation()
     running.withLock { $0[id] = execution }
@@ -89,12 +71,6 @@ public final class Scripts: Sendable {
     running.withLock { $0.values.filter { $0.session == session }.map { scriptHandle($0.id) } }.sorted()
   }
 
-  /// Sessions with a run_script execution running here; handler firings
-  /// are not counted.
-  var runningSessions: Set<SessionID> {
-    Set(running.withLock { $0.values.map(\.session) })
-  }
-
   /// Asks every run_script execution of `session` to stop, as archive does
   /// without waiting: a script may be the one archiving its own
   /// session, and each ends within the stop grace regardless.
@@ -104,9 +80,10 @@ public final class Scripts: Sendable {
     }
   }
 
-  let handlerInventory = Mutex<[String: SessionID]>([:])
-  public var inventory: [String: SessionID] {
-    running.withLock { $0.mapValues(\.session) }.merging(handlerInventory.withLock { $0 }) { _, handler in handler }
+  public var activity: WorkerActivity {
+    WorkerActivity(
+      scripts: running.withLock { Dictionary(uniqueKeysWithValues: $0.map { (ScriptRunID($0.key), $0.value.session) }) },
+    )
   }
 
   public func stop(_ id: String, session: SessionID) async throws -> ToolResultPayload {
@@ -121,10 +98,6 @@ public final class Scripts: Sendable {
     case .released, .failed: "\(scriptHandle(execution.id)) stopped: its signal was aborted and it ended"
     }
     return .script(.init(output: output))
-  }
-
-  var isIdle: Bool {
-    running.withLock { $0.isEmpty }
   }
 }
 
@@ -197,15 +170,5 @@ struct EndedScripts {
   mutating func record(_ id: String, session: SessionID) {
     if owners.updateValue(session, forKey: id) == nil { order.append(id) }
     if order.count > Self.capacity { owners.removeValue(forKey: order.removeFirst()) }
-  }
-}
-
-public struct ScriptIdentityUnavailable: Error, Sendable {
-  public let message: String
-  public let code: String
-
-  public init(message: String, code: String = "fetchIdentityUnavailable") {
-    self.message = message
-    self.code = code
   }
 }

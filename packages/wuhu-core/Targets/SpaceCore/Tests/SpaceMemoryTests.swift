@@ -20,7 +20,7 @@ import Testing
     let rows = try await space.query("SELECT path FROM docs", as: .shared(.anonymous))
     #expect(rows.rows == [[.text("/memory.md")]])
     #expect(try databases() == before)
-    await space.close()
+    try await space.close()
   }
 
   @Test func independentDatabasesShareNeitherIdentityNorSchemaNorRows() async throws {
@@ -38,7 +38,7 @@ import Testing
     #expect(try await second.query("SELECT value FROM \"/values.table\"", as: .shared(.anonymous)).rows.isEmpty)
     _ = try await first.mutateRows(table, [.insert([.string("later")])], in: .shared, acting: .shared)
     #expect(try await first.query("SELECT value FROM \"/values.table\" ORDER BY id", as: .shared(.anonymous)).rows == [[.text("first")], [.text("later")]])
-    await first.close()
-    await second.close()
+    try await first.close()
+    try await second.close()
   }
 }

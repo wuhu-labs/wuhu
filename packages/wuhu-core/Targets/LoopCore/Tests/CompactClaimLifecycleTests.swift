@@ -1,10 +1,12 @@
+import GRDB
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
   import Foundation
 #endif
-import GRDB
 @testable import LoopCore
 import SessionDomain
 @testable import SpaceCore
@@ -19,106 +21,33 @@ import Testing
       let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "claim teardown", kind: .agent, createdBy: "morgan", model: .test)
       try await sessions.requestCommand(id, .compact(instructions: instructions))
-      let entered = AsyncStream<Void>.makeStream()
-      let release = AsyncStream<Void>.makeStream()
-      let gate = Task { for await _ in release.stream { break } }
-      defer { entered.continuation.finish(); release.continuation.finish(); gate.cancel() }
-      let actor = SessionActor(
-        id: id,
-        main: Hub(space: space, sessionAccess: {
-          var access = SessionAccess()
-          let hold: @Sendable (SessionID) async throws -> Void = { _ in
-            entered.continuation.yield(())
-            await gate.value
-          }
-          if beforeWrite { access.beforeClaim = hold } else { access.afterClaim = hold }
-          return access
-        }()),
-        loopConfig: makeConfig(),
-        liveness: LivenessTracker(),
-      )
-      await actor.activate(in: actor.taskScope)
-      try await withCallback(of: Void.self) { actor.post(.wake($0)) }
-      for await _ in entered.stream { break }
-      let looper = try #require(await actor.looperTask)
-      if restart {
-        try await sessions.markInterrupted(id)
-        _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
-      } else {
-        await actor.shutdown()
-      }
-      release.continuation.yield(())
-      await looper.value
-      let hydration = try await sessions.hydrate(id)
-      if restart {
-        #expect(try await sessions.pendingCommand(id) == nil)
-        #expect(!hydration.transcript.kernel.items.contains { if case let .notification(n) = $0 { return n.kind == .compactRequest }; return false })
-        #expect(hydration.undrained.isEmpty)
-        await actor.shutdown()
-      } else {
+      let entered = Box(false)
+      let gate = Latch()
+      let hub = Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        let hold: @Sendable (SessionID) async throws -> Void = { _ in
+          entered.withLock { $0 = true }
+          await gate.wait(unless: { Task.isCancelled })
+        }
+        if beforeWrite { access.beforeClaim = hold } else { access.afterClaim = hold }
+        return access
+      }())
+      let service = await SessionService(sessions: sessions, main: hub, loopConfig: makeConfig())
+      do {
+        try await service.wake(id)
+        try await until("compact claim held") { entered.value }
+        if restart {
+          try await sessions.markInterrupted(id)
+          await #expect(throws: SessionStoreError.busyForRestart(id.rawValue)) { try await service.restart(id, executor: nil, note: nil) }
+        }
+        await service.shutdown()
         #expect(try await sessions.pendingCommand(id) == .compact(instructions: instructions))
-      }
-    }
-  }
 
-  @Test func oldClaimCleanupPreservesRemountedClaimAndArchiveRefusal() async throws {
-    try await withKernelDeps { _ in
-      let space = try Space.inMemory()
-      let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "claim overlap", kind: .agent, createdBy: "morgan", model: .test)
-      try await sessions.requestCommand(id, .compact(instructions: "old"))
-      let entered = AsyncStream<Int>.makeStream()
-      let oldRelease = AsyncStream<Void>.makeStream()
-      let newRelease = AsyncStream<Void>.makeStream()
-      let oldGate = Task { for await _ in oldRelease.stream { break } }
-      let newGate = Task { for await _ in newRelease.stream { break } }
-      defer {
-        entered.continuation.finish(); oldRelease.continuation.finish(); newRelease.continuation.finish()
-        oldGate.cancel(); newGate.cancel()
+      } catch {
+        gate.release()
+        await service.shutdown()
+        throw error
       }
-      let settled = AsyncStream<Void>.makeStream()
-      defer { settled.continuation.finish() }
-      let claims = Box(0)
-      let actor = SessionActor(
-        id: id,
-        main: Hub(space: space, sessionAccess: {
-          var access = SessionAccess()
-          access.beforeClaim = { _ async throws in
-            let claim = claims.withLock { $0 += 1; return $0 }
-            entered.continuation.yield(claim)
-            if claim == 1 { await oldGate.value } else { await newGate.value }
-          }
-          return access
-        }()),
-        loopConfig: makeConfig(),
-        liveness: LivenessTracker(),
-        afterLoop: { settled.continuation.yield(()) },
-      )
-      await actor.activate(in: actor.taskScope)
-      try await withCallback(of: Void.self) { actor.post(.wake($0)) }
-      var iterator = entered.stream.makeAsyncIterator()
-      #expect(await iterator.next() == 1)
-      let oldLooper = try #require(await actor.looperTask)
-      _ = try await withCallback(of: SessionRestart.self) { actor.post(.restart(nil, nil, nil, $0)) }
-      try await sessions.requestCommand(id, .compact(instructions: "new"))
-      try await withCallback(of: Void.self) { actor.post(.wake($0)) }
-      #expect(await iterator.next() == 2)
-      let newLooper = try #require(await actor.looperTask)
-      oldRelease.continuation.yield(())
-      await oldLooper.value
-      #expect(await actor.liveState?.claimingCompactRequest == true)
-      let reservation = UUID()
-      let prepared = try await withCallback(of: Bool.self) { actor.post(.prepareArchive(reservation, $0)) }
-      #expect(!prepared)
-      if prepared { try await withCallback(of: Void.self) { actor.post(.releaseArchive(reservation, $0)) } }
-      newRelease.continuation.yield(())
-      for await _ in settled.stream { break }
-      #expect(await actor.liveState?.claimingCompactRequest == false)
-      let ready = try await withCallback(of: Bool.self) { actor.post(.prepareArchive(reservation, $0)) }
-      #expect(ready)
-      if ready { try await withCallback(of: Void.self) { actor.post(.releaseArchive(reservation, $0)) } }
-      await actor.shutdown()
-      await newLooper.value
     }
   }
 
@@ -136,50 +65,44 @@ import Testing
         } else {
           try db.execute(sql: "DELETE FROM session_commands WHERE session_id = ?", arguments: [id.rawValue])
         }
-        #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM session_command_tokens WHERE session_id = ?", arguments: [id.rawValue]) == 1)
       }
-      try await verifyLegacyCompactToken(space: space, id: id, replacement: replacement)
+      let entered = Box(false)
+      let release = Latch()
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { request in
+        if request.mode == .forcedCompact {
+          entered.withLock { $0 = true }
+          await release.wait(unless: { Task.isCancelled })
+          return Fix.reply("folding", calls: [.init(id: "compact", name: "compact", arguments: .object(["summary": .string("folded")]))])
+        }
+        return Fix.reply("done")
+      }))
+      do {
+        try await service.wake(id)
+        if replacement {
+          try await until("replacement command runs") { entered.value }
+          await #expect(throws: SubtreeArchiveBusy.self) { try await service.archive(id) }
+          release.release()
+          try await until("replacement compact settles") {
+            guard try await sessions.settledWork(id) else { return false }
+            return try await sessions.pendingCommand(id) == nil
+          }
+        }
+        #expect(try await sessions.pendingCommand(id) == nil)
+        try await until("compact completion allows archive") {
+          do {
+            try await service.archive(id)
+            return true
+          } catch is SubtreeArchiveBusy {
+            return false
+          }
+        }
+        #expect(try await sessions.record(id).lifecycle != .live)
+      } catch {
+        release.release()
+        await service.shutdown()
+        throw error
+      }
+      await service.shutdown()
     }
   }
-}
-
-func verifyLegacyCompactToken(space: Space, id: SessionID, replacement: Bool) async throws {
-  let sessions = space.sessions
-  let entered = AsyncStream<Void>.makeStream()
-  let release = AsyncStream<Void>.makeStream()
-  let settled = AsyncStream<Void>.makeStream()
-  let gate = Task { for await _ in release.stream { break } }
-  defer { entered.continuation.finish(); release.continuation.finish(); settled.continuation.finish(); gate.cancel() }
-  let actor = SessionActor(
-    id: id,
-    main: Hub(space: space),
-    loopConfig: makeConfig(inference: { request in
-      if request.mode == .forcedCompact {
-        entered.continuation.yield(())
-        await gate.value
-      }
-      return Fix.reply("done")
-    }, compact: { _ in .init(summary: "folded") }),
-    liveness: LivenessTracker(),
-    afterLoop: { settled.continuation.yield(()) },
-  )
-  await actor.activate(in: actor.taskScope)
-  try await withCallback(of: Void.self) { actor.post(.wake($0)) }
-  let reservation = UUID()
-  if replacement {
-    for await _ in entered.stream { break }
-    let state = try #require(await actor.liveState)
-    #expect(state.compactRequestClaim != nil)
-    #expect(!state.hasSettled)
-    let prepared = try await withCallback(of: Bool.self) { actor.post(.prepareArchive(reservation, $0)) }
-    #expect(!prepared)
-    if prepared { try await withCallback(of: Void.self) { actor.post(.releaseArchive(reservation, $0)) } }
-    release.continuation.yield(())
-  }
-  for await _ in settled.stream { break }
-  #expect(try await sessions.pendingCommand(id) == nil)
-  let ready = try await withCallback(of: Bool.self) { actor.post(.prepareArchive(reservation, $0)) }
-  #expect(ready)
-  if ready { try await withCallback(of: Void.self) { actor.post(.archive(reservation, $0)) } }
-  await actor.shutdown()
 }

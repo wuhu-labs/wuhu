@@ -17,13 +17,9 @@ func callResult(
   _ arguments: JSONValue,
 ) async throws -> JSONValue {
   let id = SessionID(session)
-  let executor = sessionToolExecutor(
-    space: harness.space, hub: harness.hub, credentials: harness.credentials,
-    scripts: harness.runtime.scripts, control: sessionControl { harness.runtime.service },
-  )
   let state = harness.toolStates.values.withLock { $0[id] ?? ToolExecutionState() }
   let callID = UUID().uuidString.lowercased()
-  let payload = try await executor.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
+  let payload = try await harness.runtime.worker.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
   let context = try await harness.store.scopeContext(id, toolCallID: ToolCallID(callID))
   harness.toolStates.values.withLock {
     var state = $0[id] ?? ToolExecutionState()

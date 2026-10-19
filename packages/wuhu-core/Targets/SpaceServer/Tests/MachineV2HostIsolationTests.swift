@@ -70,9 +70,11 @@ import Testing
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
     _ = try await store.claim(.init(scope: "old-script", key: "one"), record: record)
     try await first.shutdown()
-    try await first.space.writer.write { db in
+    let offline = try DatabaseQueue(path: folder.url.appendingPathComponent("space.sqlite").path)
+    try await offline.write { db in
       try db.execute(sql: "UPDATE machine_v2_operations SET record = ? WHERE id = ?", arguments: ["corrupt", record.id.uuidString])
     }
+    try offline.close()
     let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     guard case let .response(response) = try await reopened.handler(Request(url: URL(string: "https://isolated.test/v1/machine-v2/challenge")!)) else {
       Issue.record("challenge upgraded"); return

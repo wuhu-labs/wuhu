@@ -1,5 +1,6 @@
 import InferenceKit
 import LoopCore
+import protocol MainHub.Main
 import SessionDomain
 import SessionTools
 import SpaceCore

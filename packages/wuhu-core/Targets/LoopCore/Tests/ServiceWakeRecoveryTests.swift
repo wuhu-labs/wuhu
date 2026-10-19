@@ -1,3 +1,5 @@
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -48,7 +50,6 @@ import WuhuAI
         #expect(record.work == .errored)
         #expect(record.errorMessage?.contains("boot eligibility failed:") == true)
         #expect(logs.all.contains { $0.level == .error && $0.message == "boot eligibility failed" && $0.metadata["session"] == bad.rawValue && $0.metadata["error"]?.isEmpty == false })
-        #expect(await service.registry.existing(bad) == nil)
         #expect(calls.value == [healthy])
         #expect(try await sessions.notifications(recipient: "owner").contains { $0.kind == .sessionErrored && $0.source == bad.rawValue })
         let payload = try await space.writer.read { db in
@@ -117,7 +118,6 @@ import WuhuAI
         #expect(record.errorMessage != nil)
         let phase = boot ? "boot wake" : "work signal wake"
         #expect(logs.all.contains { $0.level == .error && $0.message == "\(phase) failed" && $0.metadata["session"] == bad.rawValue })
-        #expect(await service.registry.existing(bad) == nil)
         #expect(!calls.value.contains(bad))
         await #expect(throws: SessionError.unreadableData(bad)) { try await service.resume(bad) }
         #expect(try await sessions.record(bad).work == .errored)
@@ -157,8 +157,6 @@ import WuhuAI
         #expect(record.work == .errored)
         #expect(record.errorMessage?.contains("terminal") == true)
         #expect(try await sessions.notifications(recipient: "owner").contains { $0.kind == .sessionErrored && $0.source == task.rawValue })
-        let actor = try #require(await service.registry.existing(task))
-        #expect(try await actor.live.sessionStatus.stopped)
       }
     }
   }
@@ -210,7 +208,6 @@ import WuhuAI
         #expect(hydrations.value == (executor ? 0 : 1))
         #expect(logs.all.filter { $0.message == "work signal wake failed" }.count == 1)
         #expect(!logs.all.contains { $0.message == "session wake retry scheduled" })
-        #expect(await service.registry.existing(bad) == nil)
         #expect(try await sessions.notifications(recipient: "owner").contains { $0.kind == .sessionErrored && $0.source == bad.rawValue })
         await #expect(throws: SessionError.unreadableData(bad)) { try await service.resume(bad) }
         if !executor {
@@ -262,7 +259,6 @@ import WuhuAI
         }
         await clock.base.advance(by: .seconds(100))
         #expect(calls.value == 1)
-        #expect(await service.registry.sessions.isEmpty)
         #expect(try await sessions.record(bad).work != .errored)
       }
     }
@@ -321,7 +317,6 @@ import WuhuAI
             for await _ in errors.stream.stream { break }
             #expect(calls.value == 4)
             #expect(try await sessions.record(bad).work == .errored)
-            #expect(await service.registry.existing(bad) == nil)
             // Ordinary Resume still works when the stored data itself is readable.
             recovered.withLock { $0 = true }
             try await service.resume(bad)

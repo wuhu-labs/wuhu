@@ -79,7 +79,7 @@ extension SessionStore {
   /// Delivers the job's end, when there is one to say, and forgets the job in
   /// the same write. A session that can no longer take the message still
   /// loses the job.
-  public func settleExecJob(_ session: SessionID, toolCallID: ToolCallID, notification: SystemNotification?) async throws {
+  public func settleExecJob(_ session: SessionID, toolCallID: ToolCallID, notification: SystemNotification?, onCommit: @escaping @Sendable () -> Void = {}) async throws {
     let key = session.rawValue
     let nowDate = dateGen.now
     let forget: @Sendable (Database) throws -> Void = { db in
@@ -87,6 +87,7 @@ extension SessionStore {
         sql: "DELETE FROM exec_jobs WHERE session_id = ? AND tool_call_id = ?",
         arguments: [key, toolCallID.rawValue],
       )
+      db.afterNextTransaction { _ in onCommit() }
     }
     guard let notification else { return try await writer.write(forget) }
     do {

@@ -2,6 +2,7 @@ import Credentials
 import struct Credentials.CredentialBinding
 import Dependencies
 import FetchWebSocket
+import class MainHub.Hub
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -19,7 +20,7 @@ import Testing
 import WuhuAI
 
 @Suite(.timeLimit(.minutes(1))) struct ResponsesKernelAcceptanceTests {
-  @Test func archiveUnarchiveStartOverAndShutdownInvalidateRuntimeInference() async throws {
+  @Test func archiveStartOverAndShutdownInvalidateRuntimeInference() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -36,17 +37,21 @@ import WuhuAI
       try await runService(service) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for await _ in committed.stream { break }
-        try await service.archive(sid)
+        try await until("completed pass permits archive") {
+          do { try await service.archive(sid); return true } catch is SubtreeArchiveBusy { return false }
+        }
         #expect(invalidated.value == [sid])
         try await service.unarchive(sid)
+        #expect(invalidated.value == [sid])
+        try await until("reloaded pass permits restart") {
+          do { _ = try await service.restart(sid, executor: nil, note: nil); return true }
+          catch SessionStoreError.busyForRestart { return false }
+        }
         #expect(invalidated.value == [sid, sid])
-        _ = try await service.restart(sid, executor: nil, note: nil)
-        #expect(invalidated.value == [sid, sid, sid])
       }
-      #expect(invalidated.value == [sid, sid, sid, sid])
+      #expect(invalidated.value == [sid, sid, sid])
       await #expect(throws: UnfulfilledError.self) { try await service.wake(sid) }
-      #expect(await service.registry.sessions.isEmpty)
-      #expect(invalidated.value == [sid, sid, sid, sid])
+      #expect(invalidated.value == [sid, sid, sid])
     }
   }
 

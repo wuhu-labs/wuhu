@@ -31,11 +31,10 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
     try await withSessionDeps {
       let harness = try await SessionHarness(assembledModels: testModelsJSON)
       let space = harness.space
-      let scripts = try #require(harness.runtime.scripts)
       let model = SessionExecutor.kernel(.init(provider: "offline", model: "small", effort: "none"))
       let parent = try await harness.store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "owner", executor: model)
       let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: model)
-      func taskScripts() -> Int { scripts.inventory.values.filter { $0 == task }.count }
+      func taskScripts() async -> Int { await harness.runtime.worker.activity().scripts.values.filter { $0 == task }.count }
 
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await harness.runtime.run() }
@@ -44,7 +43,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
           "source": .string("result('watching'); await sleep(3_600_000)"),
         ]))
         #expect(resultText(started)?.contains("watching") == true)
-        #expect(taskScripts() == 1)
+        #expect(await taskScripts() == 1)
 
         // The production firing sees the script as a wait.
         let first = RequestID("stall-before-archive")
@@ -53,7 +52,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
         #expect(try await stallAlerts(space, to: parent, for: first) == 0)
 
         try await harness.runtime.service.archive(task, force: true)
-        try await until("archive stops the task's script") { taskScripts() == 0 }
+        try await until("archive stops the task's script") { await taskScripts() == 0 }
         try await harness.runtime.service.unarchive(task)
 
         let second = RequestID("stall-after-unarchive")

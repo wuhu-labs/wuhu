@@ -1,3 +1,4 @@
+@testable import MainHub
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

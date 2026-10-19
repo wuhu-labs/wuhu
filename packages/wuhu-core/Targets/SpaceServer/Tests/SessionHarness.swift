@@ -7,6 +7,7 @@ import Foundation
 import InferenceKit
 import JSONValue
 import LoopCore
+import class MainHub.Hub
 import Serve
 import ServeTesting
 import SessionDomain
@@ -99,8 +100,21 @@ struct SessionHarness {
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
       allowCacheWarming: { try await CacheWarmer(space: space, usage: cacheUsage).allows($0) },
     )
-    let service = await SessionService(sessions: store, main: Hub(space: space), loopConfig: config)
-    runtime = SessionRuntime(space: space, service: service, attempts: attempts, credentials: credentials)
+    let slot = SessionServiceSlot()
+    let catalogOwner = Hub(space: space, credentials: credentials)
+    let catalog = groupCatalog(owner: catalogOwner)
+    let owner = Hub(
+      space: space, credentials: credentials, secrets: secrets,
+      machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      resolveModelExecutor: modelExecutorResolver(space: space),
+      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
+      control: sessionControl { slot.service },
+    )
+    let worker = await SessionExecution(main: owner, credentials: credentials) { _ in config }
+    let service = SessionService(sessions: store, worker: worker)
+    slot.bind(service)
+    runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: execTokens,

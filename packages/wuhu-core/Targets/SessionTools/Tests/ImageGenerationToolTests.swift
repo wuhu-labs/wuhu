@@ -3,6 +3,7 @@ import Dependencies
 import Fetch
 import Foundation
 import JSONValue
+import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
@@ -94,11 +95,9 @@ private let ModelsPath = "/models.json"
         executor: .kernel(ModelSpecifier(provider: "codex", model: "gpt-5.6-luna", effort: "high")),
       )
       let recorder = ImageRequestRecorder()
+      let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(
-          space: space,
-          credentials: CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") },
-        ),
+        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials), credentials: credentials),
         session: session,
       )
 
@@ -160,12 +159,9 @@ private let ModelsPath = "/models.json"
       try await installModels(space)
       let machineFS = FakeMachineFS()
       let recorder = ImageRequestRecorder()
+      let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(
-          space: space,
-          machines: machineFS.seam,
-          credentials: CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") },
-        ),
+        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -190,12 +186,9 @@ private let ModelsPath = "/models.json"
       try await installModels(space)
       _ = try await space.addMachine(name: "studio")
       _ = try await space.fs(.shared).write("/_/machines/studio/AGENTS.md", Data("studio manual".utf8), ifMatch: nil)
+      let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(
-          space: space,
-          machines: FakeMachineFS().seam,
-          credentials: CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") },
-        ),
+        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: FakeMachineFS().seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -217,12 +210,9 @@ private let ModelsPath = "/models.json"
       let machineFS = FakeMachineFS()
       machineFS.put("/tmp/moon.png", "kept", mtime: 100)
       let recorder = ImageRequestRecorder()
+      let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(
-          space: space,
-          machines: machineFS.seam,
-          credentials: CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") },
-        ),
+        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -245,7 +235,7 @@ private let ModelsPath = "/models.json"
       let space = try Space.inMemory()
       try await installModels(space)
       let recorder = ImageRequestRecorder()
-      var world = ToolWorld(executor: ToolExecutor(space: space), session: try await makeSession(space))
+      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let result = try await withDependencies {
         $0.fetch = recorder.client
@@ -262,7 +252,7 @@ private let ModelsPath = "/models.json"
       let space = try Space.inMemory()
       try await installModelsWithoutCodex(space)
       let recorder = ImageRequestRecorder()
-      var world = ToolWorld(executor: ToolExecutor(space: space), session: try await makeSession(space))
+      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let result = try await withDependencies {
         $0.fetch = recorder.client

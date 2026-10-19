@@ -2,6 +2,9 @@ name: LoopCore
 kind: library
 sources: Sources
 dependencies:
+  - MainHub
+  - Credentials
+  - InferenceKit
   - SessionTools
   - TaskLifetime
   - Clocks
@@ -20,6 +23,7 @@ swiftSettings:
   - enableExperimentalFeature: NonisolatedNonsendingByDefault
 tests:
   dependencies:
+    - MainHub
     - ServerTelemetry
 
     - OrderedCollections

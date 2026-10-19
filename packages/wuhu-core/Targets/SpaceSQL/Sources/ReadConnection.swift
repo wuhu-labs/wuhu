@@ -35,6 +35,7 @@ final class ReadConnection {
   }
 
   let handle: OpaquePointer
+  private var closed = false
   private let gate: Gate
   private let schema: String
   private let viewPrefix: String
@@ -121,8 +122,17 @@ final class ReadConnection {
     "'" + text.replacing("'", with: "''") + "'"
   }
 
+  func close() throws {
+    guard !closed else { return }
+    let code = sqlite3_close(handle)
+    guard code == SQLITE_OK else {
+      throw DatabaseError(resultCode: ResultCode(rawValue: code), message: String(cString: sqlite3_errmsg(handle)))
+    }
+    closed = true
+  }
+
   deinit {
-    sqlite3_close_v2(handle)
+    if !closed { sqlite3_close_v2(handle) }
   }
 
   func run(

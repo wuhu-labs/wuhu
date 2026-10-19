@@ -2,6 +2,7 @@ import Dependencies
 import Foundation
 import JSONValue
 @testable import LoopCore
+import class MainHub.Hub
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -76,8 +77,7 @@ private func compactCall(
       try await runService(service) { _ in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for await _ in committed.stream { break }
-        let actor = try #require(await service.registry.existing(sid))
-        try await until("cancelled forced pass exited") { await actor.liveState?.lastUpdatedByLoopAt != nil }
+        await service.shutdown()
         #expect(compacted.value == 0)
         #expect(attempts.value == 2)
         let transcript = try await sessions.hydrate(sid).transcript.kernel

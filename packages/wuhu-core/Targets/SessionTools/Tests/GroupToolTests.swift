@@ -1,6 +1,9 @@
 import Foundation
 import GRDB
 import JSONValue
+import class MainHub.Hub
+import struct MainHub.SessionControl
+import struct MainHub.ToolProblem
 import SessionDomain
 @testable import SessionTools
 import struct SpaceContract.GroupID
@@ -32,7 +35,7 @@ import struct WuhuAI.ToolArguments
     try await space.addEdge(src: Self.alice, dst: .shared, kind: .read, by: nil)
     return Rig(
       space: space,
-      executor: ToolExecutor(space: space),
+      executor: ToolExecutor(owner: Hub(space: space)),
       p: try await makeSession(space, name: "P", group: Self.alice),
       s: try await makeSession(space, name: "S"),
       b: try await makeSession(space, name: "B", group: Self.bob),
@@ -143,7 +146,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [hers.id] }
       machineFS.put("/x.txt", "hi", mtime: 1)
-      let executor = ToolExecutor(space: rig.space, machines: machineFS.seam)
+      let executor = ToolExecutor(owner: Hub(space: rig.space, machines: machineFS.seam))
 
       func roster(_ session: SessionID) async throws -> [String] {
         var world = ToolWorld(executor: executor, session: session)
@@ -168,7 +171,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let rig = try await makeRig()
       let performed = Box<[SessionID]>([])
-      let executor = ToolExecutor(space: rig.space, control: SessionControl { _, id, _ in performed.withLock { $0.append(id) } })
+      let executor = ToolExecutor(owner: Hub(space: rig.space, control: SessionControl { _, id, _ in performed.withLock { $0.append(id) } }))
       let st = try await task(rig, of: rig.s, in: .shared)
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)

@@ -2,6 +2,7 @@ import Dependencies
 import Fetch
 import Foundation
 import Logging
+@testable import MainHub
 import SessionDomain
 import SpaceCore
 @testable import SpaceServer

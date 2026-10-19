@@ -4,9 +4,9 @@
   import Foundation
 #endif
 import JSONValue
+import protocol MainHub.Main
+import enum MainHub.ScriptDataOperation
 import SessionDomain
-import protocol SessionTools.Main
-import enum SessionTools.ScriptDataOperation
 import SpaceCore
 import SpaceTools
 import WuhuAI

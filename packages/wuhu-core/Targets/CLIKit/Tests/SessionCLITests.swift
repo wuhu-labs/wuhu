@@ -5,13 +5,14 @@ import Foundation
 import InferenceKit
 import JSONValue
 import LoopCore
+import class MainHub.Hub
 import Scratch
 import ServeTesting
 import SessionDomain
 import SessionTools
 import SpaceContract
 import SpaceCore
-import SpaceServer
+@testable import SpaceServer
 import Synchronization
 import Testing
 import WuhuAI
@@ -110,7 +111,7 @@ private final class SessionCLIHarness: Sendable {
     }
     let hub = MachineHub(space: space)
     let attempts = AttemptHub()
-    let executor = ToolExecutor(space: space)
+    let executor = ToolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -119,7 +120,18 @@ private final class SessionCLIHarness: Sendable {
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
-    let service = await SessionService(sessions: store, main: Hub(space: space), loopConfig: config)
+    let slot = SessionServiceSlot()
+    let catalog = groupCatalog(owner: Hub(space: space))
+    let owner = Hub(
+      space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      resolveModelExecutor: modelExecutorResolver(space: space),
+      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
+      control: sessionControl { slot.service },
+    )
+    let worker = await SessionExecution(main: owner) { _ in config }
+    let service = SessionService(sessions: store, worker: worker)
+    slot.bind(service)
     serviceTask = Task {
       do {
         try await service.start()
@@ -128,7 +140,7 @@ private final class SessionCLIHarness: Sendable {
         Issue.record("session service failed: \(error)")
       }
     }
-    let runtime = SessionRuntime(space: space, service: service, attempts: attempts)
+    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     fetch = ServeTesting.client(upgrading: handler)
     stdout = Sink()

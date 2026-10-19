@@ -1,5 +1,6 @@
 import Foundation
 import MachineContract
+import class MainHub.Hub
 import Scratch
 import SessionDomain
 import SessionTools
@@ -41,7 +42,7 @@ struct MachineReceiptRecoveryTests {
         defer { socket.close() }
         dialer.offer(socket)
         try await awaitAttached(server, machine)
-        let first = ToolExecutor(space: space, machines: machineSeam(hub: server.hub), exec: execBackend(space: space, hub: server.hub))
+        let first = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: execBackend(space: space, hub: server.hub)))
         let failed = try await first.execute(session: session, call: call, state: ToolExecutionState())
         guard case let .failure(failure) = failed else { throw UnexpectedReceiptResult() }
         #expect(failure.message.contains("injected receipt failure"))
@@ -58,7 +59,7 @@ struct MachineReceiptRecoveryTests {
         defer { incarnation.cancelAll() }
         dialer.offer(try await connectMachine(replacement, key: key))
         try await awaitAttached(replacement, machine)
-        let fresh = ToolExecutor(space: reopened, machines: machineSeam(hub: replacement.hub), exec: execBackend(space: reopened, hub: replacement.hub))
+        let fresh = ToolExecutor(owner: Hub(space: reopened, machines: machineSeam(hub: replacement.hub), exec: execBackend(space: reopened, hub: replacement.hub)))
         let recovered = try await fresh.execute(session: session, call: call, state: ToolExecutionState())
         guard case let .exec(result) = recovered else { throw UnexpectedReceiptResult() }
         #expect(result.output == payload)

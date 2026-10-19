@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
-import SpaceSQL
+import GRDBSQLite
+@testable import SpaceSQL
 import Testing
 
 // The isolation the view layer promises, on a catalog that hides one row of
@@ -8,6 +9,27 @@ import Testing
 // outside the views, by any route SQLite offers.
 @Suite struct ReadPoolTests {
   static let hiding = ViewCatalog { table, _ in table == "sessions" ? "id <> 'hidden'" : nil }
+
+  @Test func busyConnectionCloseThrowsAndCanBeRetried() throws {
+    let file = try Fixture()
+    let connection = try ReadConnection(path: file.path, catalog: Self.hiding)
+    var statement: OpaquePointer?
+    #expect(sqlite3_prepare_v2(connection.handle, "SELECT 1", -1, &statement, nil) == SQLITE_OK)
+    #expect(throws: DatabaseError.self) { try connection.close() }
+    #expect(sqlite3_finalize(statement) == SQLITE_OK)
+    try connection.close()
+    try connection.close()
+  }
+
+  @Test func closeIsIdempotentAndRefusesOpenedAndUnusedSlots() async throws {
+    let file = try Fixture()
+    let pool = ReadPool(path: file.path)
+    _ = try await column(pool, "SELECT id FROM sessions")
+    try await pool.close()
+    try await pool.close()
+    await #expect(throws: DatabaseError.self) { _ = try await column(pool, "SELECT id FROM sessions") }
+    await #expect(throws: DatabaseError.self) { _ = try await pool.tables("SELECT id FROM sessions", scope: .shared()) }
+  }
 
   @Test func cancellingAMemoryReaderLetsTheWaitingWriterCommit() async throws {
     let path = "file:/read-contract-\(UUID())?vfs=memdb"

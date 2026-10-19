@@ -1,4 +1,7 @@
 import Foundation
+@testable import MainHub
+import struct MainHub.CronSchedule
+import struct MainHub.ToolProblem
 @testable import SessionTools
 import Testing
 

@@ -140,11 +140,7 @@ private func sessionRouter(
 ) -> Router {
   let store = space.sessions
   let machines = machineSeam(hub: hub)
-  let executor = sessionToolExecutor(
-    space: space, hub: hub, credentials: credentials, scripts: runtime.scripts,
-    control: sessionControl { runtime.service },
-    usage: runtime.usage, resolveModelGroup: runtime.resolveModelGroup, prepareModelRoute: runtime.prepareModelRoute,
-  )
+  let worker = runtime.worker
   @Dependency(\.uuid) var uuid
   let forward: RouteHandler = { request, _ in
     switch try await routed(request) {
@@ -153,7 +149,7 @@ private func sessionRouter(
     }
   }
   let tool: @Sendable (_ name: String, _ arguments: JSONValue) async throws -> ToolResultPayload = { name, arguments in
-    try await executor.execute(
+    try await worker.execute(
       session: principal().session,
       call: ToolCall(id: "wst_\(uuid().uuidString.lowercased())", name: name, arguments: ToolArguments(arguments)),
       state: ToolExecutionState(),

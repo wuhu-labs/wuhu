@@ -4,6 +4,7 @@ import ExecutionOwner
 import Foundation
 import InferenceKit
 import LoopCore
+import class MainHub.Hub
 import Scratch
 import SessionDomain
 import SessionTools

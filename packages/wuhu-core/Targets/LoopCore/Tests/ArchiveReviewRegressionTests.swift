@@ -1,6 +1,8 @@
 import Foundation
 import JSONValue
 @testable import LoopCore
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -14,14 +16,9 @@ import WuhuAI
       let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeAppend = { id, event async throws in
-          guard case .archived = event else { return }
-          if id == child { _ = try await space.sessions.restart(root, executor: .kernel(.test), note: nil, modelRoute: nil) }
-        }
-        return access
-      }()), loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(), beforeArchive: { id async throws in
+        if id == child { _ = try await space.sessions.restart(root, executor: .kernel(.test), note: nil, modelRoute: nil) }
+      })
       do {
         await #expect(throws: SessionError.archiveReservationLost) { try await service.archive(root) }
         #expect(try await sessions.record(root).lifecycle == .live)
@@ -31,10 +28,10 @@ import WuhuAI
         try await service.archive(root)
         #expect(try await sessions.record(root).lifecycle != .live)
       } catch {
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 
@@ -52,21 +49,16 @@ import WuhuAI
       let outsideRan = Box(false)
       let enqueued = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeAppend = { id, event async throws in
-          guard case .archived = event else { return }
-          if id == child {
-            writing.withLock { $0 = true }
-            await gate.wait(unless: { Task.isCancelled })
-          }
-        }
-        return access
-      }()), loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { request in
         #expect(request.sessionID == outside)
         outsideRan.withLock { $0 = true }
         return Fix.reply("done")
-      }))
+      }), beforeArchive: { id async throws in
+        if id == child {
+          writing.withLock { $0 = true }
+          await gate.wait(unless: { Task.isCancelled })
+        }
+      })
       try await runService(service) { service in
         let archive = Task { try await service.archive(root, force: true) }
         let enqueue = Task {
@@ -102,19 +94,14 @@ import WuhuAI
       let writing = Box(false)
       let ran = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeAppend = { id, event async throws in
-          guard case .archived = event else { return }
-          writing.withLock { $0 = true }
-          await gate.wait(unless: { Task.isCancelled })
-          throw UnexpectedCall("archive write failed")
-        }
-        return access
-      }()), loopConfig: makeConfig(inference: { _ in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { _ in
         ran.withLock { $0 = true }
         return Fix.reply("done")
-      }))
+      }), beforeArchive: { id async throws in
+        writing.withLock { $0 = true }
+        await gate.wait(unless: { Task.isCancelled })
+        throw UnexpectedCall("archive write failed")
+      })
       let archive = Task { try await service.archive(root) }
       do {
         try await until("archive write held") { writing.value }
@@ -129,10 +116,10 @@ import WuhuAI
         gate.release()
         archive.cancel()
         _ = await archive.result
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 
@@ -143,15 +130,10 @@ import WuhuAI
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let writing = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
-        var access = SessionAccess()
-        access.beforeAppend = { id, event async throws in
-          guard case .archived = event else { return }
-          writing.withLock { $0 = true }
-          await gate.wait(unless: { Task.isCancelled })
-        }
-        return access
-      }()), loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(), beforeArchive: { id async throws in
+        writing.withLock { $0 = true }
+        await gate.wait(unless: { Task.isCancelled })
+      })
       let archive = Task { try await service.archive(root) }
       do {
         try await until("parent reserved") { writing.value }
@@ -172,14 +154,14 @@ import WuhuAI
         gate.release()
         archive.cancel()
         _ = await archive.result
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 
-  @Test func refusedArchiveDoesNotConsumeCompactCommandDuringReservation() async throws {
+  @Test func refusedArchiveDoesNotReserveOrCancelAnActiveCompactPass() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
@@ -225,12 +207,10 @@ import WuhuAI
         try await service.archive(root)
       }
       do {
-        try await until("archive checked busy sibling after reserving compact session") { busyRead.value }
-        #expect(sessions.isReservedForArchive(compact))
+        try await until("archive checked busy sibling") { busyRead.value }
+        #expect(!sessions.isReservedForArchive(compact))
         pendingGate.release()
-        try await holds("compact remains pending while reserved") {
-          try await sessions.pendingCommand(compact) != nil && !compactRan.value
-        }
+        try await until("refused revocation lets compact continue") { compactRan.value }
         busyGate.release()
         await #expect(throws: SubtreeArchiveBusy.self) { try await archive.value }
         try await until("compact runs after refused archive releases reservation") { compactRan.value }
@@ -241,10 +221,10 @@ import WuhuAI
         busyGate.release()
         archive.cancel()
         _ = await archive.result
-        await service.registry.stop()
+        await service.shutdown()
         throw error
       }
-      await service.registry.stop()
+      await service.shutdown()
     }
   }
 }

@@ -1,5 +1,11 @@
 import Dependencies
 import Logging
+import protocol MainHub.Main
+import struct MainHub.ScriptError
+import struct MainHub.ScriptHandlerResult
+import struct MainHub.ScriptRunID
+import func MainHub.seconds
+import enum MainHub.WaitCut
 import QuickJSKit
 import ServerTelemetry
 import SessionDomain
@@ -92,7 +98,6 @@ final class ScriptExecution: Sendable {
   let lifetime: Duration
   let secrets: ScriptSecrets
   let tools: ToolExecutor
-  let machines: ScriptMachineAccess?
   let handler: ScriptHandlerContext?
   let buffers = Mutex(ScriptBuffers())
   let processes = ScriptProcesses()
@@ -113,7 +118,6 @@ final class ScriptExecution: Sendable {
     lifetime: Duration,
     secrets: ScriptSecrets,
     tools: ToolExecutor,
-    machines: ScriptMachineAccess? = nil,
     handler: ScriptHandlerContext? = nil,
   ) {
     self.id = id
@@ -122,7 +126,6 @@ final class ScriptExecution: Sendable {
     self.lifetime = lifetime
     self.secrets = secrets
     self.tools = tools
-    self.machines = machines
     self.handler = handler
     (controls, control) = AsyncStream.makeStream()
     (aborts, abort) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -286,7 +289,10 @@ final class ScriptExecution: Sendable {
         return first ?? .killed(.cancelled)
       }
       // A process lives only as long as its script.
-      let minted = await processes.shutdown { [machines] id in try await machines?.exec.kill(id) }
+      let minted = await processes.shutdown { exec in
+        try? await owner.scriptExecInput(session: self.session, script: ScriptRunID(self.id), exec: exec, input: .kill(.recorded))
+        try await owner.scriptExecInput(session: self.session, script: ScriptRunID(self.id), exec: exec, input: .release)
+      }
       if !minted.isEmpty {
         do {
           try await owner.releaseScriptExecs(script: id)
@@ -314,7 +320,7 @@ final class ScriptExecution: Sendable {
     ScriptFiles(owner: owner, execution: self).install(in: engine)
     ScriptSpace(execution: self, owner: owner, streams: streams).install(in: engine)
     ScriptDiscovery(execution: self, owner: owner).install(in: engine)
-    ScriptMachineBindings(execution: self, owner: owner, access: machines).install(in: engine)
+    ScriptMachineBindings(execution: self, owner: owner).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)
@@ -383,9 +389,8 @@ final class ScriptExecution: Sendable {
     guard ending == .released, let handler else {
       throw ScriptError(ending?.afterResult ?? "handler did not finish")
     }
-    var result = try handler.result()
-    result.wakes = result.wakes.map(secrets.mask)
-    return result
+    let result = try handler.result()
+    return ScriptHandlerResult(stateJSON: result.stateJSON, wakes: result.wakes.map(secrets.mask))
   }
 
   func nextAbort() async throws -> String {
@@ -497,12 +502,6 @@ final class ScriptExecution: Sendable {
       }
     }
   }
-}
-
-func seconds(_ duration: Duration) -> String {
-  let (whole, attoseconds) = duration.components
-  guard attoseconds != 0 else { return "\(whole)" }
-  return "\(Double(whole) + Double(attoseconds) / 1e18)"
 }
 
 extension ScriptEnding {

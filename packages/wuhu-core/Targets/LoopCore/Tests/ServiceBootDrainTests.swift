@@ -1,3 +1,5 @@
+import class MainHub.Hub
+import struct MainHub.SessionAccess
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -71,7 +73,6 @@ import Testing
       try await start.value
       #expect(finished.value)
       #expect(order.value == ["cleanup", "start"])
-      #expect(await service.registry.sessions.isEmpty)
       #expect(Set(invalidated.value) == Set([first, second]))
       bootEntered.continuation.finish()
       entered.continuation.finish()

@@ -40,6 +40,15 @@ public final class ReadPool: Sendable {
     }
   }
 
+  public func close() async throws {
+    var failure: (any Error)?
+    for slot in slots {
+      do { try await slot.close() }
+      catch { if failure == nil { failure = error } }
+    }
+    if let failure { throw failure }
+  }
+
   private func withSlot<T: Sendable>(_ body: (ReadSlot, UInt64) async throws -> T) async throws -> T {
     let index = load.withLock { load in
       let index = load.indices.min { load[$0] < load[$1] }!
@@ -66,6 +75,7 @@ actor ReadSlot {
   private let catalog: ViewCatalog
   private let trace: (@Sendable (String) -> Void)?
   private var connection: ReadConnection?
+  private var closed = false
 
   nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
 
@@ -102,7 +112,14 @@ actor ReadSlot {
     }
   }
 
+  func close() throws {
+    closed = true
+    try connection?.close()
+    connection = nil
+  }
+
   private func open() throws -> ReadConnection {
+    guard !closed else { throw DatabaseError(resultCode: .SQLITE_MISUSE, message: "read pool is closed") }
     if let connection { return connection }
     let opened = try ReadConnection(path: path, catalog: catalog, trace: trace)
     connection = opened

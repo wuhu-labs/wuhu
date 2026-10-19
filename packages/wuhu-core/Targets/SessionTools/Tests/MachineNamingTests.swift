@@ -1,4 +1,5 @@
 import JSONValue
+import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
@@ -12,7 +13,7 @@ import Testing
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: ToolExecutor(space: space, machines: machineFS.seam),
+        executor: ToolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -29,7 +30,7 @@ import Testing
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
-        executor: ToolExecutor(space: space, machines: machineFS.seam),
+        executor: ToolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -49,7 +50,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       var world = ToolWorld(
-        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam),
+        executor: ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 
@@ -67,7 +68,7 @@ import Testing
       let mini = try await space.addMachine(name: "mac-mini")
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
-        executor: ToolExecutor(space: space, machines: FakeMachineFS().seam),
+        executor: ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 

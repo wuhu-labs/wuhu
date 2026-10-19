@@ -1,5 +1,6 @@
 import enum Credentials.ChatGPTAuthError
 import Dependencies
+import protocol MainHub.Main
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

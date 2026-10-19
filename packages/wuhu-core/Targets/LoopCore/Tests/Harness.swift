@@ -3,7 +3,10 @@ import ControlledTime
 import Dependencies
 import Foundation
 import JSONValue
+import Logging
 @testable import LoopCore
+import class MainHub.Hub
+import protocol MainHub.Main
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -289,4 +292,33 @@ extension Transcript {
 
 extension ModelSpecifier {
   static let test = ModelSpecifier(provider: "deepseek", model: "deepseek-v4-pro", effort: "high")
+}
+
+private struct WeakService: Sendable {
+  weak var value: SessionService?
+}
+
+extension SessionExecution {
+  init(main: any Main, loopConfig: LoopConfig) async {
+    await self.init(main: main, loopConfig: { _ in loopConfig })
+  }
+}
+
+extension SessionService {
+  convenience init(
+    sessions: SessionStore,
+    main: any Main,
+    loopConfig: LoopConfig,
+    beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in },
+    log: Logger = Logger(label: "test.session-service"),
+  ) async {
+    let slot = Box(WeakService())
+    var config = loopConfig
+    config.scheduleWake = { id, due in
+      await slot.withLock { $0.value }?.scheduleWake(id, at: due)
+    }
+    let worker = await SessionExecution(main: main, loopConfig: config)
+    self.init(sessions: sessions, worker: worker, archiveGrace: .seconds(24 * 3600), runningWork: loopConfig.runningWork, beforeArchive: beforeArchive, log: log)
+    slot.withLock { $0.value = self }
+  }
 }

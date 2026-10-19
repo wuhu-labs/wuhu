@@ -1,3 +1,6 @@
+import protocol MainHub.Main
+import enum MainHub.ScriptDataOperation
+import func MainHub.spaceAnswer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

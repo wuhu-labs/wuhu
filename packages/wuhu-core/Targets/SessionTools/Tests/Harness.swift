@@ -14,6 +14,9 @@ import struct MachineContract.MachineID
 import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
+import struct MainHub.ExecBackend
+import protocol MainHub.Main
+import protocol MainHub.Worker
 import SessionDomain
 @testable import SessionTools
 import struct SpaceContract.GroupID
@@ -138,14 +141,28 @@ func makeSession(_ space: Space, name: String = "test", group: GroupID = .shared
 // The kernel's side of the black box: dispatch a call with the folded state,
 // then fold the committed result exactly as the transcript would.
 struct ToolWorld {
-  let executor: ToolExecutor
+  private let execute: @Sendable (SessionID, ToolCall, ToolExecutionState) async throws -> ToolResultPayload
+  private let owner: any Main
   let session: SessionID
   var state = ToolExecutionState()
   var delivered: ScopeContext?
   private var mintedCalls = 0
 
   init(executor: ToolExecutor, session: SessionID) {
-    self.executor = executor
+    execute = { try await executor.execute(session: $0, call: $1, state: $2) }
+    owner = executor.owner
+    self.session = session
+  }
+
+  init(worker: any Worker, owner: any Main, session: SessionID) {
+    execute = { try await worker.execute(session: $0, call: $1, state: $2) }
+    self.owner = owner
+    self.session = session
+  }
+
+  init(_ world: ToolWorld, session: SessionID) {
+    execute = world.execute
+    owner = world.owner
     self.session = session
   }
 
@@ -156,13 +173,12 @@ struct ToolWorld {
   ) async throws -> ToolResultPayload {
     mintedCalls += 1
     let id = explicit ?? "tc-\(mintedCalls)"
-    let payload = try await executor.execute(
-      session: session,
-      call: ToolCall(id: id, name: name, arguments: arguments),
-      state: state,
+    let payload = try await execute(
+      session, ToolCall(id: id, name: name, arguments: arguments),
+      state,
     )
     state.apply(payload)
-    delivered = try await executor.owner.scopeContext(session, toolCallID: ToolCallID(id))
+    delivered = try await owner.scopeContext(session, toolCallID: ToolCallID(id))
     if let delivered {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
     }
@@ -176,10 +192,9 @@ struct ToolWorld {
     _ arguments: ToolArguments,
     id: String,
   ) async throws -> ToolResultPayload {
-    try await executor.execute(
-      session: session,
-      call: ToolCall(id: id, name: name, arguments: arguments),
-      state: state,
+    try await execute(
+      session, ToolCall(id: id, name: name, arguments: arguments),
+      state,
     )
   }
 }

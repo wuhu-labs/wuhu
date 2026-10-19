@@ -4,6 +4,8 @@ import Fetch
 import Foundation
 import HTTPTypes
 import JSONValue
+import class MainHub.Hub
+import struct MainHub.ScriptIdentityUnavailable
 import OrderedCollections
 import ServeNIO
 import SessionDomain
@@ -256,8 +258,9 @@ func withIdentityScript(
           try await proxy.response(request, session: session, space: space, protect: protect)
         }
       } ?? identityFetch
-      let scripts = Scripts(space: space, identityFetch: transport)
-      let rig = IdentityScriptRig(space: space, session: session, executor: ToolExecutor(space: space, scripts: scripts))
+      let owner = Hub(space: space, identityFetch: transport)
+      let scripts = Scripts(owner: owner)
+      let rig = IdentityScriptRig(space: space, session: session, executor: ToolExecutor(owner: owner, scripts: scripts))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
         defer { group.cancelAll() }

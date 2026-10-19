@@ -1,5 +1,9 @@
 import Dependencies
 import Fetch
+import protocol MainHub.Main
+import let MainHub.scriptBufferBytes
+import struct MainHub.ScriptError
+import struct MainHub.ScriptIdentityUnavailable
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,21 +15,6 @@ import QuickJSKit
 import SpaceCore
 import SpaceTools
 import Synchronization
-
-// Server memory the engine's own memory limit never sees. This caps
-// everything one execution holds there: every unread fetched body, the output
-// window of every machine process and the output budget of every running
-// machine exec; a query result, read whole before it reaches the engine, and
-// the query tool's one result must fit in what is left.
-let scriptBufferBytes = 64 << 20
-
-public struct ScriptError: Error, CustomStringConvertible, Sendable {
-  public var description: String
-
-  public init(_ description: String) {
-    self.description = description
-  }
-}
 
 struct ScriptBuffers {
   private var next = 0

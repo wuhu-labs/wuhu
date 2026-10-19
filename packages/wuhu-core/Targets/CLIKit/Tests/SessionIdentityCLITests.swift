@@ -5,6 +5,7 @@ import Foundation
 import InferenceKit
 import LoopCore
 import MachineContract
+import class MainHub.Hub
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -99,7 +100,7 @@ private final class IdentityHarness: Sendable {
     _ = try await space.fs(.shared).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
     let tokens = ExecTokens(spaceURL: Self.sessionSpace)
     let hub = MachineHub(space: space, tokens: tokens)
-    let executor = ToolExecutor(space: space)
+    let executor = ToolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -113,9 +114,20 @@ private final class IdentityHarness: Sendable {
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
-    let service = await SessionService(sessions: self.store, main: Hub(space: space), loopConfig: config)
+    let slot = SessionServiceSlot()
+    let catalog = groupCatalog(owner: Hub(space: space))
+    let owner = Hub(
+      space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      resolveModelExecutor: modelExecutorResolver(space: space),
+      resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
+      prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
+      control: sessionControl { slot.service },
+    )
+    let worker = await SessionExecution(main: owner) { _ in config }
+    let service = SessionService(sessions: self.store, worker: worker)
+    slot.bind(service)
     self.serviceTask = Task { try? await service.start() }
-    let runtime = SessionRuntime(space: space, service: service, attempts: AttemptHub())
+    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: AttemptHub(), owner: owner)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts

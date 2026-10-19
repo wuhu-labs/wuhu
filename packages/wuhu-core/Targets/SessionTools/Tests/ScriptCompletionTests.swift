@@ -3,6 +3,7 @@ import struct Credentials.CredentialResolver
 import Fetch
 import Foundation
 import JSONValue
+import class MainHub.Hub
 @testable import SessionTools
 import Testing
 
@@ -178,7 +179,7 @@ data: {}
     }
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
-      let tools = ToolExecutor(space: rig.space, completionCatalog: {
+      let tools = ToolExecutor(owner: Hub(space: rig.space), completionCatalog: {
         .init(document: try .init(json: Data(models.utf8)), credentials: .init { _ in
           Issue.record("OIDC must not resolve a stored credential")
           return nil
@@ -209,7 +210,12 @@ data: {}
     }
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
-      let tools = ToolExecutor(space: rig.space, completionCatalog: {
+      let tools = ToolExecutor(owner: Hub(space: rig.space, completionMetrics: .init { metric in
+        seen.withLock { $0.append(metric.session.rawValue) }
+        #expect(metric.provider == "offline")
+        #expect(metric.usage?.uncachedInputTokens == 10)
+        #expect(metric.outcome.rawValue == "ok")
+      }), completionCatalog: {
         .init(document: try .init(json: Data(models.utf8)), credentials: .init { _ in
           Issue.record("OIDC must not use stored credentials")
           return nil
@@ -217,11 +223,6 @@ data: {}
           #expect(caller == rig.session)
           return "fixture-token"
         }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" })
-      }, completionMetrics: .init { metric in
-        seen.withLock { $0.append(metric.session.rawValue) }
-        #expect(metric.provider == "offline")
-        #expect(metric.usage?.uncachedInputTokens == 10)
-        #expect(metric.outcome.rawValue == "ok")
       })
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       #expect(try await tools.complete(rig.session, request) == #"{"relevant":true}"#)
@@ -259,7 +260,7 @@ data: {}
     let fetch = FetchClient { _ in throw CancellationError() }
     try await withRig(fetch: fetch) { rig in
       try await rig.write("/models.json", completionModels)
-      let tools = ToolExecutor(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
+      let tools = ToolExecutor(owner: Hub(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }), credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       await #expect(throws: CancellationError.self) { try await tools.complete(rig.session, request) }
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
@@ -284,7 +285,7 @@ data: {}
         return {session:(await context()).session,text,cursor:(state?.cursor ?? 0)+1}
       }
       """#)
-      let tools = ToolExecutor(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
+      let tools = ToolExecutor(owner: Hub(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }), credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
       let result = try await rig.scripts.runHandler(path: "/complete-handler.js", session: rig.session, stateJSON: #"{"cursor":4}"#, tools: tools)
       let state = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(state["session"] == .string(rig.session.rawValue))

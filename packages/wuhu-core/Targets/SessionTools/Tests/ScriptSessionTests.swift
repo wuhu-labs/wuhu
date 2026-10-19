@@ -1,6 +1,7 @@
 import Foundation
 import enum InferenceKit.CatalogError
 import JSONValue
+import struct MainHub.SessionControl
 import SessionDomain
 @testable import SessionTools
 @_spi(Testing) import SpaceCore

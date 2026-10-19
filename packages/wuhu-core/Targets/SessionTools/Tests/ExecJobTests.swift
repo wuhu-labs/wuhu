@@ -4,6 +4,8 @@ import Foundation
 import JSONValue
 import MachineChannel
 import struct MachineContract.MachineID
+import func MainHub.execHandle
+import class MainHub.Hub
 import OrderedCollections
 import SessionDomain
 @testable import SessionTools
@@ -16,8 +18,16 @@ import struct WuhuAI.ToolArguments
 @Suite(.timeLimit(.minutes(2))) struct ExecJobTests {
   @Test func pastItsWaitAnExecReturnsRunningAndItsEndArrivesAsOneMessage() async throws {
     try await withToolDeps { time in
-      var rig = try await ExecJobRig()
-      let scripted = rig.scripted
+      let ackGate = Gate()
+      let ackEntered = Box(false)
+      let ackFinished = Box(false)
+      let scripted = ScriptedExecMachine(onTerminalAck: { _ in
+        ackEntered.withLock { $0 = true }
+        await ackGate.wait()
+        ackFinished.withLock { $0 = true }
+      })
+      var rig = try await ExecJobRig(scripted: scripted)
+      let space = rig.space
       let (released, release) = AsyncStream<Void>.makeStream()
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripted.pump() }
@@ -26,6 +36,7 @@ import struct WuhuAI.ToolArguments
             try? await exec.send(.stdout, Array("working\n".utf8))
             for await _ in released { break }
             try? await exec.send(.stdout, Array("done\n".utf8))
+            try? await space.finishExec(exec.start.id, .exited(code: 3))
             await exec.exit(.exited(code: 3))
           }
         }
@@ -44,6 +55,19 @@ import struct WuhuAI.ToolArguments
         #expect(try await rig.execMessages() == ["\(handle) ended with exit code 3:\nworking\ndone\n"])
         try await until("the job is forgotten") { try await rig.space.sessions.execJobs().isEmpty }
         #expect(rig.owner.runningExecJobs(of: rig.session).isEmpty)
+        try await until("terminal acknowledgement is held") { ackEntered.value }
+        guard case let .failure(ended) = try await rig.world.run("cancel", .object(["id": .string(handle)])) else {
+          throw Mismatch("an ended exec accepted cancel while its terminal ack was held")
+        }
+        #expect(ended.code == "alreadyEnded")
+        #expect(scripted.kills.value.isEmpty)
+        await rig.owner.closeExecJobs()
+        #expect(ackFinished.value, "shutdown joins terminal-ack transport even after the job is forgotten")
+        let restarted = try ExecJobRig(after: rig)
+        await restarted.owner.adoptExecJobs()
+        #expect(restarted.owner.runningExecJobs(of: restarted.session).isEmpty)
+        #expect(try await restarted.execMessages().count == 1)
+        #expect(scripted.startCount.value == 1)
       }
     }
   }
@@ -152,7 +176,7 @@ import struct WuhuAI.ToolArguments
 
         _ = try await rig.exec(["wait_seconds": 5], id: "tc-mine")
         let handle = try await rig.handle(of: "tc-mine")
-        var theirs = ToolWorld(executor: rig.world.executor, session: peer)
+        var theirs = ToolWorld(rig.world, session: peer)
         guard case let .failure(refused) = try await theirs.run("cancel", .object(["id": .string(handle)])) else {
           throw Mismatch("another session cancelled the exec")
         }
@@ -353,11 +377,11 @@ private struct ExecJobRig {
   var world: ToolWorld
   let owner: Hub
 
-  init() async throws {
+  init(scripted: ScriptedExecMachine = ScriptedExecMachine()) async throws {
     let space = try Space.inMemory()
     try self.init(
       space: space, session: try await makeSession(space), machine: try await space.addMachine(name: "box").id,
-      scripted: ScriptedExecMachine(), exec: true,
+      scripted: scripted, exec: true,
     )
   }
 
@@ -372,7 +396,7 @@ private struct ExecJobRig {
     self.session = session
     self.machine = machine
     self.scripted = scripted
-    let executor = ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: exec ? scripted.backend(space) : nil)
+    let executor = ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: exec ? scripted.backend(space) : nil))
     world = ToolWorld(executor: executor, session: session)
     owner = try #require(executor.owner as? Hub)
   }

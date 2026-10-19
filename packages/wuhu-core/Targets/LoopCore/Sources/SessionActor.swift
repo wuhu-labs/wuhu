@@ -1,5 +1,5 @@
 import Dependencies
-import SessionTools
+import protocol MainHub.Main
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,7 +12,7 @@ import SpaceCore
 actor SessionActor {
   enum Lifecycle: Hashable {
     case live
-    case archived(graceExpiry: Date)
+    case archived
   }
 
   enum RunStatus {
@@ -44,13 +44,14 @@ actor SessionActor {
     let isTask: Bool
     var delegatedWake = false
     var parkWake: (at: Date, task: Task<Void, Never>)?
-    var archiving = false
+    var revoking = false
     var claimingCompactRequest = false
     var malformedMessages = 0
     var capacityFailures = 0
     var compactedForPayload = false
 
     var hasSettled: Bool {
+      guard lastUpdatedByLoopAt != nil else { return false }
       if sessionStatus.stopped {
         return true
       }
@@ -61,23 +62,20 @@ actor SessionActor {
 
   enum ExternalAction {
     case wake(Callback<Void>)
-    case enqueue(QueueInput, Callback<Int>)
-    case prepareArchive(UUID, Callback<Bool>)
-    case releaseArchive(UUID, Callback<Void>)
-    case archive(UUID, Callback<Void>)
-    case unarchive(Callback<Void>)
+    case prepareRevoke(Callback<Bool>)
     case interrupt(Callback<Void>)
     case resume(Callback<Void>)
-    case restart(SessionExecutor?, String?, SessionModelRoute?, Callback<SessionRestart>)
 
     func fail(_ error: any Error) {
       switch self {
-      case .wake(let callback), .releaseArchive(_, let callback), .archive(_, let callback),
-           .unarchive(let callback), .interrupt(let callback), .resume(let callback): callback.resume(throwing: error)
-      case .enqueue(_, let callback): callback.resume(throwing: error)
-      case .prepareArchive(_, let callback): callback.resume(throwing: error)
-      case .restart(_, _, _, let callback): callback.resume(throwing: error)
+      case .wake(let callback), .interrupt(let callback), .resume(let callback): callback.resume(throwing: error)
+      case .prepareRevoke(let callback): callback.resume(throwing: error)
       }
+    }
+
+    func acknowledgeRevocation() {
+      if case .wake(let callback) = self { callback.resume(returning: ()) }
+      else { fail(SessionError.archiveInProgress) }
     }
   }
 
@@ -100,7 +98,6 @@ actor SessionActor {
   var longRunningTask: (id: UUID, task: Task<Void, Never>)?
   var retryPause: Task<Void, any Error>?
   private var retired = false
-  private var archiveReservation: UUID?
 
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
@@ -141,7 +138,7 @@ actor SessionActor {
   }
 
   var idleSince: Date? {
-    guard archiveReservation == nil else { return nil }
+    guard liveState?.revoking != true else { return nil }
     guard let liveState else { return lastCommandProcessedAt }
     guard let lhs = lastCommandProcessedAt,
           let rhs = liveState.lastUpdatedByLoopAt,
@@ -194,63 +191,20 @@ actor SessionActor {
   }
 
   private func handle(action: ExternalAction) async {
-    if archiveReservation != nil {
-      switch action {
-      case .wake, .enqueue, .archive, .releaseArchive: break
-      case .prepareArchive(_, let callback):
-        callback.resume(throwing: SessionError.archiveInProgress)
-        return
-      case .unarchive(let callback), .interrupt(let callback), .resume(let callback):
-        callback.resume(throwing: SessionError.archiveInProgress)
-        return
-      case .restart(_, _, _, let callback):
-        callback.resume(throwing: SessionError.archiveInProgress)
-        return
-      }
-    }
     switch action {
     case .wake(let callback):
       await callback.run {
         guard try await ensureLifecycle() == .live else { return }
         try await handleWake()
       }
-    case .enqueue(let item, let callback):
+    case .prepareRevoke(let callback):
       await callback.run {
-        try await handleEnqueue(item)
-      }
-    case .prepareArchive(let reservation, let callback):
-      await callback.run {
-        guard try await ensureLifecycle() == .live else {
-          archiveReservation = reservation
-          return true
-        }
+        guard try await ensureLifecycle(startLoop: false) == .live else { return true }
         let head = try await main.queueHead(id)
         try modify { $0.queueHead = max($0.queueHead, head) }
         guard try live.hasSettled else { return false }
-        try modify { $0.archiving = true }
-        archiveReservation = reservation
+        try modify { $0.revoking = true }
         return true
-      }
-    case .releaseArchive(let reservation, let callback):
-      await callback.run {
-        guard archiveReservation == reservation else { return }
-        archiveReservation = nil
-        if liveState != nil {
-          defer {
-            liveState?.archiving = false
-            nudge()
-          }
-          try await handleWake()
-        }
-      }
-    case .archive(let reservation, let callback):
-      await callback.run {
-        guard archiveReservation == reservation else { throw SessionError.archiveReservationLost }
-        try await handleArchive()
-      }
-    case .unarchive(let callback):
-      await callback.run {
-        try await handleUnarchive()
       }
     case .interrupt(let callback):
       await callback.run {
@@ -260,32 +214,26 @@ actor SessionActor {
       await callback.run {
         try await handleResume()
       }
-    case .restart(let executor, let note, let route, let callback):
-      await callback.run {
-        try await handleRestart(executor: executor, note: note, modelRoute: route)
-      }
     }
   }
 
-  private func ensureLifecycle() async throws -> Lifecycle {
+  private func ensureLifecycle(startLoop: Bool = true) async throws -> Lifecycle {
     if let lifecycle {
+      if startLoop, lifecycle == .live, looperTask == nil { mountLooper() }
       return lifecycle
     }
 
     let hydration = try await main.hydrate(id)
     try Task.checkCancellation()
     switch hydration.record.lifecycle {
-    case .archived(let graceExpiresAt):
-      let status = Lifecycle.archived(graceExpiry: graceExpiresAt)
+    case .archived:
+      let status = Lifecycle.archived
       lifecycle = status
       return status
 
     case .live:
-      // The materialization self-nudge runs the loop once: orphan tool-call
-      // repair is thereby unconditional — pending calls surface FIFO whether
-      // or not the session was in the boot set.
       liveState = LiveState(hydration: hydration, now: date())
-      mountLooper()
+      if startLoop { mountLooper() }
       lifecycle = .live
       return .live
     }
@@ -302,15 +250,24 @@ actor SessionActor {
     while await nudges.next() != nil {
       let token = liveness.start()
       defer { liveness.end(token) }
-      do {
-        try await loop()
-        await afterLoop()
-      } catch is CancellationError {
-        return
-      } catch {
-        if !Task.isCancelled { await markErrored(error: error) }
-      }
+      await runPass()
       if retired { return }
+    }
+  }
+
+  private func runPass() async {
+    let mountID = liveState?.mountID
+    liveState?.lastUpdatedByLoopAt = nil
+    defer {
+      if liveState?.mountID == mountID { liveState?.lastUpdatedByLoopAt = date() }
+    }
+    do {
+      try await loop()
+      await afterLoop()
+    } catch is CancellationError {
+      return
+    } catch {
+      if !Task.isCancelled { await markErrored(error: error) }
     }
   }
 
@@ -321,61 +278,6 @@ actor SessionActor {
     let head = try await main.queueHead(id)
     try modify { $0.queueHead = max($0.queueHead, head) }
     nudge()
-  }
-
-  private func handleEnqueue(_ item: QueueInput) async throws -> Int {
-    switch try await ensureLifecycle() {
-    case .live:
-      let id = try await main.append(id, .inputEnqueued(item)).value(Int.self)
-      try modify {
-        $0.queueHead = max($0.queueHead, id)
-      }
-      nudge()
-      return id
-
-    case .archived(let deadline):
-      guard date() < deadline else {
-        throw SessionError.archiveGraceExpired
-      }
-      return try await main.append(id, .inputEnqueued(item)).value(Int.self)
-    }
-  }
-
-  private func handleArchive() async throws {
-    guard try await ensureLifecycle() == .live else { return }
-
-    // An owed idle check is no work, but no pass may start a turn while the
-    // archive is written: the turn would land in the archived session.
-    try modify { $0.archiving = true }
-    let deadline = try await main.append(id, .archived(grace: loopConfig.archiveGrace)).value(Date.self)
-    try Task.checkCancellation()
-    lifecycle = .archived(graceExpiry: deadline)
-    dismountLive()
-    await loopConfig.invalidateInference(id)
-  }
-
-  // No ensureLifecycle: the store's refusal is the single gate, and
-  // materializing here would run a loop pass on a session about to be wiped.
-  private func handleRestart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
-    // Its frames would land in the fresh generation.
-    let restart = try await main.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute, runningWork: try await loopConfig.runningWork(id))).value(SessionRestart.self)
-    try Task.checkCancellation()
-    lifecycle = nil
-    dismountLive()
-    await loopConfig.invalidateInference(id)
-    return restart
-  }
-
-  private func handleUnarchive() async throws {
-    guard case .archived(let deadline) = try await ensureLifecycle() else { return }
-    guard date() < deadline else {
-      throw SessionError.archiveGraceExpired
-    }
-    try await main.append(id, .unarchived).value(Void.self)
-    try Task.checkCancellation()
-    lifecycle = nil
-    dismountLive()
-    await loopConfig.invalidateInference(id)
   }
 
   private func handleInterrupt() async throws {

@@ -1,3 +1,6 @@
+import func MainHub.resolveScriptModule
+import struct MainHub.ScriptError
+import struct MainHub.ScriptHandlerResult
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,49 +13,6 @@ import SessionDomain
 import SpaceCore
 import SpaceTools
 import Synchronization
-
-public struct ScriptHandlerResult: Sendable {
-  public var stateJSON: String
-  public var wakes: [String]
-  public init(stateJSON: String, wakes: [String]) {
-    self.stateJSON = stateJSON
-    self.wakes = wakes
-  }
-}
-
-public struct ScriptHandlerInvocation: Sendable {
-  public var id: UUID
-  public var path: String
-  public var session: SessionID
-  public var rows: Rows?
-  public var fireTime: Date?
-  public var stateJSON: String?
-  public init(id: UUID = UUID(), path: String, session: SessionID, rows: Rows? = nil, fireTime: Date? = nil, stateJSON: String? = nil) {
-    self.id = id; self.path = path; self.session = session; self.rows = rows; self.fireTime = fireTime; self.stateJSON = stateJSON
-  }
-}
-
-public protocol HandlerExecutionClient: Sendable {
-  func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
-}
-
-public struct ScriptHandlerExecutor: HandlerExecutionClient {
-  let scripts: Scripts
-  let tools: ToolExecutor
-  public init(scripts: Scripts, tools: ToolExecutor) { self.scripts = scripts; self.tools = tools }
-  public func executeHandler(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult {
-    let result = try await scripts.runHandler(
-      id: invocation.id,
-      path: invocation.path,
-      session: invocation.session,
-      rows: invocation.rows,
-      fireTime: invocation.fireTime,
-      stateJSON: invocation.stateJSON,
-      tools: tools,
-    )
-    return .init(stateJSON: result.stateJSON, wakes: result.wakes)
-  }
-}
 
 final class ScriptHandlerContext: Sendable {
   private struct Output {
@@ -127,7 +87,7 @@ final class ScriptHandlerContext: Sendable {
 }
 
 extension Scripts {
-  func runHandler(
+  public func runHandler(
     id: UUID = UUID(),
     path: String,
     session: SessionID,
@@ -135,7 +95,7 @@ extension Scripts {
     fireTime: Date? = nil,
     stateJSON: String? = nil,
     tools: ToolExecutor,
-  ) async throws -> (stateJSON: String, wakes: [String]) {
+  ) async throws -> ScriptHandlerResult {
     let context = try ScriptHandlerContext(rows: rows, fireTime: fireTime, stateJSON: stateJSON)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
@@ -146,17 +106,14 @@ extension Scripts {
       lifetime: .seconds(60),
       secrets: ScriptSecrets(owner: owner, session: session),
       tools: tools,
-      machines: owner.scriptMachines(for: session),
       handler: context,
     )
-    handlerInventory.withLock { $0[execution.id] = session }
-    defer { handlerInventory.withLock { $0[execution.id] = nil } }
     await withTaskCancellationHandler {
       await execution.run(owner: owner)
     } onCancel: {
       execution.cancelHandler()
     }
     let result = try execution.handlerResult()
-    return (result.stateJSON, result.wakes)
+    return result
   }
 }

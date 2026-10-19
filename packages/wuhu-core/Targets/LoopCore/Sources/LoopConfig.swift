@@ -123,14 +123,10 @@ public struct LoopConfig: Sendable {
   public var invalidateInference: @Sendable (SessionID) async -> Void
   public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
   public var scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)?
-  // Fired after a session is archived, for the composition root to stop
-  // what it runs for the session outside the loop.
-  public var archived: @Sendable (SessionID) async -> Void
   // The cancel ids of the work running for a session outside the loop
   // (`script.<id>`), listed in the `<session-state>` of a compaction.
   public var runningWork: @Sendable (SessionID) async throws -> [String]
   public var thresholds: CompactionThresholds
-  public var archiveGrace: Duration
   public var eviction: EvictionPolicy
 
   public init(
@@ -143,10 +139,8 @@ public struct LoopConfig: Sendable {
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
     scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)? = nil,
-    archived: @escaping @Sendable (SessionID) async -> Void = { _ in },
     runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] },
     thresholds: CompactionThresholds = .init(),
-    archiveGrace: Duration = .seconds(24 * 3600),
     eviction: EvictionPolicy = .init(),
   ) {
     self.prepareCompaction = prepareCompaction
@@ -158,10 +152,8 @@ public struct LoopConfig: Sendable {
     self.invalidateInference = invalidateInference
     self.allowCacheWarming = allowCacheWarming
     self.scheduleWake = scheduleWake
-    self.archived = archived
     self.runningWork = runningWork
     self.thresholds = thresholds
-    self.archiveGrace = archiveGrace
     self.eviction = eviction
   }
 }

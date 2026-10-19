@@ -6,6 +6,7 @@ import Foundation
 import InferenceKit
 import JSONValue
 import LoopCore
+import class MainHub.Hub
 import SessionDomain
 import SessionTools
 import SpaceContract

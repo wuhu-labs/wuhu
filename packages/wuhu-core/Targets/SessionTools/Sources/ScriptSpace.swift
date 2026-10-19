@@ -1,3 +1,7 @@
+import protocol MainHub.Main
+import enum MainHub.ScriptDataOperation
+import struct MainHub.ScriptError
+import func MainHub.spaceAnswer
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -129,18 +133,6 @@ struct ScriptSpace: Sendable {
 
   private func run(_ name: String, _ input: JSONValue, as principal: Principal) async throws -> JSONValue {
     try await owner.dataOperation(ScriptDataOperation(rawValue: name)!, input: input, session: session)
-  }
-}
-
-/// A budget or protocol failure stays a plain error; a space failure becomes
-/// the payload the core turns into a SpaceError.
-func spaceAnswer(_ body: () async throws -> JSONValue) async -> JSONValue {
-  do {
-    return .object(["ok": try await body()])
-  } catch let error as ScriptError {
-    return .object(["error": ToolRunError.failed(code: .invalidArgument, message: error.description, hint: nil).payload])
-  } catch {
-    return .object(["error": Wire.failure(error).payload])
   }
 }
 

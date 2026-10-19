@@ -8,6 +8,8 @@ import JSONValue
 import MachineAgent
 import MachineChannel
 import MachineContract
+@testable import MainHub
+import struct MainHub.ExecBackend
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -41,7 +43,7 @@ struct ExecDefaultLifetimeTests {
       dialer.offer(try await connectMachine(server, key: key))
       try await awaitAttached(server, machine)
       let ready = LifetimeOutput()
-      let executor = ToolExecutor(space: space, machines: machineSeam(hub: server.hub), exec: observingOutput(execBackend(space: space, hub: server.hub), ready: ready))
+      let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: observingOutput(execBackend(space: space, hub: server.hub), ready: ready)))
       // The v1 agent stops reading output when it kills, and says so.
       try await expectLifetimes(executor, session: session, machine: machine.rawValue, cwd: work.path, cut: "\n[output was cut when the command stopped]", clock: clock, ready: ready)
     }
@@ -63,7 +65,7 @@ struct ExecDefaultLifetimeTests {
       tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
       defer { tasks.cancelAll() }
       let ready = LifetimeOutput()
-      let executor = ToolExecutor(space: space, machines: machineSeam(hub: hub), exec: observingOutput(execBackend(space: space, hub: hub), ready: ready))
+      let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: observingOutput(execBackend(space: space, hub: hub), ready: ready)))
       try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, cut: "", clock: clock, ready: ready)
       await agent.shutdown(); await service.shutdown()
     }
@@ -102,7 +104,7 @@ struct ExecDefaultLifetimeTests {
         tasks.addTask { await agent.run() }
         tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
         defer { tasks.cancelAll() }
-        let executor = ToolExecutor(space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub))
+        let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub)))
         let outcome = try await withThrowingTaskGroup(of: ToolResultPayload.self) { call in
           call.addTask {
             try await withDependencies {

@@ -152,7 +152,7 @@ public actor MachineHub {
         }
       }
     }
-    callerScope.cancel()
+    await callerScope.close()
   }
 
   // MARK: - Sessions

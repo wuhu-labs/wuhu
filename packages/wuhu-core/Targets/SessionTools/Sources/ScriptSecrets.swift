@@ -1,5 +1,7 @@
 import struct Credentials.SpaceSecrets
 import Dependencies
+import protocol MainHub.Main
+import struct MainHub.ScriptError
 import SessionDomain
 import struct SpaceContract.GroupID
 import SpaceCore

@@ -1,3 +1,5 @@
+@testable import MainHub
+import class MainHub.Hub
 @testable import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -28,18 +30,13 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
         modelRoute: testModelGroupRoute(.modelGroup(id: "work", effort: "high")),
       )
       let targets = Box<[String]>([])
-      let tools = ToolExecutor(
-        space: space,
-        resolveModelExecutor: { provider, model, effort in
-          targets.withLock { $0.append("\(provider)/\(model)") }
-          return .kernel(.init(provider: provider, model: model, effort: effort ?? "low"))
-        },
-        resolveModelGroup: { id, effort in
-          targets.withLock { $0.append(id) }
-          return .modelGroup(id: id, effort: effort ?? "low")
-        },
-        prepareModelRoute: { executor, reason in testModelGroupRoute(executor, reason: reason) },
-      )
+      let tools = ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+        targets.withLock { $0.append("\(provider)/\(model)") }
+        return .kernel(.init(provider: provider, model: model, effort: effort ?? "low"))
+      }, resolveModelGroup: { id, effort in
+        targets.withLock { $0.append(id) }
+        return .modelGroup(id: id, effort: effort ?? "low")
+      }, prepareModelRoute: { executor, reason in testModelGroupRoute(executor, reason: reason) }))
       _ = try await space.fs(.shared).write("/templates/concrete/template.json", Data(#"{"provider":"p","model":"m","effort":"low"}"#.utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/templates/group/template.json", Data(#"{"modelGroup":"template-group","effort":"low"}"#.utf8), ifMatch: nil)
       var world = ToolWorld(executor: tools, session: parent)
@@ -102,11 +99,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   @Test func groupCatalogFailuresRetainMachineReadableCodes() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let tools = ToolExecutor(
-        space: space,
-        resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") },
-        resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) },
-      )
+      let tools = ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") }, resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) }))
       var world = ToolWorld(executor: tools, session: try await makeSession(space))
       guard case let .failure(error) = try await world.run("create_session", .object(["title": "bad group", "modelGroup": "absent"])) else {
         Issue.record("expected group failure"); return
@@ -126,7 +119,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/templates/group/template.json", Data(#"{"modelGroup":"work","effort":"high"}"#.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(space: space), session: try await makeSession(space))
+      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         Issue.record("expected templates"); return
       }

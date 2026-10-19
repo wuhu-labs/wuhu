@@ -1,0 +1,40 @@
+name: MainHub
+kind: library
+sources: Sources
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - Credentials
+  - Crypto
+  - Dependencies
+  - ExecutionOwner
+  - Fetch
+  - FileSearch
+  - InferenceKit
+  - JSONValue
+  - Logging
+  - MachineChannel
+  - MachineContract
+  - OrderedCollections
+  - ServerTelemetry
+  - SessionDomain
+  - SpaceContract
+  - SpaceCore
+  - SpaceFS
+  - SpaceTools
+  - SystemFiles
+  - TaskLifetime
+  - WuhuAI
+tests:
+  dependencies:
+    - Credentials
+    - Dependencies
+    - ExecutionOwner
+    - Fetch
+    - InferenceKit
+    - JSONValue
+    - Scratch
+    - SessionDomain
+    - SpaceCore
+    - WuhuAI
