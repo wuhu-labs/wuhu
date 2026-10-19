@@ -72,15 +72,11 @@ public struct InferenceExecutor: Sendable {
     transcript: Transcript,
     mode: InferenceMode,
     idleTimeout: Duration? = nil,
-    handles: [String: String] = [:],
-    devices: [String: String] = [:],
   ) async throws -> CompletedInference {
     let context = await transcript.renderRequest(
       session: session,
       systemPrompt: systemPrompt,
       tools: tools,
-      handles: handles,
-      devices: devices,
     )
     var options = RequestOptions(
       maxTokens: model.budget.maxOutput,
@@ -183,9 +179,9 @@ public struct InferenceExecutor: Sendable {
     return completed
   }
 
-  public func acknowledge(entry: AssistantEntry, transcript: Transcript, handles: [String: String] = [:], devices: [String: String] = [:]) async {
+  public func acknowledge(entry: AssistantEntry, transcript: Transcript) async {
     guard let webSocket, model.transport == .websocket else { return }
-    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools, handles: handles, devices: devices)
+    let context = await transcript.renderRequest(session: session, systemPrompt: systemPrompt, tools: tools)
     await webSocket.acknowledge(attemptID: entry.id.uuidString, committedMessage: .init(content: entry.content), toolCallIDs: entry.toolCallIDs.mapValues(\.rawValue), renderedContext: context)
   }
 

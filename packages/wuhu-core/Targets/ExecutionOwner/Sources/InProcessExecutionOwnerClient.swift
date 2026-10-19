@@ -92,14 +92,6 @@ public struct InProcessExecutionOwnerClient: ExecutionOwnerClient {
     return try await space.sessionHome(id, at: rev)
   }
 
-  public func handlesByPrincipal() async throws -> [String: String] {
-    try await space.handlesByPrincipal()
-  }
-
-  public func deviceNames() async throws -> [String: String] {
-    try await space.deviceNames()
-  }
-
   public func mediaBytes(_ reference: MediaReference, group: GroupID) async throws -> Data {
     try await space.mediaBytes(reference, group: group)
   }

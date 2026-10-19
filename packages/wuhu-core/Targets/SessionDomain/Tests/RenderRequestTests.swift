@@ -14,6 +14,7 @@ import WuhuAI
         subscriptions: [SubscriptionID("tim-1"): .timer(.cron("0 * * * *"))],
         preReads: ["space://a.md"],
       ),
+      runningWork: [],
     )
     let transcript = Transcript(items: [.generationHead(head), Fix.message()], keptCount: 1)
     let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
@@ -42,7 +43,7 @@ import WuhuAI
   }
 
   @Test func `a creation head carries no summary and no nudge`() async {
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init())
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init(), runningWork: [])
     let transcript = Transcript(items: [.generationHead(head), Fix.message()], keptCount: 1)
     let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     #expect(context.messages.count == 2)
@@ -128,9 +129,11 @@ import WuhuAI
     #expect(text.text == message.header.render() + "\n\nhello there")
   }
 
-  @Test func `handles passed to a render attribute every message sender`() async {
-    let transcript = Transcript(items: [Fix.message(sender: "alice", text: "hello there")])
-    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys", handles: ["alice": "ali"])
+  @Test func `stored attribution renders without a live directory`() async {
+    guard case var .message(message) = Fix.message(sender: "alice", text: "hello there") else { return }
+    message.sender.handle = "ali"
+    let transcript = Transcript(items: [.message(message)])
+    let context = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
     guard case let .text(text) = context.messages[0].user?.content.first else {
       Issue.record("a conversation message must be user role")
       return

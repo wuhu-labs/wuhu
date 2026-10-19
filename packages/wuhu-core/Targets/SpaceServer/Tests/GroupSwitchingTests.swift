@@ -109,7 +109,7 @@ import WuhuAI
     try await withSessionDeps {
       let (harness, owner, catalog, id) = try await setup()
       let old = try #require(await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self))
-      let head = GenerationHead(id: UUID(), timestamp: Date(), summary: String(repeating: "important summary ", count: 50), snapshot: .init(preReads: ["/task.md"]))
+      let head = GenerationHead(id: UUID(), timestamp: Date(), summary: String(repeating: "important summary ", count: 50), snapshot: .init(preReads: ["/task.md"]), runningWork: ["exec.running"])
       let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
       let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted, nil) == nil)
@@ -120,6 +120,7 @@ import WuhuAI
       #expect(transition.route.reason == .compaction)
       guard case let .generationHead(portableHead) = transition.transcript.items[0] else { Issue.record("missing head"); return }
       #expect(portableHead.summary == head.summary)
+      #expect(portableHead.runningWork == head.runningWork)
       #expect(portableHead.snapshot.preReads == head.snapshot.preReads)
       _ = try await owner.send(.append(id, .compacted(closing: nil, head: head, kept: nil, completing: nil, transition: transition))).value(Transcript.self)
       #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self) == transition.route)
@@ -235,7 +236,7 @@ extension GroupSwitchingTests {
       catch let boundary as ReplayBoundaryRequired {
         let hydration = try await owner.send(.read(id, .hydration)).value(SessionHydration.self)
         guard case let .kernel(source) = hydration.transcript else { Issue.record("missing kernel transcript"); return }
-        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
         let next = try #require(boundary.route)
         _ = try await owner.send(.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: next, transcript: portable)))).value(Transcript.self)
       }
@@ -377,7 +378,7 @@ extension GroupSwitchingTests {
         return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
       }
       let ready = quota
-      let transcript = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "summary", snapshot: .init()), kept: nil)
+      let transcript = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "summary", snapshot: .init(), runningWork: []), kept: nil)
       let prepare = compactionPlacement(owner: owner, catalog: { ready }, usage: harness.runtime.usage)
       #expect(try await prepare(id, transcript, nil) == nil)
       var missing = source
@@ -427,7 +428,7 @@ extension GroupSwitchingTests {
         #expect(bResolutions.withLock { $0 } == (lateRefresh ? 2 : 1))
         let hydration = try await owner.send(.read(id, .hydration)).value(SessionHydration.self)
         guard case let .kernel(source) = hydration.transcript else { Issue.record("not kernel"); return }
-        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+        let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
         _ = try await owner.send(.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: next, transcript: portable)))).value(Transcript.self)
         #expect(try await owner.send(.read(id, .modelRoute)).value(SessionModelRoute?.self) == next)
         #expect(try await harness.store.generationState(id).generation == hydration.generation + 1)
@@ -468,7 +469,7 @@ extension GroupSwitchingTests {
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
         harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
-        let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "preserved ordinary summary", snapshot: .init(preReads: ["/task.md"]))
+        let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "preserved ordinary summary", snapshot: .init(preReads: ["/task.md"]), runningWork: ["exec.running"])
         let kept = 1 ..< source.items.count
         let compacted = source.compacted(head: head, kept: kept)
         let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)

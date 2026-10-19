@@ -24,8 +24,6 @@ public protocol ExecutionOwnerClient: MainClient {
   func inferenceBindingIdentity(audience: URL, session: SessionID) async throws -> String?
   func modelDocument() async throws -> Data
   func promptHome(_ id: SessionID) async throws -> SessionHome
-  func handlesByPrincipal() async throws -> [String: String]
-  func deviceNames() async throws -> [String: String]
   func mediaBytes(_ reference: MediaReference, group: GroupID) async throws -> Data
   func recordMetric(_ metric: InferenceMetric) async
 }

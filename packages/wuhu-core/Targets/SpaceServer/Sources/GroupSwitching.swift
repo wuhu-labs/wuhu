@@ -88,12 +88,12 @@ func compactionPlacement(owner: any ExecutionOwnerClient, catalog: @escaping @Se
 // The compacted generation projected onto a new binding, keeping the summary
 // and pre-reads the compaction produced.
 private func compactedHandoff(_ transcript: Transcript, to next: SessionModelRoute, resolved: ResolvedModel) throws -> Transcript {
-  var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget)
-  if case let .generationHead(source)? = transcript.items.first, case var .generationHead(head) = portable.items[0] {
-    head.summary = source.summary
-    head.snapshot = source.snapshot
-    portable.items[0] = .generationHead(head)
-  }
+  guard case let .generationHead(source)? = transcript.items.first else { throw PortableHandoffError.missingGenerationHead }
+  var portable = try transcript.portableHandoff(binding: .init(identity: resolved.bindingIdentity, epoch: next.epoch), budget: resolved.budget, runningWork: source.runningWork ?? [])
+  guard case var .generationHead(head) = portable.items[0] else { preconditionFailure("portable handoff must start a generation") }
+  head.summary = source.summary
+  head.snapshot = source.snapshot
+  portable.items[0] = .generationHead(head)
   return portable
 }
 

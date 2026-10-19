@@ -34,13 +34,14 @@ extension SessionStore {
     executor: SessionExecutor? = nil,
     note: String? = nil,
     modelRoute: SessionModelRoute? = nil,
+    runningWork: [String] = [],
   ) async throws -> SessionRestart {
     @Dependency(\.uuid) var uuid
     let key = id.rawValue
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
     let head = GenerationHead(
-      id: uuid(), timestamp: nowDate, summary: "", snapshot: StateSnapshot(), note: note,
+      id: uuid(), timestamp: nowDate, summary: "", snapshot: StateSnapshot(), note: note, runningWork: runningWork,
     )
     let (restart, hasQueuedInput) = try await writer.write { db in
       let record = try Sessions.record(key, in: db)

@@ -118,8 +118,6 @@ func kernelInference(
         transcript: request.transcript,
         mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
         idleTimeout: request.idleTimeout,
-        handles: try await owner.handlesByPrincipal(),
-        devices: try await owner.deviceNames(),
       )
       if let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self), held.failure != nil {
         try await owner.send(.append(request.sessionID, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil))).value(Void.self)
@@ -127,7 +125,7 @@ func kernelInference(
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
       return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry, transcript in
         if record.kind == .agent, let warmingPolicy { await committedWarming(request.sessionID, warmingPolicy) }
-        await inferenceExecutor.acknowledge(entry: entry, transcript: transcript, handles: (try? await owner.handlesByPrincipal()) ?? [:], devices: (try? await owner.deviceNames()) ?? [:])
+        await inferenceExecutor.acknowledge(entry: entry, transcript: transcript)
       })
     } catch {
       if let lease { await sockets.invalidate(request.sessionID, lease: lease.lease) }

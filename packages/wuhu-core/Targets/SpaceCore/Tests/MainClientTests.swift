@@ -17,7 +17,7 @@ import Testing
     let claim = try #require(try await sessions.claimCompactRequest(id, generation: hydration.generation))
     let route = SessionModelRoute(group: nil, member: nil, specifier: .test, bindingFingerprint: "binding", epoch: "epoch", reason: .create, placedAt: hydration.record.createdAt, evidence: [])
     let transition = ModelRouteTransition(expectedEpoch: route.epoch, route: route, transcript: transcript)
-    let head = GenerationHead(id: UUID(), timestamp: hydration.record.createdAt, summary: "folded", snapshot: .init())
+    let head = GenerationHead(id: UUID(), timestamp: hydration.record.createdAt, summary: "folded", snapshot: .init(), runningWork: [])
     let events: [SessionEvent] = [
       .modelRouteEstablished(route), .modelRouteFailureUpdated(expectedEpoch: route.epoch, failure: nil),
       .inputEnqueued(.notification(.init(id: UUID(), timestamp: head.timestamp, kind: .timer, subscriptionID: .init("clock"), content: .init(text: "wake")))),

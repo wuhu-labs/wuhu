@@ -346,7 +346,7 @@ actor SessionActor {
   // materializing here would run a loop pass on a session about to be wiped.
   private func handleRestart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     // Its frames would land in the fresh generation.
-    let restart = try await main.send(.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute))).value(SessionRestart.self)
+    let restart = try await main.send(.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute, runningWork: try await loopConfig.runningWork(id)))).value(SessionRestart.self)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()

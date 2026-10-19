@@ -369,6 +369,14 @@
       "prompt": "Read {fx}/fork-tests.md. My tca26 fix is committed locally but not pushed; I need its own MacroTests, not the monorepo repro. Explain what must happen first and give the exact command I should run from my devbox monorepo slot once commit 0123456789abcdef0123456789abcdef01234567 is pushed. Where will I find xUnit results? Does a typo that matches zero tests pass? Do not execute builds, tests or pushes.",
       "required": [],
       "judge": "PASS only if the answer first requires Infra to push the commit, gives `deno task pool fork-test tca26 0123456789abcdef0123456789abcdef01234567 -- --filter MacroTests` from the monorepo slot, identifies the Mac executor/pinned Xcode rather than local devbox SwiftPM or monorepo Bazel, gives `.wuhu/pool-artifacts/<job>/fork-test.xml` (equivalent job-id placeholder is fine), and says zero matched tests is red. No test/build/push should actually be executed and no submitter credential transfer should be proposed."
+    },
+    {
+      "id": "generation-head-snapshot",
+      "issue": 369,
+      "title": "Treats the generation head as a snapshot, not live work state",
+      "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header or append a new state message? How can you inspect live subscriptions if needed? At most three sentences.",
+      "required": ["no_files_written"],
+      "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header stays unchanged across server restart with no new tail state message, and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, adds a state notification, or calls tools."
     }
   ]
 }

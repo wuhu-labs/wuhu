@@ -105,7 +105,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let infer = kernelInference(owner: owner, catalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var adopted: Transcript
         if boundary == .compaction {
-          adopted = try await owner.send(.append(id, .compacted(closing: nil, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target), kept: 0 ..< source.items.count, completing: nil, transition: nil))).value(Transcript.self)
+          adopted = try await owner.send(.append(id, .compacted(closing: nil, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target, runningWork: []), kept: 0 ..< source.items.count, completing: nil, transition: nil))).value(Transcript.self)
         } else {
           do {
             _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: source, mode: .normal))
@@ -113,7 +113,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
             return
           } catch let required as ReplayBoundaryRequired {
             #expect(bodies.withLock { $0.isEmpty })
-            let portable = try source.portableHandoff(binding: required.binding, budget: required.budget)
+            let portable = try source.portableHandoff(binding: required.binding, budget: required.budget, runningWork: [])
             adopted = try await owner.send(.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: nil))).value(Transcript.self)
           }
         }
@@ -174,12 +174,12 @@ extension PortableThinkingTests {
             Issue.record("expected last-resort boundary")
             return
           } catch let boundary as ReplayBoundaryRequired {
-            let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+            let portable = try source.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: [])
             let route = try #require(boundary.route)
             _ = try await owner.send(.append(id, .portableHandoff(expectedGeneration: 0, source: source, transcript: portable, transition: .init(expectedEpoch: held.epoch, route: route, transcript: portable)))).value(Transcript.self)
           }
         } else {
-          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init())
+          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
           let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
           let transition = try #require(await compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)(id, compacted, nil))
           _ = try await owner.send(.append(id, .compacted(closing: nil, head: head, kept: 0 ..< source.items.count, completing: nil, transition: transition))).value(Transcript.self)

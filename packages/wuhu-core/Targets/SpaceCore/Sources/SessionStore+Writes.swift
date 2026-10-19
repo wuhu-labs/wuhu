@@ -52,7 +52,7 @@ extension SessionStore {
     let tagsJSON = try Sessions.encode(tags)
     try executor.requireSupported()
     let storedExecutor = try Sessions.concreteExecutor(executor, route: modelRoute)
-    let head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0) }
+    let head = snapshot.map { GenerationHead(id: uuid(), timestamp: nowDate, summary: "", snapshot: $0, runningWork: []) }
     let minted = Allocations.mintSecretCandidate(rng)
     return try await writer.write { db in
       if let receipt,
@@ -144,7 +144,12 @@ extension SessionStore {
       guard let lastID = entries.last?.id else {
         return QueueDrain(items: [], queueTail: Int(runtime.queueTail))
       }
-      let items = entries.map(\.input.transcriptItem)
+      let items = try entries.map { entry -> TranscriptItem in
+        guard case var .message(message) = entry.input else { return entry.input.transcriptItem }
+        message.sender.handle = try UserProfileRow.find(message.sender.id).fetchOne(db)?.handle
+        if let device = message.sender.device { message.sender.deviceName = try DeviceRow.find(device).fetchOne(db)?.name }
+        return .message(message)
+      }
       try Sessions.append(key, generation: runtime.generation, items: items, in: db)
       try db.execute(
         sql: "UPDATE session_runtime SET queue_tail = ? WHERE session_id = ?",

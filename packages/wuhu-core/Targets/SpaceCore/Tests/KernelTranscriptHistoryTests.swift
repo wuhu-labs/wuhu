@@ -86,7 +86,7 @@ import WuhuAI
       try await store.append(id, items: [assistant, result], transcript: Transcript(items: [assistant, result]))
       let omittedLaterAssistant = Self.assistant("carried")
       try await store.append(id, items: [omittedLaterAssistant], transcript: Transcript(items: [assistant, result, omittedLaterAssistant]))
-      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init())
+      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init(), runningWork: [])
       let compacted = try await store.writeCompaction(id, head: head, kept: keepAssistant ? 0 ..< 2 : 1 ..< 2)
       #expect(compacted.items == [.generationHead(head)] + (keepAssistant ? [assistant, result] : [result]))
       let fullPage = try await store.transcriptHistory(id)

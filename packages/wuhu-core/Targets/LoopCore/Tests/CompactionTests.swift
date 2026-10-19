@@ -309,6 +309,7 @@ private func compactCall(
           timestamp: anchor,
           summary: "pre-crash summary",
           snapshot: .init(preReads: ["space://a.md"]),
+          runningWork: [],
         ),
         kept: nil,
       )

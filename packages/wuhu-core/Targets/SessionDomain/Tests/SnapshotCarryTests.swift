@@ -37,6 +37,7 @@ import WuhuAI
       timestamp: Fix.instant,
       summary: "did things",
       snapshot: .init(carrying: transcript.environment.tools, preReads: []),
+      runningWork: [],
     )
     let next = transcript.compacted(head: head, kept: nil)
     #expect(next.items == [.generationHead(head)])

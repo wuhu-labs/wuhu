@@ -88,7 +88,7 @@ import Testing
       let id = try await store.createSession(group: .shared, title: "mechanical", kind: .agent, createdBy: "morgan", model: .test)
       try await store.requestCommand(id, .compact(instructions: nil))
       let claim = try #require(try await store.claimCompactRequest(id, generation: 0))
-      _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "kept", snapshot: .init()), kept: nil, completingCompactRequest: claim)
+      _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "kept", snapshot: .init(), runningWork: []), kept: nil, completingCompactRequest: claim)
       #expect(try await store.pendingCommand(id) == nil)
       #expect(try await store.hydrate(id).generation == 1)
     }

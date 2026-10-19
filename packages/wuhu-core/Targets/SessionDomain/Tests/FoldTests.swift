@@ -17,7 +17,7 @@ import WuhuAI
     ])
     let replayed = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(original))
     #expect(replayed.environment.tools.deliveredContext == ["hash": "first/AGENTS.md"])
-    let compacted = replayed.compacted(head: .init(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init()), kept: 0 ..< 2)
+    let compacted = replayed.compacted(head: .init(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init(), runningWork: []), kept: 0 ..< 2)
     #expect(compacted.environment.tools.deliveredContext.isEmpty)
     #expect(compacted.environment.tools.folderRoots.isEmpty)
     #expect(compacted.items.dropFirst() == original.items[...])
@@ -85,7 +85,7 @@ import WuhuAI
     let folded = state([
       Fix.result(.read(.init(path: "machines://m1/repo/stale.md", revision: .journal(1), content: "x"))),
       Fix.context(["machines://m1/repo": "machines://m1/repo"], text: "repo manual"),
-      .generationHead(.init(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: snapshot)),
+      .generationHead(.init(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: snapshot, runningWork: [])),
     ])
     #expect(folded.subscriptions == snapshot.subscriptions)
     #expect(folded.fileAccessLog.isEmpty)

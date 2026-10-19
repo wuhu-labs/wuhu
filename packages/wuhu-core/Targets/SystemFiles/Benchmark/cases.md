@@ -160,3 +160,5 @@ _Afterwards:_ deterministic checks require no rerun or polling, the end arriving
 _Text-only smoke:_ a `./deploy.sh` exec on `box` with `wait_seconds` 600 came back early with `running` because the person asked "how's it going?". The agent answers in at most two lines.
 
 _Afterwards:_ deterministic checks require the progress (bundle 3 of 7) in the reply, no cancel, rerun or polling, and no files changed. The judge fails a cancelled or rerun deploy, polling, calling it failed or timed out, or more than two lines. Scored runs need a release whose exec gives the turn back when a message arrives.
+
+- `generation-head-snapshot`: completed/cancelled work can remain in the frozen generation-start header, including after server restart; use committed events and query live subscriptions rather than rewriting history or adding a state message. Text-only interpretation smoke.

@@ -234,7 +234,7 @@ struct SessionStoreTests {
     _ = try await store.enqueue(sid, input: SessionFix.message("before", message: "m1", conversation: sid.rawValue, owesReply: true))
     _ = try await store.drainQueue(sid)
     rig.advance(60)
-    let head = GenerationHead(id: UUID(), timestamp: rig.store.dateGen.now, summary: "compacted", snapshot: .init())
+    let head = GenerationHead(id: UUID(), timestamp: rig.store.dateGen.now, summary: "compacted", snapshot: .init(), runningWork: [])
     _ = try await store.writeCompaction(sid, head: head, kept: nil)
     rig.advance(60)
     _ = try await store.enqueue(sid, input: SessionFix.message("after", message: "m2", conversation: "elsewhere", owesReply: true))
@@ -269,6 +269,7 @@ struct SessionStoreTests {
         summary: "compacted",
         snapshot: .init(),
         settle: SettleState(),
+        runningWork: [],
       )
       let compacted = try await store.writeCompaction(sid, head: head, kept: 2 ..< 3)
       #expect(compacted.items.count == 2)

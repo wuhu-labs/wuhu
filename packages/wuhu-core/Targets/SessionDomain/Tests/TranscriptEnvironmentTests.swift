@@ -78,6 +78,7 @@ import Testing
     let closed = Transcript(items: items)
     let head = GenerationHead(
       id: UUID(), timestamp: Self.later, summary: "s", snapshot: .init(), settle: closed.environment.settle,
+      runningWork: [],
     )
     let carried = closed.compacted(head: head, kept: 2 ..< 3)
     #expect(carried.environment == closed.environment)

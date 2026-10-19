@@ -48,6 +48,7 @@ import Testing
 
         let compacted = try await store.writeCompaction(id, head: .init(
           id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: staleSnapshot,
+          runningWork: [],
         ), kept: (loaded.items.count - 1) ..< loaded.items.count)
         #expect(compacted.items.last == result, "retained tool results cannot resurrect silently retired timers")
         #expect(compacted.environment.tools.subscriptions.isEmpty)
@@ -80,7 +81,7 @@ import Testing
         kept: .timer(.cron("* * * * *")), removed: .timer(.oneShot(fixedDate)),
         observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(fixedDate),
       ])
-      _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "snapshot", snapshot: snapshot), kept: nil)
+      _ = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "snapshot", snapshot: snapshot, runningWork: []), kept: nil)
       try await store.cancelSubscription(id, subscriptionID: removed)
       let subscriptions = try await store.hydrate(id).transcript.kernel.environment.tools.subscriptions
       #expect(subscriptions == [kept: .timer(.cron("* * * * *")), observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(fixedDate)])
@@ -181,7 +182,7 @@ import Testing
         let snapshot = StateSnapshot(subscriptions: [
           .init("plain"): .timer(.cron("* * * * *")), .init("handler"): .timer(.cron("* * * * *")), .init("observer"): .observe(sql: "SELECT 1"),
         ])
-        let compacted = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: snapshot), kept: nil)
+        let compacted = try await store.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: snapshot, runningWork: []), kept: nil)
         #expect(compacted.handlerSubscriptions == registrations.handlers)
         #expect(compacted.environment.tools.handlerSubscriptions == registrations.handlers)
         return id

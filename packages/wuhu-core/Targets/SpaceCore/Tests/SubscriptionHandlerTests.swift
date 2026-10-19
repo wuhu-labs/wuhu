@@ -192,7 +192,7 @@ import Testing
       let saved = try await space.sessions.armedSubscriptions(id)
       _ = try await space.sessions.restart(id)
       #expect(try await space.sessions.armedSubscriptions(id) == saved)
-      _ = try await space.sessions.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init()), kept: nil)
+      _ = try await space.sessions.writeCompaction(id, head: .init(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init(), runningWork: []), kept: nil)
       #expect(try await space.sessions.armedSubscriptions(id) == saved)
       let late = try await begin(space.sessions, slot)
       _ = try await space.sessions.archive(id, grace: .seconds(100))

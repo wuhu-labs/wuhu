@@ -111,10 +111,14 @@ public struct Sender: Hashable, Sendable, Codable {
   // The device the person spoke from, derived server-side from the request
   // credential. Never a body field: a client cannot claim one.
   public var device: String?
+  public var handle: String?
+  public var deviceName: String?
 
-  public init(id: String, timeZone: TimeZone, device: String? = nil) {
+  public init(id: String, timeZone: TimeZone, device: String? = nil, handle: String? = nil, deviceName: String? = nil) {
     self.id = id
     self.timeZone = timeZone
     self.device = device
+    self.handle = handle
+    self.deviceName = deviceName
   }
 }

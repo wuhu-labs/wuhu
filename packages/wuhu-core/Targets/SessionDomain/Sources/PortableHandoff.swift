@@ -17,6 +17,7 @@ public struct ReplayBinding: Hashable, Sendable, Codable {
 }
 
 public enum PortableHandoffError: Error, Equatable, Sendable {
+  case missingGenerationHead
   case outstandingToolCalls
   case modelHandoffTooLarge
 }
@@ -56,7 +57,7 @@ extension Transcript {
     }
   }
 
-  public func portableHandoff(binding: ReplayBinding, budget: ContextBudget, recentTokens: Int = 8192) throws -> Transcript {
+  public func portableHandoff(binding: ReplayBinding, budget: ContextBudget, runningWork: [String], recentTokens: Int = 8192) throws -> Transcript {
     guard pendingToolCallIDs.isEmpty else { throw PortableHandoffError.outstandingToolCalls }
     @Dependency(\.uuid) var uuid
     @Dependency(\.date.now) var now
@@ -95,14 +96,14 @@ extension Transcript {
         summary: "Mechanical portable handoff: \(folded.count) earlier item(s) folded without model summarization. Account-bound reasoning and provider records were not carried. Continue the outstanding request; re-read files/history if needed.\n" + digest,
         snapshot: .init(carrying: environment.tools, preReads: []), settle: environment.settle,
         note: "Replay binding changed or legacy unscoped content was adopted; prior opaque replay was removed.",
-        replayBinding: binding,
+        replayBinding: binding, runningWork: runningWork,
       )
       let notice = TranscriptItem.notification(SystemNotification(
         id: uuid(), timestamp: now, kind: .context, subscriptionID: SubscriptionID("replay-handoff"),
         content: .init(text: "Portable replay handoff completed. Earlier tool calls have their committed receipts; do not execute them again. This is a fresh account-neutral turn. Continue the outstanding request using the full carried input; re-read files/history as needed."),
       ))
       let carried = [TranscriptItem.generationHead(head)] + projected.indices.filter { selected.contains($0) }.map { projected[$0] } + [notice]
-      let result = Transcript(items: carried, keptCount: carried.count, registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions, runningWork: runningWork)
+      let result = Transcript(items: carried, keptCount: carried.count, registeredSubscriptions: registeredSubscriptions, handlerSubscriptions: handlerSubscriptions)
       if result.items.reduce(0, { $0 + $1.estimatedTokens(budget.images) }) <= budget.usableTokens { return result }
       guard tailBudget > 0 else { throw PortableHandoffError.modelHandoffTooLarge }
       tailBudget = tailBudget > 256 ? tailBudget / 2 : 0

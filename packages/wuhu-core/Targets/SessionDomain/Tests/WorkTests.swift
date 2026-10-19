@@ -53,12 +53,12 @@ struct WorkTests {
   }
 
   @Test func generationHeadTailIsWork() {
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: .init())
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "s", snapshot: .init(), runningWork: [])
     #expect(Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)
   }
 
   @Test func subscriptionsAloneDoNotMakeAnEmptySummaryHeadWork() {
-    var head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init(subscriptions: [.init("timer.t1"): .timer(.cron("* * * * *"))]))
+    var head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "", snapshot: .init(subscriptions: [.init("timer.t1"): .timer(.cron("* * * * *"))]), runningWork: [])
     #expect(!Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)
     head.snapshot.preReads = ["/notes.md"]
     #expect(Transcript(items: [.generationHead(head)], keptCount: 1).hasWork)

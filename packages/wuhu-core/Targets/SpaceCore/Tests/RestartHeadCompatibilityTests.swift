@@ -55,6 +55,7 @@ import Testing
     let head = GenerationHead(
       id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init(),
       settle: hasSettle ? SettleState(owed: [.init("ch1"): .owed]) : nil, note: "note",
+      runningWork: [],
     )
     #expect(head.settleBoundary == nil)
     let newBytes = try Sessions.encode(TranscriptItem.generationHead(head))

@@ -28,7 +28,7 @@ public enum SessionEvent: Codable, Sendable {
   case errored(String)
   case archived(grace: Duration)
   case unarchived
-  case restarted(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?)
+  case restarted(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?, runningWork: [String] = [])
 }
 
 public enum CompactionActivity: Codable, Sendable {
@@ -136,7 +136,7 @@ public struct InProcessMainClient: MainClient {
         case .errored(let message): try await sessions.markErrored(id, message: message)
         case .archived(let grace): return try await .archiveDeadline(sessions.archive(id, grace: grace))
         case .unarchived: try await sessions.unarchive(id)
-        case let .restarted(executor, note, route): return try await .restart(sessions.restart(id, executor: executor, note: note, modelRoute: route))
+        case let .restarted(executor, note, route, runningWork): return try await .restart(sessions.restart(id, executor: executor, note: note, modelRoute: route, runningWork: runningWork))
         }
         return .acknowledged
       }

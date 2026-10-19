@@ -70,7 +70,9 @@ import WuhuAI
   @Test(arguments: ["committed", "no-ack", "phase", "handles"])
   func actualKernelCommitToolExecutionAndRendering(kind: String) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      _ = try await space.setUserProfile(principal: "morgan", handle: "old-handle", displayName: nil)
       let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
@@ -96,14 +98,15 @@ import WuhuAI
       }, inference: { request in
         let lease = try await registry.acquire(session: sid, model: resolved)
         let executor = InferenceExecutor(session: sid, model: resolved, systemPrompt: "offline acceptance", tools: [Tool(name: "lookup", description: "lookup", parameters: .object(["type": .string("object"), "properties": .object([:])]))], webSocket: lease.session)
-        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal, handles: ["morgan": "old-handle"])
+        let completed = try await executor.run(attemptID: request.attemptID, transcript: request.transcript, mode: .normal)
         await registry.release(session: sid, lease: lease.lease)
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { entry, transcript in
           let persisted = try? await sessions.hydrate(sid).transcript.kernel
           #expect(persisted?.items.contains(.assistant(entry)) == true)
           commits.withLock { $0.append(entry) }
           if kind != "no-ack" {
-            await executor.acknowledge(entry: entry, transcript: transcript, handles: ["morgan": kind == "handles" ? "new-handle" : "old-handle"])
+            if kind == "handles" { _ = try? await space.setUserProfile(principal: "morgan", handle: "new-handle", displayName: nil) }
+            await executor.acknowledge(entry: entry, transcript: transcript)
           }
         })
       })
@@ -165,7 +168,7 @@ import WuhuAI
       #expect(dials.withLock { $0 } == 1)
       let second = try #require(captured.last?.object)
       let input = try #require(second["input"]?.array)
-      if kind == "committed" {
+      if kind == "committed" || kind == "handles" {
         #expect(second["previous_response_id"]?.stringValue == "resp_server")
         #expect(input.count == 1)
         #expect(input[0].object?["call_id"]?.stringValue == "call_server")

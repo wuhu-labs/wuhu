@@ -62,7 +62,7 @@ import WuhuAI
         _ = try await harness.store.restart(id, executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
       } else {
         if reason == "compacted" {
-          _ = try await harness.store.writeCompaction(id, head: .init(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init()), kept: nil)
+          _ = try await harness.store.writeCompaction(id, head: .init(id: UUID(), timestamp: Date(), summary: "folded", snapshot: .init(), runningWork: []), kept: nil)
           try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 5000, outputTokens: 0, totalTokens: 5000)))
         }
         _ = try await harness.store.drainQueue(id)

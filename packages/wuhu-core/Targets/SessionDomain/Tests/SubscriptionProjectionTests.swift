@@ -12,14 +12,14 @@ import Testing
       Fix.result(.observe(.init(subscriptionID: observer, sql: "SELECT 1"))),
       Fix.result(.read(.init(path: "/file.md", revision: .journal(7), content: "body"))),
     ])
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "snapshot", snapshot: .init(subscriptions: [deadline: .requestDeadline(Fix.instant)]))
+    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "snapshot", snapshot: .init(subscriptions: [deadline: .requestDeadline(Fix.instant)]), runningWork: [])
     transcript.items.insert(.generationHead(head), at: 0)
     #expect(transcript.environment.tools.subscriptions.count == 3, "unprojected pure transcript folding stays compatible")
     transcript.registeredSubscriptions = [observer]
     transcript.handlerSubscriptions = [observer]
     #expect(transcript.environment.tools.subscriptions == [observer: .observe(sql: "SELECT 1"), deadline: .requestDeadline(Fix.instant)])
     #expect(transcript.environment.tools.fileAccessLog["/file.md"] == .journal(7))
-    let stale = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "compact", snapshot: .init(subscriptions: [timer: .timer(.oneShot(Fix.instant)), observer: .observe(sql: "SELECT 1")]))
+    let stale = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "compact", snapshot: .init(subscriptions: [timer: .timer(.oneShot(Fix.instant)), observer: .observe(sql: "SELECT 1")]), runningWork: [])
     let compacted = transcript.compacted(head: stale, kept: 1 ..< transcript.items.count)
     #expect(compacted.registeredSubscriptions == [observer])
     #expect(compacted.handlerSubscriptions == [observer])
@@ -45,28 +45,33 @@ import Testing
     #expect(decoded.environment.tools.subscriptions.count == 1, "the receiving store/runtime must supply its fresh registration snapshot")
   }
 
-  @Test func renderProjectsRetiredHeadSubscriptionsWithoutChangingHistory() async throws {
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init(subscriptions: [.init("timer.old"): .timer(.oneShot(Fix.instant))], preReads: ["/keep.md"]))
-    let transcript = Transcript(items: [.generationHead(head)], registeredSubscriptions: [])
-    let request = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
-    guard case let .text(text)? = request.messages.first?.user?.content.first else { Issue.record("missing snapshot"); return }
-    #expect(text.text.contains("active subscriptions: none"))
-    #expect(text.text.contains("/keep.md"))
-    #expect(transcript.items == [.generationHead(head)])
-    #expect(head.snapshot.subscriptions.count == 1)
-    #expect(request.messages.count == 3)
-  }
-
-  @Test func theHeadListsTheRunningWorkTheTranscriptCarries() async throws {
-    let head = GenerationHead(id: UUID(), timestamp: Fix.instant, summary: "summary", snapshot: .init(preReads: ["/a.md"]))
-    func snapshotText(_ transcript: Transcript) async -> String? {
-      let request = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
-      guard case let .text(text)? = request.messages.first?.user?.content.first else { return nil }
-      return text.text
+  @Test func generationHeadSurvivesLiveChangesAndReloadAsAnExactPrefix() async throws {
+    let timer = SubscriptionID("timer.old")
+    let head = GenerationHead(
+      id: UUID(), timestamp: Fix.instant, summary: "summary",
+      snapshot: .init(subscriptions: [timer: .timer(.oneShot(Fix.instant))], preReads: ["/keep.md"]),
+      runningWork: ["script.started", "exec.started"],
+    )
+    func message(handle: String, device: String) -> TranscriptItem {
+      guard case var .message(message) = Fix.message(sender: "alice") else { preconditionFailure() }
+      message.sender = .init(id: "alice", timeZone: message.sender.timeZone, device: "phone", handle: handle, deviceName: device)
+      return .message(message)
     }
-    let busy = Transcript(items: [.generationHead(head)], runningWork: ["script.ffff0000", "exec.ex_0a1b2c3d"])
-    #expect(await snapshotText(busy)?.contains("running: exec.ex_0a1b2c3d, script.ffff0000\n") == true)
-    #expect(await snapshotText(Transcript(items: [.generationHead(head)]))?.contains("running: none\n") == true)
+    var transcript = Transcript(items: [.generationHead(head), message(handle: "old", device: "Old Phone")], registeredSubscriptions: [timer])
+    let first = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+    transcript.registeredSubscriptions = []
+    transcript.append(message(handle: "renamed", device: "New Phone"))
+    let next = await transcript.renderRequest(session: Fix.session, systemPrompt: "sys")
+    let reloaded = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(transcript))
+    let replay = await reloaded.renderRequest(session: Fix.session, systemPrompt: "sys")
+    #expect(Array(next.messages.prefix(first.messages.count)) == first.messages)
+    #expect(replay == next)
+    #expect(first.messages.last?.user?.content != next.messages.last?.user?.content)
+    guard case let .text(text)? = first.messages.first?.user?.content.first else {
+      Issue.record("missing snapshot"); return
+    }
+    #expect(text.text.contains("active subscriptions: timer.old"))
+    #expect(text.text.contains("running: exec.started, script.started"))
   }
 
   @Test func toolHandlerMetadataDoesNotChangeLegacyCodableBytes() throws {
@@ -99,6 +104,7 @@ import Testing
     let head = GenerationHead(
       id: UUID(), timestamp: Fix.instant, summary: "compact",
       snapshot: .init(carrying: transcript.environment.tools, preReads: []), settle: transcript.environment.settle,
+      runningWork: [],
     )
     let compacted = transcript.compacted(head: head, kept: nil)
     #expect(compacted.handlerSubscriptions == [subscription])

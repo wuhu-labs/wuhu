@@ -53,14 +53,6 @@ extension InProcessToolOwnerClient {
     try await executionOwner.promptHome(id)
   }
 
-  public func handlesByPrincipal() async throws -> [String: String] {
-    try await executionOwner.handlesByPrincipal()
-  }
-
-  public func deviceNames() async throws -> [String: String] {
-    try await executionOwner.deviceNames()
-  }
-
   public func mediaBytes(_ reference: MediaReference, group: GroupID) async throws -> Data {
     try await executionOwner.mediaBytes(reference, group: group)
   }

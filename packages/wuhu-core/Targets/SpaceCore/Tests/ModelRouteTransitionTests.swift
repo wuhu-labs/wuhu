@@ -28,7 +28,7 @@ import WuhuAI
       var next = SessionModelRouteTests().route(member: "secondary", reason: .compaction)
       next.switchCause = .quota
       next.specifier.provider = "alternate"
-      let portable = try source.portableHandoff(binding: .init(identity: "scope-b", epoch: next.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000))
+      let portable = try source.portableHandoff(binding: .init(identity: "scope-b", epoch: next.epoch), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [])
       let transition = ModelRouteTransition(expectedEpoch: old.epoch, route: next, transcript: portable)
       try await space.writer.write { db in
         try db.execute(sql: "CREATE TRIGGER fail_transition BEFORE INSERT ON session_pointers WHEN NEW.generation > \(generation) BEGIN SELECT RAISE(ABORT, 'injected crash before commit'); END")
@@ -73,7 +73,7 @@ extension ModelRouteTransitionTests {
       var next = SessionModelRouteTests().route(member: "secondary", reason: .compaction)
       next.specifier.provider = "alternate"
       let binding = ReplayBinding(identity: "scope-b", epoch: next.epoch)
-      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), replayBinding: binding)
+      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compact", snapshot: .init(), replayBinding: binding, runningWork: [])
       var invalid = source.compacted(head: head, kept: nil)
       invalid.append(.assistant(.init(id: UUID(), timestamp: fixedDate, content: [.reasoning(.encrypted(.init(providerID: "anthropic", model: "m", summary: "readable", opaque: "signature-a", id: "native-a", replayScope: "scope-a")))], stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: [:], replayBinding: binding)))
       #expect(invalid.replayBinding?.epoch == next.epoch)

@@ -133,12 +133,27 @@ struct DeviceTests {
     let pubkey = try await enrolled(space, "mac")
     let device = try await space.upsertDevice(pubkey: pubkey, installation: "a", kind: "mac", name: "Mac")
     let machine = try await space.addMachine(name: "studio")
+    _ = try await space.setUserProfile(principal: device.account.rawValue, handle: "before", displayName: nil)
+    let session = try await space.sessions.createSession(group: .shared, title: "names", kind: .agent, createdBy: "morgan", model: .test)
+    func input() -> QueueInput {
+      .message(.init(id: UUID(), messageID: .init(UUID().uuidString), conversationID: .init("names"), sender: .init(id: device.account.rawValue, timeZone: TimeZone(identifier: "UTC")!, device: device.id), timestamp: fixedDate, content: .init(text: "hello")))
+    }
+    _ = try await space.sessions.enqueue(session, input: input())
+    let before = try await space.sessions.drainQueue(session)
+    _ = try await space.setUserProfile(principal: device.account.rawValue, handle: "after", displayName: nil)
     let annotated = try await space.annotateDevice(device.id, name: "Studio Mac", machine: machine.id)
     #expect(annotated.name == "Studio Mac")
     #expect(annotated.machine == machine.id)
     let untouched = try await space.annotateDevice(device.id, name: nil, machine: nil)
     #expect(untouched.name == "Studio Mac")
     #expect(untouched.machine == machine.id)
+    _ = try await space.sessions.enqueue(session, input: input())
+    let after = try await space.sessions.drainQueue(session)
+    let hydrated = try await space.sessions.hydrate(session).transcript.kernel
+    #expect(hydrated.items == before.items + after.items)
+    guard case let .message(first) = before.items[0], case let .message(last) = after.items[0] else { Issue.record("missing messages"); return }
+    #expect(first.sender.handle == "before" && first.sender.deviceName == "Mac")
+    #expect(last.sender.handle == "after" && last.sender.deviceName == "Studio Mac")
   }
 
   @Test func annotatingAnUnknownDeviceFails() async throws {

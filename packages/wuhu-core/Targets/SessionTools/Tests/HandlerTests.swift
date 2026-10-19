@@ -299,6 +299,7 @@ private func withHandlerFiring(
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 10, "handler": "/silent.js"]))
         _ = try await space.sessions.writeCompaction(session, head: .init(
           id: UUID(), timestamp: anchor, summary: "waiting for quiet timer", snapshot: .init(subscriptions: world.state.subscriptions),
+          runningWork: [],
         ), kept: nil)
         let before = try await space.sessions.transcript(session)
         #expect(!before.environment.tools.subscriptions.isEmpty)

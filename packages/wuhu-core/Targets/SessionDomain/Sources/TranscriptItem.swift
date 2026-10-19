@@ -217,8 +217,9 @@ public struct GenerationHead: Hashable, Sendable, Codable {
   public var settleBoundary: SettleBoundary?
   public var note: String?
   public var replayBinding: ReplayBinding?
+  public var runningWork: [String]?
 
-  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil, replayBinding: ReplayBinding? = nil) {
+  public init(id: UUID, timestamp: Date, summary: String, snapshot: StateSnapshot, settle: SettleState? = nil, settleBoundary: SettleBoundary? = nil, note: String? = nil, replayBinding: ReplayBinding? = nil, runningWork: [String]) {
     self.id = id
     self.timestamp = timestamp
     self.summary = summary
@@ -227,5 +228,6 @@ public struct GenerationHead: Hashable, Sendable, Codable {
     self.settleBoundary = settleBoundary
     self.note = note
     self.replayBinding = replayBinding
+    self.runningWork = runningWork.isEmpty ? nil : runningWork.sorted()
   }
 }

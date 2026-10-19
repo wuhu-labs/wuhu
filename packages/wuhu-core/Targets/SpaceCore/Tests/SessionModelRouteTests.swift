@@ -24,7 +24,7 @@ import Testing
       #expect(try await store.hydrate(id).record.executor == .modelGroup(id: "work", effort: "high"))
       try await store.markInterrupted(id)
       try await store.markResumed(id)
-      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init())
+      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "summary", snapshot: .init(), runningWork: [])
       _ = try await store.writeCompaction(id, head: head, kept: nil)
       let reopened = try Space.open(file: file)
       #expect(try await reopened.sessions.modelRoute(id) == pin)

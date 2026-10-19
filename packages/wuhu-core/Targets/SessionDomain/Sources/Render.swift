@@ -88,7 +88,6 @@ extension ToolResultItem {
 }
 
 extension StateSnapshot {
-  /// `running` is read live, never stored in the snapshot.
   func rendered(running: [String]) -> String {
     let subs = subscriptions.isEmpty
       ? "none"
@@ -109,8 +108,8 @@ extension GenerationHead {
   // Role and position are contract: the snapshot is the generation's first
   // user-role message; the summary follows it. A creation head has no summary
   // and gets no nudge.
-  func renderMessages(session: SessionID, running: [String]) -> [Message] {
-    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: running))]))]
+  func renderMessages(session: SessionID) -> [Message] {
+    var messages: [Message] = [.user(.init(content: [.text(snapshot.rendered(running: runningWork ?? []))]))]
     if let note, !note.isEmpty {
       messages.append(.user(.init(content: [.text(note)])))
     }
@@ -128,8 +127,6 @@ extension Transcript {
     session: SessionID,
     systemPrompt: String,
     tools: [Tool]? = nil,
-    handles: [String: String] = [:],
-    devices: [String: String] = [:],
   ) async -> Context {
     var messages: [Message] = []
     // Dialects that want a turn's tool results back to back get its context
@@ -141,15 +138,12 @@ extension Transcript {
         notices = []
       }
       switch item {
-      case var .generationHead(head):
-        if let registeredSubscriptions {
-          head.snapshot.subscriptions = registeredSubscriptionState(head.snapshot.subscriptions, registered: registeredSubscriptions)
-        }
-        messages.append(contentsOf: head.renderMessages(session: session, running: runningWork ?? []))
+      case let .generationHead(head):
+        messages.append(contentsOf: head.renderMessages(session: session))
       case let .direct(message):
-        messages.append(.user(.init(content: message.content.blocks(header: message.header.attributing(handles, devices: devices)))))
+        messages.append(.user(.init(content: message.content.blocks(header: message.header))))
       case let .message(message):
-        messages.append(.user(.init(content: message.content.blocks(header: message.header.attributing(handles, devices: devices)))))
+        messages.append(.user(.init(content: message.content.blocks(header: message.header))))
       case let .notification(notification) where notification.kind == .context:
         guard !notification.content.text.isEmpty else { continue }
         notices.append(.user(.init(content: notification.content.blocks(header: notification.header))))

@@ -17,7 +17,7 @@ import WuhuAI
       original.append(old)
       try await store.append(id, items: [old], transcript: original)
       if hydrated { original = try await store.hydrate(id).transcript.kernel }
-      let projected = try original.portableHandoff(binding: .init(identity: "binding-b", epoch: "route-b"), budget: .init(maxInput: 100_000, maxOutput: 1000))
+      let projected = try original.portableHandoff(binding: .init(identity: "binding-b", epoch: "route-b"), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [])
       let generation = try await store.generationState(id).generation
       var changed = original
       changed.append(.bookmark(.init(id: UUID(), timestamp: fixedDate)))

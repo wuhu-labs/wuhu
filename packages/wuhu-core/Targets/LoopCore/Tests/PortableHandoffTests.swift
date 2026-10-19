@@ -53,6 +53,8 @@ import WuhuAI
         },
         { request in
           #expect(request.transcript.replayBinding == newBinding)
+          guard case let .generationHead(head)? = request.transcript.items.first else { throw PortableHandoffError.missingGenerationHead }
+          #expect(head.runningWork == ["exec.snapshot"])
           #expect(request.transcript.pendingToolCallIDs.isEmpty)
           #expect(request.transcript.items.contains { if case .toolResult = $0 { return true }; return false })
           let json = String(decoding: try JSONEncoder().encode(request.transcript), as: UTF8.self)
@@ -63,7 +65,8 @@ import WuhuAI
         },
       ])
       let exec = ExecScript { _ in .failure(.init(message: "recorded receipt")) }
-      let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
+      var config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
+      config.runningWork = { _ in ["exec.snapshot"] }
       try await runService(sessions, config) { service in
         _ = try await service.enqueue(item: Fix.message("do work"), to: id)
         try await until("new account request committed") {

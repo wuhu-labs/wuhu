@@ -163,7 +163,7 @@ private func toolHeavyKernelSession(_ harness: SessionHarness, rounds: Int) asyn
 
       _ = try await harness.store.writeCompaction(
         id,
-        head: GenerationHead(id: UUID(), timestamp: Date(), summary: "squashed", snapshot: StateSnapshot()),
+        head: GenerationHead(id: UUID(), timestamp: Date(), summary: "squashed", snapshot: StateSnapshot(), runningWork: []),
         kept: nil,
       )
       let trimmed = try await harness.get("/v1/session/\(id.rawValue)/entry/\(last.ref)")

@@ -22,6 +22,8 @@ public struct MessageHeader: Hashable, Sendable {
 
   public init(
     sender: String,
+    senderHandle: String? = nil,
+    deviceName: String? = nil,
     timestamp: Date,
     timeZone: TimeZone,
     source: Source,
@@ -36,6 +38,8 @@ public struct MessageHeader: Hashable, Sendable {
     self.senderGroup = senderGroup
     self.senderAdmin = senderAdmin
     self.sender = sender
+    self.senderHandle = senderHandle
+    self.deviceName = deviceName
     self.timestamp = timestamp
     self.timeZone = timeZone
     self.source = source
@@ -104,8 +108,6 @@ public struct MessageHeader: Hashable, Sendable {
 
   public static let systemSender: String = "system"
 
-  // Handles resolve at render time from the space directory: a rename
-  // re-attributes history instead of freezing a stale name into a message.
   public func attributing(_ handles: [String: String], devices: [String: String] = [:]) -> MessageHeader {
     var attributed = self
     attributed.senderHandle = handles[sender]
@@ -175,6 +177,8 @@ extension DirectMessage {
   public var header: MessageHeader {
     .init(
       sender: sender.id,
+      senderHandle: sender.handle,
+      deviceName: sender.deviceName,
       timestamp: timestamp,
       timeZone: sender.timeZone,
       source: .direct,
@@ -194,6 +198,8 @@ extension ConversationMessage {
     }
     return .init(
       sender: sender.id,
+      senderHandle: sender.handle,
+      deviceName: sender.deviceName,
       timestamp: timestamp,
       timeZone: sender.timeZone,
       source: .conversation(conversationID),

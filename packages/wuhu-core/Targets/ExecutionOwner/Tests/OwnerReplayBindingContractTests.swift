@@ -73,7 +73,7 @@ import Testing
       $0.uuid = .incrementing
       $0.date = .constant(Date(timeIntervalSince1970: 1_700_000_000))
     } operation: {
-      try source.portableHandoff(binding: binding, budget: .init(maxInput: 10000, maxOutput: 1000))
+      try source.portableHandoff(binding: binding, budget: .init(maxInput: 10000, maxOutput: 1000), runningWork: [])
     }
     let committed = try await owner.send(.append(id, .portableHandoff(expectedGeneration: hydration.generation, source: source, transcript: projected, transition: nil))).value(Transcript.self)
     #expect(committed == projected)

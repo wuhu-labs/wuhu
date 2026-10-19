@@ -38,7 +38,7 @@ import Testing
       #expect(try await prompt(space, id) == frozen)
       #expect(try await store.promptRevision(id) == created)
 
-      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init())
+      let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init(), runningWork: [])
       _ = try await store.writeCompaction(id, head: head, kept: nil)
       let compacted = try await prompt(space, id)
       #expect(compacted.contains("root two") && compacted.contains("home two") && compacted.contains("the two skill"))

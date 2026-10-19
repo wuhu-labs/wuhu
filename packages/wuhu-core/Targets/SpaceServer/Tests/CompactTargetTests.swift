@@ -16,7 +16,7 @@ private let boundKeys = CredentialResolver.bound { provider in
   .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
 }
 
-private let summaryHead = GenerationHead(id: UUID(), timestamp: Date(), summary: "where things stand", snapshot: .init(preReads: ["/task.md"]))
+private let summaryHead = GenerationHead(id: UUID(), timestamp: Date(), summary: "where things stand", snapshot: .init(preReads: ["/task.md"]), runningWork: [])
 
 private func compacted(_ store: SessionStore, _ id: SessionID) async throws -> Transcript {
   try await store.transcript(id).compacted(head: summaryHead, kept: nil)

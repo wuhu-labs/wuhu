@@ -32,7 +32,7 @@ import WuhuAI
     }
     let range = try #require(kept)
     #expect(transcript.items[range].contains(pressure))
-    let head = GenerationHead(id: UUID(), timestamp: timestamp, summary: "folded", snapshot: .init(subscriptions: [:], preReads: []))
+    let head = GenerationHead(id: UUID(), timestamp: timestamp, summary: "folded", snapshot: .init(subscriptions: [:], preReads: []), runningWork: [])
     let compacted = transcript.compacted(head: head, kept: range)
     #expect(!compacted.items.contains(pressure))
     #expect(compacted.items.contains(message))

@@ -63,7 +63,7 @@ import WuhuAI
         #expect(await iterator.next() == bad)
         #expect(try await sessions.bootSessions().isEmpty)
         let compacted = try await sessions.writeCompaction(
-          bad, head: .init(id: UUID(), timestamp: anchor, summary: "recovered", snapshot: .init(), settle: .init()), kept: nil,
+          bad, head: .init(id: UUID(), timestamp: anchor, summary: "recovered", snapshot: .init(), settle: .init(), runningWork: []), kept: nil,
         )
         #expect(compacted.environment.settle == SettleState())
         #expect(try await sessions.settleState(bad) == SettleState())

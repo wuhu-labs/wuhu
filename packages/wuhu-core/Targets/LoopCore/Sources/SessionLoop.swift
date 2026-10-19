@@ -71,7 +71,7 @@ extension SessionActor {
         let transcript = try await main.send(.append(id, .pendingCacheWarmingDiscarded)).value(Transcript.self)
         try modify { $0.transcript = transcript }
       }
-      guard try await refreshLiveState() else { return }
+      guard try await reconcileSubscriptions() else { return }
       if let toolCall = (try live).transcript.nextPendingToolCall {
         try await execute(toolCall)
         continue
@@ -151,16 +151,13 @@ extension SessionActor {
     return try await nagOrScheduleWake((try live).transcript.environment)
   }
 
-  // What the head renders live: the armed subscriptions and the running work.
-  private func refreshLiveState() async throws -> Bool {
+  private func reconcileSubscriptions() async throws -> Bool {
     let registered = try await main.send(.read(id, .registeredSubscriptions)).value(RegisteredSubscriptions.self)
-    let running = try await loopConfig.runningWork(id)
     try Task.checkCancellation()
     guard !(try live).archiving else { return false }
     try modify {
       $0.transcript.registeredSubscriptions = registered.ids
       $0.transcript.handlerSubscriptions = registered.handlers
-      $0.transcript.runningWork = running
     }
     return true
   }
@@ -343,6 +340,7 @@ extension SessionActor {
       summary: arguments.summary,
       snapshot: .init(carrying: environment.tools, arguments: arguments),
       settle: environment.settle,
+      runningWork: try await loopConfig.runningWork(id),
     )
     let closing = ToolResultItem(
       id: uuid(),
@@ -405,7 +403,7 @@ extension SessionActor {
     var boundedFailures = 0
     while true {
       if case .interrupting = (try live).sessionStatus { return }
-      guard try await refreshLiveState() else { return }
+      guard try await reconcileSubscriptions() else { return }
 
       let attemptID = uuid()
       let request = InferenceRequest(
@@ -450,7 +448,7 @@ extension SessionActor {
         let state = try live
         let compacted: Transcript
         do {
-          var portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget)
+          var portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id))
           let transition: ModelRouteTransition?
           if let route = boundary.route, let expectedEpoch = boundary.expectedEpoch {
             portable.appendRouteNotice(group: route.group!, from: (try await main.send(.read(id, .modelRoute)).value(SessionModelRoute?.self))?.member ?? "unknown", to: route.member!, reason: route.decisionReason)
@@ -598,7 +596,7 @@ extension SessionActor {
 
   @discardableResult
   func fallbackCompact() async throws -> Bool {
-    guard try await refreshLiveState() else { return false }
+    guard try await reconcileSubscriptions() else { return false }
     let transcript = (try live).transcript
     let sessionID = id
     let compactClaim = try live.compactRequestClaim
@@ -614,6 +612,7 @@ extension SessionActor {
         summary: outcome.summary,
         snapshot: .init(subscriptions: environment.tools.subscriptions, preReads: outcome.preReads),
         settle: environment.settle,
+        runningWork: try await loopConfig.runningWork(id),
       )
       let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept), nil)
       let compacted = try await main.send(.append(id, .compacted(closing: nil, head: head, kept: outcome.kept, completing: compactClaim, transition: transition))).value(Transcript.self)

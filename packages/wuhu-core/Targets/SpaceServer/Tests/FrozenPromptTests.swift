@@ -63,7 +63,7 @@ import Testing
           try await edit(space, first, "edited")
           #expect(try await turn(first) == firstPrompt, "an edit after creation waits for a compaction")
 
-          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init())
+          let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
           _ = try await harness.store.writeCompaction(first, head: head, kept: nil)
           let compacted = try await turn(first)
           #expect(compacted != firstPrompt)
