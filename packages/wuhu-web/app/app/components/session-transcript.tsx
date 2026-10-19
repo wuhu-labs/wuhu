@@ -1,3 +1,4 @@
+import { isSessionWorking } from '~/lib/session-model'
 import { useMemo, useState } from 'react'
 import { useChrome } from '@wuhu/ui'
 import { useFollowLatest } from '~/components/conversation-timeline'
@@ -74,7 +75,7 @@ function Turns({ id, record }: { id: string; record: SessionRecord }) {
     direct.history?.resetVersion ?? 0
   }`
   const { following, pin } = useFollowLatest(canvas, identity)
-  const working = record.work === 'has_work'
+  const working = isSessionWorking(record)
   const projection = useMemo(
     () => {
       const origins = new Map<number, import('~/sdk/session').TranscriptItem>()

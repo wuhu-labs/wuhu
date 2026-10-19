@@ -1,3 +1,4 @@
+import { sessionRunState } from './session-model'
 import {
   createContext,
   type ReactNode,
@@ -94,7 +95,7 @@ const sessionsSQL = `SELECT id, title, hold, work, lifecycle, kind, parent,
     WHERE n.recipient = viewer() AND n.kind = 'conversation_message' AND n.source = sessions.id
       AND n.n > COALESCE((SELECT last_read_n FROM watermarks w
         WHERE w.identity = viewer() AND w.source = sessions.id), 0)) AS has_unread,
-  executor, executor_config, last_activity_at, error_message, created_by
+  executor, executor_config, last_activity_at, error_message, created_by, run_state
 FROM sessions ORDER BY last_activity_at DESC`
 
 function sessionRows(output: QueryOutput, group: string): SessionRecord[] {
@@ -104,6 +105,7 @@ function sessionRows(output: QueryOutput, group: string): SessionRecord[] {
     title: String(row[1]),
     hold: String(row[2]),
     work: String(row[3]),
+    runState: sessionRunState(row[13]),
     lifecycle: String(row[4]),
     kind: sessionKind(row[5]),
     parent: row[6] == null ? null : String(row[6]),

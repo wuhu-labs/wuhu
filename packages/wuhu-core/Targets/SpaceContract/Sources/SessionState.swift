@@ -11,3 +11,16 @@ public enum SessionWorkPayload: String, Sendable, Hashable, Codable {
   case hasWork = "has_work"
   case errored, unknown
 }
+
+public enum SessionRunStatePayload: String, Sendable, Hashable {
+  case inference, tool
+  case noRun = "no_run"
+  case unknown
+
+  public var isWorking: Bool {
+    switch self {
+    case .inference, .tool: true
+    case .noRun, .unknown: false
+    }
+  }
+}

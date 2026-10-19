@@ -1,7 +1,9 @@
 import {
   executorLabel,
+  isSessionWorking,
   lookupSession,
   rosterModelLabel,
+  sessionRunState,
   sessionStatus,
 } from './session-model.ts'
 
@@ -43,11 +45,21 @@ Deno.test('a route waiting on its member is named, after errors', () => {
     previousMember: null,
     failureRevision: null,
   }
-  const waiting = sessionStatus({ hold: 'live', work: 'working', route })
+  const waiting = sessionStatus({
+    hold: 'live',
+    work: 'has_work',
+    runState: 'inference',
+    route,
+  })
   if (waiting?.label !== 'waiting on model') {
     throw new Error(String(waiting?.label))
   }
-  const errored = sessionStatus({ hold: 'errored', work: 'idle', route })
+  const errored = sessionStatus({
+    hold: 'errored',
+    work: 'errored',
+    runState: 'no_run',
+    route,
+  })
   if (errored?.label !== 'errored') throw new Error(String(errored?.label))
 })
 
@@ -79,5 +91,33 @@ Deno.test('a group session names its group and the member it runs on', () => {
   equal(
     rosterModelLabel({ executorLabel: 'codex/gpt-6-sol' }),
     'codex/gpt-6-sol',
+  )
+})
+
+Deno.test('run state decodes known and future wire values without using pending work', () => {
+  for (
+    const [wire, expected] of [
+      ['inference', true],
+      ['tool', true],
+      ['no_run', false],
+      ['future', false],
+      [null, false],
+    ] as const
+  ) {
+    const runState = sessionRunState(wire)
+    equal(isSessionWorking({ runState }), expected)
+    equal(
+      sessionStatus({ hold: 'normal', work: 'has_work', runState }),
+      expected ? { label: 'working', tone: 'amber' } : null,
+    )
+  }
+  equal(sessionRunState('future'), 'unknown')
+  equal(
+    sessionStatus({
+      hold: 'interrupted',
+      work: 'has_work',
+      runState: 'no_run',
+    }),
+    { label: 'interrupted', tone: 'neutral' },
   )
 })

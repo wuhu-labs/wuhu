@@ -6,12 +6,39 @@ export interface SessionSummary {
   title: string
   hold: string
   work: string
+  runState: SessionRunState
   lifecycle: string
   kind: SessionKind
   parent: string | null
   unread: boolean
   // Absent on a direct session and on a server without route tables.
   route?: SessionRoute | null
+}
+
+export type SessionRunState = 'inference' | 'tool' | 'no_run' | 'unknown'
+
+export function sessionRunState(value: unknown): SessionRunState {
+  switch (value) {
+    case 'inference':
+    case 'tool':
+    case 'no_run':
+      return value
+    default:
+      return 'unknown'
+  }
+}
+
+export function isSessionWorking(
+  session: Pick<SessionSummary, 'runState'>,
+): boolean {
+  switch (session.runState) {
+    case 'inference':
+    case 'tool':
+      return true
+    case 'no_run':
+    case 'unknown':
+      return false
+  }
 }
 
 export interface ExecutorSpec {
@@ -51,19 +78,19 @@ export function lookupSession<T extends { id: string }>(
 // The one word a session earns beyond its identity: only trouble and motion get
 // named, a session in its ordinary live state stays quiet.
 export function sessionStatus(
-  session: Pick<SessionSummary, 'hold' | 'work' | 'route'>,
+  session: Pick<SessionSummary, 'hold' | 'work' | 'route' | 'runState'>,
 ): { label: string; tone: 'rose' | 'amber' | 'neutral' } | null {
+  if (session.hold === 'interrupted') {
+    return { label: 'interrupted', tone: 'neutral' }
+  }
   if (session.hold === 'errored' || session.work === 'errored') {
     return { label: 'errored', tone: 'rose' }
   }
   if (session.route?.phase === 'waiting') {
     return { label: 'waiting on model', tone: 'amber' }
   }
-  if (session.work === 'working' || session.work === 'has_work') {
+  if (isSessionWorking(session)) {
     return { label: 'working', tone: 'amber' }
-  }
-  if (session.hold === 'interrupted') {
-    return { label: 'interrupted', tone: 'neutral' }
   }
   return null
 }

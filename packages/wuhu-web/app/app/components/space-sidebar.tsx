@@ -14,7 +14,11 @@ import {
   useChrome,
 } from '@wuhu/ui'
 import { useEffect, useState } from 'react'
-import type { SessionRecord, SessionSummary } from '~/lib/session-model'
+import {
+  isSessionWorking,
+  type SessionRecord,
+  type SessionSummary,
+} from '~/lib/session-model'
 import { errorMessage } from '~/sdk/errors'
 import type { SessionAddress } from '~/sdk/session'
 import { displayNameFor, handleFor } from '~/lib/directory'
@@ -41,12 +45,13 @@ import { WebPushControl } from './web-push-control'
 
 // A session's state as one colour, for the composer's target chip.
 export function sessionTone(
-  session: Pick<SessionSummary, 'lifecycle' | 'hold' | 'work'>,
+  session: Pick<SessionSummary, 'lifecycle' | 'hold' | 'work' | 'runState'>,
 ): DotTone {
-  if (session.lifecycle === 'archived') return 'idle'
-  if (session.hold === 'errored' || session.work === 'errored') return 'rose'
-  if (session.work === 'has_work' || session.work === 'working') return 'amber'
-  if (session.hold === 'released') return 'idle'
+  if (session.lifecycle !== 'live' || session.hold !== 'normal') return 'idle'
+  if (session.work === 'errored') return 'rose'
+  if (session.work !== 'no_work' && session.work !== 'has_work') return 'idle'
+  if (session.runState === 'unknown') return 'idle'
+  if (isSessionWorking(session)) return 'amber'
   return 'mint'
 }
 

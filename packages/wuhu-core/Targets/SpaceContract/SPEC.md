@@ -368,4 +368,4 @@ Normal machine tools use `unknownKind` when a registered v2 machine does not adv
 
 ## Session query state
 
-`SessionLifecyclePayload`, `SessionHoldPayload` and `SessionWorkPayload` name the session query columns: lifecycle is `live` or `archived`, hold is `normal` or `interrupted`, and work is `no_work`, `has_work` or `errored`. Each type includes `unknown` for clients that encounter a future value. The app maps unrecognized or missing query cells to that fallback. These types do not change query-cell JSON encoding.
+`SessionLifecyclePayload`, `SessionHoldPayload`, `SessionWorkPayload` and `SessionRunStatePayload` name the session query columns: lifecycle is `live` or `archived`, hold is `normal` or `interrupted`, work is `no_work`, `has_work` or `errored`, and run state is `inference`, `tool` or `no_run`. Run state reports activity independently of pending work; `isWorking` is true for inference and tool runs. Each type includes `unknown` for clients that encounter a future value. The app maps unrecognized or missing query cells to that fallback. These types do not change query-cell JSON encoding.

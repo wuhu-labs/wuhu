@@ -1,3 +1,4 @@
+import { sessionTone } from '../components/space-sidebar.tsx'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SidebarRow } from '@wuhu/ui'
 import { SessionRow } from '../components/session-row.tsx'
@@ -26,7 +27,8 @@ Deno.test('custom session rows retain the trailing status dot followed by their 
         group: 'shared',
         title: 'Designer',
         hold: '',
-        work: 'working',
+        work: 'has_work',
+        runState: 'inference',
         lifecycle: 'active',
         kind: 'agent',
         parent: null,
@@ -46,4 +48,19 @@ Deno.test('custom session rows retain the trailing status dot followed by their 
       'The session status and count must both be present in dot-then-badge order',
     )
   }
+})
+
+Deno.test('session tone gives errors precedence over unknown runs and keeps unknown work idle', () => {
+  const session = {
+    lifecycle: 'live',
+    hold: 'normal',
+    work: 'errored',
+    runState: 'unknown' as const,
+  }
+  if (sessionTone(session) !== 'rose') {
+    throw new Error('Errored work must remain visible')
+  }
+  if (
+    sessionTone({ ...session, work: 'unknown', runState: 'tool' }) !== 'idle'
+  ) throw new Error('Unknown work must not look active')
 })

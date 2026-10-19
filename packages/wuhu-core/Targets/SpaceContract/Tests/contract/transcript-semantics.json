@@ -2642,7 +2642,7 @@
           "inference": "7:1"
         }
       ],
-      "expectedWorking": true
+      "expectedWorking": false
     },
     {
       "name": "nonempty-stream-working-without-summary-evidence",
@@ -2680,7 +2680,7 @@
           "calls": []
         }
       ],
-      "expectedWorking": true
+      "expectedWorking": false
     }
   ]
 }

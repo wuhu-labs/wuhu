@@ -531,8 +531,7 @@ export function projectTurns(
   return {
     rows,
     items,
-    isWorking: working ||
-      events.some((event) => event.kind === 'assistantText' && event.streaming),
+    isWorking: working,
   }
 }
 

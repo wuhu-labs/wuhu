@@ -44,6 +44,7 @@ const agent: SessionRecord = {
   title: 'Desk',
   hold: 'none',
   work: 'idle',
+  runState: 'no_run',
   lifecycle: 'active',
   kind: 'agent',
   parent: null,
