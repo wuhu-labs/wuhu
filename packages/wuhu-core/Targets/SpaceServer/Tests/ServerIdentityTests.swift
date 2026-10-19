@@ -83,7 +83,7 @@ import WuhuVFS
     let identity = try await ServerIdentity.loadOrCreate(from: fs)
     let space = try makeMachineSpace()
     let handler = withDependencies { $0.continuousClock = ContinuousClock() } operation: {
-      SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, webApp: nil, identityJWKS: identity.jwks)
+      SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, identityJWKS: identity.jwks)
     }
     let client = ServeTesting.client(upgrading: handler)
     let discovery = try await client(Request(url: URL(string: origin + "/.well-known/openid-configuration")!))

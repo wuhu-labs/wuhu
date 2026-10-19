@@ -24,8 +24,8 @@ func webResponse(
   now: Date,
   dev: Bool,
   publicRead: Bool,
-  views: ViewProviders?,
-  shell: ShellSDK?,
+  views: [String: Data],
+  shell: [String: Data]?,
   pageFetch: PageFetchHandler? = nil,
   request: Request,
 ) async throws -> Response {
@@ -184,8 +184,8 @@ private func routedWebResponse(
   now: Date,
   dev: Bool,
   publicRead: Bool,
-  views: ViewProviders?,
-  shell: ShellSDK?,
+  views: [String: Data],
+  shell: [String: Data]?,
   pageFetch: PageFetchHandler?,
   request: Request,
 ) async throws -> Response {
@@ -482,11 +482,11 @@ private func underscoreResponse(
   caller: WebCaller,
   dev: Bool,
   publicRead: Bool,
-  shell: ShellSDK?,
+  shell: [String: Data]?,
   route: String,
   request: Request,
 ) async throws -> Response {
-  if let script = shell?.scripts[route] {
+  if let script = shell?[route] {
     var response = resourceResponse(name: route, data: script, cacheControl: "no-cache")
     if route == "worker.js" { response.headers[serviceWorkerAllowed] = "/" }
     return response
@@ -562,7 +562,7 @@ func revalidatedJSON(_ value: JSONValue, ifNoneMatch: String?) -> Response {
 
 private let drawnFlatByTheListProvider = ["wall": "list", "map": "list"]
 
-private func providerResponse(_ views: ViewProviders?, shell: ShellSDK?, group: GroupID, file: String, request: Request) -> Response {
+private func providerResponse(_ views: [String: Data], shell: [String: Data]?, group: GroupID, file: String, request: Request) -> Response {
   if let target = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value {
     guard let resolved = URL(string: target, relativeTo: request.url)?.absoluteURL.standardized else {
       return errorResponse(.badRequest, code: "invalidViewPath", message: "The view target is not a valid URL.")
@@ -571,9 +571,9 @@ private func providerResponse(_ views: ViewProviders?, shell: ShellSDK?, group: 
       return errorResponse(.forbidden, code: "attachmentViewForbidden", message: "Conversation attachments cannot be view definitions.", hint: "Copy the definition to a space path outside the attachments folder.")
     }
   }
-  guard let views, !file.isEmpty else { return plainStatus(.notFound) }
+  guard !file.isEmpty else { return plainStatus(.notFound) }
   let asset = drawnFlatByTheListProvider[file] ?? file
-  guard let (name, data) = views.files[asset].map({ (asset, $0) }) ?? views.files[asset + ".html"].map({ (asset + ".html", $0) }) else {
+  guard let (name, data) = views[asset].map({ (asset, $0) }) ?? views[asset + ".html"].map({ (asset + ".html", $0) }) else {
     return plainStatus(.notFound)
   }
   return resourceResponse(
@@ -588,7 +588,7 @@ private func contentResponse(
   group: GroupID,
   principal: Principal,
   files: GroupID? = nil,
-  shell: ShellSDK?,
+  shell: [String: Data]?,
   path: String,
   trailingSlash: Bool,
   indexes: Bool,
@@ -703,7 +703,7 @@ private func groupShellInjection(_ group: GroupID) -> Data {
 /// module a page authors, so it opens `<head>`; shell.js closes `<body>`.
 private let importMapInjection = Data(#"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#.utf8)
 
-private func injected(_ data: Data, contentType: String, shell: ShellSDK?, group: GroupID) -> Data {
+private func injected(_ data: Data, contentType: String, shell: [String: Data]?, group: GroupID) -> Data {
   guard shell != nil, contentType.hasPrefix("text/html") else { return data }
   var served = data
   let injection = groupShellInjection(group)

@@ -16,7 +16,7 @@ struct ScriptAI {
     let claims = MachineWriteClaims()
     engine.define("__wuhu_capability", promising: { [session, tools] arguments in
       try await capabilityAnswer {
-        try await tools.refuseUnlessLive(session)
+        try await tools.owner.refuseUnlessLive(session)
         guard case let .string(kind)? = arguments.first else {
           throw CapabilityError(.invalidArgument, "capability needs a capability kind.")
         }

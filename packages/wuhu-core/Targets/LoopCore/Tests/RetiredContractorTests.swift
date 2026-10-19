@@ -11,10 +11,11 @@ import Testing
 @Suite struct RetiredContractorTests {
   @Test func undrainedContractorInputDoesNotRequireForceToArchive() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "retired", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       _ = try await sessions.enqueue(sid, input: Fix.message("queued"))
-      try await runService(sessions, makeConfig()) { service in
+      try await runService(space, makeConfig()) { service in
         try await service.archive(sid)
         #expect(try await sessions.record(sid).lifecycle != .live)
         #expect(try await sessions.record(sid).hold == .normal)
@@ -36,7 +37,7 @@ import Testing
 
       let script = InferenceScript([])
       let config = makeConfig(inference: { try await script($0) })
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         let queued = try await service.enqueue(item: Fix.message("post-boot work", message: "m2"), to: sid)
         #expect(queued == 2)
         try await service.wake(sid)
@@ -56,7 +57,7 @@ import Testing
         group: .shared,
         title: "c", kind: .agent, createdBy: "morgan", executor: .contractor(name: "retired"),
       )
-      try await runService(sessions, makeConfig()) { service in
+      try await runService(space, makeConfig()) { service in
         try await service.interrupt(sid)
         #expect(try await sessions.record(sid).hold == .interrupted)
         try await service.resume(sid)

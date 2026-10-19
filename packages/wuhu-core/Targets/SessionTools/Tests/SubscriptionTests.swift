@@ -41,13 +41,13 @@ private func tablePath(_ raw: String) throws -> SpacePath {
 }
 
 private func tracingSpace(_ executed: @escaping @Sendable (String) -> Void) throws -> Space {
-  var configuration = Space.makeConfiguration()
+  var configuration = Space.makeConfiguration(journalMode: .default)
   configuration.prepareDatabase { db in
     db.trace { event in
       if case let .statement(statement) = event { executed(statement.sql) }
     }
   }
-  return try Space.temporary(configuration: configuration, trace: executed)
+  return try Space.inMemory(configuration: configuration, trace: executed)
 }
 
 private func observationNotifications(_ space: Space, session: SessionID) async throws -> [SystemNotification] {

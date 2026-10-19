@@ -29,7 +29,8 @@ private struct TargetRefused: Error, CustomStringConvertible {
 
   @Test func aRefusedTargetFoldsNothingAndTheTurnContinues() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "refused target", kind: .agent, createdBy: "morgan", model: .test)
       let seen = Mutex<[CompactionTarget?]>([])
       let script = InferenceScript([
@@ -47,7 +48,7 @@ private struct TargetRefused: Error, CustomStringConvertible {
         seen.withLock { $0.append(target) }
         throw TargetRefused()
       }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
@@ -62,7 +63,8 @@ private struct TargetRefused: Error, CustomStringConvertible {
 
   @Test func anAcceptedTargetReachesPlacementAndTheCompactionCommits() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "accepted target", kind: .agent, createdBy: "morgan", model: .test)
       let seen = Mutex<[CompactionTarget?]>([])
       let script = InferenceScript([
@@ -74,7 +76,7 @@ private struct TargetRefused: Error, CustomStringConvertible {
         seen.withLock { $0.append(target) }
         return nil
       }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compaction then continuation") { try await sessions.settledWork(id) && script.count == 2 }
       }

@@ -1,6 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
-import ExecutionOwner
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -61,10 +61,10 @@ func readModelsDocument(space: Space, includeGroups: Bool = true) async throws -
   return try ModelsDocument(json: data, groupsJSON: groups)
 }
 
-func groupCatalog(owner: any ExecutionOwnerClient) -> @Sendable () async throws -> ProviderCatalog {
+func groupCatalog(owner: any Main) -> @Sendable () async throws -> ProviderCatalog {
   {
-    let data = try await owner.modelDocument()
-    let groups = try await owner.modelGroupDocument()
+    guard let data = try await owner.capabilityDocument("/models.json") else { throw SpaceError.notFound("/models.json") }
+    let groups = try await owner.capabilityDocument("/model-groups.json")
     return ProviderCatalog(
       document: try ModelsDocument(json: data, groupsJSON: groups),
       credentials: CredentialResolver.bound { try await owner.providerCredentialBinding($0) },
@@ -75,10 +75,10 @@ func groupCatalog(owner: any ExecutionOwnerClient) -> @Sendable () async throws 
   }
 }
 
-func activeModelSpecifier(_ record: SessionRecord, owner: any MainClient) async -> ModelSpecifier? {
+func activeModelSpecifier(_ record: SessionRecord, owner: any Main) async -> ModelSpecifier? {
   switch record.executor {
   case let .kernel(model), let .claudeCode(model): model
-  case .modelGroup: try? await owner.send(.read(record.id, .modelRoute)).value(SessionModelRoute?.self)?.specifier
+  case .modelGroup: try? await owner.modelRoute(record.id)?.specifier
   case .contractor: nil
   }
 }

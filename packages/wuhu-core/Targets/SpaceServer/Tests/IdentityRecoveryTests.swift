@@ -111,7 +111,7 @@ import Testing
   @Test func freshRegistrationRequiresDirectorySelectionOrExistingID() async throws {
     let rig = try await RotationRig(directory: false)
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, webApp: nil, identityController: rig.controller))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, identityController: rig.controller))
     let response = try await api(Request(url: URL(string: "https://private.test/v1/identity/register-new")!, method: .post))
     #expect(response.status == .unprocessableContent)
     #expect(try await response.json(JSONValue.self).object?["code"] == "directoryNotSelected")
@@ -132,7 +132,7 @@ import Testing
     let before = await rig.controller.settings
     let effects = rig.remote.withLock { $0.effects.count }
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, webApp: nil, identityController: rig.controller))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, identityController: rig.controller))
     let response = try await api(Request(url: URL(string: "https://private.test/v1/identity/register-new")!, method: .post))
     #expect(response.status == .conflict)
     #expect(try await response.json(JSONValue.self).object?["code"] == "identityBusy")
@@ -186,7 +186,7 @@ import Testing
     #expect(await blocked.settings.keySchedule == staged)
     #expect(try await blocked.snapshot().object?["publicationFailure"] == .string(failure.directoryCode!))
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, webApp: nil, identityController: blocked))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, identityController: blocked))
     let response = try await rig.at(dayZero) {
       try await api(Request(url: URL(string: "https://private.test/v1/identity/register-new")!, method: .post))
     }
@@ -236,7 +236,7 @@ import Testing
     }, logger: logs.logger)
     await #expect(throws: failure) { try await controller.publish() }
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, webApp: nil, identityController: controller))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, identityController: controller))
     let response = try await api(Request(url: URL(string: "https://private.test/v1/identity")!))
     #expect(response.status == .ok)
     let snapshot = try await response.json(JSONValue.self)

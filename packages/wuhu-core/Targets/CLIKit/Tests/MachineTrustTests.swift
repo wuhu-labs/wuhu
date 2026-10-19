@@ -21,7 +21,7 @@ import Testing
     let identity = try TLSIdentity.selfSigned(hosts: ["localhost", "127.0.0.1"])
     let fingerprint = try identity.fingerprint()
     let handler = SpaceServer.handler(
-      space: rig.space, hub: rig.hub, fingerprint: fingerprint, dev: true, webApp: nil,
+      space: rig.space, hub: rig.hub, fingerprint: fingerprint, dev: true,
     )
     let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: handler)
     let port = try #require(server.boundAddress.port)

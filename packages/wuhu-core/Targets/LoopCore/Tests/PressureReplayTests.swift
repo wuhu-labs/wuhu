@@ -19,7 +19,8 @@ import WuhuAI
   @Test(arguments: ["responses", "anthropic", "chat"], [false, true])
   func sseReplayKeepsHistoricalNotice(dialect: String, image: Bool) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "SSE pressure", kind: .agent, createdBy: "morgan", model: .test)
       let endpoint: any ModelEndpoint
       switch dialect {
@@ -51,7 +52,7 @@ import WuhuAI
         return InferenceReply(message: completed.message, metadata: completed.metadata, committed: { _, _ in commits.withLock { $0 += 1 } })
       })
       try await withDependencies { $0.fetch = fetch } operation: {
-        try await runService(sessions, config) { service in
+        try await runService(space, config) { service in
           for round in 0 ..< 3 {
             var input = Fix.message("round \(round)", message: "m\(round)")
             if image, round == 0, case var .message(message) = input {
@@ -77,7 +78,8 @@ import WuhuAI
   @Test(arguments: [false, true])
   func fullWarmPressureCommitAndReconnect(image: Bool) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "pressure replay", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
@@ -118,7 +120,7 @@ import WuhuAI
       })
       config.invalidateInference = { await registry.invalidate($0) }
       try await withDependencies { $0[WebSocketConnector.self] = connector } operation: {
-        try await runService(sessions, config) { service in
+        try await runService(space, config) { service in
           var input = Fix.message("go")
           if image, case var .message(message) = input {
             message.content.attachments = [.image(path: "/picture.png", mimeType: "image/png", size: 3)]

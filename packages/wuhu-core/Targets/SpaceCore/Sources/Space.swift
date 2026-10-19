@@ -8,7 +8,6 @@ import TaskLifetime
 import GRDB
 import KeelObjectStore
 import Logging
-import Scratch
 import struct SpaceContract.GroupID
 import SpaceFS
 import SpaceSQL
@@ -30,16 +29,17 @@ public actor Space {
 
   init(
     writer: any DatabaseWriter,
-    blobs: BlobStore = BlobStore(objects: nil),
+    objects: (any ObjectStore)? = nil,
     log: Logger = Logger(label: "wuhu.space"),
-    reads: ReadPool? = nil,
+    catalog: ViewCatalog = .groups,
+    trace: (@Sendable (String) -> Void)? = nil,
   ) {
     @Dependency(\.date) var date
     @Dependency(\.continuousClock) var clock
     @Dependency(\.withRandomNumberGenerator) var rng
     self.writer = writer
-    self.reads = reads ?? ReadPool(path: writer.path, catalog: .groups)
-    self.blobs = blobs
+    self.reads = ReadPool(path: writer.path, catalog: catalog, trace: trace)
+    self.blobs = BlobStore(objects: objects)
     self.broadcast = FSBroadcast()
     self.dateGen = date
     self.clock = clock
@@ -61,41 +61,31 @@ public actor Space {
     let queue = try DatabaseQueue(path: file.path, configuration: makeConfiguration())
     try queue.write { db in try SpaceMeta.prepare(db, identity: identity) }
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
-    return Space(writer: queue, blobs: BlobStore(objects: store), log: log)
+    return Space(writer: queue, objects: store, log: log)
   }
 
-  // A throwaway space: read connections attach the file by path, so it lives
-  // in a scratch folder, removed once the writer is gone and at the latest
-  // when the process exits. Every blob stays inline unless the caller
-  // supplies a store.
   public static func inMemory(objects: (any ObjectStore)? = nil) throws -> Space {
-    try temporary(objects: objects)
+    try inMemory(configuration: makeConfiguration(journalMode: .default), objects: objects)
   }
 
-  static func temporary(
-    configuration: Configuration = makeConfiguration(),
+  static func inMemory(
+    configuration: Configuration,
     objects: (any ObjectStore)? = nil,
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
   ) throws -> Space {
-    let folder = try ScratchFolder("space")
-    let path = folder.url.appending(path: "space.sqlite").path
-    var configuration = configuration
-    configuration.prepareDatabase { _ in withExtendedLifetime(folder) {} }
-    let queue = try DatabaseQueue(path: path, configuration: configuration)
+    let queue = try DatabaseQueue(path: "file:/space-\(UUID())?vfs=memdb", configuration: configuration)
+    try SpaceMeta.memorySchema.get().backup(to: queue)
     try queue.write { db in try SpaceMeta.prepare(db) }
-    return Space(
-      writer: queue, blobs: BlobStore(objects: objects), log: log,
-      reads: ReadPool(path: path, catalog: catalog, trace: trace),
-    )
+    return Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace)
   }
 
-  static func makeConfiguration() -> Configuration {
+  static func makeConfiguration(journalMode: Configuration.JournalModeConfiguration = .wal) -> Configuration {
     var config = Configuration()
     config.foreignKeysEnabled = true
     config.busyMode = .timeout(5)
-    config.journalMode = .wal
+    config.journalMode = journalMode
     return config
   }
 

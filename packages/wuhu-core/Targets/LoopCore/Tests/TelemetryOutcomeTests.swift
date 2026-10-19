@@ -3,6 +3,7 @@ import JSONValue
 @testable import LoopCore
 import ServerTelemetry
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Testing
 import WuhuAI
@@ -11,7 +12,8 @@ import WuhuAI
   let spans = Box<[FinishedSpan]>([])
   try await ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test, snapshot: .init())
       let calls: [ToolCall] = [
         .init(id: "bookmark", name: "bookmark", arguments: .init(["name": 42])),
@@ -23,13 +25,13 @@ import WuhuAI
       let inference = InferenceScript([Fix.replying("", calls: calls), Fix.replying("done")])
       var config = makeConfig(executeTool: { _ in throw UnexpectedCall("secret failure") }, inference: { try await inference($0) })
       config.prepareCompaction = { _, _, _ in throw UnexpectedCall("secret compaction failure") }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: id)
         try await until("five failed tools") { spans.value.filter { $0.name == .tool }.count == 5 }
       }
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.outcome] == "error" })
       #expect(spans.value.filter { $0.name == .tool }.allSatisfy { $0.attributes[.bytesOut] != nil })
-      let actor = SessionActor(id: id, main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(), liveness: LivenessTracker())
+      let actor = SessionActor(id: id, main: Hub(space: space), loopConfig: makeConfig(), liveness: LivenessTracker())
       await #expect(throws: (any Error).self) { try await actor.execute(calls[3]) }
       #expect(spans.value.last?.attributes[.outcome] == "cancelled")
     }

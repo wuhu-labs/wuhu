@@ -21,7 +21,7 @@ func makeSpace(date: Date = fixedDate, clock: (any Clock<Duration>)? = nil, log:
     if let clock { $0.continuousClock = clock }
   } operation: {
     guard let log else { return try Space.inMemory() }
-    return try Space.temporary(log: log)
+    return try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), log: log)
   }
 }
 

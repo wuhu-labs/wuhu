@@ -8,7 +8,8 @@ import Testing
 @Suite struct WakeTests {
   @Test func `wake drains a delivery written straight to the repo while the session is live`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -17,7 +18,7 @@ import Testing
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("first settle") { try await sessions.settledWork(sid) }
 

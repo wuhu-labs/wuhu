@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 @testable import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Synchronization
 import Testing
@@ -27,7 +28,8 @@ private func compactCall(
     let call = compactCall(summary: summary, preReads: preRead ? ["/notes.md"] : [])
     #expect(throws: CompactArgumentsError.emptySummary) { _ = try decodeArguments(CompactArguments.self, from: call) }
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "compact misuse", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.replying("compact", calls: [call]),
@@ -39,7 +41,7 @@ private func compactCall(
           return Fix.reply("continued after refusal")
         },
       ])
-      try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         _ = try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("compact refusal is followed by another inference") { try await sessions.settledWork(id) && script.count == 2 }
       }
@@ -50,7 +52,8 @@ private func compactCall(
 
   @Test func cancellationAfterForcedCommitSkipsMechanicalFallback() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "cancel compact", kind: .agent, createdBy: "morgan", model: .test)
       let attempts = Box(0)
       let compacted = Box(0)
@@ -69,7 +72,7 @@ private func compactCall(
         compacted.withLock { $0 += 1 }
         return .init(summary: "should not run")
       }, budget: tightBudget)
-      let service = await SessionService(sessions: sessions, loopConfig: config)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: config)
       try await runService(service) { _ in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for await _ in committed.stream { break }
@@ -86,7 +89,8 @@ private func compactCall(
 
   @Test func `hard pressure schedules a forced-compact inference and re-establishes state`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -112,7 +116,7 @@ private func compactCall(
         budget: tightBudget,
       )
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         // The work axis flips no_work at the first big commit already; the
         // ladder converges only once the post-compaction turn has landed.
@@ -150,7 +154,8 @@ private func compactCall(
 
   @Test func `a forced turn that fails hard falls back to the out-of-band compactor`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -165,7 +170,7 @@ private func compactCall(
         budget: tightBudget,
       )
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") {
           guard script.count == 3 else { return false }
@@ -190,7 +195,8 @@ private func compactCall(
 
   @Test func `a forced turn that refuses the call falls back too`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -205,7 +211,7 @@ private func compactCall(
         budget: tightBudget,
       )
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh turn landed") {
           guard script.count == 3 else { return false }
@@ -220,7 +226,8 @@ private func compactCall(
 
   @Test func `contextLengthExceeded escalates to compaction instead of backoff`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -230,7 +237,7 @@ private func compactCall(
       let compactor = CompactScript(.init(summary: "squeezed"))
       let config = makeConfig(inference: { try await script($0) }, compact: { try await compactor($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         // The clock never advances: any backoff would hang this convergence.
         try await until("settled") { try await sessions.settledWork(sid) }
@@ -243,7 +250,8 @@ private func compactCall(
 
   @Test func `bookmark and compact are kernel tools and rewind to the bookmark`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -255,7 +263,7 @@ private func compactCall(
       // No executeTool: the executor must never see bookmark or compact.
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("explore"), to: sid)
         try await until("explored") {
           guard script.count >= 2 else { return false }
@@ -298,7 +306,8 @@ private func compactCall(
 
   @Test func `a crash between compaction and first inference redoes the pre-reads wholesale`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(sid, input: Fix.message("hello"))
       _ = try await sessions.drainQueue(sid)
@@ -325,7 +334,7 @@ private func compactCall(
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { _ in
+      try await runService(space, config) { _ in
         try await until("settled") { try await sessions.settledWork(sid) }
       }
 
@@ -338,7 +347,8 @@ private func compactCall(
 
   @Test func `the compact command forces a compaction turn and injects its instructions`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -348,7 +358,7 @@ private func compactCall(
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("first turn settled") {
           guard script.count == 1 else { return false }
@@ -375,7 +385,8 @@ private func compactCall(
 
   @Test func `a compact command without instructions injects nothing`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let seen = TranscriptSpy()
@@ -389,7 +400,7 @@ private func compactCall(
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("first turn settled") {
           guard script.count == 1 else { return false }

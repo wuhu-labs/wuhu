@@ -12,7 +12,7 @@ import SpaceFS
 import SpaceTools
 
 struct ScriptFiles: Sendable {
-  let owner: any ScriptOwnerClient
+  let owner: any Main
   let execution: ScriptExecution
 
   func install(in engine: JSEngine) {

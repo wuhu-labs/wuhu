@@ -2,6 +2,7 @@ name: LoopCore
 kind: library
 sources: Sources
 dependencies:
+  - SessionTools
   - TaskLifetime
   - Clocks
   - ServerTelemetry

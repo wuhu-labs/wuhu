@@ -21,7 +21,7 @@ import Testing
     let state = folder.url.appendingPathComponent("machine-v2")
     let keyFile = state.appendingPathComponent(MachineV2KeyStore.filename)
     let deployment = DeploymentRecord(origin: "https://isolated.test", tlsFingerprint: "test", certificate: .provided)
-    let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     let key = try await MachineV2KeyStore.loadOrCreate(directory: state, space: first.space)
     let store = try await first.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
@@ -32,7 +32,7 @@ import Testing
     case .corruptKey: try Data([42]).write(to: keyFile)
     }
     let before = try? Data(contentsOf: keyFile)
-    let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     for request in [
       Request(url: URL(string: "https://isolated.test/v1/server")!),
       Request(url: URL(string: "https://isolated.test/v1/machine")!, method: .post, body: try .json(["name": "still-v1"])),
@@ -64,7 +64,7 @@ import Testing
     let folder = try ScratchFolder("machine-v2-corrupt-record")
     let state = folder.url.appendingPathComponent("machine-v2")
     let deployment = DeploymentRecord(origin: "https://isolated.test", tlsFingerprint: "test", certificate: .provided)
-    let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    let first = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     let key = try await MachineV2KeyStore.loadOrCreate(directory: state, space: first.space)
     let store = try await first.space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = ClientRecord(id: UUID(), correlation: UUID(), machine: "offline", start: .init(kind: "query.v1", input: [:]), description: .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: [.init("query.v1", inputSchema: [:], resultSchema: [:])]))
@@ -73,7 +73,7 @@ import Testing
     try await first.space.writer.write { db in
       try db.execute(sql: "UPDATE machine_v2_operations SET record = ? WHERE id = ?", arguments: ["corrupt", record.id.uuidString])
     }
-    let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true, webApp: nil)
+    let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     guard case let .response(response) = try await reopened.handler(Request(url: URL(string: "https://isolated.test/v1/machine-v2/challenge")!)) else {
       Issue.record("challenge upgraded"); return
     }

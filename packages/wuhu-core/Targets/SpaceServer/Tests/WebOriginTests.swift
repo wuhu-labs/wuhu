@@ -400,47 +400,6 @@ import Testing
     #expect(try await query.text() == "")
   }
 
-  @Test func shellSDKIsBundledNoCacheAndHeadHasTheServedLength() async throws {
-    let harness = try Harness()
-    let script = try await harness.get(harness.web, "/_/shell.js")
-    #expect(script.status == .ok)
-    #expect(script.headers[.contentType] == "text/javascript; charset=utf-8")
-    #expect(script.headers[.cacheControl] == "no-cache")
-    let body = try await script.text()
-    #expect(body.contains("export const context"))
-    #expect(body.contains("export function interceptedNavigation"))
-    #expect(body.contains("wuhu:ready"))
-    #expect(body.contains("wuhu:context"))
-    #expect(body.contains("wuhu:navigate"))
-    // One served file carries both shell transports; a native app that had to
-    // ship its own copy would be a second contract.
-    #expect(body.contains("parent.postMessage"))
-    #expect(body.contains("messageHandlers?.wuhuShell"))
-    #expect(body.contains("--wuhu-inset-${edge}"))
-
-    let head = try await harness.web(Request(url: URL(string: "http://space/_/shell.js")!, method: .head))
-    #expect(head.status == .ok)
-    #expect(head.headers[.contentLength] == String(body.utf8.count))
-    #expect(head.headers[.cacheControl] == "no-cache")
-    #expect(try await head.text() == "")
-  }
-
-  @Test func thePageWorkerAndItsModulesAreServedNoCacheWithRootScope() async throws {
-    let harness = try Harness()
-    let worker = try await harness.get(harness.web, "/_/worker.js")
-    #expect(worker.status == .ok)
-    #expect(worker.headers[.contentType] == "text/javascript; charset=utf-8")
-    #expect(worker.headers[.cacheControl] == "no-cache")
-    #expect(worker.headers[HTTPField.Name("Service-Worker-Allowed")!] == "/")
-    #expect(try await worker.text().contains("export function pageWorker"))
-
-    let module = try await harness.get(harness.web, "/_/open-cache.js")
-    #expect(module.status == .ok)
-    #expect(module.headers[.cacheControl] == "no-cache")
-    #expect(module.headers[HTTPField.Name("Service-Worker-Allowed")!] == nil)
-    #expect(try await harness.get(harness.web, "/_/open-cache.d.ts").status == .notFound)
-  }
-
   @Test func queryResultsCarryADigestTagAndRevalidate() async throws {
     let harness = try Harness()
     _ = try await harness.direct(
@@ -480,7 +439,7 @@ import Testing
 
   @Test(arguments: ["kanban", "list", "wall", "map"])
   func providersRefuseAttachmentDefinitions(provider: String) async throws {
-    let views = ViewProviders(files: ["kanban.html": Data("<main>kanban</main>".utf8), "list.html": Data("<main>list</main>".utf8)])
+    let views = ["kanban.html": Data("<main>kanban</main>".utf8), "list.html": Data("<main>list</main>".utf8)]
     let harness = try Harness(views: views)
     for target in [
       "/_/conversations/chat/attachments/proof.view",
@@ -500,7 +459,7 @@ import Testing
   }
 
   @Test func everyHTMLResponseIsInjectedAndLengthsDescribeTransformedBytes() async throws {
-    let providers = ViewProviders(files: ["owned.html": Data("<main>owned</main>".utf8)])
+    let providers = ["owned.html": Data("<main>owned</main>".utf8)]
     let harness = try Harness(views: providers)
     _ = try await harness.direct("write", .object(["path": "/page.html", "content": "<main>authored</main>"]))
     _ = try await harness.direct("write", .object(["path": "/already.html", "content": .string(injection)]))
@@ -562,10 +521,10 @@ import Testing
   }
 
   @Test func bundledViewProvidersServeUnderTheUnderscoreNamespace() async throws {
-    let providers = ViewProviders(files: [
+    let providers = [
       "kanban.html": Data("<html>kanban provider</html>".utf8),
       "kanban.js": Data("export {}".utf8),
-    ])
+    ]
     let harness = try Harness(views: providers)
 
     let bare = try await harness.get(harness.web, "/_/views/kanban")
@@ -584,7 +543,7 @@ import Testing
   }
 
   @Test func wallAndMapAreServedByTheListProvider() async throws {
-    let providers = ViewProviders(files: ["list.html": Data("<html>list provider</html>".utf8)])
+    let providers = ["list.html": Data("<html>list provider</html>".utf8)]
     let harness = try Harness(views: providers)
 
     for kind in ["list", "wall", "map"] {
@@ -599,7 +558,7 @@ import Testing
   }
 
   @Test func spaceFilesCannotShadowBundledProviders() async throws {
-    let providers = ViewProviders(files: ["kanban.html": Data("<html>bundled</html>".utf8)])
+    let providers = ["kanban.html": Data("<html>bundled</html>".utf8)]
     let harness = try Harness(views: providers)
     await #expect(throws: (any Error).self) {
       _ = try await harness.direct("write", .object(["path": "/_/views/kanban", "content": "impostor"]))

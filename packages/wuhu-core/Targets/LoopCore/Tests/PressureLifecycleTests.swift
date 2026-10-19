@@ -1,4 +1,5 @@
 import Dependencies
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -13,7 +14,8 @@ import Testing
   @Test(arguments: [false, true])
   func cancelledBudgetResolutionCannotReadDismountedState(serviceShutdown: Bool) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "budget teardown", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(sid, input: Fix.message("go"))
       let entered = AsyncStream<Void>.makeStream()
@@ -36,7 +38,7 @@ import Testing
         }
         return .init(maxInput: 1_001_000, maxOutput: 1000)
       }
-      let service = await SessionService(sessions: sessions, loopConfig: config)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: config)
       let start = Task { try await service.start() }
       for await _ in entered.stream { break }
       if serviceShutdown {
@@ -57,7 +59,8 @@ import Testing
 
   @Test func serviceRestartReusesUnfinishedTurnsDurableNotice() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "notice restart", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(sid, input: Fix.message("go"))
       let attempts = Box<[Transcript]>([])
@@ -74,7 +77,7 @@ import Testing
       })
       config.thresholds = .init(soft: 0, hard: 100)
       for round in 1 ... 3 {
-        try await runService(sessions, config) { _ in
+        try await runService(space, config) { _ in
           try await until("inference before restart") { attempts.value.count == round }
           if round == 3 { try await until("settled") { try await sessions.settledWork(sid) } }
         }

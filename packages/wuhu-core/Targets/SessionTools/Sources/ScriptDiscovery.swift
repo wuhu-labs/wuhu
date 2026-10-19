@@ -17,7 +17,7 @@ struct ScriptDiscoveryConfiguration: Sendable {
 
 struct ScriptDiscovery: Sendable {
   let execution: ScriptExecution
-  let owner: any ScriptOwnerClient
+  let owner: any Main
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_identity_origin") { arguments in

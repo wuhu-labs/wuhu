@@ -8,7 +8,8 @@ import WuhuAI
 @Suite struct ReplayHandoffLoopTests {
   @Test func boundaryWriteConflictParksSafelyAndResumeKeepsLooperAlive() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "conflict", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { request in
@@ -20,7 +21,7 @@ import WuhuAI
         },
         { _ in Fix.reply("resumed") },
       ])
-      try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         _ = try await service.enqueue(item: Fix.message("work"), to: id)
         try await until("boundary conflict parked") { try await sessions.record(id).work == .errored }
         #expect(try await sessions.record(id).errorMessage?.contains("transcriptChanged") == true)
@@ -36,7 +37,8 @@ import WuhuAI
 
   @Test func committedSideEffectsFinishBeforeBoundaryAndAreNotRepeated() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "replay handoff", kind: .agent, createdBy: "morgan", model: .test)
       let newBinding = ReplayBinding(identity: "new-account", epoch: "new-route")
       let script = InferenceScript([
@@ -67,7 +69,7 @@ import WuhuAI
       let exec = ExecScript { _ in .failure(.init(message: "recorded receipt")) }
       var config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
       config.runningWork = { _ in ["exec.snapshot"] }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("do work"), to: id)
         try await until("new account request committed") {
           guard script.count == 3 else { return false }

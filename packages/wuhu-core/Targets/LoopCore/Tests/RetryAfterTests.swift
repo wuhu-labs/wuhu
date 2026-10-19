@@ -12,7 +12,8 @@ import WuhuAI
 @Suite struct RetryAfterTests {
   @Test func `a throttle carrying retryAt waits exactly until it, then succeeds`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -21,7 +22,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: 600)
@@ -39,7 +40,8 @@ import WuhuAI
 
   @Test func `a retryAt beyond an hour is re-asked hourly`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let weekly = anchor.addingTimeInterval(5 * 3600)
@@ -50,7 +52,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("capped wait 1", after: retryAtCeiling)
@@ -70,7 +72,8 @@ import WuhuAI
   // zero-delay hammer: a retryAt not in the future is the exponential step.
   @Test func `a retryAt not in the future backs off exponentially`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let stale = anchor.addingTimeInterval(-60)
@@ -86,7 +89,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -111,7 +114,8 @@ import WuhuAI
   // exponential schedule around it is the one a throttle without retryAt keeps.
   @Test func `a retryAt wait leaves the exponential schedule untouched`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -127,7 +131,7 @@ import WuhuAI
       let first = 1 * Double.random(in: 0 ... 1, using: &rng)
       let third = 4 * Double.random(in: 0 ... 1, using: &rng)
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: first)
@@ -147,7 +151,8 @@ import WuhuAI
 
   @Test func `interrupt cancels a long retryAt wait and resume retries`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -156,7 +161,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.asleep("retry-after", dueIn: retryAtCeiling)
@@ -177,7 +182,8 @@ import WuhuAI
 
   @Test func `a provider 429 with Retry-After is waited out end to end`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let document = ModelsDocument(providers: ["offline": .init(dialect: .anthropic, baseURL: URL(string: "https://example.test/v1")!, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
@@ -200,7 +206,7 @@ import WuhuAI
       let config = makeConfig(inference: { try await script($0) })
 
       try await withDependencies { $0.fetch = provider } operation: {
-        try await runService(sessions, config) { service in
+        try await runService(space, config) { service in
           _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("throttled") { script.count == 1 }
           try await time.asleep("retry-after", dueIn: 1800)

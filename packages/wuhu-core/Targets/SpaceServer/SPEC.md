@@ -2,7 +2,7 @@
 
 ## In-process execution ownership
 
-`SessionRuntime.assemble` composes one `SessionOwnerClient` for the session loop, inference, tool execution, QuickJS scripts and handler execution. Its session and inference facets delegate to `InProcessExecutionOwnerClient`; persistent tools and script host effects delegate to `InProcessToolOwnerClient`. Execution code receives semantic operations and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Credentials, inference signing, identity requests, attempt trace sinks and metric recording cross the same owner boundary. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `HandlerExecutionClient` and persists their returned state and wakes. This is the only execution composition: session loops, provider sockets, QuickJS scripts and handlers run in the server process. Standalone and hosted serving have no placement selector, private child mode or admin-exec replacement. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
+`SessionRuntime.assemble` composes one directly conforming Hub actor for the session loop, inference, tool execution, QuickJS scripts and handler execution. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `HandlerExecutionClient` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process without in-memory serialization. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
 
 ## Person–session DM refusal
 
@@ -869,3 +869,7 @@ A request deadline or transport failure on a v2 exec exchange is not evidence ab
 The v2 exec relay treats stdout/stderr channel EOF independently from process termination: it retains drained bytes and continues bounded polling until terminal evidence arrives, then returns the native exit status. A stdin operationEnded response after a fast process exit does not cancel output draining. Regression coverage runs the real supervisor ExecKind native process with both output descriptors closed before exit 7, as well as a fast-exit stdin refusal with authenticated response metadata.
 
 In-process exec transport close ends the socket; it does not cancel or await the caller session. Its inbound sequence is pull-driven and ends at socket EOF without waiting for retained-tail work. Caller sessions remain named in the machine hub transport scope until they return; hub shutdown cancels this scope without awaiting non-cooperative transport work. Host shutdown drains key-response pumps, release lookups, and space observations.
+
+## Web content
+
+`WebContent` injects the optional SPA, view-provider files and shell JavaScript into `handler`, `SpaceHost.open` and `serve`. The library embeds no web assets; an empty value serves API/content routes without the SPA or shell injection. `serve` applies `webAppDirectory` only to the SPA, retaining injected providers and scripts.

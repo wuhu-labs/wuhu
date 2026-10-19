@@ -1,3 +1,4 @@
+@testable import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,7 +7,6 @@
 import enum InferenceKit.CatalogError
 import JSONValue
 import SessionDomain
-@testable import SessionTools
 import SpaceCore
 import Testing
 
@@ -71,7 +71,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
         group: "work", member: "first", specifier: .init(provider: "p", model: "m", effort: "high"),
         bindingFingerprint: "binding", epoch: "epoch", reason: .create, placedAt: Date(timeIntervalSince1970: 1), evidence: [],
       )
-      let owner = InProcessToolOwnerClient(
+      let owner = Hub(
         space: space,
         resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") },
         resolveModelGroup: { id, _ in
@@ -116,7 +116,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   }
 
   @Test func invalidStoredGroupBindingRetainsMachineReadableCode() throws {
-    let owner = InProcessToolOwnerClient(space: try Space.inMemory())
+    let owner = Hub(space: try Space.inMemory())
     let failure = owner.problem(.modelRouteInvalid(group: "work", member: "initial"))
     #expect(failure.code == "modelRouteInvalid")
     #expect(failure.message.contains("work") && failure.message.contains("initial"))

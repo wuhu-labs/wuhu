@@ -37,10 +37,10 @@ let scriptWriteBytes = (12 << 20) - (64 << 10)
 
 final class ScriptMachineBindings: Sendable {
   private let execution: ScriptExecution
-  private let owner: any ScriptOwnerClient
+  private let owner: any Main
   private let access: ScriptMachineAccess?
 
-  init(execution: ScriptExecution, owner: any ScriptOwnerClient, access: ScriptMachineAccess?) {
+  init(execution: ScriptExecution, owner: any Main, access: ScriptMachineAccess?) {
     self.execution = execution
     self.owner = owner
     self.access = access
@@ -53,7 +53,7 @@ final class ScriptMachineBindings: Sendable {
         case "list": return try JSONValueEncoder().encode(try await owner.ownExecs(session: execution.session))
         case "status": return try JSONValueEncoder().encode(try await owner.ownExecStatus(string(arguments, 1), session: execution.session))
         case "kill":
-          let id = try await owner.ownExecToKill(string(arguments, 1), session: execution.session)
+          let id = try await owner.ownExecStatus(string(arguments, 1), session: execution.session).id
           do { try await available().exec.kill(id) }
           catch { throw Wire.failure(error) }
           return .null

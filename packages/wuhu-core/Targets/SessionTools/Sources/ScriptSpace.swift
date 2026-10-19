@@ -16,7 +16,7 @@ import SpaceTools
 // code, hint and token a page would see.
 struct ScriptSpace: Sendable {
   let execution: ScriptExecution
-  let owner: any ScriptOwnerClient
+  let owner: any Main
   let streams: ScriptStreams
 
   private var session: SessionID {

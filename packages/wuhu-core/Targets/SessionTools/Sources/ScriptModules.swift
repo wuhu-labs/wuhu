@@ -16,7 +16,7 @@ private let scheme = "wuhu:"
 
 /// `wuhu:/<path>` reads the acting group's files and `wuhu://<group>.localspace/<path>`
 /// another group's, which it must read; every space module is as of `rev`.
-func scriptModules(owner: any ScriptOwnerClient, snapshot: ScriptModuleSnapshot, typedErrors: Bool = false) -> JSEngine.ModuleLoader {
+func scriptModules(owner: any Main, snapshot: ScriptModuleSnapshot, typedErrors: Bool = false) -> JSEngine.ModuleLoader {
   JSEngine.ModuleLoader(
     maxModules: scriptModuleLimit,
     resolve: resolveScriptModule,

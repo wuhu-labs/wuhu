@@ -113,10 +113,10 @@ private final class IdentityHarness: Sendable {
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
-    let service = await SessionService(sessions: self.store, loopConfig: config)
+    let service = await SessionService(sessions: self.store, main: Hub(space: space), loopConfig: config)
     self.serviceTask = Task { try? await service.start() }
     let runtime = SessionRuntime(space: space, service: service, attempts: AttemptHub())
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, webApp: nil, execTokens: tokens)
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts
     self.fetch = FetchClient { request in

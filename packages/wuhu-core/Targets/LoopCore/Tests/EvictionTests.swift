@@ -15,7 +15,8 @@ import WuhuAI
 
   @Test func `the idle sweep evicts settled sessions and the next verb rematerializes`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -27,7 +28,7 @@ import WuhuAI
         eviction: .init(idleTTL: .seconds(300), maxIdle: 32, sweepInterval: .seconds(30)),
       )
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
         // idleSince set = the loop pass fully ended; advancing earlier would
@@ -59,7 +60,8 @@ import WuhuAI
 
   @Test func `a callback lost to a racing terminal error surfaces retryably and the retry lands`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -78,7 +80,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt in flight") { script.count == 1 }
 

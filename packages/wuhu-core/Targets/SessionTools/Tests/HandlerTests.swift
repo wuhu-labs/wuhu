@@ -1,4 +1,5 @@
 import Dependencies
+@testable import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,7 +8,6 @@ import Dependencies
 import JSONValue
 import Scratch
 import SessionDomain
-@testable import SessionTools
 @_spi(SessionObservation) import SpaceCore
 import SpaceFS
 import Testing

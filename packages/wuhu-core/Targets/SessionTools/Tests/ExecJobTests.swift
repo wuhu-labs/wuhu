@@ -351,7 +351,7 @@ private struct ExecJobRig {
   let machine: MachineID
   let scripted: ScriptedExecMachine
   var world: ToolWorld
-  let owner: InProcessToolOwnerClient
+  let owner: Hub
 
   init() async throws {
     let space = try Space.inMemory()
@@ -374,7 +374,7 @@ private struct ExecJobRig {
     self.scripted = scripted
     let executor = ToolExecutor(space: space, machines: FakeMachineFS().seam, exec: exec ? scripted.backend(space) : nil)
     world = ToolWorld(executor: executor, session: session)
-    owner = try #require(executor.owner as? InProcessToolOwnerClient)
+    owner = try #require(executor.owner as? Hub)
   }
 
   mutating func exec(_ extra: OrderedDictionary<String, JSONValue>, id: String) async throws -> ExecResult {

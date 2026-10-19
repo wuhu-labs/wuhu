@@ -22,7 +22,7 @@ import Testing
       let seen = Box<[Transcript]>([])
       let committed = AsyncStream<Void>.makeStream()
       defer { committed.continuation.finish() }
-      try await runService(sessions, makeConfig(inference: { request in
+      try await runService(space, makeConfig(inference: { request in
         seen.withLock { $0.append(request.transcript) }
         var reply = Fix.reply("recovered")
         reply.committed = { _, _ in committed.continuation.yield(()) }
@@ -46,7 +46,8 @@ import Testing
   @Test(arguments: [SessionKind.agent, .task])
   func queuedInputWakesTheNewGenerationAndItsFirstPromptCarriesState(kind: SessionKind) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let parent = try await sessions.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "morgan", model: .test)
       let id = try await sessions.createSession(group: .shared, title: "restart", kind: kind, parent: kind == .task ? parent : nil, createdBy: "morgan", executor: .kernel(.test))
       _ = try await sessions.armSubscription(id, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "later")), nextFireAt: anchor.addingTimeInterval(60))
@@ -61,7 +62,7 @@ import Testing
         reply.committed = { _, _ in committed.continuation.yield(()) }
         return reply
       })
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.restart(id, executor: nil, note: "Started over. Catch up before acting.")
         for await _ in committed.stream { break }
         let transcript = try #require(seen.value.first)

@@ -13,7 +13,8 @@ import WuhuAI
 @Suite struct SubscriptionReconciliationTests {
   @Test func silentRetirementDoesNotWakeLoadedSessionAndNextInferenceAndCompactionReconcile() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "silent retirement", kind: .agent, createdBy: "morgan", model: .test)
       let timerID = SubscriptionID("timer.silent")
       let schedule = TimerSchedule.oneShot(anchor.addingTimeInterval(60))
@@ -44,7 +45,7 @@ import WuhuAI
       ])
       var config = makeConfig(inference: { try await script($0) })
       config.runningWork = { _ in ["exec.snapshot"] }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         try await service.wake(id)
         try await until("loaded session settles") {
           guard script.count == 1 else { return false }
@@ -80,7 +81,8 @@ import WuhuAI
 
   @Test func afterStartOverTheFirstRequestListsTheWorkStillRunning() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "running work", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         { request in
@@ -98,7 +100,7 @@ import WuhuAI
         #expect(session == id)
         return running.value
       }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.restart(id, executor: nil, note: nil)
         running.withLock { $0 = [] }
         _ = try await service.enqueue(item: Fix.message("what is still running?"), to: id)

@@ -173,23 +173,23 @@ import struct WuhuAI.ToolArguments
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)
 
-      try await executor.control(.archive, rig.s, of: theirs)
+      try await executor.owner.control(.archive, rig.s, of: theirs, force: false)
       for (caller, target) in [(st, rig.s), (rig.p, rig.s), (st, theirs)] {
         do {
-          try await executor.control(.archive, caller, of: target)
+          try await executor.owner.control(.archive, caller, of: target, force: false)
           Issue.record("\(caller.rawValue) archived \(target.rawValue)")
         } catch let problem as ToolProblem {
           #expect(problem.message == "\(caller.rawValue) may not archive or unarchive session \(target.rawValue): only the session itself, its creator and admins of its group may")
         }
       }
       do {
-        try await executor.control(.archive, st, of: st, force: true)
+        try await executor.owner.control(.archive, st, of: st, force: true)
         Issue.record("script force-archived itself")
       } catch let problem as ToolProblem {
         #expect(problem.message.contains("can't force-archive itself"))
       }
-      try await executor.control(.archive, st, of: st)
-      try await executor.control(.unarchive, st, of: st)
+      try await executor.owner.control(.archive, st, of: st, force: false)
+      try await executor.owner.control(.unarchive, st, of: st, force: false)
       #expect(performed.value == [theirs, st, st])
     }
   }

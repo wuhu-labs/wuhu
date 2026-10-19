@@ -30,7 +30,6 @@ dependencies:
   - StructuredQueriesSQLite
   - Dependencies
   - Logging
-  - Scratch
 tests:
   exclude:
     - Fixtures/**

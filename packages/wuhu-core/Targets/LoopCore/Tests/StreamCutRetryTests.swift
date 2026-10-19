@@ -17,7 +17,8 @@ import WuhuAI
   @Test(arguments: [false, true])
   func cutStreamRetriesWithoutErrorOrPartialCommit(egressEvent: Bool) async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "partial", kind: .agent, createdBy: "morgan", model: .test)
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
       let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
@@ -41,7 +42,7 @@ import WuhuAI
       mirrorAllocationDraws(&rng)
       let delay = Double.random(in: 0 ... 1, using: &rng)
       try await withDependencies { $0.fetch = provider } operation: {
-        try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+        try await runService(space, makeConfig(inference: { try await script($0) })) { service in
           _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
           try await until("failed attempt") { script.count == 1 }
           try await time.asleep("retry", dueIn: delay)

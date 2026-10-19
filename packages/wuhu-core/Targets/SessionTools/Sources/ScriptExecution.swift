@@ -246,7 +246,7 @@ final class ScriptExecution: Sendable {
 
   // MARK: The engine's side
 
-  func run(owner: any ScriptOwnerClient) async {
+  func run(owner: any Main) async {
     guard ServerTracing.enabled else { return await runBody(owner: owner) }
     let group = try? await owner.moduleSnapshot(for: session).acting.rawValue
     await ServerTracing.$context.withValue(traceContext) {
@@ -266,7 +266,7 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func runBody(owner: any ScriptOwnerClient) async {
+  private func runBody(owner: any Main) async {
     let killed = state.withLock { state -> ScriptStop? in
       state.started = true
       return state.killRequested
@@ -301,14 +301,14 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func evaluate(owner: any ScriptOwnerClient) async -> ScriptEnding {
+  private func evaluate(owner: any Main) async -> ScriptEnding {
     let streams = ScriptStreams()
     let ending = await evaluate(owner: owner, streams: streams)
     await streams.shutdown()
     return ending
   }
 
-  private func evaluate(owner: any ScriptOwnerClient, streams: ScriptStreams) async -> ScriptEnding {
+  private func evaluate(owner: any Main, streams: ScriptStreams) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
     ScriptBindings(execution: self, owner: owner, secrets: secrets).install(in: engine)
     ScriptFiles(owner: owner, execution: self).install(in: engine)
@@ -369,7 +369,7 @@ final class ScriptExecution: Sendable {
     }
   }
 
-  private func deliver(to owner: any ScriptOwnerClient) async {
+  private func deliver(to owner: any Main) async {
     for await text in outbox {
       await notify(owner, session, script: id, text)
     }
@@ -544,7 +544,7 @@ struct ScriptConsole {
 }
 
 // Wakes `session` with a message from script `script`.
-func notify(_ owner: any ScriptOwnerClient, _ session: SessionID, script: String, _ text: String) async {
+func notify(_ owner: any Main, _ session: SessionID, script: String, _ text: String) async {
   @Dependency(\.date) var date
   @Dependency(\.uuid) var uuid
   let notification = SystemNotification(

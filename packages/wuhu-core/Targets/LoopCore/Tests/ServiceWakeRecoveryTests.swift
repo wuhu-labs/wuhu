@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -34,7 +35,7 @@ import WuhuAI
       let calls = Box<[SessionID]>([])
       let commits = AsyncStream<SessionID>.makeStream()
       defer { commits.continuation.finish() }
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { request in
         calls.withLock { $0.append(request.sessionID) }
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
@@ -100,7 +101,7 @@ import WuhuAI
       let calls = Box<[SessionID]>([])
       let commits = AsyncStream<SessionID>.makeStream()
       defer { commits.continuation.finish() }
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { request in
         calls.withLock { $0.append(request.sessionID) }
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
@@ -142,7 +143,7 @@ import WuhuAI
       let errors = ErrorCommits(task)
       sessions.writer.add(transactionObserver: errors)
       defer { errors.stream.continuation.finish() }
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(inference: { request in
         #expect(request.sessionID == task)
         try await space.writer.write { db in
           try db.execute(sql: "UPDATE session_queue SET payload = '{}' WHERE session_id = ?", arguments: [task.rawValue])
@@ -177,12 +178,13 @@ import WuhuAI
       defer { commits.continuation.finish(); errors.stream.continuation.finish() }
       let logs = RecordedLogs()
       let hydrations = Box(0)
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .read(let session, .hydration) = message else { return try await store.send(message) }
-        if session == bad { hydrations.withLock { $0 += 1 } }
-        return try await store.send(.read(session, .hydration))
-      }, loopConfig: makeConfig(inference: { request in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeHydrate = { session async throws in
+          if session == bad { hydrations.withLock { $0 += 1 } }
+        }
+        return access
+      }()), loopConfig: makeConfig(inference: { request in
         #expect(request.sessionID != bad)
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
@@ -230,22 +232,24 @@ import WuhuAI
     try await withKernelDeps { _ in
       let clock = WakeTestClock()
       try await withDependencies { $0.continuousClock = AnyClock(clock) } operation: {
-        let sessions = try Space.inMemory().sessions
+        let space = try Space.inMemory()
+        let sessions = space.sessions
         let bad = try await sessions.createSession(group: .shared, title: "transient", kind: .agent, createdBy: "morgan", model: .test)
         let healthy = try await sessions.createSession(group: .shared, title: "healthy", kind: .agent, createdBy: "morgan", model: .test)
         _ = try await sessions.enqueue(healthy, input: Fix.message("boot"))
         let calls = Box(0)
         let commits = AsyncStream<Void>.makeStream()
         defer { commits.continuation.finish(); clock.sleeps.continuation.finish() }
-        let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-          let store = InProcessMainClient(sessions: sessions)
-          guard case .read(let session, .hydration) = message else { return try await store.send(message) }
-          if session == bad {
-            calls.withLock { $0 += 1 }
-            throw DatabaseError(resultCode: .SQLITE_LOCKED)
+        let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+          var access = SessionAccess()
+          access.beforeHydrate = { session async throws in
+            if session == bad {
+              calls.withLock { $0 += 1 }
+              throw DatabaseError(resultCode: .SQLITE_LOCKED)
+            }
           }
-          return try await store.send(.read(session, .hydration))
-        }, loopConfig: makeConfig(inference: { _ in
+          return access
+        }()), loopConfig: makeConfig(inference: { _ in
           var reply = Fix.reply("done")
           reply.committed = { _, _ in commits.continuation.yield(()) }
           return reply
@@ -280,15 +284,16 @@ import WuhuAI
         sessions.writer.add(transactionObserver: errors)
         let commits = AsyncStream<SessionID>.makeStream()
         defer { commits.continuation.finish(); errors.stream.continuation.finish(); clock.sleeps.continuation.finish() }
-        let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-          let store = InProcessMainClient(sessions: sessions)
-          guard case .read(let session, .hydration) = message else { return try await store.send(message) }
-          if session == bad {
-            let count = calls.withLock { $0 += 1; return $0 }
-            if !recovered.value && (exhausted || count <= 2) { throw DatabaseError(resultCode: .SQLITE_BUSY) }
+        let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+          var access = SessionAccess()
+          access.beforeHydrate = { session async throws in
+            if session == bad {
+              let count = calls.withLock { $0 += 1; return $0 }
+              if !recovered.value && (exhausted || count <= 2) { throw DatabaseError(resultCode: .SQLITE_BUSY) }
+            }
           }
-          return try await store.send(.read(session, .hydration))
-        }, loopConfig: makeConfig(inference: { request in
+          return access
+        }()), loopConfig: makeConfig(inference: { request in
           var reply = Fix.reply("done")
           reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }
           return reply

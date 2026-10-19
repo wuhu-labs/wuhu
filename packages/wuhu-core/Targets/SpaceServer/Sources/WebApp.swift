@@ -19,16 +19,6 @@ public struct WebApp: Sendable {
     self.files = files
   }
 
-  #if WUHU_EMBEDDED
-    public static let embedded: WebApp? = WebApp(files: Dictionary(
-      uniqueKeysWithValues: EmbeddedWebApp.files.map { file in
-        (file.path.joined(separator: "/"), Data(EmbeddedWebApp.bytes(for: file)))
-      },
-    ))
-  #else
-    public static let embedded: WebApp? = nil
-  #endif
-
   public struct DirectoryLoadError: Error, CustomStringConvertible {
     public let description: String
   }

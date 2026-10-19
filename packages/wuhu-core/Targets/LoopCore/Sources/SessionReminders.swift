@@ -1,6 +1,5 @@
 import Clocks
 import Dependencies
-import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -15,7 +14,6 @@ actor SessionReminders {
   private var execution: (any SessionExecutionClient)?
   private var pending: [SessionID: UUID] = [:]
   private var tasks: [UUID: Task<Void, Never>] = [:]
-  private let taskScope = TaskScope()
   private var stopped = false
   @Dependency(\.continuousClock) private var clock
   @Dependency(\.date) private var date
@@ -24,6 +22,8 @@ actor SessionReminders {
     self.sessions = sessions
     self.execution = execution
   }
+
+  deinit { for task in tasks.values { task.cancel() } }
 
   func bind(_ execution: any SessionExecutionClient) {
     precondition(self.execution == nil)
@@ -35,17 +35,19 @@ actor SessionReminders {
     guard !stopped, let due else { return }
     let token = UUID()
     let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(date()))), clock: clock)
-    let task = try? taskScope.run("session-reminder") {
-      defer { tasks[token] = nil }
+    let task = Task { @Sendable [weak self] in
       do {
         try await sleep()
         try Task.checkCancellation()
-        await fire(id, token: token)
+        await self?.fire(id, token: token)
       } catch {}
+      await self?.finished(token)
     }
     pending[id] = token
     tasks[token] = task
   }
+
+  private func finished(_ token: UUID) { tasks[token] = nil }
 
   private func fire(_ id: SessionID, token: UUID) async {
     guard !stopped, pending[id] == token else { return }
@@ -79,7 +81,6 @@ actor SessionReminders {
     for task in running { task.cancel() }
     for task in running { await task.value }
     tasks.removeAll()
-    await taskScope.close()
     execution = nil
   }
 }

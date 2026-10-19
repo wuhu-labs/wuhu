@@ -10,6 +10,7 @@ import LoopCore
 import Serve
 import ServeTesting
 import SessionDomain
+import SessionTools
 import SpaceContract
 import SpaceCore
 @testable import SpaceServer
@@ -98,10 +99,10 @@ struct SessionHarness {
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
       allowCacheWarming: { try await CacheWarmer(space: space, usage: cacheUsage).allows($0) },
     )
-    let service = await SessionService(sessions: store, loopConfig: config)
+    let service = await SessionService(sessions: store, main: Hub(space: space), loopConfig: config)
     runtime = SessionRuntime(space: space, service: service, attempts: attempts, credentials: credentials)
     handler = SpaceServer.configuredHandler(
-      space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil,
+      space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: execTokens,
       identityController: identityController, machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
     )
@@ -181,7 +182,7 @@ struct SessionHarness {
       usage: UsageBoard(),
       oidcToken: oidcToken,
     )
-    handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true, webApp: nil)
+    handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     api = ServeTesting.client(upgrading: handler)
   }
 

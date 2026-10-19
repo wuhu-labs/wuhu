@@ -35,7 +35,7 @@ struct Harness {
     aiDisclosure: AIDisclosure? = nil,
     fingerprint: String? = nil,
     webApp: WebApp? = nil,
-    views: ViewProviders? = nil,
+    views: [String: Data] = [:],
     webPushApplicationServerKey: String? = nil,
     credentials: CredentialResolver = .unavailable,
     pageFetch: PageFetchHandler? = nil,
@@ -52,7 +52,7 @@ struct Harness {
       let hub = MachineHub(space: space)
       let handler = SpaceServer.configuredHandler(
         space: space, hub: hub, origin: origin, contentHostPattern: contentHostPattern, aiDisclosure: aiDisclosure,
-        fingerprint: fingerprint, dev: dev, publicRead: publicRead, webApp: webApp, views: views,
+        fingerprint: fingerprint, dev: dev, publicRead: publicRead, webContent: WebContent(webApp: webApp, views: views, scripts: ["shell.js": Data(), "worker.js": Data(), "space-core.js": Data("export function createSpace() {}".utf8)]),
         webPushApplicationServerKey: webPushApplicationServerKey,
         credentials: credentials, identityJWKS: identityJWKS, pageFetch: pageFetch,
       )

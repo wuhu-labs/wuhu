@@ -1,0 +1,28 @@
+name: WebBundle
+kind: library
+sources: Sources
+embeddedResources:
+  - name: WebApp
+    target: //packages/wuhu-web/app:bundle
+    typeName: EmbeddedWebApp
+    symbolName: webapp
+  - name: ViewProviders
+    path: ViewProviders
+    typeName: EmbeddedViewProviders
+    symbolName: viewproviders
+  - name: ShellSDK
+    target: //packages/wuhu-web/app:shell-sdk
+    typeName: EmbeddedShellSDK
+    symbolName: shellsdk
+checks:
+  build: [linux, mac]
+  test: [linux, mac]
+dependencies:
+  - SpaceServer
+tests:
+  dependencies:
+    - SpaceServer
+    - SpaceCore
+    - Fetch
+    - HTTPTypes
+    - ServeTesting

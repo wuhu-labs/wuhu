@@ -44,7 +44,7 @@ public actor SpaceHost {
     allowEnvironmentCredentials: Bool = true, fallbackOrigin: String = "https://localhost", port: Int? = nil,
     dev: Bool = false, publicRead: Bool = false,
     contentHostPattern: String? = nil, aiDisclosure: AIDisclosure? = nil,
-    version: String = SpaceServer.unstampedVersion, webApp: WebApp? = .embedded,
+    version: String = SpaceServer.unstampedVersion, webContent: WebContent = WebContent(),
     devImport: URL? = nil, devExport: URL? = nil,
   ) async throws -> SpaceHost {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -144,7 +144,7 @@ public actor SpaceHost {
         dev: dev,
         publicRead: publicRead,
         version: version,
-        webApp: webApp,
+        webContent: webContent,
         webPushApplicationServerKey: webPushManager.nextVAPIDKeyID.description,
         credentials: credentials,
         secrets: secrets,

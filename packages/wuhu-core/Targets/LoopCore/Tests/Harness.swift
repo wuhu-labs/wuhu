@@ -5,6 +5,7 @@ import Foundation
 import JSONValue
 @testable import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Synchronization
 import Testing
@@ -83,11 +84,11 @@ func withKernelDeps<R>(
 }
 
 func runService(
-  _ sessions: SessionStore,
+  _ space: Space,
   _ config: LoopConfig,
   body: (SessionService) async throws -> Void,
 ) async throws {
-  try await runService(await SessionService(sessions: sessions, loopConfig: config), body: body)
+  try await runService(await SessionService(sessions: space.sessions, main: Hub(space: space), loopConfig: config), body: body)
 }
 
 func runService(

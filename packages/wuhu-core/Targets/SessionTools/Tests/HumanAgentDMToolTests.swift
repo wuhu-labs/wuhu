@@ -1,3 +1,4 @@
+@testable import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -6,7 +7,6 @@
 import GRDB
 import JSONValue
 import SessionDomain
-@testable import SessionTools
 @testable import SpaceCore
 import Testing
 

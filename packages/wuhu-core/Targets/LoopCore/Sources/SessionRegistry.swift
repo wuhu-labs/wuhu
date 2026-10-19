@@ -1,4 +1,5 @@
 import Dependencies
+import SessionTools
 import Synchronization
 import TaskLifetime
 #if canImport(FoundationEssentials)
@@ -7,10 +8,10 @@ import TaskLifetime
   import Foundation
 #endif
 import struct SessionDomain.SessionID
-import protocol SpaceCore.MainClient
+import protocol SessionTools.Main
 
 actor SessionRegistry {
-  private let main: any MainClient
+  private let main: any Main
   private let loopConfig: LoopConfig
   private let liveness: LivenessTracker
 
@@ -25,13 +26,12 @@ actor SessionRegistry {
   private var stopped: Bool { if case .active = state { false } else { true } }
   private nonisolated let taskScope = TaskScope()
   private nonisolated let admission = Mutex(true)
-  private var reaper: Task<Void, Never>?
 
   @Dependency(\.continuousClock) private var clock
   @Dependency(\.date) private var date
 
   init(
-    main: any MainClient,
+    main: any Main,
     loopConfig: LoopConfig,
     liveness: LivenessTracker,
   ) {
@@ -41,9 +41,16 @@ actor SessionRegistry {
   }
 
   func activate() {
-    precondition(reaper == nil, "SessionRegistry activates once")
-    reaper = try? taskScope.run("session-reaper") { await runReaper() }
+    let clock = clock, policy = loopConfig.eviction
+    _ = try? taskScope.run("session-reaper", isolation: nil) { @Sendable [weak self] in
+      while !Task.isCancelled {
+        guard (try? await clock.sleep(for: policy.sweepInterval)) != nil else { return }
+        await self?.sweep(policy: policy)
+      }
+    }
   }
+
+  deinit { taskScope.cancel() }
 
   nonisolated func send(_ action: SessionActor.ExternalAction, to id: SessionID) {
     admission.withLock { open in
@@ -54,15 +61,18 @@ actor SessionRegistry {
 
   func post(_ action: SessionActor.ExternalAction, to id: SessionID) async {
     guard !stopped else { return }
+    if sessions[id] == nil {
+      do { _ = try await main.record(id) }
+      catch { action.fail(error); return }
+    }
+    guard !stopped else { return }
     let session: SessionActor
     if let existing = sessions[id] {
       session = existing
     } else {
-      // Unknown ids surface as unknownSession from the verb's first repo
-      // call; the placeholder actor is reaped like any idle session.
       session = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
       sessions[id] = session
-      await session.activate()
+      await session.activate(in: taskScope)
     }
     guard !stopped else { return }
     session.post(action)
@@ -88,10 +98,7 @@ actor SessionRegistry {
     let (finished, signal) = AsyncStream<Void>.makeStream()
     state = .stopping(finished)
     admission.withLock { $0 = false }
-    let reaper = self.reaper
-    reaper?.cancel()
-    self.reaper = nil
-    await reaper?.value
+    taskScope.cancel()
     let current = Array(sessions.values)
     sessions.removeAll()
     for session in current { await retire(session) }
@@ -120,14 +127,6 @@ actor SessionRegistry {
   // sessions idle past the TTL, and past maxIdle it retires oldest-idle
   // first. The verdict is the session's own (tryRetire refuses while busy);
   // write-through makes retirement safe and the next verb rehydrates.
-  private func runReaper() async {
-    let policy = loopConfig.eviction
-    while !Task.isCancelled {
-      guard (try? await clock.sleep(for: policy.sweepInterval)) != nil else { return }
-      await sweep(policy: policy)
-    }
-  }
-
   private func sweep(policy: EvictionPolicy) async {
     let now = date()
     var idle: [(id: SessionID, session: SessionActor, since: Date)] = []

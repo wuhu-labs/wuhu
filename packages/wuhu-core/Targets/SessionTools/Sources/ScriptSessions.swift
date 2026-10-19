@@ -42,7 +42,7 @@ struct ScriptSessions {
     engine.define("__wuhu_session_create", promising: { [session, tools] arguments in
       try await scripted {
         let options = try decoded(CreateOptions.self, arguments.first)
-        try await tools.refuseUnlessLive(session)
+        try await tools.owner.refuseUnlessLive(session)
         let callID: ToolCallID
         if let key = options.key {
           guard !key.isEmpty else { throw ToolProblem("createSession: key is a non-empty string") }
@@ -53,7 +53,7 @@ struct ScriptSessions {
         }
         let spawned: Spawned
         do {
-          spawned = try await tools.spawn(session, callID, SpawnOrder(
+          spawned = try await tools.owner.spawn(session, callID, SpawnOrder(
             executor: options.executor,
             title: options.title,
             kind: options.kind,
@@ -94,9 +94,9 @@ struct ScriptSessions {
         let allowed: Set<String> = ["message", "conversation", "session", "reply_target", "attachments"]
         guard Set(options.keys).isSubset(of: allowed) else { throw ToolProblem("sendMessage: unsupported options") }
         let input = try JSONDecoder().decode(SendMessageArguments.self, from: Data(JSONValue.object(options).jsonString().utf8))
-        try await tools.refuseUnlessLive(session)
+        try await tools.owner.refuseUnlessLive(session)
         @Dependency(\.uuid) var uuid
-        let reply = try await tools.sendMessage(session, ToolCallID("script:\(uuid().uuidString.lowercased())"), input)
+        let reply = try await tools.owner.sendMessage(session, ToolCallID("script:\(uuid().uuidString.lowercased())"), input)
         guard case let .sendMessage(sent) = reply else { preconditionFailure("send_message returned \(reply)") }
         return .object(["messageId": .string(sent.messageID.rawValue), "conversationId": .string(sent.conversationID.rawValue)])
       }
@@ -113,9 +113,9 @@ struct ScriptSessions {
           default: nil
           }
         }
-        try await tools.refuseUnlessLive(session)
+        try await tools.owner.refuseUnlessLive(session)
         @Dependency(\.uuid) var uuid
-        let result = try await tools.request(
+        let result = try await tools.owner.request(
           session,
           ToolCallID("script:\(uuid().uuidString.lowercased())"),
           RequestArguments(task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3])),
@@ -135,7 +135,7 @@ struct ScriptSessions {
           guard case let .string(tag) = value else { throw ToolProblem("setTags: every tag is a string") }
           return tag
         }
-        try await tools.setTags(session, of: SessionID(target), to: tags)
+        try await tools.owner.setTags(session, of: SessionID(target), to: tags)
         return .null
       }
     })
@@ -152,7 +152,7 @@ struct ScriptSessions {
         case nil: force = false
         default: throw ToolProblem("archive: force must be a boolean")
         }
-        try await tools.control(verb, session, of: SessionID(target), force: force)
+        try await tools.owner.control(verb, session, of: SessionID(target), force: force)
         return .null
       }
     })

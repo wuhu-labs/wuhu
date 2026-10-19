@@ -4,6 +4,7 @@ import Foundation
 import HTTPTypes
 import JSONValue
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Synchronization
 import Testing
@@ -91,7 +92,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
 
 private func mediaResolver(_ space: Space, viaOwner: Bool) -> any MediaResolver {
   if viaOwner {
-    OwnerMediaResolver(owner: InProcessExecutionOwnerClient(space: space), limits: .claude, group: .shared)
+    OwnerMediaResolver(owner: Hub(space: space), limits: .claude, group: .shared)
   } else {
     SpaceMediaResolver(space: space, limits: .claude, group: .shared)
   }

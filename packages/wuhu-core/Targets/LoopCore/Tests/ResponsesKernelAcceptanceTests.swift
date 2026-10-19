@@ -2,6 +2,7 @@ import Credentials
 import struct Credentials.CredentialBinding
 import Dependencies
 import FetchWebSocket
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -20,7 +21,8 @@ import WuhuAI
 @Suite(.timeLimit(.minutes(1))) struct ResponsesKernelAcceptanceTests {
   @Test func archiveUnarchiveStartOverAndShutdownInvalidateRuntimeInference() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "lifecycle", kind: .agent, createdBy: "morgan", model: .test)
       let invalidated = Box<[SessionID]>([])
       let committed = AsyncStream<Void>.makeStream()
@@ -30,7 +32,7 @@ import WuhuAI
         return reply
       })
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
-      let service = await SessionService(sessions: sessions, loopConfig: config)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: config)
       try await runService(service) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for await _ in committed.stream { break }
@@ -51,14 +53,15 @@ import WuhuAI
   @Test(arguments: [false, true])
   func modelAndMechanicalCompactionInvalidateRuntimeInference(mechanical: Bool) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "compaction", kind: .agent, createdBy: "morgan", model: .test)
       let compact = ToolCall(id: "call_compact", name: "compact", arguments: .object(["summary": .string("folded")]))
       let script = InferenceScript([Fix.replying("large", tokens: 900), mechanical ? Fix.failing(.contextTooLong) : Fix.replying("folding", calls: [compact], tokens: 950), Fix.replying("fresh", tokens: 100)])
       let invalidated = Box<[SessionID]>([])
       var config = makeConfig(inference: { try await script($0) }, compact: { _ in .init(summary: "mechanical") }, budget: .init(maxInput: 1100, maxOutput: 100))
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("fresh committed turn") { guard script.count == 3 else { return false }; return try await sessions.settledWork(sid) }
         #expect(invalidated.value == [sid])
@@ -147,7 +150,7 @@ import WuhuAI
             }
           }
           do {
-            try await runService(sessions, config) { service in
+            try await runService(space, config) { service in
               _ = try await service.enqueue(item: Fix.message("use lookup"), to: sid)
               try await until("two committed turns") { commits.withLock { $0.count } == 2 }
               try await until("settled") { try await sessions.settledWork(sid) }

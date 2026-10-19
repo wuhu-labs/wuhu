@@ -20,7 +20,7 @@ import Testing
     init() async throws {
       space = try Space.inMemory()
       hub = MachineV2Hub(space: space)
-      handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, webApp: nil, machineV2Hub: hub)
+      handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, machineV2Hub: hub)
       key = .init()
       let handler = self.handler
       func http<T: Encodable & Sendable>(_ path: String, method: Fetch.Method, input: T) async throws -> Response {
@@ -160,7 +160,7 @@ extension MachineV2TunnelTests {
 extension MachineV2TunnelTests {
   @Test func productionWallAdmitsOnlySelfAuthenticatedV2Routes() async throws {
     let f = try await Fixture()
-    let handler = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, webApp: nil, machineV2Hub: f.hub)
+    let handler = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, machineV2Hub: f.hub)
     guard case let .response(challengeResponse) = try await handler(Request(url: URL(string: "https://space.test/v1/machine-v2/challenge")!)) else { Issue.record("challenge should be HTTP"); return }
     #expect(challengeResponse.status == .ok)
     let challenge = try await challengeResponse.body.json(MachineChallengeOutput.self).challenge
@@ -266,7 +266,7 @@ extension MachineV2TunnelTests {
     #expect(foreign.status == .unauthorized)
     #expect(try await f.space.machine(pubkey: f.key.pubkeyLabel) == f.machine.id)
 
-    let wall = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, webApp: nil, machineV2Hub: f.hub)
+    let wall = SpaceServer.configuredHandler(space: f.space, hub: MachineHub(space: f.space), dev: false, machineV2Hub: f.hub)
     let request = try await signed(wall, path, key: f.key, machine: f.machine.id)
     guard case let .response(revoked) = try await wall(request) else { Issue.record("revoke should be HTTP"); return }
     #expect(revoked.status == .ok)
@@ -286,7 +286,7 @@ extension MachineV2TunnelTests {
       parked.continuation.yield()
       for await _ in resume.stream { return }
     }
-    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, webApp: nil, machineV2Hub: hub)
+    let handler = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, machineV2Hub: hub)
     let key = Curve25519.Signing.PrivateKey()
     let enrolled = try await space.enrollMachineV2(name: "racer", group: .shared, pubkey: key.pubkeyLabel)
     let machine = enrolled.machine

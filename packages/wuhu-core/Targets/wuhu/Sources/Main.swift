@@ -26,6 +26,7 @@ import enum PinnedTLS.SystemTrust
 import enum SpaceCore.UserRecovery
 import SpaceServer
 import TaskLifetime
+import enum WebBundle.WebBundle
 
 struct StandardInputEncodingError: Error, CustomStringConvertible {
   var description: String { "stdin is not valid UTF-8" }
@@ -117,6 +118,7 @@ enum Main {
             groupCertificate: config.groupCertificate.map { URL(fileURLWithPath: $0) },
             groupPrivateKey: config.groupPrivateKey.map { URL(fileURLWithPath: $0) },
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },
+            webContent: try WebBundle.load(),
             otelEndpoint: config.otelEndpoint.flatMap(URL.init(string:)),
           )
         }

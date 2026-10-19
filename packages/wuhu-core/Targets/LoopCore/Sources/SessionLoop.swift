@@ -68,7 +68,7 @@ extension SessionActor {
       }
 
       if (try live).transcript.hasPendingCacheWarming, try await !loopConfig.allowCacheWarming(id) {
-        let transcript = try await main.send(.append(id, .pendingCacheWarmingDiscarded)).value(Transcript.self)
+        let transcript = try await main.append(id, .pendingCacheWarmingDiscarded).value(Transcript.self)
         try modify { $0.transcript = transcript }
       }
       guard try await reconcileSubscriptions() else { return }
@@ -107,7 +107,7 @@ extension SessionActor {
   // alone would show no run; the row is told, and every exit re-derives it.
   // Run state is advisory: failing to write it never stops the compaction.
   private func runForcedCompaction() async throws {
-    try? await main.send(.append(id, .compactionActivity(.active))).value(Void.self)
+    try? await main.append(id, .compactionActivity(.active)).value(Void.self)
     do {
       try await runInference(mode: .forcedCompact)
     } catch {
@@ -120,7 +120,7 @@ extension SessionActor {
   private func settleCompacting() async {
     let main = main
     // Persist the settled state even when the loop was cancelled.
-    await uncancellable("Persist settled compaction state after loop cancellation") { try? await main.send(.append(id, .compactionActivity(.inactive))).value(Void.self) }
+    await uncancellable("Persist settled compaction state after loop cancellation") { try? await main.append(id, .compactionActivity(.inactive)).value(Void.self) }
   }
 
   // The operator-facing compact verb, the kernel's counterpart to Claude
@@ -128,7 +128,7 @@ extension SessionActor {
   // notification, and the turn that follows is tool-choice-pinned to compact.
   func takeCompactRequest() async throws -> Bool {
     guard !(try live).archiving else { return false }
-    guard try await main.send(.read(id, .pendingCommand)).value(SessionCommand?.self) != nil else { return false }
+    guard try await main.pendingCommand(id) != nil else { return false }
     try Task.checkCancellation()
     guard !(try live).archiving else { return false }
     let mountID = try live.mountID
@@ -136,7 +136,7 @@ extension SessionActor {
     defer {
       if liveState?.mountID == mountID { liveState?.claimingCompactRequest = false }
     }
-    guard let claim = try await main.send(.effect(id, .claimCompactRequest(generation: (try live).generation))).value(CompactRequestClaim?.self) else { return false }
+    guard let claim = try await main.claimCompactRequest(id, generation: (try live).generation) else { return false }
     try modify {
       $0.transcript = claim.transcript
       $0.compactRequestClaim = claim
@@ -152,7 +152,7 @@ extension SessionActor {
   }
 
   private func reconcileSubscriptions() async throws -> Bool {
-    let registered = try await main.send(.read(id, .registeredSubscriptions)).value(RegisteredSubscriptions.self)
+    let registered = try await main.registeredSubscriptions(id)
     try Task.checkCancellation()
     guard !(try live).archiving else { return false }
     try modify {
@@ -163,7 +163,7 @@ extension SessionActor {
   }
 
   func drainQueue() async throws {
-    let drain = try await main.send(.effect(id, .drainQueue)).value(QueueDrain.self)
+    let drain = try await main.drainQueue(id)
     try modify {
       for item in drain.items { $0.transcript.append(item) }
       $0.queueTail = drain.queueTail
@@ -208,7 +208,7 @@ extension SessionActor {
     do {
       let errorDescription = String(describing: error)
       try modify { $0.sessionStatus = .errored(errorDescription) }
-      try await main.send(.append(id, .errored(errorDescription))).value(Void.self)
+      try await main.append(id, .errored(errorDescription)).value(Void.self)
     } catch is CancellationError {
     } catch {
       Logger(label: "wuhu.loop").error("could not persist session error", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
@@ -362,7 +362,7 @@ extension SessionActor {
     } else {
       transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: kept), nil)
     }
-    let compacted = try await main.send(.append(id, .compacted(closing: closing, head: head, kept: kept, completing: nil, transition: transition))).value(Transcript.self)
+    let compacted = try await main.append(id, .compacted(closing: closing, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
     try modify {
       $0.transcript = compacted
       $0.generation += 1
@@ -429,7 +429,7 @@ extension SessionActor {
         if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: (try live).isTask, now: now) {
           appended.append(.notification(nag.notification(id: uuid(), at: now)))
         }
-        try await main.send(.append(id, .transcriptAppended(items: Array(appended.items[before...]), transcript: appended, completing: compactClaim))).value(Void.self)
+        try await main.append(id, .transcriptAppended(items: Array(appended.items[before...]), transcript: appended, completing: compactClaim)).value(Void.self)
         try modify {
           $0.transcript = appended
           if compactClaim != nil { $0.compactRequestClaim = nil }
@@ -451,11 +451,11 @@ extension SessionActor {
           var portable = try state.transcript.portableHandoff(binding: boundary.binding, budget: boundary.budget, runningWork: try await loopConfig.runningWork(id))
           let transition: ModelRouteTransition?
           if let route = boundary.route, let expectedEpoch = boundary.expectedEpoch {
-            portable.appendRouteNotice(group: route.group!, from: (try await main.send(.read(id, .modelRoute)).value(SessionModelRoute?.self))?.member ?? "unknown", to: route.member!, reason: route.decisionReason)
+            portable.appendRouteNotice(group: route.group!, from: (try await main.modelRoute(id))?.member ?? "unknown", to: route.member!, reason: route.decisionReason)
             guard portable.estimatedContextTokens(images: boundary.budget.images) <= boundary.budget.usableTokens else { throw PortableHandoffError.modelHandoffTooLarge }
             transition = ModelRouteTransition(expectedEpoch: expectedEpoch, route: route, transcript: portable)
           } else { transition = nil }
-          compacted = try await main.send(.append(id, .portableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable, transition: transition))).value(Transcript.self)
+          compacted = try await main.append(id, .portableHandoff(expectedGeneration: state.generation, source: state.transcript, transcript: portable, transition: transition)).value(Transcript.self)
         } catch {
           try Task.checkCancellation()
           await markErrored(error: error)
@@ -615,7 +615,7 @@ extension SessionActor {
         runningWork: try await loopConfig.runningWork(id),
       )
       let transition = try await loopConfig.prepareCompaction(id, transcript.compacted(head: head, kept: outcome.kept), nil)
-      let compacted = try await main.send(.append(id, .compacted(closing: nil, head: head, kept: outcome.kept, completing: compactClaim, transition: transition))).value(Transcript.self)
+      let compacted = try await main.append(id, .compacted(closing: nil, head: head, kept: outcome.kept, completing: compactClaim, transition: transition)).value(Transcript.self)
       try modify {
         $0.transcript = compacted
         $0.generation += 1
@@ -661,7 +661,7 @@ extension SessionActor {
     // enter the transcript unclamped.
     let item = ToolResultItem(id: uuid(), timestamp: date(), provenance: provenance, payload: payload.clamped())
     var items: [TranscriptItem] = [.toolResult(item)]
-    if let callID, let context = try await main.send(.read(id, .scopeContext(callID))).value(ScopeContext?.self) {
+    if let callID, let context = try await main.scopeContext(id, toolCallID: callID) {
       items.append(.notification(context.notice(id: uuid(), at: date())))
     }
     try await appended(items)
@@ -672,7 +672,7 @@ extension SessionActor {
   private func appended(_ items: [TranscriptItem]) async throws {
     var appended = (try live).transcript
     for item in items { appended.append(item) }
-    try await main.send(.append(id, .transcriptAppended(items: items, transcript: appended, completing: nil))).value(Void.self)
+    try await main.append(id, .transcriptAppended(items: items, transcript: appended, completing: nil)).value(Void.self)
     try modify { $0.transcript = appended }
   }
 }

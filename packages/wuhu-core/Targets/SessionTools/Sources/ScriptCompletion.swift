@@ -110,7 +110,7 @@ struct CompletionRequest {
 
 extension ToolExecutor {
   func complete(_ session: SessionID, _ request: CompletionRequest) async throws -> String {
-    try await refuseUnlessLive(session)
+    try await owner.refuseUnlessLive(session)
     let catalog: ProviderCatalog
     do {
       if let completionCatalog { catalog = try await completionCatalog() }

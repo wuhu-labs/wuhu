@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Scratch
 import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -66,15 +67,16 @@ import Testing
   }
 
   @Test func openingOlderDatabaseAddsTableWithoutBackfillAndReopeningPreservesRows() async throws {
-    let space = try makeSpace()
+    let folder = try ScratchFolder("inference-reopen")
+    let file = folder.url.appending(path: "space.sqlite")
+    let space = try Space.open(file: file)
     let session = try await space.sessions.createSession(group: .shared, title: "existing", kind: .agent, createdBy: "owner", model: .test)
-    let path = await space.writer.path
     try await space.writer.write { db in try db.execute(sql: "DROP TABLE inferences") }
-    let upgraded = try Space.open(file: URL(fileURLWithPath: path))
+    let upgraded = try Space.open(file: file)
     #expect(try await upgraded.query("SELECT count(*) FROM inferences").rows == [[.integer(0)]])
     #expect(try await upgraded.query("SELECT id FROM sessions").rows == [[.text(session.rawValue)]])
     try await upgraded.recordInference(record(session, id: "new-call"))
-    let reopened = try Space.open(file: URL(fileURLWithPath: path))
+    let reopened = try Space.open(file: file)
     #expect(try await reopened.query("SELECT id FROM inferences").rows == [[.text("new-call")]])
   }
 }

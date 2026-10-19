@@ -38,6 +38,15 @@ public struct SpaceIdentity: Hashable, Sendable {
 }
 
 enum SpaceMeta {
+  static let memorySchema: Result<DatabaseQueue, any Error> = Result {
+    let queue = try DatabaseQueue()
+    try queue.write {
+      try $0.execute(sql: spaceSchemaSQL)
+      try recordCompaction(Space.linksCompaction, in: $0)
+    }
+    return queue
+  }
+
   /// Brings a file to this binary's schema. A file from before a required compaction is refused, never
   /// patched; a fresh one is born compacted.
   static func prepare(_ db: Database, identity: SpaceIdentity? = nil) throws {

@@ -119,7 +119,7 @@ private final class SessionCLIHarness: Sendable {
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
-    let service = await SessionService(sessions: store, loopConfig: config)
+    let service = await SessionService(sessions: store, main: Hub(space: space), loopConfig: config)
     serviceTask = Task {
       do {
         try await service.start()
@@ -129,7 +129,7 @@ private final class SessionCLIHarness: Sendable {
       }
     }
     let runtime = SessionRuntime(space: space, service: service, attempts: attempts)
-    let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true, webApp: nil)
+    let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     fetch = ServeTesting.client(upgrading: handler)
     stdout = Sink()
     stderr = Sink()

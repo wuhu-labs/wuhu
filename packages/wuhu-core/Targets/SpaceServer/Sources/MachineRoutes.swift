@@ -192,7 +192,7 @@ func addMachineRoutes(
     for group in [record.group, target] {
       if try await admits(principal, of: group, space: space) { continue }
       return errorResponse(
-        .forbidden, code: "adminRequired",
+        .forbidden, code: MachineAdminErrorCode.adminRequired.rawValue,
         message: "moving a machine needs an admin of both its group and the target; you are not an admin of \(group.rawValue)",
       )
     }

@@ -80,3 +80,7 @@ public struct ExecStatus: Codable, Equatable, Sendable {
   public let startedAt: Double
   public let state: ExecState
 }
+
+public enum MachineAdminErrorCode: String, Sendable {
+  case adminRequired
+}

@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,8 @@ import Testing
   func teardownDuringClaimPreservesOrIntentionallyDiscardsCommand(ordering: (restart: Bool, beforeWrite: Bool), instructions: String?) async throws {
     let (restart, beforeWrite) = ordering
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "claim teardown", kind: .agent, createdBy: "morgan", model: .test)
       try await sessions.requestCommand(id, .compact(instructions: instructions))
       let entered = AsyncStream<Void>.makeStream()
@@ -23,23 +25,19 @@ import Testing
       defer { entered.continuation.finish(); release.continuation.finish(); gate.cancel() }
       let actor = SessionActor(
         id: id,
-        main: InProcessMainClient { message in
-          let store = InProcessMainClient(sessions: sessions)
-          guard case .effect(let id, .claimCompactRequest(let generation)) = message else { return try await store.send(message) }
-          if beforeWrite {
+        main: Hub(space: space, sessionAccess: {
+          var access = SessionAccess()
+          let hold: @Sendable (SessionID) async throws -> Void = { _ in
             entered.continuation.yield(())
             await gate.value
-            return try await store.send(.effect(id, .claimCompactRequest(generation: generation)))
           }
-          let command = try await store.send(.effect(id, .claimCompactRequest(generation: generation))).value(CompactRequestClaim?.self)
-          entered.continuation.yield(())
-          await gate.value
-          return .compactClaim(command)
-        },
+          if beforeWrite { access.beforeClaim = hold } else { access.afterClaim = hold }
+          return access
+        }()),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
       )
-      await actor.activate()
+      await actor.activate(in: actor.taskScope)
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       for await _ in entered.stream { break }
       let looper = try #require(await actor.looperTask)
@@ -65,7 +63,8 @@ import Testing
 
   @Test func oldClaimCleanupPreservesRemountedClaimAndArchiveRefusal() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "claim overlap", kind: .agent, createdBy: "morgan", model: .test)
       try await sessions.requestCommand(id, .compact(instructions: "old"))
       let entered = AsyncStream<Int>.makeStream()
@@ -82,19 +81,20 @@ import Testing
       let claims = Box(0)
       let actor = SessionActor(
         id: id,
-        main: InProcessMainClient { message in
-          let store = InProcessMainClient(sessions: sessions)
-          guard case .effect(_, .claimCompactRequest(_)) = message else { return try await store.send(message) }
-          let claim = claims.withLock { $0 += 1; return $0 }
-          entered.continuation.yield(claim)
-          if claim == 1 { await oldGate.value } else { await newGate.value }
-          return .compactClaim(nil)
-        },
+        main: Hub(space: space, sessionAccess: {
+          var access = SessionAccess()
+          access.beforeClaim = { _ async throws in
+            let claim = claims.withLock { $0 += 1; return $0 }
+            entered.continuation.yield(claim)
+            if claim == 1 { await oldGate.value } else { await newGate.value }
+          }
+          return access
+        }()),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         afterLoop: { settled.continuation.yield(()) },
       )
-      await actor.activate()
+      await actor.activate(in: actor.taskScope)
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       var iterator = entered.stream.makeAsyncIterator()
       #expect(await iterator.next() == 1)
@@ -152,7 +152,7 @@ func verifyLegacyCompactToken(space: Space, id: SessionID, replacement: Bool) as
   defer { entered.continuation.finish(); release.continuation.finish(); settled.continuation.finish(); gate.cancel() }
   let actor = SessionActor(
     id: id,
-    main: InProcessMainClient(sessions: sessions),
+    main: Hub(space: space),
     loopConfig: makeConfig(inference: { request in
       if request.mode == .forcedCompact {
         entered.continuation.yield(())
@@ -163,7 +163,7 @@ func verifyLegacyCompactToken(space: Space, id: SessionID, replacement: Bool) as
     liveness: LivenessTracker(),
     afterLoop: { settled.continuation.yield(()) },
   )
-  await actor.activate()
+  await actor.activate(in: actor.taskScope)
   try await withCallback(of: Void.self) { actor.post(.wake($0)) }
   let reservation = UUID()
   if replacement {

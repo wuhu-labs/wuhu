@@ -10,7 +10,8 @@ import WuhuAI
 @Suite struct CrashResumeTests {
   @Test func `boot retries an orphaned tool call against a fresh service and converges`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
 
       // The "crashed" run: a committed assistant turn whose tool call never
       // got a result. No service ever saw this state.
@@ -36,7 +37,7 @@ import WuhuAI
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { _ in
+      try await runService(space, config) { _ in
         // No verb: boot alone must surface the orphan FIFO and converge.
         try await until("settled") { try await sessions.settledWork(sid) }
       }
@@ -60,7 +61,8 @@ import WuhuAI
 
   @Test func `an interrupted orphan stays parked at boot and surfaces on resume`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
 
       // Interrupted mid-tool-call, then "crashed": boot materializes it but
       // the hold parks the loop; the orphan surfaces only once resumed.
@@ -81,7 +83,7 @@ import WuhuAI
       let exec = ExecScript { _ in .exec(.init(output: "ok", exitCode: 0)) }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         try await holds("interrupted session stays parked") { exec.calls.value.isEmpty }
         try await service.resume(sid)
         try await until("settled") { try await sessions.settledWork(sid) }

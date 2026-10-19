@@ -9,7 +9,8 @@ import Testing
 @Suite struct CreationDiscoveryTests {
   @Test func `a seeded session's first wake runs its pre-reads before its first inference`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(
         group: .shared,
         title: "t",
@@ -26,7 +27,7 @@ import Testing
       }
       let config = makeConfig(executeTool: { try await executed($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         try await service.wake(sid)
         try await until("first assistant reply") {
           try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 1
@@ -55,11 +56,12 @@ import Testing
 
   @Test func `a pre-feature session without a head wakes inert`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let config = makeConfig()
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         try await service.wake(sid)
         try await holds("no work appears") { try await sessions.settledWork(sid) }
       }

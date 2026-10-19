@@ -9,7 +9,7 @@ import Testing
 
 @Suite struct ReadWallTests {
   @Test func anonymousContentReadsAreWalledOutsideDev() async throws {
-    let providers = ViewProviders(files: ["kanban.html": Data("<html>kanban</html>".utf8)])
+    let providers = ["kanban.html": Data("<html>kanban</html>".utf8)]
     let harness = try Harness(dev: false, views: providers)
     _ = try await harness.direct("write", .object(["path": "/note.md", "content": "secret"]))
 

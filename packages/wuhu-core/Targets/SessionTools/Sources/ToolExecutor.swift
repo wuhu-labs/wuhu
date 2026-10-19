@@ -75,13 +75,13 @@ enum RosterTool: String, CaseIterable {
 }
 
 public struct ToolExecutor: Sendable {
-  let owner: any ToolOwnerClient
+  let owner: any Main
   let credentials: CredentialResolver
   let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
   let scripts: Scripts?
 
   public init(
-    owner: any ToolOwnerClient,
+    owner: any Main,
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
     scripts: Scripts? = nil,
@@ -131,13 +131,4 @@ func renderedFailure(_ error: ToolRunError) -> String {
   if case let .string(hint)? = fields["hint"] { text += " (\(hint))" }
   if case let .string(token)? = fields["token"] { text += " [current token: \(token)]" }
   return text
-}
-
-extension ToolExecutor {
-  func refuseUnlessLive(_ session: SessionID) async throws { try await owner.refuseUnlessLive(session) }
-  func spawn(_ caller: SessionID, _ call: ToolCallID, _ order: SpawnOrder) async throws -> Spawned { try await owner.spawn(caller, call, order) }
-  func sendMessage(_ caller: SessionID, _ call: ToolCallID, _ arguments: SendMessageArguments) async throws -> ToolResultPayload { try await owner.sendMessage(caller, call, arguments) }
-  func request(_ caller: SessionID, _ call: ToolCallID, _ arguments: RequestArguments) async throws -> ToolResultPayload { try await owner.request(caller, call, arguments) }
-  func setTags(_ caller: SessionID, of target: SessionID, to tags: [String]) async throws { try await owner.setTags(caller, of: target, to: tags) }
-  func control(_ verb: SessionControl.Verb, _ caller: SessionID, of target: SessionID, force: Bool = false) async throws { try await owner.control(verb, caller, of: target, force: force) }
 }

@@ -19,7 +19,8 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
   @Test(arguments: [false, true])
   func thirdFailureErrorsWithoutCompaction(forced: Bool) async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "malformed", kind: .agent, createdBy: "morgan", model: .test)
       if forced { try await sessions.requestCommand(sid, .compact(instructions: nil)) }
       let script = InferenceScript(Array(repeating: Fix.failing(malformedMessage), count: 4))
@@ -31,7 +32,7 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
       let delays = [1.0, 2.0].map { $0 * Double.random(in: 0 ... 1, using: &rng) }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -51,7 +52,8 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
 
   @Test func successfulInferenceResetsMalformedBudget() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "reset", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.failing(malformedMessage), Fix.failing(malformedMessage), Fix.replying("first"),
@@ -61,7 +63,7 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
       let delays = [1.0, 2.0, 1.0, 2.0].map { $0 * Double.random(in: 0 ... 1, using: &rng) }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         for round in 0 ..< 2 {
           _ = try await service.enqueue(item: Fix.message("round \(round)"), to: sid)
           for index in 0 ..< 2 {
@@ -82,7 +84,8 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
 
   @Test func outageDoesNotResetMalformedBudget() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "outage", kind: .agent, createdBy: "morgan", model: .test)
       let script = InferenceScript([
         Fix.failing(malformedMessage), Fix.failing(.rateLimited(retryAt: nil)),
@@ -91,7 +94,7 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
       var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
       mirrorAllocationDraws(&rng)
       let delays = [1.0, 2.0, 4.0].map { $0 * Double.random(in: 0 ... 1, using: &rng) }
-      try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -106,7 +109,8 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
 
   @Test func failedStreamCommitsNoPartialTextOrToolCalls() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "partial", kind: .agent, createdBy: "morgan", model: .test)
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
       let resolved = try await ProviderCatalog(document: document, credentials: .init { _ in .apiKey("offline") }).resolve(.init(provider: "offline", model: "test", effort: "low"), session: sid)
@@ -129,7 +133,7 @@ private let malformedMessage = InferenceError.malformedModelMessage(message: "Th
       mirrorAllocationDraws(&rng)
       let delays = [1.0, 2.0].map { $0 * Double.random(in: 0 ... 1, using: &rng) }
       try await withDependencies { $0.fetch = provider } operation: {
-        try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+        try await runService(space, makeConfig(inference: { try await script($0) })) { service in
           _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("failed attempt \(index + 1)") { script.count == index + 1 }

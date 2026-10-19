@@ -64,12 +64,12 @@ private struct Fixture {
     space = try Space.inMemory()
     let hub = MachineV2Hub(space: space)
     let releases = MachineV2Releases(base: URL(string: "https://wuhu.ai")!, fetch: host.fetch, clock: ContinuousClock(), timeout: timeout)
-    let enrolling = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, version: version, webApp: nil, machineV2Hub: hub, machineV2Releases: releases)
+    let enrolling = SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: true, version: version, machineV2Hub: hub, machineV2Releases: releases)
     let key = Curve25519.Signing.PrivateKey()
     self.key = key
     machine = try await Self.enroll(space, enrolling, "laptop", key)
     other = try await Self.enroll(space, enrolling, "desktop", .init())
-    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: false, version: version, webApp: nil, machineV2Hub: hub, machineV2Releases: releases)
+    handler = dev ? enrolling : SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), dev: false, version: version, machineV2Hub: hub, machineV2Releases: releases)
   }
 
   static func enroll(_ space: Space, _ handler: UpgradingHandler, _ name: String, _ key: Curve25519.Signing.PrivateKey) async throws -> MachineRecord {

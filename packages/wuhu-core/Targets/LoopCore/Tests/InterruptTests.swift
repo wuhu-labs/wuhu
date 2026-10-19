@@ -10,7 +10,8 @@ import WuhuAI
 @Suite struct InterruptTests {
   @Test func `interrupt cancels a mid-backoff sleep promptly and resume re-arms via its nudge`() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -19,7 +20,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         var rng: any RandomNumberGenerator = SeededRNG(seed: 7)
@@ -46,7 +47,8 @@ import WuhuAI
 
   @Test func `interrupt marks the running tool interrupted and resume never retries it`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -60,7 +62,7 @@ import WuhuAI
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("run it"), to: sid)
         try await until("executor engaged") { exec.calls.value.count == 1 }
 
@@ -92,7 +94,8 @@ import WuhuAI
 
   @Test func `a cancelled executor returning a real result gets it committed`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -107,7 +110,7 @@ import WuhuAI
       }
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("run it"), to: sid)
         try await until("executor engaged") { exec.calls.value.count == 1 }
         try await service.interrupt(sid)
@@ -129,7 +132,8 @@ import WuhuAI
 
   @Test func `interrupt during an in-flight render or stream cancels the attempt cleanly`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -138,7 +142,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("attempt in flight") { script.count == 1 }
 

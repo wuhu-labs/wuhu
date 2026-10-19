@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,8 @@ import Testing
 @Suite(.timeLimit(.minutes(1))) struct ServiceBootDrainTests {
   @Test func cancellationDuringBootJoinsPreviouslyStartedPassCleanup() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let first = try await sessions.createSession(group: .shared, title: "first", kind: .agent, createdBy: "morgan", model: .test)
       let second = try await sessions.createSession(group: .shared, title: "second", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(first, input: Fix.message("first input"))
@@ -42,19 +44,20 @@ import Testing
         throw CancellationError()
       })
       config.invalidateInference = { id in invalidated.withLock { $0.append(id) } }
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
-        if id == second {
-          for await _ in entered.stream { break }
-          let parking = AsyncStream<Void>.makeStream()
-          bootEntered.continuation.yield(())
-          for await _ in parking.stream {}
-          parking.continuation.finish()
-          throw CancellationError()
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeQueueHead = { id async throws in
+          if id == second {
+            for await _ in entered.stream { break }
+            let parking = AsyncStream<Void>.makeStream()
+            bootEntered.continuation.yield(())
+            for await _ in parking.stream {}
+            parking.continuation.finish()
+            throw CancellationError()
+          }
         }
-        return try await store.send(.read(id, .queueHead))
-      }, loopConfig: config)
+        return access
+      }()), loopConfig: config)
       let start = Task {
         defer { returned.withLock { $0 = true }; order.withLock { $0.append("start") } }
         try await service.start()

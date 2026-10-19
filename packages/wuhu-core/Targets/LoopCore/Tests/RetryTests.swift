@@ -11,7 +11,8 @@ import WuhuAI
 @Suite struct RetryTests {
   @Test func `transient failures back off on the exact schedule and remint attempt ids`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -31,7 +32,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
 
         for (index, delay) in delays.enumerated() {
@@ -71,7 +72,8 @@ import WuhuAI
 
   @Test func `terminal inference failure parks the session durably`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -79,7 +81,7 @@ import WuhuAI
       ])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("errored") { try await sessions.record(sid).work == .errored }
       }
@@ -93,7 +95,8 @@ import WuhuAI
 
   @Test func `completed inference resets the backoff count`() async throws {
     try await withKernelDeps(seed: 21) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -112,7 +115,7 @@ import WuhuAI
       // so the second work item's single failure backs off at 1s again.
       let delays = [1 * jitters[0], 2 * jitters[1], 1 * jitters[2]]
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("one"), to: sid)
         try await until("attempt 1") { script.count == 1 }
         try await time.wake("backoff 1", after: delays[0])
@@ -137,7 +140,8 @@ import WuhuAI
 
   @Test func `consecutive idle timeouts escalate the window and park after the third`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -153,7 +157,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -172,7 +176,8 @@ import WuhuAI
 
   @Test func `a non-timeout outcome resets the idle escalation`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -189,7 +194,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -210,7 +215,8 @@ import WuhuAI
   // loop read it as terminal and burned the session on its first blip.
   @Test func `a transport failure raised outside the model call still retries`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -226,7 +232,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -242,7 +248,8 @@ import WuhuAI
 
   @Test func `a connect timeout does not spend the idle-timeout budget`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript([
@@ -259,7 +266,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -275,7 +282,8 @@ import WuhuAI
 
   @Test func `consecutive unretryable failures park at the bounded limit`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let script = InferenceScript(
@@ -289,7 +297,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -311,7 +319,8 @@ import WuhuAI
   @Test func `throttling and unreachable networks retry past the bounded limit`() async throws {
     for outage in [InferenceError.rateLimited(retryAt: nil), .transport(.connectionClosed)] {
       try await withKernelDeps(seed: 7) { time in
-        let sessions = try Space.inMemory().sessions
+        let space = try Space.inMemory()
+        let sessions = space.sessions
         let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
         let rounds = boundedFailureLimit * 2
@@ -326,7 +335,7 @@ import WuhuAI
           min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
         }
 
-        try await runService(sessions, config) { service in
+        try await runService(space, config) { service in
           _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
           for (index, delay) in delays.enumerated() {
             try await until("\(outage) attempt \(index + 1)") { script.count == index + 1 }
@@ -346,7 +355,8 @@ import WuhuAI
   // promptly on a fault that follows it.
   @Test func `an outage does not spend the bounded-failure budget`() async throws {
     try await withKernelDeps(seed: 7) { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
 
       let leading = Array(repeating: Fix.failing(.rateLimited(retryAt: nil)), count: boundedFailureLimit)
@@ -361,7 +371,7 @@ import WuhuAI
         min(backoffCeiling, pow(2.0, Double(attempt))) * Double.random(in: 0 ... 1, using: &rng)
       }
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }

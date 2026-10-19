@@ -9,7 +9,8 @@ import struct WuhuAI.ToolCall
 @Suite struct ContextNoticeTests {
   @Test func `a tool call that touched a repository is followed by its context notice`() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let repo = "machines://m1/repo"
       let script = InferenceScript([
@@ -31,7 +32,7 @@ import struct WuhuAI.ToolCall
       }
       let config = makeConfig(executeTool: { try await executed($0) }, inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("go"), to: sid)
         try await until("second assistant reply") {
           try await sessions.hydrate(sid).transcript.kernel.assistantEntries.count == 2

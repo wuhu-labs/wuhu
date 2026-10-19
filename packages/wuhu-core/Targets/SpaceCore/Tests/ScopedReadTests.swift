@@ -94,7 +94,7 @@ import Testing
       $0.date = .constant(fixedDate)
       $0.continuousClock = ImmediateClock()
     } operation: {
-      try Space.temporary(catalog: Self.hiding, trace: trace)
+      try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), catalog: Self.hiding, trace: trace)
     }
   }
 

@@ -10,7 +10,7 @@ import Synchronization
 // machine processes a script started outlive it only by a crash; at boot `run`
 // tells each owner its script is gone, and the hub reaps the processes.
 public final class Scripts: Sendable {
-  let owner: any ScriptOwnerClient
+  let owner: any Main
   let discovery = Mutex(ScriptDiscoveryConfiguration())
   private let launches: AsyncStream<ScriptExecution>
   private let launch: AsyncStream<ScriptExecution>.Continuation
@@ -19,7 +19,7 @@ public final class Scripts: Sendable {
   // "unknown". Bounded and in-process: past either, an id reads as unknown.
   private let ended = Mutex(EndedScripts())
 
-  public init(owner: any ScriptOwnerClient) {
+  public init(owner: any Main) {
     self.owner = owner
     (launches, launch) = AsyncStream.makeStream()
   }
@@ -39,7 +39,7 @@ public final class Scripts: Sendable {
 
   public func announceRestart() async { await Self.announceRestart(owner: owner) }
 
-  public static func announceRestart(owner: any ScriptOwnerClient) async {
+  public static func announceRestart(owner: any Main) async {
     let ownerClient = owner
     let owners: [ScriptExecOwner]
     do {
@@ -51,7 +51,7 @@ public final class Scripts: Sendable {
     await announceRestart(owner: ownerClient, owners: owners)
   }
 
-  public static func announceRestart(owner ownerClient: any ScriptOwnerClient, owners: [ScriptExecOwner]) async {
+  public static func announceRestart(owner ownerClient: any Main, owners: [ScriptExecOwner]) async {
     for owner in owners {
       var text = "\(scriptHandle(owner.script)) was killed by a server restart"
       if !owner.live.isEmpty {

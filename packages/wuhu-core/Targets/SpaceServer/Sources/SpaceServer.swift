@@ -45,7 +45,7 @@ public enum SpaceServer {
     fingerprint: String? = nil,
     dev: Bool,
     version: String = SpaceServer.unstampedVersion,
-    webApp: WebApp? = .embedded,
+    webContent: WebContent = WebContent(),
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
   ) -> UpgradingHandler {
@@ -59,7 +59,7 @@ public enum SpaceServer {
       fingerprint: fingerprint,
       dev: dev,
       version: version,
-      webApp: webApp,
+      webContent: webContent,
       webPushApplicationServerKey: nil,
       credentials: credentials,
       secrets: secrets,
@@ -80,8 +80,7 @@ public enum SpaceServer {
     dev: Bool,
     publicRead: Bool = false,
     version: String = SpaceServer.unstampedVersion,
-    webApp: WebApp? = .embedded,
-    views: ViewProviders? = .embedded,
+    webContent: WebContent = WebContent(),
     webPushApplicationServerKey: String? = nil,
     credentials: CredentialResolver = .environmentOnly,
     secrets: SpaceSecretStores? = nil,
@@ -231,7 +230,7 @@ public enum SpaceServer {
         try await requestPrincipal(request, space: space, date: clock)
       }
     }
-    if let webApp {
+    if let webApp = webContent.webApp {
       router.get("/*") { request, _ in
         webAppResponse(webApp, request: request, contentHostPattern: contentHost.pattern)
       }
@@ -254,7 +253,7 @@ public enum SpaceServer {
       )
     }
     let content = contentHandler(
-      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, views: views, pageFetch: pageFetch,
+      space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
     )
     if dev { return hostRouted(contentHost, api: gated(routed), content: content) }
     @Dependency(\.date) var dateGen
@@ -287,7 +286,7 @@ public enum SpaceServer {
       if selfAuthenticating.contains(request.url.path) || v2KeySigned {
         return try await routed(request)
       }
-      if webApp != nil, request.method == .get, !isAPIPath(request.url) {
+      if webContent.webApp != nil, request.method == .get, !isAPIPath(request.url) {
         return try await routed(request)
       }
       switch try await bearerVerdict(request: request, space: space, now: dateGen.now) {
@@ -312,12 +311,10 @@ public enum SpaceServer {
     advertisedOrigin: String?,
     dev: Bool,
     publicRead: Bool,
-    views: ViewProviders?,
+    webContent: WebContent,
     pageFetch: PageFetchHandler? = nil,
   ) -> @Sendable (GroupID, Request) async throws -> Response {
     @Dependency(\.date) var dateGen
-    // Forcing the embed here fails at bind time, not on the first request.
-    let shell = ShellSDK.embedded
     return { group, request in
       try await webResponse(
         space: space,
@@ -327,8 +324,8 @@ public enum SpaceServer {
         now: dateGen.now,
         dev: dev,
         publicRead: publicRead,
-        views: views,
-        shell: shell,
+        views: webContent.views,
+        shell: webContent.scripts.isEmpty ? nil : webContent.scripts,
         pageFetch: pageFetch,
         request: request,
       )
@@ -352,6 +349,7 @@ public enum SpaceServer {
     groupCertificate: URL? = nil,
     groupPrivateKey: URL? = nil,
     webAppDirectory: URL? = nil,
+    webContent: WebContent = WebContent(),
     otelEndpoint: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
   ) async throws {
@@ -408,15 +406,16 @@ public enum SpaceServer {
       logger.warning("credential and secret stores unavailable (\(error)); using environment credentials only")
       configDirectory = nil
     }
-    let webApp: WebApp?
+    var webContent = webContent
     if let webAppDirectory {
-      webApp = try WebApp.load(directory: webAppDirectory)
-      logger.notice("web app override: \(webAppDirectory.path) (\(webApp!.files.count) files)")
-    } else { webApp = .embedded }
+      let webApp = try WebApp.load(directory: webAppDirectory)
+      webContent.webApp = webApp
+      logger.notice("web app override: \(webAppDirectory.path) (\(webApp.files.count) files)")
+    }
     let spaceHost = try await SpaceHost.open(
       folder: folder, deployment: deployment, configDirectory: configDirectory,
       fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
-      aiDisclosure: aiDisclosure, version: version, webApp: webApp,
+      aiDisclosure: aiDisclosure, version: version, webContent: webContent,
       devImport: devImport, devExport: devExport,
     )
     let directory = SingleSpaceDirectory(host: spaceHost)

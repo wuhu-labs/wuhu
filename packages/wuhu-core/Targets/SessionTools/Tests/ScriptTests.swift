@@ -859,6 +859,7 @@ func withRig(
   fetch: FetchClient? = nil,
   machines: MachineSeam? = nil,
   world: MachineWorld? = nil,
+  identity: (@Sendable () async throws -> JSONValue)? = nil,
   credentials: CredentialResolver = .unavailable,
   resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
   resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
@@ -893,10 +894,10 @@ func withRig(
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
       let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
-      let scripts = Scripts(space: space, secrets: stores, machines: access)
+      let main = Hub(space: space, identityConfiguration: identity, credentials: credentials, secrets: stores, machines: machines, scriptMachines: access, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute, control: control)
+      let scripts = Scripts(owner: main)
       let executor = ToolExecutor(
-        space: space, machines: machines, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup,
-        prepareModelRoute: prepareModelRoute, credentials: credentials, scripts: scripts, control: control,
+        owner: main, credentials: credentials, scripts: scripts,
       )
       let rig = try ScriptRig(
         space: space, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
@@ -925,5 +926,5 @@ private let githubStub = FetchClient { request in
 }
 
 private func tracedSpace(_ executed: @escaping @Sendable (String) -> Void) throws -> Space {
-  try Space.temporary(trace: executed)
+  try Space.inMemory(configuration: Space.makeConfiguration(journalMode: .default), trace: executed)
 }

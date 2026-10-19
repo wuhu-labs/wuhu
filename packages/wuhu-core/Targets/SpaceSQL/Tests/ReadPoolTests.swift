@@ -9,6 +9,36 @@ import Testing
 @Suite struct ReadPoolTests {
   static let hiding = ViewCatalog { table, _ in table == "sessions" ? "id <> 'hidden'" : nil }
 
+  @Test func cancellingAMemoryReaderLetsTheWaitingWriterCommit() async throws {
+    let path = "file:/read-contract-\(UUID())?vfs=memdb"
+    var configuration = Configuration()
+    configuration.busyMode = .timeout(5)
+    let writer = try DatabaseQueue(path: path, configuration: configuration)
+    try await writer.write { try $0.execute(sql: "CREATE TABLE sessions (id TEXT); INSERT INTO sessions VALUES ('first')") }
+    let (reading, readStarted) = AsyncStream<Void>.makeStream()
+    let pool = ReadPool(path: path, trace: { _ in readStarted.yield() })
+    let reader = Task {
+      try await pool.run(
+        "WITH RECURSIVE c(n) AS (SELECT 1 FROM sessions UNION ALL SELECT n + 1 FROM c) SELECT count(*) FROM c",
+        scope: .shared(),
+      )
+    }
+    defer { reader.cancel() }
+    for await _ in reading { break }
+    let (writing, writeStarted) = AsyncStream<Void>.makeStream()
+    let mutation = Task {
+      try await writer.write {
+        writeStarted.yield()
+        try $0.execute(sql: "INSERT INTO sessions VALUES ('second')")
+      }
+    }
+    for await _ in writing { break }
+    reader.cancel()
+    await #expect(throws: CancellationError.self) { _ = try await reader.value }
+    try await mutation.value
+    #expect(try await column(pool, "SELECT count(*) FROM sessions") == ["2"])
+  }
+
   @Test func theViewsShowOnlyTheRowsTheCatalogAdmits() async throws {
     let file = try Fixture()
     let pool = ReadPool(path: file.path, catalog: Self.hiding)

@@ -3,6 +3,7 @@ import Dependencies
 import Foundation
 @testable import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Testing
 
@@ -27,12 +28,70 @@ private struct FaultingExecution: SessionExecutionClient {
 }
 
 @Suite(.timeLimit(.minutes(1))) struct ExecutionServiceBoundaryTests {
+  enum ServiceUse: CaseIterable { case idle, unknown, settled }
+
+  @Test(arguments: ServiceUse.allCases, [false, true])
+  func droppingTheServiceReleasesItsHubAndCancelsSleepers(use: ServiceUse, pendingReminder: Bool) async throws {
+    try await withKernelDeps { time in
+      weak var releasedSpace: Space?
+      weak var releasedHub: Hub?
+      var service: SessionService?
+      do {
+        let space = try Space.inMemory()
+        let hub = Hub(space: space)
+        releasedSpace = space
+        releasedHub = hub
+        service = await SessionService(sessions: space.sessions, main: hub, loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
+        switch use {
+        case .idle: break
+        case .unknown:
+          await #expect(throws: SessionStoreError.unknownSession("missing")) {
+            try await service!.wake(SessionID("missing"))
+          }
+        case .settled:
+          let id = try await space.sessions.createSession(group: .shared, title: "used", kind: .agent, createdBy: "morgan", model: .test)
+          _ = try await service!.enqueue(item: Fix.message("one turn"), to: id)
+          try await until("turn settles") { try await space.sessions.settledWork(id) }
+        }
+      }
+      try await time.asleep("registry reaper", dueIn: 30)
+      if pendingReminder {
+        await service!.scheduleWake(SessionID("fixture"), at: anchor.addingTimeInterval(60))
+        try await time.asleep("parent reminder", dueIn: 60)
+      }
+      service = nil
+      try await until("dropped hub releases its store") { releasedHub == nil && releasedSpace == nil }
+      try await until("owner cancels all sleepers") { time.sleepCount == 0 }
+      await time.advance(by: 120)
+      #expect(time.sleepCount == 0)
+    }
+  }
+
+  @Test func anUnknownExecutionWakeLeavesNoActivatedActor() async throws {
+    try await withKernelDeps { time in
+      weak var releasedSpace: Space?
+      var execution: SessionExecution?
+      do {
+        let space = try Space.inMemory()
+        releasedSpace = space
+        execution = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
+      }
+      await #expect(throws: SessionStoreError.unknownSession("missing")) {
+        try await execution!.wake(SessionID("missing"))
+      }
+      execution = nil
+      try await until("unknown execution releases its store") { releasedSpace == nil }
+      try await until("unknown execution cancels its sleepers") { time.sleepCount == 0 }
+    }
+  }
+
   @Test func committedEnqueueNeverRoundTripsThroughWorkerOrThrowsLostWakeReply() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "enqueue", kind: .agent, createdBy: "morgan", model: .test)
       let enqueues = Box(0), wakes = Box(0)
-      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         wakes.withLock { $0 += 1 }
         throw ReplyLost()
@@ -54,11 +113,12 @@ private struct FaultingExecution: SessionExecutionClient {
 
   @Test func bootWakeRetriesRetiredStartupWithoutPoisoningPersistedWork() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "boot", kind: .agent, createdBy: "morgan", model: .test)
       _ = try await sessions.enqueue(id, input: Fix.message("boot"))
       let wakes = Box(0)
-      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
+      let base = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
       let execution = FaultingExecution(base: base, wakeCall: { id in
         let count = wakes.withLock { $0 += 1; return $0 }
         if count <= 2 { throw UnfulfilledError() }
@@ -81,9 +141,10 @@ private struct FaultingExecution: SessionExecutionClient {
       $0.continuousClock = AnyClock(clock)
       $0.date = DateGenerator { anchor.addingTimeInterval(TestClock<Duration>.Instant().duration(to: clock.now).timeInterval) }
     } operation: {
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let wakes = Box<[Date]>([])
-      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         @Dependency(\.date) var date
         wakes.withLock { $0.append(date.now) }
@@ -109,10 +170,11 @@ private struct FaultingExecution: SessionExecutionClient {
 
   @Test func parentRemindersReplaceDeadlinesCancelAndJoinAtShutdown() async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = SessionID("fixture")
       let wakes = Box(0)
-      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in wakes.withLock { $0 += 1 } }, enqueueCall: { _, _ in throw UnexpectedCall("enqueue") })
       let service = SessionService(sessions: sessions, execution: execution, archiveGrace: .seconds(60))
       await service.scheduleWake(id, at: anchor.addingTimeInterval(10))
@@ -139,10 +201,11 @@ private struct FaultingExecution: SessionExecutionClient {
   @Test(arguments: [false, true])
   func parentReminderWakeFailuresRetryAndBecomeVisibleAfterExhaustion(exhausted: Bool) async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "reminder", kind: .task, createdBy: "morgan", model: .test)
       let wakes = Box(0)
-      let base = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
+      let base = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
       let execution = FaultingExecution(base: base, wakeCall: { _ in
         let attempt = wakes.withLock { $0 += 1; return $0 }
         if exhausted || attempt < 4 { throw ReplyLost() }

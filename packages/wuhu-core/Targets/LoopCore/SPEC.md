@@ -1,5 +1,10 @@
 # LoopCore
 
+## Service ownership
+
+Dropping an idle or settled `SessionService` releases its hub and store without `shutdown()`, and cancels pending reminder and registry-reaper sleepers. The registry owns session-handler tasks; their cancellation ends the actor’s loop/work scope. Unknown session commands fail before actor activation. Parked reminders belong to the service, not to an evictable execution actor. `shutdown()` remains the explicit way to stop and join running execution.
+
+
 ## Archive
 
 `SessionService.archive(id, force: false)` implements subtree archive. `SubtreeArchiveBusy.sessions` carries every busy node's id and title, and `message` renders the list. The service reserves settled runtime actors before committing any archive, so an idle pass cannot start work between the tree check and its archive. Failed preflight releases those reservations.
@@ -57,7 +62,7 @@ Start over optionally carries a prepared `SessionModelRoute` through service/act
 
 ## Owner boundary
 
-Each `SessionActor` holds its session ID and a `MainClient`, sending typed `ToMain` values directly; there is no session repository or operation-specific interception surface. `SessionExecution` passes that same endpoint to its registry and actors. Tests inject a fake main through the same in-process codec, intercepting typed requests rather than actor/repository implementation calls. Parent `SessionService` owns placement, admission, boot and archive coordination, with its existing store dependency. Lifecycle, queue, compact claim and transcript behavior is unchanged.
+Each `SessionActor` holds its session ID and `any Main`. Session reads and queue/claim effects use typed methods; durable writes carry `SessionEvent` values. `SessionExecution` passes the same endpoint to its registry and actors. Tests use the directly conforming Hub on SQLite in memory, with narrow injected hooks for fault ordering rather than fake main implementations or codecs. Parent `SessionService` owns placement, admission, boot and archive coordination with its existing store dependency. Lifecycle, queue, compact claim and transcript behavior is unchanged.
 
 ## In-process execution
 

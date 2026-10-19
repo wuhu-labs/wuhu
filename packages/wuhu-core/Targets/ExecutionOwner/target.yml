@@ -3,23 +3,6 @@ kind: library
 sources: Sources
 checks:
   build: [linux, mac]
-  test: [linux, mac]
 dependencies:
-  - SessionDomain
-  - SpaceContract
-  - SpaceCore
   - InferenceKit
-  - Credentials
-  - WuhuAI
   - SystemPackage
-tests:
-  dependencies:
-    - Fetch
-    - Scratch
-    - SessionDomain
-    - SpaceContract
-    - SpaceCore
-    - InferenceKit
-    - Credentials
-    - WuhuAI
-    - Dependencies

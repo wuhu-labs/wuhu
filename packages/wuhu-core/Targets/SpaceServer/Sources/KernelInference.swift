@@ -1,5 +1,5 @@
 import Dependencies
-import ExecutionOwner
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,7 +16,7 @@ import struct SpaceCore.SessionRecord
 import WuhuAI
 
 func kernelInference(
-  owner: any ExecutionOwnerClient,
+  owner: any Main,
   catalog: @escaping @Sendable () async throws -> ProviderCatalog,
   groupCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
   sockets: ResponsesSocketRegistry,
@@ -33,7 +33,7 @@ func kernelInference(
     let warmingPolicy: CacheWarmingPolicy?
     var routingCatalog: ProviderCatalog?
     do {
-      record = try await owner.send(.read(request.sessionID, .record)).value(SessionRecord.self)
+      record = try await owner.record(request.sessionID)
       let selectedCatalog: ProviderCatalog
       if case .modelGroup = record.executor, let groupCatalog {
         selectedCatalog = try await groupCatalog()
@@ -47,7 +47,7 @@ func kernelInference(
       case let .kernel(specifier):
         model = specifier
         _ = try selectedCatalog.validate(specifier)
-        let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self)
+        let held = try await owner.modelRoute(request.sessionID)
         let fingerprint = selectedCatalog.document.providers[specifier.provider]!.routeFingerprint
         if held == nil || held?.bindingFingerprint != fingerprint {
           let prepared = SessionModelRoute(
@@ -60,12 +60,12 @@ func kernelInference(
             placedAt: date.now,
             evidence: [],
           )
-          route = try await owner.send(.append(request.sessionID, .modelRouteEstablished(prepared))).value(SessionModelRoute.self)
+          route = try await owner.append(request.sessionID, .modelRouteEstablished(prepared)).value(SessionModelRoute.self)
         } else {
           route = held!
         }
       case let .modelGroup(id, effort):
-        guard let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self) else {
+        guard let held = try await owner.modelRoute(request.sessionID) else {
           throw CatalogError.modelRouteInvalid(group: id, member: "<missing>")
         }
         route = held
@@ -119,8 +119,8 @@ func kernelInference(
         mode: request.mode == .forcedCompact ? .forcedCompact : .normal,
         idleTimeout: request.idleTimeout,
       )
-      if let held = try await owner.send(.read(request.sessionID, .modelRoute)).value(SessionModelRoute?.self), held.failure != nil {
-        try await owner.send(.append(request.sessionID, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil))).value(Void.self)
+      if let held = try await owner.modelRoute(request.sessionID), held.failure != nil {
+        try await owner.append(request.sessionID, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: nil)).value(Void.self)
       }
       if let lease { await sockets.release(session: request.sessionID, lease: lease.lease) }
       return InferenceReply(message: completed.message, metadata: completed.metadata, replayBinding: ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), committed: { entry, transcript in

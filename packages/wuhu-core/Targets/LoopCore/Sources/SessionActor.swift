@@ -1,4 +1,5 @@
 import Dependencies
+import SessionTools
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -68,10 +69,20 @@ actor SessionActor {
     case interrupt(Callback<Void>)
     case resume(Callback<Void>)
     case restart(SessionExecutor?, String?, SessionModelRoute?, Callback<SessionRestart>)
+
+    func fail(_ error: any Error) {
+      switch self {
+      case .wake(let callback), .releaseArchive(_, let callback), .archive(_, let callback),
+           .unarchive(let callback), .interrupt(let callback), .resume(let callback): callback.resume(throwing: error)
+      case .enqueue(_, let callback): callback.resume(throwing: error)
+      case .prepareArchive(_, let callback): callback.resume(throwing: error)
+      case .restart(_, _, _, let callback): callback.resume(throwing: error)
+      }
+    }
   }
 
   nonisolated let id: SessionID
-  let main: any MainClient
+  let main: any Main
   let loopConfig: LoopConfig
   let liveness: LivenessTracker
   let beforeCompactRequest: @Sendable () async -> Void
@@ -96,7 +107,7 @@ actor SessionActor {
   @Dependency(\.continuousClock) var clock
   @Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
-  init(id: SessionID, main: any MainClient, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
+  init(id: SessionID, main: any Main, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
     self.id = id
     self.main = main
     self.loopConfig = loopConfig
@@ -105,10 +116,10 @@ actor SessionActor {
     self.afterLoop = afterLoop
   }
 
-  func activate() {
+  func activate(in owner: TaskScope) {
     precondition(handlerTask == nil, "SessionActor activates once")
     guard !retired else { return }
-    handlerTask = try? taskScope.run("session-handler") { await runHandler() }
+    handlerTask = try? owner.run("session-handler") { await runHandler() }
   }
 
   var live: LiveState {
@@ -174,6 +185,7 @@ actor SessionActor {
   }
 
   private func runHandler() async {
+    defer { taskScope.cancel() }
     while let action = await inbox.next() {
       lastCommandProcessedAt = nil
       await handle(action: action)
@@ -212,7 +224,7 @@ actor SessionActor {
           archiveReservation = reservation
           return true
         }
-        let head = try await main.send(.read(id, .queueHead)).value(Int.self)
+        let head = try await main.queueHead(id)
         try modify { $0.queueHead = max($0.queueHead, head) }
         guard try live.hasSettled else { return false }
         try modify { $0.archiving = true }
@@ -260,7 +272,7 @@ actor SessionActor {
       return lifecycle
     }
 
-    let hydration = try await main.send(.read(id, .hydration)).value(SessionHydration.self)
+    let hydration = try await main.hydrate(id)
     try Task.checkCancellation()
     switch hydration.record.lifecycle {
     case .archived(let graceExpiresAt):
@@ -306,7 +318,7 @@ actor SessionActor {
   // straight to the store bypass handleEnqueue, so a wake re-syncs the queue
   // head or the loop's drain check stays stale.
   private func handleWake() async throws {
-    let head = try await main.send(.read(id, .queueHead)).value(Int.self)
+    let head = try await main.queueHead(id)
     try modify { $0.queueHead = max($0.queueHead, head) }
     nudge()
   }
@@ -314,7 +326,7 @@ actor SessionActor {
   private func handleEnqueue(_ item: QueueInput) async throws -> Int {
     switch try await ensureLifecycle() {
     case .live:
-      let id = try await main.send(.append(id, .inputEnqueued(item))).value(Int.self)
+      let id = try await main.append(id, .inputEnqueued(item)).value(Int.self)
       try modify {
         $0.queueHead = max($0.queueHead, id)
       }
@@ -325,7 +337,7 @@ actor SessionActor {
       guard date() < deadline else {
         throw SessionError.archiveGraceExpired
       }
-      return try await main.send(.append(id, .inputEnqueued(item))).value(Int.self)
+      return try await main.append(id, .inputEnqueued(item)).value(Int.self)
     }
   }
 
@@ -335,7 +347,7 @@ actor SessionActor {
     // An owed idle check is no work, but no pass may start a turn while the
     // archive is written: the turn would land in the archived session.
     try modify { $0.archiving = true }
-    let deadline = try await main.send(.append(id, .archived(grace: loopConfig.archiveGrace))).value(Date.self)
+    let deadline = try await main.append(id, .archived(grace: loopConfig.archiveGrace)).value(Date.self)
     try Task.checkCancellation()
     lifecycle = .archived(graceExpiry: deadline)
     dismountLive()
@@ -346,7 +358,7 @@ actor SessionActor {
   // materializing here would run a loop pass on a session about to be wiped.
   private func handleRestart(executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     // Its frames would land in the fresh generation.
-    let restart = try await main.send(.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute, runningWork: try await loopConfig.runningWork(id)))).value(SessionRestart.self)
+    let restart = try await main.append(id, .restarted(executor: executor, note: note, modelRoute: modelRoute, runningWork: try await loopConfig.runningWork(id))).value(SessionRestart.self)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
@@ -359,7 +371,7 @@ actor SessionActor {
     guard date() < deadline else {
       throw SessionError.archiveGraceExpired
     }
-    try await main.send(.append(id, .unarchived)).value(Void.self)
+    try await main.append(id, .unarchived).value(Void.self)
     try Task.checkCancellation()
     lifecycle = nil
     dismountLive()
@@ -387,7 +399,7 @@ actor SessionActor {
       nudge()
     }
 
-    try await main.send(.append(id, .interrupted)).value(Void.self)
+    try await main.append(id, .interrupted).value(Void.self)
     try modify { $0.sessionStatus = .interrupted }
   }
 
@@ -399,7 +411,7 @@ actor SessionActor {
     case .healthy:
       return
     case .interrupted, .errored(_):
-      try await main.send(.append(id, .resumed)).value(Void.self)
+      try await main.append(id, .resumed).value(Void.self)
       try modify {
         $0.sessionStatus = .healthy
       }

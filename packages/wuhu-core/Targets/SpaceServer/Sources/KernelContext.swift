@@ -1,15 +1,15 @@
-import ExecutionOwner
 import InferenceKit
 import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import SystemFiles
 
-func budgetResolver(owner: any ExecutionOwnerClient) -> @Sendable (SessionID) async -> ContextBudget {
+func budgetResolver(owner: any Main) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
-    guard let record = try? await owner.send(.read(id, .record)).value(SessionRecord.self),
+    guard let record = try? await owner.record(id),
           let specifier = await activeModelSpecifier(record, owner: owner),
-          let data = try? await owner.modelDocument(),
+          let data = try? await owner.capabilityDocument("/models.json"),
           let document = try? ModelsDocument(json: data),
           let model = try? ProviderCatalog(document: document, credentials: .unavailable).validate(specifier),
           let provider = document.providers[specifier.provider]
@@ -18,25 +18,7 @@ func budgetResolver(owner: any ExecutionOwnerClient) -> @Sendable (SessionID) as
   }
 }
 
-func modelExecutorResolver(owner: any ExecutionOwnerClient) -> @Sendable (String, String, String?) async throws -> SessionExecutor {
-  { provider, model, effort in
-    let data = try await owner.modelDocument()
-    let catalog = ProviderCatalog(
-      document: try ModelsDocument(json: data),
-      credentials: .unavailable,
-    )
-    let specifier: ModelSpecifier
-    if let effort {
-      specifier = ModelSpecifier(provider: provider, model: model, effort: effort)
-      try catalog.validate(specifier)
-    } else {
-      specifier = try catalog.defaultSpecifier(provider: provider, model: model)
-    }
-    return .kernel(specifier)
-  }
-}
-
-func systemPrompt(owner: any ExecutionOwnerClient, record: SessionRecord) async throws -> String {
+func systemPrompt(owner: any Main, record: SessionRecord) async throws -> String {
   kernelPrompt(for: record, home: try await owner.promptHome(record.id))
 }
 

@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -16,7 +17,8 @@ import Testing
   @Test(arguments: Teardown.allCases)
   func cancelledLooperCannotEnterCompactRequestAfterDismount(teardown: Teardown) async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "teardown", kind: .agent, createdBy: "morgan", model: .test)
       let entered = AsyncStream<Void>.makeStream()
       let cancelled = AsyncStream<Void>.makeStream()
@@ -38,12 +40,13 @@ import Testing
       let passes = Box(0)
       let actor = SessionActor(
         id: id,
-        main: InProcessMainClient { message in
-          let store = InProcessMainClient(sessions: sessions)
-          guard case .read(let id, .pendingCommand) = message else { return try await store.send(message) }
-          pendingReads.withLock { $0 += 1 }
-          return try await store.send(.read(id, .pendingCommand))
-        },
+        main: Hub(space: space, sessionAccess: {
+          var access = SessionAccess()
+          access.afterPendingCommand = { id async throws in
+            pendingReads.withLock { $0 += 1 }
+          }
+          return access
+        }()),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         beforeCompactRequest: {
@@ -61,7 +64,7 @@ import Testing
           }
         },
       )
-      await actor.activate()
+      await actor.activate(in: actor.taskScope)
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       for await _ in entered.stream { break }
       let looper = try #require(await actor.looperTask)
@@ -110,7 +113,8 @@ import Testing
 
   @Test func lateWorkCleanupCannotClearRemountedWork() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let id = try await sessions.createSession(group: .shared, title: "overlapping loops", kind: .agent, createdBy: "morgan", model: .test)
       let entered = AsyncStream<Int>.makeStream()
       let oldRelease = AsyncStream<Void>.makeStream()
@@ -128,7 +132,7 @@ import Testing
       let actorReference = Box<SessionActor?>(nil)
       let actor = SessionActor(
         id: id,
-        main: InProcessMainClient(sessions: sessions),
+        main: Hub(space: space),
         loopConfig: makeConfig(),
         liveness: LivenessTracker(),
         beforeCompactRequest: {
@@ -145,7 +149,7 @@ import Testing
       )
       actorReference.withLock { $0 = actor }
       defer { actorReference.withLock { $0 = nil } }
-      await actor.activate()
+      await actor.activate(in: actor.taskScope)
       try await withCallback(of: Void.self) { actor.post(.wake($0)) }
       var iterator = entered.stream.makeAsyncIterator()
       #expect(await iterator.next() == 1)

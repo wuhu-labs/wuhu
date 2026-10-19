@@ -35,7 +35,7 @@ public struct SessionRuntime: Sendable {
   let firing: SubscriptionFiring
   let scripts: Scripts?
   let sockets: ResponsesSocketRegistry?
-  private let discoveryOwner: InProcessToolOwnerClient?
+  private let discoveryOwner: Hub?
   private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
@@ -54,17 +54,17 @@ public struct SessionRuntime: Sendable {
     usage = UsageBoard()
     refresher = nil
     warmer = CacheWarmer(space: space, usage: usage)
-    let executionOwner = InProcessExecutionOwnerClient(space: space, credentials: credentials)
+    let executionOwner = Hub(space: space, credentials: credentials)
     let catalog = groupCatalog(owner: executionOwner)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
-    let owner: any SessionOwnerClient = InProcessToolOwnerClient(
-      space: space, executionOwner: executionOwner,
-      resolveModelExecutor: modelExecutorResolver(owner: executionOwner),
+    let owner: any Main = Hub(
+      space: space, credentials: credentials,
+      resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute,
     )
-    discoveryOwner = owner as? InProcessToolOwnerClient
-    resolveModelExecutor = modelExecutorResolver(owner: owner)
+    discoveryOwner = owner as? Hub
+    resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
     scripts = Scripts(owner: owner)
     firing = SubscriptionFiring(space: space, scripts: scripts, tools: ToolExecutor(owner: owner, scripts: scripts))
@@ -81,7 +81,7 @@ public struct SessionRuntime: Sendable {
     scripts: Scripts?,
     handler: any HandlerExecutionClient,
     startup: (@Sendable () async -> Void)? = nil,
-    owner: any ExecutionOwnerClient,
+    owner: any Main,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
   ) {
     self.startup = startup
@@ -92,8 +92,8 @@ public struct SessionRuntime: Sendable {
     self.sockets = sockets
     self.refresher = refresher
     warmer = CacheWarmer(space: space, usage: usage)
-    discoveryOwner = owner as? InProcessToolOwnerClient
-    resolveModelExecutor = modelExecutorResolver(owner: owner)
+    discoveryOwner = owner as? Hub
+    resolveModelExecutor = modelExecutorResolver(space: space)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
@@ -102,7 +102,7 @@ public struct SessionRuntime: Sendable {
   }
 
   func configureDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
-    scripts?.configureDiscovery(contentHost: contentHost, identity: identity)
+    scripts?.configureDiscovery(contentHost: contentHost)
     discoveryOwner?.configureScriptDiscovery(contentHost: contentHost, identity: identity)
   }
 
@@ -160,24 +160,32 @@ extension SessionRuntime {
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
-    let executionOwner = InProcessExecutionOwnerClient(
-      space: space, metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
-    )
-    let executionCredentials = CredentialResolver.bound { try await executionOwner.providerCredentialBinding($0) }
-    let executionMetrics = InferenceMetricsSink { await executionOwner.recordMetric($0) }
+    let executionCredentials = credentials
+    let executionMetrics = metrics
     let thresholds = CompactionThresholds()
     @Dependency(\.date) var date
     // Models are data in the space, edited at runtime (`wuhu models update`):
     // the catalog is re-read per use, never cached at boot.
     let catalogs: @Sendable (Bool) async throws -> ProviderCatalog = { includeGroups in
-      let data = try await executionOwner.modelDocument()
-      let groups = includeGroups ? try await executionOwner.modelGroupDocument() : nil
+      let fs = await space.fs(.shared)
+      let data = try await fs.read(ModelsDocument.spacePath).1
+      let groups: Data?
+      if includeGroups {
+        do { groups = try await fs.read(ModelsDocument.groupPath).1 }
+        catch SpaceError.notFound { groups = nil }
+      } else { groups = nil }
       return ProviderCatalog(
         document: try ModelsDocument(json: data, groupsJSON: groups),
         credentials: executionCredentials,
-        oidcToken: { try await executionOwner.inferenceToken(audience: $0, session: $1) },
-        oidcReadiness: { try await executionOwner.inferenceReadiness(audience: $0) },
-        oidcBindingIdentity: { try await executionOwner.inferenceBindingIdentity(audience: $0, session: $1) },
+        oidcToken: { audience, session in
+          guard let oidcToken else { throw InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.") }
+          return try await oidcToken(audience, session)
+        },
+        oidcReadiness: { audience in
+          guard oidcToken != nil else { throw InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.") }
+          try await oidcReadiness?(audience)
+        },
+        oidcBindingIdentity: { try await oidcBindingIdentity?($0, $1) },
         receiveCodexResponseHeaders: { providerID, headers in
           usage.record(providerID, plan: headers["x-codex-plan-type"], windows: codexUsage(headers: headers), at: date.now)
         },
@@ -189,21 +197,21 @@ extension SessionRuntime {
     let serviceSlot = SessionServiceSlot()
     let machines = machineSeam(hub: hub)
     let exec = execBackend(space: space, hub: hub)
-    let toolOwner = InProcessToolOwnerClient(
+    let toolOwner = Hub(
       space: space,
-      executionOwner: executionOwner,
+      metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
       secrets: secrets,
       identityFetch: identityFetch,
       machines: machines,
       exec: exec,
       scriptMachines: ScriptMachineAccess(files: machines, exec: exec),
-      resolveModelExecutor: modelExecutorResolver(owner: executionOwner),
+      resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
       completionMetrics: executionMetrics,
       control: sessionControl { serviceSlot.service },
     )
-    let owner: any SessionOwnerClient = toolOwner
+    let owner: any Main = toolOwner
     let startup: @Sendable () async -> Void = {
       do {
         let owners = try await space.takeScriptExecOwners()
@@ -237,7 +245,7 @@ extension SessionRuntime {
         await mechanicalCompaction(of: transcript, images: budget(id).images)
       },
       budget: budget,
-      prepareCompaction: compactionPlacement(owner: executionOwner, catalog: catalog, usage: usage),
+      prepareCompaction: compactionPlacement(owner: owner, catalog: catalog, usage: usage),
       killInterruptedTool: { invocation in
         guard invocation.call.name == "exec" else { return }
         await owner.killInterruptedExec(
@@ -285,13 +293,13 @@ func sessionToolExecutor(
   resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
   prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
 ) -> ToolExecutor {
-  let owner = InProcessExecutionOwnerClient(space: space, credentials: credentials)
+  let owner = Hub(space: space, credentials: credentials)
   let catalog = completionCatalog ?? groupCatalog(owner: owner)
   return ToolExecutor(
     space: space,
     machines: machineSeam(hub: hub),
     exec: execBackend(space: space, hub: hub),
-    resolveModelExecutor: modelExecutorResolver(owner: owner),
+    resolveModelExecutor: modelExecutorResolver(space: space),
     resolveModelGroup: resolveModelGroup ?? modelGroupExecutorResolver(catalog: catalog),
     prepareModelRoute: prepareModelRoute ?? modelRoutePreparer(catalog: catalog, usage: usage),
     credentials: credentials,
@@ -376,7 +384,16 @@ func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
 }
 
 func modelExecutorResolver(space: Space) -> @Sendable (String, String, String?) async throws -> SessionExecutor {
-  modelExecutorResolver(owner: InProcessExecutionOwnerClient(space: space))
+  { provider, model, effort in
+    let data = try await space.fs(.shared).read(ModelsDocument.spacePath).1
+    let catalog = ProviderCatalog(document: try ModelsDocument(json: data), credentials: .unavailable)
+    if let effort {
+      let specifier = ModelSpecifier(provider: provider, model: model, effort: effort)
+      try catalog.validate(specifier)
+      return .kernel(specifier)
+    }
+    return try .kernel(catalog.defaultSpecifier(provider: provider, model: model))
+  }
 }
 
 func machineSeam(hub: MachineHub) -> MachineSeam {
@@ -475,7 +492,7 @@ extension ToolResultPayload {
 
 // A kernel session's prompt, frozen at its prompt revision.
 func systemPrompt(space: Space, record: SessionRecord) async throws -> String {
-  try await systemPrompt(owner: InProcessExecutionOwnerClient(space: space), record: record)
+  try await systemPrompt(owner: Hub(space: space), record: record)
 }
 
 private func machineOperationFailure(_ error: OperationError) -> ToolRunError {

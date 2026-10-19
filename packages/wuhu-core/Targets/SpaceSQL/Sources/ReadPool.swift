@@ -3,7 +3,7 @@ import GRDB
 import GRDBSQLite
 import Synchronization
 
-/// Lazily opened read connections to one space file. A statement steps on its
+/// Lazily opened read connections to one space database. A statement steps on its
 /// connection's own queue, never on the cooperative pool, and a cancelled
 /// caller interrupts it.
 public final class ReadPool: Sendable {

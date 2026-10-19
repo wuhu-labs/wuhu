@@ -2,6 +2,7 @@ import Foundation
 import JSONValue
 @testable import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Testing
 import WuhuAI
@@ -9,15 +10,18 @@ import WuhuAI
 @Suite struct ArchiveReviewRegressionTests {
   @Test func contractorRestartBetweenPreflightAndWriteFailsWithoutCrashing() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
-        if id == child { _ = try await store.send(.append(root, .restarted(executor: .kernel(.test), note: nil, modelRoute: nil))).value(SessionRestart.self) }
-        return try await store.send(.append(id, .archived(grace: grace)))
-      }, loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeAppend = { id, event async throws in
+          guard case .archived = event else { return }
+          if id == child { _ = try await space.sessions.restart(root, executor: .kernel(.test), note: nil, modelRoute: nil) }
+        }
+        return access
+      }()), loopConfig: makeConfig())
       do {
         await #expect(throws: SessionError.archiveReservationLost) { try await service.archive(root) }
         #expect(try await sessions.record(root).lifecycle == .live)
@@ -36,7 +40,8 @@ import WuhuAI
 
   @Test func reservedParentFinalDoesNotBlockOtherSessionsWorkSignalsOrEnqueue() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let outside = try await sessions.createSession(group: .shared, title: "outside", kind: .agent, createdBy: "owner", model: .test)
@@ -47,15 +52,17 @@ import WuhuAI
       let outsideRan = Box(false)
       let enqueued = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
-        if id == child {
-          writing.withLock { $0 = true }
-          await gate.wait(unless: { Task.isCancelled })
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeAppend = { id, event async throws in
+          guard case .archived = event else { return }
+          if id == child {
+            writing.withLock { $0 = true }
+            await gate.wait(unless: { Task.isCancelled })
+          }
         }
-        return try await store.send(.append(id, .archived(grace: grace)))
-      }, loopConfig: makeConfig(inference: { request in
+        return access
+      }()), loopConfig: makeConfig(inference: { request in
         #expect(request.sessionID == outside)
         outsideRan.withLock { $0 = true }
         return Fix.reply("done")
@@ -89,18 +96,22 @@ import WuhuAI
 
   @Test func failedWriteReleasesReservationAndResynchronizesDeliveredInput() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let writing = Box(false)
       let ran = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .append(_, .archived(_)) = message else { return try await store.send(message) }
-        writing.withLock { $0 = true }
-        await gate.wait(unless: { Task.isCancelled })
-        throw UnexpectedCall("archive write failed")
-      }, loopConfig: makeConfig(inference: { _ in
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeAppend = { id, event async throws in
+          guard case .archived = event else { return }
+          writing.withLock { $0 = true }
+          await gate.wait(unless: { Task.isCancelled })
+          throw UnexpectedCall("archive write failed")
+        }
+        return access
+      }()), loopConfig: makeConfig(inference: { _ in
         ran.withLock { $0 = true }
         return Fix.reply("done")
       }))
@@ -132,13 +143,15 @@ import WuhuAI
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let writing = Box(false)
       let gate = Latch()
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
-        writing.withLock { $0 = true }
-        await gate.wait(unless: { Task.isCancelled })
-        return try await store.send(.append(id, .archived(grace: grace)))
-      }, loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeAppend = { id, event async throws in
+          guard case .archived = event else { return }
+          writing.withLock { $0 = true }
+          await gate.wait(unless: { Task.isCancelled })
+        }
+        return access
+      }()), loopConfig: makeConfig())
       let archive = Task { try await service.archive(root) }
       do {
         try await until("parent reserved") { writing.value }
@@ -168,7 +181,8 @@ import WuhuAI
 
   @Test func refusedArchiveDoesNotConsumeCompactCommandDuringReservation() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let one = try await sessions.createSession(group: .shared, title: "one", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let two = try await sessions.createSession(group: .shared, title: "two", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
@@ -182,23 +196,22 @@ import WuhuAI
       let compactRan = Box(false)
       let pendingGate = Latch()
       let busyGate = Latch()
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        if case .read(let id, .pendingCommand) = message {
-          let command = try await store.send(message)
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.afterPendingCommand = { id async throws in
           if id == compact, !pendingRead.value {
             pendingRead.withLock { $0 = true }
             await pendingGate.wait(unless: { Task.isCancelled })
           }
-          return command
         }
-        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
-        if id == busy, !busyRead.value {
-          busyRead.withLock { $0 = true }
-          await busyGate.wait(unless: { Task.isCancelled })
+        access.beforeQueueHead = { id async throws in
+          if id == busy, !busyRead.value {
+            busyRead.withLock { $0 = true }
+            await busyGate.wait(unless: { Task.isCancelled })
+          }
         }
-        return try await store.send(.read(id, .queueHead))
-      }, loopConfig: makeConfig(inference: { request in
+        return access
+      }()), loopConfig: makeConfig(inference: { request in
         guard request.sessionID == compact else { return try await Fix.hanging(request) }
         if request.mode == .forcedCompact {
           compactRan.withLock { $0 = true }

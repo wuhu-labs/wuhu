@@ -1,3 +1,4 @@
+import SessionTools
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -8,7 +9,7 @@ import enum SessionDomain.QueueInput
 import enum SessionDomain.SessionExecutor
 import struct SessionDomain.SessionID
 import struct SessionDomain.SessionModelRoute
-import protocol SpaceCore.MainClient
+import protocol SessionTools.Main
 import struct SpaceCore.SessionRestart
 
 public protocol SessionExecutionClient: Sendable {
@@ -31,7 +32,7 @@ public struct SessionExecution: SessionExecutionClient {
   private let liveness = LivenessTracker()
   private let archived: @Sendable (SessionID) async -> Void
 
-  public init(main: any MainClient, loopConfig: LoopConfig) async {
+  public init(main: any Main, loopConfig: LoopConfig) async {
     archived = loopConfig.archived
     registry = SessionRegistry(main: main, loopConfig: loopConfig, liveness: liveness)
     await registry.activate()

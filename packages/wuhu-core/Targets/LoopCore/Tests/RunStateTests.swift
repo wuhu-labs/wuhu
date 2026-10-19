@@ -54,7 +54,7 @@ import WuhuAI
       let config = makeConfig(executeTool: { try await exec($0) }, inference: { try await script($0) })
 
       var waiting: RunRow?
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("find the script"), to: sid)
         try await until("exec engaged") { exec.calls.value.count == 1 }
         let inTool = try await row(space, sid)
@@ -70,7 +70,7 @@ import WuhuAI
       #expect(try await row(space, sid) == waiting)
       await time.advance(by: 3600)
 
-      try await runService(sessions, config) { _ in
+      try await runService(space, config) { _ in
         // Boot rejoins the same call, and the row still dates the wait
         // from when it began.
         try await until("exec rejoined") { exec.calls.value.count == 2 }
@@ -106,7 +106,7 @@ import WuhuAI
         return Fix.reply("done")
       }, compact: { _ in .init(summary: "folded") })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("settled") { try await sessions.settledWork(sid) }
         #expect(try await row(space, sid).run == "no_run")
@@ -134,7 +134,7 @@ import WuhuAI
       let script = InferenceScript([Fix.hanging])
       let config = makeConfig(inference: { try await script($0) })
 
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         try await until("inference engaged") { script.count == 1 }
         let thinking = try await row(space, sid)

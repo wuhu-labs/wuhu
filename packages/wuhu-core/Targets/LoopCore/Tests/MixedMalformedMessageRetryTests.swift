@@ -20,7 +20,8 @@ private let malformed = InferenceError.malformedModelMessage(message: "Malformed
   @Test(arguments: [false, true])
   func mechanicalCompactionDoesNotResetBudget(transientPark: Bool) async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "mixed compaction", kind: .agent, createdBy: "morgan", model: .test)
       if transientPark { try await sessions.requestCommand(sid, .compact(instructions: nil)) }
       let middle: [InferenceScript.Step] = transientPark
@@ -36,7 +37,7 @@ private let malformed = InferenceError.malformedModelMessage(message: "Malformed
       mirrorAllocationDraws(&rng)
       let backoffs = transientPark ? boundedFailureLimit + 1 : 2
       let delays = (0 ..< backoffs).map { pow(2.0, Double($0)) * Double.random(in: 0 ... 1, using: &rng) }
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }
@@ -58,7 +59,8 @@ private let malformed = InferenceError.malformedModelMessage(message: "Malformed
   @Test(arguments: [false, true])
   func transientFailuresKeepMalformedBudgetButMalformedResetsOtherBudgets(idleTimeout: Bool) async throws {
     try await withKernelDeps { time in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let sid = try await sessions.createSession(group: .shared, title: "mixed transient", kind: .agent, createdBy: "morgan", model: .test)
       let leadingCount = idleTimeout ? 2 : boundedFailureLimit - 1
       let error: InferenceError = idleTimeout ? .transport(.idleTimeout) : .transient(status: 503, body: "transient")
@@ -68,7 +70,7 @@ private let malformed = InferenceError.malformedModelMessage(message: "Malformed
       mirrorAllocationDraws(&rng)
       let attempts = (leadingCount + 1) * 3
       let delays = (0 ..< attempts - 1).map { min(backoffCeiling, pow(2.0, Double($0))) * Double.random(in: 0 ... 1, using: &rng) }
-      try await runService(sessions, makeConfig(inference: { try await script($0) })) { service in
+      try await runService(space, makeConfig(inference: { try await script($0) })) { service in
         _ = try await service.enqueue(item: Fix.message("hello"), to: sid)
         for (index, delay) in delays.enumerated() {
           try await until("attempt \(index + 1)") { script.count == index + 1 }

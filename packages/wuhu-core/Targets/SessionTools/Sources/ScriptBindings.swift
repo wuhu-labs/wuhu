@@ -94,10 +94,10 @@ func overBudget(_ buffer: ScriptBuffer) -> ScriptError {
 
 final class ScriptBindings: Sendable {
   private let execution: ScriptExecution
-  private let owner: any ScriptOwnerClient
+  private let owner: any Main
   private let secrets: ScriptSecrets
 
-  init(execution: ScriptExecution, owner: any ScriptOwnerClient, secrets: ScriptSecrets) {
+  init(execution: ScriptExecution, owner: any Main, secrets: ScriptSecrets) {
     self.execution = execution
     self.owner = owner
     self.secrets = secrets

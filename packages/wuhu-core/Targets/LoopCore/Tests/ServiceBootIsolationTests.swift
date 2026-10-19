@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -33,20 +34,21 @@ import Testing
       let commits = AsyncStream<SessionID>.makeStream()
       defer { commits.continuation.finish() }
       let logs = RecordedLogs()
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .read(let id, .queueHead) = message else { return try await store.send(message) }
-        if missing, id == first, removed.withLock({ value in
-          guard !value else { return false }
-          value = true
-          return true
-        }) {
-          try await space.writer.write { db in
-            try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [bad.rawValue])
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeQueueHead = { id async throws in
+          if missing, id == first, removed.withLock({ value in
+            guard !value else { return false }
+            value = true
+            return true
+          }) {
+            try await space.writer.write { db in
+              try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [bad.rawValue])
+            }
           }
         }
-        return try await store.send(.read(id, .queueHead))
-      }, loopConfig: makeConfig(inference: { request in
+        return access
+      }()), loopConfig: makeConfig(inference: { request in
         calls.withLock { $0.append(request.sessionID) }
         var reply = Fix.reply("done")
         reply.committed = { _, _ in commits.continuation.yield(request.sessionID) }

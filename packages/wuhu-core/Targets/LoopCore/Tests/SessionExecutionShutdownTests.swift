@@ -1,3 +1,4 @@
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -10,9 +11,10 @@ import Testing
 
 @Test func concurrentExecutionShutdownsJoinAndRejectLaterCommands() async throws {
   try await withKernelDeps { _ in
-    let sessions = try Space.inMemory().sessions
+    let space = try Space.inMemory()
+    let sessions = space.sessions
     let id = try await sessions.createSession(group: .shared, title: "shutdown", kind: .agent, createdBy: "morgan", model: .test)
-    let execution = await SessionExecution(main: InProcessMainClient(sessions: sessions), loopConfig: makeConfig())
+    let execution = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig())
     try await execution.wake(id)
     async let first: Void = execution.shutdown()
     async let second: Void = execution.shutdown()

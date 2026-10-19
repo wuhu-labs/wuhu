@@ -1,13 +1,15 @@
 import Foundation
 @testable import LoopCore
 import SessionDomain
+import SessionTools
 import SpaceCore
 import Testing
 
 @Suite struct SubtreeArchiveTests {
   @Test func forceIncludesAChildCreatedByAToolAlreadyInFlight() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let entered = Box(false)
       let lateChild = Box<SessionID?>(nil)
@@ -26,7 +28,7 @@ import Testing
         }
         throw UnexpectedCall("inference survived interruption")
       })
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("start"), to: root)
         try await until("root running") { entered.value }
         try await service.archive(root, force: true)
@@ -39,10 +41,11 @@ import Testing
 
   @Test func concurrentOverlappingArchivesFinishWithoutStrandingAReservation() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig())
       do {
         async let one: Void = service.archive(root)
         async let two: Void = service.archive(child)
@@ -61,7 +64,8 @@ import Testing
 
   @Test func refusalNamesEveryBusyDescendantAndForceArchivesLeavesFirst() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(
         group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test),
@@ -76,17 +80,19 @@ import Testing
       _ = try await sessions.enqueue(leaf, input: Fix.message("queued"))
       _ = try await sessions.enqueue(sibling, input: Fix.message("queued", message: "sibling"))
       let writes = Box<[SessionID]>([])
-      let service = await SessionService(sessions: sessions, main: InProcessMainClient { message in
-        let store = InProcessMainClient(sessions: sessions)
-        guard case .append(let id, .archived(let grace)) = message else { return try await store.send(message) }
-        if id == child { #expect(try await store.send(.read(leaf, .record)).value(SessionRecord.self).lifecycle.isArchived) }
-        if id == root {
-          for descendant in [child, leaf, sibling] { #expect(try await store.send(.read(descendant, .record)).value(SessionRecord.self).lifecycle.isArchived) }
+      let service = await SessionService(sessions: sessions, main: Hub(space: space, sessionAccess: {
+        var access = SessionAccess()
+        access.beforeAppend = { id, event async throws in
+          guard case .archived = event else { return }
+          if id == child { #expect(try await space.sessions.record(leaf).lifecycle.isArchived) }
+          if id == root {
+            for descendant in [child, leaf, sibling] { #expect(try await space.sessions.record(descendant).lifecycle.isArchived) }
+          }
+          #expect(try await space.sessions.record(root).lifecycle == .live)
+          writes.withLock { $0.append(id) }
         }
-        #expect(try await store.send(.read(root, .record)).value(SessionRecord.self).lifecycle == .live)
-        writes.withLock { $0.append(id) }
-        return try await store.send(.append(id, .archived(grace: grace)))
-      }, loopConfig: makeConfig(inference: Fix.hanging))
+        return access
+      }()), loopConfig: makeConfig(inference: Fix.hanging))
       do {
         do {
           try await service.archive(root)
@@ -119,7 +125,8 @@ import Testing
 
   @Test func forceInterruptsARunningKernelLeaf() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", model: .test)
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let leaf = try await sessions.createSession(group: .shared, title: "running leaf", kind: .task, parent: child, createdBy: child.rawValue, executor: .kernel(.test))
@@ -131,7 +138,7 @@ import Testing
         try Task.checkCancellation()
         throw UnexpectedCall("inference survived interruption")
       })
-      try await runService(sessions, config) { service in
+      try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("start"), to: leaf)
         try await until("leaf running") { entered.value }
         await #expect(throws: SubtreeArchiveBusy(sessions: [ArchiveBusySession(id: leaf, title: "running leaf")])) {
@@ -147,7 +154,8 @@ import Testing
 
   @Test func forceClosesQueuedRequestsAndDeliversFinalsOutsideTheSubtree() async throws {
     try await withKernelDeps { _ in
-      let sessions = try Space.inMemory().sessions
+      let space = try Space.inMemory()
+      let sessions = space.sessions
       let requester = try await sessions.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .task, parent: requester, createdBy: requester.rawValue, executor: .kernel(.test))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
@@ -157,7 +165,7 @@ import Testing
       let childDelivery = try await sessions.openRequest(on: child, from: root, messageID: childRequest, text: "work", deadline: anchor.addingTimeInterval(60))
       try await sessions.markInterrupted(root)
       try await sessions.markInterrupted(child)
-      let service = await SessionService(sessions: sessions, loopConfig: makeConfig())
+      let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig())
       do {
         try await service.archive(root, force: true)
         for (id, delivery, request) in [(root, rootDelivery, rootRequest), (child, childDelivery, childRequest)] {

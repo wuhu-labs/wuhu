@@ -115,7 +115,7 @@ struct EnrollRig {
       $0.withRandomNumberGenerator = WithRandomNumberGenerator(SeededRNG(seed: 43))
     } operation: {
       let hub = MachineHub(space: space)
-      return SpaceServer.handler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, dev: dev, webApp: nil)
+      return SpaceServer.handler(space: space, hub: hub, origin: origin, fingerprint: fingerprint, dev: dev)
     }
     let server = try await ServeNIOServer.bind(host: "127.0.0.1", port: 0, tls: identity, upgrading: handler)
     do {

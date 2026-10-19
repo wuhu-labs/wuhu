@@ -231,7 +231,7 @@ extension MachineToolV2RoutingTests {
     let space = try Space.inMemory()
     let (record, _) = try await space.addMachineV2(name: "presence-v2", group: .shared)
     let hub = MachineHub(space: space)
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, webApp: nil, machineV2Hub: MachineV2Hub(space: space))
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, machineV2Hub: MachineV2Hub(space: space))
     for state: MachineV2Presence in [.attached, .lost, .detached] {
       try await space.recordMachineV2Presence(record.id.rawValue, group: .shared, state: state, description: state == .attached ? .init(instance: UUID(), acceptingStarts: true, limits: .init(), kinds: []) : nil, reason: "test")
       #expect(await hub.attachedMachines().contains(record.id) == (state == .attached))
@@ -252,7 +252,7 @@ extension MachineToolV2RoutingTests {
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
     await hub.configureV2(service)
-    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, webApp: nil)
+    let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true)
     let request = Request(url: URL(string: "https://test.invalid/v1/tools/read")!, method: .post, body: try .json(JSONValue.object(["path": .string("machines://" + record.id.rawValue + "/file")])))
     guard case let .response(response) = try await handler(request) else { Issue.record("tool upgraded"); return }
     let body = try await response.body.json(JSONValue.self)

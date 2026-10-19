@@ -5,17 +5,16 @@
 #endif
 import JSONValue
 import SessionDomain
+import protocol SessionTools.Main
 import enum SessionTools.ScriptDataOperation
-import protocol SessionTools.ScriptOwnerClient
-import protocol SessionTools.ToolOwnerClient
 import SpaceCore
 import SpaceTools
 import WuhuAI
 
 public struct ScriptOwnerContract {
-  let owner: any ToolOwnerClient
+  let owner: any Main
   let session: SessionID
-  public init(owner: any ToolOwnerClient, session: SessionID) { self.owner = owner; self.session = session }
+  public init(owner: any Main, session: SessionID) { self.owner = owner; self.session = session }
 
   public func guardedFilesAndFrozenModules() async throws {
     let first = try await owner.writeBytes("/owner.js", data: Data("export default 1".utf8), ifMatch: nil, session: session)

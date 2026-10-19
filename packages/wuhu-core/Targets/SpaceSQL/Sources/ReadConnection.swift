@@ -13,19 +13,9 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 private let multipleStatements =
   "Multiple statements found. To execute multiple statements, use Database.execute(sql:) or Database.allStatements(sql:) instead."
 
-/// One raw connection reading the space file. The file is attached read-only
-/// under a schema name only this connection knows, and a user statement names
-/// public TEMP views, each reading a secretly named inner view of one table:
-/// an unqualified name finds the TEMP view first, so the views are the only
-/// names that reach the space tables.
-///
-/// The authorizer also asks that a column read of a space table come through
-/// an inner view, so a leaked schema name alone gets past no filter. SQLite's
-/// flattener leaves no accessor on a read of no column (a flattened
-/// `count(*)`), so that read is admitted only for a table without a filter.
-/// Every error message is scrubbed of both secrets, and SQLite has no way to
-/// name a table but writing it, so a statement whose text holds either secret
-/// is refused before it compiles.
+/// Public TEMP views are the only route to the attached space: the authorizer
+/// admits base-table reads only through their secret inner views. Statements
+/// naming either secret are refused, and errors are scrubbed before returning.
 final class ReadConnection {
   struct Secrets {
     let schema: String
@@ -110,10 +100,11 @@ final class ReadConnection {
     }, nil, nil, nil)
     try exec("PRAGMA trusted_schema = OFF")
     modules = try Set(strings("SELECT name FROM pragma_module_list")).subtracting(ViewCatalog.tableFunctions)
-    try exec("ATTACH DATABASE \(Self.literal(Self.readOnlyURI(path))) AS \(quoted(schema))")
+    try exec("ATTACH DATABASE \(Self.literal(Self.attachmentURI(path))) AS \(quoted(schema))")
   }
 
-  private static func readOnlyURI(_ path: String) -> String {
+  private static func attachmentURI(_ path: String) -> String {
+    if path.hasPrefix("file:") { return path }
     var escaped: [UInt8] = []
     for byte in path.utf8 {
       switch byte {

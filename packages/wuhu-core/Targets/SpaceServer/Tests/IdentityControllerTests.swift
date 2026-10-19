@@ -41,7 +41,7 @@ import WuhuVFS
     let key = try await ServerIdentity.loadOrCreate(from: fs)
     let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://space.test", dev: true, webApp: nil, identityController: controller))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://space.test", dev: true, identityController: controller))
     var parts = URLComponents(string: "https://space.test/v1/identity/issuer-for")!
     parts.queryItems = [.init(name: "origin", value: origin)]
     let response = try await api(Request(url: parts.url!))
@@ -60,7 +60,7 @@ import WuhuVFS
       return try Response.json(JSONValue.object(["id": .string(String(repeating: "b", count: 32)), "issuer": .string("https://id.wuhu.ai/" + String(repeating: "b", count: 32)), "confirmed": true]), status: .created)
     })
     let space = try makeMachineSpace()
-    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://space.test", dev: true, webApp: nil, identityController: controller))
+    let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://space.test", dev: true, identityController: controller))
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { try await controller.set(defaultIssuer: .directory) }
       await entered.wait()
@@ -130,7 +130,7 @@ import WuhuVFS
     }
     let space = try makeMachineSpace()
     let handler = withDependencies { $0.continuousClock = ContinuousClock() } operation: {
-      SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, webApp: nil, identityController: reopened)
+      SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://private.test", dev: true, identityController: reopened)
     }
     let api = ServeTesting.client(upgrading: handler)
     #expect(try await json(try await api(Request(url: URL(string: "https://private.test/.well-known/openid-configuration")!))).object?["issuer"] == .string("https://private.test"))
@@ -201,7 +201,7 @@ import WuhuVFS
       let key = try await ServerIdentity.loadOrCreate(from: fs)
       let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
       let harness = tree.harness
-      let handler = SpaceServer.configuredHandler(space: harness.space, hub: harness.hub, sessions: harness.runtime, origin: "https://space.test", dev: false, webApp: nil, execTokens: tree.tokens, identityController: controller)
+      let handler = SpaceServer.configuredHandler(space: harness.space, hub: harness.hub, sessions: harness.runtime, origin: "https://space.test", dev: false, execTokens: tree.tokens, identityController: controller)
       let api = ServeTesting.client(upgrading: handler)
       var request = Request(url: URL(string: "https://space.test/v1/identity")!)
       #expect(try await api(request).status == .unauthorized)

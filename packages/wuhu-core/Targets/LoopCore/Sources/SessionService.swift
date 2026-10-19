@@ -1,5 +1,6 @@
 import Dependencies
 import GRDB
+import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -25,22 +26,18 @@ public struct SessionService: Sendable {
   private let archives = ArchiveCoordinator()
   private let log: Logger
 
-  public init(sessions: SessionStore, loopConfig: LoopConfig) async {
-    await self.init(sessions: sessions, main: InProcessMainClient(sessions: sessions), loopConfig: loopConfig)
-  }
-
-  public init(sessions: SessionStore, main: any MainClient, loopConfig: LoopConfig) async {
+  public init(sessions: SessionStore, main: any Main, loopConfig: LoopConfig) async {
     await self.init(sessions: sessions, main: main, loopConfig: loopConfig, log: Logger(label: "wuhu.session-service"))
   }
 
-  init(sessions: SessionStore, main: any MainClient, loopConfig: LoopConfig, log: Logger) async {
+  init(sessions: SessionStore, main: any Main, loopConfig: LoopConfig, log: Logger) async {
     self.sessions = sessions
     self.log = log
     archiveGrace = loopConfig.archiveGrace
     let reminders = SessionReminders(sessions: sessions)
     self.reminders = reminders
     var loopConfig = loopConfig
-    loopConfig.scheduleWake = { id, due in await reminders.schedule(id, at: due) }
+    loopConfig.scheduleWake = { [weak reminders] id, due in await reminders?.schedule(id, at: due) }
     let execution = await SessionExecution(main: main, loopConfig: loopConfig)
     await reminders.bind(execution)
     self.execution = execution

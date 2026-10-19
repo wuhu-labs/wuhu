@@ -17,12 +17,12 @@ final class ScriptSecrets: Sendable {
   private static let prefix = Array("wuhu-secret.".utf8)
   private static let mask = Array("***".utf8)
 
-  private let owner: any ScriptOwnerClient
+  private let owner: any Main
   private let session: SessionID
   private let suffix: [UInt8]
   private let sent = Mutex<[[UInt8]]>([])
 
-  init(owner: any ScriptOwnerClient, session: SessionID) {
+  init(owner: any Main, session: SessionID) {
     @Dependency(\.uuid) var uuid
     self.owner = owner
     self.session = session
