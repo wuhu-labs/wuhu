@@ -124,7 +124,7 @@ private final class SessionCLIHarness: Sendable {
     let slot = SessionServiceSlot()
     let catalog = groupCatalog(owner: Hub(space: space))
     let owner = Hub(
-      space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      space: space, machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),

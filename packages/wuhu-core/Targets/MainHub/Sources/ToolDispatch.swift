@@ -2,7 +2,6 @@ import protocol MachineChannel.FrameTransport
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
 import SessionDomain
-import struct SpaceCore.ExecClaim
 import struct SpaceCore.ExecRecord
 
 // A model-facing failure: rendered into the transcript as a typed tool
@@ -32,7 +31,6 @@ public struct IncompleteSession: Error, Sendable {
 }
 
 public struct ExecBackend: Sendable {
-  public var claim: @Sendable (MachineID, SessionID, ToolCallID) async throws -> ExecClaim
   public var connect: @Sendable (ExecID) async throws -> any FrameTransport
   public var status: @Sendable (ExecID) async throws -> ExecRecord?
   // Mints an exec owned by a run_script execution: (machine, session, script id).
@@ -40,13 +38,11 @@ public struct ExecBackend: Sendable {
   public var kill: @Sendable (ExecID) async throws -> Void
 
   public init(
-    claim: @escaping @Sendable (MachineID, SessionID, ToolCallID) async throws -> ExecClaim,
     connect: @escaping @Sendable (ExecID) async throws -> any FrameTransport,
     status: @escaping @Sendable (ExecID) async throws -> ExecRecord?,
     mintScript: @escaping @Sendable (MachineID, SessionID, String) async throws -> ExecRecord,
     kill: @escaping @Sendable (ExecID) async throws -> Void,
   ) {
-    self.claim = claim
     self.connect = connect
     self.status = status
     self.mintScript = mintScript

@@ -169,3 +169,7 @@ secret's value reaches it only inside the `ExecStart` that needs it.
 ## Machine v2 agent upgrade
 
 `MachineV2Upgrade` is what the server wants a v2 machine to run: `version` (absent when the server is unstamped and no pin names one), `pinned` (an admin pin chose it), `status` (`MachineV2UpgradeStatus`: `ready`, `paused`, `unstamped`, `unpublished`, `unreachable`) and `artifacts`. Only `ready` lists artifacts, and a machine installs only the `MachineV2Artifact` whose `platform` is its own (`macos-arm64`, `linux-amd64`): `url` is the release archive (`.zip` on macOS, `.tar.gz` on Linux, one `wuhu` inside) and `sha256` the lowercase hex digest of the archive bytes, which the machine must verify before installing. Every other status means stay put. The server sends it in the machine's signed hello and at `GET /v1/machine-v2/:id/upgrade` (SpaceServer SPEC).
+
+## Exec registry inputs and status
+
+`ExecMintInput.spec` is optional opaque JSON for a tool-call exec claim; a plain mint does not use it. `ExecStatus.toolCallID` identifies the session tool call that claimed an exec, or is absent for ordinary and script mints.

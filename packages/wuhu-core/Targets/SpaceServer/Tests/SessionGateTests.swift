@@ -77,7 +77,7 @@ import Testing
     try await withSessionDeps {
       let t = try await tree()
       for (method, path) in [
-        (Fetch.Method.get, "/v1/users"), (.get, "/v1/accounts"), (.get, "/v1/secret"),
+        (Fetch.Method.get, "/v1/users"), (.get, "/v1/accounts"),
         (.post, "/v1/machine"), (.get, "/v1/providers"), (.get, "/v1/session/\(t.child.rawValue)/transcript"),
       ] {
         var request = Request(url: URL(string: "http://space\(path)")!, method: method)
@@ -486,6 +486,66 @@ import Testing
       #expect(try await t.harness.get("/v1/exec/\(others.id.rawValue)", bearer: t.token).status == .notFound)
       #expect(try await t.harness.post("/v1/exec/\(others.id.rawValue)/kill", .null, bearer: t.token).status == .notFound)
       #expect(try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token).status == .ok)
+    }
+  }
+
+  @Test func execClaimsRejoinAndExposeTheToolCall() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.machine(named: "box"))
+      let spec: JSONValue = .object(["lifetime": .number(60)])
+      let body: JSONValue = .object(["machine": .string(machine.id.rawValue), "spec": spec])
+      let first = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
+      let retry = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/exec", body, toolCall: "claim")
+      #expect(first.0 == .ok)
+      #expect(retry.0 == .ok)
+      #expect(first.1 == retry.1)
+      let minted = try JSONValueDecoder().decode(ExecMintOutput.self, from: #require(JSONValue.parse(first.1)))
+      let record = try #require(try await t.harness.space.execRecord(minted.id))
+      #expect(try JSONValue.parse(#require(record.toolSpec)) == spec)
+      let response = try await t.harness.get("/v1/exec/\(minted.id.rawValue)", bearer: t.token)
+      let status = try JSONValueDecoder().decode(ExecStatus.self, from: #require(JSONValue.parse(try await response.text())))
+      #expect(status.toolCallID == "claim")
+      let listed = try await t.harness.get("/v1/exec", bearer: t.token)
+      let statuses = try JSONValueDecoder().decode([ExecStatus].self, from: #require(JSONValue.parse(try await listed.text())))
+      #expect(statuses.filter { $0.toolCallID == "claim" }.map(\.id) == [minted.id])
+    }
+  }
+
+  @Test func onlyOwnToolCallExecsCanChangeTheirOwedEnd() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.machine(named: "box"))
+      let own = try await t.harness.space.claimExec(machine: machine.id, caller: t.parent.rawValue, toolCallID: ToolCallID("own"))
+      let foreign = try await t.harness.space.claimExec(machine: machine.id, caller: t.child.rawValue, toolCallID: ToolCallID("foreign"))
+      let script = try await t.harness.space.mintScriptExec(machine: machine.id, session: t.parent.rawValue, script: "script")
+      for action in ["detach", "delivered"] {
+        for id in [foreign.record.id, script.id, t.exec] {
+          #expect(try await t.harness.post("/v1/exec/\(id.rawValue)/\(action)", .null, bearer: t.token).status == .notFound)
+        }
+        #expect(try await t.harness.post("/v1/exec/missing/\(action)", .null, bearer: t.token).status == .notFound)
+      }
+      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/detach", .null, bearer: t.token).status == .ok)
+      #expect(try await t.harness.space.execRecord(own.record.id)?.toolEndOwed == true)
+      try await t.harness.space.finishExec(own.record.id, .exited(code: 0))
+      #expect(try await t.harness.space.owedExecs().map(\.id) == [own.record.id])
+      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/delivered", .null, bearer: t.token).status == .ok)
+      #expect(try await t.harness.space.execRecord(own.record.id)?.toolEndOwed == false)
+      #expect(try await t.harness.space.owedExecs().isEmpty)
+      #expect(try await t.harness.post("/v1/exec/\(own.record.id.rawValue)/delivered", .null, bearer: t.token).status == .ok)
+    }
+  }
+
+  @Test func killingAnEndedOwnExecIsAlreadyEnded() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.machine(named: "box"))
+      let ended = try await t.harness.space.mintExec(machine: machine.id, caller: t.parent.rawValue)
+      try await t.harness.space.finishExec(ended.id, .exited(code: 0))
+      let response = try await t.harness.post("/v1/exec/\(ended.id.rawValue)/kill", .null, bearer: t.token)
+      #expect(response.status == .unprocessableContent)
+      let body = try await response.text()
+      #expect(JSONValue.parse(body)?.object?["code"]?.stringValue == "alreadyEnded")
     }
   }
 

@@ -97,6 +97,10 @@ public struct ListInput: Codable, Equatable, Sendable {
   public let path: String
   public let rev: Int?
   public let hidden: Bool?
+  /// Refuse a directory with more entries than this.
+  public let limit: Int?
+  /// Refuse a listing whose rendered form exceeds this many bytes.
+  public let byteLimit: Int?
 }
 
 @Contract

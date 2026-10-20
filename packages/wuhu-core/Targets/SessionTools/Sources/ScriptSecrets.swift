@@ -1,10 +1,8 @@
 import struct Credentials.SpaceSecrets
 import Dependencies
-import protocol MainHub.Main
-import struct MainHub.ScriptError
-import SessionDomain
-import struct SpaceContract.GroupID
-import SpaceCore
+import JSONValue
+import SpaceClient
+import struct SpaceContract.SecretsOutput
 import Synchronization
 
 // A script names a secret by a placeholder and never holds its value: the
@@ -14,20 +12,19 @@ import Synchronization
 //
 // A name resolves in the session's own group; another group the session's
 // group reads is named explicitly, and its placeholder carries it as
-// `wuhu-secret.<group>:<name>.<suffix>`.
+// `wuhu-secret.<group>:<name>.<suffix>`. The secret routes answer as the
+// session, so their refusals are the script's errors.
 final class ScriptSecrets: Sendable {
   private static let prefix = Array("wuhu-secret.".utf8)
   private static let mask = Array("***".utf8)
 
-  private let owner: any Main
-  private let session: SessionID
+  private let client: SpaceClient
   private let suffix: [UInt8]
   private let sent = Mutex<[[UInt8]]>([])
 
-  init(owner: any Main, session: SessionID) {
+  init(client: SpaceClient) {
     @Dependency(\.uuid) var uuid
-    self.owner = owner
-    self.session = session
+    self.client = client
     suffix = Array(".\(uuid().uuidString.lowercased().prefix(8))".utf8)
   }
 
@@ -42,16 +39,25 @@ final class ScriptSecrets: Sendable {
   }
 
   func names(in group: String?) async throws -> [String] {
-    try await owner.secretNames(in: group, session: session)
+    if let group { try SpaceSecrets.validate(group: group) }
+    do {
+      let output: SecretsOutput = try await client.api(.get, queryPath("/v1/secret", [("group", group)]))
+      return output.names
+    } catch { throw scriptFailure(error) }
   }
 
   func set(_ name: String, to value: String) async throws {
-    try await owner.setSecret(name, value: value, session: session)
+    try SpaceSecrets.validate(name)
+    do {
+      _ = try await client.api(.put, "/v1/secret/\(pathSegment(name))", body: .object(["value": .string(value)])) as JSONValue
+    } catch { throw scriptFailure(error) }
   }
 
   func remove(_ name: String) async throws {
-    let acting = try await owner.principal(of: session).group
-    throw ScriptError("removing secret \(name) can't be undone and needs a human admin of group \(acting.rawValue)")
+    try SpaceSecrets.validate(name)
+    do {
+      _ = try await client.api(.delete, "/v1/secret/\(pathSegment(name))") as JSONValue
+    } catch { throw scriptFailure(error) }
   }
 
   func reveal(_ text: String) async throws -> String {
@@ -72,7 +78,7 @@ final class ScriptSecrets: Sendable {
       }
       let key = (group.map { $0 + ":" } ?? "") + name
       if values[key] == nil {
-        let value = Array(try await owner.secretValue(name, in: group, session: session).utf8)
+        let value = Array(try await value(of: name, in: group).utf8)
         values[key] = value
         protect(String(decoding: value, as: UTF8.self))
       }
@@ -80,6 +86,14 @@ final class ScriptSecrets: Sendable {
       rest = bytes[end...]
     }
     return output + rest
+  }
+
+  private func value(of name: String, in group: String?) async throws -> String {
+    struct Value: Decodable { let value: String }
+    do {
+      let output: Value = try await client.api(.get, queryPath("/v1/secret/\(pathSegment(name))", [("group", group)]))
+      return output.value
+    } catch { throw scriptFailure(error) }
   }
 
   // True when the bytes hold a placeholder of this run, which only fetch may

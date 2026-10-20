@@ -68,3 +68,20 @@ extension Hub {
     return claim
   }
 }
+
+extension Hub {
+  nonisolated public func pendingArrivals(_ session: SessionID) -> AsyncThrowingStream<[PendingArrival], any Error> {
+    let snapshots = store.observePendingArrivals(session)
+    return AsyncThrowingStream { continuation in
+      let forward = Task {
+        do {
+          for try await pending in snapshots { continuation.yield(pending) }
+          continuation.finish()
+        } catch { continuation.finish(throwing: error) }
+      }
+      continuation.onTermination = { _ in forward.cancel() }
+    }
+  }
+
+  nonisolated public func owedExecs() async throws -> [ExecRecord] { try await space.owedExecs() }
+}

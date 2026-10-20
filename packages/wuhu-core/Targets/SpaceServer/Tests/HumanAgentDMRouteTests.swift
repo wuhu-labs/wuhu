@@ -1,3 +1,4 @@
+import Dependencies
 import DeterministicDependencies
 import class MainHub.Hub
 #if canImport(FoundationEssentials)
@@ -84,37 +85,42 @@ import struct WuhuAI.ToolCall
     try await withSessionDeps {
       let t = try await SessionGateTests().tree()
       let person = try await t.harness.mintPersona()
-      let owner = Hub(space: t.harness.space, identityFetch: { request, session, _ in
-        #expect(session == t.parent)
-        var request = request
-        request.headers[.authorization] = "Bearer " + t.token
-        return try await t.harness.api(request)
-      })
+      // The identity hop lands on the harness as the parent's own bearer.
+      let owner = Hub(space: t.harness.space)
       let scripts = Scripts(owner: owner)
-      let executor = SessionRuntime.toolExecutor(owner: owner, scripts: scripts)
-      try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await scripts.run() }
-        defer { group.cancelAll() }
-        for user in ["'\(person)'", "null"] {
-          let source = """
-          const response = await fetch('http://space/v1/conversation/message', {
-            method: 'POST', identity: true, headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: \(user), message: 'lost' })
-          });
-          result({ status: response.status, body: await response.json() });
-          """
-          let payload = try await executor.execute(
-            session: t.parent,
-            call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 10])),
-            state: ToolExecutionState(),
-          ).payload
-          guard case let .script(result) = payload else {
-            Issue.record("unexpected script result: \(payload)")
-            return
+      let executor = SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: try testIdentity().controller)
+      try await withDependencies {
+        $0.scriptHop = FetchClient { request in
+          #expect(request.headers[.authorization]?.hasPrefix("Bearer ") == true)
+          var request = request
+          request.headers[.authorization] = "Bearer " + t.token
+          return try await t.harness.api(request)
+        }
+      } operation: {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+          group.addTask { await scripts.run() }
+          defer { group.cancelAll() }
+          for user in ["'\(person)'", "null"] {
+            let source = """
+            const response = await fetch('http://space/v1/conversation/message', {
+              method: 'POST', identity: true, headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ user: \(user), message: 'lost' })
+            });
+            result({ status: response.status, body: await response.json() });
+            """
+            let payload = try await executor.execute(
+              session: t.parent,
+              call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 10])),
+              state: ToolExecutionState(),
+            ).payload
+            guard case let .script(result) = payload else {
+              Issue.record("unexpected script result: \(payload)")
+              return
+            }
+            #expect(JSONValue.parse(String(result.output.prefix { $0 != "\n" })) == .object([
+              "status": 422, "body": .object(["code": "refused", "message": .string(refusal)]),
+            ]))
           }
-          #expect(JSONValue.parse(String(result.output.prefix { $0 != "\n" })) == .object([
-            "status": 422, "body": .object(["code": "refused", "message": .string(refusal)]),
-          ]))
         }
       }
       #expect(try await t.harness.store.conversations(member: person).isEmpty)

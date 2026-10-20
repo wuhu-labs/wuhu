@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"QueryInput","type":"object","properties":{"sql":{"type":"string"}},"required":["sql"],"additionalProperties":false}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"QueryInput","type":"object","properties":{"sql":{"type":"string"},"parameters":{"type":["array","null"],"items":{}},"typed":{"type":["boolean","null"]},"byteLimit":{"type":["integer","null"]}},"required":["sql"],"additionalProperties":false}

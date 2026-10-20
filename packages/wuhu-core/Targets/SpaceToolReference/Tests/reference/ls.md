@@ -11,6 +11,8 @@ List a folder's entries, at the head or at `rev`. At `/` the system folder `/_` 
 | `path` | string | yes |
 | `rev` | integer or null | no |
 | `hidden` | boolean or null | no |
+| `limit` | integer or null | no |
+| `byteLimit` | integer or null | no |
 
 ## Output
 

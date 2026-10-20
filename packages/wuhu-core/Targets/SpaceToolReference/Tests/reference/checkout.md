@@ -11,6 +11,7 @@ Restore a path's content from revision `rev`. Identical file bytes return the cu
 | `path` | string | yes |
 | `rev` | integer | yes |
 | `ifMatch` | string or null | no |
+| `createOnly` | boolean or null | no |
 
 ## Output
 

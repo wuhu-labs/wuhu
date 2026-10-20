@@ -43,7 +43,7 @@ import Testing
       await attempt(()=>readText('machines://box/file.md'))
       result({codes,bytes:Array.from(bytes.data),old:Array.from(old.data),races:races.filter(r=>r.status==='fulfilled').length,page:page.entries.length,page2:page2.entries.length,ordered:page2.entries[0].rev>page.entries[0].rev,changes:journal.entries.map(x=>x.change),system:system.content.length>0,list:(await list('/')).entries.length>0,token:current.token!==first.token})
       """#)
-      #expect(value.object?["codes"] == ["invalidArgument", "unsupported", "conflict", "conflict", "invalidArgument", "conflict", "unsupported", "invalidArgument", "invalidArgument", "invalidPath"])
+      #expect(value.object?["codes"] == ["invalidArgument", "unsupported", "conflict", "conflict", "invalidArgument", "conflict", "forbidden", "invalidArgument", "invalidArgument", "invalidPath"])
       #expect(value.object?["bytes"] == [0, 255, 65])
       #expect(value.object?["old"] == [0, 255, 65])
       #expect(value.object?["races"] == 1)
@@ -199,7 +199,7 @@ import Testing
         }
       }
       let value = try await rig.evaluate("import {list} from 'wuhu:space';const failures=[];for(const options of [{},{rev:\(rev)}]){try{await list('/long',options);failures.push('ok')}catch(e){failures.push({code:e.code,message:e.message})}};result(failures)")
-      #expect(value == [["code": "invalidArgument", "message": "listing exceeds 25165824 byte allowance"], ["code": "invalidArgument", "message": "listing exceeds 25165824 byte allowance"]])
+      #expect(value == [["code": "byteLimitExceeded", "message": "listing exceeds 25165824 byte allowance"], ["code": "byteLimitExceeded", "message": "listing exceeds 25165824 byte allowance"]], "\(value)")
       #expect(try await rig.space.fs(.shared, listingLimit: 1, listingByteLimit: 24 << 20).list("/long").1.count == 1)
       #expect(try await rig.evaluate("import {list} from 'wuhu:space';result((await list('/')).entries.length>0)") == true)
     }
@@ -225,7 +225,7 @@ import Testing
       }
       result(codes)
       """#)
-      #expect(result == ["invalidArgument", "invalidArgument", "invalidArgument"])
+      #expect(result == ["byteLimitExceeded", "byteLimitExceeded", "invalidArgument"])
     }
   }
 }

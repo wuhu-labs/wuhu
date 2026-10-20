@@ -134,8 +134,7 @@ import WuhuVFS
       _ = try await page.response(Request(url: URL(string: "https://verifier.test")!), allow: ["https://verifier.test"], space: "s", group: "g", page: "/p", viewer: "v", deadline: .now() + .seconds(60))
       Issue.record("ownership failure minted a token")
     } catch let error as PageFetchError { #expect(error.code == failure.directoryCode) }
-    let script = ScriptFetch(controller: controller, hop: { _, _ in Issue.record("unconfirmed identity must not connect"); return Response(status: .ok) })
-    try await withIdentityScript(proxy: script) { rig in
+    try await withIdentityScript(identity: controller, hop: FetchClient { _ in Issue.record("unconfirmed identity must not connect"); return Response(status: .ok) }) { rig in
       let output = try await rig.evaluate("try { await fetch('https://verifier.test', {identity:true}) } catch(e) { result(e.code) }")
       #expect(output == .string(failure.directoryCode!))
     }

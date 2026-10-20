@@ -7,6 +7,7 @@ import Dependencies
 import Fetch
 import Serve
 import ServeRouting
+import func SessionTools.fetchOrigin
 import SpaceCore
 
 private struct IdentitySetInput: Decodable {

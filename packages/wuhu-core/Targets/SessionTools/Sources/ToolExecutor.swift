@@ -1,6 +1,7 @@
 import struct Credentials.CredentialResolver
 import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
+import struct MainHub.ExecArguments
 import struct MainHub.IncompleteSession
 import protocol MainHub.Main
 import struct MainHub.ManipulateUIArguments
@@ -39,6 +40,7 @@ public struct ToolExecutor: Sendable {
   let credential: @Sendable (SessionID) async throws -> String
   let credentials: CredentialResolver
   let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
+  let execJobs: ExecJobs
   let scripts: Scripts?
 
   /// `credential` is the token main issued the session; every call the worker
@@ -50,12 +52,14 @@ public struct ToolExecutor: Sendable {
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
     scripts: Scripts? = nil,
+    execJobs: ExecJobs = ExecJobs(),
   ) {
     self.owner = owner
     self.main = main
     self.credential = credential
     self.credentials = credentials
     self.completionCatalog = completionCatalog
+    self.execJobs = execJobs
     self.scripts = scripts
   }
 
@@ -69,6 +73,10 @@ public struct ToolExecutor: Sendable {
       request.headers[.authorization] = "Bearer " + token
       if let toolCall { request.headers[ToolCallHeader.name] = toolCall }
       return try await main.fetch(request)
+    }, dial: { url, headers in
+      var headers = headers + [("authorization", "Bearer " + token)]
+      if let toolCall { headers.append((ToolCallHeader.name, toolCall)) }
+      return try await main.dial(url, headers: headers)
     })
   }
 
@@ -78,8 +86,9 @@ public struct ToolExecutor: Sendable {
     }
     let (call, touched) = await resolvingMachine(session, tool, call)
     let payload = try await result(session, tool, call, state: state)
-    if case .failure = payload { return ToolOutcome(payload: payload) }
-    return ToolOutcome(payload: payload, context: await deliverContext(session, touching: touched, state: state))
+    let committed = tool == .exec ? execCommitted(session, ToolCallID(call.id)) : nil
+    if case .failure = payload { return ToolOutcome(payload: payload, committed: committed) }
+    return ToolOutcome(payload: payload, context: await deliverContext(session, touching: touched, state: state), committed: committed)
   }
 
   private func result(_ session: SessionID, _ tool: RosterTool, _ call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
@@ -105,8 +114,7 @@ public struct ToolExecutor: Sendable {
       case .createSession: return try await createSession(session, call.id, decoded(CreateSessionArguments.self, call))
       case .setTitle: return try await setTitle(session, call.id, decoded(SetTitleArguments.self, call))
       case .manipulateUI: return try await manipulateUI(session, call.id, decoded(ManipulateUIArguments.self, call))
-      // Exec stays main's: the relay and its jobs live there until cut 4.
-      case .exec: return try await owner.execute(session: session, call: call, state: state)
+      case .exec: return try await exec(session, ToolCallID(call.id), decoded(ExecArguments.self, call))
       }
     } catch let error as CapabilityError { return .failure(.init(message: error.description)) }
     catch let error as OperationError { return .failure(.init(message: error.message.isEmpty ? error.code.rawValue : error.message, code: error.code.rawValue)) }

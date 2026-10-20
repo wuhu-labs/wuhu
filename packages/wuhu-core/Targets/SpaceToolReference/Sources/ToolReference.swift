@@ -89,6 +89,10 @@ public enum ToolReference {
       summary: "Insert, update and delete rows in one revision. `values` follow the header's column order; `ids` are the inserted rows' ids.",
     ),
     Entry(
+      tool: "table.rows", input: "TableRowsInput", output: "TableMutateOutput",
+      summary: "The named-column form of table.mutate: ops are `{insert: {col: v}}`, `{update: id, set: {col: v}}` or `{delete: id}`, applied in one revision; `ids` are the inserted rows' ids.",
+    ),
+    Entry(
       tool: "new", input: "NewInput", output: "NewOutput",
       summary: "Instantiate a template document, next to it or in the folder `in`, and answer the new path.",
     ),

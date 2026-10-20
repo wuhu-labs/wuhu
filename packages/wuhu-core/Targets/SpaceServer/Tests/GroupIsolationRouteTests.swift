@@ -170,7 +170,25 @@ import Testing
         #expect(try await send(w, .delete, "/v1/secret/K", bearer: w.alice, group: w.aliceGroup).status == .ok)
 
         let session = try await send(w, .put, "/v1/secret/Y", value, bearer: try await token(w, w.s))
-        #expect(session.status == .forbidden)
+        #expect(session.status == .ok)
+
+        // `?group=` picks the store, and the admin check follows it: alice
+        // administers her group, not shared.
+        let named = try await send(w, .put, "/v1/secret/Y?group=shared", value, bearer: w.alice, group: w.aliceGroup)
+        #expect(named.status == .forbidden)
+        #expect(try await code(named) == "adminRequired")
+        let namedRemoval = try await send(w, .delete, "/v1/secret/Y?group=shared", bearer: w.alice, group: w.aliceGroup)
+        #expect(namedRemoval.status == .forbidden)
+        #expect(try await code(namedRemoval) == "adminRequired")
+
+        // A value goes to the worker's token only; an exec's, which the
+        // command can print, is refused.
+        let fromExec = try await send(w, .get, "/v1/secret/Y", bearer: try await token(w, w.s))
+        #expect(fromExec.status == .forbidden)
+        #expect(try await code(fromExec) == "unauthorized")
+        let fromWorker = try await send(w, .get, "/v1/secret/Y", bearer: w.tokens.sessionToken(w.s))
+        #expect(fromWorker.status == .ok)
+        #expect(try await fromWorker.body.json(JSONValue.self) == .object(["value": "v"]))
       }
     }
   }

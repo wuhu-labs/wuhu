@@ -6,6 +6,7 @@
 import Dependencies
 import Serve
 import ServeRouting
+import func SessionTools.fetchOrigin
 import SpaceCore
 
 /// `GET /v1/id-token?audience=<origin>` with `Authorization: Bearer wit_…`: a

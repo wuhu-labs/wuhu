@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import Crypto
 import DeterministicDependencies
 import Fetch
 import JSONValue
@@ -6,34 +7,31 @@ import SessionDomain
 @testable import SessionTools
 import SpaceContract
 @testable import SpaceCore
+@testable import SpaceServer
 import SpaceTools
 import Testing
-import enum WuhuAI.Tool
 
 @Suite(.deterministicDependencies) struct ScriptDiscoveryTests {
-  @Test(arguments: ["root", "child", "task"])
-  func callerContextAndGroupStandingMatchCheckedService(kind: String) async throws {
+  @Test(arguments: ["root", "child", "task"], ["{group}.space.test", "{group}--tenant.space.test"])
+  func callerContextAndGroupStandingMatchCheckedService(kind: String, host: String) async throws {
     let alice = GroupID(rawValue: "alice")
-    try await withRig(group: alice, task: kind == "task", childAgent: kind == "child") { rig in
+    try await withRig(contentHost: host, group: alice, task: kind == "task", childAgent: kind == "child") { rig in
       try await rig.space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('hidden', '2026-01-01T00:00:00.000Z')")
       }
-      for host in ["https://{group}.space.test:443", "https://{group}--tenant.space.test"] {
-        rig.main.configureScriptDiscovery(contentHost: host)
-        let principal = try await rig.space.principal(of: rig.session)
-        let service = SpaceToolContext(space: rig.space, principal: principal)
-        let expectedContext = try await service.discoveryContext(contentHost: host)
-        let expectedGroups = try JSONValueEncoder().encode(try await service.discoveryGroups())
-        let actual = try await rig.evaluate("""
-        import {context,groups} from 'wuhu:space'
-        result({context:await context(),groups:await groups()})
-        """)
-        #expect(actual == .object(["context": expectedContext, "groups": expectedGroups]))
-        #expect(actual.object?["context"]?.object?["session"] == .string(rig.session.rawValue))
-        #expect(actual.object?["context"]?.object?["group"] == "alice")
-        #expect(expectedGroups.array?.first { $0.object?["id"] == "hidden" } == ["id": "hidden", "member": false, "readable": false, "admin": false])
-        #expect(expectedGroups.array?.first { $0.object?["id"] == "shared" } == ["id": "shared", "member": false, "readable": true, "admin": false])
-      }
+      let principal = try await rig.space.principal(of: rig.session)
+      let service = SpaceToolContext(space: rig.space, principal: principal)
+      let expectedContext = try await service.discoveryContext(contentHost: "https://" + host)
+      let expectedGroups = try JSONValueEncoder().encode(try await service.discoveryGroups())
+      let actual = try await rig.evaluate("""
+      import {context,groups} from 'wuhu:space'
+      result({context:await context(),groups:await groups()})
+      """)
+      #expect(actual == .object(["context": expectedContext, "groups": expectedGroups]))
+      #expect(actual.object?["context"]?.object?["session"] == .string(rig.session.rawValue))
+      #expect(actual.object?["context"]?.object?["group"] == "alice")
+      #expect(expectedGroups.array?.first { $0.object?["id"] == "hidden" } == ["id": "hidden", "member": false, "readable": false, "admin": false])
+      #expect(expectedGroups.array?.first { $0.object?["id"] == "shared" } == ["id": "shared", "member": false, "readable": true, "admin": false])
       let forgedGroup = SpaceToolContext(space: rig.space, principal: Principal(actor: .session(rig.session), group: .shared))
       #expect(try await forgedGroup.discoveryContext(contentHost: nil).object?["group"] == "alice")
       try await rig.space.addEdge(src: alice, dst: GroupID(rawValue: "hidden"), kind: .read, by: nil)
@@ -43,22 +41,23 @@ import enum WuhuAI.Tool
   }
 
   @Test func identityIsReadOnlyAndResolvesCanonicalOrigins() async throws {
-    try await withRig(identity: { ["defaultIssuer": "https://id.wuhu.ai/opaque", "overrides": ["https://lab.test": "https://space.test"]] }) { rig in
+    let id = String(repeating: "o", count: 32)
+    let controller = try IdentityController(
+      identity: try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation), origin: "https://space.test",
+      settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id),
+      store: .init(load: { nil }, save: { _ in }), fetch: FetchClient { _ in Response(status: .forbidden) },
+    )
+    try await withRig(identity: controller) { rig in
       let resolved = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); result([i.defaultIssuer,i.issuerFor('https://LAB.test:443'),i.issuerFor('https://cloud.test')])")
-      #expect(resolved == ["https://id.wuhu.ai/opaque", "https://space.test", "https://id.wuhu.ai/opaque"])
+      #expect(resolved == [.string("https://id.wuhu.ai/" + id), "https://space.test", .string("https://id.wuhu.ai/" + id)])
       let refused = try await rig.evaluate("import {identity} from 'wuhu:space'; const i=await identity(); try {i.issuerFor('https://user:pass@lab.test')} catch(e) {result(e.name)}")
       #expect(refused == "TypeError")
     }
   }
 
-  @Test func rosterIsTheConfiguredRuntimeDeclaration() async throws {
+  @Test func rosterIsTheServerDeclaration() async throws {
     try await withRig { rig in
-      let roster = ToolRostersOutput(rosters: [.init(executor: .kernel, tools: ToolExecutor.tools.map {
-        guard case let .function(name, description, parameters) = $0 else { preconditionFailure() }
-        return ToolDescriptor(name: name, description: description, parameters: parameters)
-      })])
-      rig.main.configureScriptDiscovery(toolRosters: roster)
-      #expect(try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())") == JSONValueEncoder().encode(roster))
+      #expect(try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())") == JSONValueEncoder().encode(sessionToolRosters()))
       let context = try await rig.evaluate("import {context} from 'wuhu:space';result(await context())")
       #expect(context.object?["contentHost"] == "https://shared.localhost")
     }

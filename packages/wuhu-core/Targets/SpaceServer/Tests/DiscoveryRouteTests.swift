@@ -54,8 +54,9 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
     let harness = try Harness(origin: "https://space.test:5530", contentHostPattern: flat ? "{group}--space.test:5530" : nil)
     let response = try await harness.api(Request(url: URL(string: "https://space.test:5530/v1/context")!))
     #expect(response.status == .ok)
-    let context = try await json(response)
-    #expect(context == ["session": .null, "group": "shared", "contentHost": .string(flat ? "https://shared--space.test:5530" : "https://shared.space.test:5530")])
+    var context = try #require(try await json(response).object)
+    #expect(context.removeValue(forKey: "rev") == .integer(try await harness.space.currentRevision()))
+    #expect(JSONValue.object(context) == ["session": .null, "group": "shared", "contentHost": .string(flat ? "https://shared--space.test:5530" : "https://shared.space.test:5530")])
   }
 
   @Test func capabilityHTTPIsConfigurationOnlyAndDoesNotExposeCredentials() async throws {

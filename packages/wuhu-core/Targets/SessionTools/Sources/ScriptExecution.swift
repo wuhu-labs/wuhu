@@ -9,6 +9,7 @@ import enum MainHub.WaitCut
 import QuickJSKit
 import ServerTelemetry
 import SessionDomain
+import struct SpaceClient.SpaceClient
 import SpaceCore
 import Synchronization
 import TaskLifetime
@@ -96,6 +97,8 @@ final class ScriptExecution: Sendable {
   let session: SessionID
   let source: String
   let lifetime: Duration
+  /// Main's API as the session: what the bindings touch the space through.
+  let client: SpaceClient
   let secrets: ScriptSecrets
   let tools: ToolExecutor
   let handler: ScriptHandlerContext?
@@ -116,6 +119,7 @@ final class ScriptExecution: Sendable {
     session: SessionID,
     source: String,
     lifetime: Duration,
+    client: SpaceClient,
     secrets: ScriptSecrets,
     tools: ToolExecutor,
     handler: ScriptHandlerContext? = nil,
@@ -124,6 +128,7 @@ final class ScriptExecution: Sendable {
     self.session = session
     self.source = source
     self.lifetime = lifetime
+    self.client = client
     self.secrets = secrets
     self.tools = tools
     self.handler = handler
@@ -251,7 +256,7 @@ final class ScriptExecution: Sendable {
 
   func run(owner: any Main) async {
     guard ServerTracing.enabled else { return await runBody(owner: owner) }
-    let group = try? await owner.moduleSnapshot(for: session).acting.rawValue
+    let group = (try? await client.api(.get, "/v1/context") as ScriptContext)?.group
     await ServerTracing.$context.withValue(traceContext) {
       let span = ServerSpan(.script, session: session.rawValue, group: group)
       await ServerTracing.$context.withValue(span.context) {
@@ -316,10 +321,10 @@ final class ScriptExecution: Sendable {
 
   private func evaluate(owner: any Main, streams: ScriptStreams) async -> ScriptEnding {
     let engine = JSEngine(limits: .init(memoryBytes: scriptEngineMemoryBytes), interrupter: interrupter)
-    ScriptBindings(execution: self, owner: owner, secrets: secrets).install(in: engine)
-    ScriptFiles(owner: owner, execution: self).install(in: engine)
-    ScriptSpace(execution: self, owner: owner, streams: streams).install(in: engine)
-    ScriptDiscovery(execution: self, owner: owner).install(in: engine)
+    ScriptBindings(execution: self, client: client, secrets: secrets).install(in: engine)
+    ScriptFiles(client: client, execution: self).install(in: engine)
+    ScriptSpace(execution: self, client: client, streams: streams).install(in: engine)
+    ScriptDiscovery(client: client).install(in: engine)
     ScriptMachineBindings(execution: self, owner: owner).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
@@ -330,9 +335,7 @@ final class ScriptExecution: Sendable {
       try engine.execute(scriptPrelude, name: "<prelude>")
       if let handler { try handler.install(in: engine) }
       try engine.defineModule("wuhu:machine", source: machineModule)
-      let modules = scriptModules(
-        owner: owner, snapshot: try await owner.moduleSnapshot(for: session), typedErrors: handler != nil,
-      )
+      let modules = scriptModules(client: client, snapshot: try await ScriptModuleSnapshot.load(client), typedErrors: handler != nil)
       try await engine.run(module: source, name: "script", meta: ["session": .string(session.rawValue)], loader: modules)
       return .released
     } catch let JSError.exception(message, stack) {

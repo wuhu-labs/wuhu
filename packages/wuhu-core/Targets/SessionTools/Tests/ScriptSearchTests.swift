@@ -99,7 +99,7 @@ import Testing
         "matches": [["path": "wuhu://shared.localspace/docs/s.md", "line": 1, "text": "TODO shared"]], "step": .null, "scanned": "number", "skipped": [],
       ])
       #expect(object["codes"] == [
-        "invalidArgument", "invalidArgument", "invalidArgument", "invalidPath", "notFound", "notFound", "unavailable",
+        "invalidArgument", "invalidArgument", "invalidArgument", "invalidPath", "notFound", "notFound", "invalidPath",
         "TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "invalidArgument", "invalidArgument",
       ])
     }

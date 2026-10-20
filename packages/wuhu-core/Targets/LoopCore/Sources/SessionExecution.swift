@@ -22,6 +22,7 @@ public struct SessionExecution: Worker {
   private let registry: SessionRegistry
   private let liveness = LivenessTracker()
   private let scripts: Scripts
+  private let execJobs: ExecJobs
   private let tools: ToolExecutor
   private let scope = TaskScope()
 
@@ -31,12 +32,14 @@ public struct SessionExecution: Worker {
     credential: @escaping @Sendable (SessionID) async throws -> String,
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    execJobs: ExecJobs = ExecJobs(),
     loopConfig: @Sendable (ToolExecutor) -> LoopConfig,
   ) async {
     let scripts = Scripts(owner: main)
     let tools = ToolExecutor(
-      owner: main, main: connection, credential: credential, credentials: credentials, completionCatalog: completionCatalog, scripts: scripts,
+      owner: main, main: connection, credential: credential, credentials: credentials, completionCatalog: completionCatalog, scripts: scripts, execJobs: execJobs,
     )
+    self.execJobs = execJobs
     self.scripts = scripts
     self.tools = tools
     var config = loopConfig(tools)
@@ -96,6 +99,7 @@ public struct SessionExecution: Worker {
 
   public func shutdown() async {
     await registry.stop()
+    await execJobs.close()
     await scope.close()
   }
 }

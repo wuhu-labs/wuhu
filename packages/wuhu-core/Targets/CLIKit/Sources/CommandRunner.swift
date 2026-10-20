@@ -195,7 +195,7 @@ public struct CommandRunner: Sendable {
       await self.stderr(rendered(error.error))
       return 1
     } catch let error as SpaceClient.TransportFailure {
-      await self.stderr(error.message + "\n")
+      await self.stderr((error.code.map { "\($0): " } ?? "") + error.message + "\n")
       return 1
     } catch let error as CLIError {
       await self.stderr(error.message + "\n")

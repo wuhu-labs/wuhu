@@ -31,9 +31,6 @@ struct MachineReceiptRecoveryTests {
       "machine": .string(machine.rawValue), "cwd": .string(fixture.path),
       "command": .string("echo run >> invocations; printf '%s' '\(payload)'"),
     ]))
-    try await space.writer.write { db in
-      try db.execute(sql: "CREATE TRIGGER fail_exec_receipt BEFORE INSERT ON session_receipts WHEN NEW.tool_call_id = 'post-exit' BEGIN SELECT RAISE(FAIL, 'injected receipt failure'); END")
-    }
     try await withThrowingTaskGroup(of: Void.self) { lifetime in
       lifetime.addTask { await agent.run(dial: dialer.dial) }
       defer { lifetime.cancelAll() }
@@ -44,29 +41,31 @@ struct MachineReceiptRecoveryTests {
         defer { socket.close() }
         dialer.offer(socket)
         try await awaitAttached(server, machine)
-        let first = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: execBackend(space: space, hub: server.hub)))
-        let failed = try await first.execute(session: session, call: call, state: ToolExecutionState()).payload
-        guard case let .failure(failure) = failed else { throw UnexpectedReceiptResult() }
-        #expect(failure.message.contains("injected receipt failure"))
+        let jobs = ExecJobs()
+        let first = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub)), hub: server.hub, execJobs: jobs)
+        let dropped = try await first.execute(session: session, call: call, state: ToolExecutionState())
+        guard case let .exec(result) = dropped.payload else { throw UnexpectedReceiptResult() }
+        #expect(result.output == payload)
+        #expect(dropped.committed != nil)
+        await jobs.close()
         #expect(try await space.sessions.receipt(session, toolCallID: .init("post-exit")) == nil)
         let claim = try await space.claimExec(machine: machine, caller: session.rawValue, toolCallID: .init("post-exit"))
         #expect(claim.record.terminal == .exited(code: 0))
       }
 
       let reopened = try makeMachineSpace(file: file)
-      try await reopened.writer.write { db in try db.execute(sql: "DROP TRIGGER fail_exec_receipt") }
       let replacement = TestServer(space: reopened, clock: ContinuousClock())
       try await withThrowingTaskGroup(of: Void.self) { incarnation in
         incarnation.addTask { await replacement.run() }
         defer { incarnation.cancelAll() }
         dialer.offer(try await connectMachine(replacement, key: key))
         try await awaitAttached(replacement, machine)
-        let fresh = SessionRuntime.toolExecutor(owner: Hub(space: reopened, machines: machineSeam(hub: replacement.hub), exec: execBackend(space: reopened, hub: replacement.hub)))
-        let recovered = try await fresh.execute(session: session, call: call, state: ToolExecutionState()).payload
-        guard case let .exec(result) = recovered else { throw UnexpectedReceiptResult() }
+        let fresh = SessionRuntime.toolExecutor(owner: Hub(space: reopened, machines: machineSeam(hub: replacement.hub)), hub: replacement.hub)
+        let recovered = try await fresh.execute(session: session, call: call, state: ToolExecutionState())
+        guard case let .exec(result) = recovered.payload else { throw UnexpectedReceiptResult() }
         #expect(result.output == payload)
         #expect(result.exitCode == 0)
-        #expect(try await reopened.sessions.receipt(session, toolCallID: .init("post-exit")) == recovered)
+        await recovered.committed?()
         #expect(try String(contentsOfFile: fixture.path + "/invocations", encoding: .utf8) == "run\n")
       }
     }

@@ -1,13 +1,17 @@
 import Clocks
 import ControlledTime
 import Dependencies
+import Fetch
 import FileSearch
 import Foundation
 import JSONValue
 import MachineChannel
 import struct MachineContract.Ack
 import struct MachineContract.Base64Data
+import struct MachineContract.ExecExit
 import struct MachineContract.ExecID
+import struct MachineContract.ExecMintInput
+import struct MachineContract.ExecMintOutput
 import struct MachineContract.MachineEntry
 import struct MachineContract.MachineError
 import struct MachineContract.MachineID
@@ -15,11 +19,15 @@ import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
 import struct MainHub.ExecBackend
+import class MainHub.Hub
 import protocol MainHub.Worker
+import Serve
 import SessionDomain
 @testable import SessionTools
+import struct SpaceClient.SpaceClient
 import struct SpaceContract.GroupID
 import SpaceCore
+@testable import SpaceServer
 import SpaceTools
 import Synchronization
 import Testing
@@ -177,6 +185,7 @@ struct ToolWorld {
       state,
     )
     state.apply(outcome.payload)
+    await outcome.committed?()
     delivered = outcome.context
     if let delivered {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
@@ -360,6 +369,7 @@ let machineA = MachineID(rawValue: "mc_aaaaaaaa")
 final class ScriptedExecMachine: Sendable {
   let startCount = Box(0)
   let kills = Box<[ExecID]>([])
+  let failDelivered = Box(false)
 
   private let endpoints = Mutex<[ExecID: ChannelEndpoint]>([:])
   private let links = Mutex<[ExecID: InMemoryTransport]>([:])
@@ -380,14 +390,8 @@ final class ScriptedExecMachine: Sendable {
   func backend(_ space: Space) -> ExecBackend {
     self.space.withLock { $0 = space }
     return ExecBackend(
-      claim: { machine, session, callID in
-        try await space.claimExec(machine: machine, caller: session.rawValue, toolCallID: callID)
-      },
       connect: { [self] id in
-        let (caller, machineSide) = InMemoryTransport.pair()
-        links.withLock { $0[id] = machineSide }
-        transportsContinuation.yield((endpoint(for: id), machineSide))
-        return TerminalAckTransport(base: caller, observe: onTerminalAck)
+        dial(id)
       },
       status: { id in try await space.execRecord(id) },
       mintScript: { machine, session, script in
@@ -398,6 +402,68 @@ final class ScriptedExecMachine: Sendable {
         try? await space.finishExec(id, .cancelled)
       },
     )
+  }
+
+  func dial(_ id: ExecID) -> any FrameTransport {
+    let (caller, machineSide) = InMemoryTransport.pair()
+    links.withLock { $0[id] = machineSide }
+    transportsContinuation.yield((endpoint(for: id), machineSide))
+    return TerminalAckTransport(base: caller, observe: onTerminalAck)
+  }
+
+  func executor(owner: MainHub.Hub, jobs: ExecJobs = ExecJobs(), reachable: Bool = true) -> ToolExecutor {
+    let space = owner.space
+    self.space.withLock { $0 = space }
+    let tokens = ExecTokens(spaceURL: "http://main")
+    let connection = MainConnection()
+    let executor = ToolExecutor(owner: owner, main: connection, credential: {
+      guard reachable else { throw MainUnavailable() }
+      return tokens.sessionToken($0)
+    }, execJobs: jobs)
+    let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
+      owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection,
+    ))
+    connection.bind(FetchClient { [self] request in
+      guard request.url.path == "/v1/exec" || request.url.path.hasPrefix("/v1/exec/") else { return try await fallback(request) }
+      let bearer = String((request.headers["authorization"] ?? "").dropFirst(7))
+      guard let session = tokens.session(ofBearer: bearer) else { return Response(status: .unauthorized) }
+      if request.url.path == "/v1/exec" {
+        if request.method == .post {
+          let input = try await request.json(ExecMintInput.self)
+          let callID = try #require(request.headers["wuhu-tool-call"])
+          let claim = try await space.claimExec(machine: input.machine, caller: session.rawValue, toolCallID: .init(callID), spec: input.spec?.jsonString())
+          return try Response.json(ExecMintOutput(id: claim.record.id))
+        }
+        return try Response.json(try await space.liveExecs().filter { $0.caller == session.rawValue }.map { execStatus(of: $0) })
+      }
+      let components = request.url.path.split(separator: "/")
+      let id = ExecID(rawValue: String(components[2]))
+      guard let record = try await space.execRecord(id), record.caller == session.rawValue else {
+        return try Response.json(["code": "notFound", "message": "unknown exec"], status: .notFound)
+      }
+      if components.last == "detach" || components.last == "delivered" {
+        if components.last == "delivered", failDelivered.value {
+          return try Response.json(["code": "unavailable", "message": "injected delivery failure"], status: .serviceUnavailable)
+        }
+        guard try await space.setExecEndOwed(id, caller: session.rawValue, owed: components.last == "detach") else {
+          return try Response.json(["code": "notFound", "message": "unknown tool exec"], status: .notFound)
+        }
+        return try Response.json([String: String]())
+      }
+      if components.last == "kill" {
+        guard record.terminal == nil else {
+          return try Response.json(["code": "alreadyEnded", "message": "exec has already ended"], status: .unprocessableContent)
+        }
+        kills.withLock { $0.append(id) }
+        try await space.finishExec(id, .cancelled)
+        return try Response.json(["ok": true])
+      }
+      return try Response.json(execStatus(of: record))
+    }, dial: { [self] url, _ in
+      guard reachable else { throw SpaceClient.DialRefusal(status: 422, body: []) }
+      return dial(ExecID(rawValue: url.lastPathComponent))
+    })
+    return executor
   }
 
   private func endpoint(for id: ExecID) -> ChannelEndpoint {
@@ -421,7 +487,10 @@ final class ScriptedExecMachine: Sendable {
   func pump() async {
     await withDiscardingTaskGroup { group in
       for await (endpoint, transport) in transports {
-        group.addTask { await endpoint.run(transport) }
+        group.addTask { [self] in
+          guard let store = self.space.withLock({ $0 }) else { return }
+          await endpoint.run(ExecRecordingTransport(base: transport, space: store))
+        }
       }
     }
   }
@@ -469,6 +538,25 @@ private struct TerminalAckTransport: FrameTransport {
     let frame = try FrameCodec.decode(bytes)
     if frame.opcode == .ack, let ack = try? frame.payload(Ack.self), ack.terminal == true {
       try await observe(ack)
+    }
+    try await base.send(bytes)
+  }
+}
+
+private struct ExecRecordingTransport: FrameTransport {
+  let base: InMemoryTransport
+  let space: Space
+  var inbound: AsyncStream<[UInt8]> { base.inbound }
+  func close() { base.close() }
+  func send(_ bytes: [UInt8]) async throws {
+    let frame = try FrameCodec.decode(bytes)
+    if frame.opcode == .execExit, let exit = try? frame.payload(ExecExit.self),
+       try await space.execRecord(exit.id)?.terminal == nil
+    {
+      switch exit.status {
+      case let .exited(code): try await space.finishExec(exit.id, .exited(code: code))
+      case let .signaled(signal): try await space.finishExec(exit.id, .signaled(signal: signal))
+      }
     }
     try await base.send(bytes)
   }

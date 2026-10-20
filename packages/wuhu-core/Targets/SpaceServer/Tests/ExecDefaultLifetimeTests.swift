@@ -44,7 +44,7 @@ struct ExecDefaultLifetimeTests {
       dialer.offer(try await connectMachine(server, key: key))
       try await awaitAttached(server, machine)
       let ready = LifetimeOutput()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: observingOutput(execBackend(space: space, hub: server.hub), ready: ready)))
+      let executor = lifetimeExecutor(space: space, hub: server.hub, ready: ready)
       // The v1 agent stops reading output when it kills, and says so.
       try await expectLifetimes(executor, session: session, machine: machine.rawValue, cwd: work.path, cut: "\n[output was cut when the command stopped]", clock: clock, ready: ready)
     }
@@ -66,7 +66,7 @@ struct ExecDefaultLifetimeTests {
       tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
       defer { tasks.cancelAll() }
       let ready = LifetimeOutput()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: observingOutput(execBackend(space: space, hub: hub), ready: ready)))
+      let executor = lifetimeExecutor(space: space, hub: hub, ready: ready)
       try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, cut: "", clock: clock, ready: ready)
       await agent.shutdown(); await service.shutdown()
     }
@@ -105,7 +105,7 @@ struct ExecDefaultLifetimeTests {
         tasks.addTask { await agent.run() }
         tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
         defer { tasks.cancelAll() }
-        let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub)))
+        let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub)), hub: hub)
         let outcome = try await withThrowingTaskGroup(of: ToolResultPayload.self) { call in
           call.addTask {
             try await withDependencies {
@@ -244,13 +244,18 @@ private final class LifetimeOutput: Sendable {
   let connections = Mutex(0)
 }
 
-private func observingOutput(_ backend: ExecBackend, ready: LifetimeOutput) -> ExecBackend {
-  var observed = backend
-  observed.connect = { id in
+private func lifetimeExecutor(space: Space, hub: MachineHub, ready: LifetimeOutput) -> ToolExecutor {
+  let owner = Hub(space: space, machines: machineSeam(hub: hub))
+  let tokens = ExecTokens(spaceURL: "http://main")
+  let connection = MainConnection()
+  let executor = ToolExecutor(owner: owner, main: connection, credential: { tokens.sessionToken($0) })
+  SessionRuntime.bindMain(owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection, hub: hub)
+  let backend = execBackend(space: space, hub: hub)
+  connection.bindDial { url, _ in
     let index = ready.connections.withLock { value in defer { value += 1 }; return value }
-    return LifetimeTransport(base: try await backend.connect(id), ready: ready, output: index == 0 ? ready.first : ready.second)
+    return LifetimeTransport(base: try await backend.connect(.init(rawValue: url.lastPathComponent)), ready: ready, output: index == 0 ? ready.first : ready.second)
   }
-  return observed
+  return executor
 }
 
 private struct LifetimeTransport: FrameTransport {

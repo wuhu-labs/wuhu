@@ -195,4 +195,10 @@ The existing `session_worker_incarnations`, `execution_worker_owners`, `session_
 
 Message handles and device names are resolved when queued inputs enter the transcript, in the drain transaction. Stored attribution survives hydration unchanged; directory renames affect only messages admitted afterwards.
 
-Exec settlement and receipt writes accept a synchronous `onCommit` effect, invoked on the database writer after successful commit, before a subsequent database read can observe the result. Rollback does not invoke it. Hub uses this boundary to retire its local exec job before publishing completion to waiters.
+Receipt writes accept a synchronous `onCommit` effect, invoked on the database writer after successful commit, before a subsequent database read can observe the result. Rollback does not invoke it. Tool-call exec results use the worker’s transcript append boundary instead of a separate receipt. The legacy `exec_jobs` table, when present, is retained empty and unused for rollback compatibility.
+
+## Tool-call exec claims
+
+`claimExec` atomically rejoins by caller and tool-call id, preserving the first claim’s optional opaque `toolSpec`. The nullable `machine_execs.tool_spec` column is added idempotently when an existing database opens; existing rows remain null. `setExecEndOwed` sets or clears the durable end-delivery obligation on an owning caller’s tool-call exec only. `owedExecs` returns tool-call execs with that obligation, terminal or live, ordered by start and id. Existing detached job rows transfer their spec and owed flag into the exec registry, then are deleted from the retained legacy table so reopening cannot re-owe a delivered end. Request-stall clocks pause from the oldest live tool-call exec’s start rather than a separate job row; ordinary and script mints do not pause that clock.
+
+`liveToolExecs(caller:)` selects that caller’s nonterminal tool-call records for main-owned archive relay cleanup. `forgetOwedExecs(caller:)` clears only that caller’s tool-call exec end obligations, live or terminal; archive bookkeeping uses it before revoking the worker token.

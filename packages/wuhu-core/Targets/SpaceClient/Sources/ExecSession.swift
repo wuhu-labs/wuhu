@@ -8,6 +8,7 @@ import Dependencies
 import Fetch
 import JSONValue
 import MachineChannel
+import enum MachineContract.ExecEvent
 import enum MachineContract.ExecOutputStream
 import struct MachineContract.ExecStart
 import enum MachineContract.ExecState
@@ -17,6 +18,22 @@ import struct MachineContract.MachineID
 public struct ExecSession: Sendable {
   let client: SpaceClient
   let start: ExecStart
+  private let execution = Execution()
+
+  private actor Execution {
+    var outgoing: OutgoingExec?
+
+    func set(_ outgoing: OutgoingExec) { self.outgoing = outgoing }
+
+    func acknowledgeExit() async {
+      guard let outgoing else { preconditionFailure("exec session has not started") }
+      await outgoing.acknowledgeExit()
+    }
+  }
+
+  public func acknowledgeExit() async {
+    await execution.acknowledgeExit()
+  }
 
   public init(client: SpaceClient, start: ExecStart) {
     self.client = client
@@ -43,17 +60,22 @@ public struct ExecSession: Sendable {
   }
 
   public func run(
+    autoAcknowledge: Bool = true,
+    failOnRemoteError: Bool = false,
     input: AsyncStream<[UInt8]>?,
     output: @escaping @Sendable (ExecOutputStream, [UInt8]) async -> Void,
+    onEvent: (@Sendable (ExecEvent) async -> Void)? = nil,
+    onTermination: (@Sendable (Termination) async -> Void)? = nil,
   ) async throws -> Termination {
     let url = try self.client.url("/v1/exec/\(self.start.id.rawValue)")
     let clock: any Clock<Duration> = Dependency(\.continuousClock).wrappedValue
     let endpoint = ChannelEndpoint()
-    let exec = await endpoint.startExec(self.start)
+    let exec = await endpoint.startExec(self.start, autoAcknowledge: autoAcknowledge)
+    await execution.set(exec)
     return await withTaskGroup(of: Termination?.self, returning: Termination.self) { group in
       group.addTask { await self.pumpStdin(input, into: exec) }
       group.addTask { await self.maintainConnection(endpoint, url: url, clock: clock) }
-      group.addTask { await self.consumeEvents(exec, output: output) }
+      group.addTask { await self.consumeEvents(exec, output: output, onEvent: onEvent, failOnRemoteError: failOnRemoteError) }
       var termination: Termination = .interrupted
       while let outcome = await group.next() {
         if let outcome {
@@ -61,6 +83,9 @@ public struct ExecSession: Sendable {
           break
         }
       }
+      // Settlement may wait for a durable result before acknowledging the
+      // exit; keep the caller leg running until that acknowledgement is sent.
+      await onTermination?(termination)
       group.cancelAll()
       return termination
     }
@@ -85,10 +110,13 @@ public struct ExecSession: Sendable {
   private func consumeEvents(
     _ exec: OutgoingExec,
     output: @Sendable (ExecOutputStream, [UInt8]) async -> Void,
+    onEvent: (@Sendable (ExecEvent) async -> Void)?,
+    failOnRemoteError: Bool,
   ) async -> Termination? {
     var total = 0
     do {
       for try await event in exec.events {
+        await onEvent?(event)
         switch event {
         case let .output(stream, _, data):
           total += data.count
@@ -101,7 +129,9 @@ public struct ExecSession: Sendable {
             let limitReached = self.start.maxOutput.map { total >= $0 } ?? false
             return .signaled(signal, outputLimitReached: limitReached)
           }
-        case .truncated, .timedOut, .failed:
+        case let .failed(error):
+          if failOnRemoteError { return .streamFailed(error.message) }
+        case .truncated, .timedOut:
           continue
         }
       }

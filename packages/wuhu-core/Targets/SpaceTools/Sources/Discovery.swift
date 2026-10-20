@@ -17,6 +17,8 @@ extension SpaceToolContext {
       "session": session,
       "group": .string(caller.group.rawValue),
       "contentHost": contentHost.map { .string($0.replacingOccurrences(of: "{group}", with: caller.group.rawValue)) } ?? .null,
+      // The space revision now: a script's module graph freezes at it.
+      "rev": .integer(try await space.currentRevision()),
     ])
   }
 

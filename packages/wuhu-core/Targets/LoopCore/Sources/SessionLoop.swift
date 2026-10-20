@@ -270,6 +270,7 @@ extension SessionActor {
     switch result {
     case .success(let outcome):
       try await writeToolResult(.toolCall(callID), outcome.payload, context: outcome.context)
+      await outcome.committed?()
       return .completed(outcome.payload)
     case .failure(is CancellationError):
       guard !Task.isCancelled else { return .cancelled }
@@ -577,6 +578,7 @@ extension SessionActor {
       switch result {
       case .success(let outcome):
         try await writeToolResult(.compactionReestablishment, outcome.payload, context: outcome.context)
+        await outcome.committed?()
       case .failure(is CancellationError):
         return false
       case .failure(let error):

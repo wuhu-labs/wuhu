@@ -5,6 +5,7 @@
 #endif
 
 import Fetch
+import HTTPTypes
 import JSONValue
 import protocol MachineChannel.FrameTransport
 import enum SpaceContract.GroupHeader
@@ -42,14 +43,16 @@ public struct SpaceClient: Sendable {
     self.dial = { url, headers in try await dial(url, headers + [(GroupHeader.name, group)]) }
   }
 
-  public struct ToolFailure: Error {
+  public struct ToolFailure: Error, CustomStringConvertible {
     public let error: ToolError
+    public var description: String { error.message }
   }
 
-  public struct TransportFailure: Error {
+  public struct TransportFailure: Error, CustomStringConvertible {
     public let message: String
     public let status: Int?
     public let code: String?
+    public var description: String { message }
 
     init(message: String, status: Int? = nil, code: String? = nil) {
       self.message = message
@@ -118,18 +121,40 @@ public struct SpaceClient: Sendable {
     return try await self.send(request, via: self.fetch)
   }
 
-  public func fileBytes(_ path: String) async throws -> Data {
-    let response = try await self.fetch(Request(url: try self.fileURL(path)))
+  /// One `GET /v1/f/*` answer: the bytes with the version they were read at.
+  public struct FileRead: Sendable {
+    public let token: String
+    public let rev: Int?
+    public let data: Data
+  }
+
+  /// `rev` reads the file as of that revision; `limit` has the server refuse a
+  /// larger file before any byte moves.
+  public func file(_ path: String, rev: Int? = nil, limit: Int? = nil) async throws -> FileRead {
+    var query: [URLQueryItem] = []
+    if let rev { query.append(URLQueryItem(name: "rev", value: String(rev))) }
+    if let limit { query.append(URLQueryItem(name: "limit", value: String(limit))) }
+    let response = try await self.fetch(Request(url: try self.fileURL(path, query: query)))
     guard 200 ..< 300 ~= response.status.code else {
       throw await Self.failure(from: response)
     }
-    return try await response.data()
+    let etag = response.headers[.eTag] ?? ""
+    let token = etag.count >= 2 && etag.hasPrefix("\"") && etag.hasSuffix("\"") ? String(etag.dropFirst().dropLast()) : etag
+    return FileRead(token: token, rev: response.headers[HTTPField.Name("wuhu-rev")!].flatMap(Int.init), data: try await response.data())
   }
 
-  public func putFileBytes<Output: Decodable>(_ path: String, _ data: Data, ifMatch: String?) async throws -> Output {
+  public func fileBytes(_ path: String) async throws -> Data {
+    try await self.file(path).data
+  }
+
+  /// `createOnly` has the server refuse a path that already has a file (`If-None-Match: *`).
+  public func putFileBytes<Output: Decodable>(_ path: String, _ data: Data, ifMatch: String?, createOnly: Bool = false) async throws -> Output {
     var request = Request(url: try self.fileURL(path), method: .put, body: .bytes(data, contentType: "application/octet-stream"))
     if let ifMatch {
       request.headers["if-match"] = "\"\(ifMatch)\""
+    }
+    if createOnly {
+      request.headers["if-none-match"] = "*"
     }
     return try await self.send(request, via: self.fetch)
   }
@@ -150,21 +175,23 @@ public struct SpaceClient: Sendable {
     try await self.api(.get, "/v1/transcribe")
   }
 
-  private func fileURL(_ path: String) throws -> URL {
+  private func fileURL(_ path: String, query: [URLQueryItem] = []) throws -> URL {
     guard var components = URLComponents(string: self.base) else {
       throw InvalidSpace(space: self.base)
     }
+    var items = query
     if let qualified = try GroupID.address(path) {
       components.path = "/v1/f" + qualified.path
-      components.queryItems = [URLQueryItem(name: "group", value: qualified.group.rawValue)]
+      items.append(URLQueryItem(name: "group", value: qualified.group.rawValue))
     } else if path.hasPrefix("machines://") {
       let rest = path.dropFirst("machines://".count)
       let slash = rest.firstIndex(of: "/") ?? rest.endIndex
       components.path = "/v1/f" + (slash == rest.endIndex ? "/" : String(rest[slash...]))
-      components.queryItems = [URLQueryItem(name: "machine", value: String(rest[..<slash]))]
+      items.append(URLQueryItem(name: "machine", value: String(rest[..<slash])))
     } else {
       components.path = "/v1/f" + path
     }
+    if !items.isEmpty { components.queryItems = items }
     guard let url = components.url else { throw InvalidSpace(space: self.base) }
     return url
   }
@@ -188,14 +215,19 @@ public struct SpaceClient: Sendable {
     return try JSONValueDecoder().decode(Output.self, from: value)
   }
 
+  // A tool-shaped `{code, message, hint?, token?}` body is a ToolFailure; a
+  // route's own `{code, message}` (a code no tool uses) keeps the server's
+  // message and code; anything else is the raw status and text.
   static func failure(from response: Response) async -> any Error {
     let text = (try? await response.text()) ?? ""
-    if let value = JSONValue.parse(text),
-       let error = try? JSONValueDecoder().decode(ToolError.self, from: value)
-    {
+    let body = JSONValue.parse(text)
+    if let body, let error = try? JSONValueDecoder().decode(ToolError.self, from: body) {
       return ToolFailure(error: error)
     }
-    return TransportFailure(message: "HTTP \(response.status.code): \(text)", status: response.status.code, code: JSONValue.parse(text)?.object?["code"]?.stringValue)
+    if let code = body?.object?["code"]?.stringValue, let message = body?.object?["message"]?.stringValue {
+      return TransportFailure(message: message, status: response.status.code, code: code)
+    }
+    return TransportFailure(message: "HTTP \(response.status.code): \(text)", status: response.status.code, code: nil)
   }
 }
 

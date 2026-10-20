@@ -157,7 +157,7 @@ extension SpaceToolbox {
   }
 
   static let ls = SpaceTool("ls", schema: ListInput.jsonSchema) { (context, input: ListInput) in
-    try await context.list(input.path, rev: input.rev, hidden: input.hidden ?? false)
+    try await context.list(input.path, rev: input.rev, hidden: input.hidden ?? false, limit: input.limit, byteLimit: input.byteLimit)
   }
 
   static let stat = SpaceTool("stat", schema: StatInput.jsonSchema) { (context, input: StatInput) in

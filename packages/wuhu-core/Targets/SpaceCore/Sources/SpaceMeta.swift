@@ -58,6 +58,20 @@ enum SpaceMeta {
     let fresh = try !db.tableExists("fs_heads")
     if !fresh { try requireCompaction("wuhu-45", in: db) }
     try db.execute(sql: spaceSchemaSQL)
+    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_spec" }) {
+      try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_spec TEXT")
+    }
+    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_end_owed" }) {
+      try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_end_owed INTEGER NOT NULL DEFAULT 0")
+    }
+    if try db.tableExists("exec_jobs") {
+      try db.execute(sql: """
+      UPDATE machine_execs SET tool_end_owed = 1,
+        tool_spec = (SELECT spec FROM exec_jobs WHERE exec_id = machine_execs.id)
+      WHERE id IN (SELECT exec_id FROM exec_jobs)
+      """)
+      try db.execute(sql: "DELETE FROM exec_jobs")
+    }
     if fresh { try recordCompaction(Space.linksCompaction, in: db) }
     try seedIfAbsent(in: db, identity: identity)
   }

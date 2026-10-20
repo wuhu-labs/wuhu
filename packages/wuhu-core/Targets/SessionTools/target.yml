@@ -27,6 +27,7 @@ dependencies:
   - SpaceFS
   - SystemFiles
   - MachineContract
+  - MachineChannel
   - OperationProtocol
   - WuhuAI
   - JSONValue
@@ -47,8 +48,8 @@ tests:
     - DeterministicDependencies
     - LoopCore
     - MainHub
-    - SessionToolsTestSupport
     - SpaceServer
+    - SpaceClient
     - Serve
     - InferenceKit
     - Credentials

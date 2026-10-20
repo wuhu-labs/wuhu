@@ -3,14 +3,18 @@ import struct Credentials.SpaceSecrets
 import struct Credentials.SpaceSecretStores
 import Fetch
 import ServeRouting
+import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 import struct SpaceContract.SecretSetInput
 import struct SpaceContract.SecretsOutput
 import SpaceCore
 
-// Secrets are the acting group's, with no fallback. Listing takes acting in
-// the group; setting one takes an admin of it, and removing one, which can't
-// be undone, a human admin. The --dev seat is unrestricted.
+// Secrets are the acting group's, with no fallback; `?group=` names another
+// group the acting one reads. Listing takes acting in the group; a value goes
+// only to a session's worker (its script's fetch; the gate keeps an exec's
+// token out) or the --dev seat; setting one takes an admin of the group the
+// secret lives in, and removing one, which can't be undone, a human admin of
+// it. The --dev seat is unrestricted.
 func addSecretRoutes(
   _ router: inout Router,
   space: Space,
@@ -18,8 +22,16 @@ func addSecretRoutes(
   principalOf: @escaping @Sendable (Request) async throws -> PrincipalVerdict,
 ) {
   router.get("/v1/secret") { request, _ in
-    try await secretVerdict(secrets, request, principalOf) { store, _ in
+    try await secretVerdict(secrets, space, request, principalOf) { store, _, _ in
       try Response.json(SecretsOutput(names: try await store.names()))
+    }
+  }
+  router.get("/v1/secret/:name") { request, parameters in
+    try await secretVerdict(secrets, space, request, principalOf) { store, principal, _ in
+      if case .person = principal.actor {
+        return errorResponse(.forbidden, code: "unauthorized", message: "a secret's value is read only by a session's script")
+      }
+      return jsonResponse(.object(["value": .string(try await store.value(of: parameters["name"] ?? ""))]))
     }
   }
   router.put("/v1/secret/:name") { request, parameters in
@@ -29,42 +41,56 @@ func addSecretRoutes(
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a secret body {\"value\": ...}: \(error)")
     }
-    return try await secretVerdict(secrets, request, principalOf) { store, principal in
-      let admitted = if principal.actor == .anonymous { true } else { try await space.isAdmin(principal.actor, of: principal.group) }
+    return try await secretVerdict(secrets, space, request, principalOf) { store, principal, group in
+      let admitted = if principal.actor == .anonymous { true } else { try await space.isAdmin(principal.actor, of: group) }
       guard admitted else {
-        return errorResponse(
-          .forbidden, code: "adminRequired",
-          message: "setting a secret needs an admin of group \(principal.group.rawValue)",
-        )
+        var message = "setting a secret needs an admin of group \(group.rawValue)"
+        if case let .session(session) = principal.actor { message += await notAdmin(session, of: group, space: space) }
+        return errorResponse(.forbidden, code: "adminRequired", message: message)
       }
       try await store.set(parameters["name"] ?? "", to: input.value)
       return jsonResponse(.object([:]))
     }
   }
   router.delete("/v1/secret/:name") { request, parameters in
-    try await secretVerdict(secrets, request, principalOf) { store, principal in
+    try await secretVerdict(secrets, space, request, principalOf) { store, principal, group in
+      let name = parameters["name"] ?? ""
       let admitted: Bool = switch principal.actor {
       case .anonymous: true
-      case let .person(_, account): try await space.isHumanAdmin(account, of: principal.group)
+      case let .person(_, account): try await space.isHumanAdmin(account, of: group)
       case .session: false
       }
       guard admitted else {
         return errorResponse(
           .forbidden, code: "adminRequired",
-          message: "removing a secret can't be undone and needs a human admin of group \(principal.group.rawValue)",
+          message: "removing secret \(name) can't be undone and needs a human admin of group \(group.rawValue)",
         )
       }
-      try await store.remove(parameters["name"] ?? "")
+      try await store.remove(name)
       return jsonResponse(.object([:]))
     }
   }
 }
 
+/// Why `session` is no admin of `group`, worded for the caller: only a live
+/// top-level agent of a group administers it.
+func notAdmin(_ session: SessionID, of group: GroupID, space: Space) async -> String {
+  guard let caller = try? await space.sessions.record(session) else { return "" }
+  if caller.kind == .task { return "; a task never is one" }
+  if caller.parent != nil { return "; a child agent never is one" }
+  if caller.group != group { return "; you are a top-level agent of group \(caller.group.rawValue), not of \(group.rawValue)" }
+  return ""
+}
+
+// The store `body` gets is the acting group's, or the `?group=` one when the
+// acting group reads it; `body` also gets that group, which is the one its
+// admin checks are against.
 private func secretVerdict(
   _ secrets: SpaceSecretStores?,
+  _ space: Space,
   _ request: Request,
   _ principalOf: @Sendable (Request) async throws -> PrincipalVerdict,
-  _ body: (SpaceSecrets, Principal) async throws -> Response,
+  _ body: (SpaceSecrets, Principal, GroupID) async throws -> Response,
 ) async throws -> Response {
   guard let secrets else {
     return errorResponse(.serviceUnavailable, code: "unavailable", message: "this server has no secret store")
@@ -75,7 +101,18 @@ private func secretVerdict(
   case let .refused(response): return response
   }
   do {
-    return try await body(try secrets.group(principal.group.rawValue), principal)
+    var group = principal.group
+    if let named = queryValues(of: request.url)["group"], named != group.rawValue {
+      try SpaceSecrets.validate(group: named)
+      guard try await space.reads(principal.group).contains(GroupID(rawValue: named)) else {
+        return errorResponse(
+          .forbidden, code: "unauthorized",
+          message: "group \(group.rawValue) does not read group \(named), so its secrets are out of reach",
+        )
+      }
+      group = GroupID(rawValue: named)
+    }
+    return try await body(try secrets.group(group.rawValue), principal, group)
   } catch let error as SecretError {
     switch error {
     case .invalidName, .emptyValue, .invalidGroup:

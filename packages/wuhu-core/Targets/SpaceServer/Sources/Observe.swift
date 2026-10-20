@@ -29,12 +29,23 @@ func observeResponse(
   case let (glob?, nil):
     return await watchResponse(space: space, glob: glob, from: query["from"], principal: principal, batch: query["batch"] == "1")
   case let (nil, sql?):
+    // `params` is a JSON array bound to the statement's placeholders; `typed=1`
+    // renders each snapshot in the typed rule (see QueryInput.typed).
+    let parameters: [JSONValue]
+    if let raw = query["params"] {
+      guard case let .array(parsed)? = JSONValue.parse(raw) else {
+        return errorResponse(.badRequest, code: "invalidArgument", message: "params must be a JSON array")
+      }
+      parameters = parsed
+    } else {
+      parameters = []
+    }
     return await snapshotsResponse(
-      space: space, sql: sql, parameters: [], throttleMs: query["throttleMs"], principal: principal, viewer: viewer,
-      render: Wire.queryOutput,
+      space: space, sql: sql, parameters: parameters, throttleMs: query["throttleMs"], principal: principal, viewer: viewer,
+      render: query["typed"] == "1" ? Wire.typedQueryOutput : Wire.queryOutput,
     )
   default:
-    return errorResponse(.badRequest, code: "invalidArgument", message: "observe takes exactly one of ?glob= or ?sql=[&throttleMs=]")
+    return errorResponse(.badRequest, code: "invalidArgument", message: "observe takes exactly one of ?glob= or ?sql=[&params=][&typed=1][&throttleMs=]")
   }
 }
 

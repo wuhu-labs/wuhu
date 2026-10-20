@@ -23,6 +23,7 @@ import FetchWebSocket
 import Logging
 import enum PinnedTLS.PinnedTLS
 import enum PinnedTLS.SystemTrust
+import SessionTools
 import enum SpaceCore.UserRecovery
 import SpaceServer
 import TaskLifetime
@@ -69,8 +70,14 @@ enum Main {
     // Server-side inference reaches the network through the ambient fetch
     // dependency, whose live default is unimplemented on purpose; the process
     // binds the real transport once here.
+    // A script's identity fetch answers redirects itself, so its hops go out
+    // on a client that follows none.
+    var hopConfiguration = HTTPClient.Configuration()
+    hopConfiguration.redirectConfiguration = .disallow
+    let hopClient = HTTPClient(eventLoopGroupProvider: .singleton, configuration: hopConfiguration)
     prepareDependencies {
       $0.fetch = .asyncHTTPClient(inferenceClient, timeout: nil)
+      $0.scriptHop = .asyncHTTPClient(hopClient, timeout: nil)
       $0[WebSocketConnector.self] = .live
       $0[ServerTrustProbe.self] = ServerTrustProbe(
         validateSystem: { host, port in

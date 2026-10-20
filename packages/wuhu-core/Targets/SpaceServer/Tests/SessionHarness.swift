@@ -106,7 +106,7 @@ struct SessionHarness {
     let catalog = groupCatalog(owner: catalogOwner)
     let owner = Hub(
       space: space, credentials: credentials, secrets: secrets,
-      machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),

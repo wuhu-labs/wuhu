@@ -91,10 +91,12 @@ public struct ScopeContext: Hashable, Sendable, Codable {
 public struct ToolOutcome: Sendable {
   public var payload: ToolResultPayload
   public var context: ScopeContext?
+  public var committed: (@Sendable () async -> Void)?
 
-  public init(payload: ToolResultPayload, context: ScopeContext? = nil) {
+  public init(payload: ToolResultPayload, context: ScopeContext? = nil, committed: (@Sendable () async -> Void)? = nil) {
     self.payload = payload
     self.context = context
+    self.committed = committed
   }
 }
 

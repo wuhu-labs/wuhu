@@ -3,25 +3,51 @@
 #else
   import Foundation
 #endif
-import enum JSONValue.JSONValue
 import struct MachineContract.ExecID
 import struct MachineContract.ExecStart
+import struct MachineContract.StringMap
+import func MainHub.execHandle
+import struct MainHub.ToolProblem
 import SessionDomain
 import Synchronization
 import TaskLifetime
 
-/// How a job rejoins its exec after a server restart, kept in its row.
-struct ExecJobSpec: Codable {
-  var start: ExecStart
+struct ExecJobSpec: Codable, Sendable {
+  struct Start: Codable, Sendable {
+    var cwd: String
+    var command: [String]
+    var env: StringMap?
+    var secrets: StringMap?
+    var maxOutput: Int
+  }
+
+  var start: Start
   var machine: String
   var lifetime: Double
   var defaultLifetime: Bool
+  var maxOutput: Int { start.maxOutput }
+
+  init(cwd: String, command: [String], env: StringMap?, secrets: StringMap?, maxOutput: Int, machine: String, lifetime: Double, defaultLifetime: Bool) {
+    start = Start(cwd: cwd, command: command, env: env, secrets: secrets, maxOutput: maxOutput)
+    self.machine = machine
+    self.lifetime = lifetime
+    self.defaultLifetime = defaultLifetime
+  }
+
+  func start(id: ExecID) -> ExecStart {
+    ExecStart(
+      id: id,
+      cwd: start.cwd,
+      command: start.command,
+      env: start.env,
+      secrets: start.secrets,
+      window: start.maxOutput + 65536,
+      maxOutput: start.maxOutput,
+      timeout: lifetime,
+    )
+  }
 }
 
-/// The exec jobs this owner holds: one per exec tool call, from the call
-/// until the exec's end is recorded, whether the call still waits on it or
-/// has already returned `running`. They live in this process; the store's
-/// job rows are what a restart re-adopts.
 public final class ExecJobs: Sendable {
   struct Key: Hashable {
     let session: SessionID
@@ -33,6 +59,8 @@ public final class ExecJobs: Sendable {
   let drivers = TaskScope()
 
   public init() {}
+
+  public func close() async { await drivers.close() }
 
   func job(_ session: SessionID, _ call: ToolCallID) -> ExecJob? {
     jobs.withLock { $0[Key(session: session, call: call)] }
@@ -59,7 +87,7 @@ public final class ExecJobs: Sendable {
   }
 
   /// The cancel ids of `session`'s exec jobs whose call already returned.
-  public func running(of session: SessionID) -> [String] {
+  func running(of session: SessionID) -> [String] {
     jobs.withLock { $0.values.filter { $0.session == session && $0.phase == .detached }.map(\.handle) }.sorted()
   }
 
@@ -73,7 +101,9 @@ final class ExecJob: Sendable {
   enum Phase: Sendable {
     /// The tool call still waits: the end becomes its result.
     case awaited
-    /// The call returned `running`: the end becomes one message.
+    /// The call is returning `running`; its end still belongs to the call until that result commits.
+    case detaching
+    /// The call durably returned `running`: the end becomes one message.
     case detached
     /// Cancelled or archived: the end is not announced.
     case cancelled
@@ -90,13 +120,13 @@ final class ExecJob: Sendable {
   let startedAt: Date
   /// The id of the message that announces the end once the call returned.
   let notice: UUID
-  /// The encoded `ExecJobSpec` its row keeps.
   let spec: String
   /// Set on a job re-adopted after a restart, whose own call is long gone.
   let adopted: Bool
   let ended = OneShot<Outcome>()
-  /// Held across each phase change and the write that makes it durable, so
-  /// the end and the call's `running` return can never both claim the job.
+  let committed = OneShot<Bool>()
+  let deliveryRecorded = OneShot<Bool>()
+  // The end and the call’s running return cannot both claim the job.
   let gate = Turnstile()
   private let state: Mutex<Phase>
   private let tailBytes = Mutex<[UInt8]>([])

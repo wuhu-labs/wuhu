@@ -11,7 +11,11 @@ dependencies:
   - JSONValue
   - Fetch
   - FetchSSE
+  - HTTPTypes
   - Dependencies
 tests:
   dependencies:
+    - DeterministicDependencies
     - Fetch
+    - MachineChannel
+    - MachineContract

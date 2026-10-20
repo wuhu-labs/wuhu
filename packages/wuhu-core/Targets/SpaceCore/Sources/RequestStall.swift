@@ -217,7 +217,7 @@ extension Sessions {
     }
     if liveScripts.contains(clock.task) { waits.append(nil) }
     // An exec whose call returned `running` waits from when it started.
-    if let job = try String.fetchOne(db, sql: "SELECT MIN(started_at) FROM exec_jobs WHERE session_id = ?", arguments: [task]) {
+    if let job = try String.fetchOne(db, sql: "SELECT MIN(started_at) FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND terminal_state IS NULL", arguments: [task]) {
       waits.append(try SQLiteDateFormat.date(from: job))
     }
     var until: Date?

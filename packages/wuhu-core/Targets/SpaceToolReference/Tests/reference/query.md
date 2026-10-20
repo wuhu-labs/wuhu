@@ -9,6 +9,9 @@ Run a read-only `SELECT` over the space's tables and induced tables.
 | Field | Type | Required |
 | --- | --- | --- |
 | `sql` | string | yes |
+| `parameters` | array of any JSON or null | no |
+| `typed` | boolean or null | no |
+| `byteLimit` | integer or null | no |
 
 ## Output
 

@@ -99,12 +99,14 @@ extension Scripts {
     let context = try ScriptHandlerContext(rows: rows, fireTime: fireTime, stateJSON: stateJSON)
     let module = try resolveScriptModule(path.hasPrefix("/") ? "wuhu:" + path : path, from: "script")
     let quoted = JSONValue.string(module).jsonString()
+    let client = try await tools.client(session)
     let execution = ScriptExecution(
       id: "handler-" + id.uuidString.lowercased(),
       session: session,
       source: "import handler from \(quoted); await __handler_invoke(handler); delete globalThis.__handler_invoke;",
       lifetime: .seconds(60),
-      secrets: ScriptSecrets(owner: owner, session: session),
+      client: client,
+      secrets: ScriptSecrets(client: client),
       tools: tools,
       handler: context,
     )

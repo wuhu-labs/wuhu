@@ -790,7 +790,7 @@ final class ScriptRig: Sendable {
   }
 
   func expect(_ name: String) throws {
-    let actual = entries.value.joined(separator: "\n") + "\n"
+    let actual = (entries.value.joined(separator: "\n") + "\n").replacingOccurrences(of: session.rawValue, with: "<me>")
     let expected = try fixture(name + ".expected")
     #expect(actual == expected, "\(name).expected differs; actual transcript:\n\(actual)")
   }
@@ -868,7 +868,8 @@ func withRig(
   fetch: FetchClient? = nil,
   machines: MachineSeam? = nil,
   world: MachineWorld? = nil,
-  identity: (@Sendable () async throws -> JSONValue)? = nil,
+  identity: IdentityController? = nil,
+  contentHost: String? = nil,
   credentials: CredentialResolver = .unavailable,
   resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
   resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
@@ -903,9 +904,12 @@ func withRig(
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
       let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
-      let main = Hub(space: space, identityConfiguration: identity, credentials: credentials, secrets: stores, machines: machines, scriptMachines: access, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute, control: control)
+      let main = Hub(space: space, credentials: credentials, secrets: stores, machines: machines, scriptMachines: access, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute, control: control)
       let scripts = Scripts(owner: main)
-      let executor = SessionRuntime.toolExecutor(owner: main, scripts: scripts, credentials: credentials)
+      let executor = SessionRuntime.toolExecutor(
+        owner: main, scripts: scripts, credentials: credentials,
+        origin: contentHost.map { _ in "https://space.test" }, contentHostPattern: contentHost, secrets: stores, identity: identity,
+      )
       let rig = try ScriptRig(
         space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
       )

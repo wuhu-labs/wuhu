@@ -2,7 +2,7 @@
 
 ## In-process execution ownership
 
-`SessionRuntime.assemble` composes one directly conforming Hub actor for the session loop, inference, tool execution, QuickJS scripts and handler execution. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `Worker.fire` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process without in-memory serialization. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
+`SessionRuntime.assemble` composes one directly conforming Hub actor for session persistence, inference and script machine access; a worker owns tool execution, QuickJS scripts and handlers. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `Worker.fire` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process without in-memory serialization. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.
 
 ## Person–session DM refusal
 
@@ -24,7 +24,7 @@ semantics layered over MachineContract/MachineChannel.
   read sessions, outstanding join tokens) and kick any live hub leg; rotate then
   mints a fresh one-time join token to re-enroll the box.
 - `machine_execs` — the exec registry: exec id (`ex_<8>`, server-minted),
-  machine, **relay stream id**, command summary, caller (unused until auth),
+  machine, **relay stream id**, command summary, caller, tool-call id, opaque tool spec and owed-end flag,
   started-at, terminal state (`NULL` = live; `exited:N` / `signaled:N` /
   `cancelled` / `machine-lost`), kill-delivered flag. The stream id is
   allocated per machine at mint (max+1) and persisted so the id the machine
@@ -910,3 +910,9 @@ In-process exec transport close ends the socket; it does not cancel or await the
 ## Web content
 
 `WebContent` injects the optional SPA, view-provider files and shell JavaScript into `handler`, `SpaceHost.open` and `serve`. The library embeds no web assets; an empty value serves API/content routes without the SPA or shell injection. `serve` applies `webAppDirectory` only to the SPA, retaining injected providers and scripts.
+
+## Worker exec jobs
+
+A session’s `POST /v1/exec` carrying `wuhu-tool-call` claims one exec per session/call, preserving the first opaque `spec` and notifying the machine hub only for a fresh claim. Without the header it mints as before. Own tool-call exec detach/delivered routes set/clear a durable owed-end flag; recovery reads that flag even after terminal state is recorded. The worker does not announce an end until its running tool result is durably committed; retrying an uncommitted running result takes the end back for the call. Existing job rows migrate their specs and obligations into machine exec records, then are deleted so reopening cannot repeat the migration; the legacy table remains empty and unused for rollback compatibility. Own exec list/detail includes `toolCallID`; killing a terminal own exec is HTTP 422 `alreadyEnded`, while unknown or foreign execs remain 404 `notFound`.
+
+The worker reaches the same upgrading API through an authenticated in-process HTTP/WebSocket connection. Socket server tasks are bounded by the machine hub’s caller scope. The runtime shares the worker’s exec registry with generation-head snapshots, interrupt, archive and startup recovery; archive marks the worker’s jobs cancelled, kills the caller’s remaining live tool-call execs through main’s relay backend, clears owed-end flags as main bookkeeping, then revokes the session token, and worker shutdown joins drivers without killing remote processes. Scripts retain Main’s exec transport operations independently.

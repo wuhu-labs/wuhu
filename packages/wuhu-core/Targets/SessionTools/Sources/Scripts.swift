@@ -48,12 +48,14 @@ public final class Scripts: Sendable {
   func start(_ source: String, session: SessionID, lifetime: Duration, tools: ToolExecutor) async throws -> ScriptExecution {
     @Dependency(\.uuid) var uuid
     let id = String(uuid().uuidString.lowercased().prefix(8))
+    let client = try await tools.client(session)
     let execution = ScriptExecution(
       id: id,
       session: session,
       source: source,
       lifetime: lifetime,
-      secrets: ScriptSecrets(owner: owner, session: session),
+      client: client,
+      secrets: ScriptSecrets(client: client),
       tools: tools,
     )
     try Task.checkCancellation()

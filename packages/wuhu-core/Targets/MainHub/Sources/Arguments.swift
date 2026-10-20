@@ -1,16 +1,16 @@
 import enum JSONValue.JSONValue
 
-struct ExecArguments: Decodable {
-  var machine: String
-  var cwd: String
-  var command: String
-  var env: [String: String]?
-  var secrets: [String: String]?
-  var maxLifetimeSeconds: Double?
-  var waitSeconds: Double?
+public struct ExecArguments: Decodable, Sendable {
+  public var machine: String
+  public var cwd: String
+  public var command: String
+  public var env: [String: String]?
+  public var secrets: [String: String]?
+  public var maxLifetimeSeconds: Double?
+  public var waitSeconds: Double?
   /// The old name of `max_lifetime_seconds`, decoded only to refuse it.
-  var timeoutSeconds: JSONValue?
-  var maxOutput: Int?
+  public var timeoutSeconds: JSONValue?
+  public var maxOutput: Int?
 
   enum CodingKeys: String, CodingKey {
     case machine

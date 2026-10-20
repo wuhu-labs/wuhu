@@ -1,6 +1,4 @@
-import protocol MainHub.Main
-import enum MainHub.ScriptDataOperation
-import func MainHub.spaceAnswer
+import func MainHub.systemModulePath
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,14 +6,16 @@ import func MainHub.spaceAnswer
 #endif
 import JSONValue
 import QuickJSKit
-import SessionDomain
-import struct SpaceContract.GroupID
+import SpaceClient
 import SpaceCore
 import SpaceFS
 import SpaceTools
+import SystemFiles
 
+// The file half of `wuhu:space`, over main's API as the session; the bytes of
+// `wuhu://system/` are this binary's own, read in place.
 struct ScriptFiles: Sendable {
-  let owner: any Main
+  let client: SpaceClient
   let execution: ScriptExecution
 
   func install(in engine: JSEngine) {
@@ -56,15 +56,27 @@ struct ScriptFiles: Sendable {
           }
           try claimFileBuffer(24 << 20, in: execution)
           defer { execution.buffers.withLock { $0.unclaim(24 << 20) } }
-          let read = try await owner.readBytes(path, rev: revision, byteLimit: 16 << 20, session: execution.session)
+          let token: String
+          let rev: Int?
+          let data: Data
+          if let system = systemModulePath(path) {
+            guard revision == nil else {
+              throw ToolRunError.failed(code: .unsupported, message: "wuhu://system/ has no revisions: \(path)", hint: nil)
+            }
+            let read = try await SystemFiles.vfs.read(system)
+            (token, rev, data) = (Wire.string(read.0), nil, read.1)
+          } else {
+            let read = try await client.file(path, rev: revision, limit: 16 << 20)
+            (token, rev, data) = (read.token, read.rev, read.data)
+          }
           let value: String
           if name == "readText" {
-            guard let text = String(validating: read.data, as: UTF8.self) else {
+            guard let text = String(validating: data, as: UTF8.self) else {
               throw ToolRunError.failed(code: .unsupported, message: "file is not UTF-8 text", hint: "Use readBytes.")
             }
             value = text
-          } else { value = read.data.base64EncodedString() }
-          output = .object(["token": .string(read.token), "rev": read.rev.map(JSONValue.integer) ?? .null, name == "readText" ? "content" : "data": .string(value)])
+          } else { value = data.base64EncodedString() }
+          output = .object(["token": .string(token), "rev": rev.map(JSONValue.integer) ?? .null, name == "readText" ? "content" : "data": .string(value)])
         case "writeBytes", "writeText":
           let token: String?
           switch options["ifMatch"] {
@@ -79,8 +91,7 @@ struct ScriptFiles: Sendable {
           guard data.count <= 16 << 20 else { throw overBudget(.fileResult) }
           try execution.buffers.withLock { try $0.claim(data.count, for: .fileResult) }
           defer { execution.buffers.withLock { $0.unclaim(data.count) } }
-          let written = try await owner.writeBytes(path, data: data, ifMatch: token, session: execution.session)
-          output = .object(["token": .string(written.token), "rev": written.rev.map(JSONValue.integer) ?? .null])
+          output = try await client.putFileBytes(path, data, ifMatch: token, createOnly: token == nil)
         case "checkout":
           let token: String?
           switch options["ifMatch"] {
@@ -91,26 +102,26 @@ struct ScriptFiles: Sendable {
           guard case let .integer(rev)? = fields["rev"], rev >= 0 else {
             throw ToolRunError.failed(code: .invalidArgument, message: "rev must be non-negative", hint: nil)
           }
-          output = try await owner.checkout(path, rev: rev, ifMatch: token, session: execution.session)
+          output = try await client.tool("checkout", .object([
+            "path": .string(path), "rev": .integer(rev), "ifMatch": token.map(JSONValue.string) ?? .null, "createOnly": .bool(token == nil),
+          ]))
         case "list":
-          let rev: Int?
           switch options["rev"] {
-          case let .integer(value)? where value >= 0: rev = value
-          case nil: rev = nil
+          case let .integer(value)? where value >= 0: break
+          case nil: break
           default: throw ToolRunError.failed(code: .invalidArgument, message: "rev must be non-negative", hint: nil)
           }
-          let hidden: Bool
           switch options["hidden"] {
-          case let .bool(value)?: hidden = value
-          case nil: hidden = false
+          case .bool?, nil: break
           default: throw ToolRunError.failed(code: .invalidArgument, message: "hidden must be a boolean", hint: nil)
           }
           try claimFileBuffer(24 << 20, in: execution)
           reserved = 24 << 20
-          output = try await owner.list(path, rev: rev, hidden: hidden, byteLimit: reserved, session: execution.session)
+          input["limit"] = .integer(500)
+          input["byteLimit"] = .integer(24 << 20)
+          output = try await client.tool("ls", .object(input))
         default:
-          let verb = name == "move" ? "mv" : name
-          output = try await owner.dataOperation(ScriptDataOperation(rawValue: verb)!, input: .object(input), session: execution.session)
+          output = try await client.tool(name == "move" ? "mv" : name, .object(input))
         }
         let bytes = try fileResultSize(output, limit: 24 << 20)
         if reserved > 0 {
@@ -127,7 +138,7 @@ func fileResultSize(_ value: JSONValue, limit: Int) throws -> Int {
   var size = 0
   func add(_ bytes: Int) throws {
     guard bytes <= limit - size else {
-      throw ToolRunError.failed(code: .invalidArgument, message: "file result exceeds serialized byte limit", hint: "Read a smaller file or directory.")
+      throw ToolRunError.failed(code: .byteLimitExceeded, message: "file result exceeds serialized byte limit", hint: "Read a smaller file or directory.")
     }
     size += bytes
   }
@@ -168,8 +179,11 @@ private func claimFileBuffer(_ bytes: Int, in execution: ScriptExecution) throws
   }
 }
 
-private func scriptSpaceAddress(_ raw: String) throws {
+func scriptSpaceAddress(_ raw: String) throws {
   var path = raw
+  if raw.hasPrefix("machines://") {
+    throw ToolRunError.failed(code: .invalidPath, message: "wuhu:space takes a path in this group or wuhu://<group>.localspace/<path>: \(raw)", hint: nil)
+  }
   if raw.hasPrefix("wuhu://") {
     let host = raw.dropFirst("wuhu://".count).prefix { $0 != "/" }
     guard host == "system" || (try? FSResolver.group(ofHost: host)) != nil else {
@@ -180,35 +194,6 @@ private func scriptSpaceAddress(_ raw: String) throws {
   guard (try? SpacePath(validating: path)) != nil else {
     throw ToolRunError.failed(code: .invalidPath, message: "expected an absolute space path", hint: nil)
   }
-}
-
-// Only a space path passes, hostless or `wuhu://<group>.localspace/…`, so no
-// other address form (`machines://…`, `@rev`) reaches the tool around the
-// home rule.
-func scriptWritable(_ raw: String, by session: SessionID, as principal: Principal) throws(ToolRunError) -> String {
-  var plain = raw
-  var group = principal.group
-  if raw.lowercased().hasPrefix("wuhu://") {
-    let host = raw.dropFirst("wuhu://".count).prefix { $0 != "/" }
-    if let named = try? FSResolver.group(ofHost: host) {
-      plain = String(raw.dropFirst("wuhu://".count + host.count))
-      group = GroupID(rawValue: named)
-    }
-  }
-  let path: SpacePath
-  do {
-    path = try SpacePath(validating: plain)
-  } catch {
-    throw .failed(
-      code: .invalidPath, message: "wuhu:space takes a path in this group or wuhu://<group>.localspace/<path>: \(raw)", hint: nil,
-    )
-  }
-  do {
-    try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
-  } catch {
-    throw Wire.failure(error)
-  }
-  return plain == raw ? path.rawValue : raw
 }
 
 let spaceFilesModule = #"""

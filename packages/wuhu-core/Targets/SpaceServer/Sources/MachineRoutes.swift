@@ -328,6 +328,7 @@ func execStatus(of record: ExecRecord) -> ExecStatus {
     command: record.command,
     startedAt: record.startedAt.timeIntervalSince1970,
     state: state,
+    toolCallID: record.toolCallID?.rawValue,
   )
 }
 

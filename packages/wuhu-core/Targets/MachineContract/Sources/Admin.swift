@@ -56,6 +56,7 @@ public struct MachineStatus: Codable, Equatable, Sendable {
 @Contract
 public struct ExecMintInput: Codable, Equatable, Sendable {
   public let machine: MachineID
+  public let spec: JSONValue?
 }
 
 @Contract
@@ -80,6 +81,7 @@ public struct ExecStatus: Codable, Equatable, Sendable {
   public let command: String
   public let startedAt: Double
   public let state: ExecState
+  public let toolCallID: String?
 }
 
 public enum MachineAdminErrorCode: String, Sendable {

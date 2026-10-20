@@ -45,6 +45,10 @@ import Testing
         "values": .array([.integer(7), .object(["k": "v"]), .bool(true), .string("s")]),
       ])]),
     ])),
+    ("table.rows", .object([
+      "path": "/data/t.table",
+      "ops": .array([.object(["insert": .object(["n": .integer(8), "j": .object(["json": .object(["k": "w"])]), "b": .bool(false), "s": .string("t")])])]),
+    ])),
     ("query", .object(["sql": "SELECT n, j, b FROM \"/data/t.table\""])),
     ("checkout", .object(["path": "/notes/a.md", "rev": 1])),
     ("mv", .object(["from": "/b.md", "to": "/c.md"])),

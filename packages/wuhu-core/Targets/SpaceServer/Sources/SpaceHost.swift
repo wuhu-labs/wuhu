@@ -77,7 +77,6 @@ public actor SpaceHost {
       let metricsWriter = InferenceMetricsWriter(folder: folder, logger: logger)
       let credentials = configDirectory.map { CredentialResolver.live(store: CredentialsStore(configDirectory: $0, spaceID: id), allowEnvironment: allowEnvironmentCredentials) } ?? (allowEnvironmentCredentials ? .environmentOnly : .unavailable)
       let usage = UsageBoard()
-      let scriptFetch = ScriptFetch(controller: serverIdentity)
       let sessions = await SessionRuntime.assemble(
         space: space,
         hub: hub,
@@ -101,9 +100,6 @@ public actor SpaceHost {
         oidcBindingIdentity: { audience, session in
           let record = try await space.sessions.record(session)
           return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
-        },
-        identityFetch: { request, session, protect in
-          try await scriptFetch.response(request, session: session, space: space, protect: protect)
         },
       )
       var pushConfiguration = HTTPClient.Configuration()

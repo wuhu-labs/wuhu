@@ -110,14 +110,13 @@ import Testing
 
   @Test func `an exec whose call returned running holds the clock from its start`() async throws {
     let rig = try await Rig()
-    try await rig.store.detachExecJob(
-      ExecJobRecord(session: rig.task, toolCallID: ToolCallID("tc-1"), exec: ExecID(rawValue: "ex_1"), notice: UUID(), spec: "{}", startedAt: time(300)),
-      payload: .exec(.init(output: "running", exitCode: 0)),
-    )
+    rig.at(300)
+    let machine = try await rig.rig.space.addMachine(name: "box").id
+    let claim = try await rig.rig.space.claimExec(machine: machine, caller: rig.task.rawValue, toolCallID: ToolCallID("call"))
     for second in stride(from: 600.0, through: 1800, by: 600) {
       #expect(try await rig.check(second).isEmpty)
     }
-    try await rig.store.settleExecJob(rig.task, toolCallID: ToolCallID("tc-1"), notification: nil)
+    try await rig.rig.space.finishExec(claim.record.id, .exited(code: 0))
     #expect(try await rig.check(1900).isEmpty)
     #expect(try await rig.check(2500).count == 1)
   }

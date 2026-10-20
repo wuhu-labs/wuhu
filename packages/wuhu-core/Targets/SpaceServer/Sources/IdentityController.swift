@@ -7,6 +7,7 @@ import Dependencies
 import Fetch
 import JSONValue
 import Logging
+import func SessionTools.fetchOrigin
 import enum WuhuAI.InferenceError
 import WuhuVFS
 

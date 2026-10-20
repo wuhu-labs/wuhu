@@ -4,7 +4,7 @@ import StructuredQueriesSQLite
 
 let spaceSchemaSQL = [
   sessionWorkerOwnershipSchemaSQL, sessionWorkerSchemaSQL, machineV2SchemaSQL, sessionModelRouteSchemaSQL, cacheWarmingSchemaSQL,
-  substrateSchemaSQL, blobObjectSchemaSQL, sessionSchemaSQL, execJobSchemaSQL, sessionCommandSchemaSQL, sessionContextSchemaSQL,
+  substrateSchemaSQL, blobObjectSchemaSQL, sessionSchemaSQL, sessionCommandSchemaSQL, sessionContextSchemaSQL,
   conversationSchemaSQL, notificationSchemaSQL,
   allocationSchemaSQL, authSchemaSQL, groupSchemaSQL, deviceSchemaSQL, messageViewingSchemaSQL, enrollmentSchemaSQL, personaSchemaSQL,
   spaceMetaSchemaSQL, webPushSchemaSQL, pushRelaySchemaSQL,
@@ -121,7 +121,9 @@ CREATE TABLE IF NOT EXISTS "machine_execs" (
   "started_at" TEXT NOT NULL,
   "terminal_state" TEXT,
   "kill_delivered" INTEGER NOT NULL DEFAULT 0,
-  "grp" TEXT NOT NULL DEFAULT ''
+  "grp" TEXT NOT NULL DEFAULT '',
+  "tool_spec" TEXT,
+  "tool_end_owed" INTEGER NOT NULL DEFAULT 0
 );
 CREATE TRIGGER IF NOT EXISTS "machine_execs_grp_required" BEFORE INSERT ON "machine_execs" WHEN NEW."grp" = ''
   BEGIN SELECT RAISE(ABORT, 'grp required: machine_execs'); END;

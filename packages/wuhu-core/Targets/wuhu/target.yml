@@ -19,6 +19,7 @@ dependencies:
   - Dependencies
   - SpaceCore
   - SpaceServer
+  - SessionTools
   - WebBundle
   - Fetch
   - FetchWebSocket

@@ -1,7 +1,4 @@
-import protocol MainHub.Main
-import enum MainHub.ScriptDataOperation
 import struct MainHub.ScriptError
-import func MainHub.spaceAnswer
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,22 +7,17 @@ import TaskLifetime
 #endif
 import JSONValue
 import QuickJSKit
-import SessionDomain
+import SpaceClient
 import SpaceCore
 import SpaceTools
 
-// The data half of `wuhu:space`: the JS core pages share, over a
-// transport of host calls that act as the session. Each call answers
-// `{ok: value}` or `{error: payload}`, so the core raises a SpaceError with the
-// code, hint and token a page would see.
+// The data half of `wuhu:space`: the JS core pages share, over main's API as
+// the session. Each call answers `{ok: value}` or `{error: payload}`, so the
+// core raises a SpaceError with the code, hint and token a page would see.
 struct ScriptSpace: Sendable {
   let execution: ScriptExecution
-  let owner: any Main
+  let client: SpaceClient
   let streams: ScriptStreams
-
-  private var session: SessionID {
-    execution.session
-  }
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_space_verb", promising: { arguments in
@@ -34,7 +26,6 @@ struct ScriptSpace: Sendable {
         guard ["table.create", "table.schema", "table.alter", "new", "rm", "find", "grep"].contains(name) else {
           throw ToolRunError.failed(code: .invalidArgument, message: "unknown space operation", hint: nil)
         }
-        let principal = try await principal()
         guard case var .object(fields)? = arguments[safe: 1], case let .object(options)? = arguments[safe: 2] else {
           throw ToolRunError.failed(code: .invalidArgument, message: "space operation options must be an object", hint: nil)
         }
@@ -48,27 +39,25 @@ struct ScriptSpace: Sendable {
         guard Set(options.keys).isSubset(of: allowed) else {
           throw ToolRunError.failed(code: .invalidArgument, message: "unsupported options for \(name)", hint: nil)
         }
+        if let path = fields["path"]?.stringValue { try scriptSpaceAddress(path) }
         for (key, value) in options { fields[key] = value }
-        var input = JSONValue.object(fields)
-        if name == "rm", case var .object(fields) = input, let raw = fields["path"]?.stringValue {
-          fields["path"] = .string(try scriptWritable(raw, by: session, as: principal))
-          input = .object(fields)
-        }
-        return try await run(name, input, as: principal)
+        return try await client.tool(name, .object(fields))
       }
     })
     engine.define("__wuhu_space_query", promising: { arguments in
       await spaceAnswer {
         let room = execution.buffers.withLock(\.room)
-        let rows: Rows
+        let output: JSONValue
         do {
-          rows = try await owner.query(
-            string(arguments, 0), parameters: array(arguments, 1), byteLimit: room, session: session,
-          )
-        } catch SpaceError.queryResultTooLarge {
+          output = try await client.tool("query", .object([
+            "sql": .string(string(arguments, 0)), "parameters": .array(try array(arguments, 1)), "typed": .bool(true), "byteLimit": .integer(room),
+          ]))
+        } catch let failure as SpaceClient.ToolFailure
+          where failure.error.code == .byteLimitExceeded
+        {
           throw overBudget(.queryResult)
         }
-        return Wire.typedQueryOutput(rows)
+        return output
       }
     })
     engine.define("__wuhu_space_open", promising: { arguments in
@@ -89,50 +78,39 @@ struct ScriptSpace: Sendable {
     })
     engine.define("__wuhu_space_rows", promising: { arguments in
       await spaceAnswer {
-        let principal = try await principal()
-        let path = try scriptWritable(string(arguments, 0), by: session, as: principal)
-        let edits = try RowEdit.parse(arguments[safe: 1] ?? .null)
-        return try await owner.commitRows(path, edits: edits, session: session)
+        try await client.tool("table.rows", .object(["path": .string(string(arguments, 0)), "ops": arguments[safe: 1] ?? .null]))
       }
     })
     engine.define("__wuhu_space_attributes", promising: { arguments in
       await spaceAnswer {
-        try await run("attributes.read", ["path": .string(string(arguments, 0))], as: try await principal())
+        try await client.tool("attributes.read", .object(["path": .string(string(arguments, 0))]))
       }
     })
     engine.define("__wuhu_space_patch", promising: { arguments in
       await spaceAnswer {
-        let principal = try await principal()
-        let path = try scriptWritable(string(arguments, 0), by: session, as: principal)
         guard case var .object(input)? = arguments[safe: 1] else { throw ScriptError("malformed patch") }
-        input["path"] = .string(path)
-        return try await run("attributes.patch", .object(input), as: principal)
+        input["path"] = .string(string(arguments, 0))
+        return try await client.tool("attributes.patch", .object(input))
       }
     })
   }
 
-  private func principal() async throws -> Principal {
-    try await owner.principal(of: session)
-  }
-
+  // The route validates the statement before it commits to a stream, so a
+  // refusal is the open's error, never a stream that ends at once.
   private func openObserve(_ sql: String, parameters: [JSONValue]) async throws -> JSONValue {
-    let snapshots = try await owner.observe(sql, parameters: parameters, session: session)
-    return .integer(await streams.open(snapshots, newestOnly: true) { Wire.typedQueryOutput($0) })
+    let snapshots = try await client.observe(ObserveRequest(mode: .sql(sql), parameters: parameters, typed: true))
+    return .integer(await streams.open(snapshots, newestOnly: true) { JSONValue.parse($0.data) ?? .null })
   }
 
   private func openWatch(_ glob: String, from: JSONValue?) async throws -> JSONValue {
     guard !glob.isEmpty else { throw ToolRunError.failed(code: .invalidArgument, message: "watch takes a glob", hint: nil) }
-    let start: Rev? = switch from {
-    case let .integer(rev)? where rev >= 0: Rev(rev)
+    let start: Int? = switch from {
+    case let .integer(rev)? where rev >= 0: rev
     case nil, .null?: nil
     default: throw ToolRunError.failed(code: .invalidArgument, message: "from must be a non-negative revision", hint: nil)
     }
-    let events = try await owner.watch(glob, from: start, session: session)
-    return .integer(await streams.open(events, newestOnly: false) { $0 })
-  }
-
-  private func run(_ name: String, _ input: JSONValue, as principal: Principal) async throws -> JSONValue {
-    try await owner.dataOperation(ScriptDataOperation(rawValue: name)!, input: input, session: session)
+    let events = try await client.observe(ObserveRequest(mode: .glob(glob), from: start))
+    return .integer(await streams.open(events, newestOnly: false) { JSONValue.parse($0.data) ?? .null })
   }
 }
 

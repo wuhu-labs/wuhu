@@ -29,6 +29,7 @@ func callResult(
     }
     $0[id] = state
   }
+  await outcome.committed?()
   let failed: Bool = if case .failure = payload { true } else { false }
   return .object(["isError": .bool(failed), "content": .array([.object(["type": "text", "text": .string(payload.renderedText)])])])
 }

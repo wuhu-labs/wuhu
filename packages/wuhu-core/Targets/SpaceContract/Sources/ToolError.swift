@@ -10,6 +10,8 @@ public enum ErrorCode: String, Codable, Equatable, Sendable {
   case unauthorized
   case unsupported
   case unavailable
+  /// A result larger than the call's byte allowance: a query result or a file read.
+  case byteLimitExceeded
   case unknownKind
   case `internal`
   case providerNotConfigured = "provider_not_configured"

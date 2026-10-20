@@ -58,3 +58,7 @@ FileRevision stores opaque machine version tokens as machine(String), while reta
 ## Generation cache prefix
 
 For every provider, past rendered messages are an exact prefix of every later request in the same generation; only appended input differs. System prompt and tools remain fixed within a generation. Message attribution is resolved once on transcript admission and stored with its sender; handle/device renames affect only later admissions. The generation head's subscriptions, running work and pre-reads are a persisted snapshot from generation start (creation, compaction or Start over), not a live projection. Hydration after a server restart renders the same snapshot bytes. Old heads without running work render `running: none`; every new head constructor requires an explicit running snapshot, including portable replay and model/account switches. Subscription reconciliation affects scheduling and the next generation's snapshot, never historical rendering; silent handler retirement remains silent, and live registrations can be queried through `subscriptions`.
+
+## Durable tool outcomes
+
+`ToolOutcome.committed` is an optional asynchronous acknowledgement of durable admission, not tool execution. The worker invokes it only after successfully appending the outcome's tool result and optional context notice, for both ordinary calls and compaction re-establishment calls. A failed append or discarded outcome never invokes it. The callback may release retained external evidence (such as an exec caller leg) once the transcript owns the result.

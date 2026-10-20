@@ -16,7 +16,7 @@ public enum WaitCut: Sendable, Equatable {
   case arrival
 
   /// Says why the call returned `running`.
-  var reason: String {
+  public var reason: String {
     switch self {
     case let .waited(wait): "still running after \(seconds(.seconds(wait))) s"
     case .arrival: "a message arrived, so the call gave the turn back; still running"

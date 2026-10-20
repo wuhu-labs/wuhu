@@ -75,14 +75,16 @@ public struct ExecRecord: Equatable, Sendable {
   public let command: String
   public let caller: String?
   public let toolCallID: ToolCallID?
+  public let toolSpec: String?
+  public let toolEndOwed: Bool
   public let startedAt: Date
   public let terminal: ExecTerminalState?
   public let killDelivered: Bool
   /// The group the exec is homed in: groups that read it may see and join it.
   public let group: GroupID
 
-  public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID) {
-    self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group
+  public init(id: ExecID, machine: MachineID, streamID: Int, command: String, caller: String?, toolCallID: ToolCallID?, startedAt: Date, terminal: ExecTerminalState?, killDelivered: Bool, group: GroupID, toolSpec: String? = nil, toolEndOwed: Bool = false) {
+    self.id = id; self.machine = machine; self.streamID = streamID; self.command = command; self.caller = caller; self.toolCallID = toolCallID; self.startedAt = startedAt; self.terminal = terminal; self.killDelivered = killDelivered; self.group = group; self.toolSpec = toolSpec; self.toolEndOwed = toolEndOwed
   }
 }
 
@@ -368,7 +370,7 @@ extension Space {
   // Mark-started-before-spawn: the row exists before any exec-start frame is
   // sent, so a crash-retry with the same kernel tool call id rejoins this exec
   // instead of spawning a second process.
-  public func claimExec(machine: MachineID, caller: String, toolCallID: ToolCallID) async throws -> ExecClaim {
+  public func claimExec(machine: MachineID, caller: String, toolCallID: ToolCallID, spec: String? = nil) async throws -> ExecClaim {
     let id = ExecID(rawValue: "ex_" + randomSuffix(ExecID.suffixLength))
     let started = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
@@ -381,7 +383,7 @@ extension Space {
       }
       _ = try Self.insertExec(
         id, machine: machine, caller: caller, toolCallID: toolCallID, startedAt: started,
-        group: Self.execGroup(machine, caller: caller, in: db), in: db,
+        group: Self.execGroup(machine, caller: caller, in: db), toolSpec: spec, in: db,
       )
       guard let row = try Row.fetchOne(db, sql: "SELECT * FROM machine_execs WHERE id = ?", arguments: [id.rawValue]) else {
         throw SpaceError.notFound(id.rawValue)
@@ -405,6 +407,7 @@ extension Space {
     toolCallID: ToolCallID?,
     startedAt: String,
     group: String,
+    toolSpec: String? = nil,
     in db: Database,
   ) throws -> Int64 {
     try requireMachine(machine, in: db)
@@ -415,10 +418,10 @@ extension Space {
     )) ?? 1
     try db.execute(
       sql: """
-      INSERT INTO machine_execs (id, machine_id, stream_id, command, caller, tool_call_id, started_at, grp)
-      VALUES (?, ?, ?, '', ?, ?, ?, ?)
+      INSERT INTO machine_execs (id, machine_id, stream_id, command, caller, tool_call_id, started_at, grp, tool_spec)
+      VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)
       """,
-      arguments: [id.rawValue, machine.rawValue, streamID, caller, toolCallID?.rawValue, startedAt, group],
+      arguments: [id.rawValue, machine.rawValue, streamID, caller, toolCallID?.rawValue, startedAt, group, toolSpec],
     )
     return streamID
   }
@@ -455,6 +458,44 @@ extension Space {
         db,
         sql: "SELECT * FROM machine_execs WHERE machine_id = ? AND stream_id = ?",
         arguments: [machine.rawValue, streamID],
+      ).map(Self.execRecord(from:))
+    }
+  }
+
+  public func setExecEndOwed(_ id: ExecID, caller: String, owed: Bool) async throws -> Bool {
+    try await writer.write { db in
+      try db.execute(
+        sql: "UPDATE machine_execs SET tool_end_owed = ? WHERE id = ? AND caller = ? AND tool_call_id IS NOT NULL",
+        arguments: [owed, id.rawValue, caller],
+      )
+      return db.changesCount > 0
+    }
+  }
+
+  public func liveToolExecs(caller: String) async throws -> [ExecRecord] {
+    try await writer.read { db in
+      try Row.fetchAll(
+        db,
+        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND terminal_state IS NULL ORDER BY started_at, id",
+        arguments: [caller],
+      ).map(Self.execRecord(from:))
+    }
+  }
+
+  public func forgetOwedExecs(caller: String) async throws {
+    try await writer.write { db in
+      try db.execute(
+        sql: "UPDATE machine_execs SET tool_end_owed = 0 WHERE caller = ? AND tool_call_id IS NOT NULL",
+        arguments: [caller],
+      )
+    }
+  }
+
+  public func owedExecs() async throws -> [ExecRecord] {
+    try await writer.read { db in
+      try Row.fetchAll(
+        db,
+        sql: "SELECT * FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1 ORDER BY started_at, id",
       ).map(Self.execRecord(from:))
     }
   }
@@ -564,6 +605,8 @@ extension Space {
       terminal: (row["terminal_state"] as String?).flatMap(ExecTerminalState.init(stored:)),
       killDelivered: (row["kill_delivered"] as Int64) != 0,
       group: GroupID(rawValue: row["grp"] as String? ?? GroupID.shared.rawValue),
+      toolSpec: row["tool_spec"],
+      toolEndOwed: (row["tool_end_owed"] as Int64) != 0,
     )
   }
 }

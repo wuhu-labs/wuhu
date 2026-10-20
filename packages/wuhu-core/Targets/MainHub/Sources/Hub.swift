@@ -21,8 +21,6 @@ import SpaceTools
 import struct WuhuAI.ToolCall
 
 public actor Hub: Main {
-  nonisolated let identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)?
-  nonisolated let scriptDiscovery = ScriptDiscoveryConfiguration()
   nonisolated let sessionAccess: SessionAccess
   nonisolated let attemptLog: AttemptLogConfig?
   nonisolated let metrics: InferenceMetricsSink
@@ -36,8 +34,6 @@ public actor Hub: Main {
   nonisolated public let space: Space
   nonisolated let secrets: SpaceSecretStores?
   nonisolated public let machines: MachineSeam?
-  nonisolated let execBackend: ExecBackend?
-  nonisolated let execJobs: ExecJobs
   nonisolated let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
   nonisolated let resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)?
   nonisolated let prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)?
@@ -47,7 +43,6 @@ public actor Hub: Main {
   public init(
     space: Space,
     sessionAccess: SessionAccess = .init(),
-    identityConfiguration: (@Sendable () async throws -> JSONValue)? = nil,
     metrics: InferenceMetricsSink = .noop,
     credentials: CredentialResolver = .unavailable,
     inferenceToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
@@ -55,19 +50,14 @@ public actor Hub: Main {
     inferenceBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     attemptLog: AttemptLogConfig? = nil,
     secrets: SpaceSecretStores? = nil,
-    identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
     machines: MachineSeam? = nil,
-    exec: ExecBackend? = nil,
     scriptMachines: ScriptMachineAccess? = nil,
     resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
     resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
     prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
     completionMetrics: InferenceMetricsSink? = nil,
     control: SessionControl? = nil,
-    execJobs: ExecJobs = ExecJobs(),
   ) {
-    self.identityFetch = identityFetch
-    scriptDiscovery.value.withLock { $0 = identityConfiguration }
     self.sessionAccess = sessionAccess
     self.metrics = metrics
     self.credentials = credentials
@@ -79,8 +69,6 @@ public actor Hub: Main {
     self.space = space
     self.secrets = secrets
     self.machines = machines
-    execBackend = exec
-    self.execJobs = execJobs
     self.resolveModelExecutor = resolveModelExecutor
     self.resolveModelGroup = resolveModelGroup
     self.prepareModelRoute = prepareModelRoute
@@ -89,31 +77,6 @@ public actor Hub: Main {
   }
 
   nonisolated var store: SessionStore { space.sessions }
-
-  // The tools main still runs for the worker: exec, and the exec half of
-  // cancel. Every other tool is the worker's, over main's API.
-  nonisolated public func execute(
-    session: SessionID,
-    call: ToolCall,
-    state: ToolExecutionState,
-  ) async throws -> ToolResultPayload {
-    try await answering(as: session) {
-      let callID = ToolCallID(call.id)
-      switch RosterTool(rawValue: call.name) {
-      case .exec:
-        return try await exec(session, callID, decoded(ExecArguments.self, call), state: state)
-      case .cancel:
-        guard case let .exec(id) = try CancelTarget(decoded(CancelArguments.self, call).id) else {
-          preconditionFailure("the worker cancels its own subscriptions and scripts")
-        }
-        return try await cancelExec(session, id)
-      case nil:
-        return .failure(.init(message: "unknown tool: \(call.name)"))
-      default:
-        preconditionFailure("worker-owned tools must not enter the persistent dispatcher")
-      }
-    }
-  }
 
   /// A session verb's answer as the model reads it: `body` runs as `session`
   /// (a machine it reaches sees the session as its caller) and whatever it
@@ -133,17 +96,6 @@ public actor Hub: Main {
       return .failure(.init(message: renderedFailure(Wire.failure(error))))
     } catch is CancellationError {
       throw CancellationError()
-    }
-  }
-
-  nonisolated private func decoded<Arguments: Decodable>(
-    _ type: Arguments.Type,
-    _ call: ToolCall,
-  ) throws(ToolProblem) -> Arguments {
-    do {
-      return try JSONValueDecoder().decode(type, from: call.arguments.json)
-    } catch {
-      throw ToolProblem("\(call.name): arguments do not match the tool schema: \(error)")
     }
   }
 }

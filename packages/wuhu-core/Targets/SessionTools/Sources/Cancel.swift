@@ -13,7 +13,7 @@ extension ToolExecutor {
   func cancel(_ session: SessionID, _ arguments: CancelArguments, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
     switch try CancelTarget(arguments.id) {
     case .subscription: try await cancelSubscription(session, call.id, arguments.id)
-    case .exec: try await owner.execute(session: session, call: call, state: state)
+    case let .exec(id): try await cancelExec(session, id)
     case let .script(script): try await stopScript(session, script)
     }
   }

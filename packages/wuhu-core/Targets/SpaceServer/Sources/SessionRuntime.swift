@@ -78,7 +78,6 @@ public struct SessionRuntime: Sendable {
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     self.owner = owner
-    owner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
     firing = SubscriptionFiring(space: space, worker: worker)
@@ -117,10 +116,6 @@ public struct SessionRuntime: Sendable {
     firing = SubscriptionFiring(space: space, worker: worker)
   }
 
-  func configureDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
-    owner.configureScriptDiscovery(contentHost: contentHost, identity: identity)
-  }
-
   public func run() async {
     await startup?()
     await withTaskGroup(of: Void.self) { group in
@@ -141,7 +136,6 @@ public struct SessionRuntime: Sendable {
       await group.waitForAll()
     }
     await streamScope.close()
-    await owner.closeExecJobs()
   }
 }
 
@@ -172,7 +166,6 @@ extension SessionRuntime {
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
-    identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
@@ -218,9 +211,7 @@ extension SessionRuntime {
       space: space,
       metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
       secrets: secrets,
-      identityFetch: identityFetch,
       machines: machines,
-      exec: exec,
       scriptMachines: ScriptMachineAccess(files: machines, exec: exec),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
@@ -229,15 +220,18 @@ extension SessionRuntime {
       control: sessionControl { serviceSlot.service },
     )
     let owner: any Main = toolOwner
+    let execJobs = ExecJobs()
+    let jobExecutor = ToolExecutor(
+      owner: owner, main: connection, credential: { tokens.sessionToken($0) }, execJobs: execJobs,
+    )
     let startup: @Sendable () async -> Void = {
       await toolOwner.announceScriptRestart()
-      await toolOwner.adoptExecJobs()
+      await jobExecutor.adoptExecJobs()
     }
     let sockets = ResponsesSocketRegistry()
-    toolOwner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(owner: owner)
     let execution = await SessionExecution(
-      main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: executionCredentials, completionCatalog: catalog,
+      main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: executionCredentials, completionCatalog: catalog, execJobs: execJobs,
     ) { executor in
       var config = LoopConfig(
         executeTool: { invocation in
@@ -259,8 +253,8 @@ extension SessionRuntime {
         prepareCompaction: compactionPlacement(owner: owner, catalog: catalog, usage: usage),
         killInterruptedTool: { invocation in
           guard invocation.call.name == "exec" else { return }
-          await owner.killInterruptedExec(
-            session: invocation.sessionID, toolCallID: ToolCallID(invocation.call.id),
+          await executor.killInterrupted(
+            session: invocation.sessionID, callID: ToolCallID(invocation.call.id),
           )
         },
         invalidateInference: { await sockets.invalidate($0) },
@@ -269,12 +263,23 @@ extension SessionRuntime {
       )
 
       config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
-      config.runningWork = { toolOwner.runningExecJobs(of: $0) }
+      config.runningWork = { jobExecutor.runningExecJobs(of: $0) }
       return config
     }
     let service = SessionService(
-      sessions: space.sessions, worker: execution, runningWork: { toolOwner.runningExecJobs(of: $0) },
-      archived: { await toolOwner.cancelExecJobs(of: $0); tokens.revokeSession($0) },
+      sessions: space.sessions, worker: execution, runningWork: { jobExecutor.runningExecJobs(of: $0) },
+      archived: { session in
+        await jobExecutor.cancelExecJobs(of: session)
+        do {
+          for record in try await space.liveToolExecs(caller: session.rawValue) {
+            do { try await exec.kill(record.id) }
+            catch { Logger(label: "wuhu.exec").error("could not kill archived session's exec: \(error)") }
+          }
+        } catch { Logger(label: "wuhu.exec").error("could not read archived session's live execs: \(error)") }
+        do { try await space.forgetOwedExecs(caller: session.rawValue) }
+        catch { Logger(label: "wuhu.exec").error("could not retire archived session's owed exec ends: \(error)") }
+        tokens.revokeSession(session)
+      },
     )
     serviceSlot.bind(service)
     return SessionRuntime(
@@ -314,29 +319,45 @@ struct ToolOnlyWorker: Worker {
 extension SessionRuntime {
   /// Main's API bound in process to `worker` as the kernel binds it, with no
   /// loops running: what a test of the tools alone needs.
-  static func bindMain(owner: Hub, worker: any Worker, tokens: ExecTokens, connection: MainConnection) {
+  @discardableResult
+  static func bindMain(
+    owner: Hub, worker: any Worker, tokens: ExecTokens, connection: MainConnection, hub: MachineHub? = nil,
+    origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
+  ) -> UpgradingHandler {
     let runtime = SessionRuntime(
       space: owner.space, service: SessionService(sessions: owner.space.sessions, worker: worker),
       worker: worker, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection,
     )
-    _ = SpaceServer.configuredHandler(space: owner.space, hub: MachineHub(space: owner.space), sessions: runtime, dev: true, machines: owner.machines)
+    return SpaceServer.configuredHandler(
+      space: owner.space, hub: hub ?? MachineHub(space: owner.space), sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,
+      dev: true, secrets: secrets, identityController: identity, machines: owner.machines,
+    )
   }
 
   /// The tool executor as the kernel wires it, main's API bound in process and
   /// reached as the session with the session's token, without the loops.
   static func toolExecutor(
     owner: Hub,
+    hub: MachineHub? = nil,
     scripts: Scripts? = nil,
+    execJobs: ExecJobs = ExecJobs(),
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    origin: String? = nil,
+    contentHostPattern: String? = nil,
+    secrets: SpaceSecretStores? = nil,
+    identity: IdentityController? = nil,
   ) -> ToolExecutor {
     let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
     let executor = ToolExecutor(
       owner: owner, main: connection, credential: { tokens.sessionToken($0) },
-      credentials: credentials, completionCatalog: completionCatalog, scripts: scripts,
+      credentials: credentials, completionCatalog: completionCatalog, scripts: scripts, execJobs: execJobs,
     )
-    bindMain(owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection)
+    bindMain(
+      owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection, hub: hub,
+      origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
+    )
     return executor
   }
 }
@@ -384,16 +405,6 @@ func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> Ses
 
 func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
   ExecBackend(
-    claim: { machine, session, callID in
-      try await hub.requireExecKind(machine)
-      let claim = try await space.claimExec(
-        machine: machine,
-        caller: session.rawValue,
-        toolCallID: callID,
-      )
-      await hub.noteMinted(claim.record)
-      return claim
-    },
     connect: { id in
       guard let record = try await space.execRecord(id) else {
         throw MachineHubError.execNotFound(id)

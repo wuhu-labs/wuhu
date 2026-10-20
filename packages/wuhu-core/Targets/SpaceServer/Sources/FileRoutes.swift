@@ -23,18 +23,29 @@ func addFileRoutes(_ router: inout Router, contextOf: @escaping @Sendable (Reque
     guard let address = fileRouteAddress(request.url) else {
       return errorResponse(.badRequest, code: ErrorCode.invalidPath.rawValue, message: "malformed file path")
     }
+    // `?rev=` reads the file as of that revision; `?limit=` refuses a larger
+    // file before its bytes move, the bound a script module read needs.
+    let rev: Int?
+    let limit: Int?
+    do {
+      rev = try fileRouteInteger(request.url, "rev")
+      limit = try fileRouteInteger(request.url, "limit")
+    } catch let error as ToolRunError {
+      return fileRouteFailure(error)
+    }
     let context: SpaceToolContext
     switch try await contextOf(request) {
     case let .context(resolved): context = resolved
     case let .refused(response): return response
     }
     do {
-      let file = try await context.readBytes(address)
+      let file = try await context.readBytes(address, rev: rev, byteLimit: limit)
       let contentType = mimeType(for: address)
       var headers = Headers()
       headers[.contentType] = contentType
       headers[.contentLength] = String(file.data.count)
       headers[.eTag] = quoted(file.token)
+      if let rev = file.rev { headers[fileRevisionHeader] = String(rev) }
       return Response(status: .ok, headers: headers, body: .bytes(file.data, contentType: contentType))
     } catch let error as ToolRunError {
       return fileRouteFailure(error)
@@ -60,7 +71,10 @@ func addFileRoutes(_ router: inout Router, contextOf: @escaping @Sendable (Reque
     case let .refused(response): return response
     }
     do {
-      let written = try await context.writeBytes(address, data, ifMatch: request.headers[.ifMatch].map(unquoted))
+      // `If-None-Match: *` is HTTP's "only if nothing is there yet".
+      let written = try await context.writeBytes(
+        address, data, ifMatch: request.headers[.ifMatch].map(unquoted), createOnly: request.headers[.ifNoneMatch] == "*",
+      )
       return jsonResponse(.object([
         "rev": written.rev.map(JSONValue.integer) ?? .null,
         "token": .string(written.token),
@@ -69,6 +83,18 @@ func addFileRoutes(_ router: inout Router, contextOf: @escaping @Sendable (Reque
       return fileRouteFailure(error)
     }
   }
+}
+
+/// The space revision a `GET /v1/f/*` body was read at, when the file has one.
+let fileRevisionHeader = HTTPField.Name("wuhu-rev")!
+
+private func fileRouteInteger(_ url: URL, _ name: String) throws(ToolRunError) -> Int? {
+  guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == name })?.value
+  else { return nil }
+  guard let value = Int(raw), value >= 0 else {
+    throw .failed(code: .invalidArgument, message: "\(name) must be a non-negative integer", hint: nil)
+  }
+  return value
 }
 
 enum ToolContextVerdict: Sendable {
@@ -109,7 +135,7 @@ private func fileRouteFailure(_ error: ToolRunError) -> Response {
     let status: Status = switch code {
     case .notFound: .notFound
     case .conflict: .conflict
-    case .invalidPath, .invalidArgument: .badRequest
+    case .invalidPath, .invalidArgument, .byteLimitExceeded: .badRequest
     case .unauthorized: .forbidden
     case .unsupported, .unknownKind: .unsupportedMediaType
     case .unavailable: .serviceUnavailable

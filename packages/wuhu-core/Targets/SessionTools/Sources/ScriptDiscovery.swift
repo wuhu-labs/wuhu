@@ -1,6 +1,3 @@
-import protocol MainHub.Main
-import enum MainHub.ScriptDiscoveryOperation
-import func MainHub.spaceAnswer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,14 +5,13 @@ import func MainHub.spaceAnswer
 #endif
 import JSONValue
 import QuickJSKit
-import SessionDomain
-import struct SpaceContract.ToolRostersOutput
-import SpaceCore
+import SpaceClient
 import SpaceTools
 
+// `wuhu:space`'s identity(), context(), groups() and the session tool roster:
+// the server's own discovery routes, read as the session.
 struct ScriptDiscovery: Sendable {
-  let execution: ScriptExecution
-  let owner: any Main
+  let client: SpaceClient
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_identity_origin") { arguments in
@@ -34,18 +30,15 @@ struct ScriptDiscovery: Sendable {
       return parts.string.map(JSONValue.string) ?? .null
     }
     engine.define("__wuhu_discovery", promising: { arguments in
-      return await spaceAnswer {
-        let operation: ScriptDiscoveryOperation
-        switch arguments.first {
-        case .string("identity"): operation = .identity
-        case .string("context"): operation = .context
-        case .string("groups"): operation = .groups
-        case .string("toolRoster"): operation = .toolRosters
-        default:
-          throw ToolRunError.failed(code: .invalidArgument, message: "Unknown discovery operation.", hint: nil)
+      await spaceAnswer {
+        let path = switch arguments.first {
+        case .string("identity"): "/v1/identity"
+        case .string("context"): "/v1/context"
+        case .string("groups"): "/v1/groups"
+        case .string("toolRoster"): "/v1/session-tools"
+        default: throw ToolRunError.failed(code: .invalidArgument, message: "Unknown discovery operation.", hint: nil)
         }
-        let result = try await owner.discovery(operation, session: execution.session)
-        return result
+        return try await client.api(.get, path)
       }
     })
   }

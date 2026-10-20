@@ -163,8 +163,7 @@ import WuhuVFS
       _ = try await page.response(Request(url: URL(string: "https://outside.test")!), allow: ["https://outside.test"], space: "s", group: "g", page: "/page", viewer: "v", deadline: .now() + .seconds(60))
       Issue.record("page minted an unconfirmed directory token")
     } catch let error as PageFetchError { #expect(error.code == "directoryUnavailable") }
-    let script = ScriptFetch(controller: controller, hop: { _, _ in Issue.record("unconfirmed identity must not connect"); return Response(status: .ok) })
-    try await withIdentityScript(proxy: script) { rig in
+    try await withIdentityScript(identity: controller, hop: FetchClient { _ in Issue.record("unconfirmed identity must not connect"); return Response(status: .ok) }) { rig in
       let output = try await rig.evaluate("try {await fetch('https://outside.test', {identity:true})} catch(e) {result(e.code)}")
       #expect(output == "directoryUnavailable")
     }
@@ -177,16 +176,16 @@ import WuhuVFS
     let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id), store: .filesystem(fs), fetch: FetchClient { _ in try Response.json(["confirmed": true]) })
     try await controller.publish()
     let sent = Mutex<[String]>([])
-    let hop: @Sendable (Request, NIODeadline) async throws -> Response = { request, _ in
+    let hop: @Sendable (Request) async throws -> Response = { request in
       let token = String(try #require(request.headers[.authorization]).dropFirst(7))
       sent.withLock { $0.append(token) }
       try verify(token, jwks: key.jwks)
       return Response(status: .ok, body: .string("ok"))
     }
     for origin in ["https://lab.test", "https://outside.test"] {
-      let page = PageFetch(controller: controller, hop: hop)
+      let page = PageFetch(controller: controller, hop: { request, _ in try await hop(request) })
       _ = try await page.response(Request(url: URL(string: origin + "/path")!), allow: [origin], space: "s", group: "g", page: "/page", viewer: "v", deadline: .now() + .seconds(60))
-      try await withIdentityScript(proxy: ScriptFetch(controller: controller, hop: hop)) { rig in
+      try await withIdentityScript(identity: controller, hop: FetchClient { try await hop($0) }) { rig in
         let output = try await rig.evaluate("result(await (await fetch('\(origin)/path', {identity:true})).text())")
         #expect(output == "ok")
       }

@@ -73,8 +73,8 @@ import WuhuVFS
         let response = try await r.harness.get("/v1/id-token", query: ["audience": "https://pool.example"], bearer: bearer)
         #expect(response.status == .unauthorized, "\(bearer ?? "none")")
       }
-      // The session gate takes the exec token and refuses the route to sessions.
-      #expect(try await r.harness.get("/v1/id-token", query: ["audience": "https://pool.example"], bearer: execToken).status == .forbidden)
+      // The session gate takes the exec token and mints for the session itself.
+      #expect(try await r.harness.get("/v1/id-token", query: ["audience": "https://pool.example"], bearer: execToken).status == .ok)
     }
   }
 

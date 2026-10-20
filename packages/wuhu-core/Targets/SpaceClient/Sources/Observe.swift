@@ -6,6 +6,7 @@
 
 import Fetch
 import FetchSSE
+import JSONValue
 
 public struct ObserveRequest: Equatable, Sendable {
   public enum Mode: Equatable, Sendable {
@@ -17,12 +18,18 @@ public struct ObserveRequest: Equatable, Sendable {
   public var from: Int?
   public var throttleMs: Int?
   public var batch: Bool?
+  /// SQL mode: bound parameters, and `typed` for the typed-row rendering a
+  /// script's `observe` tag wants.
+  public var parameters: [JSONValue]
+  public var typed: Bool
 
-  public init(mode: Mode, from: Int? = nil, throttleMs: Int? = nil, batch: Bool? = nil) {
+  public init(mode: Mode, from: Int? = nil, throttleMs: Int? = nil, batch: Bool? = nil, parameters: [JSONValue] = [], typed: Bool = false) {
     self.mode = mode
     self.from = from
     self.throttleMs = throttleMs
     self.batch = batch
+    self.parameters = parameters
+    self.typed = typed
   }
 }
 
@@ -59,6 +66,12 @@ extension SpaceClient {
       }
     case let .sql(query):
       items = [URLQueryItem(name: "sql", value: query)]
+      if !request.parameters.isEmpty {
+        items.append(URLQueryItem(name: "params", value: JSONValue.array(request.parameters).jsonString()))
+      }
+      if request.typed {
+        items.append(URLQueryItem(name: "typed", value: "1"))
+      }
     }
     if let throttleMs = request.throttleMs {
       items.append(URLQueryItem(name: "throttleMs", value: String(throttleMs)))

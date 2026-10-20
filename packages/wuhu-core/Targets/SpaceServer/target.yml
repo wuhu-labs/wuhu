@@ -25,6 +25,7 @@ dependencies:
   - ExecutionOwner
   - FetchAsyncHTTPClient
   - SpaceContract
+  - SpaceClient
   - SpaceTools
   - SpaceCore
   - SpaceFS
@@ -78,6 +79,7 @@ tests:
     - InferenceKit
     - ExecutionOwner
     - WuhuAI
+    - SpaceClient
     - SpaceContract
     - SpaceTools
     - SpaceCore

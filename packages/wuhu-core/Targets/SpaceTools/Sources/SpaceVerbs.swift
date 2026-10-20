@@ -37,11 +37,13 @@ extension SpaceToolbox {
   }
 
   static let checkout = SpaceTool("checkout", schema: CheckoutInput.jsonSchema) { (context, input: CheckoutInput) in
-    try await context.checkout(input.path, rev: input.rev, ifMatch: input.ifMatch)
+    try await context.checkout(input.path, rev: input.rev, ifMatch: input.ifMatch, createOnly: input.createOnly ?? false)
   }
 
   static let query = SpaceTool("query", schema: QueryInput.jsonSchema) { (context, input: QueryInput) in
-    Wire.queryOutput(try await context.space.query(input.sql, byteLimit: queryResultBytes, as: context.principal))
+    let byteLimit = min(input.byteLimit ?? queryResultBytes, queryResultBytes)
+    let rows = try await context.space.query(input.sql, parameters: input.parameters ?? [], byteLimit: byteLimit, as: context.principal)
+    return input.typed == true ? Wire.typedQueryOutput(rows) : Wire.queryOutput(rows)
   }
 
   static let tableCreate = SpaceTool("table.create", schema: TableCreateInput.jsonSchema) { (context, input: TableCreateInput) in
@@ -65,6 +67,11 @@ extension SpaceToolbox {
       }
     }
     let commit = try await context.commitRows(input.path, ops: ops)
+    return Wire.object([("rev", .integer(commit.rev.value)), ("ids", .array(commit.ids.map { .integer(Int($0)) }))])
+  }
+
+  static let tableRows = SpaceTool("table.rows", schema: TableRowsInput.jsonSchema) { (context, input: TableRowsInput) in
+    let commit = try await context.commitRows(input.path, edits: try RowEdit.parse(input.ops))
     return Wire.object([("rev", .integer(commit.rev.value)), ("ids", .array(commit.ids.map { .integer(Int($0)) }))])
   }
 

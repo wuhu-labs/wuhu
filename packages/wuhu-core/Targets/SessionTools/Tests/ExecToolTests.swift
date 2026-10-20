@@ -93,22 +93,19 @@ import struct WuhuAI.ToolArguments
     }
   }
 
-  @Test func execRunsRecordsAReceiptAndAbsorbsTheRetry() async throws {
+  @Test func execAcknowledgesOnlyAfterItsOutcomeIsCommitted() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       let machine = try await space.addMachine(name: "box").id
       let acknowledged = Box(false)
+      let committed = Box(false)
       let scripted = ScriptedExecMachine(onTerminalAck: { ack in
         #expect(ack.cursor == 6)
-        let receipt = try await space.sessions.receipt(session, toolCallID: .init("tc-exec"))
-        #expect(receipt != nil)
+        #expect(committed.value)
         acknowledged.withLock { $0 = true }
       })
-      var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
-        session: session,
-      )
+      let executor = scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam))
 
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripted.pump() }
@@ -119,20 +116,25 @@ import struct WuhuAI.ToolArguments
           }
         }
 
-        guard case let .exec(result) = try await world.run(
-          "exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]), id: "tc-exec",
-        ) else { throw Mismatch("exec failed") }
-        #expect(acknowledged.value)
+        let outcome = try await executor.execute(session: session, call: .init(
+          id: "tc-exec", name: "exec", arguments: .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]),
+        ), state: .init())
+        guard case let .exec(result) = outcome.payload else { throw Mismatch("exec failed") }
+        #expect(!acknowledged.value)
         #expect(result.output == "hello\n")
         #expect(result.exitCode == 0)
         #expect(!result.reaped)
-
-        let recorded = try await space.sessions.receipt(session, toolCallID: .init("tc-exec"))
-        #expect(recorded == .exec(result))
-
-        let retried = try await world.retry("exec", .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]), id: "tc-exec")
-        #expect(retried == .exec(result))
-        #expect(scripted.startCount.value == 1, "the receipt-absorbed retry must not respawn")
+        #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-exec")) == nil)
+        let retried = try await executor.execute(session: session, call: .init(
+          id: "tc-exec", name: "exec", arguments: .object(["machine": .string(machine.rawValue), "cwd": "/work", "command": "echo hello"]),
+        ), state: .init())
+        #expect(retried.payload == outcome.payload)
+        #expect(scripted.startCount.value == 1)
+        #expect(!acknowledged.value)
+        committed.withLock { $0 = true }
+        await outcome.committed?()
+        try await until("the committed result is acknowledged") { acknowledged.value }
+        #expect(scripted.startCount.value == 1)
         group.cancelAll()
       }
     }
@@ -144,7 +146,7 @@ import struct WuhuAI.ToolArguments
       let session = try await makeSession(space)
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space)))
+      let executor = scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam))
       let world = ToolWorld(executor: executor, session: session)
       let gate = Gate()
       let sentFirstHalf = Box(false)
@@ -194,7 +196,7 @@ import struct WuhuAI.ToolArguments
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
 
@@ -234,7 +236,7 @@ import struct WuhuAI.ToolArguments
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       let seen = Box<ExecStart?>(nil)
@@ -269,7 +271,7 @@ import struct WuhuAI.ToolArguments
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
 
@@ -293,7 +295,7 @@ import struct WuhuAI.ToolArguments
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       let chatty = (1 ... 6000).map { "line-\($0)" }.joined(separator: "\n")
@@ -330,7 +332,7 @@ import struct WuhuAI.ToolArguments
       machineFS.put("/work/AGENTS.md", "repo manual", mtime: 1)
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: machineFS.seam)),
         session: session,
       )
 
@@ -355,7 +357,7 @@ import struct WuhuAI.ToolArguments
       _ = try await space.addMachine(name: "box")
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
 
@@ -375,7 +377,7 @@ extension ExecToolTests {
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       let limit = explicit ?? 1800
@@ -411,7 +413,7 @@ extension ExecToolTests {
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
@@ -442,7 +444,7 @@ extension ExecToolTests {
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
@@ -470,7 +472,7 @@ extension ExecToolTests {
       let machine = try await space.addMachine(name: "box").id
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
@@ -504,7 +506,7 @@ extension ExecToolTests {
       _ = try await space.addMachine(name: "box")
       let scripted = ScriptedExecMachine()
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: scripted.backend(space))),
+        executor: scripted.executor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: session,
       )
       let cases: [(String, JSONValue, String)] = [

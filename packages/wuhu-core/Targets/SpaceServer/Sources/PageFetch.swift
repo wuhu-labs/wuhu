@@ -12,6 +12,7 @@ import JSONValue
 import NIOCore
 import NIOHTTP1
 import Serve
+import func SessionTools.fetchOrigin
 import SpaceCore
 
 typealias PageFetchHandler = @Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response
@@ -166,21 +167,6 @@ func pageFetchResponse(space: Space, caller: WebCaller, proxy: PageFetchHandler?
 }
 
 private let hopHeaders: Set<String> = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "content-length"]
-
-func fetchOrigin(_ url: URL) -> String? {
-  guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-        let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
-        let host = parts.host?.lowercased(), !host.isEmpty, !host.contains("*"), parts.user == nil, parts.password == nil,
-        parts.port == nil || (1 ... 65535).contains(parts.port!)
-  else { return nil }
-  parts.scheme = scheme
-  parts.host = host
-  if (scheme == "https" && parts.port == 443) || (scheme == "http" && parts.port == 80) { parts.port = nil }
-  parts.path = ""
-  parts.query = nil
-  parts.fragment = nil
-  return parts.string
-}
 
 func fetchWithinDeadline<T: Sendable>(_ deadline: NIODeadline, timeoutError: any Error = PageFetchError.timeout, remaining: (@Sendable () -> Duration)? = nil, operation: @escaping @Sendable () async throws -> T) async throws -> T {
   @Dependency(\.continuousClock) var clock

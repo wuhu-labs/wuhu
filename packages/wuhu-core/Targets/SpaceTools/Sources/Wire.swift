@@ -13,7 +13,7 @@ public enum Wire {
     VersionToken(Data(raw.utf8))
   }
 
-  static func string(_ token: VersionToken) -> String {
+  public static func string(_ token: VersionToken) -> String {
     String(decoding: token.bytes, as: UTF8.self)
   }
 
@@ -178,10 +178,10 @@ public enum Wire {
     case let .queryForbiddenTable(table):
       .failed(code: .invalidArgument, message: "table not queryable: \(table)", hint: nil)
     case let .listingResultTooLarge(byteLimit):
-      .failed(code: .invalidArgument, message: "listing exceeds \(byteLimit) byte allowance", hint: "List a narrower directory.")
+      .failed(code: .byteLimitExceeded, message: "listing exceeds \(byteLimit) byte allowance", hint: "List a narrower directory.")
     case let .queryResultTooLarge(byteLimit):
       .failed(
-        code: .invalidArgument,
+        code: .byteLimitExceeded,
         message: "query result exceeds \(byteLimit >> 20) MB",
         hint: "narrow the query: select fewer columns, filter, or add a LIMIT",
       )

@@ -8,3 +8,7 @@ Unknown server error codes remain transport failures rather than decoding as a k
 ## Filesystem observation
 
 `ObserveRequest(mode: .glob(pattern), from: cursor, batch: true)` opts into whole-revision SSE frames by sending `batch=1`. A nil or false batch preserves the existing single-mutation stream; SQL requests do not send the batch flag. Consumers decode `RevisionEvents` and advance their cursor only after folding its event array.
+
+## Exec sessions
+
+`ExecSession.run(autoAcknowledge:failOnRemoteError:input:output:onEvent:onTermination:)` defaults to automatic acknowledgement and preserves the CLI's termination values. `onEvent` receives each machine exec event, including output truncation and timeout evidence. With `autoAcknowledge: false`, the consumer calls `acknowledgeExit()` only after its result is durable. `onTermination` runs while the caller transport is still maintained and must await settlement and acknowledgement before returning; returning from `run` closes that transport. `failOnRemoteError: true` terminates immediately with `.streamFailed(error.message)` on a failed event; its default false preserves CLI handling. Final typed `SpaceClient.DialRefusal` responses terminate the stream without redialing.

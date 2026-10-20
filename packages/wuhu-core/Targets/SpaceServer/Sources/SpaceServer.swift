@@ -23,6 +23,7 @@ import Serve
 import ServeNIO
 import ServeRouting
 import ServeTLS
+import SpaceClient
 import struct SpaceContract.AIDisclosure
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
@@ -185,10 +186,6 @@ public enum SpaceServer {
       return clockReading(jsonResponse(.object(info)), now: now)
     }
     let discoveryContentHost = "https://" + (contentHost.pattern?.template ?? "{group}." + contentHost.base)
-    sessions?.configureDiscovery(contentHost: discoveryContentHost)
-    if let identityController {
-      sessions?.configureDiscovery(identity: { try await identityController.snapshot() })
-    }
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
     addIDTokenRoute(&router, space: space, tokens: execTokens, identity: identityController)
@@ -217,6 +214,9 @@ public enum SpaceServer {
     addTranscribeRoutes(&router, space: space, credentials: credentials)
     addCapabilityRoutes(&router, space: space, credentials: credentials)
     addSecretRoutes(&router, space: space, secrets: secrets) { request in
+      try await requestPrincipal(request, space: space, date: clock)
+    }
+    addConversationPageRoutes(&router, space: space) { request in
       try await requestPrincipal(request, space: space, date: clock)
     }
     if let webPushApplicationServerKey {
@@ -250,7 +250,7 @@ public enum SpaceServer {
       guard let sessions else { return walled }
       return sessionGate(
         space: space, hub: hub, machines: machines, owner: sessions.owner, tokens: sessions.tokens, credentials: credentials,
-        routed: routed, otherwise: walled,
+        identity: identityController, routed: routed, otherwise: walled,
       )
     }
     let content = contentHandler(
@@ -259,7 +259,25 @@ public enum SpaceServer {
     let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
     // The worker's tools reach main through this API, in process, as the
     // session whose token they carry.
-    sessions?.connection.bind(.inProcess(api))
+    sessions?.connection.bind(.inProcess(api), dial: { url, headers in
+      var request = Request(url: url)
+      for (name, value) in headers { request.headers[name] = value }
+      request.headers["connection"] = "Upgrade"
+      request.headers["upgrade"] = "websocket"
+      request.headers["sec-websocket-key"] = "dGhlIHNhbXBsZSBub25jZQ=="
+      request.headers["sec-websocket-version"] = "13"
+      switch try await api(request) {
+      case let .webSocket(serve):
+        let (server, client) = WebSocket.pair()
+        try hub.callerScope.run("worker-exec-caller") { await serve(server) }
+        return WebSocketTransport(client)
+      case let .response(response):
+        let body = try await response.data()
+        throw SpaceClient.DialRefusal(status: response.status.code, body: Array(body))
+      case .boundedWebSocket:
+        throw SpaceClient.DialRefusal(status: 422, body: Array(#"{"code":"unsupported","message":"exec requires a frame WebSocket transport"}"#.utf8))
+      }
+    })
     return hostRouted(contentHost, api: api, content: content)
   }
 

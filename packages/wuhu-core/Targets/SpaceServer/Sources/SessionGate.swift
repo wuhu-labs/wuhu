@@ -43,6 +43,9 @@ enum SessionPrincipal {
 struct GatedSession: Hashable, Sendable {
   let session: SessionID
   let group: GroupID
+  /// True when the bearer is an exec's token (in the command's environment,
+  /// so anything it reads can be printed), false for the worker's own.
+  let exec: Bool
 }
 
 // Every request whose bearer is a session token (the worker's, for a mounted
@@ -56,10 +59,11 @@ func sessionGate(
   owner: Hub,
   tokens: ExecTokens,
   credentials: CredentialResolver,
+  identity: IdentityController?,
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
-  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, routed: routed).upgradingHandler
+  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, identity: identity, routed: routed).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -99,8 +103,10 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
   let session: SessionID
   var boundGroup: GroupID?
+  var exec = true
   if let mounted = tokens.session(ofBearer: bearer) {
     session = mounted
+    exec = false
   } else if let holder = tokens.v2Holder(ofBearer: bearer) {
     guard holder.expiresAt > now else { return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session exec credential expired; credentials are not renewed")) }
     guard (try? await holder.active()) == true else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec operation ended or is unavailable")) }
@@ -128,7 +134,7 @@ func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Dat
       message: "session \(session.rawValue) is archived and may no longer act",
     ))
   }
-  return .session(GatedSession(session: session, group: group))
+  return .session(GatedSession(session: session, group: group, exec: exec))
 }
 
 private func principal() -> GatedSession {
@@ -148,10 +154,12 @@ private func sessionRouter(
   machines: MachineSeam,
   owner: Hub,
   credentials: CredentialResolver,
+  identity: IdentityController?,
   routed: @escaping UpgradingHandler,
 ) -> Router {
   let store = space.sessions
   @Dependency(\.uuid) var uuid
+  @Dependency(\.date) var date
   let forward: RouteHandler = { request, _ in
     switch try await routed(request) {
     case let .response(response): response
@@ -203,12 +211,48 @@ private func sessionRouter(
   router.post("/v1/conversation", use: forward)
   router.get("/v1/conversation/:id/messages", use: forward)
   router.get("/v1/conversation/:id/observe", use: forward)
+  router.get("/v1/conversation/:id/page", use: forward)
   router.get("/v1/conversations", use: forward)
+  router.get("/v1/dm", use: forward)
   for operation in ["add", "remove", "rename"] {
     router.post("/v1/channel/:id/\(operation)", use: forward)
   }
   router.get("/v1/groups", use: forward)
   router.get("/v1/templates", use: forward)
+  router.get("/v1/secret", use: forward)
+  // A value is for the worker's script, which masks what it got; an exec's
+  // token can print whatever it reads, so it never gets one.
+  router.get("/v1/secret/:name") { request, parameters in
+    guard !principal().exec else {
+      return errorResponse(.forbidden, code: "unauthorized", message: "a secret's value is read only by a session's script, never from an exec")
+    }
+    return try await forward(request, parameters)
+  }
+  router.put("/v1/secret/:name", use: forward)
+  router.delete("/v1/secret/:name", use: forward)
+  // A session's own 60-second OIDC token for `audience`, naming the session
+  // and its group (no exec claims): what a script's `fetch(url, {identity:
+  // true})` carries. The exec variant (an exec's `wit_` grant) lives outside
+  // the gate, in addIDTokenRoute.
+  router.get("/v1/id-token") { request, _ in
+    guard let named = queryValues(of: request.url)["audience"], let audience = URL(string: named), fetchOrigin(audience) == named else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "audience must be an origin: scheme://host[:port], lowercase, without a path")
+    }
+    guard let identity else {
+      return errorResponse(.serviceUnavailable, code: "fetchIdentityUnavailable", message: "The server could not sign an OIDC token.")
+    }
+    let now = date.now
+    let lifetime = 60
+    do {
+      let token = try await identity.token(
+        audience: audience, space: try await space.identity().rawValue, group: principal().group.rawValue, session: principal().session.rawValue,
+        now: now, id: uuid(), lifetime: lifetime,
+      )
+      return clockReading(jsonResponse(.object(["token": .string(token), "expiresAt": .integer(Int(now.timeIntervalSince1970) + lifetime)])), now: now)
+    } catch let error as IdentityError {
+      return identityFailure(error)
+    }
+  }
   // The roster is the hub's (its refusal when the server has no machine
   // backend, its attach state); the API's shape adds each machine's group.
   router.get("/v1/machine") { _, _ in
@@ -272,8 +316,18 @@ private func sessionRouter(
         return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
       }
       try await hub.requireExecKind(input.machine)
-      let record = try await space.mintExec(machine: input.machine, caller: principal().session.rawValue)
-      await hub.noteMinted(record)
+      let record: ExecRecord
+      if let callID = request.headers[ToolCallHeader.name] {
+        let claim = try await space.claimExec(
+          machine: input.machine, caller: principal().session.rawValue,
+          toolCallID: ToolCallID(rawValue: callID), spec: input.spec?.jsonString(),
+        )
+        record = claim.record
+        if !claim.rejoined { await hub.noteMinted(record) }
+      } else {
+        record = try await space.mintExec(machine: input.machine, caller: principal().session.rawValue)
+        await hub.noteMinted(record)
+      }
       return try Response.json(ExecMintOutput(id: record.id))
     } catch let error as OperationError {
       return try Response.json(ErrorEnvelope(error), status: .unprocessableContent)
@@ -291,7 +345,18 @@ private func sessionRouter(
   }
   router.post("/v1/exec/:id/kill") { request, parameters in
     guard await ownsExec(parameters, space: space) else { return unknownExec(parameters) }
+    if let id = parameters["id"], let record = try await space.execRecord(ExecID(rawValue: id)), record.terminal != nil {
+      return errorResponse(.unprocessableContent, code: "alreadyEnded", message: "exec has already ended")
+    }
     return try await forward(request, parameters)
+  }
+  for (action, owed) in [("detach", true), ("delivered", false)] {
+    router.post("/v1/exec/:id/\(action)") { _, parameters in
+      guard let raw = parameters["id"], ExecID.isValid(raw),
+            try await space.setExecEndOwed(ExecID(rawValue: raw), caller: principal().session.rawValue, owed: owed)
+      else { return unknownExec(parameters) }
+      return try Response.json(JSONValue.object([:]))
+    }
   }
   router.webSocket("/v1/exec/:id") { request, parameters in
     guard await ownsExec(parameters, space: space) else { return .response(unknownExec(parameters)) }
@@ -532,7 +597,7 @@ private func subscriptionOutput(_ payload: ToolResultPayload) -> SubscriptionOut
 private let sessionToolFields: [String: [String]] = [
   "read": [], "ls": [], "stat": [], "grep": [], "find": [], "history": [], "query": [],
   "write": ["path"], "edit": ["path"], "rm": ["path"], "mv": ["from", "to"], "checkout": ["path"],
-  "table.schema": [], "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "new": ["in"],
+  "table.schema": [], "table.create": ["path"], "table.alter": ["path"], "table.mutate": ["path"], "table.rows": ["path"], "new": ["in"],
   "attributes.read": [], "attributes.patch": ["path"],
 ]
 

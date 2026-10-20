@@ -47,6 +47,6 @@ public extension SpaceToolContext {
     case .reaped: .reaped
     case .machineLost: .machineLost
     }
-    return ExecStatus(id: record.id, machine: record.machine, command: record.command, startedAt: record.startedAt.timeIntervalSince1970, state: state)
+    return ExecStatus(id: record.id, machine: record.machine, command: record.command, startedAt: record.startedAt.timeIntervalSince1970, state: state, toolCallID: record.toolCallID?.rawValue)
   }
 }

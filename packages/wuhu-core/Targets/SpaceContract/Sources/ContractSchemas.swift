@@ -50,6 +50,7 @@ public enum ContractSchemas {
     ("TableWriteOutput", TableWriteOutput.jsonSchema),
     ("TableMutateInput", TableMutateInput.jsonSchema),
     ("TableMutateOutput", TableMutateOutput.jsonSchema),
+    ("TableRowsInput", TableRowsInput.jsonSchema),
     ("AttributesReadInput", AttributesReadInput.jsonSchema),
     ("AttributesReadOutput", AttributesReadOutput.jsonSchema),
     ("AttributesPatchInput", AttributesPatchInput.jsonSchema),

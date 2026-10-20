@@ -40,6 +40,8 @@ public struct CheckoutInput: Codable, Equatable, Sendable {
   public let path: String
   public let rev: Int
   public let ifMatch: String?
+  /// With no `ifMatch`, restore only a path that is missing now.
+  public let createOnly: Bool?
 }
 
 @Contract
@@ -51,6 +53,13 @@ public struct CheckoutOutput: Codable, Equatable, Sendable {
 @Contract
 public struct QueryInput: Codable, Equatable, Sendable {
   public let sql: String
+  /// Bound in order of the statement's `?` placeholders.
+  public let parameters: [JSONValue]?
+  /// The typed rule: a json column's value arrives as `{"json": v}`, a blob as
+  /// `{"blob": base64}`, so a client can tell them from text.
+  public let typed: Bool?
+  /// Refuse a result larger than this many bytes (capped by the tool's own bound).
+  public let byteLimit: Int?
 }
 
 @Contract
@@ -102,6 +111,14 @@ public struct TableMutateOutput: Codable, Equatable, Sendable {
   public let rev: Int
   /// The inserted row ids, in op order.
   public let ids: [Int]
+}
+
+/// Named-field row ops, the shape `wuhu:space`'s `mutateRows` sends from a
+/// page or a script: `{insert: {…}}`, `{update: id, set: {…}}` or `{delete: id}`.
+@Contract
+public struct TableRowsInput: Codable, Equatable, Sendable {
+  public let path: String
+  public let ops: JSONValue
 }
 
 @Contract

@@ -13,9 +13,72 @@ import ServeTesting
 import SessionDomain
 import SpaceCore
 @testable import SpaceServer
+import Synchronization
 import Testing
+import struct WuhuAI.ToolCall
 
 @Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct SpaceHostExecShutdownTests {
+  @Test func archiveKillsAndAcknowledgesAWorkerExecBeforeForgettingItsEnd() async throws {
+    try await withSessionDeps {
+      let space = try makeMachineSpace()
+      _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+      let server = TestServer(space: space, clock: ContinuousClock())
+      let (machine, key) = try await addMachine(server)
+      let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .unavailable)
+      _ = SpaceServer.handler(space: space, hub: server.hub, sessions: runtime, dev: true)
+      let session = try await space.sessions.createSession(
+        group: .shared, title: "owed end", kind: .agent, createdBy: "owner",
+        model: .init(provider: "testing", model: "test-model", effort: "high"),
+      )
+      let counts = ArchiveRelayCounts()
+      let started = Gate()
+      let release = Gate()
+      let endpoint = ChannelEndpoint()
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await server.run() }
+        let socket = try await connectMachine(server, key: key)
+        defer { socket.close(); group.cancelAll() }
+        group.addTask { await endpoint.run(ArchiveMachineTransport(base: WebSocketTransport(socket), counts: counts)) }
+        group.addTask {
+          for await exec in endpoint.incomingExecs {
+            started.open()
+            for await _ in exec.kills {
+              await release.wait()
+              await exec.exit(.signaled(signal: 15))
+              break
+            }
+          }
+        }
+        try await awaitAttached(server, machine)
+        let outcome = try await runtime.worker.execute(session: session, call: ToolCall(
+          id: "archive-live", name: "exec", arguments: .object([
+            "machine": .string(machine.rawValue), "cwd": .string("/"), "command": .string("wait"), "wait_seconds": .number(0.01),
+          ]),
+        ), state: .init(folderRoots: ["machines://\(machine.rawValue)/": nil]))
+        guard case .exec = outcome.payload else { Issue.record("expected a running exec"); return }
+        await started.wait()
+        let record = try #require(try await space.execRecord(caller: session.rawValue, toolCallID: .init("archive-live")))
+        #expect(record.toolEndOwed)
+        let token = runtime.tokens.sessionToken(session)
+        try await runtime.service.archive(session)
+        #expect(try await space.sessions.record(session).lifecycle != .live)
+        #expect(try await space.execRecord(record.id)?.toolEndOwed == false)
+        #expect(runtime.tokens.session(ofBearer: token) == nil)
+        release.open()
+        try await until("the archived exec is killed and terminally acknowledged") {
+          counts.state.withLock { $0.kills == 1 && $0.acks == 1 }
+        }
+        let executor = SessionRuntime.toolExecutor(owner: runtime.owner)
+        await executor.adoptExecJobs()
+        await executor.adoptExecJobs()
+        #expect(executor.runningExecJobs(of: session).isEmpty)
+        #expect(try await space.owedExecs().isEmpty)
+        #expect(counts.state.withLock { $0.kills == 1 && $0.acks == 1 })
+        await runtime.worker.shutdown()
+      }
+    }
+  }
+
   @Test func shutdownDrainsLiveInProcessExecCaller() async throws {
     try await withSessionDeps {
       try await withDependencies {
@@ -82,4 +145,35 @@ import Testing
       }
     }
   }
+}
+
+private final class ArchiveRelayCounts: Sendable {
+  let state = Mutex((kills: 0, acks: 0))
+}
+
+private struct ArchiveMachineTransport: FrameTransport {
+  let base: any FrameTransport
+  let inbound: AsyncStream<[UInt8]>
+
+  init(base: any FrameTransport, counts: ArchiveRelayCounts) {
+    self.base = base
+    inbound = AsyncStream { continuation in
+      let task = Task {
+        for await bytes in base.inbound {
+          if let frame = try? FrameCodec.decode(bytes) {
+            if frame.opcode == .kill { counts.state.withLock { $0.kills += 1 } }
+            if frame.opcode == .ack, let ack = try? frame.payload(Ack.self), ack.terminal == true {
+              counts.state.withLock { $0.acks += 1 }
+            }
+          }
+          continuation.yield(bytes)
+        }
+        continuation.finish()
+      }
+      continuation.onTermination = { _ in task.cancel() }
+    }
+  }
+
+  func send(_ bytes: [UInt8]) async throws { try await base.send(bytes) }
+  func close() { base.close() }
 }

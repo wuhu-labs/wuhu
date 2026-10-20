@@ -5,7 +5,6 @@ import func MainHub.renderedFailure
 import struct MainHub.ScriptError
 import struct MainHub.ScriptExecStream
 import struct MainHub.ScriptRunID
-import func MainHub.spaceAnswer
 import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials

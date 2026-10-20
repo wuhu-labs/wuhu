@@ -185,7 +185,7 @@ private func status(of code: ErrorCode) -> Status {
   switch code {
   case .notFound: .notFound
   case .conflict: .conflict
-  case .invalidPath, .invalidArgument: .badRequest
+  case .invalidPath, .invalidArgument, .byteLimitExceeded: .badRequest
   case .unauthorized: .forbidden
   case .unsupported, .unknownKind: .unprocessableContent
   case .unavailable: .serviceUnavailable

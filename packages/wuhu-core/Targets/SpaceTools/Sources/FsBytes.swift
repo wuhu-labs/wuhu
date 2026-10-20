@@ -25,7 +25,7 @@ public extension SpaceToolContext {
     do {
       let target = try await resolve(address, rev: rev)
       let (token, data) = try await read(target, upTo: byteLimit) { _ in
-        .failed(code: .invalidArgument, message: "file exceeds byte limit", hint: "Read a smaller file.")
+        .failed(code: .byteLimitExceeded, message: "file exceeds byte limit", hint: "Read a smaller file.")
       }
       return FileBytes(token: Wire.string(token), rev: try revision(token, target), data: data)
     } catch {

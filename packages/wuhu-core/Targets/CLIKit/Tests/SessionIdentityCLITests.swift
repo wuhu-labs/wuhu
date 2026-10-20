@@ -118,7 +118,7 @@ private final class IdentityHarness: Sendable {
     let slot = SessionServiceSlot()
     let catalog = groupCatalog(owner: Hub(space: space))
     let owner = Hub(
-      space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub),
+      space: space, machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
@@ -426,7 +426,7 @@ private final class IdentityHarness: Sendable {
         #expect(refused.stderr == sessionRefusal + "\n", "\(arguments)")
         #expect(refused.hosts.isEmpty, "\(arguments)")
       }
-      let server = await h.asSession(["secret", "list"])
+      let server = await h.asSession(["device", "list"])
       #expect(server.code == 1)
       #expect(server.stderr.contains("not available to a session"))
       #expect(!server.stderr.contains("WUHU_IDENTITY"))
