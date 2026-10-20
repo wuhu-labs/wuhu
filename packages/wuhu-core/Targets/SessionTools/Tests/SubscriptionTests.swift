@@ -9,6 +9,7 @@ import Logging
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
+@testable import SpaceServer
 @_spi(SessionObservation) @testable import SpaceCore
 import SpaceFS
 import Testing
@@ -79,7 +80,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       let child = try await space.sessions.createSession(group: .shared, title: "child", kind: .task, parent: session, createdBy: session.rawValue, executor: try await space.sessions.record(session).executor)
       let watched = try tablePath("/restart.table")
       _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       guard case let .observe(observation) = try await world.run("observe", .object(["sql": "SELECT n FROM \"/restart.table\"", "throttle_seconds": 1])) else { throw Mismatch("observe failed") }
       _ = try await world.run("timer", .object(["message": "cron survives", "cron": "* * * * *"]))
       _ = try await world.run("timer", .object(["message": "once survives", "in_seconds": 120]))
@@ -129,7 +130,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       try await runningFiring(space) { nudged in
         guard case let .timer(armed) = try await world.run(
           "timer", .object(["message": "check the build", "in_seconds": 60]),
@@ -166,7 +167,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { time in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       try await runningFiring(space) { _ in
         guard case .timer = try await world.run(
           "timer", .object(["message": "tick", "cron": "*/5 * * * *"]),
@@ -200,7 +201,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       } operation: {
         let space = try Space.inMemory()
         let session = try await makeSession(space)
-        var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+        var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
         try await runningFiring(space) { _ in
           guard case let .timer(timer) = try await world.run(
             "timer", .object(["message": "quarter hour", "cron": "*/15 * * * *"]),
@@ -551,7 +552,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       guard case let .timer(timer) = try await world.run(
         "timer", .object(["message": "x", "in_seconds": 600]),
@@ -570,7 +571,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
 
       // Another session's subscription reads as unknown.
       let other = try await makeSession(space, name: "other")
-      var foreign = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: other)
+      var foreign = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: other)
       let stranger = try await foreign.run("cancel", .object(["id": .string(timer.subscriptionID.rawValue)]))
       #expect(try failure(stranger).code == "notFound")
 
@@ -594,7 +595,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
 
       // Still in the transcript but no longer armed: a fired one-shot timer,
       // or a cancel retried after it committed.
-      var stale = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var stale = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       _ = try await stale.run("timer", .object(["message": "y", "in_seconds": 600]), id: "tc-t2")
       try await space.sessions.cancelSubscription(session, subscriptionID: .timer(.init("tc-t2")))
       let ended = try await stale.run(
@@ -608,7 +609,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       let first = try await world.run("timer", .object(["message": "x", "in_seconds": 60]), id: "tc-timer")
       let retried = try await world.retry("timer", .object(["message": "x", "in_seconds": 60]), id: "tc-timer")
@@ -649,7 +650,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
   @Test func timerArgumentsWantExactlyOneSchedule() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       let both = try await world.run(
         "timer", .object(["message": "x", "in_seconds": 5, "cron": "* * * * *"]),
       )
@@ -675,7 +676,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
       guard case let .integer(rowID) = ids.rows[0][0] else { throw Mismatch("missing row id") }
 
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       let sql = "SELECT n FROM \"/watched.table\" ORDER BY n"
       guard case let .observe(armed) = try await world.run(
         "observe",

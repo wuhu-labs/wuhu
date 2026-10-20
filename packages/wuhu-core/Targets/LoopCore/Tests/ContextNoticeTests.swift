@@ -20,17 +20,18 @@ import struct WuhuAI.ToolCall
         ]),
         Fix.replying("done"),
       ])
-      let executed = ExecScript { call in
-        if call.arguments == .object(["path": .string(repo + "/a")]) {
-          try await sessions.recordScopeContext(
-            sid,
-            toolCallID: ToolCallID(call.id),
-            context: ScopeContext(folders: [repo: repo], deliveredContext: ["hash": repo + "/AGENTS.md"], text: "repo manual"),
-          )
-        }
-        return .read(.init(path: repo, revision: .journal(1), content: call.id))
+      let calls = Box<[ToolCall]>([])
+      var config = makeConfig(inference: { try await script($0) })
+      config.executeTool = { invocation in
+        let call = invocation.call
+        calls.withLock { $0.append(call) }
+        let payload = ToolResultPayload.read(.init(path: repo, revision: .journal(1), content: call.id))
+        guard call.arguments == .object(["path": .string(repo + "/a")]) else { return ToolOutcome(payload: payload) }
+        return ToolOutcome(
+          payload: payload,
+          context: ScopeContext(folders: [repo: repo], deliveredContext: ["hash": repo + "/AGENTS.md"], text: "repo manual"),
+        )
       }
-      let config = makeConfig(executeTool: { try await executed($0) }, inference: { try await script($0) })
 
       try await runService(space, config) { service in
         _ = try await service.enqueue(item: Fix.message("go"), to: sid)
@@ -47,7 +48,7 @@ import struct WuhuAI.ToolCall
         default: nil
         }
       }
-      let ids = executed.calls.value.map(\.id)
+      let ids = calls.value.map(\.id)
       #expect(shape == ["result \(ids[0])", "context repo manual", "result \(ids[1])"])
       let expected: [String: String?] = [repo: repo]
       #expect(transcript.environment.tools.folderRoots == expected)

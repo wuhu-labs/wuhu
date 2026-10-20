@@ -20,42 +20,6 @@ struct EditArguments: Decodable {
   var edits: [Edit]
 }
 
-struct GrepArguments: Decodable {
-  var pattern: String
-  var path: String?
-  var matchLimit: Int?
-  var hidden: Bool?
-  var noIgnore: Bool?
-  var step: String?
-
-  enum CodingKeys: String, CodingKey {
-    case pattern
-    case path
-    case matchLimit = "match_limit"
-    case hidden
-    case noIgnore = "no_ignore"
-    case step
-  }
-}
-
-struct FindArguments: Decodable {
-  var glob: String
-  var path: String?
-  var matchLimit: Int?
-  var hidden: Bool?
-  var noIgnore: Bool?
-  var step: String?
-
-  enum CodingKeys: String, CodingKey {
-    case glob
-    case path
-    case matchLimit = "match_limit"
-    case hidden
-    case noIgnore = "no_ignore"
-    case step
-  }
-}
-
 struct ExecArguments: Decodable {
   var machine: String
   var cwd: String
@@ -105,10 +69,6 @@ struct TimerArguments: Decodable {
     case inSeconds = "in_seconds"
     case cron
   }
-}
-
-struct QueryArguments: Decodable {
-  var sql: String
 }
 
 struct ReportArguments: Decodable {

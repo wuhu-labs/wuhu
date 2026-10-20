@@ -2,6 +2,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 
 @Suite struct MachineRosterTests {
@@ -13,7 +14,7 @@ import Testing
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [mini.id] }
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -36,7 +37,7 @@ import Testing
       let space = try Space.inMemory()
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 
@@ -52,7 +53,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
         session: try await makeSession(space),
       )
 
@@ -68,7 +69,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.addMachine(name: "mac-mini")
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let message = try failureMessage(try await world.run("machines", .object([:])))
       #expect(message.contains("no machine backend"))

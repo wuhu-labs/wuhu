@@ -109,7 +109,7 @@ public struct EvictionPolicy: Sendable {
 }
 
 public struct LoopConfig: Sendable {
-  public var executeTool: @Sendable (ToolInvocation) async throws -> ToolResultPayload
+  public var executeTool: @Sendable (ToolInvocation) async throws -> ToolOutcome
   public var inference: @Sendable (InferenceRequest) async throws -> InferenceReply
   public var compact: @Sendable (SessionID, Transcript) async throws -> CompactionResult
   // The compacted transcript and the target a compact call named, if any. A
@@ -130,7 +130,7 @@ public struct LoopConfig: Sendable {
   public var eviction: EvictionPolicy
 
   public init(
-    executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolResultPayload,
+    executeTool: @escaping @Sendable (ToolInvocation) async throws -> ToolOutcome,
     inference: @escaping @Sendable (InferenceRequest) async throws -> InferenceReply,
     compact: @escaping @Sendable (SessionID, Transcript) async throws -> CompactionResult,
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,

@@ -33,7 +33,7 @@ import WuhuAI
         #expect(invocation.call.name == "exec")
         let operation = ServerSpan(.machine)
         operation.finish([.machine: "devbox", .version: "v1", .kind: "exec", .exitCode: "0", .outcome: "ok"])
-        return .exec(.init(output: "secret output", exitCode: 0))
+        return ToolOutcome(payload: .exec(.init(output: "secret output", exitCode: 0)))
       }, inference: { request in
         let attempt = attempts.withLock { count in count += 1; return count }
         await metrics.record(.init(timestamp: Date(), session: request.sessionID, provider: "test", model: "model", effort: "high", outcome: .ok, ttftMs: 10, durationMs: 20, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
@@ -41,7 +41,7 @@ import WuhuAI
         return .init(message: .init(content: blocks), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 5, outputTokens: 3, totalTokens: 8)))
       }, compact: { _, _ in .init(summary: "") }, budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) })
       let owner = Hub(space: space)
-      let worker = await SessionExecution(main: owner) { _ in config }
+      let worker = await SessionExecution(main: owner, connection: MainConnection(), credential: { _ in throw MainUnavailable() }) { _ in config }
       let service = SessionService(sessions: space.sessions, worker: worker)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { try await service.start() }

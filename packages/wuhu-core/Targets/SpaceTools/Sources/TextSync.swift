@@ -6,7 +6,7 @@ import SpaceFS
 
 extension SpaceToolbox {
   static let sync = SpaceTool("sync", schema: SyncInput.jsonSchema) { (context, input: SyncInput) in
-    let live = try context.resolve(input.path)
+    let live = try await context.resolve(input.path)
     guard live.isSpace else {
       throw ToolRunError.failed(
         code: .unsupported,
@@ -15,7 +15,7 @@ extension SpaceToolbox {
       )
     }
     let baseRev = try Wire.rev(Wire.token(input.baseToken))
-    let historical = try context.resolve(input.path, rev: baseRev)
+    let historical = try await context.resolve(input.path, rev: baseRev)
     let (historicalToken, baseData) = try await historical.backend.read(historical.path)
     guard historicalToken == Wire.token(input.baseToken) else {
       throw ToolRunError.failed(

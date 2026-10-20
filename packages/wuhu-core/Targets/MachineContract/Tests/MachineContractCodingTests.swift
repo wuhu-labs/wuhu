@@ -152,8 +152,8 @@ struct MachineContractCodingTests {
     #expect(try encoder.encode(MachineAddOutput(id: MachineID(rawValue: "mc_a1b2c3d4"), token: token, fingerprint: fingerprint)) == .object([
       "id": "mc_a1b2c3d4", "token": .string(token), "fingerprint": .string(fingerprint),
     ]))
-    #expect(try encoder.encode(MachineStatus(id: MachineID(rawValue: "mc_a1b2c3d4"), name: nil, attached: true)) == .object([
-      "id": "mc_a1b2c3d4", "attached": true,
+    #expect(try encoder.encode(MachineStatus(id: MachineID(rawValue: "mc_a1b2c3d4"), name: nil, group: "shared", attached: true)) == .object([
+      "id": "mc_a1b2c3d4", "group": "shared", "attached": true,
     ]))
   }
 

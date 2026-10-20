@@ -268,9 +268,9 @@ extension SessionActor {
 
     let callID = ToolCallID(toolCall.id)
     switch result {
-    case .success(let payload):
-      try await writeToolResult(.toolCall(callID), payload, deliveredBy: callID)
-      return .completed(payload)
+    case .success(let outcome):
+      try await writeToolResult(.toolCall(callID), outcome.payload, context: outcome.context)
+      return .completed(outcome.payload)
     case .failure(is CancellationError):
       guard !Task.isCancelled else { return .cancelled }
       if case .interrupting = (try live).sessionStatus {
@@ -575,8 +575,8 @@ extension SessionActor {
         try await loopConfig.executeTool(invocation)
       }
       switch result {
-      case .success(let payload):
-        try await writeToolResult(.compactionReestablishment, payload, deliveredBy: ToolCallID(call.id))
+      case .success(let outcome):
+        try await writeToolResult(.compactionReestablishment, outcome.payload, context: outcome.context)
       case .failure(is CancellationError):
         return false
       case .failure(let error):
@@ -647,13 +647,13 @@ extension SessionActor {
   func writeToolResult(
     _ provenance: ToolResultItem.Provenance,
     _ payload: ToolResultPayload,
-    deliveredBy callID: ToolCallID? = nil,
+    context: ScopeContext? = nil,
   ) async throws {
     // The backstop, not the budget: whatever the tool layer missed must not
     // enter the transcript unclamped.
     let item = ToolResultItem(id: uuid(), timestamp: date(), provenance: provenance, payload: payload.clamped())
     var items: [TranscriptItem] = [.toolResult(item)]
-    if let callID, let context = try await main.scopeContext(id, toolCallID: callID) {
+    if let context {
       items.append(.notification(context.notice(id: uuid(), at: date())))
     }
     try await appended(items)

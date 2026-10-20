@@ -89,12 +89,13 @@ struct SessionHarness {
     if models {
       _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
-    let hub = MachineHub(space: space, tokens: execTokens)
+    let tokens = execTokens ?? ExecTokens(spaceURL: "http://space")
+    let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub
     let attempts = AttemptHub()
     let cacheUsage = cacheWarmingUsage ?? UsageBoard()
     let config = LoopConfig(
-      executeTool: { _ in .failure(.init(message: "no tools in this harness")) },
+      executeTool: { _ in ToolOutcome(payload: .failure(.init(message: "no tools in this harness"))) },
       inference: { request in try await inference(request, attempts) },
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
@@ -111,13 +112,14 @@ struct SessionHarness {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
       control: sessionControl { slot.service },
     )
-    let worker = await SessionExecution(main: owner, credentials: credentials) { _ in config }
+    let connection = MainConnection()
+    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: credentials) { _ in config }
     let service = SessionService(sessions: store, worker: worker)
     slot.bind(service)
-    runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner)
+    runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
-      credentials: credentials, secrets: secrets, execTokens: execTokens,
+      credentials: credentials, secrets: secrets, execTokens: tokens,
       identityController: identityController, machineV2Hub: machineV2 ? MachineV2Hub(space: space) : nil, keyStreams: keyStreams,
     )
     api = ServeTesting.client(upgrading: handler)

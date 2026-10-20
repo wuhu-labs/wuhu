@@ -81,7 +81,7 @@ func addMachineRoutes(
     }
     let attached = await hub.attachedMachines()
     let statuses = try await space.machines(usableFrom: principal.group).map { record in
-      MachineStatus(id: record.id, name: record.name, attached: attached.contains(record.id))
+      MachineStatus(id: record.id, name: record.name, group: record.group.rawValue, attached: attached.contains(record.id))
     }
     return try Response.json(statuses)
   }
@@ -105,7 +105,7 @@ func addMachineRoutes(
     do {
       let renamed = try await space.renameMachine(record.id, name: input.name)
       return try Response.json(MachineStatus(
-        id: renamed.id, name: renamed.name, attached: await hub.attachedMachines().contains(renamed.id),
+        id: renamed.id, name: renamed.name, group: renamed.group.rawValue, attached: await hub.attachedMachines().contains(renamed.id),
       ))
     } catch let SpaceError.invalidMachineName(raw) {
       return errorResponse(
@@ -198,7 +198,7 @@ func addMachineRoutes(
     }
     let moved = try await space.moveMachine(record.id, to: target)
     return try Response.json(MachineStatus(
-      id: moved.id, name: moved.name, attached: await hub.attachedMachines().contains(moved.id),
+      id: moved.id, name: moved.name, group: moved.group.rawValue, attached: await hub.attachedMachines().contains(moved.id),
     ))
   }
 

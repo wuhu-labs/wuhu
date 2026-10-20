@@ -3,6 +3,7 @@ import class MainHub.Hub
 import protocol MainHub.Main
 import struct MainHub.ScriptIdentityUnavailable
 @testable import SessionTools
+@testable import SpaceServer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -63,13 +64,13 @@ extension HubScriptContractTests {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      let owner: any Main = Hub(space: space, identityFetch: { _, caller, protect in
+      let owner = Hub(space: space, identityFetch: { _, caller, protect in
         #expect(caller == session)
         protect("OWNER-TOKEN")
         throw ScriptIdentityUnavailable(message: "failed OWNER-TOKEN owner-token")
       })
       let scripts = Scripts(owner: owner)
-      let tools = ToolExecutor(owner: owner, scripts: scripts)
+      let tools = SessionRuntime.toolExecutor(owner: owner, scripts: scripts)
       let execution = try await scripts.start("try { await fetch('https://identity.test', {identity:true}) } catch(e) { result(e.message) }", session: session, lifetime: .seconds(10), tools: tools)
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }

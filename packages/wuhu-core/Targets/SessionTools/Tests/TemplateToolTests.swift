@@ -4,13 +4,14 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 
 @Suite struct TemplateToolTests {
   @Test func anEmptySpaceSaysSoRatherThanListingNothing() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         throw Mismatch("templates failed")
@@ -33,7 +34,7 @@ import Testing
         Data(#"{"kind":"agent"}"#.utf8),
         ifMatch: nil,
       )
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         throw Mismatch("templates failed")

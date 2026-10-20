@@ -24,7 +24,7 @@ import SpaceFS
 // everywhere (FileSearch SPEC).
 extension SpaceToolbox {
   static let grep = SpaceTool("grep", schema: GrepInput.jsonSchema) { (context, input: GrepInput) in
-    let target = try context.resolve(input.path ?? "/")
+    let target = try await context.resolve(input.path ?? "/")
     let query = SearchQuery(
       mode: .grep, pattern: input.pattern, root: target.path, scope: scope(target),
       hidden: input.hidden ?? false, noIgnore: input.noIgnore ?? false, limit: input.matchLimit, step: input.step,
@@ -40,7 +40,7 @@ extension SpaceToolbox {
   }
 
   static let find = SpaceTool("find", schema: FindInput.jsonSchema) { (context, input: FindInput) in
-    let target = try context.resolve(input.path ?? "/")
+    let target = try await context.resolve(input.path ?? "/")
     let query = SearchQuery(
       mode: .find, pattern: input.glob, root: target.path, scope: scope(target),
       hidden: input.hidden ?? false, noIgnore: input.noIgnore ?? false, limit: input.matchLimit, step: input.step,

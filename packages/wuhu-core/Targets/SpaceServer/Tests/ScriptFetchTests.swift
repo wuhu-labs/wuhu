@@ -233,7 +233,7 @@ struct IdentityScriptRig {
   let executor: ToolExecutor
 
   func evaluate(_ source: String) async throws -> JSONValue {
-    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 60])), state: ToolExecutionState())
+    let payload = try await executor.execute(session: session, call: ToolCall(id: UUID().uuidString, name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 60])), state: ToolExecutionState()).payload
     guard case let .script(result) = payload else { Issue.record("unexpected script result: \(payload)"); return .null }
     let first = String(result.output.prefix { $0 != "\n" })
     return JSONValue.parse(first) ?? .string(first)
@@ -260,7 +260,7 @@ func withIdentityScript(
       } ?? identityFetch
       let owner = Hub(space: space, identityFetch: transport)
       let scripts = Scripts(owner: owner)
-      let rig = IdentityScriptRig(space: space, session: session, executor: ToolExecutor(owner: owner, scripts: scripts))
+      let rig = IdentityScriptRig(space: space, session: session, executor: SessionRuntime.toolExecutor(owner: owner, scripts: scripts))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
         defer { group.cancelAll() }

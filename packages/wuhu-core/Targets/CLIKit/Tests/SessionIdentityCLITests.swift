@@ -100,7 +100,7 @@ private final class IdentityHarness: Sendable {
     _ = try await space.fs(.shared).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
     let tokens = ExecTokens(spaceURL: Self.sessionSpace)
     let hub = MachineHub(space: space, tokens: tokens)
-    let executor = ToolExecutor(owner: Hub(space: space))
+    let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -123,11 +123,12 @@ private final class IdentityHarness: Sendable {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
       control: sessionControl { slot.service },
     )
-    let worker = await SessionExecution(main: owner) { _ in config }
+    let connection = MainConnection()
+    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
     let service = SessionService(sessions: self.store, worker: worker)
     slot.bind(service)
     self.serviceTask = Task { try? await service.start() }
-    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: AttemptHub(), owner: owner)
+    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts

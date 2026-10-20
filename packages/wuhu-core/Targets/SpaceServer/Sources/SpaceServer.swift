@@ -91,8 +91,9 @@ public enum SpaceServer {
     machineV2Releases: MachineV2Releases? = nil,
     keyStreams: KeyStreams = KeyStreams(),
     pageFetch: (@Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response)? = nil,
+    machines: MachineSeam? = nil,
   ) -> UpgradingHandler {
-    let machines = machineSeam(hub: hub)
+    let machines = machines ?? machineSeam(hub: hub)
     // Without --origin, content lives under localhost at the listener's port.
     let localhost = "https://localhost" + (port.map { ":\($0)" } ?? "")
     let contentHost: ContentHost
@@ -246,16 +247,23 @@ public enum SpaceServer {
     // A session's exec token is its own credential, in dev as behind the wall:
     // the session gate takes every request carrying one and passes the rest on.
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
-      guard let execTokens, let sessions else { return walled }
+      guard let sessions else { return walled }
       return sessionGate(
-        space: space, hub: hub, runtime: sessions, tokens: execTokens, credentials: credentials,
+        space: space, hub: hub, machines: machines, worker: sessions.worker, tokens: sessions.tokens, credentials: credentials,
         routed: routed, otherwise: walled,
       )
     }
     let content = contentHandler(
       space: space, contentHost: contentHost, advertisedOrigin: origin, dev: dev, publicRead: publicRead, webContent: webContent, pageFetch: pageFetch,
     )
-    if dev { return hostRouted(contentHost, api: gated(routed), content: content) }
+    let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
+    // The worker's tools reach main through this API, in process, as the
+    // session whose token they carry.
+    sessions?.connection.bind(.inProcess(api))
+    return hostRouted(contentHost, api: api, content: content)
+  }
+
+  private static func walled(routed: @escaping UpgradingHandler, space: Space, webContent: WebContent, keyStreams: KeyStreams) -> UpgradingHandler {
     @Dependency(\.date) var dateGen
     // The wall. Exceptions carry their own credential and so must precede it:
     // machine connect and enroll share-login (each with the challenge mint
@@ -277,7 +285,7 @@ public enum SpaceServer {
       // A running exec's WUHU_ID_TOKEN_REQUEST capability (IDTokenRoute.swift).
       "/v1/id-token",
     ]
-    return hostRouted(contentHost, api: gated { request in
+    return { request in
       let v2Path = request.url.path.hasPrefix("/v1/machine-v2/") ? request.url.path.split(separator: "/") : []
       let v2KeySigned = request.headers[MachineV2Connect.pubkeyHeader] != nil && (
         (request.method == .get && v2Path.count == 3) || (request.method == .get && v2Path.count == 4 && v2Path[3] == "upgrade")
@@ -302,7 +310,7 @@ public enum SpaceServer {
           hint: "enroll this device (wuhu login < invite-link), or run the server with --dev",
         ))
       }
-    }, content: content)
+    }
   }
 
   static func contentHandler(

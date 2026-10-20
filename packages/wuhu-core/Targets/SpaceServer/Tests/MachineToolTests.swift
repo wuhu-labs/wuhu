@@ -136,7 +136,7 @@ import Testing
     #expect(detached.code == "unavailable")
 
     let bogus = try await failure(server, "read", ["path": "machines://nonsense id/etc/hosts"])
-    #expect(bogus.code == "invalidPath")
+    #expect(bogus.code == "notFound")
 
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }

@@ -9,6 +9,7 @@ import Dependencies
 import Fetch
 import JSONValue
 import MachineContract
+import protocol MainHub.Worker
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
 import OrderedCollections
@@ -37,20 +38,21 @@ struct GatedSession: Hashable, Sendable {
   let group: GroupID
 }
 
-// Every request whose bearer is an exec token acts as that exec's session, on
-// the verbs a session has and under the rules its own tools keep; nothing else
-// reaches the rest of the API with one. Requests without one pass to
-// `otherwise` untouched.
+// Every request whose bearer is a session token (the worker's, for a mounted
+// session, or an exec's) acts as that session, on the verbs a session has and
+// under the rules its own tools keep; nothing else reaches the rest of the API
+// with one. Requests without one pass to `otherwise` untouched.
 func sessionGate(
   space: Space,
   hub: MachineHub,
-  runtime: SessionRuntime,
+  machines: MachineSeam,
+  worker: any Worker,
   tokens: ExecTokens,
   credentials: CredentialResolver,
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
-  let gated = sessionRouter(space: space, hub: hub, runtime: runtime, credentials: credentials, routed: routed).upgradingHandler
+  let gated = sessionRouter(space: space, hub: hub, machines: machines, worker: worker, credentials: credentials, routed: routed).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -90,7 +92,9 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
   let session: SessionID
   var boundGroup: GroupID?
-  if let holder = tokens.v2Holder(ofBearer: bearer) {
+  if let mounted = tokens.session(ofBearer: bearer) {
+    session = mounted
+  } else if let holder = tokens.v2Holder(ofBearer: bearer) {
     guard holder.expiresAt > now else { return .refused(errorResponse(.unauthorized, code: "credentialExpired", message: "Session exec credential expired; credentials are not renewed")) }
     guard (try? await holder.active()) == true else { return .refused(errorResponse(.unauthorized, code: "unauthorized", message: "Session exec operation ended or is unavailable")) }
     session = holder.key.session; boundGroup = holder.key.group
@@ -134,13 +138,12 @@ private func notForSessions() -> Response {
 private func sessionRouter(
   space: Space,
   hub: MachineHub,
-  runtime: SessionRuntime,
+  machines: MachineSeam,
+  worker: any Worker,
   credentials: CredentialResolver,
   routed: @escaping UpgradingHandler,
 ) -> Router {
   let store = space.sessions
-  let machines = machineSeam(hub: hub)
-  let worker = runtime.worker
   @Dependency(\.uuid) var uuid
   let forward: RouteHandler = { request, _ in
     switch try await routed(request) {
@@ -153,7 +156,7 @@ private func sessionRouter(
       session: principal().session,
       call: ToolCall(id: "wst_\(uuid().uuidString.lowercased())", name: name, arguments: ToolArguments(arguments)),
       state: ToolExecutionState(),
-    )
+    ).payload
   }
 
   var router = Router()
@@ -209,7 +212,8 @@ private func sessionRouter(
       let context = SpaceToolContext(
         space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
       )
-      return jsonResponse(try await spaceTool.run(context, input: input))
+      // A machine the tool reaches sees the session as its caller.
+      return jsonResponse(try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) })
     } catch let error as ToolRunError {
       switch error {
       case .undecodableInput:

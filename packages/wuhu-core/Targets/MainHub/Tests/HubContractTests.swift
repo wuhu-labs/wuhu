@@ -45,7 +45,6 @@ import Testing
     let generation = try await space.sessions.hydrate(id).generation
     _ = try #require(try await main.claimCompactRequest(id, generation: generation))
     #expect(try await main.registeredSubscriptions(id).ids.isEmpty)
-    #expect(try await main.scopeContext(id, toolCallID: .init("call")) == nil)
     let drain = try await main.drainQueue(id)
     #expect(!drain.items.isEmpty)
     #expect(try await space.sessions.undrainedInputs(id).isEmpty)

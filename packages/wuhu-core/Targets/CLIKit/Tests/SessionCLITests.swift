@@ -111,7 +111,7 @@ private final class SessionCLIHarness: Sendable {
     }
     let hub = MachineHub(space: space)
     let attempts = AttemptHub()
-    let executor = ToolExecutor(owner: Hub(space: space))
+    let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))
     let config = LoopConfig(
       executeTool: { invocation in
         try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -129,7 +129,9 @@ private final class SessionCLIHarness: Sendable {
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
       control: sessionControl { slot.service },
     )
-    let worker = await SessionExecution(main: owner) { _ in config }
+    let tokens = ExecTokens(spaceURL: "http://space")
+    let connection = MainConnection()
+    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
     let service = SessionService(sessions: store, worker: worker)
     slot.bind(service)
     serviceTask = Task {
@@ -140,7 +142,7 @@ private final class SessionCLIHarness: Sendable {
         Issue.record("session service failed: \(error)")
       }
     }
-    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner)
+    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.handler(space: space, hub: hub, sessions: runtime, dev: true)
     fetch = ServeTesting.client(upgrading: handler)
     stdout = Sink()

@@ -36,7 +36,6 @@ extension Hub {
         )
       }
       let pixels = ImageMedia.pixelSize(ofBytes: data)
-      try await deliverContext(session, callID, touching: address.folder, state: state)
       return .read(.init(
         path: address.rendered,
         revision: revision,
@@ -46,7 +45,6 @@ extension Hub {
     }
     let (revision, content) = try await readFile(address)
     let page = try readPage(content, lines: arguments.lines, path: address.rendered)
-    try await deliverContext(session, callID, touching: address.folder, state: state)
     return .read(.init(path: address.rendered, revision: revision, content: page))
   }
 
@@ -102,7 +100,6 @@ extension Hub {
       try await guardMachineFile(machine, path: path, address: address, logged: logged)
       let revision = try await machineWrite(machine, path: path, bytes: Array(arguments.content.utf8), ifMatch: logged)
       let payload = ToolResultPayload.write(.init(path: address.rendered, revision: revision))
-      try await deliverContext(session, callID, touching: address.folder, state: state)
       try await store.recordReceipt(session, toolCallID: callID, payload: payload)
       return payload
     case .system:
@@ -139,7 +136,6 @@ extension Hub {
     case let .machine(machine, path):
       let revision = try await machineWrite(machine, path: path, bytes: Array(edited.utf8), ifMatch: current)
       let payload = ToolResultPayload.edit(.init(path: address.rendered, revision: revision))
-      try await deliverContext(session, callID, touching: address.folder, state: state)
       try await store.recordReceipt(session, toolCallID: callID, payload: payload)
       return payload
     case .system:

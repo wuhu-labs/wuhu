@@ -53,6 +53,7 @@ public struct ServeNIOHooks: Sendable {
   }
 }
 
+// allow unchecked-sendable: NIO channel state bridge
 public final class ServeNIOServer: @unchecked Sendable {
   public let boundAddress: SocketAddress
 
@@ -385,6 +386,7 @@ enum BindError: Error {
   case missingBoundAddress
 }
 
+// allow unchecked-sendable: NIO channel state bridge
 final class ChannelBox: @unchecked Sendable {
   let channel: Channel
 
@@ -393,6 +395,7 @@ final class ChannelBox: @unchecked Sendable {
   }
 }
 
+// allow unchecked-sendable: NIO channel state bridge
 final class ServeNIOServerState: @unchecked Sendable {
   private enum Phase {
     case running

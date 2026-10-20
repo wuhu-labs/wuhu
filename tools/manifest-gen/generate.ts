@@ -2286,6 +2286,11 @@ export async function generateBuildBazel(
       )
     }
   }
+  if (targetNames.has('swiftlint')) {
+    throw new Error(
+      'generated SwiftLint test :swiftlint conflicts with a source target',
+    )
+  }
   if (doccCatalogs.size > 0 && targetNames.has('docs')) {
     throw new Error(
       'generated DocC site target :docs conflicts with a source target',
@@ -2339,6 +2344,7 @@ export async function generateBuildBazel(
     `load("//bazel/rules:rules.bzl", ${
       loadSymbols.map((symbol) => `"${symbol}"`).join(', ')
     })`,
+    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
     `\npackage(default_visibility = ["//visibility:public"])\n`,
     // Release tooling reads these manifests as test inputs, and a source file
     // is only a label once the package exports it.
@@ -2361,6 +2367,8 @@ export async function generateBuildBazel(
     // into the package exists (//tools:public-links-test: the public docs'
     // links into packages/).
     `filegroup(\n    name = "files",\n    srcs = glob(["**"], exclude = ["BUILD.bazel"]),\n)\n`,
+    // Run together by //packages:swiftlint, the lint CI lane.
+    `swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)\n`,
   ]
 
   if (targets.some((target) => target.kind === 'objcLibrary')) {
@@ -4999,6 +5007,19 @@ async function removeLegacyPackagesIfNeeded(): Promise<void> {
   console.log('removed stale legacy Packages/')
 }
 
+export function swiftlintSuiteBuildBazel(packageDirs: string[]): string {
+  return `test_suite(
+    name = "swiftlint",
+    tags = ["manual"],
+    tests = [
+${
+    [...packageDirs].sort().map((dir) => `        "//${dir}:swiftlint",\n`)
+      .join('')
+  }    ],
+)
+`
+}
+
 export async function main(rawArgs: string[] = Deno.args): Promise<void> {
   generatedOutputs.clear()
   configure(rawArgs)
@@ -5023,6 +5044,10 @@ export async function main(rawArgs: string[] = Deno.args): Promise<void> {
 
   if (generateAll) {
     assertPublicEdges(await discoverOwnedPackages('packages'))
+    await writeIfChanged(
+      join('packages', apply ? 'BUILD.bazel' : 'BUILD.generated.bazel'),
+      swiftlintSuiteBuildBazel(packageDirs),
+    )
     const denoWorkspaces = await discoverDenoWorkspaces('packages')
     const denoPackageDirs = await discoverDenoPackageDirs('packages')
     await writeIfChanged(

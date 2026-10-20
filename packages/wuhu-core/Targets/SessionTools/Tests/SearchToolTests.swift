@@ -4,6 +4,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 
 @Suite struct SearchToolTests {
@@ -13,7 +14,7 @@ import Testing
       for name in ["a", "b", "c", "d", "e"] {
         _ = try await space.fs(.shared).write("/src/\(name).swift", Data("x".utf8), ifMatch: nil)
       }
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .find(first) = try await world.run(
         "find", .object(["glob": "**/*.swift", "path": "/src", "match_limit": 2]),
@@ -38,7 +39,7 @@ import Testing
       _ = try await space.fs(.shared).write("/src/.gitignore", Data("gen/\n".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/a.txt", Data("x".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/gen/b.txt", Data("x".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .find(plain) = try await world.run(
         "find", .object(["glob": "**/*.txt", "path": "/src"]),
@@ -61,7 +62,7 @@ import Testing
       _ = try await space.fs(.shared).write("/src/a.swift", Data("let alpha = 1\nlet beta = 2".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/src/b.swift", Data("let beta = 3".utf8), ifMatch: nil)
       _ = try await space.fs(.shared).write("/elsewhere/c.swift", Data("let beta = 4".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .grep(result) = try await world.run("grep", .object(["pattern": "beta", "path": "/src"])) else {
         throw Mismatch("grep failed")
@@ -77,7 +78,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       guard case let .query(rows) = try await world.run(
         "query", .object(["sql": "SELECT id, title FROM sessions ORDER BY id"]),
@@ -93,13 +94,13 @@ import Testing
   @Test func queryStopsReadingPastTheScriptBuffer() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let huge = try await world.run("query", .object([
         "sql": "SELECT zeroblob(68000000)",
       ]))
       let message = try failureMessage(huge)
-      #expect(message.contains("the result is over 64 MiB"), "\(message)")
+      #expect(message.contains("query result exceeds 64 MB"), "\(message)")
     }
   }
 }

@@ -49,14 +49,13 @@ extension ToolExecutor {
     _ session: SessionID,
     _ callID: ToolCallID,
     _ arguments: GenerateImageArguments,
-    state: ToolExecutionState,
   ) async throws -> ToolResultPayload {
     let destination = try await owner.resolveImageDestination(arguments.destination, session: session)
     if let recorded = try await owner.imageReceipt(session, call: callID) { return recorded }
     try await owner.refuseImageDestination(destination, session: session)
     let image = try await capabilities().image(arguments.prompt, options: .init(provider: arguments.provider, model: arguments.model, quality: arguments.quality, size: arguments.size))
     guard PNGHeader(image) != nil else { throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.") }
-    return try await owner.placeImage(image, at: destination, session: session, call: callID, state: state)
+    return try await owner.placeImage(image, at: destination, session: session, call: callID)
   }
 
   // The run_script side of generate_image: the same checks, provider and
@@ -84,7 +83,7 @@ extension ToolExecutor {
       guard let header = PNGHeader(image) else {
         throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.")
       }
-      _ = try await owner.placeImage(image, at: destination, session: session, call: nil, state: nil)
+      _ = try await owner.placeImage(image, at: destination, session: session, call: nil)
       return GeneratedImage(path: destination.rendered, bytes: image.count, width: header.width, height: header.height)
     } catch {
       claims.release(destination)

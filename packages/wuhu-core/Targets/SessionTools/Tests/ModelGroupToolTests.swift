@@ -1,6 +1,7 @@
 @testable import MainHub
 import class MainHub.Hub
 @testable import SessionTools
+@testable import SpaceServer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -30,7 +31,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
         modelRoute: testModelGroupRoute(.modelGroup(id: "work", effort: "high")),
       )
       let targets = Box<[String]>([])
-      let tools = ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
         targets.withLock { $0.append("\(provider)/\(model)") }
         return .kernel(.init(provider: provider, model: model, effort: effort ?? "low"))
       }, resolveModelGroup: { id, effort in
@@ -78,7 +79,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
         },
         prepareModelRoute: { _, reason in placements.withLock { $0.append(reason) }; return route },
       )
-      let tools = ToolExecutor(owner: owner)
+      let tools = SessionRuntime.toolExecutor(owner: owner)
       var world = ToolWorld(executor: tools, session: parent)
       guard case let .createSession(first) = try await world.run("create_session", .object(["title": "routed", "modelGroup": "work"]), id: "create-routed") else {
         Issue.record("expected created session"); return
@@ -99,7 +100,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   @Test func groupCatalogFailuresRetainMachineReadableCodes() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let tools = ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") }, resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) }))
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { _, _, _ in throw ExecutorSpecError("unexpected concrete target") }, resolveModelGroup: { id, _ in throw CatalogError.unknownGroup(id) }))
       var world = ToolWorld(executor: tools, session: try await makeSession(space))
       guard case let .failure(error) = try await world.run("create_session", .object(["title": "bad group", "modelGroup": "absent"])) else {
         Issue.record("expected group failure"); return
@@ -119,7 +120,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/templates/group/template.json", Data(#"{"modelGroup":"work","effort":"high"}"#.utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       guard case let .templates(result) = try await world.run("templates", .object([:])) else {
         Issue.record("expected templates"); return
       }

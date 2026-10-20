@@ -42,12 +42,6 @@ func execEnvironment(_ arguments: ExecArguments) throws -> ExecEnvironment {
   try execEnvironment(env: arguments.env ?? [:], secrets: arguments.secrets ?? [:])
 }
 
-/// Where a job's end is recorded when its call still waits on it.
-private struct ExecCallContext: Sendable {
-  var address: Address
-  var state: ToolExecutionState
-}
-
 extension Hub {
   // An exec is a job that outlives its call: the call starts it, or finds it
   // again on a retry, and waits up to wait_seconds. The end becomes the call's
@@ -77,7 +71,6 @@ extension Hub {
     let span = ServerTracing.enabled ? ServerSpan(.machine, session: session.rawValue) : nil
     var spanAttributes: [SpanAttribute: String]? = span == nil ? nil : [.machine: machine.rawValue, .version: "v1", .kind: "exec", .outcome: "error"]
     defer { if let spanAttributes { span?.finish(spanAttributes) } }
-    let context = ExecCallContext(address: address, state: state)
     let job: ExecJob
     if let running = execJobs.job(session, callID) {
       // A retried call whose job still runs here waits on it again.
@@ -105,9 +98,9 @@ extension Hub {
         notice: uuid(), spec: try encodedSpec(spec),
       )
       execJobs.insert(job)
-      try drive(job, spec: spec, backend: backend, context: context)
+      try drive(job, spec: spec, backend: backend)
     }
-    let result = try await awaitJob(job, wait: wait, context: context)
+    let result = try await awaitJob(job, wait: wait)
     if case let .exec(exec) = result {
       spanAttributes?[.exitCode] = String(exec.exitCode)
       spanAttributes?[.bytesOut] = String(exec.output.utf8.count)
@@ -141,7 +134,7 @@ extension Hub {
 
   // Waits for the job's end up to `wait`, or less once something arrives; past it, records the call's
   // `running` receipt and the owed job in one write and returns that.
-  nonisolated private func awaitJob(_ job: ExecJob, wait: Double, context: ExecCallContext) async throws -> ToolResultPayload {
+  nonisolated private func awaitJob(_ job: ExecJob, wait: Double) async throws -> ToolResultPayload {
     let arrivals = pendingArrivals(job.session)
     let end: ExecWaitEnd? = await withTaskGroup(of: ExecWaitEnd?.self) { group in
       group.addTask { await job.ended.wait().map(ExecWaitEnd.ended) }
@@ -161,7 +154,6 @@ extension Hub {
       // Cancelled while the call waited: its end is close and is the result.
       guard job.phase == .awaited else { return nil }
       let payload = runningPayload(job, cut: cut)
-      try await deliverContext(job.session, job.call, touching: context.address, state: context.state)
       try await store.detachExecJob(
         ExecJobRecord(session: job.session, toolCallID: job.call, exec: job.id, notice: job.notice, spec: job.spec, startedAt: job.startedAt),
         payload: payload,
@@ -181,21 +173,21 @@ extension Hub {
 
   // Runs the job's exec to its end in a task of its own, which the call that
   // started it may stop waiting on.
-  nonisolated private func drive(_ job: ExecJob, spec: ExecJobSpec, backend: ExecBackend, context: ExecCallContext?) throws(ToolProblem) {
+  nonisolated private func drive(_ job: ExecJob, spec: ExecJobSpec, backend: ExecBackend) throws(ToolProblem) {
     do {
-      try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, backend: backend, context: context) }
+      try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, backend: backend) }
     } catch {
       execJobs.remove(job)
       throw ToolProblem("the server is stopping; \(job.handle) is followed again when it starts")
     }
   }
 
-  nonisolated private func follow(_ job: ExecJob, spec: ExecJobSpec, backend: ExecBackend, context: ExecCallContext?) async {
+  nonisolated private func follow(_ job: ExecJob, spec: ExecJobSpec, backend: ExecBackend) async {
     let outcome: ExecJob.Outcome
     do {
       _ = try await runExec(spec.start, backend: backend, received: job.received) { drive in
         let outcome = await self.outcome(of: drive, job: job, spec: spec, backend: backend)
-        try await self.settle(job, outcome, context: context)
+        try await self.settle(job, outcome)
         return outcome
       }
       return
@@ -214,7 +206,7 @@ extension Hub {
   // The end goes where the job's phase says: the waiting call's receipt, one
   // message, or nowhere after a cancel. Repeating it is harmless: the receipt
   // keeps its first value and the message is deduplicated by its id.
-  nonisolated private func settle(_ job: ExecJob, _ outcome: ExecJob.Outcome, context: ExecCallContext?) async throws {
+  nonisolated private func settle(_ job: ExecJob, _ outcome: ExecJob.Outcome) async throws {
     try await job.gate.holding {
       let committed: @Sendable () -> Void = { self.execJobs.finish(job, outcome) }
       switch job.phase {
@@ -223,7 +215,6 @@ extension Hub {
           committed()
           return
         }
-        if let context { try await deliverContext(job.session, job.call, touching: context.address, state: context.state) }
         try await store.recordReceipt(job.session, toolCallID: job.call, payload: payload, onCommit: committed)
       case .detached:
         try await store.settleExecJob(job.session, toolCallID: job.call, notification: notice(job, outcome), onCommit: committed)
@@ -464,12 +455,12 @@ extension Hub {
         notice: row.notice, spec: row.spec, phase: .detached, adopted: true,
       )
       guard let backend = execBackend, let spec = try? JSONDecoder().decode(ExecJobSpec.self, from: Data(row.spec.utf8)) else {
-        do { try await settle(job, .problem(ToolProblem("this server cannot rejoin it")), context: nil) }
+        do { try await settle(job, .problem(ToolProblem("this server cannot rejoin it"))) }
         catch { Logger(label: "wuhu.exec").error("\(job.handle) could not deliver its end: \(error)") }
         continue
       }
       execJobs.insert(job)
-      do { try drive(job, spec: spec, backend: backend, context: nil) } catch {
+      do { try drive(job, spec: spec, backend: backend) } catch {
         Logger(label: "wuhu.exec").warning("\(job.handle) was not re-adopted: \(error.message)")
       }
     }

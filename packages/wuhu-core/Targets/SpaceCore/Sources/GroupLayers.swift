@@ -61,10 +61,6 @@ extension Space {
       )
       guard db.changesCount > 0 else { throw SpaceError.notFound(group.rawValue) }
       try db.execute(sql: "UPDATE group_epoch SET n = n + 1 WHERE id = 1")
-      try db.execute(
-        sql: "DELETE FROM session_scope_context WHERE session_id IN (SELECT id FROM sessions WHERE grp = ?)",
-        arguments: [group.rawValue],
-      )
     }
   }
 

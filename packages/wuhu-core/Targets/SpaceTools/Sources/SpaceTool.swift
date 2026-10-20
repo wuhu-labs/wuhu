@@ -91,11 +91,14 @@ public struct SpaceToolContext: Sendable {
     }
   }
 
-  func resolve(_ address: String, rev: Int? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) throws -> Target {
+  /// A `machines://<name>/…` address names a machine as `machines://<id>/…`
+  /// does; a name the actor's group may not use is no machine at all.
+  func resolve(_ address: String, rev: Int? = nil, listingLimit: Int? = nil, listingByteLimit: Int? = nil) async throws -> Target {
     let space = space
     let seam = machines
     let acting = principal.group
     let actor = principal.actor
+    let address = try await machineAddressByID(address)
     let resolver = FSResolver(
       space: SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: nil, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
       spaceAt: { SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: $0, listingLimit: listingLimit, listingByteLimit: listingByteLimit) },
@@ -132,13 +135,25 @@ public struct SpaceToolContext: Sendable {
     )
   }
 
+  private func machineAddressByID(_ address: String) async throws -> String {
+    let scheme = "machines://"
+    guard address.lowercased().hasPrefix(scheme) else { return address }
+    let rest = address.dropFirst(scheme.count)
+    let host = String(rest.prefix { $0 != "/" })
+    guard !host.isEmpty, !MachineID.isValid(host) else { return address }
+    guard let record = try await space.resolveMachine(host, usableFrom: principal.group) else {
+      throw ToolRunError.failed(code: .notFound, message: "unknown machine: \(host)", hint: nil)
+    }
+    return scheme + record.id.rawValue + rest.dropFirst(host.count)
+  }
+
   /// A space path and its group, hostless or `wuhu://<group>.localspace/…`;
   /// a group the actor does not read answers as a missing path.
   func spaceTarget(_ address: String) async throws -> (group: GroupID, path: SpacePath, qualified: Bool) {
     guard !address.contains("@") else {
       throw ToolRunError.failed(code: .invalidPath, message: "invalid space path: \(address)", hint: nil)
     }
-    let target = try resolve(address)
+    let target = try await resolve(address)
     guard let group = target.group else {
       throw ToolRunError.failed(code: .invalidPath, message: "not a space path: \(address)", hint: nil)
     }

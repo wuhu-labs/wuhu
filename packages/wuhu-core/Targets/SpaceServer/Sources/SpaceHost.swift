@@ -86,6 +86,7 @@ public actor SpaceHost {
         credentials: credentials,
         secrets: secrets,
         usage: usage,
+        tokens: execTokens,
         oidcToken: { audience, session in
           @Dependency(\.date) var date
           @Dependency(\.uuid) var uuid

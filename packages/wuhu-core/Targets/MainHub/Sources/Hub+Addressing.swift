@@ -6,8 +6,8 @@ import enum SpaceFS.FSResolveError
 import struct SpaceFS.FSResolver
 import SystemFiles
 
-enum Addressing {
-  static func machineHost(_ raw: String) -> String? {
+public enum Addressing {
+  public static func machineHost(_ raw: String) -> String? {
     guard raw.hasPrefix("machines://") else { return nil }
     return String(raw.dropFirst("machines://".count).prefix { $0 != "/" })
   }
@@ -38,15 +38,20 @@ enum Addressing {
       guard let group else { throw ToolProblem(FSResolveError.unsupportedHost(raw).description) }
       return .space(normalized, in: GroupID(rawValue: group), qualified: true)
     }
-    guard raw.hasPrefix("/") else {
+    try refuseRelative(raw)
+    return .space(try normalize(raw), in: acting, qualified: false)
+  }
+
+  /// A path with no scheme and no leading slash names nothing, anywhere.
+  public static func refuseRelative(_ raw: String) throws(ToolProblem) {
+    guard raw.hasPrefix("/") || raw.lowercased().hasPrefix("wuhu://") || machineHost(raw) != nil else {
       throw ToolProblem(
         "\(raw) is a relative path; start a path in this group with /, another group's with wuhu://<group>.localspace/, a machine path with machines://<machine>/ and a system path with wuhu://system/",
       )
     }
-    return .space(try normalize(raw), in: acting, qualified: false)
   }
 
-  static func normalize(_ path: String) throws(ToolProblem) -> String {
+  public static func normalize(_ path: String) throws(ToolProblem) -> String {
     var stack: [Substring] = []
     for component in path.split(separator: "/") {
       switch component {

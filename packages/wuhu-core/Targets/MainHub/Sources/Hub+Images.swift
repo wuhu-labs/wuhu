@@ -24,10 +24,9 @@ extension Hub {
 
   nonisolated public func refuseImageDestination(_ destination: Address, session: SessionID) async throws { try await refuseUnwritable(destination, by: session) }
   nonisolated public func imageReceipt(_ session: SessionID, call: ToolCallID) async throws -> ToolResultPayload? { try await store.receipt(session, toolCallID: call) }
-  nonisolated public func placeImage(_ image: Data, at destination: Address, session: SessionID, call: ToolCallID?, state: ToolExecutionState?) async throws -> ToolResultPayload {
+  nonisolated public func placeImage(_ image: Data, at destination: Address, session: SessionID, call: ToolCallID?) async throws -> ToolResultPayload {
     let payload = try await MachineSeam.$caller.withValue(session) { try await place(image, at: destination, by: session, receipt: call) }
-    if case .machine = destination, let call, let state {
-      try await deliverContext(session, call, touching: destination.folder, state: state)
+    if case .machine = destination, let call {
       try await store.recordReceipt(session, toolCallID: call, payload: payload)
     }
     return payload

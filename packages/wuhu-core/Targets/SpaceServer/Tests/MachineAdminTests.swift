@@ -315,7 +315,7 @@ import Testing
     let (id, key) = try await addMachine(server)
 
     let before = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
-    #expect(before == [MachineStatus(id: id, name: "box", attached: false)])
+    #expect(before == [MachineStatus(id: id, name: "box", group: "shared", attached: false)])
 
     await withTaskGroup(of: Void.self) { group in
       group.addTask { await server.run() }
@@ -326,13 +326,13 @@ import Testing
             try await server.http(.get, "/v1/machine").json([MachineStatus].self).allSatisfy(\.attached)
           }
           let attached = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
-          #expect(attached == [MachineStatus(id: id, name: "box", attached: true)])
+          #expect(attached == [MachineStatus(id: id, name: "box", group: "shared", attached: true)])
           socket.close()
           _ = try await realPollUntil {
             try await server.http(.get, "/v1/machine").json([MachineStatus].self).allSatisfy { !$0.attached }
           }
           let detached = try await server.http(.get, "/v1/machine").json([MachineStatus].self)
-          #expect(detached == [MachineStatus(id: id, name: "box", attached: false)])
+          #expect(detached == [MachineStatus(id: id, name: "box", group: "shared", attached: false)])
         } catch {
           Issue.record("attachment flow failed: \(error)")
         }
@@ -351,7 +351,7 @@ import Testing
 
     let renamed = try await server.http(.put, "/v1/machine/mini/name", json: .object(["name": .string("Studio")]))
     #expect(renamed.status == .ok)
-    #expect(try await renamed.json(MachineStatus.self) == MachineStatus(id: added.id, name: "studio", attached: false))
+    #expect(try await renamed.json(MachineStatus.self) == MachineStatus(id: added.id, name: "studio", group: "shared", attached: false))
 
     #expect(try await server.http(.post, "/v1/machine/mini/rotate").status == .notFound)
     #expect(try await server.http(.post, "/v1/machine/studio/rotate").status == .ok)

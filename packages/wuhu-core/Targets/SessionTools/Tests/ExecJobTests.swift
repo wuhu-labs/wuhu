@@ -10,6 +10,7 @@ import OrderedCollections
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 import struct WuhuAI.ToolArguments
 
@@ -396,7 +397,7 @@ private struct ExecJobRig {
     self.session = session
     self.machine = machine
     self.scripted = scripted
-    let executor = ToolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: exec ? scripted.backend(space) : nil))
+    let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam, exec: exec ? scripted.backend(space) : nil))
     world = ToolWorld(executor: executor, session: session)
     owner = try #require(executor.owner as? Hub)
   }

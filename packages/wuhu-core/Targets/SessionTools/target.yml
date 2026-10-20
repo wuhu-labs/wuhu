@@ -14,10 +14,13 @@ dependencies:
   - TaskLifetime
   - ServerTelemetry
   - Credentials
+  - Crypto
   - ExecutionOwner
+  - FileSearch
   - InferenceKit
   - Fetch
   - SessionDomain
+  - SpaceClient
   - SpaceContract
   - SpaceCore
   - SpaceTools
@@ -44,6 +47,9 @@ tests:
     - LoopCore
     - MainHub
     - SessionToolsTestSupport
+    - SpaceServer
+    - Serve
+    - InferenceKit
     - Credentials
     - ExecutionOwner
     - Fetch

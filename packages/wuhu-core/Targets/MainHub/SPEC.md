@@ -2,7 +2,7 @@
 
 `Hub` implements `Main` against the real space store, provider credentials and machine contracts. Construction is inert: it opens no database and starts no tasks. The composition owner supplies an already-open `Space` and owns the Hub's lifetime. A retained Main never retains a session execution or its reminder registry. Worker hydration uses the store’s execution read, which atomically refuses main’s archive reservation; plain store hydration remains available to archive bookkeeping.
 
-Main has 64 requirements. Notifications use `append(.inputEnqueued(.notification(...)))` and its queue-position acknowledgement; boot recovery consumes stale script owners directly from Space, once, before appending one notification per owner. Notification append does not activate or refresh the generation’s prompt revision.
+Main has 63 requirements. Notifications use `append(.inputEnqueued(.notification(...)))` and its queue-position acknowledgement; boot recovery consumes stale script owners directly from Space, once, before appending one notification per owner. Notification append does not activate or refresh the generation’s prompt revision.
 
 MainHub contains no interpreter or worker dependency. SpaceServer composes a Hub with SessionTools and LoopCore; main-only clients and MainHubTests can use the real Hub without compiling either worker target or QuickJSKit.
 

@@ -52,8 +52,6 @@ import enum WuhuAI.Tool
 
   @Test func rosterIsTheConfiguredRuntimeDeclaration() async throws {
     try await withRig { rig in
-      let missing = try await rig.evaluate("import {toolRoster} from 'wuhu:session';try {await toolRoster()} catch(e) {result({name:e.name,code:e.code})}")
-      #expect(missing == ["name": "SpaceError", "code": "unsupported"])
       let roster = ToolRostersOutput(rosters: [.init(executor: .kernel, tools: ToolExecutor.tools.map {
         guard case let .function(name, description, parameters) = $0 else { preconditionFailure() }
         return ToolDescriptor(name: name, description: description, parameters: parameters)
@@ -61,7 +59,7 @@ import enum WuhuAI.Tool
       rig.main.configureScriptDiscovery(toolRosters: roster)
       #expect(try await rig.evaluate("import {toolRoster} from 'wuhu:session';result(await toolRoster())") == JSONValueEncoder().encode(roster))
       let context = try await rig.evaluate("import {context} from 'wuhu:space';result(await context())")
-      #expect(context.object?["contentHost"] == .null)
+      #expect(context.object?["contentHost"] == "https://shared.localhost")
     }
   }
 

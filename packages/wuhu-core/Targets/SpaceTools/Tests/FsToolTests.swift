@@ -54,7 +54,7 @@ import Testing
     #expect({ if case .failed(code: .unavailable, _, _, _) = machines { true } else { false } }())
 
     let badID = await failure("read", .object(["path": "machines://not a machine/a.md"]), context)
-    #expect({ if case .failed(code: .invalidPath, _, _, _) = badID { true } else { false } }())
+    #expect({ if case .failed(code: .notFound, _, _, _) = badID { true } else { false } }())
 
     let atRev = await failure("read", .object(["path": "machines://mc_00000000/a.md@3"]), context)
     #expect({ if case .failed(code: .unsupported, _, _, _) = atRev { true } else { false } }())

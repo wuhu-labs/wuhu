@@ -43,7 +43,7 @@ struct ExecDefaultLifetimeTests {
       dialer.offer(try await connectMachine(server, key: key))
       try await awaitAttached(server, machine)
       let ready = LifetimeOutput()
-      let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: observingOutput(execBackend(space: space, hub: server.hub), ready: ready)))
+      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: server.hub), exec: observingOutput(execBackend(space: space, hub: server.hub), ready: ready)))
       // The v1 agent stops reading output when it kills, and says so.
       try await expectLifetimes(executor, session: session, machine: machine.rawValue, cwd: work.path, cut: "\n[output was cut when the command stopped]", clock: clock, ready: ready)
     }
@@ -65,7 +65,7 @@ struct ExecDefaultLifetimeTests {
       tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
       defer { tasks.cancelAll() }
       let ready = LifetimeOutput()
-      let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: observingOutput(execBackend(space: space, hub: hub), ready: ready)))
+      let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: observingOutput(execBackend(space: space, hub: hub), ready: ready)))
       try await expectLifetimes(executor, session: session, machine: record.id.rawValue, cwd: work.path, cut: "", clock: clock, ready: ready)
       await agent.shutdown(); await service.shutdown()
     }
@@ -104,7 +104,7 @@ struct ExecDefaultLifetimeTests {
         tasks.addTask { await agent.run() }
         tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
         defer { tasks.cancelAll() }
-        let executor = ToolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub)))
+        let executor = SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineSeam(hub: hub), exec: execBackend(space: space, hub: hub)))
         let outcome = try await withThrowingTaskGroup(of: ToolResultPayload.self) { call in
           call.addTask {
             try await withDependencies {
@@ -113,7 +113,7 @@ struct ExecDefaultLifetimeTests {
             } operation: {
               try await executor.execute(session: session, call: ToolCall(id: "stuck", name: "exec", arguments: .object([
                 "machine": .string(record.id.rawValue), "cwd": "/", "command": "true", "max_lifetime_seconds": .integer(lifetime),
-              ])), state: ToolExecutionState())
+              ])), state: ToolExecutionState()).payload
             }
           }
           // The clock stands still until the start reaches the machine, after the exec was admitted with its deadline.
@@ -171,7 +171,7 @@ private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machi
         call.addTask { try await executor.execute(session: session, call: ToolCall(id: "default-lifetime", name: "exec", arguments: .object([
           "machine": .string(machine), "cwd": .string(cwd),
           "command": "mkfifo child-input; trap 'wait; exit 143' TERM; cat child-input & echo $! > child; echo started; wait",
-        ])), state: ToolExecutionState()) }
+        ])), state: ToolExecutionState()).payload }
         await ready.first.wait()
         await clock.armed.wait()
         let killed = try await clock.run(through: VirtualClock.at(.seconds(1) + .milliseconds(300))) { try await call.next()! }
@@ -187,7 +187,7 @@ private func expectLifetimes(_ executor: ToolExecutor, session: SessionID, machi
         call.addTask { try await executor.execute(session: session, call: ToolCall(id: "explicit-lifetime", name: "exec", arguments: .object([
           "machine": .string(machine), "cwd": .string(cwd),
           "command": "mkfifo release; exec 3<>release; echo ready; read line <&3; echo finished", "max_lifetime_seconds": 30,
-        ])), state: ToolExecutionState()) }
+        ])), state: ToolExecutionState()).payload }
         await ready.second.wait()
         let pastDefault = clock.now.advanced(by: .seconds(2))
         try await clock.run(through: pastDefault) { try await clock.sleep(until: pastDefault, tolerance: nil) }

@@ -6,7 +6,7 @@ import SpaceFS
 
 extension SpaceToolbox {
   static let read = SpaceTool("read", schema: ReadInput.jsonSchema) { (context, input: ReadInput) in
-    let target = try context.resolve(input.path, rev: input.rev)
+    let target = try await context.resolve(input.path, rev: input.rev)
     let (token, data) = try await target.backend.read(target.path)
     var content = try text(data, at: target.path)
     if let lines = input.lines {
@@ -21,7 +21,7 @@ extension SpaceToolbox {
   }
 
   static let edit = SpaceTool("edit", schema: EditInput.jsonSchema) { (context, input: EditInput) in
-    let target = try context.resolve(input.path)
+    let target = try await context.resolve(input.path)
     if let group = target.group { try await context.refuseWrite(context.spacePath(target.path), in: group) }
     let (backend, path) = (target.backend, target.path)
     let (token, data) = try await backend.read(path)
@@ -60,7 +60,7 @@ extension SpaceToolbox {
   }
 
   static let rm = SpaceTool("rm", schema: RemoveInput.jsonSchema) { (context, input: RemoveInput) in
-    let target = try context.resolve(input.path)
+    let target = try await context.resolve(input.path)
     if let group = target.group { try await context.refuseWrite(context.spacePath(target.path), in: group) }
     do {
       try await target.backend.delete(target.path, ifMatch: input.ifMatch.map(Wire.token))
@@ -78,8 +78,8 @@ extension SpaceToolbox {
   }
 
   static let mv = SpaceTool("mv", schema: MoveInput.jsonSchema) { (context, input: MoveInput) in
-    let source = try context.resolve(input.from)
-    let destination = try context.resolve(input.to)
+    let source = try await context.resolve(input.from)
+    let destination = try await context.resolve(input.to)
     // Nothing moves into or out of the binary's files.
     for (address, target) in [(input.from, source), (input.to, destination)] where target.system {
       throw SpaceError.systemReadOnly(address)
@@ -124,7 +124,7 @@ extension SpaceToolbox {
   }
 
   static let stat = SpaceTool("stat", schema: StatInput.jsonSchema) { (context, input: StatInput) in
-    let target = try context.resolve(input.path)
+    let target = try await context.resolve(input.path)
     return Wire.entry(try await target.backend.stat(target.path))
   }
 }
@@ -193,9 +193,9 @@ private func trimLineEnds(_ text: String) -> String {
 public extension SpaceToolContext {
   func list(_ address: String, rev: Int? = nil, hidden: Bool = false, limit: Int? = nil, byteLimit: Int? = nil) async throws(ToolRunError) -> JSONValue {
     do {
-      let resolved = try resolve(address, rev: rev)
+      let resolved = try await resolve(address, rev: rev)
       let hiddenCount = resolved.isSpace && resolved.path == "/" && !hidden ? SessionHome.hiddenRootEntries.count : 0
-      let target = try resolve(address, rev: rev, listingLimit: limit.map { $0 + 1 + hiddenCount }, listingByteLimit: byteLimit)
+      let target = try await resolve(address, rev: rev, listingLimit: limit.map { $0 + 1 + hiddenCount }, listingByteLimit: byteLimit)
       let (token, listed) = try await target.backend.list(target.path)
       let entries = target.isSpace && target.path == "/" && !hidden
         ? listed.filter { !SessionHome.hiddenRootEntries.contains($0.name) }

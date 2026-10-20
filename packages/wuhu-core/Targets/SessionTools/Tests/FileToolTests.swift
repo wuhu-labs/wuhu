@@ -5,6 +5,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import struct SpaceTools.MachineSeam
 import Testing
 import struct WuhuAI.ToolArguments
@@ -14,7 +15,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/notes/a.md", Data("original".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let payload = try await world.run("write", .object(["path": "/notes/a.md", "content": "clobber"]))
       #expect(try failureMessage(payload).contains("read it at its current revision"))
@@ -25,7 +26,7 @@ import struct WuhuAI.ToolArguments
   @Test func createThenReadThenWriteThenStaleWrite() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case .write = try await world.run("write", .object(["path": "/notes/new.md", "content": "v1"])) else {
         throw Mismatch("creation write should succeed without a prior read")
@@ -53,7 +54,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/a.txt", Data("one two one".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let unread = try await world.run("edit", .object([
         "path": "/a.txt", "edits": .array([.object(["old": "two", "new": "2"])]),
@@ -79,7 +80,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.put("/home/dev/notes.txt", "hello", mtime: 100)
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: try await makeSession(space),
       )
 
@@ -109,7 +110,7 @@ import struct WuhuAI.ToolArguments
       let space = try Space.inMemory()
       let fs = FakeMachineFS(opaqueTokens: true)
       fs.put("/notes.txt", "hello", mtime: 100)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
       let path = JSONValue.string("machines://\(machineA.rawValue)/notes.txt")
       guard case let .read(read) = try await world.run("read", .object(["path": path])) else { throw Mismatch("opaque read failed") }
       #expect(read.revision == .machine("opaque:100.0"))
@@ -132,7 +133,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/x.md", Data("hello".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(read) = try await world.run("read", .object(["path": "/x.md"])) else {
         throw Mismatch("absolute read failed")
@@ -146,7 +147,7 @@ import struct WuhuAI.ToolArguments
   @Test func theSystemFilesReadAndSearchButRefuseWrites() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(read) = try await world.run("read", .object(["path": "wuhu://system/AGENTS.md"])) else {
         throw Mismatch("system read failed")
@@ -179,7 +180,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/x.md", Data("hello".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let calls: [(String, ToolArguments)] = [
         ("read", .object(["path": "x.md"])),
@@ -202,7 +203,7 @@ import struct WuhuAI.ToolArguments
   @Test func escapingTheRootFailsTyped() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       let escaped = try await world.run("read", .object(["path": "/../../etc/passwd"]))
       #expect(try failureMessage(escaped).contains("escapes the root"))
     }
@@ -211,7 +212,7 @@ import struct WuhuAI.ToolArguments
   @Test func unknownToolFailsTyped() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
       let unknown = try await world.run("teleport", .object([:]))
       #expect(try failureMessage(unknown).contains("unknown tool"))
     }

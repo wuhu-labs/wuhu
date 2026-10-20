@@ -1,0 +1,4 @@
+# Linted per package by `bazel test //packages:swiftlint`, the `lint` CI lane (bazel/swiftlint).
+only_rules:
+  - duplicate_conditions
+  - testable_import_outside_tests

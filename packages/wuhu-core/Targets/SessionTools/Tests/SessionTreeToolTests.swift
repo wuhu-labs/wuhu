@@ -3,12 +3,13 @@ import JSONValue
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
+@testable import SpaceServer
 @_spi(Testing) import SpaceCore
 import Testing
 import struct WuhuAI.ToolArguments
 
 private func creating(_ space: Space) -> ToolExecutor {
-  ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+  SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
     .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
   }))
 }

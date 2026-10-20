@@ -4,6 +4,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 import struct WuhuAI.ToolArguments
 
@@ -12,7 +13,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       _ = try await space.fs(.shared).write("/a.txt", Data("v1".utf8), ifMatch: nil)
       _ = try await world.run("read", .object(["path": "/a.txt"]))
@@ -37,7 +38,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       _ = try await space.fs(.shared).write("/a.txt", Data("hello world".utf8), ifMatch: nil)
       _ = try await world.run("read", .object(["path": "/a.txt"]))
@@ -59,7 +60,7 @@ import struct WuhuAI.ToolArguments
       let machineFS = FakeMachineFS()
       machineFS.put("/home/dev/a.txt", "v1", mtime: 100)
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)),
         session: session,
       )
 
@@ -79,7 +80,7 @@ import struct WuhuAI.ToolArguments
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, resolveModelExecutor: { provider, model, effort in
           .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
         })),
         session: session,
@@ -108,7 +109,7 @@ import struct WuhuAI.ToolArguments
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       _ = try await space.fs(.shared).write("/a.txt", Data("v1".utf8), ifMatch: nil)
       let first = try await world.run("read", .object(["path": "/a.txt"]), id: "tc-read")

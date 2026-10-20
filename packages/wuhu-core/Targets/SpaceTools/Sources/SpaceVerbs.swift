@@ -3,6 +3,9 @@ import SpaceContract
 import SpaceCore
 import SpaceFS
 
+/// The most a `query` answers with, whoever asks.
+let queryResultBytes = 64 << 20
+
 extension SpaceToolbox {
   static let history = SpaceTool("history", schema: HistoryInput.jsonSchema) { (context, input: HistoryInput) in
     let target = try await context.spaceTarget(input.path)
@@ -38,7 +41,7 @@ extension SpaceToolbox {
   }
 
   static let query = SpaceTool("query", schema: QueryInput.jsonSchema) { (context, input: QueryInput) in
-    Wire.queryOutput(try await context.space.query(input.sql, as: context.principal))
+    Wire.queryOutput(try await context.space.query(input.sql, byteLimit: queryResultBytes, as: context.principal))
   }
 
   static let tableCreate = SpaceTool("table.create", schema: TableCreateInput.jsonSchema) { (context, input: TableCreateInput) in
@@ -80,7 +83,7 @@ public extension SpaceToolContext {
     } catch let SpaceError.alreadyExists(path) where createOnly {
       throw .failed(code: .conflict, message: "already exists: \(path)", hint: "Choose another path; create-only operations never replace an existing entry.")
     } catch SpaceError.versionMismatch {
-      let target = try? resolve(address)
+      let target = try? await resolve(address)
       let current: VersionToken?
       if let target { current = try? await target.backend.stat(target.path).token }
       else { current = nil }

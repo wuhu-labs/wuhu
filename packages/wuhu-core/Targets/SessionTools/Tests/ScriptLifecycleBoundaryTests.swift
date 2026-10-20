@@ -15,7 +15,7 @@ import Testing
   @Test func aScriptCanArchiveItsOwnSessionAndReturnBeforeStopGrace() async throws {
     try await withToolDeps { _ in
       try await withScriptLifecycle { space, session, owner, worker, _ in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         let payload = try await world.run("run_script", .object(["source": """
         import { archive } from 'wuhu:session';
         await archive(import.meta.session);
@@ -44,7 +44,7 @@ import Testing
       } operation: {
         try await withScriptLifecycle { space, session, owner, worker, service in
           defer { release.open() }
-          var world = ToolWorld(worker: worker, owner: owner, session: session)
+          var world = ToolWorld(worker: worker, session: session)
           guard case .script = try await world.run("run_script", .object(["source": """
           result('started');
           await fetch('https://script.test/release');

@@ -2,10 +2,6 @@ import Fetch
 import FetchTunnel
 import Serve
 
-public struct WebSocketUpgradeRefused: Error, Sendable {
-  public let request: Request
-}
-
 public enum ServeTesting {
   public enum Upgrade: Sendable {
     case response(Response)
@@ -13,16 +9,11 @@ public enum ServeTesting {
   }
 
   public static func client(_ handler: @escaping Handler) -> FetchClient {
-    FetchClient { request in try await dispatch(handler, request) }
+    .inProcess(handler)
   }
 
   public static func client(upgrading handler: @escaping UpgradingHandler) -> FetchClient {
-    self.client { request in
-      switch try await handler(request) {
-      case let .response(response): return response
-      case .webSocket, .boundedWebSocket: throw WebSocketUpgradeRefused(request: request)
-      }
-    }
+    .inProcess(handler)
   }
 
   public static func upgrade(_ handler: @escaping UpgradingHandler, _ request: Request) async throws -> Upgrade {
@@ -38,14 +29,6 @@ public enum ServeTesting {
       }
     } catch let error as ServeError {
       return .response(errorResponse(error))
-    }
-  }
-
-  private static func dispatch(_ handler: @escaping Handler, _ request: Request) async throws -> Response {
-    do {
-      return try await handler(onTheWire(request))
-    } catch let error as ServeError {
-      return errorResponse(error)
     }
   }
 

@@ -31,6 +31,7 @@ import {
   rawLabelLowering,
   requiresPublicHeaderMaterialization,
   resolvedEntitlements,
+  swiftlintSuiteBuildBazel,
   swiftPMIdentityFromUrl,
   type TargetKind,
   type TargetManifest,
@@ -1685,7 +1686,7 @@ Deno.test('generateBuildBazel discovers DocC catalogs and emits a merged site', 
     assertIncludes(build, 'name = "FeatureDocC"')
     assertIncludes(build, 'dependencies = [\n        ":BaseDocC",\n    ]')
     assertIncludes(build, 'name = "docs"')
-    assertEquals(build.match(/tags = \["manual"\]/g)?.length, 3)
+    assertEquals(build.match(/tags = \["manual"\]/g)?.length, 4)
     assertIncludes(
       build,
       'archives = [\n        ":BaseDocC",\n        ":FeatureDocC",\n    ]',
@@ -1863,6 +1864,28 @@ Deno.test('package target copts load rule symbols once and reject literal flags'
         copts: ['-DBUILD_WITH_UI_CONTROL'],
       }]),
     'target copts entry is not a rules.bzl symbol',
+  )
+})
+
+Deno.test('every Swift package gets a manual SwiftLint test, run together by //packages:swiftlint', async () => {
+  const build = await generateBuildBazel(basePkg, [
+    minimalTarget('Lib', 'library'),
+  ])
+  assertIncludes(
+    build,
+    'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
+  )
+  assertIncludes(
+    build,
+    'swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)',
+  )
+  await assertRejects(
+    () => generateBuildBazel(basePkg, [minimalTarget('swiftlint', 'library')]),
+    'generated SwiftLint test :swiftlint conflicts with a source target',
+  )
+  assertEquals(
+    swiftlintSuiteBuildBazel(['packages/b', 'packages/a']),
+    'test_suite(\n    name = "swiftlint",\n    tags = ["manual"],\n    tests = [\n        "//packages/a:swiftlint",\n        "//packages/b:swiftlint",\n    ],\n)\n',
   )
 })
 

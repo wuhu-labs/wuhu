@@ -19,12 +19,12 @@ func callResult(
   let id = SessionID(session)
   let state = harness.toolStates.values.withLock { $0[id] ?? ToolExecutionState() }
   let callID = UUID().uuidString.lowercased()
-  let payload = try await harness.runtime.worker.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
-  let context = try await harness.store.scopeContext(id, toolCallID: ToolCallID(callID))
+  let outcome = try await harness.runtime.worker.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
+  let payload = outcome.payload
   harness.toolStates.values.withLock {
     var state = $0[id] ?? ToolExecutionState()
     state.apply(payload)
-    if let context {
+    if let context = outcome.context {
       state.apply(delivered: .notification(context.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
     }
     $0[id] = state

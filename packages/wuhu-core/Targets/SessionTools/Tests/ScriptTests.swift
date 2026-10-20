@@ -22,6 +22,7 @@ import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import struct SpaceFS.SpacePath
+@testable import SpaceServer
 import struct SpaceTools.MachineSeam
 import Testing
 import struct WuhuAI.ToolArguments
@@ -678,7 +679,7 @@ final class ScriptRig: Sendable {
       session: caller ?? session,
       call: ToolCall(id: "cancel-\(id)", name: "cancel", arguments: .object(["id": .string(id)])),
       state: ToolExecutionState(),
-    )
+    ).payload
     switch payload {
     case let .script(result): record("cancel", result.output)
     case let .failure(failure): record("cancel", "failed (\(failure.code ?? "no code")): \(failure.message)")
@@ -699,7 +700,7 @@ final class ScriptRig: Sendable {
       session: session,
       call: ToolCall(id: id, name: name, arguments: .object(arguments)),
       state: ToolExecutionState(),
-    )
+    ).payload
   }
 
   private func call(_ name: String, _ arguments: OrderedDictionary<String, JSONValue>) async throws -> String {
@@ -903,9 +904,7 @@ func withRig(
       let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
       let main = Hub(space: space, identityConfiguration: identity, credentials: credentials, secrets: stores, machines: machines, scriptMachines: access, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute, control: control)
       let scripts = Scripts(owner: main)
-      let executor = ToolExecutor(
-        owner: main, credentials: credentials, scripts: scripts,
-      )
+      let executor = SessionRuntime.toolExecutor(owner: main, scripts: scripts, credentials: credentials)
       let rig = try ScriptRig(
         space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
       )

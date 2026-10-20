@@ -55,7 +55,6 @@ extension Hub {
     return command
   }
 
-  nonisolated public func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext? { try await store.scopeContext(id, toolCallID: toolCallID) }
   nonisolated public func registeredSubscriptions(_ id: SessionID) async throws -> RegisteredSubscriptions {
     let registered = try await store.registeredSubscriptions(id)
     return .init(ids: registered.ids, handlers: registered.handlers)

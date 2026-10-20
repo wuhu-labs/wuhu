@@ -79,7 +79,6 @@ public protocol Main: Sendable {
   func ownExecs(session: SessionID) async throws -> [ExecStatus]
   func ownExecStatus(_ id: String, session: SessionID) async throws -> ExecStatus
   func releaseScriptExecs(script: String) async throws
-  func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext?
   func killInterruptedExec(session: SessionID, toolCallID: ToolCallID) async
   /// For each urgency, the earliest item in the session's queue that the
   /// model has not seen yet: now, and again after every change.
@@ -97,7 +96,7 @@ public protocol Main: Sendable {
   func resolveImageDestination(_ raw: String, session: SessionID) async throws -> Address
   func refuseImageDestination(_ destination: Address, session: SessionID) async throws
   func imageReceipt(_ session: SessionID, call: ToolCallID) async throws -> ToolResultPayload?
-  func placeImage(_ image: Data, at destination: Address, session: SessionID, call: ToolCallID?, state: ToolExecutionState?) async throws -> ToolResultPayload
+  func placeImage(_ image: Data, at destination: Address, session: SessionID, call: ToolCallID?) async throws -> ToolResultPayload
   func append(_ session: SessionID, _ event: SessionEvent) async throws -> MainReply
   func modelRoute(_ session: SessionID) async throws -> SessionModelRoute?
   func record(_ session: SessionID) async throws -> SessionRecord

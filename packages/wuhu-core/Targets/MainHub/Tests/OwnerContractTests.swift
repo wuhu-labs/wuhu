@@ -64,7 +64,6 @@ private struct OwnerContract {
     #expect(try await owner.pendingCommand(id) == nil)
     #expect(try await owner.hydrate(id).generation == 1)
     #expect(try await owner.hydrate(id).transcript == .kernel(compacted))
-    #expect(try await owner.scopeContext(id, toolCallID: .init("unknown")) == nil)
     let registered = try await owner.registeredSubscriptions(id)
     #expect(registered.ids.isEmpty)
     #expect(registered.handlers.isEmpty)

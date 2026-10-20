@@ -15,7 +15,6 @@ import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
 import struct MainHub.ExecBackend
-import protocol MainHub.Main
 import protocol MainHub.Worker
 import SessionDomain
 @testable import SessionTools
@@ -141,8 +140,7 @@ func makeSession(_ space: Space, name: String = "test", group: GroupID = .shared
 // The kernel's side of the black box: dispatch a call with the folded state,
 // then fold the committed result exactly as the transcript would.
 struct ToolWorld {
-  private let execute: @Sendable (SessionID, ToolCall, ToolExecutionState) async throws -> ToolResultPayload
-  private let owner: any Main
+  private let execute: @Sendable (SessionID, ToolCall, ToolExecutionState) async throws -> ToolOutcome
   let session: SessionID
   var state = ToolExecutionState()
   var delivered: ScopeContext?
@@ -150,19 +148,16 @@ struct ToolWorld {
 
   init(executor: ToolExecutor, session: SessionID) {
     execute = { try await executor.execute(session: $0, call: $1, state: $2) }
-    owner = executor.owner
     self.session = session
   }
 
-  init(worker: any Worker, owner: any Main, session: SessionID) {
+  init(worker: any Worker, session: SessionID) {
     execute = { try await worker.execute(session: $0, call: $1, state: $2) }
-    self.owner = owner
     self.session = session
   }
 
   init(_ world: ToolWorld, session: SessionID) {
     execute = world.execute
-    owner = world.owner
     self.session = session
   }
 
@@ -173,16 +168,16 @@ struct ToolWorld {
   ) async throws -> ToolResultPayload {
     mintedCalls += 1
     let id = explicit ?? "tc-\(mintedCalls)"
-    let payload = try await execute(
+    let outcome = try await execute(
       session, ToolCall(id: id, name: name, arguments: arguments),
       state,
     )
-    state.apply(payload)
-    delivered = try await owner.scopeContext(session, toolCallID: ToolCallID(id))
+    state.apply(outcome.payload)
+    delivered = outcome.context
     if let delivered {
       state.apply(delivered: .notification(delivered.notice(id: UUID(), at: Date(timeIntervalSince1970: 0))))
     }
-    return payload
+    return outcome.payload
   }
 
   // A crash-retry: the kernel never committed the first result, so the retry
@@ -195,7 +190,7 @@ struct ToolWorld {
     try await execute(
       session, ToolCall(id: id, name: name, arguments: arguments),
       state,
-    )
+    ).payload
   }
 }
 

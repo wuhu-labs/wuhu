@@ -219,15 +219,7 @@ import Testing
     #expect(shared.groupRendered.contains("(/.agents/skills/deploy/SKILL.md)"))
 
     try await rig.store.advancePromptRevision(rig.p)
-    try await rig.space.writer.write { db in
-      try db.execute(sql: "INSERT INTO session_scope_context VALUES (?, 'tc-1', '{}', 'notes')", arguments: [rig.p.rawValue])
-      try db.execute(sql: "INSERT INTO session_scope_context VALUES (?, 'tc-1', '{}', 'notes')", arguments: [rig.s.rawValue])
-    }
     try await rig.space.setSpaceLayer(Self.alice, on: false)
-    let noticed = try await rig.space.writer.read { db in
-      try String.fetchAll(db, sql: "SELECT session_id FROM session_scope_context")
-    }
-    #expect(noticed == [rig.s.rawValue])
     // The frozen prompt keeps the layer until the next compaction or Start over.
     let frozen = try await rig.space.sessionHome(rig.p, at: try await rig.store.promptRevision(rig.p))
     #expect(!frozen.spaceLayerRendered.isEmpty)

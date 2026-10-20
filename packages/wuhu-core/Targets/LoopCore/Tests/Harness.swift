@@ -210,7 +210,7 @@ func makeConfig(
   eviction: EvictionPolicy = .init(),
 ) -> LoopConfig {
   LoopConfig(
-    executeTool: { try await executeTool($0.call) },
+    executeTool: { ToolOutcome(payload: try await executeTool($0.call)) },
     inference: inference,
     compact: { _, transcript in try await compact(transcript) },
     budget: { _ in budget },
@@ -298,9 +298,11 @@ private struct WeakService: Sendable {
   weak var value: SessionService?
 }
 
+// A loop whose worker has no line to main: the tools the worker owns are not
+// under test here.
 extension SessionExecution {
   init(main: any Main, loopConfig: LoopConfig) async {
-    await self.init(main: main, loopConfig: { _ in loopConfig })
+    await self.init(main: main, connection: MainConnection(), credential: { _ in throw MainUnavailable() }, loopConfig: { _ in loopConfig })
   }
 }
 

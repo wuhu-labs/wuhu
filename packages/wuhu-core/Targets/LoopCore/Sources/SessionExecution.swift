@@ -27,12 +27,16 @@ public struct SessionExecution: Worker {
 
   public init(
     main: any Main,
+    connection: MainConnection,
+    credential: @escaping @Sendable (SessionID) async throws -> String,
     credentials: CredentialResolver = .unavailable,
     completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
     loopConfig: @Sendable (ToolExecutor) -> LoopConfig,
   ) async {
     let scripts = Scripts(owner: main)
-    let tools = ToolExecutor(owner: main, credentials: credentials, completionCatalog: completionCatalog, scripts: scripts)
+    let tools = ToolExecutor(
+      owner: main, main: connection, credential: credential, credentials: credentials, completionCatalog: completionCatalog, scripts: scripts,
+    )
     self.scripts = scripts
     self.tools = tools
     var config = loopConfig(tools)
@@ -61,7 +65,7 @@ public struct SessionExecution: Worker {
     try await registry.revoke(session, policy: policy)
   }
 
-  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
+  public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
     try await tools.execute(session: session, call: call, state: state)
   }
 

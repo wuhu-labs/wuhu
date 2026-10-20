@@ -90,7 +90,7 @@ import struct WuhuAI.ToolCall
         return try await t.harness.api(request)
       })
       let scripts = Scripts(owner: owner)
-      let executor = ToolExecutor(owner: owner, scripts: scripts)
+      let executor = SessionRuntime.toolExecutor(owner: owner, scripts: scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await scripts.run() }
         defer { group.cancelAll() }
@@ -106,7 +106,7 @@ import struct WuhuAI.ToolCall
             session: t.parent,
             call: ToolCall(id: "script-post-\(user)", name: "run_script", arguments: .object(["source": .string(source), "wait_seconds": 10])),
             state: ToolExecutionState(),
-          )
+          ).payload
           guard case let .script(result) = payload else {
             Issue.record("unexpected script result: \(payload)")
             return

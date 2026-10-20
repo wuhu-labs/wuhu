@@ -4,6 +4,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 
 @Suite struct TitleToolTests {
@@ -11,7 +12,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space, name: "I don't know")
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       guard case let .setTitle(result) = try await world.run(
         "set_title", .object(["title": "  Nightly release watch  "]),
@@ -27,7 +28,7 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space, name: "keep me")
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
 
       for refused in ["", "   ", "two\nlines", String(repeating: "x", count: SessionStore.titleLimit + 1)] {
         let message = try failureMessage(try await world.run("set_title", .object(["title": .string(refused)])))

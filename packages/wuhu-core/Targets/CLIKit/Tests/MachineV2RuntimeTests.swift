@@ -48,7 +48,7 @@ private actor EnrollmentEffects {
       let key = try #require(VerifyingKey(label: pubkey!))
       let signature = try #require(Data(base64Encoded: request.headers[MachineV2Connect.signatureHeader]!))
       #expect(key.isValidSignature(signature, for: MachineV2Connect.signingPayload(challenge: "one-shot", machines: ["mc_test"])))
-      return try .json(JSONValue.object(["id": "mc_test", "name": "box-v2", "attached": false]))
+      return try .json(JSONValue.object(["id": "mc_test", "name": "box-v2", "group": "shared", "attached": false]))
     default: Issue.record("unexpected path \(request.url.path)"); return .text("unexpected", status: .notFound)
     }
   }

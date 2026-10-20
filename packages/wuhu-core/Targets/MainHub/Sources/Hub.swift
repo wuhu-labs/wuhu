@@ -33,9 +33,9 @@ public actor Hub: Main {
   nonisolated let scriptExecConnections = ScriptExecConnections()
 
   nonisolated let scriptMachines: ScriptMachineAccess?
-  nonisolated let space: Space
+  nonisolated public let space: Space
   nonisolated let secrets: SpaceSecretStores?
-  nonisolated let machines: MachineSeam?
+  nonisolated public let machines: MachineSeam?
   nonisolated let execBackend: ExecBackend?
   nonisolated let execJobs: ExecJobs
   nonisolated let resolveModelExecutor: (@Sendable (_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor)?
@@ -133,10 +133,6 @@ public actor Hub: Main {
       return try await write(session, callID, decoded(WriteArguments.self, call), state: state)
     case .edit:
       return try await edit(session, callID, decoded(EditArguments.self, call), state: state)
-    case .grep:
-      return try await grep(session, callID, decoded(GrepArguments.self, call), state: state)
-    case .find:
-      return try await find(session, callID, decoded(FindArguments.self, call), state: state)
     case .exec:
       return try await exec(session, callID, decoded(ExecArguments.self, call), state: state)
     case .machines:
@@ -151,8 +147,6 @@ public actor Hub: Main {
       let arguments = try decoded(CancelArguments.self, call)
       if case let .exec(id) = try CancelTarget(arguments.id) { return try await cancelExec(session, id) }
       return try await cancel(session, arguments)
-    case .query:
-      return try await query(session, decoded(QueryArguments.self, call))
     case .sendMessage:
       if case let .object(fields) = call.arguments.json, fields["user"] != nil {
         throw problem(.humanAgentDirectMessage)
@@ -168,8 +162,8 @@ public actor Hub: Main {
       return try await setTitle(session, decoded(SetTitleArguments.self, call))
     case .manipulateUI:
       return try await manipulateUI(session, decoded(ManipulateUIArguments.self, call))
-    case .generateImage, .runScript:
-      preconditionFailure("interpreter-owned tools must not enter the persistent dispatcher")
+    case .generateImage, .runScript, .grep, .find, .query:
+      preconditionFailure("worker-owned tools must not enter the persistent dispatcher")
     }
   }
 

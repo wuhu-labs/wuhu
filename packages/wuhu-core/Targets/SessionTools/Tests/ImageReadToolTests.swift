@@ -4,6 +4,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Testing
 
 private let pngMagic: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF]
@@ -41,7 +42,7 @@ private let pngHeader: [UInt8] = [
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/shots/login.png", Data(pngMagic), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(result) = try await world.run("read", .object(["path": "/shots/login.png"])) else {
         throw Mismatch("image read failed")
@@ -63,7 +64,7 @@ private let pngHeader: [UInt8] = [
       let space = try Space.inMemory()
       let fs = FakeMachineFS(opaqueTokens: true)
       fs.put("/shot.png", bytes: pngHeader, mtime: 100)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
       guard case let .read(read) = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/shot.png")])) else { throw Mismatch("opaque image read failed") }
       #expect(read.revision == .machine("opaque:100.0"))
       #expect(read.image?.pixels != nil)
@@ -75,7 +76,7 @@ private let pngHeader: [UInt8] = [
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/wide.png", Data(pngHeader), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       guard case let .read(result) = try await world.run("read", .object(["path": "/wide.png"])) else {
         throw Mismatch("image read failed")
@@ -91,7 +92,7 @@ private let pngHeader: [UInt8] = [
       var bytes = Data(pngHeader)
       bytes.append(Data(count: (50 << 20) + 1 - bytes.count))
       _ = try await space.fs(.shared).write("/huge.png", bytes, ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let refused = try await world.run("read", .object(["path": "/huge.png"]))
       #expect(try failureMessage(refused).contains("read takes images up to \(50 << 20) bytes"))
@@ -103,7 +104,7 @@ private let pngHeader: [UInt8] = [
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/liar.jpg", Data(pngHeader), ifMatch: nil)
       _ = try await space.fs(.shared).write("/text.png", Data("hello".utf8), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let liar = try await world.run("read", .object(["path": "/liar.jpg"]))
       #expect(try failureMessage(liar).contains("is named as image/jpeg but its bytes are image/png"))
@@ -116,7 +117,7 @@ private let pngHeader: [UInt8] = [
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       _ = try await space.fs(.shared).write("/a.png", Data(pngMagic), ifMatch: nil)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let refused = try await world.run("read", .object(["path": "/a.png", "lines": "1-2"]))
       #expect(try failureMessage(refused).contains("lines applies to text files"))

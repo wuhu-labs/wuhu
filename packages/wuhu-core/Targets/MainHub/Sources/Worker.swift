@@ -61,7 +61,7 @@ public struct ScriptHandlerInvocation: Sendable {
 public protocol Worker: Sendable {
   func deliver(_ session: SessionID, _ input: WorkerInput) async throws
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool
-  func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload
+  func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
   func activity() async -> WorkerActivity
   func drain() async

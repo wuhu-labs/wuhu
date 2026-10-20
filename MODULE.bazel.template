@@ -11,6 +11,11 @@ bazel_dep(name = "rules_apple", version = "4.5.3", repo_name = "build_bazel_rule
 bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rules_swift")
 bazel_dep(name = "rules_swift_package_manager", version = "1.17.1")
+bazel_dep(name = "swiftlint", version = "0.65.1")
+
+# SwiftLint builds its own SwiftSyntax, separate from ours (bazel/swiftlint).
+swiftlint_extra_rules = use_extension("@swiftlint//bazel:extensions.bzl", "extra_rules")
+swiftlint_extra_rules.setup(srcs = "//bazel/swiftlint:ExtraRules.swift")
 
 single_version_override(
     module_name = "rules_apple",

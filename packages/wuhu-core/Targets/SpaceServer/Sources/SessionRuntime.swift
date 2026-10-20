@@ -6,11 +6,16 @@ import struct FileSearch.SearchError
 import struct MainHub.ExecBackend
 import class MainHub.Hub
 import protocol MainHub.Main
+import enum MainHub.RevocationPolicy
+import struct MainHub.ScriptHandlerInvocation
+import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptMachineAccess
 import struct MainHub.SessionControl
 import struct MainHub.SessionControlRefusal
 import struct MainHub.SubscriptionFiring
 import protocol MainHub.Worker
+import struct MainHub.WorkerActivity
+import enum MainHub.WorkerInput
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -40,6 +45,10 @@ public struct SessionRuntime: Sendable {
   public let service: SessionService
   public let worker: any Worker
   public let attempts: AttemptHub
+  // What the worker presents to main's API for a mounted session, and the
+  // line it presents it over.
+  let tokens: ExecTokens
+  let connection: MainConnection
   let store: SessionStore
   let firing: SubscriptionFiring
   let sockets: ResponsesSocketRegistry?
@@ -53,11 +62,13 @@ public struct SessionRuntime: Sendable {
   let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?
   let budget: @Sendable (SessionID) async -> ContextBudget
 
-  public init(space: Space, service: SessionService, worker: any Worker, attempts: AttemptHub, owner: Hub) {
+  init(space: Space, service: SessionService, worker: any Worker, attempts: AttemptHub, owner: Hub, tokens: ExecTokens, connection: MainConnection) {
     startup = nil
     self.service = service
     self.worker = worker
     self.attempts = attempts
+    self.tokens = tokens
+    self.connection = connection
     store = space.sessions
     sockets = ResponsesSocketRegistry()
     usage = UsageBoard()
@@ -84,11 +95,15 @@ public struct SessionRuntime: Sendable {
     startup: (@Sendable () async -> Void)? = nil,
     owner: Hub,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
+    tokens: ExecTokens,
+    connection: MainConnection,
   ) {
     self.startup = startup
     self.service = service
     self.worker = worker
     self.attempts = attempts
+    self.tokens = tokens
+    self.connection = connection
     store = space.sessions
     self.usage = usage
     self.sockets = sockets
@@ -153,12 +168,15 @@ extension SessionRuntime {
     credentials: CredentialResolver,
     secrets: SpaceSecretStores?,
     usage: UsageBoard,
+    tokens: ExecTokens? = nil,
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     identityFetch: (@Sendable (Request, SessionID, @Sendable (String) -> Void) async throws -> Response)? = nil,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
+    let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
+    let connection = MainConnection()
     let executionCredentials = credentials
     let executionMetrics = metrics
     let thresholds = CompactionThresholds()
@@ -218,7 +236,9 @@ extension SessionRuntime {
     let sockets = ResponsesSocketRegistry()
     toolOwner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     let budget = budgetResolver(owner: owner)
-    let execution = await SessionExecution(main: owner, credentials: executionCredentials, completionCatalog: catalog) { executor in
+    let execution = await SessionExecution(
+      main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: executionCredentials, completionCatalog: catalog,
+    ) { executor in
       var config = LoopConfig(
         executeTool: { invocation in
           try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
@@ -254,7 +274,7 @@ extension SessionRuntime {
     }
     let service = SessionService(
       sessions: space.sessions, worker: execution, runningWork: { toolOwner.runningExecJobs(of: $0) },
-      archived: { await toolOwner.cancelExecJobs(of: $0) },
+      archived: { await toolOwner.cancelExecJobs(of: $0); tokens.revokeSession($0) },
     )
     serviceSlot.bind(service)
     return SessionRuntime(
@@ -267,7 +287,57 @@ extension SessionRuntime {
       worker: execution,
       startup: startup,
       owner: toolOwner, catalog: catalog,
+      tokens: tokens, connection: connection,
     )
+  }
+}
+
+// MARK: - Tools without loops
+
+// A worker that is only its tool executor: the gate routes a session's verbs
+// through it, and nothing runs a loop. Tests of the tools alone take it.
+struct ToolOnlyWorker: Worker {
+  let executor: ToolExecutor
+
+  func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
+    try await executor.execute(session: session, call: call, state: state)
+  }
+
+  func deliver(_ session: SessionID, _ input: WorkerInput) async throws { preconditionFailure("no loops run behind a tool-only worker") }
+  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { preconditionFailure("no loops run behind a tool-only worker") }
+  func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { preconditionFailure("no loops run behind a tool-only worker") }
+  func activity() async -> WorkerActivity { WorkerActivity(scripts: [:]) }
+  func drain() async {}
+  func shutdown() async {}
+}
+
+extension SessionRuntime {
+  /// Main's API bound in process to `worker` as the kernel binds it, with no
+  /// loops running: what a test of the tools alone needs.
+  static func bindMain(owner: Hub, worker: any Worker, tokens: ExecTokens, connection: MainConnection) {
+    let runtime = SessionRuntime(
+      space: owner.space, service: SessionService(sessions: owner.space.sessions, worker: worker),
+      worker: worker, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection,
+    )
+    _ = SpaceServer.configuredHandler(space: owner.space, hub: MachineHub(space: owner.space), sessions: runtime, dev: true, machines: owner.machines)
+  }
+
+  /// The tool executor as the kernel wires it, main's API bound in process and
+  /// reached as the session with the session's token, without the loops.
+  static func toolExecutor(
+    owner: Hub,
+    scripts: Scripts? = nil,
+    credentials: CredentialResolver = .unavailable,
+    completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+  ) -> ToolExecutor {
+    let tokens = ExecTokens(spaceURL: "http://main")
+    let connection = MainConnection()
+    let executor = ToolExecutor(
+      owner: owner, main: connection, credential: { tokens.sessionToken($0) },
+      credentials: credentials, completionCatalog: completionCatalog, scripts: scripts,
+    )
+    bindMain(owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection)
+    return executor
   }
 }
 

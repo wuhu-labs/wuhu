@@ -239,7 +239,7 @@ struct RequestMappingTests {
   @Test func namingVerbsSendTheReferenceThroughUntouched() async throws {
     try await assertRequest(
       ["machine", "name", "studio", "Mac-Mini"],
-      response: .object(["id": "mc_aaaaaaaa", "name": "mac-mini", "attached": false]),
+      response: .object(["id": "mc_aaaaaaaa", "name": "mac-mini", "group": "shared", "attached": false]),
     ) { request in
       #expect(request.method == .put)
       #expect(request.url.path == "/v1/machine/studio/name")

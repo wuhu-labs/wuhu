@@ -19,7 +19,7 @@ public enum Address: Hashable, Sendable {
     }
   }
 
-  nonisolated var folder: Address {
+  nonisolated public var folder: Address {
     switch self {
     case let .space(path, group, qualified): .space(parent(of: path) ?? path, in: group, qualified: qualified)
     case let .machine(id, path): .machine(id, parent(of: path) ?? path)
@@ -27,7 +27,7 @@ public enum Address: Hashable, Sendable {
     }
   }
 
-  nonisolated func appending(_ relative: String) -> Address {
+  nonisolated public func appending(_ relative: String) -> Address {
     switch self {
     case let .space(path, group, qualified): .space(joined(path, relative), in: group, qualified: qualified)
     case let .machine(id, path): .machine(id, joined(path, relative))

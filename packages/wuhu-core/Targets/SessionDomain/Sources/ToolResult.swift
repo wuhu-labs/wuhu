@@ -86,6 +86,18 @@ public struct ScopeContext: Hashable, Sendable, Codable {
   }
 }
 
+/// What one tool call produced: the result the model reads and, when the call touched
+/// a place with instructions the session has not seen yet, the context notice to deliver with it.
+public struct ToolOutcome: Sendable {
+  public var payload: ToolResultPayload
+  public var context: ScopeContext?
+
+  public init(payload: ToolResultPayload, context: ScopeContext? = nil) {
+    self.payload = payload
+    self.context = context
+  }
+}
+
 public struct ReadResult: Hashable, Sendable, Codable {
   public var path: String
   public var revision: FileRevision

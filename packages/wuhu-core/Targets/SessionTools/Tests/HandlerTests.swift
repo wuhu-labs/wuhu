@@ -2,6 +2,7 @@ import Dependencies
 import LoopCore
 @testable import MainHub
 @testable import SessionTools
+@testable import SpaceServer
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -55,7 +56,7 @@ private func withHandlerFiring(
       """.utf8), ifMatch: nil)
       let principal = try await space.principal(of: session)
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("observe", .object(["sql": "SELECT n FROM \"/input.table\"", "throttle_seconds": 1, "handler": "/serial.js"]))
         _ = try await space.mutateRows(watched, [.insert([.integer(1)])], in: .shared, acting: .shared)
         try await untilAdvancing("first firing started", time) { try await space.query("SELECT phase FROM \"/runs.table\"", as: principal).rows.count == 1 }
@@ -82,7 +83,7 @@ private func withHandlerFiring(
       };
       """.utf8), ifMatch: nil)
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/archive.js"]))
         await time.advance(by: 2)
         try await untilAdvancing("archive handler started", time) { (try? await space.fs(.shared).stat("/archive-started.md")) != nil }
@@ -100,7 +101,7 @@ private func withHandlerFiring(
       _ = try await space.fs(.shared).write("/must-not-run.js", Data("import {writeText} from 'wuhu:space'; export default async () => { await writeText('/ran.md','bad',{ifMatch:null}); wake('bad'); return null; };".utf8), ifMatch: nil)
       let watched = try SpacePath(validating: "/archived-input.table")
       _ = try await space.createTable(watched, header: .init(columns: [.init(name: "n", type: .integer)]), in: .shared, acting: .shared)
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: session)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: session)
       for handler in [false, true] {
         var timer: [String: JSONValue] = ["message": "bad", "in_seconds": 10]
         var observe: [String: JSONValue] = ["sql": "SELECT n FROM \"/archived-input.table\"", "throttle_seconds": 1]
@@ -138,7 +139,7 @@ private func withHandlerFiring(
       }
       """.utf8), ifMatch: nil)
       try await withHandlerFiring(try #require(first)) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 1, "handler": "/pending.js"]))
         await time.advance(by: 2)
         try await untilAdvancing("pending timer began", time) { (try? await first?.fs(.shared).stat("/pending-started.md")) != nil }
@@ -169,7 +170,7 @@ private func withHandlerFiring(
         while(true) {}
       };
       """)
-      let tools = ToolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
           do { _ = try await rig.scripts.runHandler(path: "/cpu.js", session: rig.session, tools: tools) }
@@ -184,7 +185,7 @@ private func withHandlerFiring(
 
   @Test func handlerTimeoutDiscardsEarlyWakeAndRejectsUndefinedOrOversizeState() async throws {
     try await withRig { rig in
-      let tools = ToolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts)
       try await rig.write("/timeout.js", "export default async ({wake}) => { wake('discard'); await sleep(120000); return 1; }")
       do {
         _ = try await rig.advancing {
@@ -207,7 +208,7 @@ private func withHandlerFiring(
       import {sendMessage} from 'wuhu:session';
       export default async () => { return await sendMessage({message:'handler answered'}); };
       """)
-      let result = try await rig.scripts.runHandler(path: "/post.js", session: rig.session, tools: ToolExecutor(owner: Hub(space: rig.space)))
+      let result = try await rig.scripts.runHandler(path: "/post.js", session: rig.session, tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       let posted = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(posted["conversationId"] == .string(rig.session.rawValue))
       let page = try await rig.evaluate("import {conversation} from 'wuhu:space'; result((await conversation(import.meta.session)).messages.map(m=>m.text));")
@@ -233,7 +234,7 @@ private func withHandlerFiring(
         _ = try await space.sessions.post(.conversation(channel), messageID: .init("park-\(n)"), sender: .init(id: "morgan", timeZone: TimeZone(identifier: "UTC")!), content: .init(text: text))
       }
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("observe", .object([
           "sql": .string("SELECT n, json_extract(content,'$.text') AS text FROM messages WHERE conversation_id = '\(channel.rawValue)' ORDER BY n"),
           "throttle_seconds": 1, "handler": "/park.js",
@@ -274,7 +275,7 @@ private func withHandlerFiring(
       }
       """)
       let rows = try await rig.space.query("SELECT 'release?' AS text", as: try await rig.space.principal(of: rig.session))
-      let result = try await rig.scripts.runHandler(path: "/handler.js", session: rig.session, rows: rows, stateJSON: "{\"cursor\":10}", tools: ToolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
+      let result = try await rig.scripts.runHandler(path: "/handler.js", session: rig.session, rows: rows, stateJSON: "{\"cursor\":10}", tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space), scripts: rig.scripts))
       #expect(JSONValue.parse(result.stateJSON) == .object(["cursor": 11]))
       #expect(result.wakes == ["release digest"])
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
@@ -286,7 +287,7 @@ private func withHandlerFiring(
     try await withRig { rig in
       try await rig.write("/throws.js", "export default ({wake}) => { wake('must not deliver'); throw Error('boom'); }")
       await #expect(throws: (any Error).self) {
-        try await rig.scripts.runHandler(path: "/throws.js", session: rig.session, tools: ToolExecutor(owner: Hub(space: rig.space)))
+        try await rig.scripts.runHandler(path: "/throws.js", session: rig.session, tools: SessionRuntime.toolExecutor(owner: Hub(space: rig.space)))
       }
       #expect(try await handlerNotifications(rig.space, rig.session).isEmpty)
     }
@@ -298,7 +299,7 @@ private func withHandlerFiring(
       let session = try await makeSession(space)
       _ = try await space.fs(.shared).write("/silent.js", Data("export default () => null;".utf8), ifMatch: nil)
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "in_seconds": 10, "handler": "/silent.js"]))
         _ = try await space.sessions.writeCompaction(session, head: .init(
           id: UUID(), timestamp: anchor, summary: "waiting for quiet timer", snapshot: .init(subscriptions: world.state.subscriptions),
@@ -325,7 +326,7 @@ private func withHandlerFiring(
       let fs = await space.fs(.shared)
       _ = try await fs.write("/tick.js", Data("export default ({state, fireTime}) => ({n:(state?.n ?? 0)+1, fireTime});".utf8), ifMatch: nil)
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/tick.js"]))
         await time.advance(by: 61)
         try await untilAdvancing("silent first tick", time) {
@@ -351,7 +352,7 @@ private func withHandlerFiring(
       let space = try Space.inMemory()
       let session = try await makeSession(space)
       try await withHandlerFiring(space) { worker, owner in
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         _ = try await world.run("timer", .object(["message": "unused", "cron": "* * * * *", "handler": "/missing.js"]))
         await time.advance(by: 61)
         try await untilAdvancing("missing handler error", time) { try await handlerNotifications(space, session).count == 1 }
@@ -398,7 +399,7 @@ private func withHandlerFiring(
         group.addTask { await worker.drain() }
         group.addTask { await runner.run() }
         defer { group.cancelAll() }
-        var world = ToolWorld(worker: worker, owner: owner, session: session)
+        var world = ToolWorld(worker: worker, session: session)
         var arguments: [String: JSONValue] = ["sql": "SELECT 1", "throttle_seconds": 1]
         if handler { arguments["handler"] = "/unchanged.js" }
         _ = try await world.run("observe", .object(.init(uniqueKeysWithValues: arguments.sorted { $0.key < $1.key })))

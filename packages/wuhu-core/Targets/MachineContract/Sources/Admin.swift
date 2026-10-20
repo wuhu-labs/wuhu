@@ -49,6 +49,7 @@ public struct MachineRevokeInput: Codable, Equatable, Sendable {
 public struct MachineStatus: Codable, Equatable, Sendable {
   public let id: MachineID
   public let name: String?
+  public let group: String
   public let attached: Bool
 }
 

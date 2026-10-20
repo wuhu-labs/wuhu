@@ -7,6 +7,7 @@ import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Synchronization
 import Testing
 
@@ -97,7 +98,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials), credentials: credentials),
         session: session,
       )
 
@@ -161,7 +162,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -188,7 +189,7 @@ private let ModelsPath = "/models.json"
       _ = try await space.fs(.shared).write("/_/machines/studio/AGENTS.md", Data("studio manual".utf8), ifMatch: nil)
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: FakeMachineFS().seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: FakeMachineFS().seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -212,7 +213,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: ToolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
         session: try await makeSession(space),
       )
 
@@ -235,7 +236,7 @@ private let ModelsPath = "/models.json"
       let space = try Space.inMemory()
       try await installModels(space)
       let recorder = ImageRequestRecorder()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let result = try await withDependencies {
         $0.fetch = recorder.client
@@ -252,7 +253,7 @@ private let ModelsPath = "/models.json"
       let space = try Space.inMemory()
       try await installModelsWithoutCodex(space)
       let recorder = ImageRequestRecorder()
-      var world = ToolWorld(executor: ToolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let result = try await withDependencies {
         $0.fetch = recorder.client

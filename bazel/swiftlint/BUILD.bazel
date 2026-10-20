@@ -1,0 +1,18 @@
+load(":defs.bzl", "swiftlint_test")
+
+# SwiftLint compiles these into its SwiftLintExtraRules module (MODULE.bazel.template).
+exports_files(["ExtraRules.swift"])
+
+swiftlint_test(
+    name = "violations_test",
+    srcs = glob(["testdata/Sources/*.swift"]),
+    expected_violations = [
+        "duplicate_conditions",
+        "testable_import_outside_tests",
+    ],
+)
+
+swiftlint_test(
+    name = "test_sources_test",
+    srcs = glob(["testdata/Tests/*.swift"]),
+)

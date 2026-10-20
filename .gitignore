@@ -23,6 +23,7 @@ Benchmarks/
 # run deno task generate-manifests before invoking build tools.
 packages/*/Package.swift
 .bazelignore
+packages/BUILD.bazel
 packages/*/BUILD.bazel
 packages/*/*/BUILD.bazel
 packages/*/Apps/*/**/BazelInfo*.plist

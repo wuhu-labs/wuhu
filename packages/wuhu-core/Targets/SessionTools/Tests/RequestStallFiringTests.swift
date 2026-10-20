@@ -37,7 +37,7 @@ import Testing
         group.addTask { await worker.drain() }
         group.addTask { await firing.run() }
         defer { group.cancelAll() }
-        var world = ToolWorld(worker: worker, owner: owner, session: task)
+        var world = ToolWorld(worker: worker, session: task)
         _ = try await world.run("run_script", .object(["source": "result('watching'); await sleep(3_600_000)"]))
         let script = try #require(await worker.activity().scripts.first { $0.value == task }?.key)
         // Past twice the stall, the clock has been checked and pushed out

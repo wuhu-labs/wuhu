@@ -26,9 +26,34 @@ final class ExecTokens: Sendable {
   let spaceURL: String
   let idTokens = IDTokenGrants()
   private let held = Mutex<[ExecID: (token: [UInt8], holder: Holder)]>([:])
+  // The worker's token for a mounted session: minted once, good until the
+  // session is archived.
+  private let sessions = Mutex<[SessionID: [UInt8]]>([:])
 
   init(spaceURL: String) {
     self.spaceURL = spaceURL
+  }
+
+  func sessionToken(_ session: SessionID) -> String {
+    sessions.withLock { held in
+      if let token = held[session] { return String(decoding: token, as: UTF8.self) }
+      let token = Array(Self.randomToken().utf8)
+      held[session] = token
+      return String(decoding: token, as: UTF8.self)
+    }
+  }
+
+  func revokeSession(_ session: SessionID) {
+    _ = sessions.withLock { $0.removeValue(forKey: session) }
+  }
+
+  func session(ofBearer bearer: String) -> SessionID? {
+    let presented = Array(bearer.utf8)
+    return sessions.withLock { held in
+      var found: SessionID?
+      for (session, token) in held where execTokenEqual(token, presented) { found = session }
+      return found
+    }
   }
 
   func credential(session: SessionID, exec: ExecID, timeout: Double?, now: Date) -> ExecSessionCredential {

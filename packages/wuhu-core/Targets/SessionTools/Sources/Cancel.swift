@@ -21,7 +21,7 @@ extension ToolExecutor {
   func cancel(_ session: SessionID, id: String) async throws -> ToolResultPayload {
     @Dependency(\.uuid) var uuid
     let call = ToolCall(id: "script:\(uuid().uuidString.lowercased())", name: RosterTool.cancel.rawValue, arguments: ToolArguments(.object(["id": .string(id)])))
-    return try await execute(session: session, call: call, state: ToolExecutionState())
+    return try await execute(session: session, call: call, state: ToolExecutionState()).payload
   }
 
   func stopScript(_ session: SessionID, _ script: String) async throws -> ToolResultPayload {

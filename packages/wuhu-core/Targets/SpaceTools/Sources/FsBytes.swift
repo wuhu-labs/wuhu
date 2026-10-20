@@ -23,7 +23,7 @@ public struct FileVersion: Sendable {
 public extension SpaceToolContext {
   func readBytes(_ address: String, rev: Int? = nil, byteLimit: Int? = nil) async throws(ToolRunError) -> FileBytes {
     do {
-      let target = try resolve(address, rev: rev)
+      let target = try await resolve(address, rev: rev)
       if let byteLimit, try await target.backend.stat(target.path).size > byteLimit {
         throw ToolRunError.failed(code: .invalidArgument, message: "file exceeds byte limit", hint: "Read a smaller file.")
       }
@@ -39,7 +39,7 @@ public extension SpaceToolContext {
 
   func writeBytes(_ address: String, _ data: Data, ifMatch: String?, createOnly: Bool = false) async throws(ToolRunError) -> FileVersion {
     do {
-      let target = try resolve(address)
+      let target = try await resolve(address)
       if target.isSpace, address.contains("@") {
         throw ToolRunError.failed(code: .invalidPath, message: "invalid space path: \(address)", hint: "Historical views are read-only.")
       }
@@ -56,7 +56,7 @@ public extension SpaceToolContext {
     } catch let SpaceError.alreadyExists(path) where createOnly {
       throw .failed(code: .conflict, message: "already exists: \(path)", hint: "Choose another path; create-only operations never replace an existing entry.")
     } catch SpaceError.versionMismatch {
-      let target = try? resolve(address)
+      let target = try? await resolve(address)
       let current: VersionToken?
       if let target { current = try? await target.backend.stat(target.path).token }
       else { current = nil }
