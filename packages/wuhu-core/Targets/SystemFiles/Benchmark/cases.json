@@ -377,6 +377,24 @@
       "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header or append a new state message? How can you inspect live subscriptions if needed? At most three sentences.",
       "required": ["no_files_written"],
       "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header stays unchanged across server restart with no new tail state message, and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, adds a state notification, or calls tools."
+    },
+    {
+      "id": "xcode-canary-isolation",
+      "issue": 372,
+      "title": "Does not mistake Xcode job pins for lease isolation",
+      "prompt": "Text-only smoke; do not call tools or write files. A pool scheduler requires an exact Xcode build for jobs but interactive leases match only advertised platform and requested labels. An executor having extra labels does not exclude an unlabeled request. I want to stage Xcode 27.1 and iOS 27.1 on one existing worker, retaining tvOS/visionOS/watchOS 27.0 and its separate VM lane on Xcode 27.0. Is adding a canary label and the new build enough to safely reopen that pilot on the production pool? Give a safe staging approach and say whether to re-apply the installer or move the snapshot device baseline. At most five sentences.",
+      "required": ["no_files_written"],
+      "judge": "PASS only if it rejects label/build-only isolation because unlabeled leases can enter, recommends a separate private pool endpoint/state/tokens with signing polling disabled until cutover, preserves current config rather than re-applying installer defaults, keeps non-iOS runtimes and the independent VM compiler pin unchanged, and retains the existing snapshot device baseline. Fail if it proposes a production admission feature as necessary, changes host macOS, deletes rollback before validation or claims extra labels exclude unlabeled leases. No tools or files."
+    },
+    {
+      "id": "xcode-runtime-trains",
+      "issue": 372,
+      "title": "Fresh-worker runtimes use independent platform pins, never the compiler train",
+      "prompt": "Text-only smoke; do not call tools or write files. We are setting up a fresh worker with Xcode27.1: IOS_RUNTIME=27.1, TVOS_RUNTIME=27.0, VISIONOS_RUNTIME=27.0, WATCHOS_RUNTIME=27.0. Which NAS cache trains supply each platform? If the tvOS cache pair is missing, may we run an unversioned xcodebuild -downloadPlatform tvOS? Explain the supported version-selecting download and what must be verified before cache promotion/import, in at most four sentences.",
+      "required": [
+        "no_files_written"
+      ],
+      "judge": "PASS only if it selects /tank/fleet/xcode/27.1/iOS.dmg and the three corresponding platform images from /tank/fleet/xcode/27.0 (relative checksum pairs included), rejects unversioned/newest fallback, and describes an authorized cache-producing worker using -downloadPlatform tvOS -buildVersion 27.0 with -exportPath. It must require exact version/build provenance (tvOS27.0/24J360, exported metadata/manifest), checksum verification before promotion/import and installed availability verification, stopping on mismatch rather than silently selecting a newer runtime. Fail if the compiler train selects all four images, or setup proceeds with an unverified replacement. No tools or files."
     }
   ]
 }

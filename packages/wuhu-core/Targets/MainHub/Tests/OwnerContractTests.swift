@@ -43,6 +43,10 @@ private struct OwnerContract {
     #expect(drain.items == [input.transcriptItem])
     #expect(drain.queueTail == 1)
     #expect(try await owner.drainQueue(id).items.isEmpty)
+    let missing = SessionID("missing")
+    await #expect(throws: SessionStoreError.unknownSession(missing.rawValue)) {
+      _ = try await owner.append(missing, .inputEnqueued(input)).value(Int.self)
+    }
     guard case var .kernel(transcript) = try await owner.hydrate(id).transcript else {
       Issue.record("kernel session must hydrate a kernel transcript")
       return
@@ -94,6 +98,9 @@ private struct OwnerContract {
     let guidanceToken = try await space.fs(.shared).write("/AGENTS.md", Data("frozen owner guidance".utf8), ifMatch: nil)
     let home = try await owner.promptHome(id)
     _ = try await space.fs(.shared).write("/AGENTS.md", Data("later edit".utf8), ifMatch: guidanceToken)
+    let input = QueueInput.notification(.init(id: UUID(), timestamp: now, kind: .script, subscriptionID: .script("update"), content: .init(text: "wake")))
+    _ = try await owner.append(id, .inputEnqueued(input)).value(Int.self)
+    _ = try await owner.drainQueue(id)
     #expect(try await owner.promptHome(id) == home)
     let bytes = Data([1, 2, 3, 4])
     let hash = try await space.storeImage(bytes)
@@ -205,5 +212,31 @@ extension HubOwnerContractTests {
     await #expect(throws: InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.")) {
       try await owner.inferenceReadiness(audience: URL(string: "https://provider.example")!)
     }
+  }
+}
+
+extension HubOwnerContractTests {
+  @Test func restartAnnouncesEachScriptOwnerOnlyOnce() async throws {
+    let (space, _, session) = try await contract.fixture()
+    let owner = Hub(space: space)
+    let machine = try await space.addMachine(name: "box").id
+    let running = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "running")
+    let finished = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "running")
+    try await space.finishExec(finished.id, .exited(code: 0))
+    let other = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: "finished")
+    try await space.finishExec(other.id, .exited(code: 0))
+    await owner.announceScriptRestart()
+    let queued = try await owner.hydrate(session).undrained.map(\.input)
+    #expect(queued.count == 2)
+    let notices = queued.compactMap { input -> SystemNotification? in
+      if case let .notification(value) = input { return value }; return nil
+    }
+    #expect(Set(notices.map(\.subscriptionID)) == [.script("running"), .script("finished")])
+    #expect(notices.allSatisfy { $0.kind == .script && $0.content.text.contains("was killed by a server restart") })
+    #expect(notices.first { $0.subscriptionID == .script("running") }?.content.text.contains(running.id.rawValue) == true)
+    await owner.announceScriptRestart()
+    #expect(try await owner.queueHead(session) == 2)
+    #expect(try await owner.drainQueue(session).items == queued.map(\.transcriptItem))
+    #expect(try await space.takeScriptExecOwners().isEmpty)
   }
 }

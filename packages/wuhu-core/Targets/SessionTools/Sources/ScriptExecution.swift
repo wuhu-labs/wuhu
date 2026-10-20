@@ -554,7 +554,7 @@ func notify(_ owner: any Main, _ session: SessionID, script: String, _ text: Str
     content: .init(text: text),
   )
   do {
-    try await owner.notify(session: session, notification: notification)
+    _ = try await owner.append(session, .inputEnqueued(.notification(notification))).value(Int.self)
   } catch {
     Logger(label: "wuhu.run-script").warning("script \(script) could not reach \(session.rawValue): \(error)")
   }

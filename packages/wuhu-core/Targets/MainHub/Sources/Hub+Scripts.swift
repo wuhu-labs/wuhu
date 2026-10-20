@@ -98,9 +98,7 @@ extension Hub {
   nonisolated public func resolveMachine(_ reference: String, session: SessionID) async throws -> MachineRecord? { try await space.resolveMachine(reference, usableFrom: principal(of: session).group) }
   nonisolated public func ownExecs(session: SessionID) async throws -> [ExecStatus] { try await context(session).ownExecs() }
   nonisolated public func ownExecStatus(_ id: String, session: SessionID) async throws -> ExecStatus { try await context(session).ownExecStatus(id) }
-  nonisolated public func takeScriptExecOwners() async throws -> [ScriptExecOwner] { try await space.takeScriptExecOwners() }
   nonisolated public func releaseScriptExecs(script: String) async throws { try await space.releaseScriptExecs(script: script) }
-  nonisolated public func notify(session: SessionID, notification: SystemNotification) async throws { _ = try await store.enqueue(session, input: .notification(notification)) }
 }
 
 final class ScriptDiscoveryConfiguration: Sendable {
@@ -118,7 +116,7 @@ extension Hub {
 
   nonisolated public func announceScriptRestart() async {
     do {
-      for owner in try await takeScriptExecOwners() {
+      for owner in try await space.takeScriptExecOwners() {
         var text = "script.\(owner.script) was killed by a server restart"
         if !owner.live.isEmpty {
           let ids = owner.live.map(\.rawValue).joined(separator: ", ")
@@ -127,9 +125,9 @@ extension Hub {
         @Dependency(\.date) var date
         @Dependency(\.uuid) var uuid
         do {
-          try await notify(session: SessionID(rawValue: owner.session), notification: SystemNotification(
+          _ = try await append(SessionID(rawValue: owner.session), .inputEnqueued(.notification(.init(
             id: uuid(), timestamp: date.now, kind: .script, subscriptionID: .script(owner.script), content: .init(text: text),
-          ))
+          )))).value(Int.self)
         } catch {
           Logger(label: "wuhu.execution-boot").warning("Could not notify script owner: \(error)")
         }

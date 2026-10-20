@@ -78,9 +78,7 @@ public protocol Main: Sendable {
   func resolveMachine(_ reference: String, session: SessionID) async throws -> MachineRecord?
   func ownExecs(session: SessionID) async throws -> [ExecStatus]
   func ownExecStatus(_ id: String, session: SessionID) async throws -> ExecStatus
-  func takeScriptExecOwners() async throws -> [ScriptExecOwner]
   func releaseScriptExecs(script: String) async throws
-  func notify(session: SessionID, notification: SystemNotification) async throws
   func scopeContext(_ id: SessionID, toolCallID: ToolCallID) async throws -> ScopeContext?
   func killInterruptedExec(session: SessionID, toolCallID: ToolCallID) async
   /// For each urgency, the earliest item in the session's queue that the
