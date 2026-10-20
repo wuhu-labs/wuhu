@@ -2,6 +2,7 @@ import Assertion
 import Crypto
 import Dependencies
 import DependenciesTestSupport
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -14,7 +15,7 @@ import Testing
 import enum WuhuAI.InferenceError
 import WuhuVFS
 
-@Suite(.dependency(\.continuousClock, ContinuousClock())) struct IdentityControllerTests {
+@Suite(.deterministicDependencies, .dependency(\.continuousClock, ContinuousClock())) struct IdentityControllerTests {
   @Test func inferenceSelectsIssuerAndRefusedRestartHasStaticTypedFailure() async throws {
     let fs = NodeTreeVFS(root: InMemoryVFSNode())
     let key = try await ServerIdentity.loadOrCreate(from: fs)

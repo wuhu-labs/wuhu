@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import Foundation
 @testable import MachineAgent
 import MachineChannel
@@ -37,7 +39,7 @@ private func ending(_ exec: OutgoingExec) async throws -> (status: MachineContra
   return (nil, timedOut)
 }
 
-@Suite
+@Suite(.deterministicDependencies(clock: ContinuousClock()))
 struct KillTests {
   @Test func killTakesDownTheWholeProcessGroup() async throws {
     try await Harness().run { h in

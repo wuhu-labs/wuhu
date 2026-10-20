@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import FetchURLSession
@@ -19,7 +20,7 @@ private let liveCases: [(provider: String, model: String)] = [
   ("deepseek", "deepseek-v4-pro"),
 ]
 
-@Suite struct LiveConversationTests {
+@Suite(.deterministicDependencies) struct LiveConversationTests {
   @Test(arguments: liveCases.map(\.provider))
   func scriptedConversation(provider: String) async throws {
     guard ProcessInfo.processInfo.environment["WUHU_LIVE"] == "1" else { return }

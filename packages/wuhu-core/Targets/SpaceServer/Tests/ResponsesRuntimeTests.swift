@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import FetchWebSocket
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,7 +11,7 @@ import SessionDomain
 @testable import SpaceServer
 import Testing
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ResponsesRuntimeTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct ResponsesRuntimeTests {
   @Test func assembledRuntimeReleasesSuccessfulLeasesAcknowledgesActualCommitsAndRoutesQuota() async throws {
     try await withSessionDeps {
       let peer = RuntimeResponsesPeer()

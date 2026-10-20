@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import MachineChannel
 import struct MachineContract.ExecID
 import func MainHub.execEnvironment
@@ -10,7 +11,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite(.timeLimit(.minutes(2))) struct ScriptMachineBoundaryTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(2))) struct ScriptMachineBoundaryTests {
   @Test func releaseJoinsCallerLegAndDoesNotKillRemoteProcess() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

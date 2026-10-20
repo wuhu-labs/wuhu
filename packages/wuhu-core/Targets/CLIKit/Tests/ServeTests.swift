@@ -1,8 +1,9 @@
 @testable import CLIKit
+import DeterministicDependencies
 import Fetch
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct ServeParsingTests {
   @Test func defaultsPortsAndFlags() throws {
     #expect(try Command.parse(["serve", "/tmp/store"]) == .serve(ServeCommand(
@@ -116,7 +117,7 @@ struct ServeParsingTests {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct ServeRoutingTests {
   private actor Received {
     var configs: [ServeCommand] = []
@@ -185,7 +186,7 @@ struct ServeRoutingTests {
   }
 }
 
-@Suite struct FlatServeParsingTests {
+@Suite(.deterministicDependencies) struct FlatServeParsingTests {
   @Test func parsesTheFlatTemplate() throws {
     guard case let .serve(config) = try Command.parse([
       "serve", "store", "--origin", "https://alex.test:5530", "--content-host-pattern", "{group}--alex.test:5530",
@@ -202,7 +203,7 @@ struct ServeRoutingTests {
   }
 }
 
-@Test func telemetryEndpointIsOptInAndValidated() throws {
+@Test(.deterministicDependencies) func telemetryEndpointIsOptInAndValidated() throws {
   guard case let .serve(off) = try Command.parse(["serve", "store"]),
         case let .serve(on) = try Command.parse(["serve", "store", "--otel-endpoint", "http://collector.example:4318"])
   else { Issue.record("expected serve command"); return }

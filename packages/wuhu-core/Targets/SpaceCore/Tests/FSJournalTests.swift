@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct JournalAlgebraTests {
+@Suite(.deterministicDependencies) struct JournalAlgebraTests {
   @Test func historicalReadIsStableForever() async throws {
     let space = try makeSpace()
     let token1 = try await space.writeText("/note.md", "one")
@@ -183,7 +184,7 @@ import Testing
   }
 }
 
-@Suite struct TokenGatingTests {
+@Suite(.deterministicDependencies) struct TokenGatingTests {
   @Test func staleIfMatchFails() async throws {
     let space = try makeSpace()
     let token1 = try await space.writeText("/f.md", "one")
@@ -215,7 +216,7 @@ import Testing
   }
 }
 
-@Suite struct MoveTests {
+@Suite(.deterministicDependencies) struct MoveTests {
   @Test func moveLeavesFileContentByteIdentical() async throws {
     let space = try makeSpace()
     let original = bytes("hello world\nsecond line")
@@ -239,7 +240,7 @@ import Testing
   }
 }
 
-@Suite struct PagedListingTests {
+@Suite(.deterministicDependencies) struct PagedListingTests {
   @Test func liveAndHistoricalListingsPageFromANameInNameOrder() async throws {
     let space = try makeSpace()
     for name in ["d/b.md", "d/a.md", "d/c", "d/c-1.md", "d/sub/x.md", "top.md"] {

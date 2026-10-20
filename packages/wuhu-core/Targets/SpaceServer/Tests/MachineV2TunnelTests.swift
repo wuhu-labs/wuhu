@@ -1,4 +1,5 @@
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import MachineContract
@@ -10,7 +11,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-@Suite struct MachineV2TunnelTests {
+@Suite(.deterministicDependencies) struct MachineV2TunnelTests {
   struct Fixture {
     let space: Space
     let hub: MachineV2Hub

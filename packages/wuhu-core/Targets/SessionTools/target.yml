@@ -44,6 +44,7 @@ tests:
     - path: Fixtures
       mode: copy
   dependencies:
+    - DeterministicDependencies
     - LoopCore
     - MainHub
     - SessionToolsTestSupport

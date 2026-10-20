@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import SpaceContract
 import SpaceCore
 import Testing
 
-@Suite struct SessionRoutesTests {
+@Suite(.deterministicDependencies) struct SessionRoutesTests {
   @Test func createValidatesTheModelSpecifier() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
@@ -523,7 +524,7 @@ extension SessionHarness {
   }
 }
 
-@Suite struct HistoryRoutesTests {
+@Suite(.deterministicDependencies) struct HistoryRoutesTests {
   @Test func historyIsAdditiveAuthorizedAndValidatesItsCursor() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
@@ -548,9 +549,9 @@ extension SessionHarness {
   }
 }
 
-@Suite struct ClaudeHistoryRoutesTests {}
+@Suite(.deterministicDependencies) struct ClaudeHistoryRoutesTests {}
 
-@Suite struct ConversationHistoryRoutesTests {
+@Suite(.deterministicDependencies) struct ConversationHistoryRoutesTests {
   @Test func sparseOrdinalsUseExtraRowExhaustionAndExclusiveBoundaries() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

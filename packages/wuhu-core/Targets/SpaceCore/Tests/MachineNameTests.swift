@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import struct MachineContract.MachineID
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct MachineNameTests {
   @Test func addingStoresTheNameLowercasedAndRefusesACollision() async throws {
     let space = try makeSpace()

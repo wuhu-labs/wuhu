@@ -1,11 +1,12 @@
 import Clocks
+import DeterministicDependencies
 import Foundation
 import MachineChannel
 import MachineContract
 @testable import SpaceServer
 import Testing
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1)))
 struct MachineRefusalRetentionTests {
   @Test(arguments: [false, true])
   func refusedExecReplaysAfterCallerCrashUntilTerminalAckOrTenMinutes(acknowledge: Bool) async throws {

@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import InferenceKit
 import SessionDomain
@@ -9,7 +10,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct CacheWarmerTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct CacheWarmerTests {
   @Test func onlyExplicitlyOptedInIdleAgentsReceiveOrdinaryNotices() async throws {
     let time = Mutex(Date(timeIntervalSince1970: 100))
     try await withSessionDeps {

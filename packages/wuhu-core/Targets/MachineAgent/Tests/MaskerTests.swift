@@ -1,3 +1,4 @@
+import DeterministicDependencies
 @testable import MachineAgent
 import Testing
 
@@ -31,7 +32,7 @@ struct SplitMix64: RandomNumberGenerator {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct MaskerTests {
   @Test func masksEverySingleSplitIdentically() {
     let secrets = ["hunter2", "ab"]

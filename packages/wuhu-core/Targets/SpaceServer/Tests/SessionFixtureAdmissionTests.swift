@@ -1,6 +1,7 @@
+import DeterministicDependencies
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct SessionFixtureAdmissionTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct SessionFixtureAdmissionTests {
   @Test func boundsAdmissionAndHandsReleasedCapacityToTheNextWaiter() async throws {
     let admission = SessionFixtureAdmission(capacity: 1)
     let first = try await admission.acquire("first", within: .seconds(30))
@@ -71,7 +72,7 @@ import Testing
   }
 }
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct SessionFixtureTraitTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct SessionFixtureTraitTests {
   @Test func fixturesRunInsideTheTraitsAdmission() async throws {
     #expect(SessionFixtureAdmission.isAdmitted)
     try await withSessionDeps { #expect(SessionFixtureAdmission.isAdmitted) }
@@ -80,8 +81,8 @@ import Testing
 
 private let nestedAdmission = SessionFixtureAdmission(capacity: 1)
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1), admission: nestedAdmission, bound: .seconds(1))) struct NestedSessionFixtureTraitTests {
-  @Suite struct Inner {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1), admission: nestedAdmission, bound: .seconds(1))) struct NestedSessionFixtureTraitTests {
+  @Suite(.deterministicDependencies) struct Inner {
     @Test(.sessionFixtures(timeLimit: .minutes(1), admission: nestedAdmission, bound: .seconds(1)))
     func nestedScopesShareTheOutermostSlot() async throws {
       #expect(SessionFixtureAdmission.isAdmitted)

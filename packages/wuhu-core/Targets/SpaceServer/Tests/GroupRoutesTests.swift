@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import Testing
 
 // Sessions, settings and conversations by group on the API: alice is the
 // person's personal group, bob another person's.
-@Suite struct GroupRoutesTests {
+@Suite(.deterministicDependencies) struct GroupRoutesTests {
   struct People {
     let harness: SessionHarness
     let bearer: String

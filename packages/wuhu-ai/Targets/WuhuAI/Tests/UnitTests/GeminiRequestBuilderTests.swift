@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 @testable import WuhuAI
 
 // MARK: - Gemini Encoding Tests
 
-@Suite struct GeminiRequestBuilderTests {
+@Suite(.deterministicDependencies) struct GeminiRequestBuilderTests {
   @Test func buildsBasicGeminiRequest() async throws {
     let context = Context(
       systemPrompt: "You are helpful.",

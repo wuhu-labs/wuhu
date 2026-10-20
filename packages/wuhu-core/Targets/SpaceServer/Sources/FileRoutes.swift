@@ -76,7 +76,8 @@ enum ToolContextVerdict: Sendable {
   case refused(Response)
 }
 
-// `?group=<id>` names another group's file, like `wuhu://<id>.localspace/<path>`.
+// `?group=<id>` names another group's file, like `wuhu://<id>.localspace/<path>`;
+// `?machine=<id-or-name>` a machine's, like `machines://<id-or-name>/<path>`.
 func fileRouteAddress(_ url: URL) -> String? {
   guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
   let rawPath = components.percentEncodedPath
@@ -89,6 +90,10 @@ func fileRouteAddress(_ url: URL) -> String? {
     segments.append(decoded)
   }
   let path = "/" + segments.joined(separator: "/")
+  if let machine = components.queryItems?.first(where: { $0.name == "machine" })?.value {
+    guard !machine.isEmpty, !machine.contains("/") else { return nil }
+    return "machines://" + machine + path
+  }
   guard let group = components.queryItems?.first(where: { $0.name == "group" })?.value else { return path }
   // The same parser as a `wuhu://<group>.localspace/` host, so the two
   // spellings accept the same groups.

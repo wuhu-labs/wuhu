@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -22,7 +23,7 @@ private let sameDialectPairs: [(String, String, String, String)] = [
   ("anthropic", "claude-sonnet-4-6", "anthropic", "claude-opus-4-7"),
 ]
 
-@Suite struct SameDialectHandoffTests {
+@Suite(.deterministicDependencies) struct SameDialectHandoffTests {
   @Test(arguments: sameDialectPairs)
   func crossProviderSameDialect(
     sourceProvider: String, sourceModel: String,
@@ -67,7 +68,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
   ("deepseek", "deepseek-v4-pro", "anthropic", "claude-sonnet-4-6"),
 ]
 
-@Suite struct CrossDialectHandoffTests {
+@Suite(.deterministicDependencies) struct CrossDialectHandoffTests {
   @Test(arguments: crossDialectPairs)
   func crossProviderDifferentDialect(
     sourceProvider: String, sourceModel: String,
@@ -106,7 +107,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
 
 // MARK: - With Reasoning Handoff
 
-@Suite struct ReasoningHandoffTests {
+@Suite(.deterministicDependencies) struct ReasoningHandoffTests {
   @Test
   func reasoningCrossProviderHandoff() async throws {
     let recordingName = "claude-sonnet-4-6-to-deepseek-v4-pro-reasoning-handoff"
@@ -166,7 +167,7 @@ private let crossDialectPairs: [(String, String, String, String)] = [
 
 // MARK: - GPT reasoning replayed to Anthropic (regression)
 
-@Suite struct GPTReasoningToAnthropicHandoffTests {
+@Suite(.deterministicDependencies) struct GPTReasoningToAnthropicHandoffTests {
   /// Regression for the production error
   /// `messages.N.content.0: Invalid \`signature\` in \`thinking\` block`.
   ///

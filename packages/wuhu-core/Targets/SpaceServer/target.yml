@@ -52,6 +52,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - DeterministicDependencies
     - MainHub
     - ServeTLS
     - Subprocess

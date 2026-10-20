@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -264,13 +266,21 @@ private struct Rig {
   }
 }
 
-@Suite(.timeLimit(.minutes(2))) struct MachineV2ExecLifecycleTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(2))) struct MachineV2ExecLifecycleTests {
   /// Audit 8: each way an exec ends reaches the caller as the process's own status and the record as the reason it ended. A
   /// stop the caller's side asked for (a kill, the caller's cancel, the caller gone) records `cancelled`; the timeout and the
   /// output budget keep the process's real termination.
-  @Test(arguments: ["completed", "callerCancelled", "kill", "callerGone", "timeout", "outputLimit"])
+  @Test(arguments: ["completed", "callerCancelled", "kill", "timeout", "outputLimit"])
   func everyEndingReachesTheCallerAndTheRecordAsItsOwn(_ ending: String) async throws {
     try await MachineV2Service.$callerGrace.withValue(.seconds(2)) { try await end(ending) }
+  }
+
+  @Test func callerGoneReachesTheRecordAfterWallClockGrace() async throws {
+    try await withDependencies {
+      $0.date = DateGenerator { Date() }
+    } operation: {
+      try await MachineV2Service.$callerGrace.withValue(.seconds(2)) { try await end("callerGone") }
+    }
   }
 
   private func end(_ ending: String) async throws {

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import Scratch
@@ -7,7 +8,7 @@ import struct SpaceContract.GroupID
 import SpaceFS
 import Testing
 
-@Suite struct InferenceStoreTests {
+@Suite(.deterministicDependencies) struct InferenceStoreTests {
   private func record(_ session: SessionID, id: String, failed: Bool = false) -> InferenceRecord {
     InferenceRecord(
       id: id, session: session, at: fixedDate,

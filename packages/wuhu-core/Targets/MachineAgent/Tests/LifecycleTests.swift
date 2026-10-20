@@ -1,6 +1,7 @@
 import Clocks
 import ClockTesting
 import Dependencies
+import DeterministicDependencies
 import Foundation
 @testable import MachineAgent
 import MachineChannel
@@ -26,7 +27,7 @@ private func pollUntilAdvancing(
   return condition()
 }
 
-@Suite(.timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(2)))
 struct LifecycleTests {
   /// Runs on a `VirtualClock`: time moves only from one pending sleep to the next, so the dial instants are the backoff schedule
   /// itself, however slow the host is.

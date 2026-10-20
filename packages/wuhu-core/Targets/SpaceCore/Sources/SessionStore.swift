@@ -300,6 +300,37 @@ extension SessionStore {
       try Sessions.receipt(key, toolCallID: toolCallID.rawValue, in: db)
     }
   }
+
+  /// The API's first successful answer to the session's tool call, if one
+  /// was recorded.
+  public func apiReceipt(_ id: SessionID, toolCallID: ToolCallID) async throws -> APIReceipt? {
+    let key = id.rawValue
+    return try await writer.read { db in
+      try Sessions.apiReceipt(key, toolCallID: toolCallID.rawValue, in: db)
+    }
+  }
+
+  // The first recorded answer is authoritative; a crash-retry that re-records
+  // must not overwrite it.
+  public func recordAPIReceipt(_ id: SessionID, toolCallID: ToolCallID, _ receipt: APIReceipt) async throws {
+    let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    try await writer.write { db in
+      try Sessions.recordAPIReceipt(key, toolCallID: toolCallID.rawValue, receipt, now: now, in: db)
+    }
+  }
+}
+
+/// A `/v1/tools/<name>` response as the session's tool call got it: its status
+/// and JSON body, answered again to a repeat of the same call.
+public struct APIReceipt: Hashable, Sendable {
+  public let status: Int
+  public let body: String
+
+  public init(status: Int, body: String) {
+    self.status = status
+    self.body = body
+  }
 }
 
 extension SessionStore {

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
@@ -7,7 +8,7 @@ import Testing
 
 private enum ResponsesUsageProbeFailure: Error { case streamDidNotComplete }
 
-@Suite struct ResponsesStreamParserTests {
+@Suite(.deterministicDependencies) struct ResponsesStreamParserTests {
   private func sse(_ events: [SSEEvent]) -> AsyncThrowingStream<SSEEvent, Error> {
     AsyncThrowingStream { continuation in
       for event in events { continuation.yield(event) }

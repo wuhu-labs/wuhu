@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -11,7 +12,7 @@ import Testing
 // Where `GET /v1/groups` says the caller stands: the person is a member of
 // alice (personal), shared and team; team reads library; bob is another
 // person's.
-@Suite struct GroupListTests {
+@Suite(.deterministicDependencies) struct GroupListTests {
   struct Space {
     let harness: SessionHarness
     let tokens: ExecTokens

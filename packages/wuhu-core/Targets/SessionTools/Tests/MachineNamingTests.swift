@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import JSONValue
 import class MainHub.Hub
 import SessionDomain
@@ -6,7 +7,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct MachineNamingTests {
+@Suite(.deterministicDependencies) struct MachineNamingTests {
   @Test func aPathResolvesAMachineNameAndKeepsTheIdInTheAddress() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

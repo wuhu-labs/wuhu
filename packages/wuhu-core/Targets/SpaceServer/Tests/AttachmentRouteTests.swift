@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -146,7 +147,7 @@ private func refusal(_ response: Response) async throws -> (Status, String) {
   return (response.status, value.object?["code"]?.stringValue ?? text)
 }
 
-@Suite struct AttachmentRouteTests {
+@Suite(.deterministicDependencies) struct AttachmentRouteTests {
   private let pixels = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 
   // The assembled runtime is the only path that resolves attachment bytes; the

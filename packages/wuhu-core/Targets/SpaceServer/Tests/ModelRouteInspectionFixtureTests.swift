@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SessionDomain
@@ -7,7 +8,7 @@ import Testing
 
 // The app and the web decode this checked-in inspection body, so a change to
 // the endpoint's encoding fails here before it reaches either client.
-@Suite struct ModelRouteInspectionFixtureTests {
+@Suite(.deterministicDependencies) struct ModelRouteInspectionFixtureTests {
   static let fixture = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .appendingPathComponent("../../SpaceContract/Tests/contract/model-route-inspection.json")

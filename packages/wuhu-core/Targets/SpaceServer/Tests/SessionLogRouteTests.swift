@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -71,7 +72,7 @@ private func toolHeavyKernelSession(_ harness: SessionHarness, rounds: Int) asyn
   return id
 }
 
-@Suite struct SessionLogRouteTests {
+@Suite(.deterministicDependencies) struct SessionLogRouteTests {
   @Test func kernelLogFiltersServerSideAndPaginatesPostFilter() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

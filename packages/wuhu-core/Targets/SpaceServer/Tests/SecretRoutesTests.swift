@@ -1,5 +1,6 @@
 import struct Credentials.SpaceSecrets
 import struct Credentials.SpaceSecretStores
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -11,7 +12,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct SecretRoutesTests {
+@Suite(.deterministicDependencies) struct SecretRoutesTests {
   @Test func setListAndRemoveNeverReturnAValue() async throws {
     try await withSecretsClient { client, store in
       #expect(try await client(.put, "/v1/secret/GITHUB_TOKEN", ["value": "ghp_first"]).status == .ok)

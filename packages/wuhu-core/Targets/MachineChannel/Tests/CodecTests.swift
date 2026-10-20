@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct CodecTests {
   @Test func framesRoundTripThroughWireBytes() throws {
     let frames: [Frame] = [

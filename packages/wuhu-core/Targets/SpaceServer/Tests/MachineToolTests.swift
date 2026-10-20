@@ -1,5 +1,7 @@
+import Clocks
 import ComputerFiles
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -14,7 +16,7 @@ import SpaceCore
 import SpaceTools
 import Testing
 
-@Suite struct MachineToolTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct MachineToolTests {
   @Test func fsToolSuiteOverMachinesAgainstARealAgent() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
@@ -199,29 +201,32 @@ import Testing
     }
   }
 
-  @Test func readBeyondTheAgentBoundSurfacesAsAToolError() async throws {
+  // The text tools read a machine file whole up to one frame; past it the
+  // bytes never reach main, and the refusal says how to slice it instead.
+  @Test func aFileOverOneReadFrameIsRefusedTyped() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())
     let (machine, key) = try await addMachine(server)
     let fixture = try ScratchFolder("m5-fixture")
     defer { fixture.remove() }
     let root = fixture.path
-    let path = "\(root)/big.bin"
-    #expect(FileManager.default.createFile(atPath: path, contents: Data(count: (8 << 20) + 1)))
+    let path = "\(root)/big.txt"
+    let size = VFSDefaults.maxReadBytes + 1
+    #expect(FileManager.default.createFile(atPath: path, contents: Data(repeating: UInt8(ascii: "a"), count: size)))
 
     try await runScenario(server: server) { dialer, _ in
       dialer.offer(try await connectMachine(server, key: key))
       try await awaitAttached(server, machine)
-      let tooLarge = try await failure(server, "read", ["path": .string("machines://\(machine.rawValue)\(path)")])
-      #expect(tooLarge.code == "unsupported")
-      #expect(tooLarge.message.contains("exceeds"))
+      let refused = try await failure(server, "read", ["path": .string("machines://\(machine.rawValue)\(path)")])
+      #expect(refused.code == "unsupported")
+      #expect(refused.message == "\(path) is \(size) bytes; a machine file is read whole up to \(VFSDefaults.maxReadBytes) bytes")
     }
   }
 }
 
 // One engine walks both backends (FileSearch): a space tree and the same tree
 // on a v2 machine page identically, modulo the address prefix.
-@Suite struct SearchParityTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct SearchParityTests {
   @Test func grepAndFindPagesAreIdenticalAcrossBackendsModuloTheAddressPrefix() async throws {
     let space = try makeMachineSpace()
     let scratch = try ScratchFolder("search-parity")

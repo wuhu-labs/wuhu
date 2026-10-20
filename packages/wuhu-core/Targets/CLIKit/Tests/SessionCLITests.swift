@@ -1,5 +1,6 @@
 @testable import CLIKit
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import InferenceKit
@@ -211,7 +212,7 @@ private func until(
   throw UntilTimeout()
 }
 
-@Suite struct SessionCLITests {
+@Suite(.deterministicDependencies) struct SessionCLITests {
   @Test func sendFromAnUnenrolledSeatPostsAsTheOwnerInItsZone() async throws {
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "ok"))]) }
@@ -641,7 +642,7 @@ private func until(
   }
 }
 
-@Suite struct SessionVerbParserTests {
+@Suite(.deterministicDependencies) struct SessionVerbParserTests {
   @Test func parsesSend() throws {
     #expect(try Command.parse(["send", "abc", "hi"]) == .send(SendCommand(
       session: "abc", text: "hi", wait: false, timeout: nil,

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import SpaceFS
 import SpaceTools
 import Testing
 
-@Suite struct ScriptFileTests {
+@Suite(.deterministicDependencies) struct ScriptFileTests {
   @Test func bytesTextTokensAndPagedHistory() async throws {
     try await withRig { rig in
       let value = try await rig.evaluate(#"""

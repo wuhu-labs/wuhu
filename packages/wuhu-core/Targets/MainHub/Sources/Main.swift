@@ -83,11 +83,14 @@ public protocol Main: Sendable {
   /// For each urgency, the earliest item in the session's queue that the
   /// model has not seen yet: now, and again after every change.
   func pendingArrivals(_ session: SessionID) -> AsyncThrowingStream<[PendingArrival], any Error>
+  // Exec (`execute`, `ownExecs`, `ownExecStatus`, `killInterruptedExec` and
+  // the script exec members) and the operator verbs (`setTags`, `control`)
+  // stay on Main until the cut that moves exec into the worker; inference and
+  // the capabilities scripts reach through `complete`/`capability`
+  // (`refuseUnlessLive`, `capabilityDocument`, `capabilityInput`,
+  // `recordCompletion`) until the cut that moves them over the API.
   func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload
   func refuseUnlessLive(_ session: SessionID) async throws
-  func spawn(_ caller: SessionID, _ call: ToolCallID, _ order: SpawnOrder) async throws -> Spawned
-  func sendMessage(_ caller: SessionID, _ call: ToolCallID, _ arguments: SendMessageArguments) async throws -> ToolResultPayload
-  func request(_ caller: SessionID, _ call: ToolCallID, _ arguments: RequestArguments) async throws -> ToolResultPayload
   func setTags(_ caller: SessionID, of target: SessionID, to tags: [String]) async throws
   func control(_ verb: SessionControl.Verb, _ caller: SessionID, of target: SessionID, force: Bool) async throws
   func capabilityDocument(_ path: String) async throws -> Data?

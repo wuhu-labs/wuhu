@@ -1,3 +1,4 @@
+import DeterministicDependencies
 @testable import MainHub
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -18,7 +19,7 @@ import struct SpaceClient.ExecSession
 import struct SpaceClient.SpaceClient
 import Testing
 
-@Suite struct GroupSelectionTests {
+@Suite(.deterministicDependencies) struct GroupSelectionTests {
   @Test func noSelectionSendsTheSameRequestAsBefore() async throws {
     let h = try GroupHarness(features: nil)
     let result = await h.run(["ls", "/"])

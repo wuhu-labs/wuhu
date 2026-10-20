@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct MessageRoutingTests {
+@Suite(.deterministicDependencies) struct MessageRoutingTests {
   struct Case: Sendable {
     var name: String
     var audience: RoutingSnapshot.Audience = .channel(messages: 10, seconds: 900)

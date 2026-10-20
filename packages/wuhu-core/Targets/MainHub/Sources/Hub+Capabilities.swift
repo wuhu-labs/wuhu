@@ -53,13 +53,18 @@ extension Hub {
     let address = try await resolve(raw, as: session)
     switch address {
     case let .machine(machine, path):
-      guard let entry = try await machineStat(machine, path: path) else { throw CapabilityError(.invalidArgument, "Input file does not exist.") }
+      guard try await machineStat(machine, path: path) != nil else { throw CapabilityError(.invalidArgument, "Input file does not exist.") }
+      do {
+        return try await Data(machineBytes(machine, path: path, limit: limit))
+      } catch is MachineSeam.OverLimit {
+        throw CapabilityError(.invalidArgument, "Input exceeds the \(limit)-byte bound.")
+      }
+    case let .space(path, group):
+      let acting = try await space.principal(of: session).group
+      let fs = await space.fs(group ?? acting)
+      let entry = try await fs.stat(path)
       guard entry.size <= limit else { throw CapabilityError(.invalidArgument, "Input exceeds the \(limit)-byte bound.") }
-      return try await Data(machineFile(machine, path: path, entry: entry, reference: address.rendered))
-    case let .space(path, group, _):
-      let entry = try await space.fs(group).stat(path)
-      guard entry.size <= limit else { throw CapabilityError(.invalidArgument, "Input exceeds the \(limit)-byte bound.") }
-      let bytes = try await readRaw(address).1
+      let bytes = try await fs.read(path).1
       guard bytes.count <= limit else { throw CapabilityError(.invalidArgument, "Input exceeds the \(limit)-byte bound.") }
       return bytes
     case .system: throw CapabilityError(.invalidArgument, "Capability inputs must be private space or authorized machine files.")

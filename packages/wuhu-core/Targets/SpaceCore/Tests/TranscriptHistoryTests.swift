@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import SessionDomain
@@ -6,7 +7,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct TranscriptHistoryTests {
+@Suite(.deterministicDependencies) struct TranscriptHistoryTests {
   @Test func pagesAreBoundedExclusiveAndMatchTheCanonicalTranscript() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
@@ -71,7 +72,7 @@ import WuhuAI
   }
 }
 
-@Suite struct BoundedHistoryReadProofTests {
+@Suite(.deterministicDependencies) struct BoundedHistoryReadProofTests {
   @Test func recentAndBackwardPagesDoNotDecodeUnselectedAncientPayloads() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

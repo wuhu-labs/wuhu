@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import Scratch
 import SpaceCore
 import Testing
 
-@Test func closingSpaceEndsObservationKindsAndRefusesNewOnes() async throws {
+@Test(.deterministicDependencies) func closingSpaceEndsObservationKindsAndRefusesNewOnes() async throws {
   let space = try Space.inMemory()
   let query = await space.observeQuery("SELECT path FROM docs", throttle: .zero, as: .shared(.anonymous))
   var queryRows = query.makeAsyncIterator()
@@ -22,7 +23,7 @@ import Testing
   try await space.close()
 }
 
-@Test func closingSpaceReleasesDatabaseHandlesWhileStoresAreRetained() async throws {
+@Test(.deterministicDependencies) func closingSpaceReleasesDatabaseHandlesWhileStoresAreRetained() async throws {
   let folder = try ScratchFolder("space-close")
   let file = folder.url.appendingPathComponent("space.sqlite")
   let space = try Space.open(file: file)

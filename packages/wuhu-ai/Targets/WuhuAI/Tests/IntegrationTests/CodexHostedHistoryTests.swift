@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
 import WuhuAI
 import WuhuRecordReplay
 
-@Suite struct CodexHostedHistoryTests {
+@Suite(.deterministicDependencies) struct CodexHostedHistoryTests {
   @Test(arguments: [false, true])
   func legacySearchContinuesWithoutHostedTool(withFunctionTool: Bool) async throws {
     let recording = withFunctionTool

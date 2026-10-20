@@ -1,4 +1,5 @@
 import Clocks
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -17,7 +18,7 @@ import Testing
   import Glibc
 #endif
 
-@Suite struct MachineGraceTests {
+@Suite(.deterministicDependencies) struct MachineGraceTests {
   @Test func callerGonePastGraceKillsTheGroupOnTheMachine() async throws {
     let space = try makeMachineSpace()
     let clock = TestClock()

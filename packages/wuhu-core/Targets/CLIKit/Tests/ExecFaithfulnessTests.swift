@@ -1,8 +1,9 @@
 import CLIKit
+import DeterministicDependencies
 import Foundation
 import Testing
 
-@Suite struct ExecFaithfulnessTests {
+@Suite(.deterministicDependencies) struct ExecFaithfulnessTests {
   @Test func execStdoutIsPipeCleanAndByteExact() async throws {
     try await execScenario { h, m in
       let io = CLIIO()

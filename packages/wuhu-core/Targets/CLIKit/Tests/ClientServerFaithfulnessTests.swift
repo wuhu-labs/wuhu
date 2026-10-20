@@ -1,6 +1,7 @@
 import CLIKit
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -23,7 +24,7 @@ private let onePixelPNG: [UInt8] = [
   0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ]
 
-@Suite
+@Suite(.deterministicDependencies(clock: TestClock()))
 struct ClientServerFaithfulnessTests {
   @Test func everyVerbRunsAgainstRealSpaceServer() async throws {
     let harness = try ServerHarness()

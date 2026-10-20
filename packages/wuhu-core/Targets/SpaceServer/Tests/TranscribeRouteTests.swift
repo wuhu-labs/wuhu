@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import enum InferenceKit.TranscriptionLimits
@@ -43,7 +44,7 @@ private func configure(_ harness: Harness, _ json: String = configuredOpenAI) as
   _ = try await harness.space.fs(.shared).write("/capabilities.json", Data(json.utf8), ifMatch: nil)
 }
 
-@Suite struct TranscribeRouteTests {
+@Suite(.deterministicDependencies) struct TranscribeRouteTests {
   @Test func aChatGPTLoginTranscribesThroughTheDictationBackend() async throws {
     let harness = try Harness(credentials: chatGPTLogin)
     let (provider, seen) = providerReplying(#"{"text":"hello wuhu","asset_format":"wav"}"#)

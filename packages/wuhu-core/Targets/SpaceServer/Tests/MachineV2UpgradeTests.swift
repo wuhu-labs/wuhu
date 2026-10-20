@@ -1,4 +1,5 @@
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import MachineContract
@@ -136,7 +137,7 @@ private func ready(_ version: String, pinned: Bool = false) -> MachineV2Upgrade 
 
 private let both: Set<String> = ["linux-amd64", "macos-arm64"]
 
-@Suite struct MachineV2UpgradeTests {
+@Suite(.deterministicDependencies) struct MachineV2UpgradeTests {
   @Test func helloAnnouncesTheServerVersionAndCachesAPublishedRelease() async throws {
     let host = ReleaseHost(["0.1.0-dev.122": both])
     let f = try await Fixture(host: host)

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import class MainHub.Hub
@@ -30,6 +31,7 @@ private func directMessages(_ space: Space, to session: SessionID) async throws 
   return found
 }
 
+@Suite(.deterministicDependencies)
 struct SessionTreeToolTests {
   @Test func createSessionRejectsRemovedExecutorAsTypedFailure() async throws {
     try await withToolDeps { _ in

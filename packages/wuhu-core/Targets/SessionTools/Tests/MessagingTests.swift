@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import enum MachineContract.VFSDefaults
@@ -26,6 +27,7 @@ private func makeTask(_ space: Space, parent: SessionID, name: String = "task") 
   )
 }
 
+@Suite(.deterministicDependencies)
 struct MessagingTests {
   @Test func sendMessageWithNoTargetPostsIntoTheOwnBox() async throws {
     try await withToolDeps { _ in
@@ -169,6 +171,7 @@ struct MessagingTests {
       #expect(message.content.attachments == [.file(path: path, mimeType: "video/mp4", size: clip.count)])
       #expect(try await space.fs(.shared).read(path).1 == Data(clip))
       #expect(machineFS.reads.withLock { $0 } == [
+        .read(path: "/clips/long.mp4"),
         .read(path: "/clips/long.mp4", offset: 0, length: frame),
         .read(path: "/clips/long.mp4", offset: frame, length: frame),
         .read(path: "/clips/long.mp4", offset: 2 * frame, length: 3),
@@ -198,22 +201,20 @@ struct MessagingTests {
     }
   }
 
-  @Test(arguments: [(3, 1), (4, 2)])
-  func aFileThatShrankUnderAnOlderAgentWhileKeepingItsMtimeIsRefusedNotStitched(stat: Int, now: Int) async throws {
+  // The stat admits a size; the read takes no more than it, so a file swapped
+  // in between never reaches the conversation.
+  @Test func anAttachmentSwappedForABiggerFileAfterItsStatIsRefused() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let machineFS = FakeMachineFS(ranges: false)
-      let half = VFSDefaults.maxReadBytes / 2
-      machineFS.put("/clips/take.mp4", bytes: Array(repeating: 1, count: stat * half), mtime: 1)
-      machineFS.replacedAfterStat.withLock {
-        $0["/clips/take.mp4"] = .init(mtime: 1, content: Array(repeating: 2, count: now * half))
-      }
+      let machineFS = FakeMachineFS()
+      machineFS.put("/clips/a.bin", bytes: Array(repeating: 1, count: 10), mtime: 1)
+      machineFS.replacedAfterStat.withLock { $0["/clips/a.bin"] = .init(mtime: 1, content: Array(repeating: 2, count: 20)) }
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam)), session: try await makeSession(space, name: "a"))
 
-      let sent = try await world.run("send_message", .object([
-        "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/take.mp4")]),
+      let refused = try await world.run("send_message", .object([
+        "message": .string("x"), "attachments": .array([.string("machines://\(machineA.rawValue)/clips/a.bin")]),
       ]))
-      #expect(try failureMessage(sent).contains("changed while it was being read"))
+      #expect(try failureMessage(refused).contains("changed while it was being read"))
       #expect(try await space.sessions.messages(conversation: ConversationID(key(world.session))).isEmpty)
     }
   }

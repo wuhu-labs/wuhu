@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,6 +19,7 @@ import Scratch
 import Synchronization
 import Testing
 
+@Suite(.deterministicDependencies)
 struct AssertionCacheTests {
   @Test(arguments: ["space.example", "space.example:443", "https://space.example", "https://SPACE.EXAMPLE:443/"])
   func secureDefaultPortAliasesShareOneKey(_ spelling: String) {

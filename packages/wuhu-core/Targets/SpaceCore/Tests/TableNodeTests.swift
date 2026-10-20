@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import struct SpaceContract.GroupID
@@ -5,7 +6,7 @@ import struct SpaceContract.GroupID
 import SpaceFS
 import Testing
 
-@Suite struct TableNodeTests {
+@Suite(.deterministicDependencies) struct TableNodeTests {
   func makeTable(_ space: Space, at rawPath: String) async throws -> SpacePath {
     let table = try path(rawPath)
     _ = try await space.createTable(table, header: TableHeader(columns: [

@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -9,7 +10,7 @@ import SpaceContract
 import SpaceCore
 import Testing
 
-@Suite struct WebPushRouteTests {
+@Suite(.deterministicDependencies) struct WebPushRouteTests {
   let applicationServerKey = "vapid-public-key"
   let key = Curve25519.Signing.PrivateKey()
   let harness: Harness

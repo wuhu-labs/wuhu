@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -6,7 +7,7 @@ import JSONValue
 import SpaceContract
 import Testing
 
-@Suite struct ObserveTests {
+@Suite(.deterministicDependencies) struct ObserveTests {
   @Test func batchRevisionFramesAreWholeLiveAndReplayed() async throws {
     let harness = try Harness()
     for name in ["a", "b", "c"] {

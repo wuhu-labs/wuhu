@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import Fetch
 import Foundation
@@ -53,7 +54,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
   ]
 }
 
-@Suite struct PortableThinkingTests {
+@Suite(.deterministicDependencies) struct PortableThinkingTests {
   /// `claude` is a Claude model behind a non-Anthropic host (the one named
   /// downgrade); `deepseek` and `mimo` (a non-Claude model on a `claude`-dialect
   /// host) keep their effort.

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -40,7 +41,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
   return world.delivered?.text ?? ""
 }
 
-@Suite struct MachineNotesTests {
+@Suite(.deterministicDependencies) struct MachineNotesTests {
   @Test func identicalNotesAndRepositoriesAcrossMachinesLoadOnce() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
@@ -80,13 +81,13 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       names: { _ in ["deploy"] },
     )
     var delivery = ContextDelivery(alreadyLoaded: [:])
-    let first = await reader.load(.space("/_/machines/first", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let first = await reader.load(.space("/_/machines/first", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
     #expect(first.contains("- deploy — Before the edit."))
     #expect(reads.value == 1)
-    let next = await reader.load(.space("/_/machines/next", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let next = await reader.load(.space("/_/machines/next", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
     #expect(next.contains("- deploy — After the edit."))
     #expect(!next.contains("identical"))
-    let third = await reader.load(.space("/_/machines/third", in: .shared, qualified: false), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
+    let third = await reader.load(.space("/_/machines/third", in: nil), style: .machineNotes, delivery: &delivery).joined(separator: "\n")
     #expect(third.contains("- deploy — identical to /_/machines/next/.agents/skills/deploy/SKILL.md (loaded earlier)"))
   }
 

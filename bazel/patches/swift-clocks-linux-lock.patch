@@ -1,9 +1,9 @@
 --- a/Sources/Clocks/Internal/Lock.swift
 +++ b/Sources/Clocks/Internal/Lock.swift
 @@ -1,21 +1,59 @@
--import Foundation
+-public import Foundation
 +#if canImport(Darwin)
-+  import Foundation
++  public import Foundation
  
 -extension NSLock {
 -  @inlinable

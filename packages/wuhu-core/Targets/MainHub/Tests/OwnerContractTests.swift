@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import MainHub
 import protocol MainHub.Main
@@ -129,7 +130,7 @@ private actor RecordedMetrics {
   func append(_ metric: InferenceMetric) { values.append(metric) }
 }
 
-@Suite struct HubOwnerContractTests {
+@Suite(.deterministicDependencies) struct HubOwnerContractTests {
   private let contract = OwnerContract { Hub(space: $0, metrics: $1) }
 
   @Test func queueAndCompaction() async throws { try await contract.queueAndCompaction() }

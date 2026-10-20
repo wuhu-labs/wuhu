@@ -9,6 +9,7 @@ dependencies:
   - Logging
 tests:
   dependencies:
+    - DeterministicDependencies
     - Dependencies
     - Clocks
     - Fetch

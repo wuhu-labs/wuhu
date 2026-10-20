@@ -1,5 +1,6 @@
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -17,7 +18,7 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
   return fields.keys.first
 }
 
-@Suite struct SessionStreamTests {
+@Suite(.deterministicDependencies) struct SessionStreamTests {
   @Test func channelObserveEmitsAHeartbeatEachSecond() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
@@ -277,7 +278,7 @@ private func itemKind(_ event: SessionStreamEvent) -> String? {
   }
 }
 
-@Suite struct BoundedSessionStreamTests {
+@Suite(.deterministicDependencies) struct BoundedSessionStreamTests {
   @Test func staleGenerationResetsAndEndsRatherThanReplaying() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

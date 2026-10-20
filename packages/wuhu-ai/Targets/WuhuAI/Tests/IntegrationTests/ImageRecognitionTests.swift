@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -24,7 +25,7 @@ private func pandaDataURI() -> String {
   return "data:image/jpeg;base64,\(data.base64EncodedString())"
 }
 
-@Suite struct ImageRecognitionTests {
+@Suite(.deterministicDependencies) struct ImageRecognitionTests {
   @Test(arguments: imageModels)
   func identifiesPanda(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {

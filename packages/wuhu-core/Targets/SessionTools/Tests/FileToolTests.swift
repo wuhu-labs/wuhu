@@ -1,6 +1,8 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import JSONValue
+import enum MachineContract.VFSDefaults
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
@@ -10,7 +12,7 @@ import struct SpaceTools.MachineSeam
 import Testing
 import struct WuhuAI.ToolArguments
 
-@Suite struct FileGuardTests {
+@Suite(.deterministicDependencies) struct FileGuardTests {
   @Test func writeWithoutReadOfExistingFileFailsTyped() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
@@ -120,15 +122,45 @@ import struct WuhuAI.ToolArguments
       guard case .edit = try await world.run("edit", .object(["path": path, "edits": [["old": "updated", "new": "edited"]]])) else { throw Mismatch("opaque edit failed") }
       fs.put("/notes.txt", "foreign", mtime: 2000)
       #expect(try failureMessage(await world.run("write", .object(["path": path, "content": "stale"]))).contains("re-read"))
-      _ = try await world.run("read", .object(["path": path]))
-      fs.replacedAfterStat.withLock { $0["/notes.txt"] = .init(mtime: 3000, content: Array("raced".utf8)) }
-      #expect(try failureMessage(await world.run("write", .object(["path": path, "content": "racing"]))).contains("re-read"))
-      #expect(fs.files.value["/notes.txt"]?.content == Array("raced".utf8))
+    }
+  }
+
+  // A text read of a machine file is bounded at one frame before any byte
+  // reaches the model, whatever the agent would hand over in ranges.
+  @Test func aMachineTextFileOverOneFrameIsRefusedTyped() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let fs = FakeMachineFS()
+      fs.put("/big.log", bytes: Array(repeating: UInt8(ascii: "x"), count: VFSDefaults.maxReadBytes + 1), mtime: 1)
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: fs.seam)), session: try await makeSession(space))
+      let refused = try await world.run("read", .object(["path": .string("machines://\(machineA.rawValue)/big.log")]))
+      #expect(try failureMessage(refused).contains("is \(VFSDefaults.maxReadBytes + 1) bytes; a machine file is read whole up to \(VFSDefaults.maxReadBytes) bytes"))
+      #expect(fs.reads.withLock { $0 } == [.read(path: "/big.log")], "one frame asked, no ranges")
+    }
+  }
+
+  // A write with no read behind it may only create; only a stat that says
+  // "not found" lets it through, any other failure is reported as is.
+  @Test func aCreateOnlyMachineWriteReportsAStatFailureInsteadOfWriting() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let fs = FakeMachineFS()
+      let seam = MachineSeam(
+        vfs: { machine, op in
+          if case .stat = op { return .error(error: .init(code: .io, message: "disk on fire")) }
+          return try await fs.seam.vfs(machine, op)
+        },
+        search: fs.seam.search, attached: fs.seam.attached,
+      )
+      var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: seam)), session: try await makeSession(space))
+      let refused = try await world.run("write", .object(["path": .string("machines://\(machineA.rawValue)/new.txt"), "content": "x"]))
+      #expect(try failureMessage(refused).contains("disk on fire"))
+      #expect(fs.writes.withLock { $0 }.isEmpty)
     }
   }
 }
 
-@Suite struct PathTests {
+@Suite(.deterministicDependencies) struct PathTests {
   @Test func aSessionThatNeverMountsReadsTheSpaceByAbsolutePath() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

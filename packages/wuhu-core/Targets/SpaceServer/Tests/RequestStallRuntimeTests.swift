@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -26,7 +27,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
 
 // A request's stall clock against the real runtimes: what holds it and what
 // must not.
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct RequestStallRuntimeTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct RequestStallRuntimeTests {
   @Test func archiveStopsAnInProcessScriptSoItCannotHoldALaterRequest() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness(assembledModels: testModelsJSON)

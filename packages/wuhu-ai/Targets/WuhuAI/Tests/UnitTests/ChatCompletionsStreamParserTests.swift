@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 @testable import WuhuAI
@@ -6,7 +7,7 @@ import Testing
 
 private enum UsageProbeFailure: Error { case streamDidNotComplete }
 
-@Suite struct ChatCompletionsStreamParserTests {
+@Suite(.deterministicDependencies) struct ChatCompletionsStreamParserTests {
   // MARK: - Helpers
 
   private func sse(_ events: [SSEEvent]) -> AsyncThrowingStream<SSEEvent, Error> {

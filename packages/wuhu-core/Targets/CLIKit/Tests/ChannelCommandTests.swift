@@ -1,8 +1,9 @@
 @testable import CLIKit
+import DeterministicDependencies
 import JSONValue
 import Testing
 
-@Suite struct ChannelCommandTests {
+@Suite(.deterministicDependencies) struct ChannelCommandTests {
   @Test func channelCommandsHaveScriptParityAndRejectIncompleteArguments() throws {
     #expect(try Command.parse(["channel", "create", "--title", "Team", "alice", "bob"]) == .channel(.create(title: "Team", people: ["alice", "bob"])))
     #expect(try Command.parse(["channel", "add", "team", "carol"]) == .channel(.members(id: "team", people: ["carol"], add: true)))

@@ -1,10 +1,12 @@
+import Clocks
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SpaceContract
 import SpaceTools
 import Testing
 
-@Suite struct FsToolTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct FsToolTests {
   @Test func rootListingHidesTheSystemFolderUnlessAsked() async throws {
     let context = try makeContext()
     _ = try await seedFile("/_/sessions/brave-fox/AGENTS.md", "mine", context)
@@ -138,10 +140,10 @@ import Testing
       "edit", .object(["path": "/a.md", "edits": .array([.object(["old": "alpha", "new": "x"])])]), context,
     )
     guard case let .failed(code, message, hint, _) = ambiguous else {
-      Issue.record("expected conflict, got \(String(describing: ambiguous))")
+      Issue.record("expected invalidArgument, got \(String(describing: ambiguous))")
       return
     }
-    #expect(code == .conflict)
+    #expect(code == .invalidArgument)
     #expect(message.contains("2 times"))
     #expect(hint?.contains("at lines 1, 3") == true)
   }

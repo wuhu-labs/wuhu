@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -10,7 +11,7 @@ import Testing
 // wuhu:session's operator verbs through the server's real wiring: the MCP
 // route's executor, the SessionService behind sessionControl, and the
 // session loops themselves. Nothing here fakes SessionControl.
-@Suite struct SessionControlE2ETests {
+@Suite(.deterministicDependencies) struct SessionControlE2ETests {
   @Test func unreadableResumeExplainsStartOverOnHTTPAndScriptSurfaces() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

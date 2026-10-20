@@ -1,6 +1,7 @@
 import Clocks
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 @testable import InferenceKit
@@ -51,7 +52,7 @@ private final class CapabilityRecorder: Sendable {
 private let imageReply = #"{"data":[{"b64_json":"UE5H"}]}"#
 private let audio = AudioClip(bytes: Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!, mediaType: .wav)
 
-@Suite struct CapabilityTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct CapabilityTests {
   @Test func noConfigSynthesizesCodexWithoutAModelSheet() async throws {
     let recorder = CapabilityRecorder([imageReply])
     let provider = CapabilityClient(document: nil, credentials: bothCredentials)

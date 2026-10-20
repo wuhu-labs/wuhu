@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,7 +8,7 @@ import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct HumanAgentDMTests {
+@Suite(.deterministicDependencies) struct HumanAgentDMTests {
   @Test func openingAHumanSessionDMIsRefusedForAgentsAndTasksFromEitherSide() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()

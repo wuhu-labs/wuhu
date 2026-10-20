@@ -1,8 +1,9 @@
 @testable import CLIKit
+import DeterministicDependencies
 import JSONValue
 import Testing
 
-@Suite struct ModelsVerbTests {
+@Suite(.deterministicDependencies) struct ModelsVerbTests {
   @Test func seedIsValidJSONWithVerifiedModelIDs() throws {
     let seed = try #require(JSONValue.parse(WellKnownModels.seed))
     let providers = try #require(seed.object)

@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import Fetch
 import Foundation
 import enum PinnedTLS.PinnedTLS
@@ -8,7 +10,7 @@ import SpaceServer
 import Synchronization
 import Testing
 
-@Suite struct ServeSmokeTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct ServeSmokeTests {
   private func scratch() throws -> URL {
     let base = try scratchURL("serve-smoke")
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)

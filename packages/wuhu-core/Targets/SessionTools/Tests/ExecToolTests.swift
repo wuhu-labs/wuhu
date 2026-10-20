@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import MachineChannel
@@ -18,7 +19,7 @@ import SpaceCore
 import Testing
 import struct WuhuAI.ToolArguments
 
-@Suite(.timeLimit(.minutes(2))) struct ExecToolTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(2))) struct ExecToolTests {
   @Test func terminalCallerReconnectsAreBoundedEvenWhenLocalConnectSucceeds() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

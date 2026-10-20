@@ -1,6 +1,7 @@
 import Clocks
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -17,7 +18,7 @@ import SpaceTools
 import Synchronization
 import Testing
 
-@Suite struct PageFetchTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct PageFetchTests {
   struct Rig {
     let h: Harness
     let cookie: String
@@ -112,6 +113,7 @@ import Testing
 
   @Test func localBackendVerifiesTokenAgainstDiscoveryAndReceivesNoCookies() async throws {
     let identity = try identity()
+    @Dependency(\.date.now) var now
     let seen = Mutex<[Request]>([])
     let seenBodies = Mutex<[String?]>([])
     let jwk = try #require(identity.jwks.object?["keys"]?.array?.first?.object)
@@ -124,7 +126,7 @@ import Testing
       let parts = authorization.dropFirst("Bearer ".count).split(separator: ".").map(String.init)
       let claims = try jwtClaims(authorization)
       guard claims.object?["aud"] == .string(fetchOrigin(request.url)!), claims.object?["iss"] == "https://space.test",
-            (claims.object?["exp"]?.intValue ?? 0) > Int(Date().timeIntervalSince1970),
+            (claims.object?["exp"]?.intValue ?? 0) > Int(now.timeIntervalSince1970),
             try publicKey.isValidSignature(P256.Signing.ECDSASignature(rawRepresentation: decode(parts[2])), for: Data((parts[0] + "." + parts[1]).utf8))
       else { return Response(status: .unauthorized) }
       seen.withLock { $0.append(request) }

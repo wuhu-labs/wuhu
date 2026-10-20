@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct ScriptLifecycleBoundaryTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct ScriptLifecycleBoundaryTests {
   @Test func aScriptCanArchiveItsOwnSessionAndReturnBeforeStopGrace() async throws {
     try await withToolDeps { _ in
       try await withScriptLifecycle { space, session, owner, worker, _ in

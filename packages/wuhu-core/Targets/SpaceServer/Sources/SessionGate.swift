@@ -9,10 +9,19 @@ import Dependencies
 import Fetch
 import JSONValue
 import MachineContract
-import protocol MainHub.Worker
+import struct MainHub.CancelArguments
+import struct MainHub.CreateSessionArguments
+import class MainHub.Hub
+import struct MainHub.IncompleteSession
+import struct MainHub.ManipulateUIArguments
+import struct MainHub.ObserveArguments
+import struct MainHub.ReportArguments
+import struct MainHub.RequestArguments
+import struct MainHub.SendMessageArguments
+import struct MainHub.SetTitleArguments
+import struct MainHub.TimerArguments
 import struct OperationProtocol.ErrorEnvelope
 import struct OperationProtocol.OperationError
-import OrderedCollections
 import Serve
 import ServeRouting
 import SessionDomain
@@ -22,8 +31,6 @@ import SpaceCore
 import SpaceFS
 import SpaceTools
 import SystemFiles
-import struct WuhuAI.ToolArguments
-import struct WuhuAI.ToolCall
 
 let sessionRefusalMessage = "not available to a session"
 
@@ -46,13 +53,13 @@ func sessionGate(
   space: Space,
   hub: MachineHub,
   machines: MachineSeam,
-  worker: any Worker,
+  owner: Hub,
   tokens: ExecTokens,
   credentials: CredentialResolver,
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
-  let gated = sessionRouter(space: space, hub: hub, machines: machines, worker: worker, credentials: credentials, routed: routed).upgradingHandler
+  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, routed: routed).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -139,7 +146,7 @@ private func sessionRouter(
   space: Space,
   hub: MachineHub,
   machines: MachineSeam,
-  worker: any Worker,
+  owner: Hub,
   credentials: CredentialResolver,
   routed: @escaping UpgradingHandler,
 ) -> Router {
@@ -151,12 +158,30 @@ private func sessionRouter(
     case .webSocket, .boundedWebSocket: notForSessions()
     }
   }
-  let tool: @Sendable (_ name: String, _ arguments: JSONValue) async throws -> ToolResultPayload = { name, arguments in
-    try await worker.execute(
-      session: principal().session,
-      call: ToolCall(id: "wst_\(uuid().uuidString.lowercased())", name: name, arguments: ToolArguments(arguments)),
-      state: ToolExecutionState(),
-    ).payload
+  // The tool call a request runs for is its idempotency key: a call that
+  // already ran gets its first answer again, not a second run. A request
+  // without one (the CLI from an exec) runs every time. The hub's verbs own
+  // this themselves, each recording its answer in the write that makes its
+  // effect (or making the effect by an id derived from the call); only the
+  // file tools are replayed here, from the API's recorded answer.
+  let callID: @Sendable (Request) -> ToolCallID = { request in
+    request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:)) ?? ToolCallID("wst_\(uuid().uuidString.lowercased())")
+  }
+  let receipted: @Sendable (Request, @Sendable () async throws -> Response) async throws -> Response = { request, body in
+    let toolCall = request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:))
+    if let toolCall, let receipt = try await store.apiReceipt(principal().session, toolCallID: toolCall) {
+      return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
+    }
+    let response = try await body()
+    guard let toolCall, 200 ..< 300 ~= response.status.code else { return response }
+    let answer = String(decoding: try await response.data(), as: UTF8.self)
+    try await store.recordAPIReceipt(principal().session, toolCallID: toolCall, APIReceipt(status: response.status.code, body: answer))
+    return jsonResponse(JSONValue.parse(answer) ?? .null, status: response.status)
+  }
+  // A session verb runs on the hub as the session, and answers as the tool
+  // would: a typed failure is a 422 carrying its code.
+  let answered: @Sendable (@Sendable () async throws -> ToolResultPayload) async throws -> ToolResultPayload = { body in
+    try await owner.answering(as: principal().session, body)
   }
 
   var router = Router()
@@ -183,13 +208,26 @@ private func sessionRouter(
     router.post("/v1/channel/:id/\(operation)", use: forward)
   }
   router.get("/v1/groups", use: forward)
-  router.get("/v1/machine", use: forward)
-  router.get("/v1/f/*", use: forward)
+  router.get("/v1/templates", use: forward)
+  // The roster is the hub's (its refusal when the server has no machine
+  // backend, its attach state); the API's shape adds each machine's group.
+  router.get("/v1/machine") { _, _ in
+    let payload = try await answered { try await owner.machineRoster(principal().session) }
+    guard case let .machines(roster) = payload else { return toolRefusal(payload) }
+    let groups = Dictionary(uniqueKeysWithValues: try await space.machines(usableFrom: principal().group).map { ($0.id.rawValue, $0.group.rawValue) })
+    return try Response.json(roster.machines.compactMap { listing in
+      groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
+    })
+  }
+  // A machine the byte route reaches sees the session as its caller.
+  router.get("/v1/f/*") { request, parameters in
+    try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
+  }
   router.put("/v1/f/*") { request, parameters in
     if let address = fileRouteAddress(request.url), let refused = await foreignHomeRefusal([address], space: space) {
       return refused
     }
-    return try await forward(request, parameters)
+    return try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
   }
   router.get("/v1/observe") { request, _ in
     await observeResponse(space: space, url: request.url, principal: Principal(actor: .session(principal().session), group: principal().group))
@@ -208,18 +246,21 @@ private func sessionRouter(
     if let refused = await foreignHomeRefusal(writtenAddresses(name, input, fields: fields), space: space) {
       return refused
     }
-    do {
-      let context = SpaceToolContext(
-        space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
-      )
-      // A machine the tool reaches sees the session as its caller.
-      return jsonResponse(try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) })
-    } catch let error as ToolRunError {
-      switch error {
-      case .undecodableInput:
-        return jsonResponse(error.payload, status: .badRequest)
-      case .failed:
-        return jsonResponse(error.payload, status: .unprocessableContent)
+    return try await receipted(request) {
+      do {
+        let context = SpaceToolContext(
+          space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
+        )
+        // A machine the tool reaches sees the session as its caller.
+        let output = try await MachineSeam.$caller.withValue(principal().session) { try await spaceTool.run(context, input: input) }
+        return jsonResponse(output)
+      } catch let error as ToolRunError {
+        switch error {
+        case .undecodableInput:
+          return jsonResponse(error.payload, status: .badRequest)
+        case .failed:
+          return jsonResponse(error.payload, status: .unprocessableContent)
+        }
       }
     }
   }
@@ -258,32 +299,34 @@ private func sessionRouter(
   }
 
   router.post("/v1/session") { request, _ in
+    // The kind reaches the hub as written: an odd one is the hub's answer, not
+    // a decoding failure here.
     let input: SessionCreateInput
+    let kind: String?
     do {
-      input = try await request.json(SessionCreateInput.self)
+      var body = try await request.json(JSONValue.self, upTo: maximumPostFieldsBytes)
+      kind = body.object?["kind"]?.stringValue
+      if var fields = body.object { fields.removeValue(forKey: "kind"); body = .object(fields) }
+      input = try JSONValueDecoder().decode(SessionCreateInput.self, from: body)
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-create body: \(error)")
     }
-    var arguments: OrderedDictionary<String, JSONValue> = ["title": .string(input.title)]
-    arguments["kind"] = input.kind.map { .string($0.rawValue) }
-    arguments["top_level"] = input.topLevel.map(JSONValue.bool)
-    arguments["group"] = input.group.map(JSONValue.string)
-    arguments["executor"] = input.executor.map(JSONValue.string)
-    arguments["provider"] = input.provider.map(JSONValue.string)
-    arguments["model"] = input.model.map(JSONValue.string)
-    arguments["modelGroup"] = input.modelGroup.map(JSONValue.string)
-    arguments["effort"] = input.effort.map(JSONValue.string)
-    arguments["template"] = input.template.map(JSONValue.string)
-    arguments["tags"] = input.tags.map { .array($0.map(JSONValue.string)) }
-    if input.topLevel == true, let named = input.group {
-      do {
-        let creator = try await store.record(principal().session).group
-        _ = try await space.homeGroup(GroupID(rawValue: named), creator: creator)
-      } catch SpaceError.groupForbidden(let named) {
-        return errorResponse(.forbidden, code: "groupForbidden", message: "group \(named) is not readable from here")
+    let payload: ToolResultPayload
+    do {
+      payload = try await answered {
+        try await owner.createSession(principal().session, callID(request), CreateSessionArguments(
+          title: input.title, kind: kind, executor: input.executor, topLevel: input.topLevel, group: input.group,
+          provider: input.provider, model: input.model, modelGroup: input.modelGroup, effort: input.effort,
+          tags: input.tags, template: input.template, expectsReply: input.expectsReply, message: input.message, stallSeconds: input.stallSeconds,
+        ))
       }
+    } catch let incomplete as IncompleteSession {
+      // The session exists: the failure names it.
+      return jsonResponse(
+        .object(["code": .string(IncompleteSession.code), "message": .string(incomplete.message), "id": .string(incomplete.id.rawValue)]),
+        status: .unprocessableContent,
+      )
     }
-    let payload = try await tool("create_session", .object(arguments))
     guard case let .createSession(created) = payload else { return toolRefusal(payload) }
     do {
       let record = try await store.record(created.sessionID)
@@ -301,6 +344,9 @@ private func sessionRouter(
         effort: effort,
         kind: record.kind == .agent ? .agent : .task,
         parent: record.parent?.rawValue,
+        title: created.title,
+        requestId: created.requestID?.rawValue,
+        member: created.member,
       ))
     } catch {
       return sessionErrorResponse(error)
@@ -315,15 +361,97 @@ private func sessionRouter(
     } catch {
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-request body: \(error)")
     }
-    var arguments: OrderedDictionary<String, JSONValue> = ["task": .string(id.rawValue), "message": .string(input.message)]
-    arguments["deadline_seconds"] = input.deadlineSeconds.map(JSONValue.number)
-    arguments["stall_seconds"] = input.stallSeconds.map(JSONValue.number)
-    let payload = try await tool("request", .object(arguments))
+    let payload = try await answered {
+      try await owner.request(principal().session, callID(request), RequestArguments(
+        task: id.rawValue, message: input.message, deadlineSeconds: input.deadlineSeconds, stallSeconds: input.stallSeconds,
+      ))
+    }
     guard case let .request(opened) = payload else { return toolRefusal(payload) }
     return try Response.json(SessionRequestOutput(
       requestId: opened.requestID.rawValue,
       conversationId: opened.conversationID.rawValue,
+      deadline: opened.deadline?.timeIntervalSince1970,
     ))
+  }
+
+  router.post("/v1/request/:id/report") { request, parameters in
+    guard let id = parameters["id"], !id.isEmpty else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown request")
+    }
+    let input: RequestReportInput
+    do {
+      input = try await request.json(RequestReportInput.self)
+    } catch {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a request-report body: \(error)")
+    }
+    let payload = try await answered {
+      try await owner.report(principal().session, callID(request), ReportArguments(requestID: id, kind: input.kind.rawValue, content: input.content))
+    }
+    guard case let .report(reported) = payload else { return toolRefusal(payload) }
+    return try Response.json(RequestReportOutput(messageId: reported.messageID.rawValue, conversationId: reported.conversationID.rawValue))
+  }
+
+  // A session names only itself.
+  router.post("/v1/session/:id/title") { request, parameters in
+    guard let id = sessionID(parameters), id == principal().session else { return unknownSession(parameters) }
+    let input: SessionTitleInput
+    do {
+      input = try await request.json(SessionTitleInput.self)
+    } catch {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a session-title body: \(error)")
+    }
+    let payload = try await answered { try await owner.setTitle(principal().session, callID(request), SetTitleArguments(title: input.title)) }
+    guard case let .setTitle(titled) = payload else { return toolRefusal(payload) }
+    return try Response.json(SessionTitleOutput(title: titled.title))
+  }
+
+  router.post("/v1/device/:id/command") { request, parameters in
+    guard let device = parameters["id"], !device.isEmpty else { return unknownDevice(parameters) }
+    let input: DeviceCommandInput
+    do {
+      input = try await request.json(DeviceCommandInput.self)
+    } catch {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a device-command body: \(error)")
+    }
+    let payload = try await answered {
+      try await owner.manipulateUI(principal().session, callID(request), ManipulateUIArguments(device: device, payload: input.payload))
+    }
+    guard case let .manipulateUI(issued) = payload else { return toolRefusal(payload) }
+    return try Response.json(DeviceCommandOutput(n: Int(issued.n)))
+  }
+
+  // One durable slot of the session's own, keyed by the tool call that arms
+  // it, so a retried arm lands on the same slot.
+  router.post("/v1/subscription") { request, _ in
+    let input: SubscriptionInput
+    do {
+      input = try await request.json(SubscriptionInput.self)
+    } catch {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "expected a subscription body: \(error)")
+    }
+    let payload: ToolResultPayload
+    switch (input.observe, input.timer) {
+    case let (observe?, nil):
+      payload = try await answered {
+        try await owner.observe(principal().session, callID(request), ObserveArguments(sql: observe.sql, throttleSeconds: observe.throttleSeconds, handler: input.handler))
+      }
+    case let (nil, timer?):
+      payload = try await answered {
+        try await owner.timer(principal().session, callID(request), TimerArguments(message: timer.message, inSeconds: timer.inSeconds, cron: timer.cron, handler: input.handler))
+      }
+    default:
+      return errorResponse(.badRequest, code: "invalidArgument", message: "a subscription is exactly one of observe and timer")
+    }
+    guard let output = subscriptionOutput(payload) else { return toolRefusal(payload) }
+    return try Response.json(output)
+  }
+  router.delete("/v1/subscription/:id") { request, parameters in
+    guard let id = parameters["id"], !id.isEmpty else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown subscription")
+    }
+    let payload = try await answered { try await owner.cancel(principal().session, callID(request), CancelArguments(id: id)) }
+    guard let output = subscriptionOutput(payload) else { return toolRefusal(payload) }
+    return try Response.json(output)
   }
 
   for verb in ["interrupt", "resume", "archive", "unarchive", "tags"] {
@@ -362,15 +490,14 @@ private func sessionRouter(
     if case let .object(fields) = body, fields["viewing"] != nil {
       return errorResponse(.badRequest, code: "invalidArgument", message: "viewing is set only on a person's message, never by a session")
     }
-    var arguments: OrderedDictionary<String, JSONValue> = ["message": .string(input.message)]
-    arguments["conversation"] = input.conversation.map(JSONValue.string)
-    arguments["session"] = input.session.map(JSONValue.string)
-    if case let .object(fields) = body {
-      arguments["user"] = fields["user"]
+    if case let .object(fields) = body, fields["user"] != nil {
+      return errorResponse(.unprocessableContent, code: "refused", message: SessionStoreError.humanAgentDirectMessageExplanation)
     }
-    arguments["reply_target"] = input.replyTarget.map(JSONValue.string)
-    arguments["attachments"] = input.attachments.map { .array($0.map(JSONValue.string)) }
-    let payload = try await tool("send_message", .object(arguments))
+    let payload = try await answered {
+      try await owner.sendMessage(principal().session, callID(request), SendMessageArguments(
+        message: input.message, conversation: input.conversation, session: input.session, replyTarget: input.replyTarget, attachments: input.attachments,
+      ))
+    }
     guard case let .sendMessage(sent) = payload else { return toolRefusal(payload) }
     return try Response.json(ConversationPostOutput(
       messageId: sent.messageID.rawValue,
@@ -380,6 +507,24 @@ private func sessionRouter(
     ))
   }
   return router
+}
+
+private func subscriptionOutput(_ payload: ToolResultPayload) -> SubscriptionOutput? {
+  switch payload {
+  case let .observe(armed):
+    SubscriptionOutput(id: armed.subscriptionID.rawValue, kind: .observe, fireAt: nil, cron: nil)
+  case let .timer(armed):
+    switch armed.schedule {
+    case let .oneShot(date): SubscriptionOutput(id: armed.subscriptionID.rawValue, kind: .timer, fireAt: date.timeIntervalSince1970, cron: nil)
+    case let .cron(expression): SubscriptionOutput(id: armed.subscriptionID.rawValue, kind: .timer, fireAt: nil, cron: expression)
+    }
+  case let .cancelObservation(ended):
+    SubscriptionOutput(id: ended.subscriptionID.rawValue, kind: .observe, fireAt: nil, cron: nil)
+  case let .cancelTimer(ended):
+    SubscriptionOutput(id: ended.subscriptionID.rawValue, kind: .timer, fireAt: nil, cron: nil)
+  default:
+    nil
+  }
 }
 
 // The file tools a session has, each with the argument fields that name what it

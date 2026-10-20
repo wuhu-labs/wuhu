@@ -1,5 +1,7 @@
+import Clocks
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import struct ExecutionOwner.AttemptLogConfig
 import Fetch
 import Foundation
@@ -10,7 +12,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct OIDCProviderTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct OIDCProviderTests {
   @Test(arguments: ["anthropic", "claude", "deepseek", "openai"])
   func bearerAuthMintsPerCallWithoutCredentials(provider: String) async throws {
     let minted = TokenCalls()

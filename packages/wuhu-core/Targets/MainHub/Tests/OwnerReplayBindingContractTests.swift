@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import Fetch
 import MainHub
@@ -14,7 +15,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite struct OwnerReplayBindingContractTests {
+@Suite(.deterministicDependencies) struct OwnerReplayBindingContractTests {
   @Test func liveCredentialEpochSurvivesOwnerRefreshAndRotatesOnReplacement() async throws {
     let folder = try ScratchFolder("owner-replay-credentials")
     defer { folder.remove() }

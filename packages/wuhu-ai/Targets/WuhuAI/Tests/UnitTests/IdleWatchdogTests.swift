@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import Synchronization
@@ -39,7 +40,7 @@ private final class StallGate: Sendable {
   }
 }
 
-@Suite("Idle watchdog")
+@Suite("Idle watchdog", .deterministicDependencies)
 struct IdleWatchdogTests {
   @Test("silence past the idle window fails as .transport(.idleTimeout)")
   func idleSilenceTimesOut() async throws {

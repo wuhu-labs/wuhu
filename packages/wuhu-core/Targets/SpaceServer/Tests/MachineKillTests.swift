@@ -1,4 +1,5 @@
 import Clocks
+import DeterministicDependencies
 import Fetch
 import Foundation
 import MachineChannel
@@ -17,7 +18,7 @@ import Testing
 // The kill paths scripts lean on: a kill that lands before the start still
 // wins, and a process stranded by a machine drop gets killed when the machine
 // comes back unless a caller is still dialed to resume it.
-@Suite struct MachineKillTests {
+@Suite(.deterministicDependencies) struct MachineKillTests {
   @Test func aKillBeforeTheStartKeepsTheCommandFromRunning() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: TestClock())

@@ -1,12 +1,12 @@
 import Dependencies
+import struct MainHub.CreateSessionArguments
+import struct MainHub.IncompleteSession
 import func MainHub.renderedFailure
 import struct MainHub.RequestArguments
 import struct MainHub.ScriptError
 import func MainHub.seconds
 import struct MainHub.SendMessageArguments
 import struct MainHub.SessionControl
-import struct MainHub.Spawned
-import struct MainHub.SpawnOrder
 import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -51,22 +51,21 @@ struct ScriptSessions {
     engine.define("__wuhu_session_create", promising: { [session, tools] arguments in
       try await scripted {
         let options = try decoded(CreateOptions.self, arguments.first)
-        try await tools.owner.refuseUnlessLive(session)
-        let callID: ToolCallID
+        let callID: String
         if let key = options.key {
           guard !key.isEmpty else { throw ToolProblem("createSession: key is a non-empty string") }
-          callID = ToolCallID("script-key:\(key)")
+          callID = "script-key:\(key)"
         } else {
           @Dependency(\.uuid) var uuid
-          callID = ToolCallID("script:\(uuid().uuidString.lowercased())")
+          callID = "script:\(uuid().uuidString.lowercased())"
         }
-        let spawned: Spawned
+        let reply: ToolResultPayload
         do {
-          spawned = try await tools.owner.spawn(session, callID, SpawnOrder(
-            executor: options.executor,
+          reply = try await tools.createSession(session, callID, CreateSessionArguments(
             title: options.title,
             kind: options.kind,
-            topLevel: options.topLevel ?? false,
+            executor: options.executor,
+            topLevel: options.topLevel,
             group: options.group,
             provider: options.provider,
             model: options.model,
@@ -74,25 +73,23 @@ struct ScriptSessions {
             effort: options.effort,
             tags: options.tags,
             template: options.template,
-            expectsReply: options.expectsReply ?? false,
+            expectsReply: options.expectsReply,
             message: options.message,
             stallSeconds: options.stallSeconds,
           ))
-        } catch let error as ExecutorUnavailableError {
-          return .object(["error": .string(error.description), "code": "executorNoLongerSupported"])
         } catch let problem as ToolProblem {
-          throw ToolProblem("createSession: \(problem.message)", code: problem.code)
+          throw ToolProblem(scriptNamed(problem.message), code: problem.code)
+        } catch let incomplete as IncompleteCreate {
+          throw IncompleteCreate(id: incomplete.id, message: scriptNamed(incomplete.message))
         }
-        var made: OrderedDictionary<String, JSONValue> = ["id": .string(spawned.id.rawValue)]
+        guard case let .createSession(spawned) = reply else { preconditionFailure("create_session returned \(reply)") }
+        var made: OrderedDictionary<String, JSONValue> = ["id": .string(spawned.sessionID.rawValue)]
         if let group = spawned.modelGroup { made["modelGroup"] = .string(group) }
         if let member = spawned.member { made["member"] = .string(member) }
         if let provider = spawned.provider { made["provider"] = .string(provider) }
         if let model = spawned.model { made["model"] = .string(model) }
         if let requestID = spawned.requestID {
           made["requestId"] = .string(requestID.rawValue)
-        }
-        if let unfinished = spawned.unfinished {
-          made["error"] = .string("createSession: session \(spawned.id.rawValue) was created, but \(unfinished)")
         }
         return .object(made)
       }
@@ -103,9 +100,8 @@ struct ScriptSessions {
         let allowed: Set<String> = ["message", "conversation", "session", "reply_target", "attachments"]
         guard Set(options.keys).isSubset(of: allowed) else { throw ToolProblem("sendMessage: unsupported options") }
         let input = try JSONDecoder().decode(SendMessageArguments.self, from: Data(JSONValue.object(options).jsonString().utf8))
-        try await tools.owner.refuseUnlessLive(session)
         @Dependency(\.uuid) var uuid
-        let reply = try await tools.owner.sendMessage(session, ToolCallID("script:\(uuid().uuidString.lowercased())"), input)
+        let reply = try await tools.sendMessage(session, "script:\(uuid().uuidString.lowercased())", input)
         guard case let .sendMessage(sent) = reply else { preconditionFailure("send_message returned \(reply)") }
         return .object(["messageId": .string(sent.messageID.rawValue), "conversationId": .string(sent.conversationID.rawValue)])
       }
@@ -122,11 +118,10 @@ struct ScriptSessions {
           default: nil
           }
         }
-        try await tools.owner.refuseUnlessLive(session)
         @Dependency(\.uuid) var uuid
-        let result = try await tools.owner.request(
+        let result = try await tools.request(
           session,
-          ToolCallID("script:\(uuid().uuidString.lowercased())"),
+          "script:\(uuid().uuidString.lowercased())",
           RequestArguments(task: task, message: message, deadlineSeconds: seconds(arguments[safe: 2]), stallSeconds: seconds(arguments[safe: 3])),
         )
         guard case let .request(opened) = result else {
@@ -184,6 +179,11 @@ private func verbName(_ value: JSONValue?) -> String {
   if case let .string(text)? = value { text } else { "a session verb" }
 }
 
+// The tool's failure, named as the script's function.
+private func scriptNamed(_ message: String) -> String {
+  message.hasPrefix("create_session: ") ? "createSession: " + message.dropFirst("create_session: ".count) : message
+}
+
 private func decoded<T: Decodable>(_ type: T.Type, _ value: JSONValue?) throws -> T {
   guard let value, case .object = value else {
     throw ToolProblem("createSession wants an options object: { title, kind, topLevel, ... }")
@@ -205,6 +205,8 @@ private func scripted(_ body: () async throws -> JSONValue) async throws -> JSON
   } catch let problem as ToolProblem {
     if let code = problem.code { return .object(["error": .string(problem.message), "code": .string(code)]) }
     throw ScriptError(problem.message)
+  } catch let incomplete as IncompleteCreate {
+    return .object(["error": .string(incomplete.message), "code": .string(IncompleteSession.code), "id": .string(incomplete.id)])
   } catch is CancellationError {
     throw CancellationError()
   } catch {
@@ -246,12 +248,21 @@ export async function createSession(options) {
   return result
 }
 
-export function sendMessage(options) {
-  return send(options)
+function answered(reply) {
+  if (reply !== null && typeof reply === "object" && reply.error !== undefined) {
+    const error = new Error(reply.error)
+    if (reply.code !== undefined) error.code = reply.code
+    throw error
+  }
+  return reply
 }
 
-export function request(id, message, { deadlineSeconds, stallSeconds } = {}) {
-  return ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null)
+export async function sendMessage(options) {
+  return answered(await send(options))
+}
+
+export async function request(id, message, { deadlineSeconds, stallSeconds } = {}) {
+  return answered(await ask(String(id), String(message), deadlineSeconds ?? null, stallSeconds ?? null))
 }
 
 export async function setTags(id, tags) {

@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
@@ -43,7 +44,7 @@ private let utc = TimeZone(identifier: "UTC")!
 
 private func human(_ id: String) -> Sender { Sender(id: id, timeZone: utc) }
 
-@Suite struct ConversationDeliveryTests {
+@Suite(.deterministicDependencies) struct ConversationDeliveryTests {
   private func agent(_ store: SessionStore, _ title: String = "a") async throws -> SessionID {
     try await store.createSession(group: .shared, title: title, kind: .agent, createdBy: "morgan", model: .test)
   }

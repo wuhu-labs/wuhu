@@ -6,12 +6,28 @@ public struct ReadInput: Codable, Equatable, Sendable {
   public let path: String
   public let rev: Int?
   public let lines: String?
+  /// Answer an image path with its stored bytes (`ReadOutput.image`) instead
+  /// of refusing binary content.
+  public let image: Bool?
 }
 
 @Contract
 public struct ReadOutput: Codable, Equatable, Sendable {
   public let token: String
+  /// An image's content is a line describing it; its bytes are in `image`.
   public let content: String
+  public let image: ReadImageOutput?
+}
+
+/// An image the read tool stored: the content-addressed blob main keeps the
+/// bytes in, their checked type and, when the header tells, the pixel size.
+@Contract
+public struct ReadImageOutput: Codable, Equatable, Sendable {
+  public let mimeType: String
+  public let blob: String
+  public let byteCount: Int
+  public let width: Int?
+  public let height: Int?
 }
 
 @Contract
@@ -19,6 +35,9 @@ public struct WriteInput: Codable, Equatable, Sendable {
   public let path: String
   public let content: String
   public let ifMatch: String?
+  /// Refuse to replace an existing file (`conflict`); a creation with no
+  /// version to match.
+  public let createOnly: Bool?
 }
 
 @Contract

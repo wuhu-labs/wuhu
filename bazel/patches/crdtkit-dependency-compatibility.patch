@@ -1,0 +1,35 @@
+diff --git a/Package.swift b/Package.swift
+--- a/Package.swift
++++ b/Package.swift
+@@ -7,7 +7,7 @@
+         .macOS(.v12),
+         .iOS(.v15),
+         .macCatalyst(.v15),
+-        .watchOS(.v8),
++        .watchOS(.v9),
+         .tvOS(.v15)
+     ],
+     products: [
+@@ -22,6 +22,7 @@
+             targets: ["CRDTKit"]),
+     ],
+     dependencies: [
++        .package(url: "https://github.com/pointfreeco/swift-issue-reporting", from: "2.1.2"),
+         .package(url: "https://github.com/apple/swift-algorithms", from: "1.0.0"),
+         .package(url: "https://github.com/pointfreeco/swift-dependencies", from: "1.0.0"),
+     ],
+@@ -31,6 +32,7 @@
+             dependencies: [
+                 .product(name: "Algorithms", package: "swift-algorithms"),
+                 .product(name: "Dependencies", package: "swift-dependencies"),
++                .product(name: "IssueReporting", package: "swift-issue-reporting"),
+             ],
+             swiftSettings: [
+                 .swiftLanguageVersion(.v6)
+diff --git a/Sources/CRDTBase/Author.swift b/Sources/CRDTBase/Author.swift
+--- a/Sources/CRDTBase/Author.swift
++++ b/Sources/CRDTBase/Author.swift
+@@ -1,2 +1,2 @@
+ import Dependencies
+-import XCTestDynamicOverlay
++import IssueReporting

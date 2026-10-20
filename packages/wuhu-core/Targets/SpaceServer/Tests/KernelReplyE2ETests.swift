@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -112,7 +113,7 @@ private final class ToolsWitness: Sendable {
   }
 }
 
-@Suite struct KernelReplyE2ETests {
+@Suite(.deterministicDependencies) struct KernelReplyE2ETests {
   @Test func delegatedTaskReportsFinalAndTheAgentRelaysIt() async throws {
     try await withReplayableDeps {
       let witness = ToolsWitness()

@@ -28,6 +28,7 @@ dependencies:
   - WuhuAI
 tests:
   dependencies:
+    - DeterministicDependencies
     - Credentials
     - Dependencies
     - ExecutionOwner

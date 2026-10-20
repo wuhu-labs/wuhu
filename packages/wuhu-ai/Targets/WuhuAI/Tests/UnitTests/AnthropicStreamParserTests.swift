@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 @testable import WuhuAI
 
 // MARK: - Anthropic Stream Parser Tests
 
-@Suite struct AnthropicStreamParserTests {
+@Suite(.deterministicDependencies) struct AnthropicStreamParserTests {
   private func sse(_ events: [SSEEvent]) -> AsyncThrowingStream<SSEEvent, Error> {
     AsyncThrowingStream { continuation in
       for event in events { continuation.yield(event) }

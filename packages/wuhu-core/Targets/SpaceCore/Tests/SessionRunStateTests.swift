@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import SessionDomain
@@ -9,6 +10,7 @@ import WuhuAI
 
 // The sessions row says what the loop is doing, and its activity
 // time follows the loop rather than only inputs and verbs.
+@Suite(.deterministicDependencies)
 struct SessionRunStateTests {
   private struct RunRow: Equatable {
     var work: String

@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SpaceContract
 import SpaceTools
 import Testing
 
-@Suite struct SpaceVerbTests {
+@Suite(.deterministicDependencies) struct SpaceVerbTests {
   @Test func historyAndCheckoutRoundTrip() async throws {
     let context = try makeContext()
     let first = try await seedFile("/a.md", "v1", context)

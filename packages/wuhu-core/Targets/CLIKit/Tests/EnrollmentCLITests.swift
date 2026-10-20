@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite(.serialized) struct EnrollmentCLITests {
+@Suite(.deterministicDependencies, .serialized) struct EnrollmentCLITests {
   @Test func enrollsFromACleanHomeAndTheTokenDiesAtEnrollment() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
@@ -353,7 +354,7 @@ import Testing
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct ShareLoginParsingTests {
   @Test func defaultsToNoTTL() throws {
     #expect(try Command.parse(["share-login"]) == .shareLogin(ttl: nil))

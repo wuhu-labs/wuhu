@@ -1,5 +1,6 @@
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import SpaceContract
@@ -7,7 +8,7 @@ import SpaceContract
 import Synchronization
 import Testing
 
-@Suite struct MachineV2EnrollmentTests {
+@Suite(.deterministicDependencies) struct MachineV2EnrollmentTests {
   @Test(arguments: ["machine_v2_members", "join_tokens"]) func interruptedEnrollmentRollsBackEveryRowAndAllowsRetry(_ rejectingTable: String) async throws {
     let space = try Space.inMemory()
     let accountsBefore = try await space.accounts().count

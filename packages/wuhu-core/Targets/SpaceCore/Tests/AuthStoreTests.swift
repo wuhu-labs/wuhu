@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct AuthStoreTests {
   @Test func eachAddCreatesADistinctAccount() async throws {
     let space = try makeSpace()

@@ -18,6 +18,7 @@ dependencies:
   - OrderedCollections
 tests:
   dependencies:
+    - DeterministicDependencies
     - OrderedCollections
     - MachineContract
     - FileSearch

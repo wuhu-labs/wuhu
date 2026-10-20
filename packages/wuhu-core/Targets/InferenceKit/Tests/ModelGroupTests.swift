@@ -1,4 +1,5 @@
 import Credentials
+import DeterministicDependencies
 import Foundation
 import InferenceKit
 import SessionDomain
@@ -13,7 +14,7 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
   return document
 }
 
-@Suite struct ModelGroupTests {
+@Suite(.deterministicDependencies) struct ModelGroupTests {
   @Test func unionRoundTripsAndPolicyDefaults() throws {
     let document = try groupDocument()
     #expect(try ModelsDocument(json: JSONEncoder().encode(document), groupsJSON: JSONEncoder().encode(document.groups)) == document)
@@ -101,7 +102,7 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
   }
 }
 
-@Suite struct ModelPlacementTests {
+@Suite(.deterministicDependencies) struct ModelPlacementTests {
   let now = Date(timeIntervalSince1970: 100_000)
 
   func usage(_ used: Double, reset: Double = 118_000, weekly: Double? = nil) -> ModelUsageSnapshot {
@@ -149,7 +150,7 @@ private func groupDocument(policy: ModelsDocument.Policy = .quotaAware()) throws
   }
 }
 
-@Suite struct ModelGroupCapabilityTests {
+@Suite(.deterministicDependencies) struct ModelGroupCapabilityTests {
   @Test func capabilityGroupOverridesFailBeforeCredentialsOrNetwork() async throws {
     let doc = try groupDocument()
     let json = try JSONEncoder().encode(doc)

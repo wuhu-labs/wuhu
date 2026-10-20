@@ -1,9 +1,11 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct SessionNotificationTests {
   @Test func settlingNotifiesNobody() async throws {
     try await withSessionDeps {

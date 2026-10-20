@@ -1,5 +1,6 @@
 import struct Credentials.SpaceSecretStores
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -18,7 +19,7 @@ import Testing
 // Group isolation over HTTP: secrets, machines, archive and the MCP
 // seat live in groups. Alice and Bob are people with personal groups; Admin is
 // a human admin of shared; P is a top-level agent in alice, S one in shared.
-@Suite struct GroupIsolationRouteTests {
+@Suite(.deterministicDependencies) struct GroupIsolationRouteTests {
   struct World {
     let harness: SessionHarness
     let tokens: ExecTokens

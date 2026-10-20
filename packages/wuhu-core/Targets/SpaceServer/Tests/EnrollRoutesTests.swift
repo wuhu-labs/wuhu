@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -7,7 +8,7 @@ import enum SpaceContract.ShareLogin
 import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct EnrollRoutesTests {
   @Test func mintedTokenConsumesOnceThenDies() async throws {
     let harness = try Harness()

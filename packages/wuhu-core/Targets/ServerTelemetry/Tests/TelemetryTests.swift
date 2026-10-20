@@ -1,6 +1,7 @@
 import Clocks
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import ServerTelemetry
 import Synchronization
 import Testing
 
-@Test func boundedDropsAndRecoversFromDeadCollector() async {
+@Test(.deterministicDependencies) func boundedDropsAndRecoversFromDeadCollector() async {
   let buffer = SpanBuffer(capacity: 4)
   ServerTracing.$emitter.withValue({ buffer.append($0) }) {
     for _ in 0 ..< 20 { ServerSpan(.turn, session: "s", group: "g").finish() }
@@ -27,7 +28,7 @@ import Testing
   #expect(buffer.pending == 0)
 }
 
-@Test func batchingContextAndContentFreeOTLP() async throws {
+@Test(.deterministicDependencies) func batchingContextAndContentFreeOTLP() async throws {
   let spans = Mutex<[FinishedSpan]>([])
   ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
     let turn = ServerSpan(.turn, session: "s", group: "g")
@@ -81,18 +82,18 @@ private func exportedResource(hostName: String?) async throws -> [String: String
   return Dictionary(uniqueKeysWithValues: resource.attributes.map { ($0.key, $0.value.stringValue) })
 }
 
-@Test func resourceNamesServiceVersionAndHost() async throws {
+@Test(.deterministicDependencies) func resourceNamesServiceVersionAndHost() async throws {
   #expect(try await exportedResource(hostName: "ct106") == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121", "host.name": "ct106"])
   #expect(try await exportedResource(hostName: nil) == ["service.name": "wuhu-server", "service.version": "0.1.0-dev.121"])
 }
 
-@Test func disabledHasNoContext() {
+@Test(.deterministicDependencies) func disabledHasNoContext() {
   let span = ServerSpan(.turn)
   #expect(span.context == nil)
   span.finish()
 }
 
-@Test func slowCollectorCannotBackpressureProducers() async {
+@Test(.deterministicDependencies) func slowCollectorCannotBackpressureProducers() async {
   let buffer = SpanBuffer(capacity: 4)
   let (entered, enter) = AsyncStream<Void>.makeStream()
   let (release, resume) = AsyncStream<Void>.makeStream()
@@ -116,7 +117,7 @@ private func exportedResource(hostName: String?) async throws -> [String: String
   }
 }
 
-@Test func cancelledShutdownDrainsAllBatchesBeforeReturning() async {
+@Test(.deterministicDependencies(clock: TestClock())) func cancelledShutdownDrainsAllBatchesBeforeReturning() async {
   let buffer = SpanBuffer()
   let exported = BatchSizes()
   await ServerTracing.$emitter.withValue({ buffer.append($0) }) {
@@ -132,7 +133,7 @@ private func exportedResource(hostName: String?) async throws -> [String: String
   #expect(buffer.dropped == 0)
 }
 
-@Test func shutdownDeadlineDropsAnUnavailableCollectorWithoutHanging() async throws {
+@Test(.deterministicDependencies) func shutdownDeadlineDropsAnUnavailableCollectorWithoutHanging() async throws {
   try await withDependencies {
     $0.installTimeControl()
   } operation: {
@@ -156,7 +157,7 @@ private final class BatchSizes: Sendable {
   let values = Mutex<[Int]>([])
 }
 
-@Test func stoppedPeriodicSenderDrainsItsSleepingQueue() async throws {
+@Test(.deterministicDependencies) func stoppedPeriodicSenderDrainsItsSleepingQueue() async throws {
   try await withDependencies {
     $0.installTimeControl()
   } operation: {

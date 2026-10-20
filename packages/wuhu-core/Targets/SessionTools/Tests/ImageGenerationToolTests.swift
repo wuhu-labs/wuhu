@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -83,7 +84,7 @@ private func installModelsWithoutCodex(_ space: Space) async throws {
 
 private let ModelsPath = "/models.json"
 
-@Suite struct ImageGenerationToolTests {
+@Suite(.deterministicDependencies) struct ImageGenerationToolTests {
   @Test func codexRequestWritesAReadablePNGWithoutReturningItsBase64() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

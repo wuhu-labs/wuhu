@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct RebuildEquivalenceTests {
+@Suite(.deterministicDependencies) struct RebuildEquivalenceTests {
   static let markdownBodies = [
     "---\nkind: note\nstatus: open\ntags:\n  - a\n  - b\n---\n# Title\n[link](/other.md)",
     "---\nkind: task\npriority: 3\n---\nbody with [ref](/a.md) and ![img](/img.png)",

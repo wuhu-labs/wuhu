@@ -22,7 +22,7 @@ public enum ToolReference {
   public static let entries: [Entry] = [
     Entry(
       tool: "read", input: "ReadInput", output: "ReadOutput",
-      summary: "Read a file's UTF-8 text, at the head or at a past revision `rev`. `lines` (`A-B`, 1-based, inclusive) cuts a range. A file that is not UTF-8 text is `unsupported`.",
+      summary: "Read a file's UTF-8 text, at the head or at a past revision `rev`. `lines` (`A-B`, 1-based, inclusive) cuts a range. A file that is not UTF-8 text is `unsupported`, unless `image` is set and the path is an image: then its checked bytes go to the blob store and `image` names them.",
     ),
     Entry(
       tool: "write", input: "WriteInput", output: "WriteOutput",
@@ -216,6 +216,7 @@ public enum ToolReference {
     for (name, property) in spec["properties"]?.object ?? [:] {
       let field = prefix + name
       result.append(Row(field: field, type: describe(property), required: required.contains(name)))
+      let property = optionalBranch(property) ?? property
       if property.object?["properties"] != nil || property.object?["oneOf"] != nil {
         result += rows(property, prefix: field + ".")
       } else if let items = property.object?["items"], items.object?["properties"] != nil || items.object?["oneOf"] != nil {
@@ -225,8 +226,17 @@ public enum ToolReference {
     return result
   }
 
+  // An optional nested object renders as `anyOf: [schema, null]`.
+  static func optionalBranch(_ schema: JSONValue) -> JSONValue? {
+    guard let branches = schema.object?["anyOf"]?.array, branches.count == 2,
+          branches.contains(where: { $0.object?["type"]?.stringValue == "null" }),
+          let inner = branches.first(where: { $0.object?["type"]?.stringValue != "null" }) else { return nil }
+    return inner
+  }
+
   static func describe(_ schema: JSONValue) -> String {
     guard let spec = schema.object, !spec.isEmpty else { return "any JSON" }
+    if let inner = optionalBranch(schema) { return describe(inner) + " or null" }
     if let constant = spec["const"] { return "`\(constant.jsonString())`" }
     if let branches = spec["oneOf"]?.array {
       let described = Array(Set(branches.map(describe))).sorted()

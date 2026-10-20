@@ -2,6 +2,7 @@ import Clocks
 import Crypto
 import Dependencies
 import DependenciesTestSupport
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -12,7 +13,7 @@ import Synchronization
 import Testing
 import WuhuVFS
 
-@Suite(.dependency(\.continuousClock, ContinuousClock())) struct IdentityRotationTests {
+@Suite(.deterministicDependencies, .dependency(\.continuousClock, ContinuousClock())) struct IdentityRotationTests {
   @Test(arguments: [false, true]) func overlapSwitchRetireAndRestart(directory: Bool) async throws {
     let rig = try await RotationRig(directory: directory)
     let oldKeys = await rig.controller.jwks

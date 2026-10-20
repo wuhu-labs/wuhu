@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import SessionDomain
@@ -6,7 +7,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct PortableHandoffStoreTests {
+@Suite(.deterministicDependencies) struct PortableHandoffStoreTests {
   @Test(arguments: [false, true]) func rewrittenGenerationIsAtomicAndHistoryIsUntouched(hydrated: Bool) async throws {
     try await withSessionDeps {
       let space = try makeSpace()

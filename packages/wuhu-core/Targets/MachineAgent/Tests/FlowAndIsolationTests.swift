@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import Foundation
 @testable import MachineAgent
 import MachineChannel
@@ -5,7 +7,7 @@ import MachineContract
 import Scratch
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies(clock: ContinuousClock()))
 struct FlowAndIsolationTests {
   @Test func fullWindowStopsTheChildUntilTheConsumerAcks() async throws {
     try await Harness().run { h in

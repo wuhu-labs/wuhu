@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
 
-@Suite struct ChannelTests {
+@Suite(.deterministicDependencies) struct ChannelTests {
   @Test func managementIsAtomicHumanOnlyAndSessionsNeverJoin() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

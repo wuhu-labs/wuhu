@@ -1,5 +1,7 @@
 import Clocks
+import ClockTesting
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -10,7 +12,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-@Suite(.dependency(\.continuousClock, ContinuousClock())) struct IdentityRecoveryTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock())) struct IdentityRecoveryTests {
   @Test(arguments: ["unavailable", "rateLimited", "transport", "unconfirmed", "invalidID"])
   func failedFreshRegistrationPreservesSavedIssuerAndMinting(failure: String) async throws {
     let rig = try await RotationRig(directory: true)
@@ -40,28 +42,24 @@ import Testing
     #expect(try rotationJSON(String(token.split(separator: ".")[1])).object?["iss"] == .string(issuer))
   }
 
-  @Test func registrationTimeoutPreservesConfirmedIssuer() async throws {
+  @Test(.timeLimit(.minutes(1))) func registrationTimeoutPreservesConfirmedIssuer() async throws {
     let rig = try await RotationRig(directory: true)
-    let clock = TestClock<Duration>()
-    let entered = Gate()
+    let clock = VirtualClock()
     let fetch = FetchClient { request in
       if request.method == .put { return try Response.json(["confirmed": true]) }
-      entered.open()
       try await clock.sleep(for: .seconds(60))
       return Response(status: .serviceUnavailable)
     }
-    let controller = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    let controller = try await withDependencies { $0.continuousClock = clock } operation: {
+      try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    }
     let before = await controller.settings
-    await withDependencies { $0.continuousClock = clock } operation: {
-      await withTaskGroup(of: Void.self) { tasks in
-        tasks.addTask {
-          await #expect(throws: IdentityError.directoryUnavailable) { try await controller.registerNew() }
-        }
-        await entered.wait()
-        await clock.run()
-        await tasks.waitForAll()
+    try await withDependencies { $0.continuousClock = clock } operation: {
+      try await clock.run(through: VirtualClock.at(.seconds(15))) {
+        await #expect(throws: IdentityError.directoryUnavailable) { try await controller.registerNew() }
       }
     }
+    #expect(clock.now == VirtualClock.at(.seconds(15)))
     #expect(await controller.settings == before)
     #expect(await controller.directoryConfirmed)
     #expect(try await rig.tokenKid(controller) == rig.key.kid)

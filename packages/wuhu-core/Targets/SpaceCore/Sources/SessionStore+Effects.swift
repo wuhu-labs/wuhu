@@ -15,6 +15,29 @@ public struct RecordedWrite: Sendable {
   public let replayed: Bool
 }
 
+/// A tool call's answer, recorded in the same transaction as the effect it
+/// stands for: a retry of the call reads it back instead of acting again.
+public struct ToolReceipt: Sendable {
+  public let session: SessionID
+  public let callID: ToolCallID
+  public let payload: ToolResultPayload
+
+  public init(session: SessionID, callID: ToolCallID, payload: ToolResultPayload) {
+    self.session = session
+    self.callID = callID
+    self.payload = payload
+  }
+
+  func record(now: String, in db: Database) throws {
+    try Sessions.recordReceipt(session.rawValue, toolCallID: callID.rawValue, payload: try Sessions.encode(payload), now: now, in: db)
+  }
+
+  /// The answer this call already has, if any.
+  func recorded(in db: Database) throws -> ToolResultPayload? {
+    try Sessions.receipt(session.rawValue, toolCallID: callID.rawValue, in: db)
+  }
+}
+
 extension SessionStore {
   // The fs journal write and the receipt commit in one transaction: there is
   // no crash window in which the effect happened but the receipt did not, so
@@ -124,9 +147,41 @@ extension SessionStore {
     nextFireAt: Date? = nil,
     marker: String? = nil,
   ) async throws -> ArmedSubscription {
-    @Dependency(\.uuid) var uuid
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
+    let prepared = prepared(slot)
+    return try await writer.write { db in
+      try self.armSubscription(key, slot: prepared, nextFireAt: nextFireAt, marker: marker, now: now, in: db)
+    }
+  }
+
+  // The arm as a tool call's effect: the call's answer is looked up and
+  // recorded in the write that arms, so a call already answered (an earlier
+  // run, or an overlapping twin of this one) gets that answer and arms
+  // nothing, whether its slot still stands or has since fired or been
+  // cancelled.
+  public func armSubscription(
+    _ id: SessionID,
+    slot: SubscriptionSlot,
+    nextFireAt: Date? = nil,
+    marker: String? = nil,
+    answering receipt: ToolReceipt,
+  ) async throws -> ToolResultPayload {
+    let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    let prepared = prepared(slot)
+    return try await writer.write { db in
+      if let recorded = try receipt.recorded(in: db) { return recorded }
+      try self.armSubscription(key, slot: prepared, nextFireAt: nextFireAt, marker: marker, now: now, in: db)
+      try receipt.record(now: now, in: db)
+      return receipt.payload
+    }
+  }
+
+  // The slot as it is stored: an observation gets its incarnation, a handler
+  // a fresh one. A request's deadline and stall slots need neither.
+  private func prepared(_ slot: SubscriptionSlot) -> SubscriptionSlot {
+    @Dependency(\.uuid) var uuid
     var inserted = slot
     if case .observe = inserted.kind, inserted.observationProgress == nil {
       inserted.observationProgress = ObservationProgress(incarnation: uuid(), deliverySequence: 0)
@@ -138,28 +193,63 @@ extension SessionStore {
       inserted.handlerFailed = nil
       inserted.handlerAttemptID = nil
     }
-    let payload = try Sessions.encode(inserted)
-    return try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try SubscriptionRow.insert {
-        SubscriptionRow(
-          sessionID: key, subscriptionID: slot.id.rawValue, payload: payload,
-          nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker,
-          lastFiredAt: nil, armedAt: now,
-        )
-      } onConflict: { ($0.sessionID, $0.subscriptionID) }.execute(db)
-      let row = try SubscriptionRow.find(key, slot.id.rawValue, in: db)
-      guard let row else { preconditionFailure("an armed slot must exist after its insert") }
-      return try self.armedSubscription(row)
-    }
+    return inserted
+  }
+
+  @discardableResult
+  func armSubscription(
+    _ key: String,
+    slot: SubscriptionSlot,
+    nextFireAt: Date?,
+    marker: String?,
+    now: String,
+    in db: Database,
+  ) throws -> ArmedSubscription {
+    _ = try Sessions.record(key, in: db)
+    let payload = try Sessions.encode(slot)
+    try SubscriptionRow.insert {
+      SubscriptionRow(
+        sessionID: key, subscriptionID: slot.id.rawValue, payload: payload,
+        nextFireAt: nextFireAt.map(SQLiteDateFormat.string(from:)), marker: marker,
+        lastFiredAt: nil, armedAt: now,
+      )
+    } onConflict: { ($0.sessionID, $0.subscriptionID) }.execute(db)
+    let row = try SubscriptionRow.find(key, slot.id.rawValue, in: db)
+    guard let row else { preconditionFailure("an armed slot must exist after its insert") }
+    return try armedSubscription(row)
+  }
+
+  static func deleteSubscription(_ key: String, _ subscriptionID: SubscriptionID, in db: Database) throws {
+    try SubscriptionRow.where {
+      $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
+    }.delete().execute(db)
   }
 
   public func cancelSubscription(_ id: SessionID, subscriptionID: SubscriptionID) async throws {
     let key = id.rawValue
-    try await writer.write { db in
-      try SubscriptionRow.where {
-        $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
-      }.delete().execute(db)
+    try await writer.write { db in try Self.deleteSubscription(key, subscriptionID, in: db) }
+  }
+
+  // The cancel as a tool call's effect. `answer` sees the slot as stored (nil
+  // when there is none) and says what the call returns, or throws why it
+  // cannot; the lookup, the delete and the answer's receipt are one write, so
+  // a call already answered (an earlier run, or an overlapping twin of this
+  // one) gets that answer, never a refusal for the slot its twin removed.
+  public func cancelSubscription(
+    _ id: SessionID,
+    subscriptionID: SubscriptionID,
+    answering callID: ToolCallID,
+    _ answer: @escaping @Sendable (SubscriptionSlot?) throws -> ToolResultPayload,
+  ) async throws -> ToolResultPayload {
+    let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    return try await writer.write { db in
+      if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
+      let stored = try SubscriptionRow.find(key, subscriptionID.rawValue, in: db).map { try self.armedSubscription($0).slot }
+      let payload = try answer(stored)
+      try Self.deleteSubscription(key, subscriptionID, in: db)
+      try ToolReceipt(session: id, callID: callID, payload: payload).record(now: now, in: db)
+      return payload
     }
   }
 
@@ -169,9 +259,7 @@ extension SessionStore {
       guard try Sessions.record(id.rawValue, in: db).lifecycle != .live,
             try SubscriptionRow.find(id.rawValue, subscriptionID.rawValue, in: db) != nil
       else { return false }
-      try SubscriptionRow.where {
-        $0.sessionID.eq(id.rawValue) && $0.subscriptionID.eq(subscriptionID.rawValue)
-      }.delete().execute(db)
+      try Self.deleteSubscription(id.rawValue, subscriptionID, in: db)
       return true
     }
   }
@@ -294,9 +382,7 @@ extension SessionStore {
       }
       switch advance {
       case .retire:
-        try SubscriptionRow.where {
-          $0.sessionID.eq(key) && $0.subscriptionID.eq(subscriptionID.rawValue)
-        }.delete().execute(db)
+        try Self.deleteSubscription(key, subscriptionID, in: db)
       case let .reschedule(next):
         try SubscriptionRow.update {
           $0.nextFireAt = #bind(SQLiteDateFormat.string(from: next))

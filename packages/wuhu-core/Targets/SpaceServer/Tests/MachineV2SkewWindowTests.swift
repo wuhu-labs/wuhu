@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -79,7 +80,7 @@ private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHu
   await service.shutdown()
 }
 
-@Suite struct MachineV2SkewWindowTests {
+@Suite(.deterministicDependencies) struct MachineV2SkewWindowTests {
   /// A server one release ahead of its machines keeps every file tool working;
   /// search, which those agents do not speak as search.v1, is refused typed before anything starts.
   @Test(arguments: [SkewAgentRelease.dev120, .dev121])

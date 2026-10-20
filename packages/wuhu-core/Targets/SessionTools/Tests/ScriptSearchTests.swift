@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -9,7 +10,7 @@ import Testing
 // `find` and `grep` in `wuhu:space` run the find and grep tools as the
 // session: the same matches, limits and step cursors, over the groups its
 // group reads, with failures as SpaceErrors.
-@Suite struct ScriptSearchTests {
+@Suite(.deterministicDependencies) struct ScriptSearchTests {
   @Test func findAndGrepPageThroughOwnAndReadableGroupsWithTypedErrors() async throws {
     let alice = GroupID(rawValue: "alice")
     try await withRig(group: alice, prepare: { space, _ in

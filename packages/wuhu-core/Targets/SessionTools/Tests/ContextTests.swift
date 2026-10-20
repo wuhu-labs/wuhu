@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import class MainHub.Hub
@@ -48,7 +49,7 @@ private func rendered(_ path: String) -> String {
   "machines://\(machineA.rawValue)\(path)"
 }
 
-@Suite struct ContextTests {
+@Suite(.deterministicDependencies) struct ContextTests {
   @Test func identicalFilesAcrossCheckoutsLoadOnceAndCompactionResets() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

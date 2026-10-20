@@ -1,11 +1,12 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 @testable import InferenceKit
 import Testing
 
-@Suite struct AudioDurationTests {
+@Suite(.deterministicDependencies) struct AudioDurationTests {
   @Test func mp3ReadsCompleteFrameTiming() {
     let frame = Data([0xFF, 0xFB, 0x90, 0x00]) + Data(repeating: 0, count: 413)
     let duration = AudioDuration.seconds(.init(bytes: frame + frame, mediaType: .mpeg))

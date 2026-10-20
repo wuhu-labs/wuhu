@@ -21,6 +21,7 @@ dependencies:
   - SpaceServer
 tests:
   dependencies:
+    - DeterministicDependencies
     - SpaceServer
     - SpaceCore
     - Fetch

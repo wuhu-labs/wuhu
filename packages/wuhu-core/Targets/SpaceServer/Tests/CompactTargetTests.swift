@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import Foundation
 import InferenceKit
@@ -39,7 +40,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   return (id, try await owner.append(id, .modelRouteEstablished(bound)).value(SessionModelRoute.self))
 }
 
-@Suite struct CompactTargetTests {
+@Suite(.deterministicDependencies) struct CompactTargetTests {
   @Test func aConcreteTargetTakesAGroupSessionOffItsGroupAndSurvivesRestart() async throws {
     try await withSessionDeps {
       let folder = try scratchURL("compact-target")

@@ -1,5 +1,7 @@
 @testable import CLIKit
+import Clocks
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import Scratch
@@ -11,7 +13,7 @@ import Testing
   import Darwin
 #endif
 
-@Suite struct MachineV2InstallerTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock())) struct MachineV2InstallerTests {
   final class Effects: Sendable {
     let commands = Mutex<[[String]]>([])
     let fail = Mutex(false)

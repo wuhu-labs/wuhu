@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
@@ -5,7 +6,7 @@ import Testing
 
 // MARK: - CodingKeys Tests
 
-@Suite struct CodingKeysTests {
+@Suite(.deterministicDependencies) struct CodingKeysTests {
   // MARK: ContentBlock
 
   @Test func contentBlockTextRoundTrips() throws {

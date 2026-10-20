@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import OrderedCollections
@@ -19,7 +20,7 @@ private let toolContext = Context(
   tools: [echoTool],
 )
 
-@Suite struct ToolChoiceTests {
+@Suite(.deterministicDependencies) struct ToolChoiceTests {
   @Test func anthropicOmitsToolChoiceByDefault() async throws {
     let (_, _, body) = try await buildAnthropicRequest(
       model: "m",
@@ -151,7 +152,7 @@ private let toolContext = Context(
   }
 }
 
-@Suite struct ForcingEndpointRecipeTests {
+@Suite(.deterministicDependencies) struct ForcingEndpointRecipeTests {
   @Test func anthropicEffortPassesVerbatim() {
     let endpoint = AnthropicEndpoint(model: "claude-sonnet-5", apiKey: "k")
     var body: OrderedDictionary<String, JSONValue> = [:]

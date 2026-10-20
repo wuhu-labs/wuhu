@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -15,7 +16,7 @@ import ServeNIO
 import ServeTLS
 import Testing
 
-@Suite struct ServerTrustStoreTests {
+@Suite(.deterministicDependencies) struct ServerTrustStoreTests {
   @Test func locatesTheUserStoreFromTheEnvironment() throws {
     let scratch = try ScratchFolder("trust")
     defer { scratch.remove() }
@@ -117,7 +118,7 @@ import Testing
   }
 }
 
-@Suite(.serialized) struct SpaceTransportTests {
+@Suite(.deterministicDependencies, .serialized) struct SpaceTransportTests {
   @Test func unpinnedSecureTrafficStaysOnThePlainClientAndRecordsNothing() async throws {
     let directory = try scratchURL("trust")
     defer { try? FileManager.default.removeItem(at: directory) }

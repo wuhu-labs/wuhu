@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import protocol MainHub.Main
 #if canImport(FoundationEssentials)
@@ -12,7 +13,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite struct HubBindingContractTests {
+@Suite(.deterministicDependencies) struct HubBindingContractTests {
   @Test func preservesVerifiedCredentialAndOIDCIdentity() async throws {
     let space = try Space.inMemory()
     let expected = CredentialBinding(credential: .apiKey("fixture-key"), identityEpoch: "authoritative-epoch")

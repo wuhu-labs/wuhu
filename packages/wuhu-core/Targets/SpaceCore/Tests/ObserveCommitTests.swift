@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct ObserveCommitTests {
+@Suite(.deterministicDependencies) struct ObserveCommitTests {
   @Test func recursiveDeleteIsOneFilteredCommitLiveAndReplayed() async throws {
     let space = try makeSpace()
     for name in ["a", "b", "c"] { _ = try await space.writeText("/dir/\(name).md", name) }

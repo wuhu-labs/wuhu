@@ -1,6 +1,7 @@
 import Clocks
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -13,7 +14,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-@Suite struct ScriptFetchPolicyTests {
+@Suite(.deterministicDependencies) struct ScriptFetchPolicyTests {
   @Test func ordinaryCallMasksHeaderNamesContainingAnEarlierIdentityToken() async throws {
     let token = Mutex<String?>(nil)
     let proxy = ScriptFetch(identity: try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation), issuer: "https://space.test", hop: { request, _ in

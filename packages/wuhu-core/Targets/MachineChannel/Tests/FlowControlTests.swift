@@ -1,8 +1,10 @@
+import Clocks
+import DeterministicDependencies
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(2)))
 struct FlowControlTests {
   @Test func producerStallsAtExactlyWindowUntilConsumptionAcks() async throws {
     let caller = ChannelEndpoint()

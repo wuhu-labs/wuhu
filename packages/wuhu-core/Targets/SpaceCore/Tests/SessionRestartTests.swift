@@ -1,11 +1,12 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct SessionRestartTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct SessionRestartTests {
   @Test func restartOpensAnEmptyGenerationAndKeepsTheIdentity() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions

@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct AssertionGateTests {
+@Suite(.deterministicDependencies) struct AssertionGateTests {
   let harness: Harness
   let identity: String
   let key = Curve25519.Signing.PrivateKey()

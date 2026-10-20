@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import InferenceKit
 import JSONValue
@@ -9,7 +10,7 @@ import SpaceContract
 @testable import SpaceServer
 import Testing
 
-@Suite struct ModelGroupRouteTests {
+@Suite(.deterministicDependencies) struct ModelGroupRouteTests {
   func install(_ harness: SessionHarness, model: String = "test-model") async throws {
     let fs = await harness.space.fs(.shared)
     let (entry, data) = try await fs.read("/models.json")

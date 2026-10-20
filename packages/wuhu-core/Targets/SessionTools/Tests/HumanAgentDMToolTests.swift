@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import class MainHub.Hub
 @testable import SessionTools
 @testable import SpaceServer
@@ -12,6 +13,7 @@ import SessionDomain
 @testable import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct HumanAgentDMToolTests {
   private let refusal = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
 

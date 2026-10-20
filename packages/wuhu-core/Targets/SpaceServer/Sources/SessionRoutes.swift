@@ -110,6 +110,9 @@ func addSessionRoutes(
         effort: effort,
         kind: kind == .agent ? .agent : .task,
         parent: nil,
+        title: input.title,
+        requestId: nil,
+        member: route?.member,
       ))
     } catch {
       return sessionErrorResponse(error)

@@ -5,9 +5,9 @@
 `Space.inMemory()` opens an isolated SQLite memdb database with no scratch directory or database file. The memory opener uses SQLite’s in-memory rollback journal, while file-backed spaces retain WAL. Memory readers hold read transactions: a concurrent writer commit waits for them, up to the five-second busy timeout, then throws a SQLite busy error. Cancellation interrupts long queries and releases their read transaction. Sandbox readers attach the same memory database; files, tables, revisions, identities and queries follow the same implementation as `Space.open`. An unavailable memory VFS throws a SQLite database error, never opens a disk substitute. Memory databases copy a schema template without an identity, then run ordinary preparation. Both opening paths apply the same idempotent schema script and seed their own identity; existing file-backed data is retained.
 
 
-## Scope-context staging
+## Scope context
 
-Scope context is staged by session and kernel tool-call ID, then committed as an ordinary notice after its tool result. Staging persists folder roots and delivered-content hashes together in a metadata envelope in the existing `session_scope_context.folders` JSON column; text remains in its existing column. The old flat folder dictionary is explicitly decoded as legacy metadata with no hashes. No schema change or backfill is required, and retrying a call replaces its staged context atomically. Once committed, notice entries themselves carry the hash-to-first-path map used to reconstruct generation-scoped dedupe state.
+Nothing of scope context is staged here: the worker computes it after a tool call and appends it as an ordinary notice behind the tool result, and the notice entries carry the hash-to-first-path map that rebuilds generation-scoped dedupe state.
 
 
 ## Direct messages

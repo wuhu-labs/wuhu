@@ -1,10 +1,12 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct SessionObserveTests {
   @Test func sessionsTableIsQueryableThroughTheSandbox() async throws {
     try await withSessionDeps {

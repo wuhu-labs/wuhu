@@ -2,6 +2,7 @@ import Clocks
 import ControlledTime
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -12,7 +13,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct MachineAdminTests {
+@Suite(.deterministicDependencies) struct MachineAdminTests {
   @Test func enrollRotateRevokeVerifyRoundTrip() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())

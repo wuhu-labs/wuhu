@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import struct SessionDomain.ToolCallID
 @testable import SpaceCore
@@ -13,7 +14,7 @@ private func makeExecSpace() throws -> Space {
   }
 }
 
-@Suite struct ExecClaimTests {
+@Suite(.deterministicDependencies) struct ExecClaimTests {
   @Test func duplicateClaimIsAbsorbedAndScopedByCaller() async throws {
     let space = try makeExecSpace()
     let machine = try await space.addMachine(name: "box").id

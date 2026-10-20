@@ -1,10 +1,12 @@
+import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(1)))
 struct StopLifetimeTests {
   /// The overrun ends the exec however the output is split: a send waiting on the unread window must not hide the excess byte.
   @Test(arguments: ["printf abc; sleep 10", "printf ab; sleep 0.2; printf c; sleep 10"])

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import KeelObjectStore
@@ -6,7 +7,7 @@ import Scratch
 import SpaceFS
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct BlobStoreTests {
   private func folder() throws -> URL {
     let url = try scratchURL("blobs")

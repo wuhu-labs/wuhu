@@ -84,10 +84,10 @@ export interface ExternalPackage {
 }
 
 const issueReportingTestSupport: ExternalPackage = {
-  url: 'https://github.com/pointfreeco/xctest-dynamic-overlay',
-  from: '1.0.0',
-  identity: 'xctest-dynamic-overlay',
-  bazelRepo: 'swiftpkg_xctest_dynamic_overlay',
+  url: 'https://github.com/pointfreeco/swift-issue-reporting',
+  from: '2.1.2',
+  identity: 'swift-issue-reporting',
+  bazelRepo: 'swiftpkg_swift_issue_reporting',
   products: ['IssueReportingTestSupport'],
 }
 
@@ -95,7 +95,7 @@ function testSupportPackages(
   pkg: PackageManifest,
 ): Record<string, ExternalPackage> {
   return {
-    'xctest-dynamic-overlay': issueReportingTestSupport,
+    'swift-issue-reporting': issueReportingTestSupport,
     ...pkg.externalPackages,
   }
 }
@@ -263,6 +263,7 @@ export interface TargetManifest {
   name: string
   productName?: string
   kind: TargetKind
+  testOnly?: boolean
   sources: string
   dependencies?: Dependency[]
   resources?: Resource[]
@@ -1741,7 +1742,7 @@ function swiftTestDecl(
   const config = test.config
   const testDeps = [
     `.byName(name: "${target.name}")`,
-    '.product(name: "IssueReportingTestSupport", package: "xctest-dynamic-overlay")',
+    '.product(name: "IssueReportingTestSupport", package: "swift-issue-reporting")',
     ...(config.dependencies ?? [])
       .map((dep) => swiftDependency(pkg, targetNames, dep)),
   ]
@@ -2498,7 +2499,9 @@ export async function generateBuildBazel(
         ? starlarkList([`":${target.name}_gen"`])
         : bazelSourceGlob(sourceRoot)
       chunks.push(
-        `wuhu_swift_library(\n    name = "${target.name}",\n    srcs = ${librarySrcs},\n${await bazelResourceAttrs(
+        `wuhu_swift_library(\n    name = "${target.name}",\n${
+          target.testOnly ? '    testonly = True,\n' : ''
+        }    srcs = ${librarySrcs},\n${await bazelResourceAttrs(
           target,
           sourceRoot,
           target.resources,
@@ -2541,7 +2544,7 @@ ${
       )
       const testDeps = [
         `":${target.name}"`,
-        '"@swiftpkg_xctest_dynamic_overlay//:IssueReportingTestSupport"',
+        '"@swiftpkg_swift_issue_reporting//:IssueReportingTestSupport"',
         ...testExtraDeps,
       ]
       const testPluginsAttr = testPlugins.length

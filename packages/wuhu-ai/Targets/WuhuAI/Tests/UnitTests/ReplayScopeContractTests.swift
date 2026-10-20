@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,7 +11,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite struct ReplayScopeContractTests {
+@Suite(.deterministicDependencies) struct ReplayScopeContractTests {
   @Test(arguments: ["account-a", "account-b", nil] as [String?])
   func anthropicSignaturesAndRedactedBlocksRequireExactKnownScope(target: String?) async throws {
     let endpoint = AnthropicEndpoint(model: "claude-test", replayScope: target, apiKey: "offline")

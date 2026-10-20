@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -20,7 +21,7 @@ private let multiTurnModels: [ModelEntry] = [
   ModelEntry(providerID: "openai", model: "gpt-5.4", recordingName: "gpt-5.4-multi-turn-jokes"),
 ]
 
-@Suite struct MultiTurnJokesTests {
+@Suite(.deterministicDependencies) struct MultiTurnJokesTests {
   @Test(arguments: multiTurnModels)
   func plainTextMultiTurn(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {

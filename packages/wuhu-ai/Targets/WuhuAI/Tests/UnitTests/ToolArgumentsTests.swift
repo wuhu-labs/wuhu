@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
 import WuhuAI
 
-@Suite struct ToolArgumentsTests {
+@Suite(.deterministicDependencies) struct ToolArgumentsTests {
   @Test func `emitted argument bytes survive a Codable round trip`() throws {
     let emitted = #"{"command":"bash -lc 'ls -la'", "max_output":30000,"timeout_seconds":30}"#
     let call = ToolCall(id: "call_1", name: "exec", arguments: try #require(ToolArguments(verbatim: emitted)))

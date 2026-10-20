@@ -10,6 +10,7 @@ dependencies:
   - JSONValue
 tests:
   dependencies:
+    - DeterministicDependencies
     - Clocks
     - Dependencies
     - MachineContract

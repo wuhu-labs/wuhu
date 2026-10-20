@@ -24,7 +24,7 @@ checks:
 externalPackages:
   swift-dependencies:
     url: https://github.com/pointfreeco/swift-dependencies.git
-    from: "1.14.1"
+    from: "1.17.1"
     products: [Dependencies, DependenciesTestSupport]
   swift-log:
     url: https://github.com/apple/swift-log.git

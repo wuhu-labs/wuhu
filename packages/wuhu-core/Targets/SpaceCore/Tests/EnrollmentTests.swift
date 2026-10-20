@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import Scratch
@@ -6,7 +7,7 @@ import Scratch
 import Synchronization
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct EnrollmentTests {
   @Test func mintAndConsumeEnrollsTheKeyAndKillsTheToken() async throws {
     let space = try makeSpace()

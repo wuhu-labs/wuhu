@@ -1,5 +1,6 @@
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import SpaceServer
 import Synchronization
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct MachineLivenessTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct MachineLivenessTests {
   @Test func attachedButSilentMachineFailsExecAndPendingFileCalls() async throws {
     let space = try makeMachineSpace()
     let time = LivenessTime()

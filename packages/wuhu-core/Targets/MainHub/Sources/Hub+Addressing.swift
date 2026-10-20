@@ -12,8 +12,9 @@ public enum Addressing {
     return String(raw.dropFirst("machines://".count).prefix { $0 != "/" })
   }
 
-  /// A hostless path is `acting`'s; there is no fallback to another group.
-  static func parse(_ raw: String, acting: GroupID) throws -> Address {
+  /// A hostless path is the acting group's (`.space(_, in: nil)`); there is
+  /// no fallback to another group.
+  public static func parse(_ raw: String) throws -> Address {
     if let machine = machineHost(raw) {
       let rest = raw.dropFirst("machines://".count)
       let slash = rest.firstIndex(of: "/")
@@ -36,10 +37,20 @@ public enum Addressing {
         throw ToolProblem("invalid group host in \(raw): a group id is lowercase letters, digits and inner hyphens")
       }
       guard let group else { throw ToolProblem(FSResolveError.unsupportedHost(raw).description) }
-      return .space(normalized, in: GroupID(rawValue: group), qualified: true)
+      return .space(normalized, in: GroupID(rawValue: group))
     }
     try refuseRelative(raw)
-    return .space(try normalize(raw), in: acting, qualified: false)
+    return .space(try normalize(raw), in: nil)
+  }
+
+  public static func refuseSystem(_ address: Address) throws(ToolProblem) {
+    if case .system = address { throw systemReadOnly(address) }
+  }
+
+  public static func systemReadOnly(_ address: Address) -> ToolProblem {
+    ToolProblem(
+      "\(address.rendered) is read-only: wuhu://system/ ships with the server; a skill with the same name in the space or your home replaces a system one",
+    )
   }
 
   /// A path with no scheme and no leading slash names nothing, anywhere.
@@ -76,8 +87,8 @@ extension Hub {
   nonisolated func resolve(_ raw: String, as session: SessionID) async throws -> Address {
     let principal = try await space.principal(of: session)
     let acting = principal.group
-    let address = try Addressing.parse(await naming(raw), acting: acting)
-    if case let .space(path, group, _) = address, try await !space.sessions.readsFile(path, in: group, as: principal) {
+    let address = try Addressing.parse(await naming(raw))
+    if case let .space(path, group) = address, try await !space.sessions.readsFile(path, in: group ?? acting, as: principal) {
       throw SpaceError.notFound(path)
     }
     // A machine of a group the session's group doesn't read is no machine.

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
 @testable import WuhuAI
 
-@Suite struct StructuredOutputTests {
+@Suite(.deterministicDependencies) struct StructuredOutputTests {
   private let schema: JSONValue = .object([
     "type": .string("object"), "properties": .object(["relevant": .object(["type": .string("boolean")])]),
     "required": .array([.string("relevant")]), "additionalProperties": .bool(false),

@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import InferenceKit
@@ -10,7 +11,7 @@ import struct SpaceContract.SessionCreateOutput
 import Synchronization
 import Testing
 
-@Suite struct RuntimeReplayBoundaryTests {
+@Suite(.deterministicDependencies) struct RuntimeReplayBoundaryTests {
   @Test(arguments: [false, true]) func freshUnverifiedOIDCJWTPerResolutionStillReachesModelWithoutBoundaryLoop(alternatingSessions: Bool) async throws {
     try await withSessionDeps {
       let mints = Mutex(0)

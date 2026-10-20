@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,7 +9,7 @@
 import SpaceCore
 import Testing
 
-@Suite(.serialized) struct PersonaCLITests {
+@Suite(.deterministicDependencies, .serialized) struct PersonaCLITests {
   func enroll(_ rig: EnrollRig, port: Int, space: String, fingerprint: String, admin: Bool = false) async throws {
     let account = try await rig.space.addAccount(kind: .human, name: nil, admin: admin)
     let minted = try await rig.space.mintJoinToken(account: account.id, capabilities: [.device], createdBy: nil, lifetime: 600)

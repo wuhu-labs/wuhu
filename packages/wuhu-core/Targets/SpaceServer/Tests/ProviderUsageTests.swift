@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -36,7 +37,7 @@ private let codexAndClaudeModels = """
 }
 """
 
-@Suite struct ProviderUsageTests {
+@Suite(.deterministicDependencies) struct ProviderUsageTests {
   @Test func everyProviderListsItsModelsAndNoUsageUntilObserved() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

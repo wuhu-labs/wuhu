@@ -1,4 +1,5 @@
 import Credentials
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,7 +10,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct ReplayBindingTests {
+@Suite(.deterministicDependencies) struct ReplayBindingTests {
   private let specifier = ModelSpecifier(provider: "openai", model: "gpt-5.4", effort: "high")
   private let session = SessionID("replay-test")
 

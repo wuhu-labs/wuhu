@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import ServeTLS
 import struct SpaceClient.SpaceClient
 import Testing
 
-@Suite(.serialized) struct TrustDialPathsTests {
+@Suite(.deterministicDependencies, .serialized) struct TrustDialPathsTests {
   enum Chain: CaseIterable {
     case selfSigned
     case caSigned

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import JSONValue
 import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.timeLimit(.minutes(2)))
+@Suite(.deterministicDependencies, .timeLimit(.minutes(2)))
 struct RequestTests {
   @Test func vfsRoundTrip() async throws {
     let caller = ChannelEndpoint()

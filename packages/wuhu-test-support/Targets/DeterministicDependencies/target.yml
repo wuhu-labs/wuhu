@@ -1,0 +1,10 @@
+name: DeterministicDependencies
+kind: library
+testOnly: true
+sources: Sources
+dependencies:
+  - Dependencies
+  - DependenciesTestSupport
+tests:
+  dependencies:
+    - Dependencies

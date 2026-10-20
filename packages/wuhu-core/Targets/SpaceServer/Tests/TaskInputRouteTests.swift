@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import Testing
 
 // A task works for its parent. No route lets a person wake one; the parent's
 // request and the task's reports still flow.
-@Suite struct TaskInputRouteTests {
+@Suite(.deterministicDependencies) struct TaskInputRouteTests {
   struct Tree {
     let harness: SessionHarness
     let parent: SessionID

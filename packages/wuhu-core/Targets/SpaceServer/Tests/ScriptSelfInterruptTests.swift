@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -14,7 +15,7 @@ import Testing
 // session's turn to end, the turn waits for the script's call, and the call
 // waits for the script, which waits for the interrupt: the call's wind-down
 // limit is what breaks the cycle.
-@Suite struct ScriptSelfInterruptTests {
+@Suite(.deterministicDependencies) struct ScriptSelfInterruptTests {
   @Test func aScriptThatInterruptsItsOwnSessionLeavesItInterruptedAndResumable() async throws {
     let clock = TestClock()
     let provider = ScriptedProvider()

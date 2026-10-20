@@ -249,7 +249,7 @@ public enum SpaceServer {
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
       guard let sessions else { return walled }
       return sessionGate(
-        space: space, hub: hub, machines: machines, worker: sessions.worker, tokens: sessions.tokens, credentials: credentials,
+        space: space, hub: hub, machines: machines, owner: sessions.owner, tokens: sessions.tokens, credentials: credentials,
         routed: routed, otherwise: walled,
       )
     }

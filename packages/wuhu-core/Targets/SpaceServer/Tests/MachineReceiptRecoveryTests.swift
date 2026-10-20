@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import Foundation
 import MachineContract
 import class MainHub.Hub
@@ -9,7 +11,7 @@ import SessionTools
 import Testing
 import struct WuhuAI.ToolCall
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1)))
 struct MachineReceiptRecoveryTests {
   @Test func serverRestartAfterRealAgentExitBeforeReceiptReplaysEveryByteWithoutRespawning() async throws {
     let fixture = try ScratchFolder("post-exit-receipt")

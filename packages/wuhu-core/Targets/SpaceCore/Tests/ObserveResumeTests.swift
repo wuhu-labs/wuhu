@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct ObserveResumeTests {
+@Suite(.deterministicDependencies) struct ObserveResumeTests {
   @Test func replaysCommittedEventsAfterCursorThenContinuesLive() async throws {
     let space = try makeSpace()
     _ = try await space.writeText("/a.md", "one")

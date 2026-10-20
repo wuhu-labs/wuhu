@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import InferenceKit
@@ -8,7 +9,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite struct ContinuationReasoningTests {
+@Suite(.deterministicDependencies) struct ContinuationReasoningTests {
   @Test(arguments: [false, true])
   func noReplayScopeIsSentWithThinkingNotRefused(carried: Bool) async throws {
     let body = try await emittedRequest(history(signed: false, carried: carried), scope: nil)

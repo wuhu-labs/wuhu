@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -21,7 +22,7 @@ private let toggleModels: [ModelEntry] = [
   ModelEntry(providerID: "kimi", model: "kimi-k2.6", recordingName: "kimi-k2.6-reasoning-toggle"),
 ]
 
-@Suite struct ReasoningToggleTests {
+@Suite(.deterministicDependencies) struct ReasoningToggleTests {
   @Test(arguments: toggleModels)
   func reasoningOpenToClosed(entry: ModelEntry) async throws {
     try await withRecording("\(entry.recordingName)-open-to-closed") {

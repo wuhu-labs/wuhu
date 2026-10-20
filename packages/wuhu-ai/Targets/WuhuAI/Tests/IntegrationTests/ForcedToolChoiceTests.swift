@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
@@ -74,7 +75,7 @@ private let forcedCompactCases: [ModelEntry] = [
   ModelEntry(providerID: "openai", model: "gpt-5.4", recordingName: "gpt-5.4-forced-compact"),
 ]
 
-@Suite struct ForcedCompactTests {
+@Suite(.deterministicDependencies) struct ForcedCompactTests {
   @Test(arguments: forcedCompactCases)
   func forcedCompactTurn(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {
@@ -146,7 +147,7 @@ private let forcedCompactCases: [ModelEntry] = [
 
 // MARK: - DeepSeek any-force keeps thinking (dialect divergence)
 
-@Suite struct DeepSeekAnyForceTests {
+@Suite(.deterministicDependencies) struct DeepSeekAnyForceTests {
   @Test func anyForceRunsWithThinkingEnabled() async throws {
     let recording = "deepseek-anthropic-forced-any"
     try await withRecording(recording) {
@@ -181,7 +182,7 @@ private let parallelCases: [ModelEntry] = [
   ModelEntry(providerID: "openai", model: "gpt-5.4", recordingName: "gpt-5.4-parallel-tools"),
 ]
 
-@Suite struct ParallelToolCallTests {
+@Suite(.deterministicDependencies) struct ParallelToolCallTests {
   @Test(arguments: parallelCases)
   func parallelCallsWithIDMatchedResults(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {

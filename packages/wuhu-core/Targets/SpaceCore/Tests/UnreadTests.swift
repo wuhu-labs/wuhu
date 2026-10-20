@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
@@ -14,6 +15,7 @@ SELECT id, EXISTS (
 ) AS has_unread FROM sessions ORDER BY id
 """
 
+@Suite(.deterministicDependencies)
 struct UnreadTests {
   private let utc = TimeZone(identifier: "UTC")!
 

@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 @testable import WuhuAI
 
 // MARK: - Chat Completions Encoding Tests
 
-@Suite struct ChatCompletionsRequestBuilderTests {
+@Suite(.deterministicDependencies) struct ChatCompletionsRequestBuilderTests {
   @Test func buildsBasicChatCompletionsRequest() async throws {
     let context = Context(
       systemPrompt: "You are helpful.",

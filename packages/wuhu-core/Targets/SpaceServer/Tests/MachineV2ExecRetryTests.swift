@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -153,7 +155,7 @@ private final class Collected: Sendable {
   var status: MachineContract.ExitStatus? { value.withLock { $0.status } }
 }
 
-@Suite(.timeLimit(.minutes(3))) struct MachineV2ExecRetryTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(3))) struct MachineV2ExecRetryTests {
   /// Each case loses one exchange, as a transport failure or a request deadline, before or after the machine applied it. The relay
   /// must retry that exchange (and only it) while the exec is live, and the exec must end the way it would have without the loss.
   @Test(arguments: ExecRetryCase.all)

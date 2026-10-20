@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import Scratch
 import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct UserVerbTests {
   @Test func addCreatesDistinctAccountsAgainstARealFolder() async throws {
     let harness = try RecoveryHarness()

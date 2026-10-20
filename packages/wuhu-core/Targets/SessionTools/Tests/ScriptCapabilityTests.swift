@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import Testing
 private let scriptPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]) + Data("IHDR".utf8) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])
 private let scriptWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==")!
 
-@Suite struct ScriptCapabilityTests {
+@Suite(.deterministicDependencies) struct ScriptCapabilityTests {
   @Test func allCapabilitiesAreDeclaredWhenUnconfiguredAndErrorsAreTyped() async throws {
     try await withRig { rig in
       _ = try await rig.space.fs(.shared).write("/audio.wav", scriptWAV, ifMatch: nil)

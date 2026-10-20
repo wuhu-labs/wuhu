@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -14,7 +15,7 @@ import struct WuhuAI.ToolArguments
 
 // P is a top-level agent in alice, which reads shared; S one in shared; B one
 // in bob, which reads nothing else.
-@Suite struct GroupToolTests {
+@Suite(.deterministicDependencies) struct GroupToolTests {
   struct Rig {
     let space: Space
     let executor: ToolExecutor

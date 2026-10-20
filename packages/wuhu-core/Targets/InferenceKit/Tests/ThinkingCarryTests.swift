@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -15,7 +16,7 @@ import WuhuAI
 
 // Doctrine (WuhuAI SPEC): thinking is carried, never policed. These run the real
 // catalog, executor and Anthropic wire builder against recorded-shape streams.
-@Suite struct ThinkingCarryTests {
+@Suite(.deterministicDependencies) struct ThinkingCarryTests {
   @Test(arguments: [false, true])
   func miMoUnsignedThinkingIsSentThroughEveryToolStep(oidc: Bool) async throws {
     let loop = try await toolLoop(.mimo, oidc: oidc)

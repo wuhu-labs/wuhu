@@ -1,4 +1,5 @@
 import Clocks
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -11,7 +12,7 @@ import Testing
 
 // The hub hands a session's exec its credential on the way to a real agent;
 // a human's exec gets none, and nobody can plant the names themselves.
-@Suite struct SessionExecEnvironmentTests {
+@Suite(.deterministicDependencies) struct SessionExecEnvironmentTests {
   static let probe = ["sh", "-c", "printf '%s|%s|%s|%s' \"${WUHU_EXEC-unset}\" \"${WUHU_SPACE_URL-unset}\" \"${WUHU_TOKEN-unset}\" \"${#WUHU_TOKEN}\""]
 
   @Test func aSessionsExecRunsWithItsTokenMaskedAndAHumansWithout() async throws {

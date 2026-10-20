@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 @testable import WuhuAI
 
 // MARK: - Gemini Stream Parser Tests
 
-@Suite struct GeminiStreamParserTests {
+@Suite(.deterministicDependencies) struct GeminiStreamParserTests {
   private func sse(_ events: [SSEEvent]) -> AsyncThrowingStream<SSEEvent, Error> {
     AsyncThrowingStream { continuation in
       for event in events { continuation.yield(event) }

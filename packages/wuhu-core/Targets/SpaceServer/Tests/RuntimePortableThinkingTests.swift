@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import Testing
 
 // Under a loaded pool the whole process stalls for seconds at a time, so the
 // waits are bounded by the admitted time limit rather than the default 10 s.
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct RuntimePortableThinkingTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct RuntimePortableThinkingTests {
   @Test func upgradeMidToolLoopCompletesAndNextMessageRestoresThinking() async throws {
     try await runUpgrade(wake: nil)
   }

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -8,7 +9,7 @@ import Testing
 // server stores as sent, the root they leave unnamed parses (a send naming it
 // is refused for having no entry, MessageViewingRouteTests), and every path
 // they leave out is one it refuses.
-@Suite struct ViewingVectorTests {
+@Suite(.deterministicDependencies) struct ViewingVectorTests {
   private struct Vectors: Decodable {
     struct Spelled: Decodable {
       let viewing: String

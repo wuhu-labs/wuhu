@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -6,7 +8,7 @@ import SpaceContract
 @testable import SpaceServer
 import Testing
 
-@Suite struct ApiOriginTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct ApiOriginTests {
   @Test func everyToolIsFaithfulToDirectRun() async throws {
     let harness = try Harness()
     _ = try await harness.direct("write", .object(["path": "/notes/a.md", "content": "foo\nbar [b](/b.md)"]))

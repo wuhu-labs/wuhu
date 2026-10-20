@@ -1,10 +1,11 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 @testable import MachineChannel
 import MachineContract
 import Testing
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1)))
 struct RetentionTests {
   @Test func terminalAckWhileUnboundIsResentOnRebindAndRetiresPromptly() async throws {
     let machine = ChannelEndpoint()

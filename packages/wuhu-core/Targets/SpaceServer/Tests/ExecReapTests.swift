@@ -1,4 +1,5 @@
 import Clocks
+import DeterministicDependencies
 import Foundation
 import MachineChannel
 import MachineContract
@@ -12,7 +13,7 @@ import Testing
 // reaped by policy, the machine buffers output to termination, and a retry
 // that rejoins by the same kernel tool call id drains the tail and reads the
 // honest reap verdict — never a fabricated success or a silent respawn.
-@Suite struct ExecReapTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock())) struct ExecReapTests {
   @Test func reapPastGraceIsHonestAndTheBufferedTailDrains() async throws {
     let space = try makeMachineSpace()
     let clock = TestClock()

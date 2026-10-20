@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import MachineChannel
 import Serve
 import SpaceServer
 import Testing
 
-@Test func closingExecTransportEndsBothSocketDirections() async {
+@Test(.deterministicDependencies) func closingExecTransportEndsBothSocketDirections() async {
   let (server, client) = WebSocket.pair()
   let transport = WebSocketTransport(client)
   transport.close()
@@ -11,7 +12,7 @@ import Testing
   for await _ in server.inbound { Issue.record("A closed socket delivered a message") }
 }
 
-@Test(.timeLimit(.minutes(1))) func transportEOFFinishesBeforeItsBlockedPeerAndDoesNotCancelIt() async {
+@Test(.deterministicDependencies, .timeLimit(.minutes(1))) func transportEOFFinishesBeforeItsBlockedPeerAndDoesNotCancelIt() async {
   let (server, client) = WebSocket.pair()
   let transport = WebSocketTransport(client)
   let (release, continuation) = AsyncStream<Void>.makeStream()

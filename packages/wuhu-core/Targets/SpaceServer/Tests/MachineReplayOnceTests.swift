@@ -1,10 +1,12 @@
+import Clocks
+import DeterministicDependencies
 import Foundation
 @testable import MachineChannel
 import MachineContract
 import SpaceServer
 import Testing
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: TestClock()), .timeLimit(.minutes(1)))
 struct MachineReplayOnceTests {
   @Test func freshCallerRequestsExactlyOneMappedReplayAndUnboundTerminalAckRetiresThroughHub() async throws {
     let space = try makeMachineSpace()

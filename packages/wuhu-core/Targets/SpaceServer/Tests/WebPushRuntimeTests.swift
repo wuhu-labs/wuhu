@@ -1,5 +1,6 @@
 import AsyncHTTPClient
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import Logging
 import NIOCore
@@ -10,7 +11,7 @@ import SpaceCore
 import Testing
 import WebPush
 
-@Suite struct WebPushRuntimeTests {
+@Suite(.deterministicDependencies) struct WebPushRuntimeTests {
   @Test func concurrentDrainsNeverDuplicateADelivery() async throws {
     let messages = MessageCollector()
     let entered = Gate()

@@ -4,6 +4,7 @@ import struct Credentials.CredentialResolver
 import struct Credentials.SpaceSecrets
 import struct Credentials.SpaceSecretStores
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import GRDB
@@ -31,7 +32,7 @@ import struct WuhuAI.ToolCall
 // Each test runs one script from Fixtures/Scripts and compares its transcript —
 // every tool result, every message the script sent, and the harness's own
 // probes, in order — with the checked-in <name>.expected.
-@Suite struct ScriptTests {
+@Suite(.deterministicDependencies) struct ScriptTests {
   @Test func executionEndsWithAnUnclosedObservation() async throws {
     try await withRig { rig in
       let result = try await rig.evaluate(#"""

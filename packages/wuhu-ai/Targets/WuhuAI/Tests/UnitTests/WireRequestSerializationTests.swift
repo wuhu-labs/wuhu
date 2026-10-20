@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
 import Testing
 import WuhuAI
 
-@Suite struct WireRequestSerializationTests {
+@Suite(.deterministicDependencies) struct WireRequestSerializationTests {
   @Test func providerWireRequestsUseDeterministicObjectKeyOrdering() async throws {
     let context = Self.longComplexContext()
     let options = RequestOptions(

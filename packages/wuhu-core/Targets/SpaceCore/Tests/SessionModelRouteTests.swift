@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -6,7 +7,7 @@ import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct SessionModelRouteTests {
+@Suite(.deterministicDependencies) struct SessionModelRouteTests {
   func route(member: String = "primary", reason: ModelPlacementReason = .create) -> SessionModelRoute {
     SessionModelRoute(group: "work", member: member, specifier: .init(provider: "p", model: "m", effort: "high"), bindingFingerprint: "fixture", epoch: member, reason: reason, placedAt: fixedDate, evidence: [])
   }

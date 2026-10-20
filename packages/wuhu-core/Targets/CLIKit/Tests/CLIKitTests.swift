@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import SpaceContract
 import Synchronization
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct RequestMappingTests {
   @Test func v2AddUsesExplicitEndpointSuffixAndGroupWithoutChangingLegacyAdd() async throws {
     for (verb, endpoint, expectedName) in [("machine-v2", "/v1/machine-v2", "box-v2"), ("machine", "/v1/machine", "box")] {
@@ -301,7 +302,7 @@ struct RequestMappingTests {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct WalletTests {
   @Test func useCreatesLocalWalletAndConfirmsWithPath() async throws {
     let temp = try TemporaryDirectory()
@@ -579,7 +580,7 @@ struct WalletTests {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct FormattingAndErrorTests {
   @Test func formatsListHistoryAndQuery() async throws {
     #expect(formatList(try decode(ListOutput.self, .object(["rev": 3, "entries": [
@@ -846,7 +847,7 @@ private func writeJSON(_ value: some Encodable, to url: URL) throws {
   try data.write(to: url, options: .atomic)
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct TrustVerbTests {
   @Test func useWithoutPinRequiresSystemTrust() async throws {
     let temp = try TemporaryDirectory()
@@ -994,7 +995,7 @@ struct TrustVerbTests {
   }
 }
 
-@Suite struct CapabilityCLITests {
+@Suite(.deterministicDependencies) struct CapabilityCLITests {
   @Test func transcriptionHelpExplainsAuthoritativeCapabilities() async throws {
     let harness = try Harness(response: .object([:]))
     #expect(await harness.runner.run(arguments: ["transcribe", "--help"]) == 0)

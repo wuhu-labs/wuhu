@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -7,6 +8,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
+@Suite(.deterministicDependencies)
 struct SessionStoreTests {
   @Test func createAndHydrateEmptySession() async throws {
     try await withSessionDeps {

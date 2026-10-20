@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct NotificationContentTests {
+@Suite(.deterministicDependencies) struct NotificationContentTests {
   @Test func sessionEventsAreTitledWithTheSessionAndSayWhatHappened() {
     let errored = NotificationContent(
       .sessionErrored,

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite(.serialized) struct MachineTrustTests {
+@Suite(.deterministicDependencies, .serialized) struct MachineTrustTests {
   @Test func joinWithFingerprintPinsBeforeTheFirstDialAndTheAgentHonorsIt() async throws {
     let rig = try TrustRig()
     defer { rig.cleanUp() }

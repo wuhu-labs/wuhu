@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import Logging
@@ -8,7 +9,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct PushRelayRuntimeTests {
+@Suite(.deterministicDependencies) struct PushRelayRuntimeTests {
   @Test func aDeliveredNotificationCarriesTheRoutingDataATapNeeds() async throws {
     let messages = MessageCollector()
     let (space, owner) = try await relaySpace(grants: ["g1_live"])

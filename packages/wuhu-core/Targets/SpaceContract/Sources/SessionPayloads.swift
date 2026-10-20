@@ -9,7 +9,9 @@ public let ownerIdentity: String = "owner"
 // exec it creates that session's child the way create_session does: kind
 // defaults to task, and topLevel (agents only) creates it with no parent.
 // group places a top-level agent: default the caller's (acting) group, and it
-// must be one that group reads.
+// must be one that group reads. From a session, `message` is the brief: with
+// expectsReply it opens a request on the new child (stallSeconds belongs to
+// that request), without it is a DM from the creator.
 @Contract
 public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let title: String
@@ -24,6 +26,9 @@ public struct SessionCreateInput: Codable, Equatable, Sendable {
   public let identity: String?
   public let topLevel: Bool?
   public let group: String?
+  public let message: String?
+  public let expectsReply: Bool?
+  public let stallSeconds: Double?
 }
 
 // A session's exec opening a request on one of that session's tasks, as the
@@ -35,10 +40,66 @@ public struct SessionRequestInput: Codable, Equatable, Sendable {
   public let stallSeconds: Double?
 }
 
+// `deadline` is the request's deadline as unix seconds, when it has one.
 @Contract
 public struct SessionRequestOutput: Codable, Equatable, Sendable {
   public let requestId: String
   public let conversationId: String
+  public let deadline: Double?
+}
+
+// A session answering a request open on it: progress keeps it open, final
+// closes it.
+@Contract
+public struct RequestReportInput: Codable, Equatable, Sendable {
+  public let kind: MessageKindPayload
+  public let content: String
+}
+
+@Contract
+public struct RequestReportOutput: Codable, Equatable, Sendable {
+  public let messageId: String
+  public let conversationId: String
+}
+
+// A session arming one durable slot of its own: exactly one of observe and
+// timer. The slot's id is derived from the tool call the request runs for, so
+// arming it again under the same call re-arms the same slot.
+@Contract
+public struct SubscriptionInput: Codable, Equatable, Sendable {
+  public let observe: SubscriptionObserveInput?
+  public let timer: SubscriptionTimerInput?
+  public let handler: String?
+}
+
+@Contract
+public struct SubscriptionObserveInput: Codable, Equatable, Sendable {
+  public let sql: String
+  public let throttleSeconds: Double?
+}
+
+// One of inSeconds (fire once) and cron (fire repeatedly, five UTC fields).
+@Contract
+public struct SubscriptionTimerInput: Codable, Equatable, Sendable {
+  public let message: String
+  public let inSeconds: Double?
+  public let cron: String?
+}
+
+@Contract
+public enum SubscriptionKindPayload: String, Codable, Equatable, Sendable {
+  case observe
+  case timer
+}
+
+// A timer carries its schedule: fireAt (unix seconds) for a one-shot, cron
+// for a repeating one.
+@Contract
+public struct SubscriptionOutput: Codable, Equatable, Sendable {
+  public let id: String
+  public let kind: SubscriptionKindPayload
+  public let fireAt: Double?
+  public let cron: String?
 }
 
 @Contract
@@ -73,6 +134,8 @@ public struct SessionHomeOutput: Codable, Equatable, Sendable {
   public let skills: [SessionHomeSkill]
 }
 
+// requestId is the request a session's create opened with expectsReply;
+// member is the model group member the new session was routed to.
 @Contract
 public struct SessionCreateOutput: Codable, Equatable, Sendable {
   public let id: String
@@ -83,6 +146,9 @@ public struct SessionCreateOutput: Codable, Equatable, Sendable {
   public let effort: String?
   public let kind: SessionKindPayload
   public let parent: String?
+  public let title: String
+  public let requestId: String?
+  public let member: String?
 }
 
 @Contract
@@ -139,6 +205,12 @@ public struct SessionCompactInput: Codable, Equatable, Sendable {
 
 @Contract
 public struct SessionTitleInput: Codable, Equatable, Sendable {
+  public let title: String
+}
+
+// The title as stored: trimmed to one line.
+@Contract
+public struct SessionTitleOutput: Codable, Equatable, Sendable {
   public let title: String
 }
 

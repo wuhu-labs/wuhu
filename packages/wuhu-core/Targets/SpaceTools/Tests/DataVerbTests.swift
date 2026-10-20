@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import JSONValue
 import OrderedCollections
 import SpaceContract
@@ -6,7 +7,7 @@ import SpaceFS
 import SpaceTools
 import Testing
 
-@Suite struct DataVerbTests {
+@Suite(.deterministicDependencies) struct DataVerbTests {
   func code(_ error: ToolRunError?) -> ErrorCode? {
     if case let .failed(code, _, _, _)? = error { code } else { nil }
   }

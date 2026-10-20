@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -7,7 +8,7 @@ import Testing
 
 // P is a top-level agent in alice, which reads shared; S is one in shared,
 // which reads nothing else.
-@Suite struct GroupMessagingTests {
+@Suite(.deterministicDependencies) struct GroupMessagingTests {
   static let alice = GroupID(rawValue: "alice")
   static let bob = GroupID(rawValue: "bob")
   static let utc = TimeZone(identifier: "UTC")!

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import Testing
   import CImageCodec
 #endif
 
-@Suite struct ImageCodecSecurityTests {
+@Suite(.deterministicDependencies) struct ImageCodecSecurityTests {
   @Test func `absurd PNG header dimensions are refused without overflowing`() {
     let header = Data([
       0x89,

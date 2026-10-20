@@ -1,3 +1,4 @@
+import DeterministicDependencies
 @testable import MainHub
 import class MainHub.Hub
 import protocol MainHub.Main
@@ -15,17 +16,13 @@ import struct SessionToolsTestSupport.ScriptOwnerContract
 import SpaceCore
 import Testing
 
-@Suite struct HubScriptContractTests {
+@Suite(.deterministicDependencies) struct HubScriptContractTests {
   @Test func guardedFilesAndFrozenModules() async throws {
     try await withOwner { try await $0.guardedFilesAndFrozenModules() }
   }
 
   @Test func typedDataAndQueryStream() async throws {
     try await withOwner { try await $0.typedDataAndQueryStream() }
-  }
-
-  @Test func persistentToolReceipts() async throws {
-    try await withOwner { try await $0.persistentToolReceipts() }
   }
 
   @Test func watchCancellationReleasesParentStream() async throws {

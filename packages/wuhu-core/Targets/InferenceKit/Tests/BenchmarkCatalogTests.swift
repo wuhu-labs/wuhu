@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,7 +8,7 @@ import InferenceKit
 import SessionDomain
 import Testing
 
-@Suite struct BenchmarkCatalogTests {
+@Suite(.deterministicDependencies) struct BenchmarkCatalogTests {
   @Test func benchmarkModelsSupportTheirDeclaredEfforts() throws {
     let file = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()

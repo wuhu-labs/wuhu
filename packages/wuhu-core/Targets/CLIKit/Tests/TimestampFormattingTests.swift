@@ -1,8 +1,9 @@
 @testable import CLIKit
+import DeterministicDependencies
 import Foundation
 import Testing
 
-@Suite struct TimestampFormattingTests {
+@Suite(.deterministicDependencies) struct TimestampFormattingTests {
   @Test(arguments: [12345, -12345, 30, -30, 90, -90])
   func fixedOffsetsKeepCoreFoundationMinuteRounding(offset: Int) throws {
     let zone = try #require(TimeZone(secondsFromGMT: offset))

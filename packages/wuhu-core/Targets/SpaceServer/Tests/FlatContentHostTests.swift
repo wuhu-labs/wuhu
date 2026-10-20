@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -9,7 +10,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct FlatContentHostTests {
+@Suite(.deterministicDependencies) struct FlatContentHostTests {
   let origin = "https://alex.wuhu.test:5530"
   let pattern = "{group}--alex.wuhu.test"
 

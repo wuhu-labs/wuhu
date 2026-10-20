@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
@@ -5,7 +6,7 @@ import Testing
 
 // MARK: - Responses Encoding Tests
 
-@Suite struct ResponsesRequestBuilderTests {
+@Suite(.deterministicDependencies) struct ResponsesRequestBuilderTests {
   @Test func buildsBasicResponsesRequest() async throws {
     let context = Context(
       systemPrompt: "You are helpful.",

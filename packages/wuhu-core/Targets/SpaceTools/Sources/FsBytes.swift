@@ -24,17 +24,33 @@ public extension SpaceToolContext {
   func readBytes(_ address: String, rev: Int? = nil, byteLimit: Int? = nil) async throws(ToolRunError) -> FileBytes {
     do {
       let target = try await resolve(address, rev: rev)
-      if let byteLimit, try await target.backend.stat(target.path).size > byteLimit {
-        throw ToolRunError.failed(code: .invalidArgument, message: "file exceeds byte limit", hint: "Read a smaller file.")
-      }
-      let (token, data) = try await target.backend.read(target.path)
-      if let byteLimit, data.count > byteLimit {
-        throw ToolRunError.failed(code: .invalidArgument, message: "file exceeds byte limit", hint: "Read a smaller file.")
+      let (token, data) = try await read(target, upTo: byteLimit) { _ in
+        .failed(code: .invalidArgument, message: "file exceeds byte limit", hint: "Read a smaller file.")
       }
       return FileBytes(token: Wire.string(token), rev: try revision(token, target), data: data)
     } catch {
       throw Wire.failure(error)
     }
+  }
+
+  /// `target` whole, or `tooLarge(size)` past `limit` bytes: a machine file
+  /// through the seam's own bound, so the server never holds more than it; a
+  /// space or system file by its stat, then its bytes.
+  internal func read(_ target: Target, upTo limit: Int?, tooLarge: (Int) -> ToolRunError) async throws -> (VersionToken, Data) {
+    guard let limit else { return try await target.backend.read(target.path) }
+    if let machine = target.machine, let machines {
+      do {
+        let (token, bytes) = try await machines.fileBytes(machine, target.path, limit: limit)
+        return (Wire.token(token), Data(bytes))
+      } catch let over as MachineSeam.OverLimit {
+        throw tooLarge(over.size)
+      }
+    }
+    let size = try await target.backend.stat(target.path).size
+    guard size <= limit else { throw tooLarge(size) }
+    let (token, data) = try await target.backend.read(target.path)
+    guard data.count <= limit else { throw tooLarge(data.count) }
+    return (token, data)
   }
 
   func writeBytes(_ address: String, _ data: Data, ifMatch: String?, createOnly: Bool = false) async throws(ToolRunError) -> FileVersion {
@@ -50,6 +66,19 @@ public extension SpaceToolContext {
         try await refuseWrite(path, in: group)
         token = try await space.writeFile(path, data: data, in: group, acting: principal.group, ifMatch: ifMatch.map(Wire.token), createOnly: createOnly)
       } else {
+        // A machine agent has no create-only write: the check is a stat
+        // before it, with the window that leaves. (The system backend
+        // refuses every write itself.)
+        if createOnly, target.machine != nil {
+          let exists: Bool
+          do {
+            _ = try await target.backend.stat(target.path)
+            exists = true
+          } catch ToolRunError.failed(code: .notFound, message: _, hint: _, token: _) {
+            exists = false
+          }
+          if exists { throw SpaceError.alreadyExists(address) }
+        }
         token = try await target.backend.write(target.path, data, ifMatch: ifMatch.map(Wire.token))
       }
       return FileVersion(token: Wire.string(token), rev: try revision(token, target))

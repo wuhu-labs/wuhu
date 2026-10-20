@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -17,7 +18,7 @@ private let sampleApp = WebApp(files: [
 
 private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><body></body></html>".utf8)])!
 
-@Suite struct WebAppTests {
+@Suite(.deterministicDependencies) struct WebAppTests {
   @Test func indexServedAtRootWithNoCache() async throws {
     let harness = try Harness(webApp: sampleApp)
     let response = try await harness.get(harness.api, "/")
@@ -119,7 +120,7 @@ private let bannerApp = WebApp(files: ["index.html": Data("<html><head></head><b
   }
 }
 
-@Suite struct WebAppDirectoryLoadTests {
+@Suite(.deterministicDependencies) struct WebAppDirectoryLoadTests {
   private func scratch() throws -> URL {
     let directory = try scratchURL("webapp")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import enum InferenceKit.CatalogError
 import JSONValue
@@ -7,6 +8,7 @@ import SessionDomain
 @_spi(Testing) import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct ScriptSessionTests {
   @Test func scriptsCreateWithRequestedGroupInsteadOfAnInheritedConcreteModel() async throws {
     let calls = Box<[String]>([])

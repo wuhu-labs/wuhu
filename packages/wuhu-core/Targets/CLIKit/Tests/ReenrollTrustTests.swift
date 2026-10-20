@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -14,7 +15,7 @@ import Testing
 // Re-enrolling replaces the pin: a link with a fingerprint re-pins to it, one
 // without (a server on --cert/--key) drops the pin for system trust. A link
 // without one to a server system trust rejects enrolls through the pin.
-@Suite(.serialized) struct ReenrollTrustTests {
+@Suite(.deterministicDependencies, .serialized) struct ReenrollTrustTests {
   enum Verb: CaseIterable {
     case login
     case machineJoin

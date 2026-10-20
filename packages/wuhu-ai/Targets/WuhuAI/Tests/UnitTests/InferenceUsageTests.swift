@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import JSONValue
 import Testing
 @testable import WuhuAI
 
-@Suite struct InferenceUsageTests {
+@Suite(.deterministicDependencies) struct InferenceUsageTests {
   private func events(_ frames: [(String?, String)]) -> AsyncThrowingStream<SSEEvent, any Error> {
     AsyncThrowingStream { continuation in
       for (event, data) in frames { continuation.yield(SSEEvent(event: event ?? "message", data: data)) }

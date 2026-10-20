@@ -1,12 +1,13 @@
 @testable import CLIKit
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import Scratch
 import Synchronization
 import Testing
 
-@Suite struct MachineV2LaunchdTests {
+@Suite(.deterministicDependencies(clock: ContinuousClock())) struct MachineV2LaunchdTests {
   final class Launchctl: Sendable {
     struct State {
       var commands: [[String]] = []

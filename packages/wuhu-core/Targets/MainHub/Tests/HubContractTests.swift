@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import protocol MainHub.Main
 import enum MainHub.MainContractError
 #if canImport(FoundationEssentials)
@@ -10,7 +11,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite struct HubContractTests {
+@Suite(.deterministicDependencies) struct HubContractTests {
   @Test func executionHydrationRefusesReservedSessionsButPlainReadsRemainAvailable() async throws {
     let space = try Space.inMemory()
     let main: any Main = Hub(space: space)

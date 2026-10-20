@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -20,7 +21,7 @@ private let anthropicTestCases: [(model: String, recordingName: String, kind: St
   ("deepseek-v4-pro", "deepseek-anthropic-reasoning", "reasoning"),
 ]
 
-@Suite struct DeepSeekBothDialectsTests {
+@Suite(.deterministicDependencies) struct DeepSeekBothDialectsTests {
   // MARK: - Chat Completions
 
   @Test(arguments: chatTestCases)

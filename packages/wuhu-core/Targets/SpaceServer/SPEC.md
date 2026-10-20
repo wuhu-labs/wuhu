@@ -205,9 +205,12 @@ Removing a key ends what it holds open. A streamed response (no `Content-Length`
   `?group=<id>` names that group's file, as `wuhu://<id>.localspace/<path>`
   does for the tools (a group the acting group does not read is 404, a
   malformed id 400); the CLI's `cat` and `put` send a qualified path this way.
-  `PUT` writes the request body verbatim, honors `If-Match`, bounds the body
-  at 64 MiB (`413` past it), and answers the `WriteOutput` shape
-  (`{rev, token}`). Both live under `/v1` so the API wall gates them exactly
+  `?machine=<id-or-name>` names a machine's file, as `machines://<id-or-name>/<path>`
+  does for the tools; a machine file is read whole up to one wire frame
+  (`VFSDefaults.maxReadBytes`), `415` past it, and a session reaches the
+  machine as itself on both verbs. `PUT` writes the request body verbatim,
+  honors `If-Match`, bounds the body at 64 MiB (`413` past it), and answers
+  the `WriteOutput` shape (`{rev, token}`). Both live under `/v1` so the API wall gates them exactly
   like `POST /v1/tools/*`: `--public-read` opens the content origin, never
   this. Tool failures map onto HTTP status (`notFound` → 404, `conflict` →
   409, `unauthorized` → 403, `unsupported` → 415, `provider_auth` → 502,
@@ -533,15 +536,49 @@ An exec whose registry row has a `caller` session — the exec tool's claim, a
     group, is refused, 422): the checked
     address is `path`, both of `mv`'s, and for `new` its `in`, else its
     template's (the instance lands next to it; the template is only read).
-    `GET /v1/observe`, `GET /v1/server`, `GET /v1/groups`, `GET /v1/machine` (machines its
-    group reads).
-  - `POST /v1/conversation/message` runs `send_message` (a post to a session
-    is a DM from this session; multipart attachments are refused), answering
-    `{delivered: []}`. `POST /v1/session` runs `create_session`: a child task
-    by default on the session's own model, `kind: agent` for a child agent,
-    `topLevel: true` for a top-level agent (an agent only). `POST
-    /v1/session/:id/request` (`SessionRequestInput` → `SessionRequestOutput`)
-    runs `request` on its child. Tool refusals are 422.
+    A `wuhu-tool-call` header on `POST /v1/tools/*` is the call's idempotency
+    key: the first 2xx answer is recorded under (session, id) and a repeat
+    with the same id gets that answer back without running the tool again,
+    which is how a worker's write or edit retried after a crash never fails
+    as stale. `read` with `image: true` of an image path (png, jpg, gif, webp;
+    not under `wuhu://system/`) checks the bytes against the name, bounds them at
+    `ImageMedia.maxReadBytes`, stores them in the blob store and answers
+    `ReadOutput.image` (`{mimeType, blob, byteCount, width?, height?}`) with
+    a one-line `content`.
+    `GET /v1/observe`, `GET /v1/server`, `GET /v1/groups`.
+  - The session verbs run on the hub as the session; the `wuhu-tool-call`
+    header is their idempotency key too, owned by each verb: the answer is
+    looked up and recorded in the write that makes the effect (a slot armed
+    or cancelled, a device command, a title set, a session created) or the
+    effect's id is derived from the call (a message, a request, a report,
+    whose deadline and stall clocks commit with the request's message and
+    end with its final), so a repeat, or two runs of one call at once, gets
+    the first answer, a retried cancel is still "cancelled", and a retried
+    title never overwrites a later one; a refusal leaves no receipt and runs
+    again. An incomplete create (the
+    session exists, its template or brief did not land) is 422
+    `{code: incompleteSession, message, id}`, and the same call again
+    finishes it. `POST /v1/conversation/message` is
+    `send_message` (a post to a session is a DM from this session; `user` is
+    refused 422 as the tool refuses it; multipart attachments are refused),
+    answering `{delivered: []}`. `POST /v1/session` is `create_session`: a
+    child task by default on the session's own model, `kind: agent` for a
+    child agent, `topLevel: true` for a top-level agent (an agent only);
+    `kind` reaches the hub as written, so an odd one is the hub's 422; the
+    answer carries `title`, `requestId` and `member`. `POST
+    /v1/session/:id/request` (`SessionRequestInput` → `SessionRequestOutput`,
+    with `deadline`) is `request` on its child; `POST /v1/request/:id/report`
+    (`RequestReportInput` → `RequestReportOutput`) is `report`; `POST
+    /v1/session/:id/title` is `set_title`, for the session itself only
+    (another id is 404); `POST /v1/device/:id/command` is `manipulate_ui`
+    (top-level agents only); `POST /v1/subscription` (`SubscriptionInput`,
+    exactly one of `observe` and `timer`, else 400) arms the session's own
+    slot keyed by the tool call and `DELETE /v1/subscription/:id` is the
+    subscription half of `cancel` (an ended or foreign id is 422 `notFound`);
+    `GET /v1/templates` lists the templates `templates` lists; `GET
+    /v1/machine` renders the hub's roster (machines its group reads, the
+    hub's attach state; 422 when the server has no machine backend) as
+    `[MachineStatus]`. Tool refusals are 422 carrying the tool's code.
   - `POST /v1/session/:id/{interrupt, resume, tags}` pass the
     self/ancestor check first (403 with the reason otherwise);
     `archive` and `unarchive` pass the archive rule above.

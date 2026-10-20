@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,7 +11,7 @@ import JSONValue
 import Testing
 @testable import WuhuAI
 
-@Suite struct CapacityErrorTests {
+@Suite(.deterministicDependencies) struct CapacityErrorTests {
   @Test(arguments: ["websocket_backpressure", "response_too_large", "websocket_message_too_large"])
   func capacityCodesOverride429And413OnHTTPAndWebSocket(code: String) async throws {
     for status in [429, 413] {

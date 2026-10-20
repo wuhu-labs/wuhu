@@ -1,4 +1,5 @@
 @testable import CLIKit
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -29,7 +30,7 @@ private func idToken(_ arguments: [String], environment: [String: String], reply
   return (code, await stdout.text, await stderr.text, seen.withLock { $0 })
 }
 
-@Suite struct IDTokenVerbTests {
+@Suite(.deterministicDependencies) struct IDTokenVerbTests {
   static let exec = ["WUHU_ID_TOKEN_URL": "https://space.test/v1/id-token", "WUHU_ID_TOKEN_REQUEST": capability]
 
   @Test func parsesTheAudienceAndRequiresIt() throws {

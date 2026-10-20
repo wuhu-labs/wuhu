@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -7,7 +8,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct ReadWallTests {
+@Suite(.deterministicDependencies) struct ReadWallTests {
   @Test func anonymousContentReadsAreWalledOutsideDev() async throws {
     let providers = ["kanban.html": Data("<html>kanban</html>".utf8)]
     let harness = try Harness(dev: false, views: providers)

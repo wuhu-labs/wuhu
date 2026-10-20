@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import MachineChannel
 import MachineContract
@@ -5,7 +6,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1)))
 struct MachineRetentionTests {
   @Test(arguments: [false, true])
   func terminalExecMapsDisappearWhenCallerLeaves(callerLeavesFirst: Bool) async throws {

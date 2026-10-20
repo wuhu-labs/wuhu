@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -7,7 +8,7 @@ import SpaceServer
 import Testing
 import WebBundle
 
-@Suite struct WebBundleTests {
+@Suite(.deterministicDependencies) struct WebBundleTests {
   private func client() throws -> FetchClient {
     let space = try Space.inMemory()
     return ServeTesting.client(upgrading: SpaceServer.handler(

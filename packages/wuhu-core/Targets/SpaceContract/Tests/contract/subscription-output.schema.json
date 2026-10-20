@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SubscriptionOutput","type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["observe","timer"]},"fireAt":{"type":["number","null"]},"cron":{"type":["string","null"]}},"required":["id","kind"],"additionalProperties":false}

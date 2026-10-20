@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Fetch
 import JSONValue
 import OrderedCollections
 import Testing
 @testable import WuhuAI
 
-@Suite struct StockEndpointTests {
+@Suite(.deterministicDependencies) struct StockEndpointTests {
   @Test func codexEndpointOmitsOptionalOriginatorByDefault() {
     let endpoint = OpenAICodexEndpoint(
       model: "gpt-5.5",
@@ -141,7 +142,7 @@ import Testing
 // block. Verified live against api.deepseek.com/anthropic on 2026-08-19: the
 // block's text is never read back, so an empty one satisfies the check while a
 // missing one 400s.
-@Suite struct DeepSeekPlaceholderThinkingTests {
+@Suite(.deterministicDependencies) struct DeepSeekPlaceholderThinkingTests {
   private func toolCall(_ id: String, thinking: Bool) -> Message {
     var content: [ContentBlock] = []
     if thinking { content.append(.reasoning(.unencrypted("weighing it"))) }
@@ -241,7 +242,7 @@ private actor ResponseHeaderRecorder {
   }
 }
 
-@Test func codexEndpointReportsHeadersFromErrorResponses() async throws {
+@Test(.deterministicDependencies) func codexEndpointReportsHeadersFromErrorResponses() async throws {
   let recorder = ResponseHeaderRecorder()
   let endpoint = OpenAICodexEndpoint(
     model: "gpt-5.5",

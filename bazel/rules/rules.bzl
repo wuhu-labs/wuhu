@@ -477,6 +477,14 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
         deps = deps,
         module_name = name.replace("-", "_"),
         package_name = package_name,
+        # IssueReporting discovers its test bridge with dlsym; an archive dependency alone is stripped.
+        linkopts = kwargs.pop("linkopts", []) + select({
+            "//bazel/constraints:linux": [
+                "-Wl,--undefined=$s25IssueReportingTestSupport07_recordA0ypyF",
+                "-Wl,--export-dynamic",
+            ],
+            "//conditions:default": [],
+        }),
         **kwargs
     )
 

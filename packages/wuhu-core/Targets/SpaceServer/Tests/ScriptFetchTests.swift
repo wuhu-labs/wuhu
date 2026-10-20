@@ -1,5 +1,6 @@
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -17,7 +18,7 @@ import Synchronization
 import Testing
 import struct WuhuAI.ToolCall
 
-@Suite struct ScriptFetchTests {
+@Suite(.deterministicDependencies) struct ScriptFetchTests {
   @Test func scriptVerifierChecksJWKSClaimsAndPerCallTokensWhileEchoesAreMasked() async throws {
     let identity = try ServerIdentity(rawKey: P256.Signing.PrivateKey().rawRepresentation)
     let published = try Harness(origin: "https://space.test", identityJWKS: identity.jwks)

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import class MainHub.Hub
 import SessionTools
 #if canImport(FoundationEssentials)
@@ -18,7 +19,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Test func telemetryRecordsARealTurnWithoutMessageArgumentsOrResults() async throws {
+@Test(.deterministicDependencies) func telemetryRecordsARealTurnWithoutMessageArgumentsOrResults() async throws {
   let spans = Mutex<[FinishedSpan]>([])
   try await ServerTracing.$emitter.withValue({ span in spans.withLock { $0.append(span) } }) {
     try await withSessionDeps {

@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -34,7 +35,7 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
   return CredentialBinding(credential: credential, identityEpoch: "fixture-epoch")
 }
 
-@Suite struct CatalogEntryIsolationTests {
+@Suite(.deterministicDependencies) struct CatalogEntryIsolationTests {
   @Test(arguments: [JSONValue?.none, .some(.string("none"))])
   func mixedCatalogRetainsValidEntriesAndAcceptsThinkingWithoutReplay(policy: JSONValue?) async throws {
     let document = try ModelsDocument(json: mixedReplayCatalogJSON(policy: policy))

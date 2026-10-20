@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import struct MachineContract.MachineID
+import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
 
@@ -181,14 +182,38 @@ extension Space {
   public func issueDeviceCommand(device: String, payload: String, issuedBy: String) async throws -> Int64 {
     let stamp = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
-      let known = try DeviceRow.where { $0.id.eq(device) }.fetchOne(db)
-      guard known != nil else { throw SpaceError.unknownDevice(device) }
-      try db.execute(
-        sql: "INSERT INTO device_commands (device_id, payload, issued_by, created_at) VALUES (?, ?, ?, ?)",
-        arguments: [device, payload, issuedBy, stamp],
-      )
-      return db.lastInsertedRowID
+      try Self.insertDeviceCommand(device, payload: payload, issuedBy: issuedBy, at: stamp, in: db)
     }
+  }
+
+  // The command as a tool call's effect: the call's answer is looked up and
+  // recorded in the write that issues it, so a call already answered (an
+  // earlier run, or an overlapping twin of this one) gets that answer and
+  // the device is driven once.
+  public func issueDeviceCommand(
+    device: String,
+    payload: String,
+    issuedBy session: SessionID,
+    answering callID: ToolCallID,
+  ) async throws -> ToolResultPayload {
+    let stamp = SQLiteDateFormat.string(from: dateGen.now)
+    return try await writer.write { db in
+      if let recorded = try Sessions.receipt(session.rawValue, toolCallID: callID.rawValue, in: db) { return recorded }
+      let n = try Self.insertDeviceCommand(device, payload: payload, issuedBy: session.rawValue, at: stamp, in: db)
+      let receipt = ToolReceipt(session: session, callID: callID, payload: .manipulateUI(.init(device: device, n: n)))
+      try receipt.record(now: stamp, in: db)
+      return receipt.payload
+    }
+  }
+
+  private static func insertDeviceCommand(_ device: String, payload: String, issuedBy: String, at stamp: String, in db: Database) throws -> Int64 {
+    let known = try DeviceRow.where { $0.id.eq(device) }.fetchOne(db)
+    guard known != nil else { throw SpaceError.unknownDevice(device) }
+    try db.execute(
+      sql: "INSERT INTO device_commands (device_id, payload, issued_by, created_at) VALUES (?, ?, ?, ?)",
+      arguments: [device, payload, issuedBy, stamp],
+    )
+    return db.lastInsertedRowID
   }
 
   public func deviceNames() async throws -> [String: String] {

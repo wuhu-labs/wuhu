@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 #if canImport(FoundationEssentials)
@@ -30,7 +31,7 @@ private func expectRemoved(_ response: Response) async throws {
   #expect(body["message"] == "executor no longer supported")
 }
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct RemovedExecutorTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct RemovedExecutorTests {
   @Test(arguments: [0, 99]) func retiredCursorResetsAndCloses(generation: Int) async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

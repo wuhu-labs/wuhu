@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -21,7 +22,7 @@ import Scratch
 import Synchronization
 import Testing
 
-@Suite struct MachineV2AutoUpgradeTests {
+@Suite(.deterministicDependencies) struct MachineV2AutoUpgradeTests {
   /// Archives hold their version string; extraction writes it as `wuhu`, whose `--version` prints it back.
   final class Box: Sendable {
     let announcement: Mutex<MachineV2Upgrade>

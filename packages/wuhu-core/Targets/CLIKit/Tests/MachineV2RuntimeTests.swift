@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -56,7 +57,7 @@ private actor EnrollmentEffects {
   nonisolated var client: FetchClient { FetchClient { try await self.fetch($0) } }
 }
 
-@Suite struct MachineV2RuntimeTests {
+@Suite(.deterministicDependencies) struct MachineV2RuntimeTests {
   func fixture(_ label: String = "machine-v2-runtime") throws -> (scratch: ScratchFolder, root: URL) {
     let scratch = try ScratchFolder(label)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scratch.path)

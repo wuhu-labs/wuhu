@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 @testable import SpaceCore
@@ -16,7 +17,7 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
   return (name, AllocationNames.id(for: name, words: words, secret: testSecret))
 }
 
-@Suite struct AllocationNameTests {
+@Suite(.deterministicDependencies) struct AllocationNameTests {
   @Test func tinyVocabularyWidthThreeIsExhaustivelyBijective() {
     let domain = Int64(tinyWords.count * tinyWords.count * tinyWords.count)
     var names = Set<String>()
@@ -104,7 +105,7 @@ private func roundTrip(_ id: Int64, words: [String]) -> (name: String, back: Int
   }
 }
 
-@Suite struct AllocationSpaceTests {
+@Suite(.deterministicDependencies) struct AllocationSpaceTests {
   private func makeAllocationSpace() throws -> Space {
     try withDependencies {
       $0.date = .constant(fixedDate)

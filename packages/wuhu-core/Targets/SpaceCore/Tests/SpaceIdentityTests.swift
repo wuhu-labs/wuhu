@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import Scratch
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct SpaceIdentityTests {
   @Test func mintedIdentityHasTheOpaqueSpcShape() async throws {
     let space = try makeSpace()

@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import FetchWebSocket
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -11,7 +12,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite(.timeLimit(.minutes(1))) struct ResponsesRegistryShutdownTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct ResponsesRegistryShutdownTests {
   @Test(arguments: [false, true])
   func explicitAndRunnerCancellationShutdownCloseOwnedSessionsAndAcquisition(cancellingRunner: Bool) async throws {
     let clock = TestClock()

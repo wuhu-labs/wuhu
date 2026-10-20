@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import LoopCore
 @testable import MainHub
 @testable import SessionTools
@@ -37,7 +38,7 @@ private func withHandlerFiring(
   }
 }
 
-@Suite struct HandlerTests {
+@Suite(.deterministicDependencies) struct HandlerTests {
   @Test func oneObservationSerializesFiringsAcrossInFlightChanges() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()
@@ -380,7 +381,7 @@ private func withHandlerFiring(
   }
 }
 
-@Suite struct ArchivedObservationTests {
+@Suite(.deterministicDependencies) struct ArchivedObservationTests {
   @Test(arguments: [false, true]) func archiveDoesNotRetireAnObserverWhoseSnapshotNeverChanges(handler: Bool) async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()

@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -15,7 +16,7 @@ private struct OfflineRehearsalMedia: MediaResolver {
   }
 }
 
-@Suite struct LegacyReplayRehearsalTests {
+@Suite(.deterministicDependencies) struct LegacyReplayRehearsalTests {
   @Test(.enabled(if: ProcessInfo.processInfo.environment["WUHU_REPLAY_REHEARSAL_DB"] != nil))
   func oldLiveTranscriptIsAdoptedOnceWithoutSendingOpacity() async throws {
     let path = try #require(ProcessInfo.processInfo.environment["WUHU_REPLAY_REHEARSAL_DB"])

@@ -1,4 +1,5 @@
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -11,7 +12,7 @@ import WuhuVFS
 
 // A session's exec trades its WUHU_ID_TOKEN_REQUEST capability for a short
 // OIDC token naming its session, machine and exec, through the real handler.
-@Suite struct IDTokenRouteTests {
+@Suite(.deterministicDependencies) struct IDTokenRouteTests {
   struct Rig {
     let harness: SessionHarness
     let tokens: ExecTokens

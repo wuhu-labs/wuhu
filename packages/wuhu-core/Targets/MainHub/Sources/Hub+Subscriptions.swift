@@ -20,11 +20,11 @@ extension SubscriptionID {
 }
 
 extension Hub {
-  // Durable slots keyed by the kernel tool call id make re-registration
-  // naturally idempotent (INSERT OR IGNORE), so observe/timer carry no
-  // receipts: a crash-retry re-arms the same slot and rebuilds the same
-  // result.
-  nonisolated func observe(
+  // Each verb owns its idempotency: the answer is looked up and recorded in
+  // the write that arms or cancels the slot, so a call that already ran, or
+  // runs twice at once, acts once and gets the one answer, whether the slot
+  // still stands or has since fired or been cancelled.
+  nonisolated public func observe(
     _ session: SessionID,
     _ callID: ToolCallID,
     _ arguments: ObserveArguments,
@@ -39,15 +39,16 @@ extension Hub {
     // the baseline: arming never fires on rows that already existed.
     let baseline = try await space.query(arguments.sql, as: try await space.principal(of: session))
     let subscriptionID = SubscriptionID.observation(callID)
-    try await store.armSubscription(
+    let payload = ToolResultPayload.observe(.init(subscriptionID: subscriptionID, sql: arguments.sql))
+    return try await store.armSubscription(
       session,
       slot: .init(id: subscriptionID, kind: .observe(sql: arguments.sql, throttleSeconds: throttle), handler: try handlerPath(arguments.handler)),
       marker: rowsMarker(baseline),
+      answering: ToolReceipt(session: session, callID: callID, payload: payload),
     )
-    return .observe(.init(subscriptionID: subscriptionID, sql: arguments.sql))
   }
 
-  nonisolated func timer(
+  nonisolated public func timer(
     _ session: SessionID,
     _ callID: ToolCallID,
     _ arguments: TimerArguments,
@@ -63,35 +64,35 @@ extension Hub {
       throw ToolProblem(error.message)
     }
     let subscriptionID = SubscriptionID.timer(callID)
-    try await store.armSubscription(
+    let payload = ToolResultPayload.timer(.init(subscriptionID: subscriptionID, schedule: schedule, message: arguments.message))
+    return try await store.armSubscription(
       session,
       slot: .init(id: subscriptionID, kind: .timer(schedule, message: arguments.message), handler: try handlerPath(arguments.handler)),
       nextFireAt: nextFireAt,
+      answering: ToolReceipt(session: session, callID: callID, payload: payload),
     )
-    return .timer(.init(subscriptionID: subscriptionID, schedule: schedule, message: arguments.message))
   }
 
   // The subscription half of cancel(id). Only the caller's own slots are
   // looked up, so another session's id is as unknown as a made-up one. A
   // request's deadline and stall alert end with the request, never here.
-  nonisolated func cancel(_ session: SessionID, _ arguments: CancelArguments) async throws -> ToolResultPayload {
+  nonisolated public func cancel(_ session: SessionID, _ callID: ToolCallID, _ arguments: CancelArguments) async throws -> ToolResultPayload {
     let subscriptionID = SubscriptionID(arguments.id)
     if subscriptionID.rawValue.hasPrefix("deadline.") { throw deadlineRefusal(subscriptionID) }
     if subscriptionID.rawValue.hasPrefix("stall.") {
       throw ToolProblem("\(subscriptionID.rawValue) is the stall alert of a request you opened; it ends with the task's final report", code: "invalidArgument")
     }
-    let armed = try await store.armedSubscriptions(session).first { $0.slot.id == subscriptionID }
-    switch armed?.slot.kind {
-    case .observe?:
-      try await store.cancelSubscription(session, subscriptionID: subscriptionID)
-      return .cancelObservation(.init(subscriptionID: subscriptionID))
-    case .timer?:
-      try await store.cancelSubscription(session, subscriptionID: subscriptionID)
-      return .cancelTimer(.init(subscriptionID: subscriptionID))
-    case .requestDeadline?, .requestStall?, .parkReminder?, nil:
-      // Nothing remembers a subscription past its slot: one that ended (a
-      // fired one-shot, a second cancel) reads like one that never was.
-      throw ToolProblem("\(subscriptionID.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
+    return try await store.cancelSubscription(session, subscriptionID: subscriptionID, answering: callID) { armed in
+      switch armed?.kind {
+      case .observe?:
+        return .cancelObservation(.init(subscriptionID: subscriptionID))
+      case .timer?:
+        return .cancelTimer(.init(subscriptionID: subscriptionID))
+      case .requestDeadline?, .requestStall?, .parkReminder?, nil:
+        // Nothing remembers a subscription past its slot: one that ended (a
+        // fired one-shot, a second cancel) reads like one that never was.
+        throw ToolProblem("\(subscriptionID.rawValue) is not armed: it already ended, or you never had it", code: "notFound")
+      }
     }
   }
 

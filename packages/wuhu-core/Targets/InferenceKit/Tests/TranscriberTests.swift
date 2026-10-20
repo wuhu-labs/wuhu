@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 @testable import InferenceKit
@@ -85,7 +86,7 @@ extension Data {
 
 private let clip = AudioClip(bytes: Data("RIFFfake-wav-bytes".utf8), mediaType: .wav)
 
-@Suite struct TranscriberTests {
+@Suite(.deterministicDependencies) struct TranscriberTests {
   @Test func codexEmitsTheDictationMultipartAndReadsTheTranscript() async throws {
     let recorder = Recorder()
     let transcription = try await withDependencies {

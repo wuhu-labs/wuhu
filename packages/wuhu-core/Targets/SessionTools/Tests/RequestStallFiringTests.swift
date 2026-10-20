@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import LoopCore
 import MainHub
@@ -6,7 +7,7 @@ import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct RequestStallFiringTests {
+@Suite(.deterministicDependencies) struct RequestStallFiringTests {
   @Test func anInProcessScriptHoldsTheStallClockUntilItEnds() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()

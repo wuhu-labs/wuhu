@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite struct ScriptChannelTests {
+@Suite(.deterministicDependencies) struct ScriptChannelTests {
   @Test func sessionCreatesAndManagesAChannelWithTwoPeopleFromAScript() async throws {
     try await withRig { rig in
       var people: [String] = []

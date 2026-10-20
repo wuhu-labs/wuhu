@@ -1,11 +1,12 @@
 import Clocks
+import DeterministicDependencies
 import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct RowEditTests {
+@Suite(.deterministicDependencies) struct RowEditTests {
   func makeTable(_ space: Space) async throws -> SpacePath {
     let table = try path("/tasks.table")
     _ = try await space.createTable(table, header: TableHeader(columns: [

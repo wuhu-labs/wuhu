@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -15,7 +16,7 @@ import Testing
 // kernel's inference and Claude Code's launch, never a test-side copy of the
 // wiring. Were either to read the live home, an edit after creation would
 // show up and these fail.
-@Suite struct FrozenPromptTests {
+@Suite(.deterministicDependencies) struct FrozenPromptTests {
   private func edit(_ space: Space, _ id: SessionID, _ tag: String) async throws {
     _ = try await space.fs(.shared).write("/AGENTS.md", Data("root \(tag)".utf8), ifMatch: nil)
     _ = try await space.fs(.shared).write("\(SessionHome.path(of: id))/AGENTS.md", Data("home \(tag)".utf8), ifMatch: nil)

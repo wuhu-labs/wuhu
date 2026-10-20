@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 @testable import MainHub
 import struct MainHub.CronSchedule
@@ -17,7 +18,7 @@ private func utc(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: I
   return calendar.date(from: components)!
 }
 
-@Suite struct CronTests {
+@Suite(.deterministicDependencies) struct CronTests {
   @Test func dailyAtNoon() throws {
     let cron = try CronSchedule.parse("0 12 * * *")
     #expect(cron.next(after: utc(2026, 7, 6, 9, 30)) == utc(2026, 7, 6, 12, 0))

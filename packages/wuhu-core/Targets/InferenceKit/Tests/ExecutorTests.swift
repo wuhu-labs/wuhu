@@ -1,6 +1,7 @@
 import Clocks
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 @testable import InferenceKit
@@ -152,7 +153,7 @@ private func run(
   return (reply, box.captured)
 }
 
-@Suite struct ExecutorTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct ExecutorTests {
   @Test func malformedModelMessageMetricKeepsTypedKind() {
     let classified = InferenceMetric.classify(.malformedModelMessage(message: "bad tool_use", reason: "invalid_tool_use_name"))
     #expect(classified.outcome == .httpError)
@@ -444,7 +445,7 @@ extension ExecutorTests {
   }
 }
 
-@Suite struct WarmingPrefixTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct WarmingPrefixTests {
   @Test func ordinaryWarmingRenderRetainsByteIdenticalPreviousPrefix() async throws {
     let executor = try await makeExecutor()
     let box = RequestBox()

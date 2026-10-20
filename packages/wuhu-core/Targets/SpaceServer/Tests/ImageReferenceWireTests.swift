@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import ExecutionOwner
 import Fetch
 import Foundation
@@ -49,7 +50,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   return try #require(bodies.withLock { $0.first })
 }
 
-@Suite struct ImageReferenceWireTests {
+@Suite(.deterministicDependencies) struct ImageReferenceWireTests {
   // A row written before images moved to the blob store and a row written after
   // it must reach the provider as the same bytes: the reference is a storage
   // decision, and the prompt may not notice it.

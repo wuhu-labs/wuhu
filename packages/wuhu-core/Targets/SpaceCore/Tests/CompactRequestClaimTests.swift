@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,7 +8,7 @@ import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite struct CompactRequestClaimTests {
+@Suite(.deterministicDependencies) struct CompactRequestClaimTests {
   @Test(arguments: [nil, "keep the notes"] as [String?])
   func claimIsDurableAndIdempotentUntilAssistantCommit(instructions: String?) async throws {
     try await withSessionDeps {

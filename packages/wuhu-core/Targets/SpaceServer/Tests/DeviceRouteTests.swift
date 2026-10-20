@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct DeviceRouteTests {
+@Suite(.deterministicDependencies) struct DeviceRouteTests {
   let harness: Harness
   let identity: String
   let key = Curve25519.Signing.PrivateKey()
@@ -169,7 +170,7 @@ import Testing
 
 // The attribution is server-side, so it is only real over the session stack
 // that actually posts messages.
-@Suite struct DeviceAttributionRouteTests {
+@Suite(.deterministicDependencies) struct DeviceAttributionRouteTests {
   @discardableResult
   private func enrolled(
     _ space: Space,

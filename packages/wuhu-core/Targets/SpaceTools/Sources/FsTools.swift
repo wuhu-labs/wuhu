@@ -7,6 +7,12 @@ import SpaceFS
 extension SpaceToolbox {
   static let read = SpaceTool("read", schema: ReadInput.jsonSchema) { (context, input: ReadInput) in
     let target = try await context.resolve(input.path, rev: input.rev)
+    if input.image == true, !target.system, let mimeType = ImageMedia.mimeType(ofPath: target.path) {
+      guard input.lines == nil else {
+        throw ToolRunError.failed(code: .invalidArgument, message: "lines applies to text files; \(input.path) is an image", hint: nil)
+      }
+      return try await image(target, as: mimeType, named: input.path, context)
+    }
     let (token, data) = try await target.backend.read(target.path)
     var content = try text(data, at: target.path)
     if let lines = input.lines {
@@ -15,8 +21,37 @@ extension SpaceToolbox {
     return Wire.object([("token", .string(Wire.string(token))), ("content", .string(content))])
   }
 
+  // An image's bytes go to the blob store and the answer carries the hash,
+  // so a transcript keeps a reference and a client never relays the bytes.
+  private static func image(_ target: SpaceToolContext.Target, as mimeType: String, named path: String, _ context: SpaceToolContext) async throws -> JSONValue {
+    let (token, data) = try await context.read(target, upTo: ImageMedia.maxReadBytes) { size in
+      .failed(code: .unsupported, message: "\(path) is \(size) bytes; read takes images up to \(ImageMedia.maxReadBytes) bytes", hint: nil)
+    }
+    let actual = ImageMedia.mimeType(ofBytes: data)
+    guard actual == mimeType else {
+      throw ToolRunError.failed(
+        code: .unsupported,
+        message: "\(path) is named as \(mimeType) but its bytes are \(actual ?? "no image format read takes"); rename or convert it",
+        hint: nil,
+      )
+    }
+    let pixels = ImageMedia.pixelSize(ofBytes: data)
+    let hash = try await context.space.storeImage(data)
+    return Wire.object([
+      ("token", .string(Wire.string(token))),
+      ("content", .string("image \(mimeType), \(pixels.map { "\($0.width)x\($0.height) px, " } ?? "")\(data.count) bytes; delivered as an attached image")),
+      ("image", Wire.object([
+        ("mimeType", .string(mimeType)),
+        ("blob", .string(hash)),
+        ("byteCount", .integer(data.count)),
+        ("width", pixels.map { .integer($0.width) }),
+        ("height", pixels.map { .integer($0.height) }),
+      ])),
+    ])
+  }
+
   static let write = SpaceTool("write", schema: WriteInput.jsonSchema) { (context, input: WriteInput) in
-    let written = try await context.writeBytes(input.path, Data(input.content.utf8), ifMatch: input.ifMatch)
+    let written = try await context.writeBytes(input.path, Data(input.content.utf8), ifMatch: input.ifMatch, createOnly: input.createOnly ?? false)
     return Wire.object([("rev", written.rev.map(JSONValue.integer)), ("token", .string(written.token))])
   }
 
@@ -33,9 +68,11 @@ extension SpaceToolbox {
       switch TextEdit.apply(content: content, old: op.old, new: op.new) {
       case let .success(edited):
         content = edited
+      // The file is at the version the caller read, so an old text that does
+      // not match is the caller's argument, not a version conflict.
       case .failure(.notFound):
         throw ToolRunError.failed(
-          code: .conflict,
+          code: .invalidArgument,
           message: "edit \(index + 1) of \(input.edits.count): old text not found in \(path)",
           hint: Wire.staleHint,
         )
@@ -43,7 +80,7 @@ extension SpaceToolbox {
         let lines = occurrenceLines(in: content, of: op.old)
         let located = lines.isEmpty ? "" : " at lines \(lines.map(String.init).joined(separator: ", "))"
         throw ToolRunError.failed(
-          code: .conflict,
+          code: .invalidArgument,
           message: "edit \(index + 1) of \(input.edits.count): old text matches \(count) times in \(path)",
           hint: "matches\(located); widen old with surrounding context until it is unique",
         )

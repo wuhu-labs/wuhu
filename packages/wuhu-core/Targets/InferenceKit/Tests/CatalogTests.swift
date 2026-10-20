@@ -2,6 +2,7 @@ import enum Credentials.ChatGPTAuthError
 import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
 import enum Credentials.ProviderCredential
+import DeterministicDependencies
 import enum Fetch.FetchError
 import Foundation
 @testable import InferenceKit
@@ -67,7 +68,7 @@ private let chatGPTOnly = CredentialResolver { _ in
   .chatGPT(accessToken: "access.jwt", accountID: "acct-42")
 }
 
-@Suite struct CatalogTests {
+@Suite(.deterministicDependencies) struct CatalogTests {
   @Test func retiredProviderKeysAreIgnored() throws {
     let json = try #require(String(data: fixtureJSON, encoding: .utf8))
       .replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"acceptsUnsignedThinking\": true, \"dialect\": \"anthropic\"")

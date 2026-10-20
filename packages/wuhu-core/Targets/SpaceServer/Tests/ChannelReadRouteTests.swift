@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -8,7 +9,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct ChannelReadRouteTests {
+@Suite(.deterministicDependencies) struct ChannelReadRouteTests {
   @Test func attachmentsRequireMembershipAcrossFileToolsListingsAndContentHosts() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false, origin: "https://localhost")

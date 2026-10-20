@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -6,13 +7,13 @@ import MachineContract
 import ServeTesting
 import SessionDomain
 import SpaceContract
-import SpaceCore
+@_spi(Testing) import SpaceCore
 @testable import SpaceServer
 import Testing
 
 // A session's exec token through the real handler: what it may do, as whom,
 // and when it stops working.
-@Suite struct SessionGateTests {
+@Suite(.deterministicDependencies) struct SessionGateTests {
   struct Tree {
     let harness: SessionHarness
     let tokens: ExecTokens
@@ -246,6 +247,225 @@ import Testing
       #expect(sent.conversationId != t.stranger.rawValue)
       let messages = try await t.harness.store.messages(conversation: ConversationID(sent.conversationId))
       #expect(messages.last?.senderSession == t.parent)
+    }
+  }
+
+  // The hub's verbs through the gate: a report closes the request it names,
+  // a subscription is the session's own slot, a title is only its own, and
+  // a device is a top-level agent's to drive.
+  @Test func reportSubscriptionTitleAndDeviceCommandRunOnTheHub() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
+      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+      _ = try await t.harness.store.openRequest(on: t.child, from: t.parent, messageID: .init("ask-1"), text: "work", deadline: nil)
+      // The request is open on the child once it has taken the message.
+      _ = try await t.harness.store.drainQueue(t.child)
+      let reported = try await t.harness.call(
+        "/v1/request/ask-1/report", .object(["kind": "final", "content": "done"]), as: RequestReportOutput.self, bearer: childToken,
+      )
+      let messages = try await t.harness.store.messages(conversation: ConversationID(reported.conversationId))
+      let final = messages.first { $0.id.rawValue == reported.messageId }
+      #expect(final?.kind == .final)
+      #expect(final?.senderSession == t.child)
+      let closed = try await t.harness.post("/v1/request/ask-1/report", .object(["kind": "final", "content": "again"]), bearer: childToken)
+      #expect(closed.status == .unprocessableContent)
+
+      let timer = try await t.harness.call(
+        "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), as: SubscriptionOutput.self, bearer: t.token,
+      )
+      #expect(timer.kind == .timer)
+      #expect(timer.fireAt != nil)
+      #expect(try await t.harness.store.armedSubscriptions(t.parent).map(\.slot.id.rawValue) == [timer.id])
+      let both = try await t.harness.post(
+        "/v1/subscription", .object(["timer": ["message": "x", "inSeconds": 1], "observe": ["sql": "SELECT 1"]]), bearer: t.token,
+      )
+      #expect(both.status == .badRequest)
+      var cancel = Request(url: URL(string: "http://space/v1/subscription/\(timer.id)")!, method: .delete)
+      cancel.headers[.authorization] = "Bearer " + t.token
+      let ended = try await t.harness.api(cancel)
+      #expect(ended.status == .ok)
+      #expect(try await ended.text().contains(timer.id))
+      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
+      #expect(try await t.harness.api(cancel).status == .unprocessableContent)
+
+      let titled = try await t.harness.call(
+        "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), as: SessionTitleOutput.self, bearer: t.token,
+      )
+      #expect(titled.title == "lead")
+      #expect(try await t.harness.store.record(t.parent).title == "lead")
+      #expect(try await t.harness.post("/v1/session/\(t.child.rawValue)/title", .object(["title": "x"]), bearer: t.token).status == .notFound)
+
+      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
+      _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+      let device = try await t.harness.space.upsertDevice(pubkey: testPubkey("phone"), installation: "inst-1", kind: "phone", name: "Phone")
+      let issued = try await t.harness.call(
+        "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), as: DeviceCommandOutput.self, bearer: t.token,
+      )
+      #expect(issued.n == 1)
+      let refused = try await t.harness.post("/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), bearer: childToken)
+      #expect(refused.status == .unprocessableContent)
+      #expect(try await refused.text().contains("top-level agents"))
+    }
+  }
+
+  // The tool call a request runs for is its idempotency key: the same call
+  // again gets the first answer back, not a second slot, child or cancel.
+  @Test func aRepeatedToolCallReplaysItsFirstAnswer() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      func call(_ method: Fetch.Method, _ path: String, _ body: JSONValue, toolCall: String) async throws -> (Status, String) {
+        try await toolCalled(t.harness, bearer: t.token, method, path, body, toolCall: toolCall)
+      }
+      let armed = try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer")
+      #expect(armed.0 == .ok)
+      #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "ping", "inSeconds": 60]]), toolCall: "tc-timer") == armed)
+      let slots = try await t.harness.store.armedSubscriptions(t.parent)
+      #expect(slots.count == 1)
+      let id = try #require(slots.first?.slot.id.rawValue)
+
+      let cancelled = try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel")
+      #expect(cancelled.0 == .ok)
+      // The slot is gone, yet the retried cancel is answered as the first was.
+      #expect(try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel") == cancelled)
+      #expect(try await call(.delete, "/v1/subscription/\(id)", .null, toolCall: "tc-cancel-2").0 == .unprocessableContent)
+
+      let created = try await call(.post, "/v1/session", .object(["title": "helper"]), toolCall: "tc-create")
+      #expect(created.0 == .ok)
+      #expect(try await call(.post, "/v1/session", .object(["title": "helper"]), toolCall: "tc-create") == created)
+      let helpers = try await t.harness.space.query("SELECT id FROM sessions WHERE title = 'helper'", as: .shared(.anonymous)).rows
+      #expect(helpers.count == 1)
+
+      // A failure is not a receipt: the same call runs again.
+      let refused = try await call(.post, "/v1/session/\(t.stranger.rawValue)/request", .object(["message": "do it"]), toolCall: "tc-request")
+      #expect(refused.0 == .unprocessableContent)
+      #expect(try await call(.post, "/v1/session/\(t.stranger.rawValue)/request", .object(["message": "do it"]), toolCall: "tc-request").0 == .unprocessableContent)
+
+      // An arm retried after its slot is gone is answered as the first was
+      // and arms nothing.
+      let gone = try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone")
+      #expect(gone.0 == .ok)
+      let goneID = try #require(JSONValue.parse(gone.1)?.object?["id"]?.stringValue)
+      try await t.harness.store.cancelSubscription(t.parent, subscriptionID: SubscriptionID(goneID))
+      #expect(try await call(.post, "/v1/subscription", .object(["timer": ["message": "once", "inSeconds": 60]]), toolCall: "tc-timer-gone") == gone)
+      #expect(try await t.harness.store.armedSubscriptions(t.parent).allSatisfy { $0.slot.id.rawValue != goneID })
+
+      // A device is driven once: the retry answers with the first command's n.
+      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
+      _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+      let device = try await t.harness.space.upsertDevice(pubkey: testPubkey("phone"), installation: "inst-1", kind: "phone", name: "Phone")
+      let driven = try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device")
+      #expect(driven.0 == .ok)
+      #expect(try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device") == driven)
+      let again = try await call(.post, "/v1/device/\(device.id)/command", .object(["payload": ["sidebar": "everything"]]), toolCall: "tc-device-2")
+      #expect(JSONValue.parse(again.1)?.object?["n"] == .integer(2))
+
+      // A title call retried after a later one answers as it first did and
+      // leaves the later title standing.
+      let named = try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), toolCall: "tc-title")
+      #expect(named.0 == .ok)
+      #expect(try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead, renamed"]), toolCall: "tc-title-2").0 == .ok)
+      #expect(try await call(.post, "/v1/session/\(t.parent.rawValue)/title", .object(["title": "lead"]), toolCall: "tc-title") == named)
+      #expect(try await t.harness.store.record(t.parent).title == "lead, renamed")
+    }
+  }
+
+  // Two runs of one tool call at once (a worker retrying while its first
+  // run still runs) act once: the answer is looked up in the write that
+  // makes the effect, not before it.
+  @Test func overlappingRunsOfOneToolCallActOnce() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let call: @Sendable (Fetch.Method, String, JSONValue, String) async throws -> (Status, String) = { method, path, body, toolCall in
+        try await toolCalled(t.harness, bearer: t.token, method, path, body, toolCall: toolCall)
+      }
+
+      let timer: JSONValue = .object(["timer": ["message": "ping", "inSeconds": 60]])
+      async let firstArm = call(.post, "/v1/subscription", timer, "tc-timer")
+      async let secondArm = call(.post, "/v1/subscription", timer, "tc-timer")
+      let armed = try await (firstArm, secondArm)
+      #expect(armed.0.0 == .ok)
+      #expect(armed.0 == armed.1)
+      let slots = try await t.harness.store.armedSubscriptions(t.parent)
+      #expect(slots.count == 1)
+      let id = try #require(slots.first?.slot.id.rawValue)
+
+      async let firstCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
+      async let secondCancel = call(.delete, "/v1/subscription/\(id)", .null, "tc-cancel")
+      let cancelled = try await (firstCancel, secondCancel)
+      #expect(cancelled.0.0 == .ok)
+      #expect(cancelled.0 == cancelled.1)
+      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
+
+      let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
+      _ = try await t.harness.space.addKey(testPubkey("phone"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+      let device = try await t.harness.space.upsertDevice(pubkey: testPubkey("phone"), installation: "inst-1", kind: "phone", name: "Phone")
+      let command: JSONValue = .object(["payload": ["sidebar": "everything"]])
+      async let firstDrive = call(.post, "/v1/device/\(device.id)/command", command, "tc-device")
+      async let secondDrive = call(.post, "/v1/device/\(device.id)/command", command, "tc-device")
+      let driven = try await (firstDrive, secondDrive)
+      #expect(driven.0.0 == .ok)
+      #expect(driven.0 == driven.1)
+      // One command was issued: the next is the second.
+      let next = try await call(.post, "/v1/device/\(device.id)/command", command, "tc-device-2")
+      #expect(JSONValue.parse(next.1)?.object?["n"] == .integer(2))
+    }
+  }
+
+  // A request's clocks commit with its message and end with the final that
+  // closes it; a retry of either call is the first one again.
+  @Test func aRetriedRequestOrReportIsTheFirstOne() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: .shared))
+      let childExec = try await t.harness.space.mintExec(machine: machine.id, caller: t.child.rawValue)
+      let childToken = t.tokens.credential(session: t.child, exec: childExec.id, timeout: nil, now: Date()).token
+
+      let ask: JSONValue = .object(["message": "do it", "deadlineSeconds": 60, "stallSeconds": 30])
+      let opened = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session/\(t.child.rawValue)/request", ask, toolCall: "tc-ask")
+      #expect(opened.0 == .ok)
+      #expect(try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session/\(t.child.rawValue)/request", ask, toolCall: "tc-ask") == opened)
+      let requestID = try #require(JSONValue.parse(opened.1)?.object?["requestId"]?.stringValue)
+      let clocks = try await t.harness.store.armedSubscriptions(t.parent).map(\.slot.id.rawValue).sorted()
+      #expect(clocks == ["deadline.\(requestID)", "stall.\(requestID)"])
+
+      _ = try await t.harness.store.drainQueue(t.child)
+      let done: JSONValue = .object(["kind": "final", "content": "done"])
+      let reported = try await toolCalled(t.harness, bearer: childToken, .post, "/v1/request/\(requestID)/report", done, toolCall: "tc-done")
+      #expect(reported.0 == .ok)
+      #expect(try await toolCalled(t.harness, bearer: childToken, .post, "/v1/request/\(requestID)/report", done, toolCall: "tc-done") == reported)
+      let conversation = try #require(JSONValue.parse(reported.1)?.object?["conversationId"]?.stringValue)
+      let finals = try await t.harness.store.messages(conversation: ConversationID(conversation)).filter { $0.kind == .final }
+      #expect(finals.count == 1)
+      #expect(try await t.harness.store.armedSubscriptions(t.parent).isEmpty)
+      #expect(try await toolCalled(t.harness, bearer: childToken, .post, "/v1/request/\(requestID)/report", done, toolCall: "tc-done-2").0 == .unprocessableContent)
+    }
+  }
+
+  // A create that left its session unfinished names it, and the same call
+  // again finishes that session rather than making another.
+  @Test func anIncompleteCreateNamesTheSessionAndItsRetryFinishesIt() async throws {
+    try await withSessionDeps {
+      let t = try await tree()
+      let fs = await t.harness.space.fs(.shared)
+      _ = try await fs.write("/templates/night/template.json", Data(#"{"kind":"task"}"#.utf8), ifMatch: nil)
+      _ = try await fs.write("/templates/night/AGENTS.md", Data("night rules".utf8), ifMatch: nil)
+      await t.harness.space.failTemplateClones("the disk is full")
+      let body: JSONValue = .object(["title": "shift", "template": "night"])
+      let half = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session", body, toolCall: "tc-half")
+      #expect(half.0 == .unprocessableContent)
+      let fields = try #require(JSONValue.parse(half.1)?.object)
+      #expect(fields["code"] == .string("incompleteSession"))
+      let id = try #require(fields["id"]?.stringValue)
+      #expect(fields["message"] == .string("create_session: session \(id) was created, but internal: the disk is full"))
+      #expect(try await t.harness.store.record(SessionID(id)).title == "shift")
+
+      await t.harness.space.failTemplateClones(nil)
+      let finished = try await toolCalled(t.harness, bearer: t.token, .post, "/v1/session", body, toolCall: "tc-half")
+      #expect(finished.0 == .ok)
+      #expect(JSONValue.parse(finished.1)?.object?["id"] == .string(id))
+      #expect(try await fs.read("/_/sessions/\(id)/AGENTS.md").1 == Data("night rules".utf8))
     }
   }
 
@@ -523,4 +743,19 @@ extension SessionGateTests {
     tokens.finishCredentialAttempt(session: session, group: .shared, scope: "parallel", key: "exec", claimed: true)
     #expect(tokens.v2Holder(ofBearer: credential.object!["token"]!.stringValue!) != nil)
   }
+}
+
+// One request through the gate as a tool call: its status and body text,
+// comparable across a retry.
+private func toolCalled(
+  _ harness: SessionHarness, bearer: String, _ method: Fetch.Method, _ path: String, _ body: JSONValue, toolCall: String,
+) async throws -> (Status, String) {
+  var request = Request(url: URL(string: "http://space\(path)")!, method: method)
+  if body != .null {
+    request.body = .bytes(Data(body.jsonString().utf8), contentType: "application/json")
+  }
+  request.headers[.authorization] = "Bearer " + bearer
+  request.headers[ToolCallHeader.name] = toolCall
+  let response = try await harness.api(request)
+  return (response.status, try await response.text())
 }

@@ -124,7 +124,11 @@ extension SessionStore {
     content: MessageContent,
     uploads: [AttachmentUpload] = [],
     acting: Principal? = nil,
+    alongside: (@Sendable (MessageRecord, Database) throws -> Void)? = nil,
   ) async throws -> MessageDelivery {
+    // `alongside` commits with a new message and never runs for a replayed
+    // one: what it writes (a request's clocks) exists exactly when the
+    // message does.
     precondition(viewing == nil || senderSession == nil, "only a person's message carries viewing")
     let nowDate = dateGen.now
     let now = SQLiteDateFormat.string(from: nowDate)
@@ -199,6 +203,7 @@ extension SessionStore {
       )
       let record = try Conversations.message(id: messageID.rawValue, in: db)!
       let enqueued = try deliver(record, conversation: conversation, poster: poster, nowDate: nowDate, now: now, in: db)
+      try alongside?(record, db)
       if let written {
         pending += written.attachments.map {
           MutationEvent(group: conversation.group, path: $0.path, rev: Int(written.rev), kind: .write, entry: .file)

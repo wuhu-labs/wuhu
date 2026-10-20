@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import Scratch
@@ -7,7 +8,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct ModelRouteTransitionTests {
+@Suite(.deterministicDependencies) struct ModelRouteTransitionTests {
   @Test func failedAtomicCommitRecoversOldPairAndCommittedTransitionRecoversNewPair() async throws {
     let folder = try scratchURL("route-transition")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

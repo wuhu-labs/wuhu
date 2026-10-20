@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct MachineExecTests {
+@Suite(.deterministicDependencies) struct MachineExecTests {
   @Test func execEchoEndToEndByteExact() async throws {
     let space = try makeMachineSpace()
     let server = TestServer(space: space, clock: ContinuousClock())

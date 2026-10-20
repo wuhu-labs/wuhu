@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -12,7 +13,7 @@ import Testing
 
 private let bound: Duration = .seconds(5)
 
-@Suite struct KeyStreamsTests {
+@Suite(.deterministicDependencies) struct KeyStreamsTests {
   @Test func selfRevocationEndsTheKeysStreamsAndSparesAnotherKeys() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false)

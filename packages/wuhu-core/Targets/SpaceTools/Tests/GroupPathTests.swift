@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 import JSONValue
 import SpaceContract
 import SpaceCore
@@ -5,7 +7,7 @@ import SpaceTools
 import Testing
 
 // Alice's personal group reads shared; shared reads nothing of hers.
-@Suite struct GroupPathTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct GroupPathTests {
   struct Rig {
     let shared: SpaceToolContext
     let alice: SpaceToolContext

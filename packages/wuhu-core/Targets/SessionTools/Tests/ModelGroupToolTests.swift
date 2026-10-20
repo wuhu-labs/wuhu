@@ -1,3 +1,4 @@
+import DeterministicDependencies
 @testable import MainHub
 import class MainHub.Hub
 @testable import SessionTools
@@ -21,7 +22,7 @@ func testModelGroupRoute(_ executor: SessionExecutor, reason: ModelPlacementReas
   )
 }
 
-@Suite struct ModelGroupToolTests {
+@Suite(.deterministicDependencies) struct ModelGroupToolTests {
   @Test func childrenInheritRequestedGroupAndExplicitTargetsReplaceTemplates() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

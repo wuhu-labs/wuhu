@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(ImageIO)
   import CoreGraphics
   import ImageIO
@@ -15,7 +16,7 @@ import SpaceContract
 @testable import SpaceCore
 import Testing
 
-@Suite struct ImageFittingTests {
+@Suite(.deterministicDependencies) struct ImageFittingTests {
   @Test func `an image within the limits goes out byte for byte`() throws {
     let png = try #require(Self.png(width: 64, height: 32))
     #expect(ImageFitting.fit(png, mimeType: "image/png", limits: .claude) == .image(png, mimeType: "image/png"))

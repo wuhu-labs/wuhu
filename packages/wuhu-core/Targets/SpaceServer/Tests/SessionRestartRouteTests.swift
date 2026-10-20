@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import Synchronization
 import Testing
 import enum WuhuAI.InferenceError
 
-@Suite struct SessionRestartRouteTests {
+@Suite(.deterministicDependencies) struct SessionRestartRouteTests {
   @Test func aBareRestartKeepsTheSpecAndWipesTheTranscript() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
@@ -5,7 +6,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct MachineRosterTests {
+@Suite(.deterministicDependencies) struct MachineRosterTests {
   @Test func rosterCarriesIdAliasAndAttachState() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct SessionTreeTests {
+@Suite(.deterministicDependencies) struct SessionTreeTests {
   private func root(_ store: SessionStore, _ title: String = "root") async throws -> SessionID {
     try await store.createSession(group: .shared, title: title, kind: .agent, createdBy: "morgan", model: .test)
   }

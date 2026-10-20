@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -7,6 +8,7 @@ import SpaceCore
 import SpaceFS
 import Testing
 
+@Suite(.deterministicDependencies)
 struct TrustedImportTests {
   @Test func tableCreationAndPopulationRecordTheirAttributionAtomically() async throws {
     let space = try Space.inMemory()

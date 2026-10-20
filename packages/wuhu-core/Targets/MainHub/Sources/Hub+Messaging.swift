@@ -5,7 +5,6 @@ import Dependencies
   import Foundation
 #endif
 import enum InferenceKit.CatalogError
-import struct MachineContract.MachineEntry
 import SessionDomain
 import struct SpaceContract.AttachmentTally
 import SpaceCore
@@ -101,7 +100,7 @@ extension Hub {
     return seconds
   }
 
-  nonisolated func report(
+  nonisolated public func report(
     _ session: SessionID,
     _ callID: ToolCallID,
     _ arguments: ReportArguments,
@@ -180,14 +179,13 @@ extension Hub {
   nonisolated private func attachmentUploads(_ references: [String], by session: SessionID) async throws -> [AttachmentUpload] {
     let context = SpaceToolContext(space: space, principal: try await space.principal(of: session))
     var tally = AttachmentTally()
-    var located: [(reference: String, address: Address, entry: MachineEntry?)] = []
+    var located: [(reference: String, address: Address, size: Int)] = []
     for reference in references {
       let address = try await resolve(reference, as: session)
       let size: Int
-      var machineEntry: MachineEntry?
       switch address {
-      case let .space(path, group, _):
-        guard let entry = try? await space.fs(group).stat(path), entry.kind == .file else {
+      case let .space(path, group):
+        guard let entry = try? await space.fs(group ?? context.principal.group).stat(path), entry.kind == .file else {
           throw ToolProblem("attachment \(reference) is not a file in the space")
         }
         size = entry.size
@@ -196,7 +194,6 @@ extension Hub {
           throw ToolProblem("attachment \(reference) is not a file on that machine")
         }
         size = entry.size
-        machineEntry = entry
       case let .system(path):
         guard let entry = try? await SystemFiles.vfs.stat(path), entry.kind == .file else {
           throw ToolProblem("attachment \(reference) is not a system file")
@@ -208,16 +205,19 @@ extension Hub {
       } catch {
         throw ToolProblem(error.message)
       }
-      located.append((reference, address, machineEntry))
+      located.append((reference, address, size))
     }
     var uploads: [AttachmentUpload] = []
-    for (reference, address, entry) in located {
-      let bytes = if case .space = address {
-        try await [UInt8](context.readBytes(reference).data)
-      } else if case let .machine(machine, path) = address, let entry {
-        try await machineFile(machine, path: path, entry: entry, reference: reference)
-      } else {
-        try await [UInt8](readRaw(address).1)
+    for (reference, address, size) in located {
+      let bytes: [UInt8]
+      switch address {
+      case .space: bytes = try await [UInt8](context.readBytes(reference).data)
+      case let .machine(machine, path):
+        // No more than the tally admitted: a file swapped since the stat is refused, not copied.
+        do { bytes = try await machineBytes(machine, path: path, limit: size) } catch is MachineSeam.OverLimit {
+          throw ToolProblem("attachment \(reference) changed while it was being read; send it again")
+        }
+      case let .system(path): bytes = try await [UInt8](SystemFiles.vfs.read(path).1)
       }
       uploads.append(AttachmentUpload(name: reference, bytes: bytes))
     }
@@ -273,7 +273,7 @@ extension Hub {
     }
   }
 
-  nonisolated func createSession(
+  nonisolated public func createSession(
     _ session: SessionID,
     _ callID: ToolCallID,
     _ arguments: CreateSessionArguments,
@@ -300,7 +300,7 @@ extension Hub {
       throw ToolProblem("create_session: \(problem.message)", code: problem.code)
     }
     if let unfinished = spawned.unfinished {
-      throw ToolProblem("create_session: session \(spawned.id.rawValue) was created, but \(unfinished)")
+      throw IncompleteSession(id: spawned.id, message: "create_session: session \(spawned.id.rawValue) was created, but \(unfinished)")
     }
     return .createSession(.init(
       sessionID: spawned.id, title: spawned.title, requestID: spawned.requestID,

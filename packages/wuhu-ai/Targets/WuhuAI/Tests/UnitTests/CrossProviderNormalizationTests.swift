@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Testing
@@ -5,7 +6,7 @@ import Testing
 
 // MARK: - Normalization Tests
 
-@Suite struct CrossProviderNormalizationTests {
+@Suite(.deterministicDependencies) struct CrossProviderNormalizationTests {
   // MARK: Tool Call ID Normalization
 
   @Test func passesValidToolCallIdThrough() {

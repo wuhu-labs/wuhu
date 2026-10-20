@@ -1,8 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct QueueCapTests {
   private func stored(_ input: QueueInput) async throws -> QueueInput {
     let store = try makeSpace().sessions

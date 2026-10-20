@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -8,7 +9,7 @@ import Testing
 
 private let routePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]) + Data("IHDR".utf8) + Data([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])
 
-@Suite struct CapabilityRouteTests {
+@Suite(.deterministicDependencies) struct CapabilityRouteTests {
   @Test func imageAndSearchHTTPUseTheSharedAuthoritativeResolution() async throws {
     let harness = try Harness(credentials: .init { id in id == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : .apiKey("key") })
     _ = try await harness.space.fs(.shared).write("/capabilities.json", Data(#"{"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://fake.openai/v1"}}},"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://fake.brave"}}}}"#.utf8), ifMatch: nil)

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SessionDomain
@@ -8,7 +9,7 @@ import SpaceFS
 import SpaceTools
 import Testing
 
-@Suite struct ScriptTableTests {
+@Suite(.deterministicDependencies) struct ScriptTableTests {
   @Test(arguments: [false, true]) func permissionsMatchHTTP(task: Bool) async throws {
     try await permissionMatrix(group: GroupID(rawValue: "alice"), task: task)
     try await permissionMatrix(group: .shared, task: task)

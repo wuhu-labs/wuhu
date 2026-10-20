@@ -1,5 +1,6 @@
 @testable import CLIKit
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -50,7 +51,7 @@ private func agent(_ arguments: [String], stdin: String, terminal: Bool = false,
   return (code, await stdout.text, await stderr.text)
 }
 
-@Suite struct AgentVerbTests {
+@Suite(.deterministicDependencies) struct AgentVerbTests {
   @Test func parsesLogAndResumeAndRefusesBoth() throws {
     #expect(try Command.parse(["agent"]) == .agent(nil))
     #expect(try Command.parse(["agent", "--log", "run.jsonl"]) == .agent(.new("run.jsonl")))

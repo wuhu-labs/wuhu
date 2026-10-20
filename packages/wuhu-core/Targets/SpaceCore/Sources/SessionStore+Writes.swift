@@ -239,14 +239,32 @@ extension SessionStore {
     let cleaned = try Self.usableTitle(title)
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      _ = try Sessions.record(key, in: db)
-      try db.execute(
-        sql: "UPDATE sessions SET title = ?, last_activity_at = ? WHERE id = ?",
-        arguments: [cleaned, now, key],
-      )
-    }
+    try await writer.write { db in try Self.updateTitle(key, to: cleaned, now: now, in: db) }
     return cleaned
+  }
+
+  // The title as a tool call's effect: the call's answer is looked up and
+  // recorded in the write that sets it, so a call already answered changes
+  // nothing — a retry that lands after a later call never puts its title back.
+  public func setTitle(_ id: SessionID, to title: String, answering callID: ToolCallID) async throws -> ToolResultPayload {
+    let cleaned = try Self.usableTitle(title)
+    let key = id.rawValue
+    let now = SQLiteDateFormat.string(from: dateGen.now)
+    return try await writer.write { db in
+      if let recorded = try Sessions.receipt(key, toolCallID: callID.rawValue, in: db) { return recorded }
+      try Self.updateTitle(key, to: cleaned, now: now, in: db)
+      let receipt = ToolReceipt(session: id, callID: callID, payload: .setTitle(.init(title: cleaned)))
+      try receipt.record(now: now, in: db)
+      return receipt.payload
+    }
+  }
+
+  private static func updateTitle(_ key: String, to title: String, now: String, in db: Database) throws {
+    _ = try Sessions.record(key, in: db)
+    try db.execute(
+      sql: "UPDATE sessions SET title = ?, last_activity_at = ? WHERE id = ?",
+      arguments: [title, now, key],
+    )
   }
 
   // The whole list is replaced, whatever the session's lifecycle: an archived

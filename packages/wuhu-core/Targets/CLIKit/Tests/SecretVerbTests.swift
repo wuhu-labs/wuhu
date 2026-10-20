@@ -1,7 +1,8 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 
-@Suite struct SecretVerbTests {
+@Suite(.deterministicDependencies) struct SecretVerbTests {
   @Test func setListRemoveReachTheSpaceStoreAndNeverPrintAValue() async throws {
     let harness = try MachineCLIHarness()
     try await harness.runScenario { h in

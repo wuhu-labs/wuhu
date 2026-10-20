@@ -1,5 +1,6 @@
 import struct Credentials.CredentialResolver
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -10,7 +11,7 @@ import SpaceCore
 import Synchronization
 import Testing
 
-@Suite struct HomeWriteRuleTests {
+@Suite(.deterministicDependencies) struct HomeWriteRuleTests {
   private func contents(_ harness: SessionHarness, _ path: String) async throws -> String {
     String(decoding: try await harness.space.fs(.shared).read(path).1, as: UTF8.self)
   }

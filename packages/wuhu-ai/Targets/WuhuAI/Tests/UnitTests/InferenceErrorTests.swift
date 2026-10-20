@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -38,7 +39,7 @@ private func captureInferenceError<E: ModelEndpoint>(
 
 // MARK: - Non-2xx Classification
 
-@Suite("InferenceError classification")
+@Suite("InferenceError classification", .deterministicDependencies)
 struct InferenceErrorTests {
   @Test(arguments: ["code", "type"])
   func cutStreamCodeIsTyped(field: String) async throws {

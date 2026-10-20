@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import JSONValue
 @testable import SessionTools
 import Testing
 
-@Suite struct TimerRosterTests {
+@Suite(.deterministicDependencies) struct TimerRosterTests {
   @Test func timerSchemaDeclaresOneShotCronAndHandlerParameters() throws {
     let tool = try #require(ToolExecutor.tools.first {
       if case .function("timer", _, _) = $0 { return true }; return false

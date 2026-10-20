@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -5,7 +6,7 @@ import Serve
 import SpaceContract
 import Testing
 
-@Suite struct UserRoutesTests {
+@Suite(.deterministicDependencies) struct UserRoutesTests {
   @Test func settingAHandleRefusesJunkAndCollisions() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import JSONValue
 import SpaceContract
 import SpaceCore
 import SpaceTools
 import Testing
 
-@Suite struct TablePermissionTests {
+@Suite(.deterministicDependencies) struct TablePermissionTests {
   @Test func readableSharedDoesNotPermitProtectedTableWrites() async throws {
     let base = try makeContext()
     let account = try await base.space.addAccount(kind: .human, name: "reader")

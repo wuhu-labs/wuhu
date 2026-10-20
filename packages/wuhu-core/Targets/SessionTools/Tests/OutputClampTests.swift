@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import MachineChannel
@@ -8,7 +9,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct ReadClampTests {
+@Suite(.deterministicDependencies) struct ReadClampTests {
   @Test func bigFileReadClampsWithAContinuationNotice() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
@@ -62,7 +63,7 @@ import Testing
   }
 }
 
-@Suite struct GrepLineClampTests {
+@Suite(.deterministicDependencies) struct GrepLineClampTests {
   @Test func longMatchedLinesAreShortened() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Dispatch
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@MainActor @Suite struct BroadcastCancellationTests {
+@MainActor @Suite(.deterministicDependencies) struct BroadcastCancellationTests {
   @Test func cancellationDuringDeliveryDoesNotHoldTheBroadcastLock() async {
     let cancellationEntered = DispatchSemaphore(value: 0)
     let ready = AsyncStream<Void>.makeStream()

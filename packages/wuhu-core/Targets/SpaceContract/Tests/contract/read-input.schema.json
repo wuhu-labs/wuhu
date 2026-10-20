@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ReadInput","type":"object","properties":{"path":{"type":"string"},"rev":{"type":["integer","null"]},"lines":{"type":["string","null"]}},"required":["path"],"additionalProperties":false}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ReadInput","type":"object","properties":{"path":{"type":"string"},"rev":{"type":["integer","null"]},"lines":{"type":["string","null"]},"image":{"type":["boolean","null"]}},"required":["path"],"additionalProperties":false}

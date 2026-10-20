@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import OrderedCollections
@@ -6,7 +7,7 @@ import Testing
 
 // MARK: - Anthropic Encoding Tests
 
-@Suite struct AnthropicRequestBuilderTests {
+@Suite(.deterministicDependencies) struct AnthropicRequestBuilderTests {
   @Test(arguments: [
     ("https://api.anthropic.com", "https://api.anthropic.com/v1/messages"),
     ("https://api.anthropic.com/", "https://api.anthropic.com/v1/messages"),

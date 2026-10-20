@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -58,7 +59,7 @@ private func hang() async throws -> Response {
   throw CancellationError()
 }
 
-@Suite struct ScriptAITests {
+@Suite(.deterministicDependencies) struct ScriptAITests {
   // Each provider call holds until four are in flight, so the batch finishes
   // only if four run at once, and a fifth in flight would raise the peak.
   @Test func generatesInParallelAtMostFourAtATime() async throws {

@@ -46,3 +46,23 @@ struct FindArguments: Decodable {
 struct QueryArguments: Decodable {
   var sql: String
 }
+
+struct ReadArguments: Decodable {
+  var path: String
+  var lines: String?
+}
+
+struct WriteArguments: Decodable {
+  var path: String
+  var content: String
+}
+
+struct EditArguments: Decodable {
+  struct Edit: Decodable {
+    var old: String
+    var new: String
+  }
+
+  var path: String
+  var edits: [Edit]
+}

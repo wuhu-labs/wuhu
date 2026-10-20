@@ -98,7 +98,7 @@ private struct ContextFiles: Sendable {
           let group = machines.first(where: { $0.id == machine }).map({ GroupID(rawValue: $0.group) }),
           let context: DiscoveryContext = try? await main.api(.get, "/v1/context")
     else { return nil }
-    return .space("/_/machines/\(machine.rawValue)", in: group, qualified: group != context.group)
+    return .space("/_/machines/\(machine.rawValue)", in: group == context.group ? nil : group)
   }
 
   func readIfPresent(_ address: Address) async -> String? {

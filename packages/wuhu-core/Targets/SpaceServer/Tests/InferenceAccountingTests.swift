@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -12,7 +13,7 @@ import SpaceCore
 import Testing
 import WuhuAI
 
-@Suite struct InferenceAccountingTests {
+@Suite(.deterministicDependencies) struct InferenceAccountingTests {
   private let model = ModelSpecifier(provider: "codex", model: "configured", effort: "high")
 
   @Test func kernelMetricWritesNormalizedRowAndUnchangedJSONLine() async throws {

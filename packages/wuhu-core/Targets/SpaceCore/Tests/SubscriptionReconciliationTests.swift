@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,7 +9,7 @@ import SessionDomain
 @_spi(SessionObservation) @testable import SpaceCore
 import Testing
 
-@Suite struct SubscriptionReconciliationTests {
+@Suite(.deterministicDependencies) struct SubscriptionReconciliationTests {
   @Test func silentHandlerRetirementReconcilesLoadedHydratedAndCompactedStateWithoutDelivery() async throws {
     let folder = try ScratchFolder("subscription-reconciliation")
     let file = folder.url.appending(path: "space.sqlite")

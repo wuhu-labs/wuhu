@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import FetchWebSocket
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -11,7 +12,7 @@ import SpaceCore
 import Testing
 import WuhuAI
 
-@Suite(.sessionFixtures(timeLimit: .minutes(1))) struct ResponsesLeaseTests {
+@Suite(.deterministicDependencies, .sessionFixtures(timeLimit: .minutes(1))) struct ResponsesLeaseTests {
   @Test(arguments: [Optional(401), Optional(409), nil])
   func providerFailureOrCancellationReleasesRegistryLeaseForResume(status: Int?) async throws {
     try await withSessionDeps {

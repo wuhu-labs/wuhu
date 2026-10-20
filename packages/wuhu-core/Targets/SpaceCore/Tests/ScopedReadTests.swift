@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import Foundation
 @testable import SpaceCore
 import SpaceFS
@@ -10,7 +11,7 @@ import Testing
 // A catalog that hides rows reaches every read entry point: a query and an
 // observation see only what the views admit, and a write to a hidden row
 // wakes an observation without telling it anything.
-@Suite struct ScopedReadTests {
+@Suite(.deterministicDependencies) struct ScopedReadTests {
   static let hiding = ViewCatalog(views: { tables, scope in
     ViewCatalog.groupViews(tables, scope).map { view in
       var view = view

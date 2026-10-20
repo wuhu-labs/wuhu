@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import KeelObjectStore
@@ -8,7 +9,7 @@ import SpaceFS
 import Synchronization
 import Testing
 
-@Suite struct ObserveTransactionTests {
+@Suite(.deterministicDependencies) struct ObserveTransactionTests {
   @Test(arguments: ["ABORT", "ROLLBACK"]) func failedReceiptEmitsNeitherNowNorOnTheNextTransaction(action: String) async throws {
     try await withSessionDeps {
       let space = try makeSpace()

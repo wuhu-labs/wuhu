@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import struct SpaceContract.GroupID
 @_spi(SessionObservation) @testable import SpaceCore
 import Testing
 
-@Suite struct SubscriptionHandlerTests {
+@Suite(.deterministicDependencies) struct SubscriptionHandlerTests {
   func owner(_ store: SessionStore, group: GroupID = .shared) async throws -> SessionID {
     try await store.createSession(group: group, title: "watch", kind: .agent, createdBy: "morgan", model: .test)
   }

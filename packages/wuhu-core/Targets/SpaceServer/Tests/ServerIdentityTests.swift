@@ -1,5 +1,6 @@
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -10,7 +11,7 @@ import Testing
 import enum WuhuAI.InferenceError
 import WuhuVFS
 
-@Suite struct ServerIdentityTests {
+@Suite(.deterministicDependencies) struct ServerIdentityTests {
   @Test func jwksVerifiesTokenAndKeySurvivesReopen() async throws {
     let fs = NodeTreeVFS(root: InMemoryVFSNode())
     let first = try await ServerIdentity.loadOrCreate(from: fs)

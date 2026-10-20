@@ -33,22 +33,88 @@ public struct MachineSeam: Sendable {
       attached: attached,
     )
   }
+
+  /// A file bigger than the bound its reader stated.
+  public struct OverLimit: Error {
+    public let path: String
+    public let size: Int
+    public let limit: Int
+  }
+
+  /// The whole file at `path` with the token it was read at, when it is at
+  /// most `limit` bytes; a bigger one is `OverLimit`, found after at most one
+  /// frame, so the server never holds more than the bound. One frame when the
+  /// file fits, else ranges checked against one stat, so a file that changes
+  /// mid-read is refused rather than spliced. An agent built before ranged
+  /// reads ignores the range and refuses a file over one frame as tooLarge,
+  /// which is how it is told apart.
+  public func fileBytes(_ machine: MachineID, _ path: String, limit: Int) async throws -> (token: String, bytes: [UInt8]) {
+    switch try await vfs(machine, .read(path: path)) {
+    case let .file(token, data):
+      guard data.bytes.count <= limit else { throw OverLimit(path: path, size: data.bytes.count, limit: limit) }
+      return (token, data.bytes)
+    case let .error(error) where error.code == .tooLarge: break
+    case let .error(error): throw machineFailure(error)
+    default: throw unexpectedResult("read", path)
+    }
+    let entry: MachineEntry
+    switch try await vfs(machine, .stat(path: path)) {
+    case let .entry(found): entry = found
+    case let .error(error): throw machineFailure(error)
+    default: throw unexpectedResult("stat", path)
+    }
+    guard entry.size <= limit else { throw OverLimit(path: path, size: entry.size, limit: limit) }
+    let changed = ToolRunError.failed(code: .conflict, message: "\(path) changed while it was being read", hint: "send it again")
+    var bytes: [UInt8] = []
+    bytes.reserveCapacity(entry.size)
+    while bytes.count < entry.size {
+      let length = min(VFSDefaults.maxReadBytes, entry.size - bytes.count)
+      switch try await vfs(machine, .read(path: path, offset: bytes.count, length: length)) {
+      case let .file(token, data):
+        guard token == entry.token, data.bytes.count == length else { throw changed }
+        bytes += data.bytes
+      case let .error(error) where error.code == .tooLarge:
+        throw ToolRunError.failed(
+          code: .unsupported,
+          message: "\(path) is \(entry.size) bytes and the machine agent there reads at most \(VFSDefaults.maxReadBytes) bytes of a file",
+          hint: "upgrade the machine agent to read files over \(VFSDefaults.maxReadBytes >> 20) MiB",
+        )
+      case let .error(error): throw machineFailure(error)
+      default: throw unexpectedResult("read", path)
+      }
+    }
+    // An agent built before ranged reads answers every range with the whole
+    // file, and does so only once the file fits one frame. A file that shrank
+    // to exactly one frame while keeping its mtime passes every check above;
+    // only its size after the read tells.
+    guard bytes.count == entry.size, case let .entry(after) = try await vfs(machine, .stat(path: path)),
+          after.size == entry.size, after.token == entry.token else { throw changed }
+    return (entry.token, bytes)
+  }
 }
 
 struct MachineBackend: SpaceVFS {
   let machine: MachineID
   let seam: MachineSeam
 
+  /// A machine file is read whole up to one frame, as the tools always did;
+  /// a reader with a bigger bound (an image, an attachment, a capability
+  /// input) states it to the seam itself.
   func read(_ path: String) async throws -> (VersionToken, Data) {
-    switch try await seam.vfs(machine, .read(path: path)) {
-    case let .file(token, data): return (Wire.token(token), Data(data.bytes))
-    case let .error(error): throw machineFailure(error)
-    default: throw unexpectedResult("read", path)
+    do {
+      let (token, bytes) = try await seam.fileBytes(machine, path, limit: VFSDefaults.maxReadBytes)
+      return (Wire.token(token), Data(bytes))
+    } catch let over as MachineSeam.OverLimit {
+      throw ToolRunError.failed(
+        code: .unsupported,
+        message: "\(path) is \(over.size) bytes; a machine file is read whole up to \(over.limit) bytes",
+        hint: "read a slice of it with exec (head, tail, sed -n, dd)",
+      )
     }
   }
 
-  /// The v1 machine VFS reads a file whole; search, the one ranged reader,
-  /// runs on the machine itself (`search.v1`) and never comes here.
+  /// Search, the one streaming reader, runs on the machine itself
+  /// (`search.v1`) and never comes here.
   func reader(_ path: String) async throws -> any SpaceFileReader {
     SpaceDataReader(try await read(path).1)
   }
@@ -116,10 +182,10 @@ struct MachineBackend: SpaceVFS {
       mtime: Date(timeIntervalSince1970: entry.mtime),
     )
   }
+}
 
-  private func unexpectedResult(_ op: String, _ path: String) -> ToolRunError {
-    .failed(code: .internal, message: "machine returned an unexpected result for \(op) \(path)", hint: nil)
-  }
+private func unexpectedResult(_ op: String, _ path: String) -> ToolRunError {
+  .failed(code: .internal, message: "machine returned an unexpected result for \(op) \(path)", hint: nil)
 }
 
 func machineFailure(_ error: MachineError, staleOnConflict: Bool = false) -> ToolRunError {

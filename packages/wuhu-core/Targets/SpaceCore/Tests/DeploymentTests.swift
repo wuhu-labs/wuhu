@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import Scratch
@@ -7,7 +8,7 @@ import Testing
 private let fp = "sha256:" + String(repeating: "ab", count: 32)
 private let rotated = "sha256:" + String(repeating: "cd", count: 32)
 
-@Suite
+@Suite(.deterministicDependencies)
 struct DeploymentTests {
   @Test func absentRecordReadsNil() async throws {
     let space = try makeSpace()

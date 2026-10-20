@@ -1,5 +1,6 @@
 import Crypto
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -19,7 +20,7 @@ import Testing
 // engine: `bazel test //packages/wuhu-core:SpaceServerTests
 // --test_env=BACKCOMPAT_RECORD=1 --test_filter=BackcompatTests`, then copy
 // space.sqlite and goldens.json out of the test's undeclared outputs.
-@Suite struct BackcompatTests {
+@Suite(.deterministicDependencies) struct BackcompatTests {
   static let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Backcompat")
 
   @Test func todaysClientSQLAnswersByteForByte() async throws {

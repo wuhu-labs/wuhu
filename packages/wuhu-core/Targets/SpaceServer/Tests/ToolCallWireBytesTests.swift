@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -88,7 +89,7 @@ private func renderedRequestBody(_ store: SessionStore, _ session: SessionID) as
   return try #require(bodies.withLock { $0.first })
 }
 
-@Suite struct ToolCallWireBytesTests {
+@Suite(.deterministicDependencies) struct ToolCallWireBytesTests {
   @Test func `a stored tool call renders the bytes the model emitted, every time`() async throws {
     let message = try await streamedToolCall()
     let space = try Space.inMemory()

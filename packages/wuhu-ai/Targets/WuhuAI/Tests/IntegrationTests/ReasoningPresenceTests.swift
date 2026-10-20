@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -26,7 +27,7 @@ private let nonReasoningModels: [ModelEntry] = [
   ModelEntry(providerID: "openai", model: "gpt-4.1-mini", recordingName: "gpt-4.1-mini-reasoning-present"),
 ]
 
-@Suite struct ReasoningPresenceTests {
+@Suite(.deterministicDependencies) struct ReasoningPresenceTests {
   // MARK: - Reasoning Exists
 
   @Test(arguments: reasoningModels)
@@ -112,7 +113,7 @@ private let opaqueModels: [ModelEntry] = [
   ModelEntry(providerID: "openai", model: "gpt-5.4", recordingName: "gpt-5.4-reasoning-opaque"),
 ]
 
-@Suite struct ReasoningOpaqueTests {
+@Suite(.deterministicDependencies) struct ReasoningOpaqueTests {
   @Test(arguments: opaqueModels)
   func opaqueBlobHasCorrectShape(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {

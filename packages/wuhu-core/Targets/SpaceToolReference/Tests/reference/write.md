@@ -11,6 +11,7 @@ Create or replace a file with UTF-8 text. With `ifMatch`, the write succeeds onl
 | `path` | string | yes |
 | `content` | string | yes |
 | `ifMatch` | string or null | no |
+| `createOnly` | boolean or null | no |
 
 ## Output
 

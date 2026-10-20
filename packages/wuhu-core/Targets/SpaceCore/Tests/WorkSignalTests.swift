@@ -1,10 +1,11 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct WorkSignalTests {
+@Suite(.deterministicDependencies) struct WorkSignalTests {
   @Test func everyQueueWriterPostsAWorkSignal() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions

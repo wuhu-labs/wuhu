@@ -157,6 +157,11 @@ public struct SpaceClient: Sendable {
     if let qualified = try GroupID.address(path) {
       components.path = "/v1/f" + qualified.path
       components.queryItems = [URLQueryItem(name: "group", value: qualified.group.rawValue)]
+    } else if path.hasPrefix("machines://") {
+      let rest = path.dropFirst("machines://".count)
+      let slash = rest.firstIndex(of: "/") ?? rest.endIndex
+      components.path = "/v1/f" + (slash == rest.endIndex ? "/" : String(rest[slash...]))
+      components.queryItems = [URLQueryItem(name: "machine", value: String(rest[..<slash]))]
     } else {
       components.path = "/v1/f" + path
     }

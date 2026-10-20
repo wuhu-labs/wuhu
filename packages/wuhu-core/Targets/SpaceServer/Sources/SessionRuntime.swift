@@ -52,7 +52,7 @@ public struct SessionRuntime: Sendable {
   let store: SessionStore
   let firing: SubscriptionFiring
   let sockets: ResponsesSocketRegistry?
-  private let discoveryOwner: Hub
+  let owner: Hub
   private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
@@ -77,7 +77,7 @@ public struct SessionRuntime: Sendable {
     let catalog = groupCatalog(owner: owner)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
-    discoveryOwner = owner
+    self.owner = owner
     owner.configureScriptDiscovery(toolRosters: sessionToolRosters())
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
@@ -109,7 +109,7 @@ public struct SessionRuntime: Sendable {
     self.sockets = sockets
     self.refresher = refresher
     warmer = CacheWarmer(space: space, usage: usage)
-    discoveryOwner = owner
+    self.owner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
@@ -118,7 +118,7 @@ public struct SessionRuntime: Sendable {
   }
 
   func configureDiscovery(contentHost: String? = nil, identity: (@Sendable () async throws -> JSONValue)? = nil) {
-    discoveryOwner.configureScriptDiscovery(contentHost: contentHost, identity: identity)
+    owner.configureScriptDiscovery(contentHost: contentHost, identity: identity)
   }
 
   public func run() async {
@@ -141,7 +141,7 @@ public struct SessionRuntime: Sendable {
       await group.waitForAll()
     }
     await streamScope.close()
-    await discoveryOwner.closeExecJobs()
+    await owner.closeExecJobs()
   }
 }
 

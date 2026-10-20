@@ -1,11 +1,12 @@
 @testable import CLIKit
 import Crypto
+import DeterministicDependencies
 import Foundation
 import ImageRetention
 import Scratch
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct UpgradeParsingTests {
   @Test func parsesBareUpgrade() throws {
     #expect(try Command.parse(["upgrade"]) == .upgrade(UpgradeCommand(check: false, rollback: false, lane: nil)))
@@ -36,7 +37,7 @@ struct UpgradeParsingTests {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct ReleaseVersionTests {
   @Test func parsesEveryLane() {
     #expect(ReleaseVersion.parse("0.1.0") == ReleaseVersion(major: 0, minor: 1, patch: 0, lane: .release, iteration: 0))
@@ -77,7 +78,7 @@ struct ReleaseVersionTests {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct UpgradeLayoutTests {
   private func layout(in scratch: ScratchFolder) throws -> UpgradeLayout {
     let root = scratch.url.appendingPathComponent("bin", isDirectory: true)

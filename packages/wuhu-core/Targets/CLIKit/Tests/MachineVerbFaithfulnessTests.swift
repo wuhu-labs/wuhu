@@ -1,12 +1,13 @@
 import CLIKit
 import Crypto
+import DeterministicDependencies
 import Foundation
 import MachineContract
 import struct SpaceContract.GroupID
 import SpaceCore
 import Testing
 
-@Suite struct MachineVerbFaithfulnessTests {
+@Suite(.deterministicDependencies) struct MachineVerbFaithfulnessTests {
   @Test func machineLifecycleAddJoinRunListRotateRevoke() async throws {
     let harness = try MachineCLIHarness()
     try await harness.runScenario { h in

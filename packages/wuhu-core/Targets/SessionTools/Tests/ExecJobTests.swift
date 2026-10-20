@@ -1,5 +1,6 @@
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import MachineChannel
@@ -16,7 +17,7 @@ import struct WuhuAI.ToolArguments
 
 /// An exec that outlives its call: `running` past the wait or a message's
 /// grace, one message at its end, cancel, and a restart that rejoins it.
-@Suite(.timeLimit(.minutes(2))) struct ExecJobTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(2))) struct ExecJobTests {
   @Test func pastItsWaitAnExecReturnsRunningAndItsEndArrivesAsOneMessage() async throws {
     try await withToolDeps { time in
       let ackGate = Gate()

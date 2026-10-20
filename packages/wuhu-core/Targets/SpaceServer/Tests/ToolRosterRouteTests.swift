@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -15,7 +16,7 @@ func sessionToolRosters(_ harness: SessionHarness, executor: SessionToolExecutor
   return try JSONValueDecoder().decode(ToolRostersOutput.self, from: try #require(JSONValue.parse(text)))
 }
 
-@Suite struct ToolRosterRouteTests {
+@Suite(.deterministicDependencies) struct ToolRosterRouteTests {
   @Test func defaultListingCarriesOnlyKernel() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

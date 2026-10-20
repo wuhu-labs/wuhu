@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct RequestReportTests {
+@Suite(.deterministicDependencies) struct RequestReportTests {
   private struct Pair {
     let rig: MovingClockSpace
     let parent: SessionID

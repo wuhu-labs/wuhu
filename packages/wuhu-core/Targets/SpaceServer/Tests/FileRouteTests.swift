@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -18,7 +19,7 @@ private let onePixelPNG = Data([
   0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ])
 
-@Suite struct FileRouteTests {
+@Suite(.deterministicDependencies) struct FileRouteTests {
   @Test func bytesRoundTripThroughTheByteRoutes() async throws {
     let harness = try Harness()
 

@@ -1,4 +1,5 @@
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import Scratch
 import SessionDomain
@@ -13,7 +14,7 @@ private final class WarmingTime: Sendable {
   func advance(_ seconds: Double = 3300) { value.withLock { $0.addTimeInterval(seconds) } }
 }
 
-@Suite struct CacheWarmingTests {
+@Suite(.deterministicDependencies) struct CacheWarmingTests {
   private func settle(_ store: SessionStore, _ id: SessionID, tokens: Int = 100_000) async throws {
     _ = try await store.drainQueue(id)
     try await store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: tokens, outputTokens: 0, totalTokens: tokens)))

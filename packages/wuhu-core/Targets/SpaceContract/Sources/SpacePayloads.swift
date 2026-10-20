@@ -215,6 +215,13 @@ public enum GroupHeader {
   public static let feature: String = "groups"
 }
 
+/// The request header that names the session tool call a `/v1/tools/<name>`
+/// request runs for: the server answers a repeat of the same call with the
+/// first successful response instead of running the tool again.
+public enum ToolCallHeader {
+  public static let name: String = "wuhu-tool-call"
+}
+
 @Contract
 public enum ObserveInput: Codable, Equatable, Sendable {
   case glob(pattern: String, from: Int?, batch: Bool? = nil)

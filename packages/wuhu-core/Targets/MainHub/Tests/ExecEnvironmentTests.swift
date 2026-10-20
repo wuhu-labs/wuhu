@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import JSONValue
 @testable import MainHub
 import struct MainHub.ExecEnvironment
@@ -9,7 +10,7 @@ private func resolve(_ arguments: JSONValue) throws -> ExecEnvironment {
   try execEnvironment(JSONValueDecoder().decode(ExecArguments.self, from: arguments))
 }
 
-@Suite struct ExecEnvironmentTests {
+@Suite(.deterministicDependencies) struct ExecEnvironmentTests {
   @Test func absentMapsStayOffTheWire() throws {
     #expect(try resolve(.object(["machine": "box", "cwd": "/", "command": "true"])) == ExecEnvironment(env: nil, secrets: nil))
   }

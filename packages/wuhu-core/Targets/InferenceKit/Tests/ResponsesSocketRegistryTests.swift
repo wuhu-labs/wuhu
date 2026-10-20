@@ -1,6 +1,7 @@
 import Clocks
 import Credentials
 import Dependencies
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct ResponsesSocketRegistryTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct ResponsesSocketRegistryTests {
   private func model(key: String = "offline", url: String = "https://example.test/v1") async throws -> ResolvedModel {
     var document = try ModelsDocument(json: fixtureJSON)
     document.providers["openai"]?.transport = .websocket

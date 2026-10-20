@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import Testing
 import WuhuAI
@@ -39,7 +40,7 @@ private let doubleNumberTool = Tool(
   ]),
 )
 
-@Suite struct ToolCallLoopTests {
+@Suite(.deterministicDependencies) struct ToolCallLoopTests {
   @Test(arguments: toolLoopModels)
   func toolCallDoubleNumber(entry: ModelEntry) async throws {
     try await withRecording(entry.recordingName) {
@@ -93,7 +94,7 @@ private let doubleNumberTool = Tool(
 
 // MARK: - Foreign Tool Call ID Replay
 
-@Suite struct ToolCallIDNormalizationTests {
+@Suite(.deterministicDependencies) struct ToolCallIDNormalizationTests {
   /// Regression for the reported Cloudflare error
   /// `tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'`.
   ///

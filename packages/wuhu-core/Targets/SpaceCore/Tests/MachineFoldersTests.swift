@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import struct SpaceContract.GroupID
 @testable import SpaceCore
@@ -8,7 +9,7 @@ private func text(_ fs: any SpaceVFS, _ path: String) async throws -> String {
   String(decoding: try await fs.read(path).1, as: UTF8.self)
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct MachineFoldersTests {
   // Notes live with the machine's current group: a move carries them into the
   // new group's tree, where they are listed and delivered, and out of the old.

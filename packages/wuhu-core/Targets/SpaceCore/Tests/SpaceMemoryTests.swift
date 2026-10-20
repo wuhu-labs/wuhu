@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import Scratch
 import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct SpaceMemoryTests {
+@Suite(.deterministicDependencies) struct SpaceMemoryTests {
   @Test func constructionAndQueriesCreateNoScratchDatabase() async throws {
     let folder = try ScratchFolder("memory-contract")
     let root = folder.url.deletingLastPathComponent()

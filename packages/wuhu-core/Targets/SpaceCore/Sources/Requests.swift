@@ -17,19 +17,20 @@ extension SessionStore {
     stallSeconds: Double? = nil,
   ) async throws -> MessageDelivery {
     let key = task.rawValue
-    // A retry of a request that already posted replays it: that request is
-    // the open one, not a second.
-    let replay = try await message(messageID) != nil
     try await writer.read { db in
       let record = try Sessions.record(key, in: db)
       guard record.parent == parent else { throw SessionStoreError.notTheParent(key) }
+      // A retry of a request that already posted replays it: that request is
+      // the open one, not a second.
       let state = try Sessions.settleState(key, in: db)
-      if !replay, let open = state.openRequests.values.first {
+      if try Conversations.message(id: messageID.rawValue, in: db) == nil, let open = state.openRequests.values.first {
         throw SessionStoreError.requestAlreadyOpen(open.id.rawValue)
       }
     }
     let request = RequestID(messageID.rawValue)
-    let delivery = try await post(
+    // The clocks commit with the message: a request that exists has its
+    // deadline and stall alert, and a replayed one keeps the ones it got.
+    return try await post(
       .dm(with: key),
       messageID: messageID,
       sender: Sender(id: parent.rawValue, timeZone: TimeZone(identifier: "UTC")!),
@@ -38,25 +39,25 @@ extension SessionStore {
       requestID: request,
       deadline: deadline,
       content: MessageContent(text: text),
+      alongside: { message, db in
+        let now = SQLiteDateFormat.string(from: message.createdAt)
+        if let deadline {
+          try self.armSubscription(
+            parent.rawValue,
+            slot: .init(id: .deadline(request), kind: .requestDeadline(request: request, task: task)),
+            nextFireAt: deadline, marker: nil, now: now, in: db,
+          )
+        }
+        if let stallSeconds {
+          let opened = message.createdAt
+          try self.armSubscription(
+            parent.rawValue,
+            slot: .init(id: .stall(request), kind: .requestStall(.init(request: request, task: task, seconds: stallSeconds, openedAt: opened))),
+            nextFireAt: opened.addingTimeInterval(stallSeconds), marker: nil, now: now, in: db,
+          )
+        }
+      },
     )
-    if let deadline, !delivery.replayed {
-      try await armSubscription(
-        parent,
-        slot: .init(id: .deadline(request), kind: .requestDeadline(request: request, task: task)),
-        nextFireAt: deadline,
-      )
-    }
-    // A replay re-arms the stall clock too, in case the first attempt posted
-    // and failed before arming it; arming is idempotent.
-    if let stallSeconds, try await writer.read({ try !Sessions.requestClosed(request, in: $0) }) {
-      let opened = delivery.message.createdAt
-      try await armSubscription(
-        parent,
-        slot: .init(id: .stall(request), kind: .requestStall(.init(request: request, task: task, seconds: stallSeconds, openedAt: opened))),
-        nextFireAt: opened.addingTimeInterval(stallSeconds),
-      )
-    }
-    return delivery
   }
 
   public func report(
@@ -67,6 +68,11 @@ extension SessionStore {
     text: String,
   ) async throws -> MessageDelivery {
     let key = task.rawValue
+    // A retried report is the first one again: its message stands, and what
+    // that message closed stays closed.
+    if let posted = try await message(messageID) {
+      return MessageDelivery(message: posted, enqueued: [], replayed: true)
+    }
     let parent = try await writer.read { db in
       let record = try Sessions.record(key, in: db)
       guard let parent = record.parent else { throw SessionStoreError.noParent(key) }
@@ -76,7 +82,15 @@ extension SessionStore {
       }
       return parent
     }
-    let delivery = try await post(
+    // A final ends the request's clocks in the write that posts it.
+    var closing: (@Sendable (MessageRecord, Database) throws -> Void)?
+    if kind == .final {
+      closing = { _, db in
+        try Self.deleteSubscription(parent.rawValue, .deadline(request), in: db)
+        try Self.deleteSubscription(parent.rawValue, .stall(request), in: db)
+      }
+    }
+    return try await post(
       .dm(with: parent.rawValue),
       messageID: messageID,
       sender: Sender(id: key, timeZone: TimeZone(identifier: "UTC")!),
@@ -84,12 +98,8 @@ extension SessionStore {
       kind: kind,
       requestID: request,
       content: MessageContent(text: text),
+      alongside: closing,
     )
-    if kind == .final {
-      try await cancelSubscription(parent, subscriptionID: .deadline(request))
-      try await cancelSubscription(parent, subscriptionID: .stall(request))
-    }
-    return delivery
   }
 
   public func recordRequestDeadline(

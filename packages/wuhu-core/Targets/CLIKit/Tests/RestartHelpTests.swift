@@ -1,7 +1,8 @@
 @testable import CLIKit
+import DeterministicDependencies
 import Testing
 
-@Suite struct RestartHelpTests {
+@Suite(.deterministicDependencies) struct RestartHelpTests {
   @Test func groupTargetParsesForCreateAndStartOverAndRefusesMixedTargets() throws {
     guard case let .sessionCreate(create) = try Command.parse(["session", "create", "--model-group", "work", "--effort", "high", "coder"]),
           case let .sessionRestart(restart) = try Command.parse(["session", "restart", "--model-group", "work", "session-id"])

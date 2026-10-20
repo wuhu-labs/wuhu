@@ -1,6 +1,7 @@
 import Clocks
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -72,7 +73,7 @@ private func observationNotifications(_ space: Space, session: SessionID) async 
   }
 }
 
-@Suite struct SubscriptionTests {
+@Suite(.deterministicDependencies) struct SubscriptionTests {
   @Test func startOverKeepsLiveObservationCronOneShotAndRequestDeadline() async throws {
     try await withToolDeps { time in
       let space = try Space.inMemory()

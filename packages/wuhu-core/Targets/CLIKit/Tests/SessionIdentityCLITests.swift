@@ -1,5 +1,6 @@
 @testable import CLIKit
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import InferenceKit
@@ -187,7 +188,7 @@ private final class IdentityHarness: Sendable {
   }
 }
 
-@Suite struct SessionIdentityCLITests {
+@Suite(.deterministicDependencies) struct SessionIdentityCLITests {
   // Archive also admits an admin of the session's group, which this top-level
   // parent is; interrupt keeps the self-and-descendants rule.
   @Test func anUnrelatedInterruptIsRefusedWithTheReasonAndItsOwnChildsTagsWork() async throws {

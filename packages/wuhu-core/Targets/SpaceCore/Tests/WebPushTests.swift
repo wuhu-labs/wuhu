@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct WebPushTests {
+@Suite(.deterministicDependencies) struct WebPushTests {
   @Test func subscriptionStartsAtNowAndAdvancesOneNotificationAtATime() async throws {
     let space = try makeSpace()
     let account = try await space.addAccount(kind: .human, name: nil)

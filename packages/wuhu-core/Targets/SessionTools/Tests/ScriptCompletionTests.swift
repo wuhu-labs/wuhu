@@ -1,5 +1,6 @@
 import struct Credentials.CredentialBinding
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -30,7 +31,7 @@ data: {}
 
 """#
 
-@Suite struct ScriptCompletionTests {
+@Suite(.deterministicDependencies) struct ScriptCompletionTests {
   @Test func modelGroupsAreTypedUnsupportedTargetsWithoutCredentialsOrProviderIO() async throws {
     let fetch = FetchClient { _ in Issue.record("group completion must not call a provider"); return Response(status: .internalServerError) }
     let credentials = CredentialResolver { _ in Issue.record("group completion must not resolve credentials"); return nil }

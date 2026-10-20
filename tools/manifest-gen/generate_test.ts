@@ -2138,18 +2138,18 @@ Deno.test('every Swift test links IssueReporting support without changing produc
   }
   const build = await generateBuildBazel(applePkg, [target])
   const support =
-    '"@swiftpkg_xctest_dynamic_overlay//:IssueReportingTestSupport"'
+    '"@swiftpkg_swift_issue_reporting//:IssueReportingTestSupport"'
   assertEquals(build.split(support).length - 1, 8)
   const production = build.slice(0, build.indexOf('wuhu_swift_test('))
   assertEquals(production.includes(support), false)
 
   const swift = generatePackageSwift(applePkg, '.', [target])
   const product =
-    '.product(name: "IssueReportingTestSupport", package: "xctest-dynamic-overlay")'
+    '.product(name: "IssueReportingTestSupport", package: "swift-issue-reporting")'
   assertEquals(swift.split(product).length - 1, 2)
   assertIncludes(
     swift,
-    '.package(url: "https://github.com/pointfreeco/xctest-dynamic-overlay", from: "1.0.0")',
+    '.package(url: "https://github.com/pointfreeco/swift-issue-reporting", from: "2.1.2")',
   )
   assertEquals(
     swift.slice(0, swift.indexOf('.testTarget(')).includes(product),
@@ -2158,7 +2158,7 @@ Deno.test('every Swift test links IssueReporting support without changing produc
   const withoutTests = generatePackageSwift(applePkg, '.', [
     minimalTarget('Feature', 'library'),
   ])
-  assertEquals(withoutTests.includes('xctest-dynamic-overlay'), false)
+  assertEquals(withoutTests.includes('swift-issue-reporting'), false)
 })
 
 Deno.test('a simulator test lane lowers to its own bundle target beside the swift_test', async () => {
@@ -3407,4 +3407,12 @@ Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing S
     )[key],
     'Production',
   )
+})
+
+Deno.test('test-only helper libraries include developer framework search paths', async () => {
+  const build = await generateBuildBazel(applePkg, [{
+    ...minimalTarget('TestDependencies', 'library'),
+    testOnly: true,
+  }])
+  assertIncludes(build, 'name = "TestDependencies",\n    testonly = True,')
 })

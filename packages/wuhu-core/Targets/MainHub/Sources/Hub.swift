@@ -90,20 +90,37 @@ public actor Hub: Main {
 
   nonisolated var store: SessionStore { space.sessions }
 
+  // The tools main still runs for the worker: exec, and the exec half of
+  // cancel. Every other tool is the worker's, over main's API.
   nonisolated public func execute(
     session: SessionID,
     call: ToolCall,
     state: ToolExecutionState,
   ) async throws -> ToolResultPayload {
-    try await MachineSeam.$caller.withValue(session) { try await dispatch(session: session, call: call, state: state) }
+    try await answering(as: session) {
+      let callID = ToolCallID(call.id)
+      switch RosterTool(rawValue: call.name) {
+      case .exec:
+        return try await exec(session, callID, decoded(ExecArguments.self, call), state: state)
+      case .cancel:
+        guard case let .exec(id) = try CancelTarget(decoded(CancelArguments.self, call).id) else {
+          preconditionFailure("the worker cancels its own subscriptions and scripts")
+        }
+        return try await cancelExec(session, id)
+      case nil:
+        return .failure(.init(message: "unknown tool: \(call.name)"))
+      default:
+        preconditionFailure("worker-owned tools must not enter the persistent dispatcher")
+      }
+    }
   }
 
-  nonisolated private func dispatch(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolResultPayload {
-    guard let tool = RosterTool(rawValue: call.name) else {
-      return .failure(.init(message: "unknown tool: \(call.name)"))
-    }
+  /// A session verb's answer as the model reads it: `body` runs as `session`
+  /// (a machine it reaches sees the session as its caller) and whatever it
+  /// throws of the typed kinds becomes a tool failure.
+  nonisolated public func answering(as session: SessionID, _ body: @Sendable () async throws -> ToolResultPayload) async throws -> ToolResultPayload {
     do {
-      return try await run(tool, session: session, call: call, state: state)
+      return try await MachineSeam.$caller.withValue(session, operation: body)
     } catch let error as ExecutorUnavailableError {
       return .failure(.init(message: error.description, code: "executorNoLongerSupported"))
     } catch let error as CapabilityError {
@@ -116,54 +133,6 @@ public actor Hub: Main {
       return .failure(.init(message: renderedFailure(Wire.failure(error))))
     } catch is CancellationError {
       throw CancellationError()
-    }
-  }
-
-  nonisolated private func run(
-    _ tool: RosterTool,
-    session: SessionID,
-    call: ToolCall,
-    state: ToolExecutionState,
-  ) async throws -> ToolResultPayload {
-    let callID = ToolCallID(call.id)
-    switch tool {
-    case .read:
-      return try await read(session, callID, decoded(ReadArguments.self, call), state: state)
-    case .write:
-      return try await write(session, callID, decoded(WriteArguments.self, call), state: state)
-    case .edit:
-      return try await edit(session, callID, decoded(EditArguments.self, call), state: state)
-    case .exec:
-      return try await exec(session, callID, decoded(ExecArguments.self, call), state: state)
-    case .machines:
-      return try await machineRoster(session)
-    case .templates:
-      return try await templateRoster(session)
-    case .observe:
-      return try await observe(session, callID, decoded(ObserveArguments.self, call))
-    case .timer:
-      return try await timer(session, callID, decoded(TimerArguments.self, call))
-    case .cancel:
-      let arguments = try decoded(CancelArguments.self, call)
-      if case let .exec(id) = try CancelTarget(arguments.id) { return try await cancelExec(session, id) }
-      return try await cancel(session, arguments)
-    case .sendMessage:
-      if case let .object(fields) = call.arguments.json, fields["user"] != nil {
-        throw problem(.humanAgentDirectMessage)
-      }
-      return try await sendMessage(session, callID, decoded(SendMessageArguments.self, call))
-    case .request:
-      return try await request(session, callID, decoded(RequestArguments.self, call))
-    case .report:
-      return try await report(session, callID, decoded(ReportArguments.self, call))
-    case .createSession:
-      return try await createSession(session, callID, decoded(CreateSessionArguments.self, call))
-    case .setTitle:
-      return try await setTitle(session, decoded(SetTitleArguments.self, call))
-    case .manipulateUI:
-      return try await manipulateUI(session, decoded(ManipulateUIArguments.self, call))
-    case .generateImage, .runScript, .grep, .find, .query:
-      preconditionFailure("worker-owned tools must not enter the persistent dispatcher")
     }
   }
 

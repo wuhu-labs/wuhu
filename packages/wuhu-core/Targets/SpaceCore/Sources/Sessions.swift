@@ -72,6 +72,14 @@ CREATE TABLE IF NOT EXISTS "session_receipts" (
   "recorded_at" TEXT NOT NULL,
   PRIMARY KEY ("session_id", "tool_call_id")
 );
+CREATE TABLE IF NOT EXISTS "session_api_receipts" (
+  "session_id" TEXT NOT NULL,
+  "tool_call_id" TEXT NOT NULL,
+  "status" INTEGER NOT NULL,
+  "body" TEXT NOT NULL,
+  "recorded_at" TEXT NOT NULL,
+  PRIMARY KEY ("session_id", "tool_call_id")
+);
 CREATE TABLE IF NOT EXISTS "session_subscriptions" (
   "session_id" TEXT NOT NULL,
   "subscription_id" TEXT NOT NULL,
@@ -283,6 +291,25 @@ enum Sessions {
       VALUES (?, ?, ?, ?)
       """,
       arguments: [key, toolCallID, payload, now],
+    )
+  }
+
+  static func apiReceipt(_ key: String, toolCallID: String, in db: Database) throws -> APIReceipt? {
+    guard let row = try Row.fetchOne(
+      db,
+      sql: "SELECT status, body FROM session_api_receipts WHERE session_id = ? AND tool_call_id = ?",
+      arguments: [key, toolCallID],
+    ) else { return nil }
+    return APIReceipt(status: row["status"], body: row["body"])
+  }
+
+  static func recordAPIReceipt(_ key: String, toolCallID: String, _ receipt: APIReceipt, now: String, in db: Database) throws {
+    try db.execute(
+      sql: """
+      INSERT OR IGNORE INTO session_api_receipts (session_id, tool_call_id, status, body, recorded_at)
+      VALUES (?, ?, ?, ?, ?)
+      """,
+      arguments: [key, toolCallID, receipt.status, receipt.body, now],
     )
   }
 

@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -20,7 +21,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
   }
 }
 
-@Suite struct DiscoveryRouteTests {
+@Suite(.deterministicDependencies) struct DiscoveryRouteTests {
   @Test(arguments: [false, true])
   func sessionHTTPAndModuleDiscoveryAgree(task: Bool) async throws {
     try await withSessionDeps {

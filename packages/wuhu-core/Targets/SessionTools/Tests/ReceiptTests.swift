@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import class MainHub.Hub
@@ -8,7 +9,7 @@ import SpaceCore
 import Testing
 import struct WuhuAI.ToolArguments
 
-@Suite struct ReceiptTests {
+@Suite(.deterministicDependencies) struct ReceiptTests {
   @Test func spaceWriteCrashRetryReturnsTheRecordedOutcome() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
@@ -21,9 +22,8 @@ import struct WuhuAI.ToolArguments
         "write", .object(["path": "/a.txt", "content": "v2"]), id: "tc-write",
       ) else { throw Mismatch("write failed") }
 
-      // The effect and its receipt committed atomically, so there is no
-      // window in which the write happened without the receipt.
-      #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-write")) == .write(first))
+      // Main answered the call and kept the answer under its id.
+      #expect(try await space.sessions.apiReceipt(session, toolCallID: .init("tc-write")) != nil)
 
       // Crash-retry: the kernel never committed the result, so the retry
       // still carries the pre-write fileAccessLog — without the receipt this
@@ -115,7 +115,7 @@ import struct WuhuAI.ToolArguments
       let first = try await world.run("read", .object(["path": "/a.txt"]), id: "tc-read")
       let again = try await world.retry("read", .object(["path": "/a.txt"]), id: "tc-read")
       #expect(first == again)
-      #expect(try await space.sessions.receipt(session, toolCallID: .init("tc-read")) == nil)
+      #expect(try await space.sessions.apiReceipt(session, toolCallID: .init("tc-read")) == nil)
     }
   }
 }

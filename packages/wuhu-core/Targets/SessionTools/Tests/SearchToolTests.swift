@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import class MainHub.Hub
@@ -7,7 +8,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct SearchToolTests {
+@Suite(.deterministicDependencies) struct SearchToolTests {
   @Test func findHonorsMatchLimitAndResumesWithStep() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

@@ -61,14 +61,6 @@ public struct ScriptOwnerContract {
       throw ScriptOwnerContractFailure.violation("invalid observe query was admitted")
     } catch {}
   }
-
-  public func persistentToolReceipts() async throws {
-    let call = ToolCall(id: "owner-receipt", name: "write", arguments: .object(["path": "/receipt.md", "content": "first"]))
-    let first = try await owner.execute(session: session, call: call, state: .init())
-    let replay = try await owner.execute(session: session, call: call, state: .init())
-    try require(first == replay)
-    try require(try await owner.readBytes("/receipt.md", rev: nil, byteLimit: 1024, session: session).data == Data("first".utf8))
-  }
 }
 
 public enum ScriptOwnerContractFailure: Error, Sendable { case violation(String) }

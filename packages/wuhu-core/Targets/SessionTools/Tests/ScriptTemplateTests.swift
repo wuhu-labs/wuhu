@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 @testable import SessionTools
@@ -6,7 +7,7 @@ import SpaceCore
 import SpaceTools
 import Testing
 
-@Suite struct ScriptTemplateTests {
+@Suite(.deterministicDependencies) struct ScriptTemplateTests {
   @Test func atomicAllocationAndStrategyValidation() async throws {
     try await withRig { rig in
       try await rig.write("/templates/task.md", "---\ntitle: Task\ntemplate: {strategy: incr, prefix: TASK, pad: 3}\n---\nbody\n")

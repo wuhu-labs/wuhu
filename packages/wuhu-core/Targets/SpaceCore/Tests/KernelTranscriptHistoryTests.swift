@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import GRDBSQLite
@@ -7,7 +8,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct KernelTranscriptHistoryTests {
+@Suite(.deterministicDependencies) struct KernelTranscriptHistoryTests {
   private static func assistant(_ call: String) -> TranscriptItem {
     .assistant(AssistantEntry(
       id: UUID(), timestamp: fixedDate,

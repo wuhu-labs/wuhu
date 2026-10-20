@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -24,7 +25,7 @@ import Testing
 // A dial the server answers with an HTTP error is its answer, not a dead
 // network: the exec ends naming the status and message instead of redialing
 // until it calls the server unreachable.
-@Suite struct ExecDialRefusalTests {
+@Suite(.deterministicDependencies) struct ExecDialRefusalTests {
   static let refusalBody = Array(#"{"code":"forbidden","message":"not available to a session"}"#.utf8)
 
   @Test func theDialerSurfacesAnHTTPRefusalWithItsStatusAndMessage() async throws {

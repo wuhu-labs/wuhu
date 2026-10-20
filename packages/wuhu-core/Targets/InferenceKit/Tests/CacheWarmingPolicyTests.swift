@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import Foundation
 import InferenceKit
 import Testing
 
-@Suite struct CacheWarmingPolicyTests {
+@Suite(.deterministicDependencies) struct CacheWarmingPolicyTests {
   @Test func explicitOptInAndDefaultsRoundTrip() throws {
     var json = String(decoding: fixtureJSON, as: UTF8.self)
     #expect(try ModelsDocument(json: fixtureJSON).providers.values.allSatisfy { $0.models.values.allSatisfy { $0.cacheWarming == nil } })

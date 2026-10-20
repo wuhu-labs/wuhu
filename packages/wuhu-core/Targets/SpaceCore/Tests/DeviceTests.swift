@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct DeviceTests {
   private func enrolled(_ space: Space, _ seed: String) async throws -> String {
     let account = try await space.addAccount(kind: .human, name: seed)

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import Scratch
@@ -7,7 +8,7 @@ import Testing
 
 // A session's prompt renders the space as of one stored revision,
 // which moves only at creation, compaction and Start over.
-@Suite struct PromptRevisionTests {
+@Suite(.deterministicDependencies) struct PromptRevisionTests {
   private func edit(_ space: Space, _ id: SessionID, _ tag: String) async throws {
     _ = try await space.writeText("/AGENTS.md", "root \(tag)")
     _ = try await space.writeText("\(SessionHome.path(of: id))/AGENTS.md", "home \(tag)")

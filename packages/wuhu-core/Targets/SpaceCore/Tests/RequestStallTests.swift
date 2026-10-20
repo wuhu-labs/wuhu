@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import struct MachineContract.ExecID
 import SessionDomain
@@ -7,7 +8,7 @@ import Testing
 
 // A request's stall clock: the parent hears once when its task goes quiet
 // with nothing to wait on, and hears again only after new progress.
-@Suite struct RequestStallTests {
+@Suite(.deterministicDependencies) struct RequestStallTests {
   private final class Rig: Sendable {
     let rig: MovingClockSpace
     let parent: SessionID
@@ -185,19 +186,23 @@ import Testing
     #expect(try await rig.slot() == nil)
   }
 
-  @Test func `a replayed request re-arms a missing clock until it is closed`() async throws {
+  // The clock commits with the request's message, so a replay of the request
+  // has nothing to arm: a clock that is gone stays gone.
+  @Test func `a replayed request arms no clock of its own`() async throws {
     let rig = try await Rig()
-    try await rig.store.cancelSubscription(rig.parent, subscriptionID: .stall(rig.request))
-    rig.at(300)
     func replay() async throws {
       _ = try await rig.store.openRequest(
         on: rig.task, from: rig.parent, messageID: MessageID(rig.request.rawValue), text: "do the thing", deadline: nil,
         stallSeconds: 600,
       )
     }
+    rig.at(300)
     try await replay()
-    // The clock runs from the request's post, not from the replay.
-    #expect(try await rig.due() == time(600))
+    #expect(try await rig.due() == time(600), "the clock runs from the request's post, not from the replay")
+
+    try await rig.store.cancelSubscription(rig.parent, subscriptionID: .stall(rig.request))
+    try await replay()
+    #expect(try await rig.slot() == nil)
 
     _ = try await rig.store.drainQueue(rig.task)
     _ = try await rig.store.report(rig.task, request: rig.request, kind: .final, messageID: MessageID("f1"), text: "done")

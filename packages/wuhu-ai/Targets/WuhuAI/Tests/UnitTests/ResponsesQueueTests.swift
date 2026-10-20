@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import FetchWebSocket
 import Testing
 @testable import WuhuAI
 
-@Suite struct ResponsesQueueTests {
+@Suite(.deterministicDependencies) struct ResponsesQueueTests {
   @Test func stalledConsumerBacklogFailsAt128MiBAndReleasesBytesWhenConsumed() async throws {
     let queue = ResponsesEventBuffer()
     let chunk = SSEEvent(data: String(repeating: "x", count: 1 << 20))

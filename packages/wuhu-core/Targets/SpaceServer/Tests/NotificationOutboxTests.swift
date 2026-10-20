@@ -1,8 +1,9 @@
+import DeterministicDependencies
 import Foundation
 @testable import SpaceServer
 import Testing
 
-@Suite struct NotificationOutboxTests {
+@Suite(.deterministicDependencies) struct NotificationOutboxTests {
   private let now = Date(timeIntervalSince1970: 1_767_225_600)
 
   @Test(arguments: [

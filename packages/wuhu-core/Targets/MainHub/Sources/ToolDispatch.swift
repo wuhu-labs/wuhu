@@ -17,6 +17,20 @@ public struct ToolProblem: Error {
   }
 }
 
+// A session that exists but was not finished (its template not cloned, its
+// brief not handed over): the failure names it, so the caller can find it and
+// a retry of the same call can finish it.
+public struct IncompleteSession: Error, Sendable {
+  public static let code = "incompleteSession"
+  public var id: SessionID
+  public var message: String
+
+  public init(id: SessionID, message: String) {
+    self.id = id
+    self.message = message
+  }
+}
+
 public struct ExecBackend: Sendable {
   public var claim: @Sendable (MachineID, SessionID, ToolCallID) async throws -> ExecClaim
   public var connect: @Sendable (ExecID) async throws -> any FrameTransport

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import class MainHub.Hub
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -15,7 +16,7 @@ import struct SpaceContract.ConversationPostOutput
 import Testing
 import struct WuhuAI.ToolCall
 
-@Suite struct HumanAgentDMRouteTests {
+@Suite(.deterministicDependencies) struct HumanAgentDMRouteTests {
   private let refusal = "There is no DM between human and agent. If you want to notify a human that has talked in your conversation box, simply post that box, optionally specifying the reply target's message ID."
 
   @Test func sessionHTTPUserAndLegacyConversationTargetsAreRefused() async throws {

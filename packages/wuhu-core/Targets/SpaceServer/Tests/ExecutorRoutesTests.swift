@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SessionDomain
@@ -6,7 +7,7 @@ import SpaceContract
 import SystemFiles
 import Testing
 
-@Suite struct ExecutorRoutesTests {
+@Suite(.deterministicDependencies) struct ExecutorRoutesTests {
   @Test func createDefaultsToTheKernelExecutor() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

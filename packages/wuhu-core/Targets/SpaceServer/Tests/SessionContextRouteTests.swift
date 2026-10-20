@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import SessionDomain
@@ -13,7 +14,7 @@ private func context(_ harness: SessionHarness, _ id: String) async throws -> Se
   ).context
 }
 
-@Suite struct SessionContextRouteTests {
+@Suite(.deterministicDependencies) struct SessionContextRouteTests {
   @Test func aKernelSessionReportsAnEstimatedContext() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

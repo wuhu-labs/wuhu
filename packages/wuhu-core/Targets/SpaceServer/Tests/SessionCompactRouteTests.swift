@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -6,7 +7,7 @@ import SpaceContract
 @testable import SpaceCore
 import Testing
 
-@Suite struct SessionCompactRouteTests {
+@Suite(.deterministicDependencies) struct SessionCompactRouteTests {
   @Test func aSecondRequestBeforeDeliveryReplacesTheFirst() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()

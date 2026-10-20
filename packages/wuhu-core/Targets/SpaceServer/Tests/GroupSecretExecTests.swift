@@ -1,5 +1,6 @@
 import struct Credentials.SpaceSecretStores
 import Crypto
+import DeterministicDependencies
 import Foundation
 import MachineChannel
 import MachineContract
@@ -12,7 +13,7 @@ import Testing
 
 // An exec's secrets resolve in the group of the machine it runs on, at the
 // moment it starts; the caller's group plays no part.
-@Suite struct GroupSecretExecTests {
+@Suite(.deterministicDependencies) struct GroupSecretExecTests {
   @Test func twoMachinesInOneGroupUseOneSecretMasked() async throws {
     try await withSecretServer { rig in
       try await rig.stores.group("shared").set("API_KEY", to: "hunter2-value")

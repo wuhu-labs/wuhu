@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,7 +10,7 @@ import Fetch
 import Scratch
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct SkillExportTests {
   @Test func payloadsAreEmbeddedAndWellFormed() throws {
     let skills = try #require(SkillCatalog.embedded)

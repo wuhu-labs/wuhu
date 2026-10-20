@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 @testable import MachineAgent
 import MachineContract
 import Scratch
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct VFSTests {
   @Test func writeReadStatRoundTrip() throws {
     let scratch = try ScratchFolder("machine-agent-tests")

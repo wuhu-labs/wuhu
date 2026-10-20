@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,7 +10,7 @@ import SessionDomain
 import Testing
 import WuhuAI
 
-@Suite struct PressureCompactionPathTests {
+@Suite(.deterministicDependencies) struct PressureCompactionPathTests {
   @Test(arguments: [false, true])
   func modelBookmarkAndMechanicalCompactionDropRetainedPressure(mechanical: Bool) async throws {
     let timestamp = Date(timeIntervalSince1970: 0)

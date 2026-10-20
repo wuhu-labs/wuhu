@@ -121,6 +121,6 @@ func devicePayload(_ record: DeviceRecord) -> DevicePayload {
   )
 }
 
-private func unknownDevice(_ parameters: RouteParameters) -> Response {
+func unknownDevice(_ parameters: RouteParameters) -> Response {
   errorResponse(.notFound, code: "notFound", message: "unknown device: \(parameters["id"] ?? "")")
 }

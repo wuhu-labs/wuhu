@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import Scratch
@@ -5,7 +6,7 @@ import Scratch
 import SpaceFS
 import Testing
 
-@Suite struct TemplateTests {
+@Suite(.deterministicDependencies) struct TemplateTests {
   static let incrTemplate = """
   ---
   template:
@@ -78,7 +79,7 @@ import Testing
   }
 }
 
-@Suite struct DevLoopTests {
+@Suite(.deterministicDependencies) struct DevLoopTests {
   @Test func exportThenImportIsIdentityOnTypedContent() async throws {
     let source = try makeSpace()
     _ = try await source.writeText("/notes/todo.md", "---\nkind: note\nstatus: open\n---\n[ref](/other.md)")

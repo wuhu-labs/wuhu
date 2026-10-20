@@ -17,6 +17,7 @@ dependencies:
   - SystemPackage
 tests:
   dependencies:
+    - DeterministicDependencies
     - MachineContract
     - MachineChannel
     - JSONValue

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,7 +9,7 @@ import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
 
-@Suite struct SubscriptionQueryTests {
+@Suite(.deterministicDependencies) struct SubscriptionQueryTests {
   @Test func queryShowsPublicSlotsWithHandlerMetadataNotInternalState() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -10,7 +11,7 @@ import Testing
 
 // The group a request acts in: a person names it by header and needs
 // membership; a session acts in its own group only.
-@Suite struct ActingGroupTests {
+@Suite(.deterministicDependencies) struct ActingGroupTests {
   struct People {
     let harness: SessionHarness
     let bearer: String

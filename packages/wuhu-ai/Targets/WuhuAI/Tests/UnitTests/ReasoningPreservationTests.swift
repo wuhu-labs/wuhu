@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -9,7 +10,7 @@ import Testing
 // 2026-07-29; each one is a 400 or a silently dropped reasoning trace if it
 // regresses.
 
-@Suite struct ReasoningPreservationTests {
+@Suite(.deterministicDependencies) struct ReasoningPreservationTests {
   // MARK: - Fixtures
 
   private var historyWithReasoning: Context {

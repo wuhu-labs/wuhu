@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct PersonaTests {
   func enrolledKey(_ space: Space, pubkey: String = testPubkey("laptop")) async throws -> KeyRecord {
     let account = try await space.addAccount(kind: .human, name: nil)

@@ -48,6 +48,7 @@ dependencies:
 tests:
   size: large
   dependencies:
+    - DeterministicDependencies
     - MainHub
     - ImageRetention
     - OperationProtocol

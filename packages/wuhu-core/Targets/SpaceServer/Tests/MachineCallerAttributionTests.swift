@@ -1,3 +1,5 @@
+import Clocks
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -30,7 +32,7 @@ private struct SilentExec: OperationKind {
   }
 }
 
-@Suite struct MachineCallerAttributionTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct MachineCallerAttributionTests {
   @Test func everyStartASessionCausesNamesItAndOtherStartsDont() async throws {
     let folder = try ScratchFolder("v2-caller")
     let file = folder.url.appending(path: "notes.txt")
@@ -68,6 +70,41 @@ private struct SilentExec: OperationKind {
       for try await event in outgoing.events { if case .exit = event { break } }
       let exec = try #require(seen.withLock { $0.last })
       #expect(exec.kind == "exec.v1"); #expect(exec.caller == expected)
+      await agent.shutdown(); await service.shutdown()
+    }
+  }
+
+  // The byte lane through the session gate names the session too, on a GET and on a PUT.
+  @Test func theByteLaneNamesTheSessionOnAMachine() async throws {
+    let folder = try ScratchFolder("v2-byte-lane")
+    let file = folder.url.appending(path: "notes.txt")
+    try Data("needle".utf8).write(to: file)
+    let tokens = ExecTokens(spaceURL: "https://space.test:5530")
+    let harness = try await SessionHarness(execTokens: tokens)
+    let space = harness.space
+    let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+    let (record, _) = try await space.addMachineV2(name: "lane-v2", group: .shared)
+    let seen = Starts()
+    let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
+    let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
+    await harness.hub.configureV2(service)
+    let exec = try await space.mintExec(machine: record.id, caller: session.rawValue, group: .shared)
+    let bearer = tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+    let expected = StartRequest.Caller(session: session.rawValue, title: "Backend coder", group: "shared")
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { await agent.run() }
+      tasks.addTask { try await service.run() }
+      defer { tasks.cancelAll() }
+      let lane = "/v1/f\(file.path)?machine=\(record.id.rawValue)"
+      var get = Request(url: URL(string: "http://space" + lane)!)
+      get.headers[.authorization] = "Bearer " + bearer
+      let got = try await harness.api(get)
+      #expect(got.status == .ok)
+      let put = try await harness.put(lane, .string("x"), bearer: bearer)
+      #expect(put.status == .ok)
+      let kinds = seen.all.map(\.kind)
+      #expect(kinds.contains("read.v1")); #expect(kinds.contains("write.v1"))
+      #expect(seen.all.map(\.caller) == Array(repeating: expected, count: kinds.count))
       await agent.shutdown(); await service.shutdown()
     }
   }

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 import SpaceCore
 import Testing
 
-@Suite(.timeLimit(.minutes(1))) struct PendingArrivalTests {
+@Suite(.deterministicDependencies, .timeLimit(.minutes(1))) struct PendingArrivalTests {
   private let utc = TimeZone(identifier: "UTC")!
 
   @Test func `each urgency keeps its earliest arrival: a person's post into the box is direct, a session's DM other`() async throws {

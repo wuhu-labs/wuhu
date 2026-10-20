@@ -145,6 +145,10 @@ struct ToolWorld {
   var state = ToolExecutionState()
   var delivered: ScopeContext?
   private var mintedCalls = 0
+  // A kernel never reuses a tool call id within a session, and main answers a
+  // repeated id with its first result: implicit ids are unique per world, and
+  // a retry names its call explicitly.
+  private let minting = String(UUID().uuidString.lowercased().prefix(8))
 
   init(executor: ToolExecutor, session: SessionID) {
     execute = { try await executor.execute(session: $0, call: $1, state: $2) }
@@ -167,7 +171,7 @@ struct ToolWorld {
     id explicit: String? = nil,
   ) async throws -> ToolResultPayload {
     mintedCalls += 1
-    let id = explicit ?? "tc-\(mintedCalls)"
+    let id = explicit ?? "tc-\(minting)-\(mintedCalls)"
     let outcome = try await execute(
       session, ToolCall(id: id, name: name, arguments: arguments),
       state,

@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -13,7 +14,7 @@ import struct SpaceContract.SessionRestartOutput
 @testable import SpaceServer
 import Testing
 
-@Suite struct MessageViewingRouteTests {
+@Suite(.deterministicDependencies) struct MessageViewingRouteTests {
   func refusal(_ response: Response) async throws -> JSONValue? {
     #expect(response.status == .badRequest)
     return JSONValue.parse(try await response.text())

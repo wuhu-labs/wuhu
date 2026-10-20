@@ -1,7 +1,8 @@
+import DeterministicDependencies
 @testable import SpaceCore
 import Testing
 
-@Suite
+@Suite(.deterministicDependencies)
 struct UserProfileTests {
   @Test func aHandleIsStoredLowercasedAndFoundEitherWay() async throws {
     let space = try makeSpace()

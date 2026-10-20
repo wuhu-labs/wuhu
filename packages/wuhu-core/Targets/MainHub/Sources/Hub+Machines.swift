@@ -2,7 +2,7 @@ import SessionDomain
 import SpaceCore
 
 extension Hub {
-  nonisolated func machineRoster(_ session: SessionID) async throws -> ToolResultPayload {
+  nonisolated public func machineRoster(_ session: SessionID) async throws -> ToolResultPayload {
     guard let machines else {
       throw ToolProblem("no machine backend is available on this server")
     }

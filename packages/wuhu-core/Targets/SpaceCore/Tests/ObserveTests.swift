@@ -1,11 +1,12 @@
 import Clocks
+import DeterministicDependencies
 import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct ObserveTests {
+@Suite(.deterministicDependencies) struct ObserveTests {
   @Test func oneEventPerFilesystemMutation() async throws {
     let space = try makeSpace()
     let events = Collector<MutationEvent>()

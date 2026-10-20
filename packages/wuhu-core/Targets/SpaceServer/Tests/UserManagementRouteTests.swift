@@ -1,12 +1,13 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
 import SpaceCore
 import Testing
 
-@Suite struct UserManagementRouteTests {
+@Suite(.deterministicDependencies) struct UserManagementRouteTests {
   let harness: Harness
   let identity: String
 

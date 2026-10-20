@@ -1,4 +1,6 @@
+import Clocks
 import Dependencies
+import DeterministicDependencies
 import FetchWebSocket
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -10,7 +12,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite struct SocketObserverTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct SocketObserverTests {
   @Test(arguments: ["valid", "malformed", "binary"])
   func receivedByteCountUsesWireBytesIncludingMalformedEvents(kind: String) async throws {
     let text = #"{ "type" : "response.completed", "response" : { "id" : "resp_ok", "status" : "completed", "usage" : { "input_tokens" : 1, "output_tokens" : 0 }, "output" : [] } }"#

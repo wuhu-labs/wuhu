@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -9,7 +10,7 @@ import SpaceCore
 @testable import SpaceServer
 import Testing
 
-@Suite struct PushRelayRouteTests {
+@Suite(.deterministicDependencies) struct PushRelayRouteTests {
   let key = Curve25519.Signing.PrivateKey()
   let harness: Harness
   let identity: String

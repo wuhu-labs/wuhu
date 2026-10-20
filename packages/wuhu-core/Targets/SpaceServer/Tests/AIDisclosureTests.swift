@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import JSONValue
@@ -7,7 +8,7 @@ import SpaceContract
 import Testing
 import WuhuVFS
 
-@Suite struct AIDisclosureTests {
+@Suite(.deterministicDependencies) struct AIDisclosureTests {
   let disclosure = AIDisclosure(version: "trial-2026-10", providers: [
     AIProviderDisclosure(name: "DeepSeek", location: "China", via: "Wuhu metering proxy", policy: "https://wuhu.ai/privacy"),
   ])

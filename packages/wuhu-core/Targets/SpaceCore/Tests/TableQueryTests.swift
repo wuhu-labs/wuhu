@@ -1,10 +1,11 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 @testable import SpaceCore
 import SpaceFS
 import Testing
 
-@Suite struct TableTests {
+@Suite(.deterministicDependencies) struct TableTests {
   func makeLogTable(_ space: Space, at rawPath: String = "/data/log.table") async throws -> SpacePath {
     let table = try path(rawPath)
     _ = try await space.createTable(table, header: TableHeader(columns: [
@@ -53,7 +54,7 @@ import Testing
   }
 }
 
-@Suite struct AuthorizerTests {
+@Suite(.deterministicDependencies) struct AuthorizerTests {
   func seed(_ space: Space) async throws {
     _ = try await space.writeText("/note.md", "---\nkind: note\n---\n[x](/other.md)")
     let table = try path("/data/t.table")

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ReadImageOutput","type":"object","properties":{"mimeType":{"type":"string"},"blob":{"type":"string"},"byteCount":{"type":"integer"},"width":{"type":["integer","null"]},"height":{"type":["integer","null"]}},"required":["mimeType","blob","byteCount"],"additionalProperties":false}

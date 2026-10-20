@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -10,7 +11,7 @@ import Testing
 // One listener: the bare host is the API and the web app, `<group>.<host>`
 // that group's content, a name deeper under the host 421, any other name the
 // API.
-@Suite struct HostRoutingTests {
+@Suite(.deterministicDependencies) struct HostRoutingTests {
   static let origin = "https://space.test:5530"
 
   struct Rig {

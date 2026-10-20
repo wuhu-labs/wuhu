@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
@@ -7,7 +8,7 @@ import struct SpaceContract.GroupID
 import SpaceFS
 import Testing
 
-@Suite struct GroupIsolationTests {
+@Suite(.deterministicDependencies) struct GroupIsolationTests {
   static let alice = GroupID(rawValue: "alice")
   static let bob = GroupID(rawValue: "bob")
 
@@ -163,7 +164,7 @@ import Testing
   }
 }
 
-@Suite struct GroupAdminTests {
+@Suite(.deterministicDependencies) struct GroupAdminTests {
   @Test func topLevelAgentsAdministerTheirGroupAndNothingElseDoes() async throws {
     let space = try makeSpace()
     let store = space.sessions
@@ -303,7 +304,7 @@ import Testing
 
 // Every statement keyed on a path names its group: a path alone matches that
 // path in every group.
-@Suite struct StorageLintTests {
+@Suite(.deterministicDependencies) struct StorageLintTests {
   static let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .appending(path: "Sources")
 

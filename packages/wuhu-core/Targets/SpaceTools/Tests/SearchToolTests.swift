@@ -1,5 +1,6 @@
 import Clocks
 import Dependencies
+import DeterministicDependencies
 import FileSearch
 import Foundation
 import JSONValue
@@ -10,7 +11,7 @@ import SpaceFS
 import Synchronization
 import Testing
 
-@Suite struct SearchToolTests {
+@Suite(.deterministicDependencies(clock: TestClock())) struct SearchToolTests {
   private func seedCorpus(_ context: SpaceToolContext) async throws {
     _ = try await seedFile("/docs/a.txt", "foo one\nplain\nfoo two", context)
     _ = try await seedFile("/docs/b.txt", "nothing here", context)

@@ -2,7 +2,7 @@
 # meaningless without an app host) compiles out and its lock drops NSLock, so
 # the Linux static binary keeps no full-Foundation root (swiftpkg_swift_clocks).
 swift_deps.configure_package(
-    name = "swiftpkg_xctest_dynamic_overlay",
+    name = "swiftpkg_swift_issue_reporting",
     patch_args = ["-p1"],
     patches = [
         "//bazel/patches:issue-reporting-linux-app-host.patch",

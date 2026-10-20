@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import FetchSSE
 import Foundation
@@ -14,7 +15,7 @@ import Testing
 
 // `<group>.<host>` serves that group's content, to its members, with a
 // cookie minted on that host; `shared.<host>` serves `shared`.
-@Suite struct WebGroupHostTests {
+@Suite(.deterministicDependencies) struct WebGroupHostTests {
   static let origin = "https://space.test:5530"
   static let sharedHost = "shared.space.test:5530"
 

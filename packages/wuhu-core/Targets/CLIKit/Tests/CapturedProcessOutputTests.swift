@@ -1,7 +1,8 @@
 import CLIKit
+import DeterministicDependencies
 import Testing
 
-@Suite struct CapturedProcessOutputTests {
+@Suite(.deterministicDependencies) struct CapturedProcessOutputTests {
   @Test func everyShortOutputArrivesWhole() async throws {
     let mismatches = try await withThrowingTaskGroup(of: Int.self) { group in
       for index in 0 ..< 400 {

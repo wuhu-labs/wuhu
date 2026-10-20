@@ -1,4 +1,5 @@
 import struct Credentials.CredentialResolver
+import DeterministicDependencies
 import Fetch
 import JSONValue
 import SessionDomain
@@ -9,7 +10,7 @@ import SpaceTools
 import Testing
 import enum WuhuAI.Tool
 
-@Suite struct ScriptDiscoveryTests {
+@Suite(.deterministicDependencies) struct ScriptDiscoveryTests {
   @Test(arguments: ["root", "child", "task"])
   func callerContextAndGroupStandingMatchCheckedService(kind: String) async throws {
     let alice = GroupID(rawValue: "alice")

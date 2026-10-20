@@ -1,10 +1,12 @@
 import ControlledTime
 import Dependencies
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
+@Suite(.deterministicDependencies)
 struct SessionGraceTests {
   private func makeControlledSpace() throws -> (Space, TimeControl) {
     try withDependencies {

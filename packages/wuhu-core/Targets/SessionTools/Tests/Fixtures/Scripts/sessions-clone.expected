@@ -1,9 +1,9 @@
 === run_script
-{"made":false,"id":"string","message":"createSession: session <coder> was created, but internal: the disk is full"}
+{"made":false,"id":"string","code":"incompleteSession","message":"createSession: session <coder> was created, but internal: the disk is full"}
 
 [script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === run_script
-{"made":false,"id":"string","message":"createSession: session <coder> was created, but internal: the disk is full"}
+{"made":false,"id":"string","code":"incompleteSession","message":"createSession: session <coder> was created, but internal: the disk is full"}
 
 [script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe

@@ -1,5 +1,6 @@
 import AsyncHTTPClient
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import FetchAsyncHTTPClient
 import Foundation
@@ -11,7 +12,7 @@ import Testing
 // The auth gate's 401 leaves the request body unread; the substrate must
 // still deliver the crafted JSON response over a real socket instead of a
 // bare 500.
-@Suite struct AuthGateTests {
+@Suite(.deterministicDependencies) struct AuthGateTests {
   @Test func nonDevPostWithABodyGetsTheCrafted401OverARealSocket() async throws {
     let space = try makeMachineSpace()
     let hub = withDependencies {

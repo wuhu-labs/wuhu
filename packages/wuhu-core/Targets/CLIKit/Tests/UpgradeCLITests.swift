@@ -1,5 +1,6 @@
 @testable import CLIKit
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 import Scratch
@@ -110,7 +111,7 @@ private final class UpgradeHarness: Sendable {
   }
 }
 
-@Suite
+@Suite(.deterministicDependencies)
 struct UpgradeCLITests {
   @Test func hexDigestsStayCanonicalLowercase() {
     #expect(SHA256.hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")

@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import JSONValue
 @testable import SessionTools
 import SpaceTools
 import Testing
 
-@Suite struct ScriptOwnExecTests {
+@Suite(.deterministicDependencies) struct ScriptOwnExecTests {
   @Test func foreignIDsAreNotFoundWithoutMachineAccess() async throws {
     try await withRig { rig in
       let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec('bad');result('allowed')}catch(e){result(e.code)}")

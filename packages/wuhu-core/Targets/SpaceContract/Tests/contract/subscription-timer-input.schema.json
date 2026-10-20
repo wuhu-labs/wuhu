@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"SubscriptionTimerInput","type":"object","properties":{"message":{"type":"string"},"inSeconds":{"type":["number","null"]},"cron":{"type":["string","null"]}},"required":["message"],"additionalProperties":false}

@@ -1,5 +1,6 @@
 import Assertion
 import Crypto
+import DeterministicDependencies
 import Fetch
 import Foundation
 import HTTPTypes
@@ -10,7 +11,7 @@ import SpaceCore
 import SpaceServer
 import Testing
 
-@Suite struct WebOriginTests {
+@Suite(.deterministicDependencies) struct WebOriginTests {
   let injection = #"<script type="module" src="/_/shell.js"></script>"#
   let importMap = #"<script type="importmap">{"imports":{"wuhu:space":"/_/space.js"}}</script>"#
 

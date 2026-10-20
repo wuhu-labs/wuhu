@@ -1,5 +1,6 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import ExecutionOwner
 import Fetch
 import Foundation
@@ -16,7 +17,7 @@ import Synchronization
 import Testing
 import WuhuAI
 
-@Suite struct GroupSwitchingTests {
+@Suite(.deterministicDependencies) struct GroupSwitchingTests {
   func setup(seconds: Int = 1800, policy: ModelsDocument.Policy? = nil, model: String = "test-model") async throws -> (SessionHarness, Hub, ProviderCatalog, SessionID) {
     let harness = try await SessionHarness(credentials: .bound { provider in
       .init(credential: .apiKey("key-" + provider), identityEpoch: provider)

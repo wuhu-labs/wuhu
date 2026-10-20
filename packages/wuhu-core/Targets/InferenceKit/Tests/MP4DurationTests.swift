@@ -1,11 +1,12 @@
 import Credentials
 import Dependencies
+import DeterministicDependencies
 import Fetch
 import Foundation
 @testable import InferenceKit
 import Testing
 
-@Suite struct MP4DurationTests {
+@Suite(.deterministicDependencies) struct MP4DurationTests {
   private static func big(_ value: UInt64, count: Int = 4) -> Data {
     Data((0 ..< count).reversed().map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
   }

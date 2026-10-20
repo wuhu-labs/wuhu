@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import Foundation
 import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct SessionTemplateTests {
+@Suite(.deterministicDependencies) struct SessionTemplateTests {
   @Test func templatesListFromTheirManifests() async throws {
     let space = try makeSpace()
     _ = try await space.writeText(

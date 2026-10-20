@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -8,7 +9,7 @@ import SessionDomain
 @testable import SpaceCore
 import Testing
 
-@Suite struct RestartHeadCompatibilityTests {
+@Suite(.deterministicDependencies) struct RestartHeadCompatibilityTests {
   private struct Dev88Head: Hashable, Codable {
     var id: UUID
     var timestamp: Date

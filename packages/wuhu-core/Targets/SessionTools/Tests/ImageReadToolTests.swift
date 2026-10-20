@@ -1,3 +1,4 @@
+import DeterministicDependencies
 import Foundation
 import JSONValue
 import class MainHub.Hub
@@ -37,7 +38,7 @@ private let pngHeader: [UInt8] = [
   0xA0,
 ]
 
-@Suite struct ImageReadToolTests {
+@Suite(.deterministicDependencies) struct ImageReadToolTests {
   @Test func imageFilesReadAsAttachedImages() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

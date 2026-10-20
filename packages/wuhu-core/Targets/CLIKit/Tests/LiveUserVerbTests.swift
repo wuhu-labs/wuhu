@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import JSONValue
 import SpaceCore
 import Testing
 
-@Suite(.serialized) struct LiveUserVerbTests {
+@Suite(.deterministicDependencies, .serialized) struct LiveUserVerbTests {
   @Test func addEnrollInviteAndPromoteWithoutStoppingTheServer() async throws {
     let rig = try EnrollRig()
     defer { rig.cleanUp() }

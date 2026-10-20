@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -11,7 +12,7 @@ import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
 
-@Suite struct MachineV2StoreTests {
+@Suite(.deterministicDependencies) struct MachineV2StoreTests {
   @Test func durableContractAndGroupIsolation() async throws {
     let space = try Space.inMemory()
     let key = SymmetricKey(size: .bits256)

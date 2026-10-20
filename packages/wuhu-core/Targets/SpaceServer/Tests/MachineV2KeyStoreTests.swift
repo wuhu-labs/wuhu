@@ -1,3 +1,4 @@
+import DeterministicDependencies
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -17,7 +18,7 @@ import SpaceCore
 import Testing
 import WuhuVFS
 
-@Suite struct MachineV2KeyStoreTests {
+@Suite(.deterministicDependencies) struct MachineV2KeyStoreTests {
   @Test func durableDiskKeyAndNewTableCheckSurviveDatabaseReopen() async throws {
     let folder = try ScratchFolder("v2-durable-key")
     let database = folder.url.appendingPathComponent("space.sqlite")

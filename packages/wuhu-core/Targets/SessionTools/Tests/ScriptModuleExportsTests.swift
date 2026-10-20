@@ -1,9 +1,10 @@
+import DeterministicDependencies
 import JSONValue
 @testable import SessionTools
 import SystemFiles
 import Testing
 
-@Suite struct ScriptModuleExportsTests {
+@Suite(.deterministicDependencies) struct ScriptModuleExportsTests {
   @Test func generatedInventoryMatchesActualInstalledNamespaces() async throws {
     try await withRig { rig in
       let actual = try await rig.evaluate(#"""

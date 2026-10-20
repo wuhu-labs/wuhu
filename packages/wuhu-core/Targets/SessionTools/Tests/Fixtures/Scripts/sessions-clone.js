@@ -6,5 +6,5 @@ try {
   })
   result({ made: true, requestId: typeof made.requestId })
 } catch (error) {
-  result({ made: false, id: typeof error.id, message: error.message.replaceAll(error.id, "<coder>") })
+  result({ made: false, id: typeof error.id, code: error.code, message: error.message.replace(/session \S+ was created/, "session <coder> was created") })
 }

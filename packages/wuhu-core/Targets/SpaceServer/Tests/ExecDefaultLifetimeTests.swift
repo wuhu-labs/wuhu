@@ -1,6 +1,7 @@
 import ClockTesting
 import Crypto
 import Dependencies
+import DeterministicDependencies
 @testable import ExecSupervisor
 import Fetch
 import Foundation
@@ -21,7 +22,7 @@ import Synchronization
 import Testing
 import struct WuhuAI.ToolCall
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.deterministicDependencies(clock: ContinuousClock()), .timeLimit(.minutes(1)))
 struct ExecDefaultLifetimeTests {
   @Test func theV1AgentKillsTheProcessGroupAtTheDefaultLifetime() async throws {
     let state = try ScratchFolder("exec-default-lifetime-agent")
