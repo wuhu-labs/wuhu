@@ -123,12 +123,11 @@ import Testing
     }
   }
 
-  @Test func bareRestartKeepsSubscriptionsButClearsParkRemindersAndErrors() async throws {
+  @Test func bareRestartKeepsSubscriptionsAndClearsErrors() async throws {
     try await withSessionDeps {
       let store = try makeSpace().sessions
       let id = try await store.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
       let observation = try await store.armSubscription(id, slot: .init(id: .init("obs.keep"), kind: .observe(sql: "SELECT 1", throttleSeconds: 30)), marker: "old snapshot")
-      _ = try await store.armSubscription(id, slot: .init(id: .park(.init("retry")), kind: .parkReminder(request: .init("retry"))), nextFireAt: fixedDate.addingTimeInterval(60))
       try await store.markErrored(id, message: "boom")
       try await store.requestCommand(id, .compact(instructions: "discard this"))
       _ = try await store.restart(id)

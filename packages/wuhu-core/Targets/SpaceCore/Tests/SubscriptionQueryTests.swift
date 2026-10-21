@@ -18,7 +18,6 @@ import Testing
       let id = try await tests.owner(store)
       let observation = try await tests.arm(store, id)
       _ = try await store.armSubscription(id, slot: .init(id: .init("timer"), kind: .timer(.cron("* * * * *"), message: "tick")), nextFireAt: fixedDate)
-      _ = try await store.armSubscription(id, slot: .init(id: .init("park"), kind: .parkReminder(request: .init("r"))))
       _ = try await store.armSubscription(id, slot: .init(id: .init("deadline"), kind: .requestDeadline(request: .init("r"), task: id)), nextFireAt: fixedDate)
       let initial = try await space.query("SELECT id, session_id, kind, sql, schedule, handler, armed_at, last_fired_at, last_error FROM subscriptions ORDER BY id")
       #expect(initial.rows == [

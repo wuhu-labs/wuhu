@@ -13,7 +13,7 @@ import ServeTesting
 import SessionDomain
 import SessionTools
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -413,7 +413,13 @@ private func until(
         return reply([.text(.init(text: "ok"))])
       }
       let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
-      let requester = try await harness.store.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      let requester = try await harness.store.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", model: .init(provider: "testing", model: "test-model", effort: "high"))
+      try await harness.space.writer.write { db in
+        try db.execute(
+          sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
+          arguments: ["contractor:retired", "{}", requester.rawValue],
+        )
+      }
       let root = try await harness.store.createSession(group: .shared, title: "coder", kind: .task, parent: requester, createdBy: requester.rawValue, executor: model)
       let child = try await harness.store.createSession(group: .shared, title: "proxy", kind: .task, parent: root, createdBy: root.rawValue, executor: model)
       let leaf = try await harness.store.createSession(group: .shared, title: "signup", kind: .task, parent: child, createdBy: child.rawValue, executor: model)

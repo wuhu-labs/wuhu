@@ -44,9 +44,9 @@ func modelRoutePreparer(catalog: @escaping @Sendable () async throws -> Provider
 
 func activeModelSpecifier(_ record: SessionRecord, store: SessionStore) async -> ModelSpecifier? {
   switch record.executor {
-  case let .kernel(model), let .claudeCode(model): model
+  case let .kernel(model): model
   case .modelGroup: try? await store.modelRoute(record.id)?.specifier
-  case .contractor: nil
+  case .retired: nil
   }
 }
 
@@ -78,9 +78,9 @@ func groupCatalog(space: Space, access: InferenceAccess) -> @Sendable () async t
 
 func activeModelSpecifier(_ record: SessionRecord, owner: any Main) async -> ModelSpecifier? {
   switch record.executor {
-  case let .kernel(model), let .claudeCode(model): model
+  case let .kernel(model): model
   case .modelGroup: try? await owner.modelRoute(record.id)?.specifier
-  case .contractor: nil
+  case .retired: nil
   }
 }
 

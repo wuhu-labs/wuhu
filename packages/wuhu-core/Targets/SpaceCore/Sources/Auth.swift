@@ -31,19 +31,15 @@ public struct ReadSessionToken: Hashable, Sendable {
   }
 }
 
-// `contractor` decodes the accounts and keys of the removed contractor
-// executor in an old space; nothing creates one and its keys are refused.
 public enum AccountKind: String, Hashable, Sendable, CaseIterable {
   case human
   case space
   case machine
-  case contractor
 }
 
 public enum KeyCapability: String, Hashable, Sendable, CaseIterable {
   case device
   case seat
-  case contractor
   case execMachine = "exec-machine"
   case space
 }

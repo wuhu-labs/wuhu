@@ -7,7 +7,7 @@ import Testing
   @Test func seedIsValidJSONWithVerifiedModelIDs() throws {
     let seed = try #require(JSONValue.parse(WellKnownModels.seed))
     let providers = try #require(seed.object)
-    #expect(Array(providers.keys).sorted() == ["anthropic", "claude", "codex", "deepseek", "openai"])
+    #expect(Array(providers.keys).sorted() == ["anthropic", "codex", "deepseek", "openai"])
     let deepseek = try #require(providers["deepseek"]?.object?["models"]?.object)
     #expect(Array(deepseek.keys).sorted() == ["deepseek-v4-flash", "deepseek-v4-pro"])
     for (_, provider) in providers {
@@ -47,7 +47,6 @@ import Testing
     #expect(merge.added.sorted() == [
       "model deepseek/deepseek-v4-flash",
       "provider anthropic",
-      "provider claude",
       "provider codex",
       "provider openai",
     ])
@@ -68,7 +67,7 @@ import Testing
     let basis = try #require(JSONValue.parse(WellKnownModels.seed))
     let merge = ModelsMerge(basis: basis, user: nil)
     #expect(merge.merged == basis)
-    #expect(merge.added.count == 5)
+    #expect(merge.added.count == 4)
   }
 
   @Test func prettyJSONRoundTrips() throws {

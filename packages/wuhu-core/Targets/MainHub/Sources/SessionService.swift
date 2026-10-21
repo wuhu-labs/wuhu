@@ -174,20 +174,16 @@ public final class SessionService: Sendable {
     }
   }
 
-  private func inactiveExecutorRecord(_ sessionID: SessionID) async throws -> SessionRecord? {
+  private func retiredRecord(_ sessionID: SessionID) async throws -> SessionRecord? {
     let record = try await sessions.record(sessionID)
-    guard record.executor.isRemoved else { return nil }
+    guard record.executor.isRetired else { return nil }
     return record
   }
 
   public func wake(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { return }
     let record = try await sessions.record(sessionID)
-    if case .claudeCode = record.executor {
-      if record.work != .errored { try await sessions.markErrored(sessionID, message: ExecutorUnavailableError().description) }
-      return
-    }
-    if case .contractor = record.executor { return }
+    guard !record.executor.isRetired else { return }
     guard record.work != .errored else { return }
     do {
       try await retryingEviction { try await worker.deliver(sessionID, .wake) }
@@ -204,11 +200,7 @@ public final class SessionService: Sendable {
 
   public func interrupt(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await inactiveExecutorRecord(sessionID) != nil {
-      if case .claudeCode = try await sessions.record(sessionID).executor { return }
-      try await sessions.markInterrupted(sessionID)
-      return
-    }
+    if try await retiredRecord(sessionID) != nil { return }
     try await retryingEviction {
       try await worker.deliver(sessionID, .interrupt)
     }
@@ -218,7 +210,7 @@ public final class SessionService: Sendable {
   public func resume(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
     do {
-      if try await inactiveExecutorRecord(sessionID) != nil {
+      if try await retiredRecord(sessionID) != nil {
         try await sessions.markResumed(sessionID)
         return
       }
@@ -252,7 +244,7 @@ public final class SessionService: Sendable {
           checked.insert(record.id)
           if settled || force {
             prepared.append(record.id)
-            if record.executor.isRemoved { inactive.insert(record.id) }
+            if record.executor.isRetired { inactive.insert(record.id) }
             try await sessions.reserveForArchive(record.id, token: reservation)
             if !settled { _ = try await retryingEviction { try await worker.revoke(record.id, policy: .cancel) } }
           } else {
@@ -268,12 +260,12 @@ public final class SessionService: Sendable {
       }
       for member in subtree {
         let record = try await sessions.record(member.id)
-        if inactive.contains(record.id), !record.executor.isRemoved { throw SessionError.archiveReservationLost }
+        if inactive.contains(record.id), !record.executor.isRetired { throw SessionError.archiveReservationLost }
         if case .live = record.lifecycle {
           try await beforeArchive(record.id)
           _ = try await sessions.archive(record.id, grace: archiveGrace)
         }
-        if !record.executor.isRemoved {
+        if !record.executor.isRetired {
           try await worker.deliver(record.id, .archived)
           await archived(record.id)
         }
@@ -287,7 +279,7 @@ public final class SessionService: Sendable {
   }
 
   private func prepareArchive(_ id: SessionID) async throws -> Bool {
-    if try await inactiveExecutorRecord(id) != nil { return true }
+    if try await retiredRecord(id) != nil { return true }
     return try await retryingEviction {
       try await worker.revoke(id, policy: .whenSettled)
     }
@@ -296,7 +288,7 @@ public final class SessionService: Sendable {
   private func releaseArchive(_ ids: [SessionID], reservation: UUID) async {
     for id in ids {
       sessions.releaseArchiveReservation(id, token: reservation)
-      guard (try? await inactiveExecutorRecord(id)) == nil else { continue }
+      guard (try? await retiredRecord(id)) == nil else { continue }
       if let record = try? await sessions.record(id), record.lifecycle == .live {
         try? await worker.deliver(id, .reload)
       }
@@ -316,7 +308,7 @@ public final class SessionService: Sendable {
 
   private func restartSettled(_ sessionID: SessionID, executor: SessionExecutor?, note: String?, modelRoute: SessionModelRoute?) async throws -> SessionRestart {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await inactiveExecutorRecord(sessionID) != nil {
+    if try await retiredRecord(sessionID) != nil {
       let result = try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute)
       await reloadCommitted(sessionID)
       return result
@@ -354,13 +346,6 @@ public final class SessionService: Sendable {
 
   public func unarchive(_ sessionID: SessionID) async throws {
     guard !sessions.isReservedForArchive(sessionID) else { throw SessionError.archiveInProgress }
-    if try await inactiveExecutorRecord(sessionID) != nil {
-      try await sessions.unarchive(sessionID)
-      if case .claudeCode = try await sessions.record(sessionID).executor {
-        try await sessions.markErrored(sessionID, message: ExecutorUnavailableError().description)
-      }
-      return
-    }
     guard case .archived = try await sessions.record(sessionID).lifecycle else { return }
     try await sessions.unarchive(sessionID)
     await reloadCommitted(sessionID)

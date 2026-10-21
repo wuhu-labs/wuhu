@@ -88,7 +88,7 @@ extension Hub {
         return .cancelObservation(.init(subscriptionID: subscriptionID))
       case .timer?:
         return .cancelTimer(.init(subscriptionID: subscriptionID))
-      case .requestDeadline?, .requestStall?, .parkReminder?, nil:
+      case .requestDeadline?, .requestStall?, nil:
         // Nothing remembers a subscription past its slot: one that ended (a
         // fired one-shot, a second cancel) reads like one that never was.
         throw ToolProblem("\(subscriptionID.rawValue) is not armed: it already ended, or you never had it", code: "notFound")

@@ -72,11 +72,6 @@ extension SessionStore {
           subscriptions[armed.slot.id] = .requestDeadline(deadline)
         case .requestStall:
           continue
-        case .parkReminder:
-          try db.execute(
-            sql: "DELETE FROM session_subscriptions WHERE session_id = ? AND subscription_id = ?",
-            arguments: [key, armed.slot.id.rawValue],
-          )
         }
       }
       var head = head
@@ -143,10 +138,7 @@ extension SessionStore {
 extension Sessions {
   static func generationState(_ key: String, in db: Database) throws -> GenerationState {
     let generation = try runtime(key, in: db).generation
-    switch try record(key, in: db).executor {
-    case .kernel, .modelGroup, .contractor: break
-    case .claudeCode: return GenerationState(generation: Int(generation), note: nil)
-    }
+    if try record(key, in: db).executor.isRetired { return GenerationState(generation: Int(generation), note: nil) }
     let payload = try String.fetchOne(
       db,
       sql: """

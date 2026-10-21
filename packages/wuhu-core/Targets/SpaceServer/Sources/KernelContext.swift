@@ -80,9 +80,9 @@ re-read, and keep working.
 // revision, so they hold still between compactions.
 func layoutPrompt(fixed: String, identity: String, record: SessionRecord, home: SessionHome) -> String {
   let model: String? = switch record.executor {
-  case let .kernel(specifier), let .claudeCode(specifier): "\(specifier.provider)/\(specifier.model)"
+  case let .kernel(specifier): "\(specifier.provider)/\(specifier.model)"
   case let .modelGroup(id, _): id
-  case .contractor: nil
+  case .retired: nil
   }
   let session = [identity, SessionPrompt.sessionCore(task: record.kind == .task, model: model), home.rendered]
     .joined(separator: "\n\n")

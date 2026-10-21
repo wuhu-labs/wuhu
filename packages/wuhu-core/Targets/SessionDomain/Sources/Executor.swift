@@ -4,11 +4,8 @@ import OrderedCollections
 public enum SessionExecutor: Hashable, Sendable, Codable {
   case kernel(ModelSpecifier)
   case modelGroup(id: String, effort: String)
-  // Decode-only: Start over on a kernel provider is the only way back.
-  case claudeCode(ModelSpecifier)
-  // Decode-only: sessions archived before contractors were removed still list,
-  // but nothing creates, runs, or rewrites one.
-  case contractor(name: String)
+  /// A session archived while it ran an executor this build does not have. Nothing creates, starts, restarts or rewrites one; its stored kind is kept because the apps label archived sessions by it.
+  case retired(kind: String)
 }
 
 public struct ExecutorSpecError: Error, Hashable, Sendable {
@@ -23,18 +20,15 @@ extension SessionExecutor {
   public var kind: String {
     switch self {
     case .kernel, .modelGroup: Self.kernelKind
-    case .claudeCode: Self.claudeCodeKind
-    case .contractor(let name): Self.contractorPrefix + name
+    case let .retired(kind): kind
     }
   }
 
   static let kernelKind = "kernel"
-  static let claudeCodeKind = "claude-code"
-  static let contractorPrefix = "contractor:"
 
   public var configJSON: String {
     switch self {
-    case .kernel(let model), .claudeCode(let model):
+    case .kernel(let model):
       JSONValue.object([
         "provider": .string(model.provider),
         "model": .string(model.model),
@@ -42,36 +36,28 @@ extension SessionExecutor {
       ]).jsonString()
     case let .modelGroup(id, effort):
       JSONValue.object(["modelGroup": .string(id), "effort": .string(effort)]).jsonString()
-    case .contractor:
-      // Nothing reads a contractor row's config any more.
+    case .retired:
       "{}"
     }
   }
 
   public init(kind: String, configJSON: String) throws {
-    if kind.hasPrefix(Self.contractorPrefix) {
-      self = .contractor(name: String(kind.dropFirst(Self.contractorPrefix.count)))
+    guard kind == Self.kernelKind else {
+      self = .retired(kind: kind)
       return
     }
     guard let json = JSONValue.parse(configJSON), var fields = json.object else {
       throw ExecutorSpecError("executor config is not a JSON object: \(configJSON)")
     }
-    switch kind {
-    case Self.kernelKind:
-      if let group = fields.removeValue(forKey: "modelGroup") {
-        guard let id = group.stringValue, !id.isEmpty,
-              let effort = fields.removeValue(forKey: "effort")?.stringValue, fields.isEmpty
-        else {
-          throw ExecutorSpecError("kernel group config wants only string modelGroup and effort")
-        }
-        self = .modelGroup(id: id, effort: effort)
-      } else {
-        self = .kernel(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
+    if let group = fields.removeValue(forKey: "modelGroup") {
+      guard let id = group.stringValue, !id.isEmpty,
+            let effort = fields.removeValue(forKey: "effort")?.stringValue, fields.isEmpty
+      else {
+        throw ExecutorSpecError("kernel group config wants only string modelGroup and effort")
       }
-    case Self.claudeCodeKind:
-      self = .claudeCode(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
-    default:
-      throw ExecutorSpecError("unknown executor: \(kind)")
+      self = .modelGroup(id: id, effort: effort)
+    } else {
+      self = .kernel(try ModelSpecifier(envelope: &fields, kind: kind, configJSON: configJSON))
     }
   }
 }
@@ -203,21 +189,20 @@ public struct ExecutorUnavailableError: Error, Equatable, Sendable, CustomString
 }
 
 extension SessionExecutor {
-  public var isRemoved: Bool {
+  public var isRetired: Bool {
     switch self {
-    case .claudeCode, .contractor: true
+    case .retired: true
     case .kernel, .modelGroup: false
     }
   }
 
   public func requireSupported() throws {
-    if case .claudeCode = self { throw ExecutorUnavailableError() }
+    if case .retired = self { throw ExecutorUnavailableError() }
   }
 }
 
 extension SessionCreationParams {
   static func validateExecutor(_ executor: String?) throws {
-    if executor == "claude-code" { throw ExecutorUnavailableError() }
     guard executor == nil || executor == "kernel" else {
       throw ExecutorSpecError("unknown executor: \(executor!)")
     }

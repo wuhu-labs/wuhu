@@ -49,9 +49,9 @@ struct ScriptSessionTests {
     }
   }
 
-  @Test func scriptsRejectRemovedExecutorWithoutCallingModelResolver() async throws {
+  @Test func scriptsRejectAnUnknownExecutorWithoutCallingModelResolver() async throws {
     try await withRig(resolveModelExecutor: { _, _, _ in
-      Issue.record("removed executor must not resolve a kernel model")
+      Issue.record("an unknown executor must not resolve a kernel model")
       throw ExecutorUnavailableError()
     }) { rig in
       let outcome = try await rig.evaluate("""
@@ -64,8 +64,8 @@ struct ScriptSessionTests {
       }
       """)
       #expect(outcome.object?["created"] == false)
-      #expect(outcome.object?["message"] == "executor no longer supported")
-      #expect(outcome.object?["code"] == "executorNoLongerSupported")
+      #expect(outcome.object?["message"] == "createSession: unknown executor: claude-code")
+      #expect(outcome.object?["code"] == "invalidArgument")
     }
   }
 

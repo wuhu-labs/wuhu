@@ -17,7 +17,7 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let root = try await sessions.createSession(group: .shared, title: "root", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      let root = try await createRetiredSession(in: space, title: "root", createdBy: "owner")
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let service = await SessionService(sessions: sessions, main: Hub(space: space), loopConfig: makeConfig(), beforeArchive: { id async throws in
         if id == child { _ = try await space.sessions.restart(root, executor: .kernel(.test), note: nil, modelRoute: nil) }

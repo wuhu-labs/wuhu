@@ -32,8 +32,9 @@ extension SessionStore {
     let key = id.rawValue
     return try await writer.read { db in
       let runtime = try Sessions.runtime(key, in: db)
-      if case .claudeCode = try Sessions.record(key, in: db).executor { return (Int(runtime.generation), []) }
-      return (Int(runtime.generation), try Sessions.transcript(key, in: db).items)
+      let generation = Int(runtime.generation)
+      if try Sessions.record(key, in: db).executor.isRetired { return (generation, []) }
+      return (generation, try Sessions.transcript(key, in: db).items)
     }
   }
 
@@ -53,7 +54,7 @@ extension SessionStore {
     ) { db, state in
       let runtime = try Sessions.runtime(key, in: db)
       let generation = Int(runtime.generation)
-      if case .claudeCode = try Sessions.record(key, in: db).executor {
+      if try Sessions.record(key, in: db).executor.isRetired {
         var next = state
         next.cursor = TranscriptCursor(generation: generation, position: -1)
         let reset = state.cursor?.generation != generation || state.cursor?.position != -1

@@ -40,6 +40,14 @@ import Testing
     ('cedar-lake-ember', 901, 'k2', 'ac_car01000', '2026-01-02T00:00:00.000Z');
   """
 
+  // Tables migration 002 removes: the removed executors' stores and the stores that predate the current schema.
+  static let dropped: Set = [
+    "claude_code_handovers", "claude_code_sessions", "claude_history_calls", "claude_history_items",
+    "claude_history_progress", "claude_history_seen", "contractor_entries", "contractor_rate_limits",
+    "contractor_slots", "contractors", "exec_jobs", "physical_sessions", "session_mirror",
+    "session_scope_context", "session_watches",
+  ]
+
   @Test func everyAdminStaysAnAdminThroughTheirPersonalGroup() async throws {
     let folder = try scratch()
     defer { try? FileManager.default.removeItem(at: folder) }
@@ -100,9 +108,9 @@ import Testing
     }
     _ = try Space.open(file: file)
     let reopened = try Self.shape(file)
-    #expect(reopened.filter { !retired.contains($0.key) } == expected)
+    #expect(reopened == expected)
     for table in retired {
-      #expect(reopened[table] == migrated[table])
+      #expect(reopened[table] == nil)
     }
   }
 
@@ -114,7 +122,7 @@ import Testing
     let file = try copy(to: folder, seeding: Self.people)
     let (before, userTables, sequence) = try DatabaseQueue(path: file.path).read { db in
       var rows: [String: (columns: [String], rows: [[DatabaseValue]])] = [:]
-      for table in try Self.tables(db) where table != "session_scope_context" {
+      for table in try Self.tables(db) where table != "session_scope_context" && !Self.dropped.contains(table) {
         let columns = try Self.columns(of: table, in: db).filter { !(table == "accounts" && $0 == "is_admin") }
         rows[table] = try (columns, Self.rows(table, columns, in: db))
       }

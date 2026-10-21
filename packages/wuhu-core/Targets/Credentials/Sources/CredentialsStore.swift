@@ -115,7 +115,6 @@ public struct CredentialsStore: Sendable {
       if contents != previous { try await save(contents) }
       let credential: ProviderCredential = switch stored {
       case let .apiKey(key): .apiKey(key)
-      case let .claudeCodeOAuth(token): .claudeCodeOAuth(token)
       case let .chatGPTOAuth(tokens): .chatGPT(accessToken: tokens.accessToken, accountID: tokens.accountID)
       }
       return CredentialBinding(credential: credential, identityEpoch: identity.epoch)

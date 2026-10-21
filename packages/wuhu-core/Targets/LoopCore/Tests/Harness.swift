@@ -10,7 +10,7 @@ import protocol MainHub.Main
 import class MainHub.SessionService
 import SessionDomain
 import SessionTools
-import SpaceCore
+@testable import SpaceCore
 import Synchronization
 import Testing
 import WuhuAI
@@ -71,6 +71,28 @@ func holds(
     }
     try? await clock.sleep(for: .milliseconds(2))
   }
+}
+
+// A session row only an old space carries: created on a model, then stamped with an executor this build no longer has.
+func createRetiredSession(
+  in space: Space,
+  title: String,
+  kind: SessionKind = .agent,
+  parent: SessionID? = nil,
+  createdBy: String,
+  executorKind: String = "contractor:retired",
+) async throws -> SessionID {
+  let id = try await space.sessions.createSession(
+    group: .shared, title: title, kind: kind, parent: parent, createdBy: createdBy, executor: .kernel(.test),
+  )
+  let retired = SessionExecutor.retired(kind: executorKind)
+  try await space.writer.write { db in
+    try db.execute(
+      sql: "UPDATE sessions SET executor = ?, executor_config = ? WHERE id = ?",
+      arguments: [retired.kind, retired.configJSON, id.rawValue],
+    )
+  }
+  return id
 }
 
 func withKernelDeps<R>(

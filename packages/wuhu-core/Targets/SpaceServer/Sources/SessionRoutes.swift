@@ -50,7 +50,6 @@ func addSessionRoutes(
       )
     }
     do {
-      if input.executor == "claude-code" { throw ExecutorUnavailableError() }
       var params = SessionCreationParams(
         executor: input.executor,
         modelGroup: input.modelGroup,
@@ -98,9 +97,9 @@ func addSessionRoutes(
         }
       }
       let (model, effort): (String?, String?) = switch executor {
-      case .kernel(let specifier), .claudeCode(let specifier): (specifier.model, specifier.effort)
+      case .kernel(let specifier): (specifier.model, specifier.effort)
       case let .modelGroup(_, effort): (route?.specifier.model, effort)
-      case .contractor: (nil, nil)
+      case .retired: (nil, nil)
       }
       return try Response.json(SessionCreateOutput(
         id: id.rawValue,
@@ -308,7 +307,6 @@ func addSessionRoutes(
       var params = SessionCreationParams(executor: input.executor, modelGroup: input.modelGroup, provider: input.provider, model: input.model, effort: input.effort)
       // A restart on the same provider keeps what it does not name; another
       // provider's model and effort never carry over.
-      if case .claudeCode = record.executor, input.provider == nil { throw ExecutorUnavailableError() }
       let current = record.executor.creationParams
       if params.modelGroup != nil || params.provider == nil || params.provider == current.provider {
         params = params.merged(over: current)
@@ -327,9 +325,9 @@ func addSessionRoutes(
         ).enqueued.count
       }
       let (model, effort): (String?, String?) = switch restart.executor {
-      case let .kernel(specifier), let .claudeCode(specifier): (specifier.model, specifier.effort)
+      case let .kernel(specifier): (specifier.model, specifier.effort)
       case let .modelGroup(_, effort): (route?.specifier.model, effort)
-      case .contractor: (nil, nil)
+      case .retired: (nil, nil)
       }
       return try Response.json(SessionRestartOutput(
         id: id.rawValue,
@@ -675,7 +673,6 @@ func addSessionRoutes(
     guard let id = sessionID(parameters) else { return unknownSession(parameters) }
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
     do {
-      if case .contractor = try await store.record(id).executor { return contractorSession(id) }
       let (generation, items) = try await store.transcriptSnapshot(id)
       return try Response.json(TranscriptReadOutput(generation: generation, items: items.map(itemJSON)))
     } catch {
@@ -695,11 +692,6 @@ func addSessionRoutes(
       cursor = nil
     default:
       return errorResponse(.badRequest, code: "invalidArgument", message: "pass generation and position together, or neither")
-    }
-    do {
-      if case .contractor = try await store.record(id).executor { return contractorSession(id) }
-    } catch {
-      return sessionErrorResponse(error)
     }
     return directStreamResponse(runtime: runtime, session: id, cursor: cursor, bounded: query["paged"] == "true", historyEpoch: query["epoch"])
   }
@@ -781,15 +773,6 @@ private func viewingVerdict(_ spelling: String?, space: Space, as principal: Pri
 
 private func unknownTimezone(_ timezone: String?) -> Response {
   errorResponse(.badRequest, code: "invalidArgument", message: "unknown timezone: \(timezone ?? "")")
-}
-
-func contractorSession(_ id: SessionID) -> Response {
-  errorResponse(
-    .conflict,
-    code: "contractorSession",
-    message: "session \(id.rawValue) ran on the removed contractor executor; its transcript is no longer served",
-    hint: "start it over on a model to use it again: wuhu session restart \(id.rawValue) --provider <p> --model <m>",
-  )
 }
 
 func unknownSession(_ parameters: RouteParameters) -> Response {
@@ -1000,10 +983,10 @@ private func notificationPayload(_ record: NotificationRecord) -> NotificationPa
 
 private func restartOpening(executor: SessionExecutor, record: SessionRecord, at now: Date) -> String {
   let spec: String = switch executor {
-  case let .kernel(model), let .claudeCode(model):
+  case let .kernel(model):
     "\(executor.kind) \(model.provider)/\(model.model) (\(model.effort))"
   case let .modelGroup(id, effort): "kernel model group \(id) (\(effort))"
-  case .contractor:
+  case .retired:
     executor.kind
   }
   let conversation = record.kind == .task ? "your DM with your parent" : "your box"
@@ -1015,11 +998,11 @@ private func restartOpening(executor: SessionExecutor, record: SessionRecord, at
 extension SessionExecutor {
   fileprivate var creationParams: SessionCreationParams {
     switch self {
-    case let .kernel(model), let .claudeCode(model):
+    case let .kernel(model):
       SessionCreationParams(provider: model.provider, model: model.model, effort: model.effort)
     case let .modelGroup(id, effort):
       SessionCreationParams(modelGroup: id, effort: effort)
-    case .contractor:
+    case .retired:
       SessionCreationParams()
     }
   }

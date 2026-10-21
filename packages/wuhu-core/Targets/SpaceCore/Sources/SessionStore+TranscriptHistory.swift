@@ -56,7 +56,7 @@ extension SessionStore {
       if let expected, expected != Int(generation) {
         throw TranscriptHistoryError.generationChanged(expected: expected, actual: Int(generation))
       }
-      if case .claudeCode = try Sessions.record(key, in: db).executor {
+      if try Sessions.record(key, in: db).executor.isRetired {
         return TranscriptHistoryPage(generation: Int(generation), entries: [], origins: [], before: nil, hasEarlier: false, headPosition: nil)
       }
       let headValue: Int64? = try SessionPointerRow

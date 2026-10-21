@@ -70,9 +70,8 @@ extension ProviderCatalog {
     switch (provider.dialect, credential) {
     case let (.codex, .chatGPT(token, account)):
       guard !token.isEmpty, !account.isEmpty else { throw CatalogError.missingCredential(provider: specifier.provider) }
-    case let (.responses, .apiKey(key)), let (.anthropic, .apiKey(key)), let (.claude, .apiKey(key)):
+    case let (.responses, .apiKey(key)), let (.anthropic, .apiKey(key)):
       guard !key.isEmpty else { throw CatalogError.missingCredential(provider: specifier.provider) }
-    case (.claude, _): throw CatalogError.claudeAPIKeyRequired(provider: specifier.provider)
     default: throw CatalogError.credentialMismatch(provider: specifier.provider)
     }
   }

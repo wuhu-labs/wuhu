@@ -1932,8 +1932,8 @@ extension Command {
     omitted fields keep the session's current spec, so a bare restart is a
     pure wipe; naming another provider keeps nothing of the old model. the
     resulting spec is validated exactly as `session create` validates a new
-    one. a session left from the removed contractor executor comes back only
-    this way, with --provider and --model.
+    one. a live session left on an executor this build no longer has comes
+    back only this way, with --provider and --model.
 
     --message posts an opening message so the fresh session starts working.
     \(exitCodes)

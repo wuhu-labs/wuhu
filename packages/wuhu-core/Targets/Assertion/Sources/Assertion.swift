@@ -74,8 +74,8 @@ public struct SignedAssertion: Hashable, Sendable {
           let signature = base64URLDecoded(parts[2]),
           let payload = JSONValue.parse(String(decoding: payloadData, as: UTF8.self)),
           let wire = try? JSONValueDecoder().decode(WireClaims.self, from: payload),
-          // A session claim scoped an assertion to one contractor session; a
-          // server without contractors refuses one rather than widen it.
+          // A session claim scoped an assertion to one session; this server
+          // refuses one rather than widen it.
           payload.object?["session"] == nil
     else { return nil }
     self.claims = AssertionClaims(

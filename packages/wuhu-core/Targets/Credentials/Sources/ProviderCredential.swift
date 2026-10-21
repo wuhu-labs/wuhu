@@ -7,7 +7,6 @@
 public enum ProviderCredential: Sendable, Hashable {
   case apiKey(String)
   case chatGPT(accessToken: String, accountID: String)
-  case claudeCodeOAuth(String)
 }
 
 public struct CredentialBinding: Sendable {

@@ -105,7 +105,6 @@ public struct SubscriptionSlot: Hashable, Sendable, Codable {
   public enum Kind: Hashable, Sendable, Codable {
     case observe(sql: String, throttleSeconds: Double)
     case timer(TimerSchedule, message: String)
-    case parkReminder(request: RequestID)
     case requestDeadline(request: RequestID, task: SessionID)
     case requestStall(RequestStall)
   }

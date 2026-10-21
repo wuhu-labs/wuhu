@@ -24,7 +24,7 @@ import Testing
           try await ContinuousClock().sleep(for: .seconds(3600))
         } catch is CancellationError {
           let child = try await Task {
-            let child = try await sessions.createSession(group: .shared, title: "late child", kind: .task, parent: root, createdBy: root.rawValue, executor: .contractor(name: "retired"))
+            let child = try await createRetiredSession(in: space, title: "late child", kind: .task, parent: root, createdBy: root.rawValue)
             _ = try await sessions.enqueue(child, input: Fix.message("late work"))
             return child
           }.value
@@ -156,7 +156,7 @@ import Testing
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let requester = try await sessions.createSession(group: .shared, title: "requester", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      let requester = try await createRetiredSession(in: space, title: "requester", createdBy: "owner")
       let root = try await sessions.createSession(group: .shared, title: "root", kind: .task, parent: requester, createdBy: requester.rawValue, executor: .kernel(.test))
       let child = try await sessions.createSession(group: .shared, title: "child", kind: .task, parent: root, createdBy: root.rawValue, executor: .kernel(.test))
       let rootRequest = MessageID("root-request")

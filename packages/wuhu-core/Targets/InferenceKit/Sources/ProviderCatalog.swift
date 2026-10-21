@@ -35,7 +35,6 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
   case invalidTransport(provider: String)
   case invalidCacheWarming(String)
   case invalidOIDCDialect(provider: String)
-  case claudeAPIKeyRequired(provider: String)
   case invalidOpaqueReplay(provider: String, value: String)
 
   public var description: String {
@@ -56,8 +55,6 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
       "invalid cacheWarming configuration: \(reason)"
     case let .invalidOpaqueReplay(provider, value):
       "invalid opaqueReplay \"\(value)\" for provider \(provider); expected affine or none"
-    case let .claudeAPIKeyRequired(provider):
-      "claude provider needs an API key; Claude Code tokens are only usable through the gateway: \(provider)"
     case let .invalidOIDCDialect(provider):
       "OIDC authentication is unsupported for Codex providers: \(provider)"
     case let .invalidEndpoint(provider): "provider endpoint must be an HTTP(S) URL without user information: \(provider)"
@@ -216,7 +213,7 @@ public struct ProviderCatalog: Sendable {
       switch provider.dialect {
       case .responses:
         endpoint = OpenAIGPTEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: token, promptCacheKey: cacheKey)
-      case .anthropic, .claude:
+      case .anthropic:
         endpoint = OIDCAnthropicEndpoint(model: specifier.model, baseURL: provider.baseURL, token: token, deepSeek: specifier.provider == "deepseek", replayScope: replayScope, routeEpoch: routeEpoch)
       case .codex:
         throw .invalidInput(status: 422, body: CatalogError.invalidOIDCDialect(provider: specifier.provider).description)
@@ -247,10 +244,6 @@ public struct ProviderCatalog: Sendable {
     let cacheKey = replayCacheKey(session: session, bindingIdentity: bindingIdentity, routeEpoch: routeEpoch)
     let endpoint: any ModelEndpoint
     switch (provider.dialect, credential) {
-    case (.claude, .claudeCodeOAuth), (.claude, .chatGPT):
-      throw .invalidInput(status: 401, body: CatalogError.claudeAPIKeyRequired(provider: specifier.provider).description)
-    case let (.claude, .apiKey(key)):
-      endpoint = AnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key, promptCache: .oneHour)
     case let (.anthropic, .apiKey(key)) where specifier.provider == "deepseek":
       endpoint = DeepSeekAnthropicEndpoint(model: specifier.model, replayScope: replayScope, routeEpoch: routeEpoch, baseURL: provider.baseURL, apiKey: key)
     case let (.anthropic, .apiKey(key)):
@@ -278,8 +271,7 @@ public struct ProviderCatalog: Sendable {
           await receiveCodexResponseHeaders(specifier.provider, headers)
         },
       )
-    case (.codex, .apiKey), (.anthropic, .chatGPT), (.responses, .chatGPT),
-         (.anthropic, .claudeCodeOAuth), (.responses, .claudeCodeOAuth), (.codex, .claudeCodeOAuth):
+    case (.codex, .apiKey), (.anthropic, .chatGPT), (.responses, .chatGPT):
       throw .invalidInput(
         status: 401,
         body: CatalogError.credentialMismatch(provider: specifier.provider).description,

@@ -33,23 +33,24 @@ private func directMessages(_ space: Space, to session: SessionID) async throws 
 
 @Suite(.deterministicDependencies)
 struct SessionTreeToolTests {
-  @Test func createSessionRejectsRemovedExecutorAsTypedFailure() async throws {
+  @Test func createSessionRejectsAnUnknownExecutorAsTypedFailure() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let parent = try await makeSession(space, name: "parent")
       var world = ToolWorld(executor: creating(space), session: parent)
-      for arguments: JSONValue in [
-        .object(["title": "removed", "executor": "claude-code"]),
-        .object(["title": "removed", "template": "legacy"]),
-      ] {
-        _ = try await space.fs(.shared).write("/templates/legacy/template.json", Data(#"{"executor":"claude-code","provider":"p","model":"m"}"#.utf8), ifMatch: nil)
+      func refused(_ arguments: JSONValue) async throws -> ToolFailure {
         guard case let .failure(error) = try await world.run("create_session", ToolArguments(arguments)) else {
-          Issue.record("unsupported executor created a session")
-          continue
+          throw Mismatch("an unknown executor created a session")
         }
-        #expect(error.code == "executorNoLongerSupported")
-        #expect(error.message == "executor no longer supported")
+        return error
       }
+      let direct = try await refused(.object(["title": "removed", "executor": "claude-code"]))
+      #expect(direct.code == "invalidArgument")
+      #expect(direct.message == "create_session: unknown executor: claude-code")
+      _ = try await space.fs(.shared).write("/templates/legacy/template.json", Data(#"{"executor":"claude-code","provider":"p","model":"m"}"#.utf8), ifMatch: nil)
+      let templated = try await refused(.object(["title": "removed", "template": "legacy"]))
+      #expect(templated.code == "invalidArgument")
+      #expect(templated.message == "create_session: template legacy: unknown executor: claude-code")
     }
   }
 

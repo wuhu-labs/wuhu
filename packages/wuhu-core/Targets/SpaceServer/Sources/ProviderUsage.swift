@@ -143,7 +143,7 @@ struct UsageRefresher: Sendable {
       case .codex:
         guard board.claimRefresh(id, now: date.now, interval: Self.interval) else { continue }
         await refreshCodex(id, provider: provider)
-      case .claude, .anthropic, .responses:
+      case .anthropic, .responses:
         continue
       }
     }

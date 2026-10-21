@@ -347,8 +347,8 @@ extension SessionStore {
       // loop is about to do (after an interrupt).
       if record.work == .errored || record.hold == .interrupted {
         let transcript = switch record.executor {
-        case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
-        case .claudeCode: Transcript()
+        case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
+        case .retired: Transcript()
         }
         try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
       }
@@ -403,8 +403,8 @@ extension SessionStore {
         let transcript: Transcript
         do {
           transcript = switch record?.executor {
-          case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
-          case .claudeCode, nil: Transcript()
+          case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
+          case .retired, nil: Transcript()
           }
         } catch where isUnreadableSessionData(error) {
           transcript = Transcript()
@@ -448,6 +448,7 @@ extension SessionStore {
     try await writer.write { db in
       let record = try Sessions.record(key, in: db)
       guard case let .archived(graceExpiresAt) = record.lifecycle else { return }
+      try record.executor.requireSupported()
       guard nowDate < graceExpiresAt else { throw SessionStoreError.archiveGraceExpired(key) }
       try db.execute(
         sql: "UPDATE sessions SET lifecycle = 'live', grace_expires_at = NULL, last_activity_at = ? WHERE id = ?",

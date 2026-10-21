@@ -80,7 +80,7 @@ extension Hub {
     } catch let error as ExecutorUnavailableError {
       throw error
     } catch let error as ExecutorSpecError {
-      throw ToolProblem(error.message)
+      throw ToolProblem(error.message, code: "invalidArgument")
     } catch let error as CatalogError {
       throw ToolProblem(error.description, code: error.code)
     } catch {

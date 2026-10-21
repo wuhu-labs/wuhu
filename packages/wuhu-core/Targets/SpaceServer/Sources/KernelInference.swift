@@ -75,7 +75,7 @@ func kernelInference(
         route = held
         model = try selectedCatalog.validateRoute(held, group: id, effort: effort)
         try await routeWaitOrSwitch(held, session: request.sessionID, catalog: selectedCatalog, usage: usage)
-      case .claudeCode, .contractor:
+      case .retired:
         preconditionFailure("kernel inference for \(record.executor.kind) session \(request.sessionID.rawValue)")
       }
       resolved = try await selectedCatalog.resolve(model, session: request.sessionID, routeEpoch: request.transcript.replayBinding?.epoch ?? route.epoch)

@@ -85,28 +85,24 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect(document.providers["codex"]?.originator == "wuhu")
   }
 
-  @Test func claudeCodeCredentialsCannotReachKernelInference() async throws {
-    let document = try ModelsDocument(json: Data("""
-    {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
-      "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
-        "efforts": ["high"], "defaultEffort": "high"}}}}
-    """.utf8))
-    let catalog = ProviderCatalog(document: document, credentials: CredentialResolver { _ in
-      return .claudeCodeOAuth("fixture")
-    })
-    await #expect(throws: InferenceError.invalidInput(status: 401, body: CatalogError.claudeAPIKeyRequired(provider: "claude").description)) {
-      try await catalog.resolve(.init(provider: "claude", model: "opus", effort: "high"), session: SessionID("s"))
+  @Test func theRemovedClaudeDialectNoLongerParses() {
+    #expect(throws: CatalogError.invalidDocument) {
+      try ModelsDocument(json: Data("""
+      {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
+        "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
+          "efforts": ["high"], "defaultEffort": "high"}}}}
+      """.utf8))
     }
   }
 
-  @Test func claudeDialectWithAPIKeyUsesAnthropicMessages() async throws {
+  @Test func anthropicDialectWithAPIKeyUsesAnthropicMessages() async throws {
     let document = try ModelsDocument(json: Data("""
-    {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
+    {"anthropic": {"dialect": "anthropic", "baseURL": "https://api.anthropic.com/v1",
       "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
         "efforts": ["high"], "defaultEffort": "high"}}}}
     """.utf8))
     let catalog = ProviderCatalog(document: document, credentials: CredentialResolver { _ in .apiKey("test-key") })
-    let resolved = try await catalog.resolve(.init(provider: "claude", model: "opus", effort: "high"), session: SessionID("s"))
+    let resolved = try await catalog.resolve(.init(provider: "anthropic", model: "opus", effort: "high"), session: SessionID("s"))
     #expect(resolved.endpoint is AnthropicEndpoint)
   }
 

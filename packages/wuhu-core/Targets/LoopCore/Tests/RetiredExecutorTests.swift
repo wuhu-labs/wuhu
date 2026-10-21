@@ -2,18 +2,18 @@ import Dependencies
 import Foundation
 @testable import LoopCore
 import SessionDomain
-import SpaceCore
+@testable import SpaceCore
 import Testing
 
-// A session left from the removed contractor executor: the service never
-// materializes it, every verb acts on the store, and a restart onto a model
-// is the way back.
-@Suite struct RetiredContractorTests {
-  @Test func undrainedContractorInputDoesNotRequireForceToArchive() async throws {
+// A session left from an executor this build no longer has: the service never
+// materializes it, the verbs read the store, and a restart onto a model is the
+// way back.
+@Suite struct RetiredExecutorTests {
+  @Test func undrainedRetiredInputDoesNotRequireForceToArchive() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(group: .shared, title: "retired", kind: .agent, createdBy: "owner", executor: .contractor(name: "retired"))
+      let sid = try await createRetiredSession(in: space, title: "retired", createdBy: "owner")
       _ = try await sessions.enqueue(sid, input: Fix.message("queued"))
       try await runService(space, makeConfig()) { service in
         try await service.archive(sid)
@@ -24,14 +24,11 @@ import Testing
     }
   }
 
-  @Test func bootAndWakeNeverMaterializeALeftoverContractorSession() async throws {
+  @Test func bootAndWakeNeverMaterializeALeftoverRetiredSession() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(
-        group: .shared,
-        title: "c", kind: .agent, createdBy: "morgan", executor: .contractor(name: "retired"),
-      )
+      let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
       _ = try await sessions.enqueue(sid, input: Fix.message("pre-boot backlog"))
       #expect(try await sessions.bootSessions().isEmpty)
 
@@ -49,32 +46,40 @@ import Testing
     }
   }
 
-  @Test func theVerbsActOnTheStoreAndARestartOntoAModelIsTheWayBack() async throws {
+  @Test func theVerbsRefuseWhatWouldRunItAndARestartOntoAModelIsTheWayBack() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let sid = try await sessions.createSession(
-        group: .shared,
-        title: "c", kind: .agent, createdBy: "morgan", executor: .contractor(name: "retired"),
-      )
+      let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
       try await runService(space, makeConfig()) { service in
         try await service.interrupt(sid)
-        #expect(try await sessions.record(sid).hold == .interrupted)
-        try await service.resume(sid)
         #expect(try await sessions.record(sid).hold == .normal)
-
-        try await service.archive(sid)
-        guard case .archived = try await sessions.record(sid).lifecycle else {
-          Issue.record("expected archived lifecycle")
-          return
-        }
-        try await service.unarchive(sid)
-        #expect(try await sessions.record(sid).lifecycle == .live)
+        await #expect(throws: ExecutorUnavailableError()) { try await service.resume(sid) }
 
         let restart = try await service.restart(sid, executor: .kernel(.test), note: nil)
         #expect(restart.executor == .kernel(.test))
         #expect(restart.generation == 1)
         #expect(try await sessions.record(sid).executor == .kernel(.test))
+      }
+    }
+  }
+
+  @Test func anArchivedRetiredSessionIsNeverUnarchived() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await createRetiredSession(in: space, title: "c", createdBy: "morgan")
+      try await runService(space, makeConfig()) { service in
+        try await service.archive(sid)
+        guard case .archived = try await sessions.record(sid).lifecycle else {
+          Issue.record("expected archived lifecycle")
+          return
+        }
+        await #expect(throws: ExecutorUnavailableError()) { try await service.unarchive(sid) }
+        guard case .archived = try await sessions.record(sid).lifecycle else {
+          Issue.record("expected the refusal to leave it archived")
+          return
+        }
       }
     }
   }

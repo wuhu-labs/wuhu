@@ -8,30 +8,18 @@ func sessionContext(
   store: SessionStore,
   budget: @Sendable (SessionID) async -> ContextBudget,
 ) async -> SessionContext? {
-  switch record.executor {
-  case .claudeCode: return nil
-  case .kernel, .modelGroup:
-    guard let transcript = try? await store.transcript(record.id) else { return nil }
-    let budget = await budget(record.id)
-    let maxTokens = budget.usableTokens
-    let used = transcript.estimatedContextTokens(images: budget.images)
-    return SessionContext(
-      usedTokens: used,
-      maxTokens: maxTokens,
-      percentage: percentage(used: used, maxTokens: maxTokens),
-      updatedAt: nil,
-      source: .estimate,
-    )
-  case .contractor:
-    guard let report = try? await store.context(record.id) else { return nil }
-    return SessionContext(
-      usedTokens: report.usedTokens,
-      maxTokens: report.maxTokens,
-      percentage: percentage(used: report.usedTokens, maxTokens: report.maxTokens),
-      updatedAt: report.reportedAt.timeIntervalSince1970,
-      source: .reported,
-    )
-  }
+  guard !record.executor.isRetired else { return nil }
+  guard let transcript = try? await store.transcript(record.id) else { return nil }
+  let budget = await budget(record.id)
+  let maxTokens = budget.usableTokens
+  let used = transcript.estimatedContextTokens(images: budget.images)
+  return SessionContext(
+    usedTokens: used,
+    maxTokens: maxTokens,
+    percentage: percentage(used: used, maxTokens: maxTokens),
+    updatedAt: nil,
+    source: .estimate,
+  )
 }
 
 private func percentage(used: Int, maxTokens: Int) -> Double {

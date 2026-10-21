@@ -79,7 +79,7 @@ import WuhuAI
 
   @Test func firstPartyDefaultsRequireDialectAndExactHTTPSOrigin() throws {
     let models: [String: ModelsDocument.Model] = [:]
-    for (dialect, host) in [(ModelsDocument.Dialect.anthropic, "api.anthropic.com"), (.claude, "api.anthropic.com"), (.responses, "api.openai.com"), (.codex, "chatgpt.com")] {
+    for (dialect, host) in [(ModelsDocument.Dialect.anthropic, "api.anthropic.com"), (.responses, "api.openai.com"), (.codex, "chatgpt.com")] {
       let provider = ModelsDocument.Provider(dialect: dialect, baseURL: URL(string: "https://\(host)/v1")!, models: models)
       #expect(provider.effectiveOpaqueReplay == .affine)
       for url in ["http://\(host)", "https://\(host).proxy.test", "https://\(host):444", "https://user@\(host)", "https://proxy.test"] {
@@ -107,16 +107,14 @@ import WuhuAI
   }
 
   @Test func anthropicNoReplayAcceptsEveryListedEffort() throws {
-    for dialect in [ModelsDocument.Dialect.anthropic, .claude] {
-      for explicit in [true, false] {
-        let thinking = ModelsDocument.Model(maxInput: 1000, maxOutput: 100, efforts: ["none", "high"], defaultEffort: "none")
-        let provider = ModelsDocument.Provider(dialect: dialect, baseURL: URL(string: "https://proxy.test")!, opaqueReplay: explicit ? ModelsDocument.OpaqueReplay.none : nil, models: ["model": thinking])
-        let document = ModelsDocument(providers: ["proxy": provider])
-        #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
-        let catalog = ProviderCatalog(document: document, credentials: .unavailable)
-        try catalog.validate(.init(provider: "proxy", model: "model", effort: "high"))
-        try catalog.validate(.init(provider: "proxy", model: "model", effort: "none"))
-      }
+    for explicit in [true, false] {
+      let thinking = ModelsDocument.Model(maxInput: 1000, maxOutput: 100, efforts: ["none", "high"], defaultEffort: "none")
+      let provider = ModelsDocument.Provider(dialect: .anthropic, baseURL: URL(string: "https://proxy.test")!, opaqueReplay: explicit ? ModelsDocument.OpaqueReplay.none : nil, models: ["model": thinking])
+      let document = ModelsDocument(providers: ["proxy": provider])
+      #expect(try ModelsDocument(json: JSONEncoder().encode(document)) == document)
+      let catalog = ProviderCatalog(document: document, credentials: .unavailable)
+      try catalog.validate(.init(provider: "proxy", model: "model", effort: "high"))
+      try catalog.validate(.init(provider: "proxy", model: "model", effort: "none"))
     }
   }
 

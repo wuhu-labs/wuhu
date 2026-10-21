@@ -166,8 +166,6 @@ public struct SubscriptionFiring: Sendable {
       break
     case let .timer(schedule, message):
       try await fireTimer(subscription, schedule: schedule, message: message, due: due, now: now)
-    case .parkReminder:
-      try await firePark(subscription)
     case let .requestDeadline(request, task):
       try await fireDeadline(subscription, request: request, task: task, now: now)
     case .requestStall:
@@ -255,12 +253,6 @@ public struct SubscriptionFiring: Sendable {
       content: .init(text: text),
     )
     try await deliver(subscription, notification: notification, advance: advance)
-  }
-
-  // Only the removed contractor executor armed park rows; a leftover one
-  // retires unfired, since every live session nags from its environment.
-  private func firePark(_ subscription: ArmedSubscription) async throws {
-    try await retire(subscription)
   }
 
   private func fireDeadline(

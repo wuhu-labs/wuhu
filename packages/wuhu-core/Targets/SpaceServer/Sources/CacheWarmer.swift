@@ -74,7 +74,7 @@ struct CacheWarmer: Sendable {
         throw CatalogError.modelRouteInvalid(group: id, member: "<missing>")
       }
       model = try ProviderCatalog(document: document, credentials: .unavailable).validateRoute(route, group: id, effort: effort)
-    case .claudeCode, .contractor: return nil
+    case .retired: return nil
     }
     @Dependency(\.date.now) var now
     if let failure = try await space.sessions.modelRoute(record.id)?.failure, !failure.refusing, failure.evidenceExpiresAt > now { return nil }

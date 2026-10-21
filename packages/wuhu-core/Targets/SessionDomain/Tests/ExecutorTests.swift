@@ -12,13 +12,12 @@ import Testing
     #expect(decoded == executor)
   }
 
-  @Test func claudeCodeRoundTripsThroughTheColumnPair() throws {
-    let executor = SessionExecutor.claudeCode(Self.model)
-    #expect(executor.kind == "claude-code")
-    #expect(try SessionExecutor(kind: executor.kind, configJSON: executor.configJSON) == executor)
-    #expect(throws: ExecutorSpecError.self) {
-      try SessionExecutor(kind: "claude-code", configJSON: #"{"provider":"a","model":"m"}"#)
-    }
+  @Test func aRetiredKindKeepsItsStoredString() throws {
+    let decoded = try SessionExecutor(kind: "claude-code", configJSON: "{}")
+    #expect(decoded == .retired(kind: "claude-code"))
+    #expect(decoded.kind == "claude-code")
+    #expect(decoded.isRetired)
+    #expect(throws: ExecutorUnavailableError()) { try decoded.requireSupported() }
   }
 
   @Test func anArchivedContractorRowStillDecodes() throws {
@@ -26,14 +25,13 @@ import Testing
       kind: "contractor:opus-box",
       configJSON: #"{"model":"claude-opus-5","effort":"max","extra":{"cwd":"/work"}}"#,
     )
-    #expect(decoded == .contractor(name: "opus-box"))
+    #expect(decoded == .retired(kind: "contractor:opus-box"))
     #expect(decoded.kind == "contractor:opus-box")
   }
 
-  @Test func unknownExecutorsAreRefused() {
-    #expect(throws: ExecutorSpecError.self) {
-      try SessionExecutor(kind: "daemon", configJSON: #"{"provider":"a","model":"m","effort":"high"}"#)
-    }
+  @Test func anUnknownKindDecodesAsRetired() throws {
+    let decoded = try SessionExecutor(kind: "daemon", configJSON: #"{"provider":"a","model":"m","effort":"high"}"#)
+    #expect(decoded == .retired(kind: "daemon"))
   }
 
   @Test func kernelConfigRejectsJunk() {
@@ -75,19 +73,13 @@ import Testing
 
   @Test func theProviderDialectPicksTheExecutor() async throws {
     func resolveModelExecutor(_ provider: String, _ model: String, _ effort: String?) async throws -> SessionExecutor {
-      let specifier = ModelSpecifier(provider: provider, model: model, effort: effort ?? "default")
-      return provider == "claude" ? .claudeCode(specifier) : .kernel(specifier)
+      .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "default"))
     }
 
     let kernel = try await SessionExecutor.resolve(
       SessionCreationParams(provider: "a", model: "m"), resolveModelExecutor: resolveModelExecutor,
     )
     #expect(kernel == .kernel(ModelSpecifier(provider: "a", model: "m", effort: "default")))
-    await #expect(throws: ExecutorUnavailableError()) {
-      try await SessionExecutor.resolve(
-        SessionCreationParams(provider: "claude", model: "opus"), resolveModelExecutor: resolveModelExecutor,
-      )
-    }
     await #expect(throws: ExecutorSpecError.self) {
       try await SessionExecutor.resolve(SessionCreationParams(model: "m"), resolveModelExecutor: resolveModelExecutor)
     }

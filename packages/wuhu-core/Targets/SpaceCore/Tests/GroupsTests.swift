@@ -236,7 +236,7 @@ import Testing
     await #expect(throws: SpaceError.personalGroupEdge(alicesGroup.rawValue)) {
       try await space.removeEdge(src: alicesGroup, dst: alicesGroup, kind: .admin)
     }
-    await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .contractor, name: "bot", admin: true) }
+    await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .machine, name: "bot", admin: true) }
     _ = try await space.removeAccount(alice.id)
     #expect(try await !space.isHumanAdmin(alice.id, of: alicesGroup))
   }

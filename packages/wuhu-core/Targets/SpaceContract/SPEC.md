@@ -201,7 +201,7 @@ local timezone, the SPA the browser's); absent means UTC — never
 server-local.
 
 - **`ToolRostersOutput`** (`GET /v1/session-tools?executor=kernel`): the kernel tool roster. Omitting `executor` returns this one roster. `ToolDescriptor.parameters` is each tool's parameter JSON Schema. The route is distinct from `/v1/tools`, the space toolbox.
-- **`SessionCreateInput`**: all provider dialects run in the kernel. Optional `executor` accepts `kernel`; `claude-code` returns HTTP 422 `executorNoLongerSupported`, as do templates and restart inputs naming that executor. `effort` absent means the model's declared default
+- **`SessionCreateInput`**: all provider dialects run in the kernel. Optional `executor` accepts `kernel`; any other value returns HTTP 422 `invalidArgument` with message "unknown executor: <value>", as do templates and restart inputs naming one. `effort` absent means the model's declared default
   effort; `SessionCreateOutput.effort` reports the resolved value. The model
   specifier is validated against the space's `/models.json` — unknown
   provider/model/effort is rejected before the session row exists, and so is a
@@ -223,8 +223,8 @@ server-local.
   field is optional and an omitted one keeps the session's live spec, so an
   empty body is a pure transcript wipe. A restart on the same provider keeps
   what it does not name; naming another provider carries nothing over. A
-  session left from the removed contractor executor has no spec to keep, so it
-  needs `provider` and `model`. The resolved spec is validated
+  session left from an executor this build no longer has has no spec to keep,
+  so it needs `provider` and `model`. The resolved spec is validated
   exactly as `SessionCreateInput` is. `message`, when given, is posted right
   after the restart as an ordinary input, and `SessionRestartOutput.queued`
   reports its delivery count (absent when no message was carried);

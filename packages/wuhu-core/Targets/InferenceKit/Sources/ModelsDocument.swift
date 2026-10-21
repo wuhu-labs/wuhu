@@ -93,11 +93,10 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     case anthropic
     case responses
     case codex
-    case claude
 
     var images: ImageLimits {
       switch self {
-      case .anthropic, .claude: .claude
+      case .anthropic: .claude
       case .responses, .codex: .openAI
       }
     }
@@ -174,7 +173,7 @@ extension ModelsDocument.Provider {
           baseURL.port == nil || baseURL.port == 443 else { return .none }
     let host = baseURL.host?.lowercased()
     return switch dialect {
-    case .anthropic, .claude: host == "api.anthropic.com" ? .affine : .none
+    case .anthropic: host == "api.anthropic.com" ? .affine : .none
     case .responses: host == "api.openai.com" ? .affine : .none
     case .codex: host == "chatgpt.com" ? .affine : .none
     }

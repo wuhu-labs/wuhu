@@ -207,10 +207,6 @@ import Testing
       let notYours = try await send(p, .post, "/v1/tools/query?identity=\(foreign.name)", sql)
       #expect(notYours.status == .forbidden)
       #expect(try await code(notYours) == "identityNotYours")
-      let (contractor, _) = try await p.harness.enrolledBearer(account: p.key.account, capabilities: [.contractor])
-      let keyless = try await send(p, .post, "/v1/tools/query?identity=\(second.name)", sql, bearer: contractor)
-      #expect(keyless.status == .forbidden)
-      #expect(try await code(keyless) == "personaRequiresDevice")
 
       let dm = try await p.harness.store.post(
         .dm(with: second.name), messageID: MessageID("m1"), sender: Sender(id: foreign.name, timeZone: .gmt),

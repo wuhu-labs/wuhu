@@ -32,18 +32,6 @@ enum WellKnownModels {
         }
       }
     },
-    "claude": {
-      "dialect": "claude",
-      "baseURL": "https://api.anthropic.com/v1",
-      "models": {
-        "claude-sonnet-5": {
-          "maxInput": 1000000,
-          "maxOutput": 64000,
-          "efforts": ["low", "medium", "high", "max"],
-          "defaultEffort": "high"
-        }
-      }
-    },
     "openai": {
       "dialect": "responses",
       "baseURL": "https://api.openai.com/v1",

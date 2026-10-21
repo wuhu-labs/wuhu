@@ -199,7 +199,7 @@ private enum ProviderCatalogFixture {
   static func document(_ provider: Provider) -> ModelsDocument {
     let entry = switch provider {
     case .mimo: #""dialect":"anthropic","baseURL":"https://api.xiaomimimo.com/anthropic","opaqueReplay":"affine""#
-    case .claude: #""dialect":"claude","baseURL":"https://api.anthropic.com""#
+    case .claude: #""dialect":"anthropic","baseURL":"https://api.anthropic.com""#
     }
     return try! ModelsDocument(json: Data("""
     {"\(provider.id)":{\(entry),"models":{"\(provider.model)":{"maxInput":1048576,"maxOutput":65536,"efforts":["medium"],"defaultEffort":"medium"}}}}

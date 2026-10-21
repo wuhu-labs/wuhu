@@ -25,7 +25,7 @@ private let codexAndClaudeModels = """
     "models": {"gpt": {"maxInput": 1000, "maxOutput": 100, "efforts": ["high"], "defaultEffort": "high"}}
   },
   "claude": {
-    "dialect": "claude",
+    "dialect": "anthropic",
     "baseURL": "https://api.anthropic.com",
     "models": {"opus": {"maxInput": 1000, "maxOutput": 100, "efforts": ["high"], "defaultEffort": "high"}}
   },
@@ -170,7 +170,7 @@ private let codexAndClaudeModels = """
         await refresher.refreshStale()
       }
       #expect(seen.withLock { $0 } == [URLRequestSummary(url: "https://chatgpt.com/backend-api/wham/usage", account: "acct-42", authorization: "Bearer jwt")])
-      #expect(resolved.withLock { $0 } == ["chatgpt"], "the second fresh pass reads no credentials and Claude is never probed")
+      #expect(resolved.withLock { $0 } == ["chatgpt"], "the second fresh pass reads no credentials and only Codex is probed")
       #expect(board.usage("chatgpt")?.plan == "pro")
       #expect(board.usage("chatgpt")?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546)])
       #expect(board.usage("claude") == nil)

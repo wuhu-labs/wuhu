@@ -39,11 +39,11 @@ import Testing
     }
   }
 
-  @Test func claudeDialectCreatesAKernelSession() async throws {
+  @Test func aProviderFromModelsJSONCreatesAKernelSession() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
       _ = try await harness.space.fs(.shared).write("/models.json", Data("""
-      {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
+      {"claude": {"dialect": "anthropic", "baseURL": "https://api.anthropic.com/v1",
         "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
           "efforts": ["high"], "defaultEffort": "high"}}}}
       """.utf8), ifMatch: nil)
@@ -470,20 +470,6 @@ import Testing
         bearer: bearer,
       )
       #expect(response.status == .unauthorized)
-    }
-  }
-
-  @Test func aContractorKeyCannotDeriveAPersona() async throws {
-    try await withSessionDeps {
-      let harness = try await SessionHarness(dev: false)
-      let (bearer, _) = try await harness.enrolledBearer(capabilities: [.contractor])
-      let response = try await harness.post(
-        "/v1/session",
-        .object(["kind": "agent", "title": "t", "provider": "testing", "model": "test-model"]),
-        bearer: bearer,
-      )
-      #expect(response.status == .forbidden)
-      #expect((try await json(response)).object?["code"]?.stringValue == "personaRequiresDevice")
     }
   }
 

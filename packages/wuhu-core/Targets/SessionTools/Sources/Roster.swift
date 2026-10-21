@@ -183,7 +183,7 @@ extension ToolExecutor {
     ),
     Tool(
       name: "create_session",
-      description: "Create a session: by default a child task. A child agent gets a box of its own; a top-level agent (top_level) has no parent and belongs to the humans — you gain no parent/ancestry control but retain creator archive/unarchive rights, and only an agent may create one. A child lives in your group; a top-level agent in yours too unless group names another your group reads. With expects_reply the child starts working on message and owes you a final report; without, message arrives as a DM from you and there is no duty, which is how you prime a child agent for a human who then takes over (a task takes no messages from people). Omitted target and effort default to your requested target (not its active member); modelGroup is exclusive with provider/model. Explicit targets replace inherited/template targets as a whole; a template's values win over that default, and explicit arguments win over both. Every provider runs in the kernel. The removed claude-code executor returns executorNoLongerSupported.",
+      description: "Create a session: by default a child task. A child agent gets a box of its own; a top-level agent (top_level) has no parent and belongs to the humans — you gain no parent/ancestry control but retain creator archive/unarchive rights, and only an agent may create one. A child lives in your group; a top-level agent in yours too unless group names another your group reads. With expects_reply the child starts working on message and owes you a final report; without, message arrives as a DM from you and there is no duty, which is how you prime a child agent for a human who then takes over (a task takes no messages from people). Omitted target and effort default to your requested target (not its active member); modelGroup is exclusive with provider/model. Explicit targets replace inherited/template targets as a whole; a template's values win over that default, and explicit arguments win over both. Every provider runs in the kernel. An executor other than kernel is refused invalidArgument.",
       parameters: schema([
         ("title", string("Session title: one line, at most \(SessionTitle.maximumCharacters) characters.")),
         ("kind", .object([
@@ -202,7 +202,7 @@ extension ToolExecutor {
           "description": .string("Open a request on the new child so it reports back."),
         ])),
         ("stall_seconds", number("With expects_reply: tell me once the child has shown no progress for this many seconds (default 1800; 0 turns it off).")),
-        ("executor", string("kernel; claude-code is removed and returns executorNoLongerSupported.")),
+        ("executor", string("kernel only; another value is invalidArgument, \"unknown executor: <value>\".")),
         ("provider", string("Model provider id, e.g. anthropic.")),
         ("model", string("Model name as listed in the models data.")),
         ("modelGroup", string("Session routing group id from /model-groups.json; mutually exclusive with provider/model.")),

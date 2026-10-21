@@ -85,7 +85,7 @@ import Testing
   }
 
   @Test func everyUserCapableKeyOpensTheWall() async throws {
-    for capabilities: Set<KeyCapability> in [[.device], [.seat], [.contractor], [.execMachine, .device]] {
+    for capabilities: Set<KeyCapability> in [[.device], [.seat], [.execMachine, .device]] {
       let key = Curve25519.Signing.PrivateKey()
       try await enroll(key.pubkeyLabel, in: harness.space, capabilities: capabilities)
       #expect(try await request(bearer: try mint(key: key)).status == .ok)

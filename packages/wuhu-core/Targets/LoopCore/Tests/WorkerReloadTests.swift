@@ -46,18 +46,15 @@ private struct ReloadFailure: Error {}
     }
   }
 
-  @Test func removedExecutorRestartReplacesAnArchivedMount() async throws {
+  @Test func aRetiredSessionHandsOverToAKernelOnRestart() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "handover", kind: .agent, createdBy: "morgan", executor: .contractor(name: "old"))
+      let id = try await createRetiredSession(in: space, title: "handover", createdBy: "morgan", executorKind: "contractor:old")
       let replies = InferenceScript([Fix.replying("handed over")])
       let worker = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig(inference: { try await replies($0) }))
       let service = SessionService(sessions: sessions, worker: worker)
       do {
-        try await service.archive(id)
-        try await worker.deliver(id, .wake)
-        try await service.unarchive(id)
         _ = try await service.restart(id, executor: .kernel(.test), note: nil)
         _ = try await service.enqueue(item: Fix.message("new executor"), to: id)
         try await until("handover work settles") { try await sessions.settledWork(id) && replies.count == 1 }
@@ -77,7 +74,9 @@ private struct ReloadFailure: Error {}
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      let id = try await sessions.createSession(group: .shared, title: "committed", kind: .agent, createdBy: "morgan", executor: restart ? .contractor(name: "old") : .kernel(.test))
+      let id = restart
+        ? try await createRetiredSession(in: space, title: "committed", createdBy: "morgan", executorKind: "contractor:old")
+        : try await sessions.createSession(group: .shared, title: "committed", kind: .agent, createdBy: "morgan", model: .test)
       if !restart { _ = try await sessions.archive(id, grace: .seconds(3600)) }
       let hydrating = Box(false)
       let release = Latch()

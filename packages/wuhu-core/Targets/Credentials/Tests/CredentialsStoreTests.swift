@@ -33,7 +33,6 @@ import Testing
     let contents = CredentialsFile(providers: [
       "anthropic": .apiKey("sk-ant-test"),
       "codex": .chatGPTOAuth(tokens),
-      "claude": .claudeCodeOAuth("sk-ant-oat-test"),
     ])
     try await store.save(contents)
     #expect(try await store.load() == contents)

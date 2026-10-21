@@ -59,6 +59,17 @@ import WuhuAI
     }
   }
 
+  @Test func `an errored session with a pending command still boots`() async throws {
+    try await withKernelDeps { _ in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let sid = try await sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
+      try await sessions.markErrored(sid, message: "boom")
+      try await sessions.requestCommand(sid, .compact(instructions: nil))
+      #expect(try await sessions.bootSessions() == [sid])
+    }
+  }
+
   @Test func `an interrupted orphan stays parked at boot and surfaces on resume`() async throws {
     try await withKernelDeps { _ in
       let space = try Space.inMemory()

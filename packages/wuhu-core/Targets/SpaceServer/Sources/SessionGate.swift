@@ -521,9 +521,9 @@ private func sessionRouter(
     do {
       let record = try await store.record(created.sessionID)
       let (model, effort): (String?, String?) = switch record.executor {
-      case .kernel(let specifier), .claudeCode(let specifier): (specifier.model, specifier.effort)
+      case .kernel(let specifier): (specifier.model, specifier.effort)
       case let .modelGroup(_, effort): (try await store.modelRoute(record.id)?.specifier.model, effort)
-      case .contractor: (nil, nil)
+      case .retired: (nil, nil)
       }
       return try Response.json(SessionCreateOutput(
         id: record.id.rawValue,

@@ -25,7 +25,7 @@ import WuhuAI
     #expect(document.providers["openai"]?.transport == nil)
     let resolved = try await fixtureCatalog().resolve(.init(provider: "openai", model: "gpt-5.4", effort: "medium"), session: .init("one"))
     #expect(resolved.transport == .sse)
-    for dialect in [ModelsDocument.Dialect.anthropic, .claude] {
+    for dialect in [ModelsDocument.Dialect.anthropic] {
       var invalid = document
       invalid.providers["openai"]?.dialect = dialect
       invalid.providers["openai"]?.transport = .websocket

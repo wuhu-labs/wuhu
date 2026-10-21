@@ -42,7 +42,6 @@ struct CredentialIdentity: Hashable, Sendable, Codable {
 public enum StoredCredential: Sendable, Hashable {
   case apiKey(String)
   case chatGPTOAuth(ChatGPTTokens)
-  case claudeCodeOAuth(String)
 }
 
 public struct ChatGPTTokens: Sendable, Hashable, Codable {
@@ -75,7 +74,6 @@ extension StoredCredential: Codable {
   private enum CodingKeys: String, CodingKey {
     case kind
     case apiKey
-    case claudeCodeOAuthToken
   }
 
   public init(from decoder: any Decoder) throws {
@@ -84,8 +82,6 @@ extension StoredCredential: Codable {
     switch kind {
     case "apiKey":
       self = .apiKey(try container.decode(String.self, forKey: .apiKey))
-    case "claudeCodeOAuth":
-      self = .claudeCodeOAuth(try container.decode(String.self, forKey: .claudeCodeOAuthToken))
     case "chatgptOAuth":
       self = .chatGPTOAuth(try ChatGPTTokens(from: decoder))
     default:
@@ -103,9 +99,6 @@ extension StoredCredential: Codable {
     case let .apiKey(key):
       try container.encode("apiKey", forKey: .kind)
       try container.encode(key, forKey: .apiKey)
-    case let .claudeCodeOAuth(token):
-      try container.encode("claudeCodeOAuth", forKey: .kind)
-      try container.encode(token, forKey: .claudeCodeOAuthToken)
     case let .chatGPTOAuth(tokens):
       try container.encode("chatgptOAuth", forKey: .kind)
       try tokens.encode(to: encoder)

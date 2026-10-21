@@ -129,13 +129,13 @@ extension Hub {
 
   nonisolated func callerDefaults(_ session: SessionID, params: SessionCreationParams) async throws -> SessionCreationParams {
     switch try await store.record(session).executor {
-    case let .kernel(specifier), let .claudeCode(specifier):
+    case let .kernel(specifier):
       guard params.modelGroup == nil, params.provider == nil || params.provider == specifier.provider else { return .init() }
       return .init(provider: specifier.provider, model: specifier.model, effort: specifier.effort)
     case let .modelGroup(id, effort):
       guard params.provider == nil, params.model == nil, params.modelGroup == nil || params.modelGroup == id else { return .init() }
       return .init(modelGroup: id, effort: effort)
-    case .contractor:
+    case .retired:
       return .init()
     }
   }

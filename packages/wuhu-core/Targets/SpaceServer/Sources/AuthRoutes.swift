@@ -127,7 +127,7 @@ func addAuthRoutes(_ router: inout Router, space: Space, challenges: OneShotChal
       return errorResponse(
         .badRequest,
         code: "invalidArgument",
-        message: "capabilities must be a non-empty subset of \(mintableCapabilities.map(\.rawValue).joined(separator: "|"))",
+        message: "capabilities must be a non-empty subset of \(KeyCapability.allCases.map(\.rawValue).joined(separator: "|"))",
       )
     }
     let ttl = input.ttlSeconds ?? 3600
@@ -265,14 +265,11 @@ func keyPayload(_ key: KeyRecord) -> KeyPayload {
   )
 }
 
-// A contractor key still decodes from an old space, but none is minted.
-private let mintableCapabilities: [KeyCapability] = KeyCapability.allCases.filter { $0 != .contractor }
-
 private func capabilitySet(_ raw: [String]) -> Set<KeyCapability>? {
   guard !raw.isEmpty else { return nil }
   var capabilities: Set<KeyCapability> = []
   for value in raw {
-    guard let capability = KeyCapability(rawValue: value), mintableCapabilities.contains(capability) else { return nil }
+    guard let capability = KeyCapability(rawValue: value) else { return nil }
     capabilities.insert(capability)
   }
   return capabilities

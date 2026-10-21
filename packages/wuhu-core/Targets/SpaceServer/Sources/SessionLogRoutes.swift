@@ -41,29 +41,24 @@ func addSessionLogRoutes(
     }
     do {
       let record = try await store.record(id)
-      switch record.executor {
-      case .kernel, .modelGroup, .claudeCode:
-        let (generation, items) = try await store.transcriptSnapshot(id)
-        var upper = items.count
-        if let before = query["before"] {
-          switch resolveKernelRef(before, generation: generation, count: items.count, session: id.rawValue) {
-          case let .index(position): upper = position
-          case let .refused(response): return response
-          }
+      let (generation, items) = try await store.transcriptSnapshot(id)
+      var upper = items.count
+      if let before = query["before"] {
+        switch resolveKernelRef(before, generation: generation, count: items.count, session: id.rawValue) {
+        case let .index(position): upper = position
+        case let .refused(response): return response
         }
-        let tag = kernelRefTag(id.rawValue)
-        let page = (0 ..< upper)
-          .filter { kernelLevel(items[$0]) <= level }
-          .suffix(limit)
-        return try Response.json(SessionLogOutput(
-          context: await sessionContext(record, store: store, budget: runtime.budget),
-          items: page.map {
-            SessionLogItem(ref: "\(tag):\(generation):\($0)", receivedAt: nil, emittedAt: nil, item: itemJSON(items[$0]))
-          },
-        ))
-      case .contractor:
-        return contractorLogUnavailable
       }
+      let tag = kernelRefTag(id.rawValue)
+      let page = (0 ..< upper)
+        .filter { kernelLevel(items[$0]) <= level }
+        .suffix(limit)
+      return try Response.json(SessionLogOutput(
+        context: await sessionContext(record, store: store, budget: runtime.budget),
+        items: page.map {
+          SessionLogItem(ref: "\(tag):\(generation):\($0)", receivedAt: nil, emittedAt: nil, item: itemJSON(items[$0]))
+        },
+      ))
     } catch {
       return sessionErrorResponse(error)
     }
@@ -75,33 +70,19 @@ func addSessionLogRoutes(
     }
     if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
     do {
-      let record = try await store.record(id)
-      switch record.executor {
-      case .kernel, .modelGroup, .claudeCode:
-        let (generation, items) = try await store.transcriptSnapshot(id)
-        switch resolveKernelRef(ref, generation: generation, count: items.count, session: id.rawValue) {
-        case let .refused(response):
-          return response
-        case let .index(position):
-          return try Response.json(SessionEntryOutput(
-            item: SessionLogItem(ref: ref, receivedAt: nil, emittedAt: nil, item: itemJSON(items[position])),
-          ))
-        }
-      case .contractor:
-        return contractorLogUnavailable
+      let (generation, items) = try await store.transcriptSnapshot(id)
+      switch resolveKernelRef(ref, generation: generation, count: items.count, session: id.rawValue) {
+      case let .refused(response):
+        return response
+      case let .index(position):
+        return try Response.json(SessionEntryOutput(
+          item: SessionLogItem(ref: ref, receivedAt: nil, emittedAt: nil, item: itemJSON(items[position])),
+        ))
       }
     } catch {
       return sessionErrorResponse(error)
     }
   }
-}
-
-private var contractorLogUnavailable: Response {
-  errorResponse(
-    .unprocessableContent,
-    code: "unsupportedExecutor",
-    message: "this session ran on the removed contractor executor; its log is no longer served",
-  )
 }
 
 let defaultLogLimit = 50

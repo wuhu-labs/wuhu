@@ -186,14 +186,14 @@ import Testing
     }
   }
 
-  @Test func aCallerWithoutAPersonaCannotObserveViewer() async throws {
+  @Test func aSeatKeyObservesAsItsOwnPersona() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness(dev: false)
-      let (bearer, _) = try await harness.enrolledBearer(capabilities: [.contractor])
-      let refused = try await harness.get(
+      let (bearer, _) = try await harness.enrolledBearer(capabilities: [.seat])
+      let observed = try await harness.get(
         "/v1/observe", query: ["sql": "SELECT viewer() AS v", "throttleMs": "0"], bearer: bearer,
       )
-      #expect(refused.status == .forbidden)
+      #expect(observed.status == .ok)
       let plain = try await harness.get("/v1/observe", query: ["sql": "SELECT 1 AS v", "throttleMs": "0"], bearer: bearer)
       #expect(plain.status == .ok)
     }

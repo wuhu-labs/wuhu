@@ -85,8 +85,7 @@ e.g. `template: {"strategy":"incr","prefix":"TASK","pad":3}` (sequential
 
 A session is an LLM agent living in the space: one transcript, one work
 queue, one owning channel, persisted in the space SQLite. Every session has
-an executor, picked by its provider's dialect: a `claude` provider runs
-the built-in kernel loop; all provider dialects use it.
+one executor: the built-in kernel loop, for every provider.
 Created inert (`wuhu session create --provider P --model M [--effort E]
 <title>`); it starts working when something is posted to it. The
 `(provider, model, effort)` spec is validated against `/models.json` — a plain space file keyed

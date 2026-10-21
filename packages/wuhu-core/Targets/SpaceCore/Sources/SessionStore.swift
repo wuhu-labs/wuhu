@@ -188,8 +188,8 @@ extension SessionStore {
     let key = id.rawValue
     return try await writer.read { db in
       switch try Sessions.record(key, in: db).executor {
-      case .kernel, .modelGroup, .contractor: try Sessions.transcript(key, in: db)
-      case .claudeCode: Transcript()
+      case .kernel, .modelGroup: try Sessions.transcript(key, in: db)
+      case .retired: Transcript()
       }
     }
   }
@@ -201,7 +201,9 @@ extension SessionStore {
   public func hydrateForExecution(_ id: SessionID) async throws -> SessionHydration {
     try await writer.read { db in
       guard !self.archiveReservations.contains(id) else { throw ExecutionHydrationError.reservedForArchive(id) }
-      return try Sessions.hydrate(id.rawValue, in: db)
+      let hydration = try Sessions.hydrate(id.rawValue, in: db)
+      try hydration.record.executor.requireSupported()
+      return hydration
     }
   }
 
@@ -216,15 +218,14 @@ extension SessionStore {
         SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)
           OR id IN (SELECT caller FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1)) AS parked
         FROM sessions
-        WHERE lifecycle = 'live' AND executor IN ('kernel', 'claude-code')
-          AND (executor = 'claude-code' OR work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR work = 'no_work')
+        WHERE lifecycle = 'live' AND executor = 'kernel'
+          AND (work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR work = 'no_work')
         ORDER BY allocation
         """,
       ).compactMap { row -> SessionID? in
         let key: String = row["id"]
         let id = SessionID(key)
         do {
-          try Sessions.record(key, in: db).executor.requireSupported()
           guard row["parked"] as Bool else { return id }
           return try Sessions.settleState(key, in: db).openRequests.isEmpty ? nil : id
         } catch {
@@ -350,8 +351,7 @@ private extension Sessions {
     let runtime = try Sessions.runtime(key, in: db)
     let transcript: SessionTranscript = switch record.executor {
     case .kernel, .modelGroup: .kernel(try Sessions.kernelTranscript(key, in: db))
-    case .contractor: .kernel(try Sessions.transcript(key, in: db))
-    case .claudeCode: throw ExecutorUnavailableError()
+    case .retired: .kernel(Transcript())
     }
     return SessionHydration(
       generation: Int(runtime.generation),

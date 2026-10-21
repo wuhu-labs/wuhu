@@ -13,7 +13,7 @@ import Testing
 import WuhuAI
 
 @Suite(.deterministicDependencies(clock: TestClock())) struct OIDCProviderTests {
-  @Test(arguments: ["anthropic", "claude", "deepseek", "openai"])
+  @Test(arguments: ["anthropic", "deepseek", "openai"])
   func bearerAuthMintsPerCallWithoutCredentials(provider: String) async throws {
     let minted = TokenCalls()
     let catalog = try catalog(provider: provider, signer: { url, session in await minted.mint(url, session) })
@@ -63,11 +63,10 @@ import WuhuAI
     }
   }
 
-  @Test(arguments: ["openai", "claude"]) func noSignerNeverDetoursToCredential(provider: String) async throws {
-    let catalog = try catalog(provider: provider, signer: nil)
-    let model = provider == "claude" ? "claude-sonnet-5" : "gpt-5.4"
+  @Test func noSignerNeverDetoursToCredential() async throws {
+    let catalog = try catalog(provider: "openai", signer: nil)
     await #expect(throws: InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.")) {
-      try await catalog.resolve(.init(provider: provider, model: model, effort: "high"), session: .init("s"))
+      try await catalog.resolve(.init(provider: "openai", model: "gpt-5.4", effort: "high"), session: .init("s"))
     }
   }
 
@@ -104,14 +103,10 @@ import WuhuAI
 
 private func catalog(provider: String, signer: (@Sendable (URL, SessionID) async throws -> String)?) throws -> ProviderCatalog {
   var document = try ModelsDocument(json: fixtureJSON)
-  if provider == "claude" {
-    document.providers[provider] = document.providers["anthropic"]
-    document.providers[provider]?.dialect = .claude
-  }
   document.providers[provider]?.auth = .oidc
   return ProviderCatalog(document: document, credentials: .init { _ in
     Issue.record("OIDC must never resolve a stored credential")
-    return provider == "claude" ? .claudeCodeOAuth("stored-legacy-token-do-not-use") : .apiKey("stored-key-do-not-use")
+    return .apiKey("stored-key-do-not-use")
   }, oidcToken: signer, oidcBindingIdentity: { _, _ in "fixture-issuer-space-group" })
 }
 

@@ -52,8 +52,6 @@ extension Executor {
       switch credential {
       case .apiKey:
         text += "\(provider): api key\n"
-      case .claudeCodeOAuth:
-        text += "\(provider): claude code setup token\n"
       case let .chatGPTOAuth(tokens):
         let remaining = tokens.expiresAt.timeIntervalSince(now)
         let state = remaining > 0
@@ -95,7 +93,7 @@ extension Executor {
       let tokens = try await ChatGPTAuth.awaitDeviceGrant(authorization)
       try await store.replace(providerID: provider, credential: .chatGPTOAuth(tokens))
       await runner.stdout("logged in: chatgpt account \(tokens.accountID), stored for \(provider) in \(store.file.path)\n")
-    case .claude, .anthropic, .responses:
+    case .anthropic, .responses:
       throw CLIError(message: "provider \(provider) uses API keys; run `wuhu auth set \(provider)`")
     }
   }
@@ -109,8 +107,6 @@ extension Executor {
       } catch {
         await runner.stdout("warning: token revocation failed (\(error)); removing local credentials anyway\n")
       }
-    case .claudeCodeOAuth:
-      break
     case .apiKey, nil:
       throw CLIError(message: "no login stored for \(provider) (api keys are removed with `wuhu auth remove`)")
     }

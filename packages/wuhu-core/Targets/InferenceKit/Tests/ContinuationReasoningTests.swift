@@ -35,13 +35,13 @@ import WuhuAI
     #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
   }
 
-  /// A non-Claude model behind a custom `claude`-dialect host is not under
-  /// Claude's rule: the dialect never decides it.
+  /// A non-Claude model on an Anthropic-dialect host is not under Claude's
+  /// rule: the dialect never decides it.
   @Test(arguments: [nil, "replay-handoff", "model-route"] as [String?])
-  func nonClaudeModelOnClaudeDialectHostKeepsConfiguredEffort(source: String?) async throws {
+  func nonClaudeModelOnAnthropicHostKeepsConfiguredEffort(source: String?) async throws {
     var transcript = history(signed: true, carried: true, scope: "previous-account")
     if let source { transcript.append(boundaryNotice(source)) }
-    let resolved = try await catalogModel(dialect: "claude", baseURL: "https://claude-format.invalid/v1", model: "glm-5.1")
+    let resolved = try await catalogModel(dialect: "anthropic", baseURL: "https://claude-format.invalid/v1", model: "glm-5.1")
     #expect(!resolved.isClaude)
     let body = try await emittedRequest(transcript, resolved: resolved)
     #expect(body.object?["thinking"]?.object?["type"]?.stringValue == "adaptive")
@@ -49,11 +49,10 @@ import WuhuAI
 
   /// Claude served by a proxy host is still under Claude's rule: the host
   /// never decides it.
-  @Test(arguments: ["anthropic", "claude"])
-  func claudeModelBehindProxyHostDowngradesAfterMidTurnSwitch(dialect: String) async throws {
+  @Test func claudeModelBehindProxyHostDowngradesAfterMidTurnSwitch() async throws {
     var transcript = history(signed: true, carried: true, scope: "previous-account")
     transcript.append(boundaryNotice("replay-handoff"))
-    let resolved = try await catalogModel(dialect: dialect, baseURL: "https://egress.invalid/anthropic", model: "claude-sonnet-4-6")
+    let resolved = try await catalogModel(dialect: "anthropic", baseURL: "https://egress.invalid/anthropic", model: "claude-sonnet-4-6")
     #expect(resolved.isClaude)
     let body = try await emittedRequest(transcript, resolved: resolved)
     #expect(body.object?["thinking"] == nil)

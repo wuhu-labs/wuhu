@@ -79,7 +79,7 @@ extension SessionStore {
     let now = dateGen.now
     let enqueued = try await writer.write { db -> Bool in
       let record = try Sessions.record(id.rawValue, in: db)
-      let kernel = switch record.executor { case .kernel, .modelGroup: true; case .claudeCode, .contractor: false }
+      let kernel = switch record.executor { case .kernel, .modelGroup: true; case .retired: false }
       guard record.kind == .agent, record.lifecycle == .live, record.hold == .normal, record.work == .noWork,
             !self.archiveReservations.contains(id), kernel,
             var row = try CacheWarmingRow.where({ $0.sessionID.eq(id.rawValue) }).fetchOne(db),

@@ -49,7 +49,7 @@ func bearerVerdict(request: Request, space: Space, now: Date) async throws -> Be
   // signature over a live row; the rejection is byte-identical to an unknown
   // key so the response leaks neither existence nor capabilities. It precedes
   // the window check, whose refusal would otherwise tell such a key apart.
-  guard !credential.capabilities.isDisjoint(with: [.device, .seat, .contractor]) else {
+  guard !credential.capabilities.isDisjoint(with: [.device, .seat]) else {
     return .rejected(unknownKey(identity))
   }
   switch assertion.claims.validity(at: now) {

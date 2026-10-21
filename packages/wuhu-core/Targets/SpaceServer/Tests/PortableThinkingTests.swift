@@ -56,9 +56,8 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
 
 @Suite(.deterministicDependencies) struct PortableThinkingTests {
   /// `claude` is a Claude model behind a non-Anthropic host (the one named
-  /// downgrade); `deepseek` and `mimo` (a non-Claude model on a `claude`-dialect
-  /// host) keep their effort.
-  @Test(arguments: ThinkingBoundary.allCases, ["claude", "deepseek", "mimo"])
+  /// downgrade); `deepseek` (a non-Claude model) keeps its effort.
+  @Test(arguments: ThinkingBoundary.allCases, ["claude", "deepseek"])
   fileprivate func portableBoundaryKeepsCurrentTurnRunningAndNextInputRestoresThinking(boundary: ThinkingBoundary, flavor: String) async throws {
     try await withSessionDeps {
       let bodies = Mutex<[JSONValue]>([])
@@ -75,13 +74,11 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let modelName = flavor == "claude" ? "claude-test-model" : "test-model"
         let models = switch flavor {
         case "deepseek": testModelsJSON.replacingOccurrences(of: "\"testing\"", with: "\"deepseek\"")
-        case "claude": testModelsJSON.replacingOccurrences(of: "\"test-model\"", with: "\"claude-test-model\"")
-        default: testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"claude\"")
+        default: testModelsJSON.replacingOccurrences(of: "\"test-model\"", with: "\"claude-test-model\"")
         }
         let duringTurn: String? = switch flavor {
         case "deepseek": "enabled"
-        case "claude": nil
-        default: "adaptive"
+        default: nil
         }
         let identity = Mutex("old-account")
         let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { _ in .init(credential: .apiKey("fake"), identityEpoch: identity.withLock { $0 }) })
