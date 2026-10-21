@@ -12,13 +12,9 @@ import Synchronization
 import Testing
 
 private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ source: String) async throws -> JSONValue {
-  return try await withThrowingTaskGroup(of: Void.self) { group in
-    group.addTask { await harness.runtime.worker.drain() }
-    defer { group.cancelAll() }
-    let response = try await callResult(harness, session.rawValue, tool: "run_script", .object(["source": .string(source)]))
-    let text = try #require(resultText(response))
-    return try #require(JSONValue.parse(String(text.prefix { $0 != "\n" })))
-  }
+  let response = try await callResult(harness, session.rawValue, tool: "run_script", .object(["source": .string(source)]))
+  let text = try #require(resultText(response))
+  return try #require(JSONValue.parse(String(text.prefix { $0 != "\n" })))
 }
 
 @Suite(.deterministicDependencies) struct DiscoveryRouteTests {

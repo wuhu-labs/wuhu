@@ -186,7 +186,7 @@ private func status(of code: ErrorCode) -> Status {
   case .notFound: .notFound
   case .conflict: .conflict
   case .invalidPath, .invalidArgument, .byteLimitExceeded: .badRequest
-  case .unauthorized: .forbidden
+  case .unauthorized, .forbidden: .forbidden
   case .unsupported, .unknownKind: .unprocessableContent
   case .unavailable: .serviceUnavailable
   case .internal: .internalServerError

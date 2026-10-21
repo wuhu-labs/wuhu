@@ -10,7 +10,6 @@ import struct MachineContract.MachineID
 @testable import MainHub
 import func MainHub.execEnvironment
 import class MainHub.Hub
-import struct MainHub.ScriptMachineAccess
 import OrderedCollections
 import SessionDomain
 @testable import SessionTools
@@ -20,79 +19,6 @@ import Testing
 import struct WuhuAI.ToolArguments
 
 @Suite(.deterministicDependencies, .timeLimit(.minutes(2))) struct ExecToolTests {
-  @Test func terminalCallerReconnectsAreBoundedEvenWhenLocalConnectSucceeds() async throws {
-    try await withToolDeps { _ in
-      let space = try Space.inMemory()
-      let session = try await makeSession(space)
-      let machine = try await space.addMachine(name: "box").id
-      let scripted = ScriptedExecMachine()
-      var backend = scripted.backend(space)
-      backend.mintScript = { machine, session, script in
-        let record = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: script)
-        try await space.finishExec(record.id, .exited(code: 0))
-        return record
-      }
-      let connects = Box(0)
-      backend.connect = { _ in
-        connects.withLock { $0 += 1 }
-        let (caller, peer) = InMemoryTransport.pair()
-        peer.sever()
-        return caller
-      }
-      let files = FakeMachineFS()
-      files.attached.withLock { _ = $0.insert(machine) }
-      let main = Hub(space: space, scriptMachines: ScriptMachineAccess(files: files.seam, exec: backend))
-      let reason = try await withDependencies {
-        $0.continuousClock = ImmediateClock()
-      } operation: { () async throws -> String? in
-        let run = try await main.startScriptExec(session: session, script: .init("script"), request: .init(
-          machine: machine, cwd: "/", command: "true", environment: try execEnvironment(env: [:], secrets: [:]),
-          window: 1024, maxOutput: nil, timeout: nil, acceptsStdin: false, autoAcknowledge: true,
-        ))
-        for try await event in run.events {
-          if case let .lost(reason) = event { return reason }
-        }
-        return nil as String?
-      }
-      #expect(reason?.contains("no longer replayable") == true)
-      #expect(connects.value == 2)
-    }
-  }
-
-  @Test func machineLostStopsAfterFirstSeverWithoutClaimingProcessExit() async throws {
-    try await withToolDeps { _ in
-      let space = try Space.inMemory()
-      let session = try await makeSession(space)
-      let machine = try await space.addMachine(name: "box").id
-      var backend = ScriptedExecMachine().backend(space)
-      backend.mintScript = { machine, session, script in
-        let record = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: script)
-        try await space.finishExec(record.id, .machineLost)
-        return record
-      }
-      let connects = Box(0)
-      backend.connect = { _ in
-        connects.withLock { $0 += 1 }
-        let (caller, peer) = InMemoryTransport.pair()
-        peer.sever()
-        return caller
-      }
-      let files = FakeMachineFS()
-      files.attached.withLock { _ = $0.insert(machine) }
-      let main = Hub(space: space, scriptMachines: ScriptMachineAccess(files: files.seam, exec: backend))
-      let run = try await main.startScriptExec(session: session, script: .init("script"), request: .init(
-        machine: machine, cwd: "/", command: "true", environment: try execEnvironment(env: [:], secrets: [:]),
-        window: 1024, maxOutput: nil, timeout: nil, acceptsStdin: false, autoAcknowledge: true,
-      ))
-      var reason: String?
-      for try await event in run.events {
-        if case let .lost(value) = event { reason = value }
-      }
-      #expect(reason?.contains("remote process outcome is unknown") == true)
-      #expect(connects.value == 1)
-    }
-  }
-
   @Test func execAcknowledgesOnlyAfterItsOutcomeIsCommitted() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

@@ -71,11 +71,11 @@ private func resolvedPlacement(_ held: SessionModelRoute, session: SessionID, ca
   }
 }
 
-func compactionPlacement(owner: any Main, catalog: @escaping @Sendable () async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
+func compactionPlacement(owner: any Main, catalog: @escaping @Sendable (SessionID) async throws -> ProviderCatalog, usage: UsageBoard) -> @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? {
   { id, transcript, target in
-    if let target { return try await requestedTransition(target, session: id, transcript: transcript, owner: owner, catalog: catalog(), usage: usage) }
+    if let target { return try await requestedTransition(target, session: id, transcript: transcript, owner: owner, catalog: catalog(id), usage: usage) }
     guard let held = try await owner.modelRoute(id), let group = held.group else { return nil }
-    let catalog = try await catalog()
+    let catalog = try await catalog(id)
     _ = try catalog.validateRoute(held, group: group, effort: held.specifier.effort)
     guard let definition = catalog.document.groups[group], case .quotaAware = definition.policy else { return nil }
     guard let (next, resolved) = try await resolvedPlacement(held, session: id, catalog: catalog, usage: usage, excludingHeld: false) else { return nil }

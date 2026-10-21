@@ -120,12 +120,19 @@ public struct LoopConfig: Sendable {
   // propagates the kill to the effector (a crash-shaped cancellation never
   // reaches this seam, so crash-retry rejoin stays possible).
   public var killInterruptedTool: @Sendable (ToolInvocation) async -> Void
+  // Asked when a hand-off finds a tool mid-flight: true releases it to the
+  // next worker (its wait is cancelled, the call stays pending, nothing is
+  // written); false lets it run to its end here.
+  public var releaseTool: @Sendable (ToolInvocation) async -> Bool
   public var invalidateInference: @Sendable (SessionID) async -> Void
   public var allowCacheWarming: @Sendable (SessionID) async throws -> Bool
   public var scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)?
   // The cancel ids of the work running for a session outside the loop
   // (`script.<id>`), listed in the `<session-state>` of a compaction.
   public var runningWork: @Sendable (SessionID) async throws -> [String]
+  // Told when a session mounts here, with the transcript it hydrated: the
+  // worker takes up what the session left running elsewhere.
+  public var mounted: @Sendable (SessionID, Transcript) async -> Void = { _, _ in }
   public var thresholds: CompactionThresholds
   public var eviction: EvictionPolicy
 
@@ -136,6 +143,7 @@ public struct LoopConfig: Sendable {
     budget: @escaping @Sendable (SessionID) async -> ContextBudget,
     prepareCompaction: @escaping @Sendable (SessionID, Transcript, CompactionTarget?) async throws -> ModelRouteTransition? = { _, _, _ in nil },
     killInterruptedTool: @escaping @Sendable (ToolInvocation) async -> Void = { _ in },
+    releaseTool: @escaping @Sendable (ToolInvocation) async -> Bool = { _ in false },
     invalidateInference: @escaping @Sendable (SessionID) async -> Void = { _ in },
     allowCacheWarming: @escaping @Sendable (SessionID) async throws -> Bool = { _ in true },
     scheduleWake: (@Sendable (SessionID, Date?) async throws -> Void)? = nil,
@@ -149,6 +157,7 @@ public struct LoopConfig: Sendable {
     self.compact = compact
     self.budget = budget
     self.killInterruptedTool = killInterruptedTool
+    self.releaseTool = releaseTool
     self.invalidateInference = invalidateInference
     self.allowCacheWarming = allowCacheWarming
     self.scheduleWake = scheduleWake

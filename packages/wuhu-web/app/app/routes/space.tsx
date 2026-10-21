@@ -66,7 +66,6 @@ export interface SpaceContext {
   client: SpaceClient
   contentOrigin: ContentOrigin
   contentHost: string | null
-  viewRevs: Record<string, number>
   capability: SessionCapability
   members: ConversationMemberPayload[]
   conversationError: string | null
@@ -163,7 +162,7 @@ export function SpaceBody(
   const { sessions } = feeds
   const group = placeGroup(location.search)
   const client = server.client(group)
-  const { files: { paths, viewRevs }, contentOrigin } = feeds.feed(group)
+  const { files: { paths }, contentOrigin } = feeds.feed(group)
   const members = feeds.groups == null
     ? [sharedGroup]
     : memberGroups(feeds.groups)
@@ -176,8 +175,7 @@ export function SpaceBody(
     contentOrigin,
     path: onNode ? activePath : null,
     suffix: withoutGroup(location.search) + location.hash,
-    viewRev: activePath === null ? 0 : viewRevs[activePath] ?? 0,
-  }, feeds.feed(group))
+  })
 
   const go = useCallback((to: string) => {
     void navigate(to)
@@ -321,7 +319,6 @@ export function SpaceBody(
             client,
             contentOrigin,
             contentHost,
-            viewRevs,
             capability,
             members: access.members,
             conversationError: access.error,

@@ -14,6 +14,7 @@ actor SessionReminders {
   private let sessions: SessionStore
   private let execution: any Worker
   private var pending: [SessionID: UUID] = [:]
+  private var dues: [SessionID: Date] = [:]
   private var tasks: [UUID: Task<Void, Never>] = [:]
   private var stopped = false
   @Dependency(\.continuousClock) private var clock
@@ -28,7 +29,9 @@ actor SessionReminders {
 
   func schedule(_ id: SessionID, at due: Date?) {
     if let token = pending.removeValue(forKey: id) { tasks[token]?.cancel() }
+    dues[id] = nil
     guard !stopped, let due else { return }
+    dues[id] = due
     let token = UUID()
     let sleep = deadlineSleep(after: .seconds(max(0, due.timeIntervalSince(date()))), clock: clock)
     let task = Task { @Sendable [weak self] in
@@ -47,7 +50,8 @@ actor SessionReminders {
 
   private func fire(_ id: SessionID, token: UUID) async {
     guard !stopped, pending[id] == token else { return }
-    for attempt in 0 ..< 4 {
+    var attempt = 0
+    while true {
       do {
         try Task.checkCancellation()
         try await execution.deliver(id, .wake)
@@ -55,6 +59,10 @@ actor SessionReminders {
       } catch is CancellationError { break }
       catch {
         guard !Task.isCancelled else { break }
+        if isWorkerUnreachable(error) {
+          do { try await clock.sleep(for: .seconds(1)) } catch { break }
+          continue
+        }
         guard attempt < 3 else {
           let log = Logger(label: "wuhu.session-reminders")
           log.error("Reminder wake failed", metadata: ["session": "\(id.rawValue)", "error": "\(error)"])
@@ -64,22 +72,30 @@ actor SessionReminders {
         }
         do { try await clock.sleep(for: .seconds(1 << attempt)) }
         catch { break }
+        attempt += 1
       }
     }
-    if pending[id] == token { pending[id] = nil }
+    if pending[id] == token {
+      pending[id] = nil
+      dues[id] = nil
+    }
   }
+
+  /// The wakes still to come, by when each is due.
+  func scheduled() -> [SessionID: Date] { dues }
 
   func shutdown() async {
     stopped = true
     let running = Array(tasks.values)
     pending.removeAll()
+    dues.removeAll()
     for task in running { task.cancel() }
     for task in running { await task.value }
     tasks.removeAll()
   }
 }
 
-func deadlineSleep(after delay: Duration, clock: any Clock<Duration>) -> @Sendable () async throws -> Void {
+public func deadlineSleep(after delay: Duration, clock: any Clock<Duration>) -> @Sendable () async throws -> Void {
   let clock = AnyClock(clock)
   let deadline = clock.now.advanced(by: delay)
   return { try await clock.sleep(until: deadline, tolerance: nil) }

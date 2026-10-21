@@ -1,3 +1,4 @@
+import func MainHub.deadlineSleep
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials

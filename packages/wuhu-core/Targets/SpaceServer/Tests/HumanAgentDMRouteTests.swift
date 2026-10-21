@@ -98,7 +98,7 @@ import struct WuhuAI.ToolCall
         }
       } operation: {
         try await withThrowingTaskGroup(of: Void.self) { group in
-          group.addTask { await scripts.run() }
+          group.addTask { await whenCancelled { await scripts.close() } }
           defer { group.cancelAll() }
           for user in ["'\(person)'", "null"] {
             let source = """

@@ -2,20 +2,6 @@ import Dependencies
 import Foundation
 import GRDB
 
-let allocationSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "allocations" (
-  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "kind" TEXT NOT NULL,
-  "created_by" TEXT NOT NULL,
-  "created_at" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "allocation_freeze" (
-  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
-  "vocab_sha256" TEXT NOT NULL,
-  "secret" BLOB NOT NULL
-);
-"""
-
 public enum AllocationKind: String, Sendable {
   case persona
   case session

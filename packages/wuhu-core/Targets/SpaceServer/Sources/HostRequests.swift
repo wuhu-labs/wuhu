@@ -4,6 +4,7 @@ import TaskLifetime
 #else
   import Foundation
 #endif
+import Dependencies
 import Fetch
 import Serve
 
@@ -50,6 +51,26 @@ actor HostRequests {
     bodies[id] = task
     output.onTermination = { _ in task?.cancel() }
     return .stream(length: body.contentLength, contentType: body.contentType, HostBodyChunks(chunks: chunks, demand: input))
+  }
+
+  /// Lets the requests being answered finish, for up to `grace`: returns
+  /// once none has been in flight for a moment, and refuses any after.
+  func quiesce(grace: Duration) async {
+    @Dependency(\.continuousClock) var sleeper
+    let clock = ContinuousClock()
+    let deadline = clock.now + grace
+    var quietSince: ContinuousClock.Instant?
+    while clock.now < deadline {
+      if requests.isEmpty {
+        let since = quietSince ?? clock.now
+        quietSince = since
+        if clock.now - since >= .milliseconds(200) { break }
+      } else {
+        quietSince = nil
+      }
+      try? await sleeper.sleep(for: .milliseconds(20))
+    }
+    stopped = true
   }
 
   func shutdown(sockets: HostSockets) async {

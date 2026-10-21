@@ -182,6 +182,7 @@ public enum SpaceError: Error, Equatable, Sendable {
   case invalidDeviceName(String)
   /// The database predates a schema compaction this binary requires.
   case needsMigration(String)
+  case unknownMigrations([String])
   /// Admin is held through a personal group, which only a human account has.
   case notAPerson(String)
   /// A personal group's admin edge to itself is what makes it personal.

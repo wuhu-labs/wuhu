@@ -35,7 +35,7 @@ import Testing
 
       let firing = SubscriptionFiring(space: space, worker: worker)
       try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await worker.drain() }
+        group.addTask { await whenCancelled { await worker.shutdown() } }
         group.addTask { await firing.run() }
         defer { group.cancelAll() }
         var world = ToolWorld(worker: worker, session: task)

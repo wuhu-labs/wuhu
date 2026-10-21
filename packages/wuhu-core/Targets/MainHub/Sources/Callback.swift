@@ -2,9 +2,11 @@ import Synchronization
 
 // The retryable outcome of racing an eviction: a dropped Callback resolves to
 // this on deinit, and lazy materialization makes the caller's retry land.
-struct UnfulfilledError: Error {}
+public struct UnfulfilledError: Error {
+  public init() {}
+}
 
-final class Callback<Value>: Sendable {
+public final class Callback<Value>: Sendable {
   typealias Continuation = CheckedContinuation<Value, any Error>
 
   let state: Mutex<Continuation?>
@@ -13,7 +15,7 @@ final class Callback<Value>: Sendable {
     state = .init(cont)
   }
 
-  func resume(with result: sending Result<Value, any Error>) {
+  public func resume(with result: sending Result<Value, any Error>) {
     let cont = state.withLock { source -> Continuation? in
       let cont = source
       source = nil
@@ -22,18 +24,18 @@ final class Callback<Value>: Sendable {
     cont!.resume(with: result)
   }
 
-  func resume(returning value: sending Value) {
+  public func resume(returning value: sending Value) {
     resume(with: .success(value))
   }
 
-  func resume(throwing error: any Error) {
+  public func resume(throwing error: any Error) {
     resume(with: .failure(error))
   }
 
   // The body must stay caller-isolated (the store executor); an
   // @isolated(any) parameter would drop the dynamic isolation and run the
   // verb off-actor.
-  func run(body: () async throws -> sending Value) async {
+  nonisolated(nonsending) public func run(body: () async throws -> sending Value) async {
     do {
       let result = try await body()
       resume(returning: result)
@@ -50,7 +52,9 @@ final class Callback<Value>: Sendable {
   }
 }
 
-func withCallback<T>(of type: T.Type = T.self, job: (Callback<T>) throws -> Void) async throws -> T {
+// Runs on the caller's actor (MainHub lacks LoopCore's NonisolatedNonsendingByDefault), so the
+// job closure stays where the callback is appended.
+nonisolated(nonsending) public func withCallback<T>(of type: T.Type = T.self, job: (Callback<T>) throws -> Void) async throws -> T {
   try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, any Error>) in
     let callback = Callback(cont)
     do {

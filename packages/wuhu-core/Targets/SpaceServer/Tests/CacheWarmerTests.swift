@@ -72,7 +72,7 @@ import WuhuAI
         var transcript = try await harness.store.transcript(id)
         let pressure = TranscriptItem.notification(.init(id: UUID(), timestamp: Date(), kind: .context, subscriptionID: .init("context-pressure"), content: .init(text: "<compaction-notice>Context is 80% full. Compact at a natural boundary.</compaction-notice>")))
         transcript.append(pressure)
-        try await harness.store.append(id, items: [pressure], transcript: transcript)
+        try await harness.store.append(id, items: [pressure], inputOrigin: transcript.cacheWarmingInputOrigin)
         try await harness.store.markInterrupted(id)
         try await harness.store.markResumed(id)
       }

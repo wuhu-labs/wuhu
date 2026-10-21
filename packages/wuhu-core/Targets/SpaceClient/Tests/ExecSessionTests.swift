@@ -31,7 +31,7 @@ import Testing
         }
       }
       group.addTask {
-        let termination = try await session.run(autoAcknowledge: false, input: nil, output: { _, bytes in
+        let termination = try await session.run(autoAcknowledge: false, input: .closed, output: { _, bytes in
           output.withLock { $0 += bytes }
         }, onEvent: { event in
           events.withLock { $0.append(event) }
@@ -68,7 +68,7 @@ import Testing
       throw SpaceClient.DialRefusal(status: 403, body: Array("denied".utf8))
     })
     let session = ExecSession(client: client, start: ExecStart(id: ExecID(rawValue: "exec_refused"), cwd: "/", command: ["echo"]))
-    let termination = try await session.run(input: nil, output: { _, _ in })
+    let termination = try await session.run(input: .closed, output: { _, _ in })
     #expect(termination == .streamFailed("403: denied"))
   }
 }

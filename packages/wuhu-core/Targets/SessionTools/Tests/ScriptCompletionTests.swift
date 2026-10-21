@@ -181,12 +181,11 @@ data: {}
     }
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), completionCatalog: {
-        .init(document: try .init(json: Data(models.utf8)), credentials: .init { _ in
-          Issue.record("OIDC must not resolve a stored credential")
-          return nil
-        }, oidcToken: { _, _ in throw SigningFailure() })
-      })
+      try await rig.write("/models.json", models)
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
+        Issue.record("OIDC must not resolve a stored credential")
+        return nil
+      }, oidcToken: { _, _ in throw SigningFailure() }))
       try await rig.write("/signing-handler.js", #"""
       import {complete, CompletionError} from 'wuhu:ai'
       export default async () => {
@@ -205,31 +204,24 @@ data: {}
   }
 
   @Test func configuredOIDCAndMetricsSeamsKeepCallerIdentity() async throws {
-    let seen = Box<[String]>([])
     let fetch = FetchClient { request in
       #expect(request.headers.sensitiveValues["authorization"] == "Bearer fixture-token")
       return Response(status: .ok, body: .bytes(Data(completionSSE.utf8), contentType: "text/event-stream"))
     }
     try await withRig(fetch: fetch) { rig in
       let models = completionModels.replacingOccurrences(of: "\"dialect\":\"anthropic\"", with: "\"dialect\":\"anthropic\",\"auth\":\"oidc\"")
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space, completionMetrics: .init { metric in
-        seen.withLock { $0.append(metric.session.rawValue) }
-        #expect(metric.provider == "offline")
-        #expect(metric.usage?.uncachedInputTokens == 10)
-        #expect(metric.outcome.rawValue == "ok")
-      }), completionCatalog: {
-        .init(document: try .init(json: Data(models.utf8)), credentials: .init { _ in
-          Issue.record("OIDC must not use stored credentials")
-          return nil
-        }, oidcToken: { _, caller in
-          #expect(caller == rig.session)
-          return "fixture-token"
-        }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" })
-      })
+      try await rig.write("/models.json", models)
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .init { _ in
+        Issue.record("OIDC must not use stored credentials")
+        return nil
+      }, oidcToken: { _, caller in
+        #expect(caller == rig.session)
+        return "fixture-token"
+      }, oidcBindingIdentity: { _, _ in "completion-oidc-fixture" }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       #expect(try await tools.complete(rig.session, request) == #"{"relevant":true}"#)
-      #expect(seen.value == [rig.session.rawValue])
-      #expect(try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT COUNT(*) AS n FROM inferences'))[0].n)"#) == .integer(0))
+      let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT session, provider, input, outcome FROM inferences'))[0])"#)
+      #expect(record == .object(["session": .string(rig.session.rawValue), "provider": .string("offline"), "input": .integer(10), "outcome": .string("ok")]))
     }
   }
 
@@ -262,7 +254,7 @@ data: {}
     let fetch = FetchClient { _ in throw CancellationError() }
     try await withRig(fetch: fetch) { rig in
       try await rig.write("/models.json", completionModels)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }), credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let request = try CompletionRequest(input: .string("hello"), options: .object(["model": .string("offline/small")]))
       await #expect(throws: CancellationError.self) { try await tools.complete(rig.session, request) }
       let record = try await rig.evaluate(#"import {query} from 'wuhu:space'; result((await query('SELECT * FROM inferences'))[0])"#)
@@ -287,7 +279,7 @@ data: {}
         return {session:(await context()).session,text,cursor:(state?.cursor ?? 0)+1}
       }
       """#)
-      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }), credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") })
+      let tools = SessionRuntime.toolExecutor(owner: Hub(space: rig.space), access: .init(credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }))
       let result = try await rig.scripts.runHandler(path: "/complete-handler.js", session: rig.session, stateJSON: #"{"cursor":4}"#, tools: tools)
       let state = try #require(JSONValue.parse(result.stateJSON)?.object)
       #expect(state["session"] == .string(rig.session.rawValue))

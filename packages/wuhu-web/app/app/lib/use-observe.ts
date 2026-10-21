@@ -5,6 +5,7 @@ import {
   observeStore,
   realTimer,
   type Snapshot,
+  type StoreConfig,
 } from '~/sdk/observe'
 import { openAuthorizedStream } from '~/sdk/sse'
 import { inGroup } from '~/sdk/http'
@@ -17,6 +18,7 @@ export function useObserve<Data, Event>(
   subscription: GroupSubscription<Event> | null,
   fold: Fold<Data, Event>,
   initial: Data,
+  events?: Pick<StoreConfig<Data, Event>, 'onEvent' | 'onOpen'>,
 ): Snapshot<Data> {
   const url = subscription ? subscription.url(subscription.from) : null
   const key = url === null ? null : `${subscription!.group}\n${url}`
@@ -35,6 +37,7 @@ export function useObserve<Data, Event>(
       }
     }
     return observeStore({
+      ...events,
       subscription,
       fold,
       initial,

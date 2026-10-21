@@ -8,6 +8,8 @@ import InferenceKit
 import JSONValue
 import LoopCore
 import class MainHub.Hub
+import protocol MainHub.Main
+import class MainHub.SessionService
 import Serve
 import ServeTesting
 import SessionDomain
@@ -77,6 +79,7 @@ struct SessionHarness {
     identityController: IdentityController? = nil,
     secrets: SpaceSecretStores? = nil,
     cacheWarmingUsage: UsageBoard? = nil,
+    metrics: InferenceMetricsSink = .noop,
     machineV2: Bool = false,
     inference: @escaping @Sendable (LoopCore.InferenceRequest, AttemptHub) async throws -> LoopCore.InferenceReply = { _, _ in
       throw InferenceError.other(status: nil, body: "no inference scripted")
@@ -101,22 +104,23 @@ struct SessionHarness {
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
       allowCacheWarming: { try await CacheWarmer(space: space, usage: cacheUsage).allows($0) },
     )
-    let slot = SessionServiceSlot()
-    let catalogOwner = Hub(space: space, credentials: credentials)
-    let catalog = groupCatalog(owner: catalogOwner)
+    let access = InferenceAccess(credentials: credentials)
+    let catalog = groupCatalog(space: space, access: access)
     let owner = Hub(
-      space: space, credentials: credentials, secrets: secrets,
+      space: space, secrets: secrets,
       machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: cacheUsage),
-      control: sessionControl { slot.service },
     )
     let connection = MainConnection()
-    let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: credentials) { _ in config }
-    let service = SessionService(sessions: store, worker: worker)
-    slot.bind(service)
-    runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: attempts, owner: owner, tokens: tokens, connection: connection)
+    let workers = WorkerRegistry(tokens: tokens)
+    let credential = workers.mint()
+    let main: any Main = MainClient(connection: connection, credential: { credential.token })
+    let worker = await SessionExecution(main: main, connection: connection, credential: { tokens.sessionToken($0) }, access: access) { _ in config }
+    workers.announce(credential.id, endpoint: worker)
+    let service = SessionService(sessions: store, worker: workers)
+    runtime = SessionRuntime(space: space, service: service, workers: workers, inProcessWorker: worker, attempts: attempts, owner: owner, access: access, metrics: metrics, tokens: tokens, connection: connection)
     handler = SpaceServer.configuredHandler(
       space: space, hub: hub, sessions: runtime, origin: origin, fingerprint: fingerprint, dev: dev,
       credentials: credentials, secrets: secrets, execTokens: tokens,

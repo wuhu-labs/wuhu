@@ -3,6 +3,6 @@
 
 [script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe
-verbs: ["archive Wuhu Infra", "interrupt twin", "resume twin", "archive twin", "unarchive twin", "archive stranger"]
+lifecycles: ["Wuhu Infra: archived", "stranger: archived", "twin: live"]
 === probe
 tags: ["self"]

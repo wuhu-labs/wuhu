@@ -188,7 +188,7 @@ private func unexpectedResult(_ op: String, _ path: String) -> ToolRunError {
   .failed(code: .internal, message: "machine returned an unexpected result for \(op) \(path)", hint: nil)
 }
 
-func machineFailure(_ error: MachineError, staleOnConflict: Bool = false) -> ToolRunError {
+public func machineFailure(_ error: MachineError, staleOnConflict: Bool = false) -> ToolRunError {
   switch error.code {
   case .notFound:
     .failed(code: .notFound, message: error.message, hint: nil)

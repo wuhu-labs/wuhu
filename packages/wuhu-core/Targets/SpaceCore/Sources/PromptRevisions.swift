@@ -9,13 +9,6 @@ import StructuredQueriesSQLite
 // moves: at creation, after a template clone, at every compaction and at
 // Start over. A session with no row predates the table: it renders from the
 // latest revision and gets its row at its next activation.
-let sessionPromptRevisionSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "session_prompt_revisions" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "rev" INTEGER NOT NULL
-);
-"""
-
 @Table("session_prompt_revisions")
 struct SessionPromptRevisionRow {
   @Column("session_id", primaryKey: true) var sessionID: String

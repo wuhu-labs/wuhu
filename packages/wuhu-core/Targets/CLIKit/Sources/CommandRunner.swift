@@ -31,6 +31,8 @@ public struct ServeCommand: Equatable, Sendable {
   public var groupPrivateKey: String? = nil
   public var otelEndpoint: String? = nil
   public var webApp: String? = nil
+  /// The workers run in processes of their own, and SIGHUP reboots main in place.
+  public var workerProcess: Bool = false
   /// Deprecated options serve accepts and ignores, with a warning.
   public var ignoredOptions: [String] = []
 }

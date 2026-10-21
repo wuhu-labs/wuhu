@@ -64,7 +64,7 @@ private struct SilentExec: OperationKind {
       let minted = try await space.mintExec(machine: record.id, caller: session.rawValue, group: .shared)
       let endpoint = ChannelEndpoint()
       let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["true"]))
-      let transport = try await execBackend(space: space, hub: hub).connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       tasks.addTask { await endpoint.run(transport) }
       await outgoing.closeStdin()
       for try await event in outgoing.events { if case .exit = event { break } }

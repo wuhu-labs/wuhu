@@ -15,14 +15,14 @@ import Testing
     try await space.writer.write { db in
       try db.execute(sql: "CREATE TRIGGER reject_v2_enrollment BEFORE INSERT ON \(rejectingTable) BEGIN SELECT RAISE(ABORT, 'injected enrollment interruption'); END")
     }
-    await #expect(throws: DatabaseError.self) { try await space.addMachineV2(name: "atomic-v2") }
-    #expect(try await space.resolveMachine("atomic-v2") == nil)
+    await #expect(throws: DatabaseError.self) { try await space.addMachineV2(name: "atomic") }
+    #expect(try await space.resolveMachine("atomic") == nil)
     #expect(try await space.machineV2Members(group: .shared).isEmpty)
     #expect(try await space.accounts().count == accountsBefore)
     #expect(try await space.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM join_tokens") } == 0)
     try await space.writer.write { db in try db.execute(sql: "DROP TRIGGER reject_v2_enrollment") }
-    let created = try await space.addMachineV2(name: "atomic-v2")
-    let persisted = try #require(try await space.resolveMachine("atomic-v2"))
+    let created = try await space.addMachineV2(name: "atomic")
+    let persisted = try #require(try await space.resolveMachine("atomic"))
     #expect(persisted.id == created.machine.id)
     #expect(persisted.account == created.machine.account)
     #expect(persisted.name == created.machine.name)
@@ -35,7 +35,7 @@ import Testing
     #expect(enrolled.capabilities == [.execMachine])
     #expect(Self.identity(try await space.consumeMachineV2JoinToken(created.token.token, pubkey: pubkey)) == Self.identity(enrolled))
     await #expect(throws: JoinTokenRejected.self) { try await space.consumeMachineV2JoinToken(created.token.token, pubkey: Self.label()) }
-    await #expect(throws: SpaceError.self) { try await space.addMachineV2(name: "atomic-v2") }
+    await #expect(throws: SpaceError.self) { try await space.addMachineV2(name: "atomic") }
   }
 
   @Test func oneCallEnrollmentIsAtomicAcrossMachineKeyAndDeviceLink() async throws {

@@ -5,12 +5,14 @@ checks:
   build: [linux, mac]
   test: [linux, mac]
 dependencies:
+  - Clocks
   - Credentials
   - Crypto
   - Dependencies
   - ExecutionOwner
   - Fetch
   - FileSearch
+  - GRDB
   - InferenceKit
   - JSONValue
   - Logging
@@ -35,7 +37,9 @@ tests:
     - Fetch
     - InferenceKit
     - JSONValue
+    - MachineChannel
     - Scratch
     - SessionDomain
+    - SpaceContract
     - SpaceCore
     - WuhuAI

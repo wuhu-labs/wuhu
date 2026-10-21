@@ -1,7 +1,10 @@
 import Foundation
 @testable import LoopCore
+import struct MainHub.ArchiveBusySession
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
+import struct MainHub.SubtreeArchiveBusy
 import SessionDomain
 import SessionTools
 import SpaceCore

@@ -18,11 +18,11 @@ import Testing
       let session = try await makeSession(space)
       let machine = try await space.addMachine(name: "owner-box").id
       let scripted = ScriptedExecMachine()
-      let backend = scripted.backend(space)
       let claim = try await space.claimExec(machine: machine, caller: session.rawValue, toolCallID: .init("interrupted"))
-      let owner = Hub(space: space, scriptMachines: .init(files: FakeMachineFS().seam, exec: backend))
+      let files = FakeMachineFS().seam
+      let owner = Hub(space: space, machines: files)
       let executor = scripted.executor(owner: owner)
-      #expect(try await owner.scriptMachines(session: session).contains { $0.id == machine })
+      #expect(await executor.machineID("owner-box", as: session) == machine)
       await executor.killInterrupted(session: session, callID: .init("missing"))
       #expect(scripted.kills.value.isEmpty)
       await executor.killInterrupted(session: session, callID: .init("interrupted"))

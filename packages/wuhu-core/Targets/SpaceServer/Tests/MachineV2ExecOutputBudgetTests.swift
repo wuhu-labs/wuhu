@@ -77,12 +77,11 @@ struct MachineV2ExecOutputBudgetTests {
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: chunks, window: window, maxOutput: maxOutput))
-    let backend = execBackend(space: space, hub: hub)
     return try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let transport = try await backend.connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
       // Nothing reads the output until the exec has ended, so a small window stays full.

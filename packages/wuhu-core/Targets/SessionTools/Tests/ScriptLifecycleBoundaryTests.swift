@@ -85,18 +85,12 @@ private func withScriptLifecycle(
 ) async throws {
   let space = try Space.inMemory()
   let session = try await makeSession(space)
-  let serviceRef = Box<SessionService?>(nil)
-  let owner = Hub(space: space, control: SessionControl { verb, target, force in
-    guard verb == .archive, let service = serviceRef.value else { throw Mismatch("unexpected session control") }
-    try await service.archive(target, force: force)
-  })
+  let owner = Hub(space: space)
   let worker = await firingWorker(owner)
   let service = SessionService(sessions: space.sessions, worker: worker)
-  serviceRef.withLock { $0 = service }
-  defer { serviceRef.withLock { $0 = nil } }
   do {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { await worker.drain() }
+      group.addTask { await whenCancelled { await worker.shutdown() } }
       defer { group.cancelAll() }
       try await body(space, session, owner, worker, service)
     }

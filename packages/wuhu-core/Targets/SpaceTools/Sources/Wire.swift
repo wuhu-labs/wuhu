@@ -197,6 +197,12 @@ public enum Wire {
       .failed(code: .notFound, message: "unknown device: \(device)", hint: "list them with: SELECT id, name, kind, machine_id FROM devices")
     case let .needsMigration(compaction):
       .failed(code: .internal, message: "the space database needs the \(compaction) migration", hint: nil)
+    case let .unknownMigrations(identifiers):
+      .failed(
+        code: .internal,
+        message: "the space database has migrations unknown to this server: \(identifiers.joined(separator: ", "))",
+        hint: "upgrade the server or restore a database backup from before those migrations",
+      )
     case let .adminThroughGroup(account, groups):
       .failed(code: .conflict, message: adminThroughGroupMessage(account, groups), hint: nil)
     case let .notAPerson(account):

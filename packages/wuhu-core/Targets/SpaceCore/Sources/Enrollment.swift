@@ -9,31 +9,6 @@ import struct SpaceContract.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let enrollmentSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "join_tokens" (
-  "token_hash" TEXT NOT NULL PRIMARY KEY,
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "capabilities" TEXT NOT NULL,
-  "created_by" TEXT REFERENCES "accounts" ("id"),
-  "created_at" TEXT NOT NULL,
-  "expires_at" TEXT NOT NULL,
-  "grp" TEXT NOT NULL DEFAULT ''
-);
-CREATE TRIGGER IF NOT EXISTS "join_tokens_grp_required" BEFORE INSERT ON "join_tokens" WHEN NEW."grp" = ''
-  BEGIN SELECT RAISE(ABORT, 'grp required: join_tokens'); END;
-CREATE INDEX IF NOT EXISTS "join_tokens_by_account" ON "join_tokens" ("account_id");
--- What a consumed machine token enrolled, so the same token with the same pubkey
--- replays to the same key: a box that lost the response retries instead of
--- being locked out. A receipt dies with its key (rotation, revocation, kick)
--- and is pruned once the token's own expiry passes.
-CREATE TABLE IF NOT EXISTS "join_token_receipts" (
-  "token_hash" TEXT NOT NULL PRIMARY KEY,
-  "pubkey" TEXT NOT NULL REFERENCES "account_keys" ("pubkey") ON DELETE CASCADE,
-  "expires_at" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "join_token_receipts_by_pubkey" ON "join_token_receipts" ("pubkey");
-"""
-
 public struct JoinToken: Hashable, Sendable {
   static let prefix: String = "jt_"
   static let suffixLength: Int = 32
@@ -58,7 +33,7 @@ public struct MintedJoinToken: Equatable, Sendable {
 
 extension Space {
   public func addMachineV2(name: String, group: GroupID = .shared) async throws -> (machine: MachineRecord, token: MintedJoinToken) {
-    guard let name = MachineName.normalized(name), name.hasSuffix("-v2") else { throw SpaceError.invalidMachineName(name) }
+    guard let name = MachineName.normalized(name) else { throw SpaceError.invalidMachineName(name) }
     let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
     let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
     let token = JoinToken(rawValue: JoinToken.prefix + randomSuffix(JoinToken.suffixLength))
@@ -82,8 +57,7 @@ extension Space {
   /// One-call enrollment for a machine whose key already exists on the caller's
   /// side (the Wuhu app): the machine, its account, its v2 membership, its live
   /// key and an optional device link commit in one transaction, with no join
-  /// token in between. The name needs no `-v2` suffix; it is unique across v1
-  /// and v2.
+  /// token in between. The name is unique across v1 and v2.
   ///
   /// `enrolledBy`, when given, must own `device`; a device it does not own is
   /// reported as unknown.

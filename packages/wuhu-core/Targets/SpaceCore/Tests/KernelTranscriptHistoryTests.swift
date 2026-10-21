@@ -84,9 +84,9 @@ import WuhuAI
       let id = try await store.createSession(group: .shared, title: "kernel", kind: .agent, createdBy: "morgan", model: .test)
       let assistant = Self.assistant("carried")
       let result = Self.result("carried")
-      try await store.append(id, items: [assistant, result], transcript: Transcript(items: [assistant, result]))
+      try await store.append(id, items: [assistant, result], inputOrigin: Transcript(items: [assistant, result]).cacheWarmingInputOrigin)
       let omittedLaterAssistant = Self.assistant("carried")
-      try await store.append(id, items: [omittedLaterAssistant], transcript: Transcript(items: [assistant, result, omittedLaterAssistant]))
+      try await store.append(id, items: [omittedLaterAssistant], inputOrigin: Transcript(items: [assistant, result, omittedLaterAssistant]).cacheWarmingInputOrigin)
       let head = GenerationHead(id: UUID(), timestamp: fixedDate, summary: "compacted", snapshot: .init(), runningWork: [])
       let compacted = try await store.writeCompaction(id, head: head, kept: keepAssistant ? 0 ..< 2 : 1 ..< 2)
       #expect(compacted.items == [.generationHead(head)] + (keepAssistant ? [assistant, result] : [result]))
@@ -102,7 +102,7 @@ import WuhuAI
         #expect(try Self.origin(id.rawValue, 0, 1, "carried", db)?.item == assistant)
       }
       let tailAssistant = Self.assistant("later")
-      try await store.append(id, items: [tailAssistant], transcript: Transcript(items: compacted.items + [tailAssistant]))
+      try await store.append(id, items: [tailAssistant], inputOrigin: Transcript(items: compacted.items + [tailAssistant]).cacheWarmingInputOrigin)
       try await space.writer.read { db throws -> Void in
         #expect(try Self.origin(id.rawValue, 1, resultPosition, "carried", db) == (keepAssistant ? TranscriptHistoryEntry(position: 1, item: assistant) : nil))
       }
@@ -133,9 +133,9 @@ import WuhuAI
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let source = try DatabaseQueue(path: folder.appendingPathComponent("source.sqlite").path)
+    let space = try Space(writer: source)
     let assistant = Self.assistant("vacuum")
     try await source.write { db in
-      try db.execute(sql: sessionSchemaSQL + kernelTranscriptHistorySchemaSQL)
       try Sessions.append("gap", generation: 0, items: [Self.assistant("gap")], in: db)
       try Sessions.append("s", generation: 0, items: [assistant], in: db)
       try Sessions.append("other", generation: 0, items: [Self.assistant("other")], in: db)
@@ -157,5 +157,6 @@ import WuhuAI
       #expect(try String.fetchAll(db, sql: "SELECT id FROM session_contents ORDER BY rowid") == before)
       #expect(try Self.origin("s", 0, 100, "vacuum", db)?.item == assistant)
     }
+    try await space.close()
   }
 }

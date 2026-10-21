@@ -3,15 +3,6 @@ import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let sessionContextSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "session_context" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "used_tokens" INTEGER NOT NULL,
-  "max_tokens" INTEGER NOT NULL,
-  "reported_at" TEXT NOT NULL
-);
-"""
-
 @Table("session_context")
 struct SessionContextRow {
   @Column("session_id", primaryKey: true) var sessionID: String

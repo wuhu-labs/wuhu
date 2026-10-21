@@ -37,7 +37,7 @@ extension ToolExecutor {
     guard arguments.cwd.hasPrefix("/"), !arguments.machine.contains("/") else {
       throw ToolProblem("exec takes a machine name or id and an absolute cwd on it, got machine \(arguments.machine), cwd \(arguments.cwd)")
     }
-    guard let machine = try await owner.resolveMachine(arguments.machine, session: session) else {
+    guard let machine = try await machine(arguments.machine, as: session) else {
       throw ToolProblem("unknown machine: \(arguments.machine)")
     }
     let cwd = try Addressing.normalize(arguments.cwd)
@@ -130,7 +130,8 @@ extension ToolExecutor {
 
   func drive(_ job: ExecJob, spec: ExecJobSpec, client: SpaceClient) throws(ToolProblem) {
     do {
-      try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, client: client) }
+      let task = try execJobs.drivers.run("exec job \(job.handle)") { await self.follow(job, spec: spec, client: client) }
+      job.driver.withLock { $0 = task }
     } catch {
       execJobs.remove(job)
       throw ToolProblem("the server is stopping; \(job.handle) is followed again when it starts")
@@ -141,7 +142,7 @@ extension ToolExecutor {
     let connection = ExecSession(client: client, start: spec.start(id: job.id))
     let buffer = ExecBuffer()
     do {
-      _ = try await connection.run(autoAcknowledge: false, failOnRemoteError: true, input: nil, output: { _, bytes in
+      _ = try await connection.run(autoAcknowledge: false, failOnRemoteError: true, input: .closed, output: { _, bytes in
         await buffer.received(bytes)
         job.received(bytes)
       }, onEvent: { event in await buffer.event(event) }, onTermination: { termination in
@@ -181,6 +182,9 @@ extension ToolExecutor {
         try? await delivered(job)
         execJobs.finish(job, outcome)
         job.committed.fulfill(true)
+      case .released:
+        execJobs.finish(job, outcome)
+        job.committed.fulfill(false)
       }
     }
   }
@@ -228,7 +232,7 @@ extension ToolExecutor {
           Self.execLog.warning("\(job.handle) could not record delivery of its end: \(error)")
         }
       }
-    case .awaited, .detached, .cancelled:
+    case .awaited, .detached, .cancelled, .released:
       return nil
     }
   }

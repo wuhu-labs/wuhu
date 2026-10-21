@@ -66,7 +66,7 @@ func machineV2SessionRefusal(_ verb: String) -> String {
   let usage: String
   switch verb {
   case "install", "upgrade": usage = "\(verb) <id> --binary <signed-wuhu>"
-  case "join": usage = "join <https-origin> [fingerprint] [--name <name-v2>] < v2-token"
+  case "join": usage = "join <https-origin> [fingerprint] [--name <name>] < v2-token"
   case "preflight": usage = "preflight <id> <private-result-path>"
   default: usage = "\(verb) <id>"
   }

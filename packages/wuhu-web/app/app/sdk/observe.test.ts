@@ -555,3 +555,32 @@ Deno.test('a subscription that stops on refusal never retries a refused query, b
   plainTimer.fire()
   assertEquals(plain.streams.length, 2)
 })
+
+Deno.test('group feed hooks publish accepted revisions and each connection without opening another stream', () => {
+  const net = new FakeNet()
+  const timer = new FakeTimer()
+  const events: RevEvent[] = []
+  let opened = 0
+  const store = observeStore<null, RevEvent>({
+    subscription: revSubscription(4),
+    fold: (value) => value,
+    initial: null,
+    open: net.open,
+    timer,
+    onEvent: (event) => events.push(event),
+    onOpen: () => {
+      opened++
+    },
+  })
+  store.subscribe(() => {})
+  net.last.fireOpen()
+  net.last.send({ rev: 5, path: '/note.txt' })
+  net.last.send({ rev: 3, path: '/old.txt' })
+  assertEquals(events, [{ rev: 5, path: '/note.txt' }])
+  net.last.fail()
+  timer.fire()
+  net.last.fireOpen()
+  assertEquals(opened, 2)
+  assertEquals(net.streams.length, 2)
+  store.close()
+})

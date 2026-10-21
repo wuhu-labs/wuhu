@@ -99,7 +99,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space), access: .init(credentials: credentials)),
         session: session,
       )
 
@@ -163,7 +163,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam), access: .init(credentials: credentials)),
         session: try await makeSession(space),
       )
 
@@ -190,7 +190,7 @@ private let ModelsPath = "/models.json"
       _ = try await space.fs(.shared).write("/_/machines/studio/AGENTS.md", Data("studio manual".utf8), ifMatch: nil)
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: FakeMachineFS().seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam), access: .init(credentials: credentials)),
         session: try await makeSession(space),
       )
 
@@ -214,7 +214,7 @@ private let ModelsPath = "/models.json"
       let recorder = ImageRequestRecorder()
       let credentials = CredentialResolver { _ in .chatGPT(accessToken: "token", accountID: "account") }
       var world = ToolWorld(
-        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, credentials: credentials, machines: machineFS.seam), credentials: credentials),
+        executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: machineFS.seam), access: .init(credentials: credentials)),
         session: try await makeSession(space),
       )
 

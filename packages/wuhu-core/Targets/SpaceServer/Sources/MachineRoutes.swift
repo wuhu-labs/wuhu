@@ -329,6 +329,7 @@ func execStatus(of record: ExecRecord) -> ExecStatus {
     startedAt: record.startedAt.timeIntervalSince1970,
     state: state,
     toolCallID: record.toolCallID?.rawValue,
+    killDelivered: record.killDelivered,
   )
 }
 

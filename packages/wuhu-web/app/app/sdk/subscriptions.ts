@@ -22,7 +22,7 @@ export interface GroupSubscription<Event> extends Subscription<Event> {
 export function globSubscription(
   client: SpaceClient,
   glob: string,
-  from: number,
+  from: number | null,
 ): GroupSubscription<RevisionEvents> {
   return {
     group: client.group,

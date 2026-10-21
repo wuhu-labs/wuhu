@@ -50,7 +50,7 @@ import struct WuhuAI.ToolCall
           }
         }
         try await awaitAttached(server, machine)
-        let outcome = try await runtime.worker.execute(session: session, call: ToolCall(
+        let outcome = try await runtime.inProcessWorker!.execute(session: session, call: ToolCall(
           id: "archive-live", name: "exec", arguments: .object([
             "machine": .string(machine.rawValue), "cwd": .string("/"), "command": .string("wait"), "wait_seconds": .number(0.01),
           ]),
@@ -69,12 +69,12 @@ import struct WuhuAI.ToolCall
           counts.state.withLock { $0.kills == 1 && $0.acks == 1 }
         }
         let executor = SessionRuntime.toolExecutor(owner: runtime.owner)
-        await executor.adoptExecJobs()
-        await executor.adoptExecJobs()
+        await executor.adoptExecJobs(of: session)
+        await executor.adoptExecJobs(of: session)
         #expect(executor.runningExecJobs(of: session).isEmpty)
         #expect(try await space.owedExecs().isEmpty)
         #expect(counts.state.withLock { $0.kills == 1 && $0.acks == 1 })
-        await runtime.worker.shutdown()
+        await runtime.workers.shutdown()
       }
     }
   }

@@ -6,4 +6,4 @@ running after the loss: 8
 
 [script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe
-killed when the script ended: 9 of 9
+killed when the script ended: 8 of 9

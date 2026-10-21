@@ -2,12 +2,6 @@ import GRDB
 import SessionDomain
 import StructuredQueries
 
-let kernelTranscriptHistorySchemaSQL = """
-CREATE INDEX IF NOT EXISTS "session_contents_assistant_history" ON "session_contents" ("session_id")
-  WHERE json_type("payload", '$.assistant') IS NOT NULL;
-CREATE INDEX IF NOT EXISTS "session_pointers_by_content" ON "session_pointers" ("session_id", "generation", "content_id", "position");
-"""
-
 @Table("session_contents")
 private struct KernelHistoryContent {
   @Column("rowid") var rowID: Int64

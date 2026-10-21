@@ -1,5 +1,10 @@
 import Dependencies
+import class MainHub.Callback
 import protocol MainHub.Main
+import enum MainHub.RevocationPolicy
+import enum MainHub.SessionError
+import struct MainHub.UnfulfilledError
+import func MainHub.withCallback
 import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -62,14 +67,14 @@ actor SessionActor {
 
   enum ExternalAction {
     case wake(Callback<Void>)
-    case prepareRevoke(Callback<Bool>)
+    case prepareRevoke(RevocationPolicy, Callback<Bool>)
     case interrupt(Callback<Void>)
     case resume(Callback<Void>)
 
     func fail(_ error: any Error) {
       switch self {
       case .wake(let callback), .interrupt(let callback), .resume(let callback): callback.resume(throwing: error)
-      case .prepareRevoke(let callback): callback.resume(throwing: error)
+      case .prepareRevoke(_, let callback): callback.resume(throwing: error)
       }
     }
 
@@ -82,7 +87,6 @@ actor SessionActor {
   nonisolated let id: SessionID
   let main: any Main
   let loopConfig: LoopConfig
-  let liveness: LivenessTracker
   let beforeCompactRequest: @Sendable () async -> Void
   let afterLoop: @Sendable () async -> Void
 
@@ -96,6 +100,9 @@ actor SessionActor {
   private var handlerTask: Task<Void, Never>?
   private(set) var looperTask: Task<Void, Never>?
   var longRunningTask: (id: UUID, task: Task<Void, Never>)?
+  var inFlightTool: ToolInvocation?
+  private var passInFlight = false
+  private var passObservers: [CheckedContinuation<Void, Never>] = []
   var retryPause: Task<Void, any Error>?
   private var retired = false
 
@@ -104,11 +111,10 @@ actor SessionActor {
   @Dependency(\.continuousClock) var clock
   @Dependency(\.withRandomNumberGenerator) var withRandomNumberGenerator
 
-  init(id: SessionID, main: any Main, loopConfig: LoopConfig, liveness: LivenessTracker, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
+  init(id: SessionID, main: any Main, loopConfig: LoopConfig, beforeCompactRequest: @escaping @Sendable () async -> Void = {}, afterLoop: @escaping @Sendable () async -> Void = {}) {
     self.id = id
     self.main = main
     self.loopConfig = loopConfig
-    self.liveness = liveness
     self.beforeCompactRequest = beforeCompactRequest
     self.afterLoop = afterLoop
   }
@@ -197,14 +203,28 @@ actor SessionActor {
         guard try await ensureLifecycle() == .live else { return }
         try await handleWake()
       }
-    case .prepareRevoke(let callback):
+    case .prepareRevoke(let policy, let callback):
       await callback.run {
         guard try await ensureLifecycle(startLoop: false) == .live else { return true }
-        let head = try await main.queueHead(id)
-        try modify { $0.queueHead = max($0.queueHead, head) }
-        guard try live.hasSettled else { return false }
-        try modify { $0.revoking = true }
-        return true
+        switch policy {
+        case .cancel:
+          return true
+        case .whenSettled:
+          let head = try await main.queueHead(id)
+          try modify { $0.queueHead = max($0.queueHead, head) }
+          guard try live.hasSettled else { return false }
+          try modify { $0.revoking = true }
+          return true
+        case .handOff:
+          // The loop returns at its next boundary; a releasable tool is cut
+          // now and stays pending, so the next worker picks it up.
+          try modify { $0.revoking = true }
+          if let invocation = inFlightTool, await loopConfig.releaseTool(invocation) {
+            longRunningTask?.task.cancel()
+          }
+          await passEnded()
+          return true
+        }
       }
     case .interrupt(let callback):
       await callback.run {
@@ -215,6 +235,13 @@ actor SessionActor {
         try await handleResume()
       }
     }
+  }
+
+  // Suspends until the pass in flight, if any, has returned: what it knew is
+  // then in the store, and nothing of this session runs here.
+  private func passEnded() async {
+    guard passInFlight else { return }
+    await withCheckedContinuation { passObservers.append($0) }
   }
 
   private func ensureLifecycle(startLoop: Bool = true) async throws -> Lifecycle {
@@ -232,7 +259,10 @@ actor SessionActor {
       return status
 
     case .live:
-      liveState = LiveState(hydration: hydration, now: date())
+      let live = LiveState(hydration: hydration, now: date())
+      await loopConfig.mounted(id, live.transcript)
+      try Task.checkCancellation()
+      liveState = live
       if startLoop { mountLooper() }
       lifecycle = .live
       return .live
@@ -248,9 +278,12 @@ actor SessionActor {
 
   private func runLooper(nudges: Inbox<Void>) async {
     while await nudges.next() != nil {
-      let token = liveness.start()
-      defer { liveness.end(token) }
+      passInFlight = true
       await runPass()
+      passInFlight = false
+      let observers = passObservers
+      passObservers.removeAll()
+      for observer in observers { observer.resume() }
       if retired { return }
     }
   }

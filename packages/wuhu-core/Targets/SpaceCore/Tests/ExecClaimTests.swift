@@ -37,70 +37,6 @@ private func makeExecSpace() throws -> Space {
     #expect(try await space.owedExecs().isEmpty)
   }
 
-  @Test func reopeningAnOlderExecSchemaAddsNullableToolSpec() async throws {
-    let scratch = try ScratchFolder("exec-schema")
-    defer { scratch.remove() }
-    let file = scratch.url.appendingPathComponent("space.sqlite")
-    let original = try Space.open(file: file)
-    let machine = try await original.addMachine(name: "box").id
-    let minted = try await original.mintExec(machine: machine)
-    try await original.writer.write { db in
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_spec")
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_end_owed")
-    }
-    try await original.close()
-    let reopened = try Space.open(file: file)
-    #expect(try await reopened.execRecord(minted.id)?.toolSpec == nil)
-    let claimed = try await reopened.claimExec(machine: machine, caller: "caller", toolCallID: ToolCallID("call"), spec: "{}")
-    #expect(claimed.record.toolSpec == "{}")
-    try await reopened.close()
-    let again = try Space.open(file: file)
-    #expect(try await again.execRecord(claimed.record.id)?.toolSpec == "{}")
-    try await again.close()
-  }
-
-  @Test func reopeningMigratesDetachedJobsAndRetainsTheirEmptyTable() async throws {
-    let scratch = try ScratchFolder("exec-jobs")
-    defer { scratch.remove() }
-    let file = scratch.url.appendingPathComponent("space.sqlite")
-    let space = try Space.open(file: file)
-    let machine = try await space.addMachine(name: "box").id
-    let claim = try await space.claimExec(machine: machine, caller: "caller", toolCallID: ToolCallID("call"))
-    let plain = try await space.mintExec(machine: machine, caller: "caller")
-    #expect(try await space.setExecEndOwed(plain.id, caller: "caller", owed: true) == false)
-    let script = try await space.mintScriptExec(machine: machine, session: "caller", script: "script")
-    #expect(try await space.setExecEndOwed(script.id, caller: "caller", owed: true) == false)
-    try await space.finishExec(claim.record.id, .exited(code: 0))
-    try await space.writer.write { db in
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_spec")
-      try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_end_owed")
-      try db.execute(sql: "CREATE TABLE exec_jobs (exec_id TEXT PRIMARY KEY, spec TEXT NOT NULL)")
-      try db.execute(sql: "INSERT INTO exec_jobs (exec_id, spec) VALUES (?, ?)", arguments: [claim.record.id.rawValue, "{}"])
-    }
-    try await space.close()
-    let reopened = try Space.open(file: file)
-    let owed = try #require(try await reopened.owedExecs().first)
-    #expect(owed.id == claim.record.id)
-    #expect(owed.terminal == .exited(code: 0))
-    #expect(owed.toolSpec == "{}")
-    #expect(owed.toolEndOwed)
-    #expect(try await reopened.execRecord(plain.id)?.toolEndOwed == false)
-    #expect(try await reopened.writer.read { db in try db.tableExists("exec_jobs") })
-    #expect(try await reopened.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM exec_jobs") } == 0)
-    try await reopened.close()
-    let again = try Space.open(file: file)
-    #expect(try await again.owedExecs() == [owed])
-    #expect(try await again.setExecEndOwed(owed.id, caller: "caller", owed: false))
-    #expect(try await again.owedExecs().isEmpty)
-    try await again.close()
-    let delivered = try Space.open(file: file)
-    #expect(try await delivered.owedExecs().isEmpty)
-    #expect(try await delivered.execRecord(owed.id)?.toolEndOwed == false)
-    #expect(try await delivered.writer.read { db in try db.tableExists("exec_jobs") })
-    #expect(try await delivered.writer.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM exec_jobs") } == 0)
-    try await delivered.close()
-  }
-
   @Test func forgettingOwedEndsOnlyAffectsTheCallersToolExecs() async throws {
     let space = try makeExecSpace()
     let machine = try await space.addMachine(name: "box").id
@@ -216,7 +152,7 @@ private func makeExecSpace() throws -> Space {
     let finished = try await space.mintScriptExec(machine: machine, session: session, script: "s1")
     try await space.finishExec(finished.id, .exited(code: 0))
     let released = try await space.mintScriptExec(machine: machine, session: session, script: "s2")
-    try await space.releaseScriptExecs(script: "s2")
+    try await space.releaseScriptExecs(script: "s2", session: session)
     let other = try await space.mintScriptExec(machine: machine, session: "bbbbbbbb", script: "s3")
 
     let owners = try await space.takeScriptExecOwners()

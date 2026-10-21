@@ -8,6 +8,7 @@ import Fetch
 import HTTPTypes
 import JSONValue
 import protocol MachineChannel.FrameTransport
+import enum SpaceContract.ErrorCode
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupID
 import struct SpaceContract.ToolError
@@ -53,6 +54,8 @@ public struct SpaceClient: Sendable {
     public let status: Int?
     public let code: String?
     public var description: String { message }
+    /// The server's error code, when it is one the contract names.
+    public var errorCode: ErrorCode? { code.flatMap(ErrorCode.init(rawValue:)) }
 
     init(message: String, status: Int? = nil, code: String? = nil) {
       self.message = message
@@ -145,6 +148,15 @@ public struct SpaceClient: Sendable {
 
   public func fileBytes(_ path: String) async throws -> Data {
     try await self.file(path).data
+  }
+
+  /// `GET /v1/blob/:hash`: bytes a tool answer stored by hash (an image a `read` delivered).
+  public func blob(_ hash: String) async throws -> Data {
+    let response = try await self.fetch(Request(url: try self.url("/v1/blob/\(hash)")))
+    guard 200 ..< 300 ~= response.status.code else {
+      throw await Self.failure(from: response)
+    }
+    return try await response.data()
   }
 
   /// `createOnly` has the server refuse a path that already has a file (`If-None-Match: *`).

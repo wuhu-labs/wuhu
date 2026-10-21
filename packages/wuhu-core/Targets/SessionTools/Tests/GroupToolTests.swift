@@ -3,10 +3,10 @@ import Foundation
 import GRDB
 import JSONValue
 import class MainHub.Hub
-import struct MainHub.SessionControl
 import struct MainHub.ToolProblem
 import SessionDomain
 @testable import SessionTools
+import struct SpaceClient.SpaceClient
 import struct SpaceContract.GroupID
 @testable import SpaceCore
 @testable import SpaceServer
@@ -172,30 +172,35 @@ import struct WuhuAI.ToolArguments
   @Test func archiveIsForTheSessionItsCreatorAndAdminsButForceCannotArchiveSelf() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
-      let performed = Box<[SessionID]>([])
-      let executor = SessionRuntime.toolExecutor(owner: Hub(space: rig.space, control: SessionControl { _, id, _ in performed.withLock { $0.append(id) } }))
+      let executor = SessionRuntime.toolExecutor(owner: Hub(space: rig.space))
       let st = try await task(rig, of: rig.s, in: .shared)
       let other = try await makeSession(rig.space, name: "S2")
       let theirs = try await task(rig, of: other, in: .shared)
-
-      try await executor.owner.control(.archive, rig.s, of: theirs, force: false)
-      for (caller, target) in [(st, rig.s), (rig.p, rig.s), (st, theirs)] {
+      // The route's refusal, or nil when the verb went through.
+      func verb(_ verb: String, _ caller: SessionID, of target: SessionID, force: Bool = false) async throws -> String? {
         do {
-          try await executor.owner.control(.archive, caller, of: target, force: false)
-          Issue.record("\(caller.rawValue) archived \(target.rawValue)")
-        } catch let problem as ToolProblem {
-          #expect(problem.message == "\(caller.rawValue) may not archive or unarchive session \(target.rawValue): only the session itself, its creator and admins of its group may")
+          let _: JSONValue = try await executor.client(caller).api(.post, "/v1/session/\(target.rawValue)/\(verb)", body: verb == "archive" ? .object(["force": .bool(force)]) : nil)
+          return nil
+        } catch let failure as SpaceClient.ToolFailure {
+          return failure.error.message
+        } catch let failure as SpaceClient.TransportFailure {
+          return failure.message
         }
       }
-      do {
-        try await executor.owner.control(.archive, st, of: st, force: true)
-        Issue.record("script force-archived itself")
-      } catch let problem as ToolProblem {
-        #expect(problem.message.contains("can't force-archive itself"))
+
+      #expect(try await verb("archive", rig.s, of: theirs) == nil)
+      guard case .archived = try await rig.space.sessions.record(theirs).lifecycle else { throw Mismatch("creator's archive did not commit") }
+      for (caller, target) in [(st, rig.s), (rig.p, rig.s), (st, theirs)] {
+        let refusal = try await verb("archive", caller, of: target)
+        #expect(refusal == "\(caller.rawValue) may not archive or unarchive session \(target.rawValue): only the session itself, its creator and admins of its group may")
       }
-      try await executor.owner.control(.archive, st, of: st, force: false)
-      try await executor.owner.control(.unarchive, st, of: st, force: false)
-      #expect(performed.value == [theirs, st, st])
+      #expect(try await verb("archive", st, of: st, force: true)?.contains("can't force-archive itself") == true)
+      #expect(try await verb("archive", st, of: st) == nil)
+      guard case .archived = try await rig.space.sessions.record(st).lifecycle else { throw Mismatch("self-archive did not commit") }
+      // Archived, it may no longer act; its parent brings it back.
+      #expect(try await verb("unarchive", st, of: st) == "session \(st.rawValue) is archived and may no longer act")
+      #expect(try await verb("unarchive", rig.s, of: st) == nil)
+      guard case .live = try await rig.space.sessions.record(st).lifecycle else { throw Mismatch("unarchive did not commit") }
     }
   }
 }

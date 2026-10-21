@@ -17,7 +17,7 @@ extension SessionStore {
     var transcript = try await transcript(id)
     let before = transcript.items.count
     transcript.appendAssistant(message, id: attemptID, metadata: metadata)
-    try await append(id, items: Array(transcript.items[before...]), transcript: transcript)
+    try await append(id, items: Array(transcript.items[before...]), inputOrigin: transcript.cacheWarmingInputOrigin)
   }
 }
 
@@ -25,6 +25,6 @@ extension SessionStore {
   func writeToolResult(_ id: SessionID, _ item: ToolResultItem) async throws {
     var transcript = try await transcript(id)
     transcript.append(.toolResult(item))
-    try await append(id, items: [.toolResult(item)], transcript: transcript)
+    try await append(id, items: [.toolResult(item)], inputOrigin: transcript.cacheWarmingInputOrigin)
   }
 }

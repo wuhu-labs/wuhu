@@ -24,9 +24,17 @@ final class UsageBoard: Sendable {
   }
 
   private let entries = Mutex<[String: Entry]>([:])
+  private let onRecord: (@Sendable (String, String?, [UsageWindow], Date) -> Void)?
+
+  /// `onRecord` hears every report too: a worker in its own process passes
+  /// them on to main's board.
+  init(onRecord: (@Sendable (String, String?, [UsageWindow], Date) -> Void)? = nil) {
+    self.onRecord = onRecord
+  }
 
   func record(_ provider: String, plan: String?, windows: [UsageWindow], at date: Date) {
     guard !windows.isEmpty else { return }
+    onRecord?(provider, plan, windows, date)
     entries.withLock { entries in
       guard (entries[provider]?.usage.observedAt ?? -.infinity) <= date.timeIntervalSince1970 else { return }
       var merged = entries[provider]?.usage.windows ?? []

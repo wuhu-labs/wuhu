@@ -1,6 +1,5 @@
 import Dependencies
 import GRDB
-import protocol MainHub.Worker
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -9,7 +8,6 @@ import protocol MainHub.Worker
 import JSONValue
 import Logging
 import SessionDomain
-import func SessionTools.scriptHandle
 import SpaceCore
 import Synchronization
 
@@ -21,16 +19,14 @@ public final class SessionService: Sendable {
   let archiveGrace: Duration
   private let reminders: SessionReminders
   private let lifecycle = LifecycleCoordinator()
-  private let runningWork: @Sendable (SessionID) async throws -> [String]
   private let log: Logger
 
-  public convenience init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration = .seconds(24 * 3600), runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] }, archived: @escaping @Sendable (SessionID) async -> Void = { _ in }) {
-    self.init(sessions: sessions, worker: worker, archiveGrace: archiveGrace, runningWork: runningWork, archived: archived, log: Logger(label: "wuhu.session-service"))
+  public convenience init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration = .seconds(24 * 3600), archived: @escaping @Sendable (SessionID) async -> Void = { _ in }) {
+    self.init(sessions: sessions, worker: worker, archiveGrace: archiveGrace, archived: archived, log: Logger(label: "wuhu.session-service"))
   }
 
-  init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration, runningWork: @escaping @Sendable (SessionID) async throws -> [String] = { _ in [] }, archived: @escaping @Sendable (SessionID) async -> Void = { _ in }, beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in }, log: Logger) {
+  public init(sessions: SessionStore, worker: any Worker, archiveGrace: Duration, archived: @escaping @Sendable (SessionID) async -> Void = { _ in }, beforeArchive: @escaping @Sendable (SessionID) async throws -> Void = { _ in }, log: Logger) {
     self.sessions = sessions
-    self.runningWork = runningWork
     self.worker = worker
     self.archived = archived
     self.beforeArchive = beforeArchive
@@ -43,6 +39,12 @@ public final class SessionService: Sendable {
     await reminders.schedule(id, at: due)
   }
 
+  /// The parked sessions' wakes still to come: what a main that takes over
+  /// schedules again.
+  public func scheduledWakes() async -> [SessionID: Date] {
+    await reminders.scheduled()
+  }
+
   public func shutdown() async {
     await reminders.shutdown()
     await worker.shutdown()
@@ -50,9 +52,6 @@ public final class SessionService: Sendable {
 
   public func start() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { [worker] in
-        await worker.drain()
-      }
       group.addTask {
         let (parking, continuation) = AsyncStream<Void>.makeStream()
         for await _ in parking {}
@@ -117,7 +116,8 @@ public final class SessionService: Sendable {
 
   private func wakeWithRetry(_ id: SessionID, phase: String = "work signal wake") async -> Bool {
     @Dependency(\.continuousClock) var clock
-    for attempt in 0 ... 3 {
+    var attempt = 0
+    while true {
       do {
         try await wake(id)
         return true
@@ -126,6 +126,12 @@ public final class SessionService: Sendable {
         if case SessionStoreError.unknownSession = error {
           if phase == "boot wake" { await failSession(id, error: error, phase: phase) }
           return false
+        }
+        // Main is up before its worker, or between two of them: the session
+        // waits for one, however long that takes.
+        if isWorkerUnreachable(error) {
+          do { try await clock.sleep(for: .seconds(1)) } catch { return false }
+          continue
         }
         let transient: Bool
         if let database = error as? DatabaseError {
@@ -143,9 +149,9 @@ public final class SessionService: Sendable {
         } catch {
           return false
         }
+        attempt += 1
       }
     }
-    return false
   }
 
   private func failSession(_ id: SessionID, error: any Error, phase: String) async {
@@ -219,7 +225,7 @@ public final class SessionService: Sendable {
       try await retryingEviction {
         try await worker.deliver(sessionID, .resume)
       }
-    } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting {
+    } catch where error is DecodingError || error is ExecutorSpecError || (error as? CocoaError)?.code == .formatting || (error as? SessionError) == .unreadableData(sessionID) {
       await failSession(sessionID, error: SessionError.unreadableData(sessionID), phase: "resume")
       throw SessionError.unreadableData(sessionID)
     }
@@ -323,8 +329,7 @@ public final class SessionService: Sendable {
     }
     let result: SessionRestart
     do {
-      let scripts = await worker.activity().scripts.filter { $0.value == sessionID }.keys.map { scriptHandle($0.rawValue) }.sorted()
-      result = try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute, runningWork: scripts + (try await runningWork(sessionID)))
+      result = try await sessions.restart(sessionID, executor: executor, note: note, modelRoute: modelRoute, runningWork: try await worker.runningWork(sessionID))
     } catch {
       await reloadCommitted(sessionID)
       throw error
@@ -359,58 +364,6 @@ public final class SessionService: Sendable {
     guard case .archived = try await sessions.record(sessionID).lifecycle else { return }
     try await sessions.unarchive(sessionID)
     await reloadCommitted(sessionID)
-  }
-}
-
-// A session's live work: each loop pass holds a token from wake to settle, so
-// drain-on-shutdown waits for in-flight tool/inference/compaction work to
-// reach a settle or park boundary. Verbs are quick actor hops and don't count.
-final class LivenessTracker: Sendable {
-  struct Token: Hashable {
-    private let id = UUID()
-  }
-
-  private struct TrackerState {
-    var active: Set<Token> = []
-    var waiter: CheckedContinuation<Void, Never>?
-  }
-
-  private let state = Mutex(TrackerState())
-
-  func start() -> Token {
-    let token = Token()
-    state.withLock { _ = $0.active.insert(token) }
-    return token
-  }
-
-  func end(_ token: Token) {
-    let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
-      state.active.remove(token)
-      guard state.active.isEmpty, let waiter = state.waiter else { return nil }
-      state.waiter = nil
-      return waiter
-    }
-    waiter?.resume()
-  }
-
-  // Parks until the surrounding task is cancelled, then waits for in-flight
-  // work to end. Single caller by contract (the service's start()).
-  func drain() async {
-    let (parking, parkingContinuation) = AsyncStream<Void>.makeStream()
-    for await _ in parking {}
-    parkingContinuation.finish()
-
-    await withCheckedContinuation { cont in
-      let resumeNow = state.withLock { state -> Bool in
-        precondition(state.waiter == nil, "LivenessTracker.drain has a single caller")
-        if state.active.isEmpty { return true }
-        state.waiter = cont
-        return false
-      }
-      if resumeNow {
-        cont.resume()
-      }
-    }
   }
 }
 

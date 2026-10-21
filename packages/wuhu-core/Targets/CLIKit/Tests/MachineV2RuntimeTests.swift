@@ -36,11 +36,11 @@ private actor EnrollmentEffects {
     switch request.url.path {
     case "/v1/machine-v2/enroll":
       let body = try await request.json(JSONValue.self)
-      #expect(body.object?["name"] == "box-v2")
+      #expect(body.object?["name"] == "box")
       #expect(body.object?["token"] == "explicit-token")
       pubkey = body.object?["pubkey"]?.stringValue
       if refuseV2 { return .text("v1-token-refused", status: .forbidden) }
-      return try .json(JSONValue.object(["account": "machine-account", "capabilities": ["execMachine"], "machine": "mc_test", "machineName": "box-v2"]))
+      return try .json(JSONValue.object(["account": "machine-account", "capabilities": ["execMachine"], "machine": "mc_test", "machineName": "box"]))
     case "/v1/machine-v2/challenge": return try .json(["challenge": "one-shot"])
     case "/v1/machine-v2/mc_test":
       #expect(request.headers[MachineV2Connect.pubkeyHeader] == pubkey)
@@ -49,7 +49,7 @@ private actor EnrollmentEffects {
       let key = try #require(VerifyingKey(label: pubkey!))
       let signature = try #require(Data(base64Encoded: request.headers[MachineV2Connect.signatureHeader]!))
       #expect(key.isValidSignature(signature, for: MachineV2Connect.signingPayload(challenge: "one-shot", machines: ["mc_test"])))
-      return try .json(JSONValue.object(["id": "mc_test", "name": "box-v2", "group": "shared", "attached": false]))
+      return try .json(JSONValue.object(["id": "mc_test", "name": "box", "group": "shared", "attached": false]))
     default: Issue.record("unexpected path \(request.url.path)"); return .text("unexpected", status: .notFound)
     }
   }
@@ -77,7 +77,7 @@ private actor EnrollmentEffects {
     let machine = try await MachineV2Runtime.join(server: "https://example.test", fingerprint: nil, name: "box", token: "explicit-token\n", environment: ["HOME": root.path], trust: trust, fetch: effects.client)
     #expect(machine == "mc_test")
     let home = try MachineV2Home.locate(environment: ["HOME": root.path], machine: machine)
-    #expect(try home.load() == .init(machine: "mc_test", name: "box-v2", server: "https://example.test"))
+    #expect(try home.load() == .init(machine: "mc_test", name: "box", server: "https://example.test"))
     #expect(try home.loadKey().pubkeyLabel == (await effects.pubkey))
     #expect(try Data(contentsOf: sentinel) == Data("legacy untouched".utf8))
     #expect(await effects.requests.map(\.url.path) == ["/v1/machine-v2/enroll", "/v1/machine-v2/challenge", "/v1/machine-v2/mc_test"])

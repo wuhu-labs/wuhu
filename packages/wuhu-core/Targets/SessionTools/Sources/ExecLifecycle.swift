@@ -102,6 +102,22 @@ extension ToolExecutor {
     return .script(.init(output: output))
   }
 
+  /// A hand-off found the exec call mid-wait: this worker forgets the job and
+  /// stops following it without acknowledging its end, so the relay keeps
+  /// the replay for the next worker, which rejoins by the call id. False
+  /// once the call has returned `running` (its end is owed here) or when
+  /// there is no such job.
+  public func release(session: SessionID, callID: ToolCallID) async -> Bool {
+    guard let job = execJobs.job(session, callID) else { return false }
+    let released = try? await job.gate.holding { () -> Bool in
+      guard job.phase == .awaited, let driver = job.driver.withLock({ $0 }) else { return false }
+      execJobs.remove(job)
+      driver.cancel()
+      return true
+    }
+    return released == true
+  }
+
   public func cancelExecJobs(of session: SessionID) async {
     guard let client = try? await client(session) else { return }
     for job in execJobs.jobs(of: session) {
@@ -117,24 +133,46 @@ extension ToolExecutor {
     }
   }
 
+  /// A hand-off: this worker stops following the session's execs whose calls
+  /// returned `running`, without acknowledging their ends, so the next worker
+  /// adopts them when it mounts the session. An end already being delivered
+  /// here finishes first.
+  public func releaseExecJobs(of session: SessionID) async {
+    for job in execJobs.jobs(of: session) {
+      try? await job.gate.holding {
+        guard job.phase == .detached || job.phase == .detaching, job.ended.value == nil else { return }
+        job.phase = .released
+        execJobs.remove(job)
+        job.driver.withLock { $0 }?.cancel()
+      }
+    }
+  }
+
   public func runningExecJobs(of session: SessionID) -> [String] { execJobs.running(of: session) }
 
-  public func adoptExecJobs() async {
+  /// The session's execs whose ends it is owed and that no call of it still
+  /// waits for, followed here from now on: what a restart or a hand-off left
+  /// running. Reads the transcript to know which calls still wait.
+  public func adoptExecJobs(of session: SessionID) async {
+    do {
+      let hydration = try await owner.hydrate(session)
+      guard case let .kernel(transcript) = hydration.transcript else { return }
+      await adoptExecJobs(of: session, pending: Set(transcript.pendingToolCallIDs))
+    } catch {
+      Self.execLog.warning("could not read the exec caller's transcript: \(error)")
+    }
+  }
+
+  /// As above, with the calls the session's transcript still waits for: the
+  /// loop rejoins those by their call ids.
+  public func adoptExecJobs(of session: SessionID, pending: Set<ToolCallID>) async {
     let records: [ExecRecord]
-    do { records = try await owner.owedExecs() } catch {
-      Self.execLog.error("could not read the exec jobs a restart interrupted: \(error)")
+    do { records = try await owner.owedExecs(session) } catch {
+      Self.execLog.error("could not read the exec jobs the session is owed: \(error)")
       return
     }
     for record in records {
-      guard let caller = record.caller, let call = record.toolCallID else { continue }
-      let session = SessionID(rawValue: caller)
-      guard execJobs.job(session, call) == nil else { continue }
-      do {
-        let hydration = try await owner.hydrate(session)
-        if case let .kernel(transcript) = hydration.transcript, transcript.pendingToolCallIDs.contains(call) { continue }
-      } catch {
-        Self.execLog.warning("could not read the exec caller's transcript: \(error)")
-      }
+      guard let call = record.toolCallID, !pending.contains(call), execJobs.job(session, call) == nil else { continue }
       let job = ExecJob(
         session: session,
         call: call,

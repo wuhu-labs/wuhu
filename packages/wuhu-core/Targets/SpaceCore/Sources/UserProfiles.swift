@@ -2,15 +2,6 @@ import Foundation
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let userProfileSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "user_profiles" (
-  "principal" TEXT NOT NULL PRIMARY KEY,
-  "handle" TEXT NOT NULL UNIQUE,
-  "display_name" TEXT,
-  "updated_at" TEXT NOT NULL
-);
-"""
-
 @Table("user_profiles")
 struct UserProfileRow {
   @Column("principal", primaryKey: true) var principal: String

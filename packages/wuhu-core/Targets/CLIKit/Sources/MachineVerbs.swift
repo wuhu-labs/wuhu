@@ -23,7 +23,6 @@ extension Executor {
     let space = try self.wallet.pinnedSpace()
     let server = await self.advertisedServer(space: space)
     var body: JSONValue = .object([:])
-    let name = v2 ? name.map { $0.hasSuffix("-v2") ? $0 : $0 + "-v2" } : name
     body.set("name", name.map(JSONValue.string))
     body.set("group", group.map(JSONValue.string))
     let output: MachineAddOutput = try await self.api(.post, v2 ? "/v1/machine-v2" : "/v1/machine", space: space, body: body)

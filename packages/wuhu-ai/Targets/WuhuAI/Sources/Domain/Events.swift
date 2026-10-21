@@ -2,7 +2,7 @@
 
 /// Per-block lifecycle events with stable contentIndex.
 /// The consumer renders by index, never by type-guessing.
-public enum InferenceEvent: Hashable, Sendable {
+public enum InferenceEvent: Hashable, Sendable, Codable {
   /// Stream begins. The partial message carries content and phase.
   case start(AssistantMessage)
 

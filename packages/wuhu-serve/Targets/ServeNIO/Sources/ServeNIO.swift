@@ -53,7 +53,7 @@ public struct ServeNIOHooks: Sendable {
   }
 }
 
-// allow unchecked-sendable: NIO channel state bridge
+// swiftlint:disable:next no_unchecked_sendable - NIO channel state bridge
 public final class ServeNIOServer: @unchecked Sendable {
   public let boundAddress: SocketAddress
 
@@ -166,6 +166,44 @@ public final class ServeNIOServer: @unchecked Sendable {
       hooks.onStartupFailure(error)
       throw error
     }
+  }
+
+  /// Serves on `socket`, a stream socket that is already bound and
+  /// listening; the server owns it from here and closes it on shutdown. A
+  /// caller that keeps a duplicate of it keeps the listener alive past this
+  /// server: connections then wait in its backlog for the next one.
+  public static func bind(
+    listeningSocket socket: CInt,
+    options: ServeOptions = .init(),
+    hooks: ServeNIOHooks = .init(),
+    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    upgrading handler: @escaping UpgradingHandler,
+  ) async throws -> Self {
+    let state = ServeNIOServerState()
+    let bootstrap = self.makeBootstrap(eventLoopGroup: eventLoopGroup, options: options, hooks: hooks, state: state, handler: handler)
+    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state)
+  }
+
+  static func adopt(_ bound: EventLoopFuture<Channel>, hooks: ServeNIOHooks, state: ServeNIOServerState) async throws -> Self {
+    do {
+      let serverChannel = try await bound.get()
+      guard let boundAddress = serverChannel.localAddress else {
+        try? await serverChannel.close()
+        throw BindError.missingBoundAddress
+      }
+      let server = Self(serverChannel: serverChannel, boundAddress: boundAddress, hooks: hooks, state: state)
+      hooks.onDidBind(boundAddress)
+      return server
+    } catch {
+      hooks.onStartupFailure(error)
+      throw error
+    }
+  }
+
+  /// Stops taking connections and closes the listening socket this server
+  /// owns; the connections it has go on until `shutdown`.
+  public func stopAccepting() async {
+    try? await self.serverChannel.close()
   }
 
   public func waitUntilShutdown() async {
@@ -386,7 +424,7 @@ enum BindError: Error {
   case missingBoundAddress
 }
 
-// allow unchecked-sendable: NIO channel state bridge
+// swiftlint:disable:next no_unchecked_sendable - NIO channel state bridge
 final class ChannelBox: @unchecked Sendable {
   let channel: Channel
 
@@ -395,7 +433,7 @@ final class ChannelBox: @unchecked Sendable {
   }
 }
 
-// allow unchecked-sendable: NIO channel state bridge
+// swiftlint:disable:next no_unchecked_sendable - NIO channel state bridge
 final class ServeNIOServerState: @unchecked Sendable {
   private enum Phase {
     case running

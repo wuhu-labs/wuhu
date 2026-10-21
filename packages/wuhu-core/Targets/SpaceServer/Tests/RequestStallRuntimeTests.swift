@@ -35,7 +35,7 @@ private func stallAlerts(_ space: Space, to parent: SessionID, for request: Requ
       let model = SessionExecutor.kernel(.init(provider: "offline", model: "small", effort: "none"))
       let parent = try await harness.store.createSession(group: .shared, title: "parent", kind: .agent, createdBy: "owner", executor: model)
       let task = try await harness.store.createSession(group: .shared, title: "task", kind: .task, parent: parent, createdBy: parent.rawValue, executor: model)
-      func taskScripts() async -> Int { await harness.runtime.worker.activity().scripts.values.filter { $0 == task }.count }
+      func taskScripts() async -> Int { await harness.runtime.workers.activity().scripts.values.filter { $0 == task }.count }
 
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await harness.runtime.run() }

@@ -34,10 +34,7 @@ private func runningFiring<R>(
   let signals = space.sessions.workSignals()
   let signaled = Box<[SessionID]>([])
   return try await withThrowingTaskGroup(of: Void.self, returning: R.self) { group in
-    group.addTask {
-      await worker.drain()
-      await worker.shutdown()
-    }
+    group.addTask { await whenCancelled { await worker.shutdown() } }
     group.addTask { await service.run() }
     group.addTask {
       for await session in signals {

@@ -4,6 +4,7 @@ import GRDB
 @testable import LoopCore
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
 import SessionDomain
 @testable import SpaceCore
 import Synchronization

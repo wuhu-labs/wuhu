@@ -5,7 +5,7 @@ import struct WuhuAI.AssistantMessage
 import struct WuhuAI.AssistantMessageMetadata
 import enum WuhuAI.InferenceEvent
 
-public enum AttemptEvent: Sendable {
+public enum AttemptEvent: Sendable, Codable {
   case started(attemptID: UUID)
   case delta(attemptID: UUID, event: InferenceEvent)
   case finished(attemptID: UUID, outcome: AttemptOutcome)
@@ -17,7 +17,7 @@ public enum AttemptEvent: Sendable {
   }
 }
 
-public enum AttemptOutcome: Sendable {
+public enum AttemptOutcome: Sendable, Codable {
   case done(AssistantMessage, AssistantMessageMetadata)
   case failed(reason: String)
 }
@@ -35,8 +35,13 @@ public final class AttemptHub: Sendable {
   }
 
   private let topics = Mutex<[SessionID: Topic]>([:])
+  private let onPublish: (@Sendable (SessionID, AttemptEvent) -> Void)?
 
-  public init() {}
+  /// `onPublish` hears every event too: a worker in its own process passes
+  /// them on to main's hub.
+  public init(onPublish: (@Sendable (SessionID, AttemptEvent) -> Void)? = nil) {
+    self.onPublish = onPublish
+  }
 
   public func publish(session: SessionID, _ event: AttemptEvent) {
     let continuations = topics.withLock { topics -> [AsyncStream<AttemptEvent>.Continuation] in
@@ -55,6 +60,7 @@ public final class AttemptHub: Sendable {
     for continuation in continuations {
       continuation.yield(event)
     }
+    onPublish?(session, event)
   }
 
   public func events(session: SessionID) -> AsyncStream<AttemptEvent> {

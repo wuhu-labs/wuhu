@@ -5,23 +5,6 @@
 #endif
 import GRDB
 
-let spaceMetaSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "space_meta" (
-  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
-  "space_id" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "space_deployment" (
-  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
-  "origin" TEXT,
-  "tls_fingerprint" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "space_deployment_certificate" (
-  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
-  "tls_fingerprint" TEXT NOT NULL,
-  "generated" INTEGER NOT NULL
-);
-"""
-
 public struct SpaceIdentity: Hashable, Sendable {
   static let prefix: String = "spc_"
   static let suffixLength: Int = 32
@@ -40,45 +23,21 @@ public struct SpaceIdentity: Hashable, Sendable {
 enum SpaceMeta {
   static let memorySchema: Result<DatabaseQueue, any Error> = Result {
     let queue = try DatabaseQueue()
-    try queue.write {
-      try $0.execute(sql: spaceSchemaSQL)
-      try recordCompaction(Space.linksCompaction, in: $0)
-    }
+    try Migrations.apply(to: queue)
     return queue
   }
 
-  /// Brings a file to this binary's schema. A file from before a required compaction is refused, never
-  /// patched; a fresh one is born compacted.
-  static func prepare(_ db: Database, identity: SpaceIdentity? = nil) throws {
-    if let identity, try db.tableExists("space_meta"),
-       let actual = try String.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
-    {
-      throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
+  static func prepare(_ queue: any DatabaseWriter, identity: SpaceIdentity? = nil) throws {
+    try queue.read { db in
+      if let identity, try db.tableExists("space_meta"),
+         let actual = try String.fetchOne(db, sql: "SELECT space_id FROM space_meta WHERE id = 1"), actual != identity.rawValue
+      {
+        throw SpaceIdentityError.mismatch(expected: identity.rawValue, actual: actual)
+      }
     }
-    let fresh = try !db.tableExists("fs_heads")
-    if !fresh { try requireCompaction("wuhu-45", in: db) }
-    try db.execute(sql: spaceSchemaSQL)
-    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_spec" }) {
-      try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_spec TEXT")
-    }
-    if try !db.columns(in: "machine_execs").contains(where: { $0.name == "tool_end_owed" }) {
-      try db.execute(sql: "ALTER TABLE machine_execs ADD COLUMN tool_end_owed INTEGER NOT NULL DEFAULT 0")
-    }
-    if try db.tableExists("exec_jobs") {
-      try db.execute(sql: """
-      UPDATE machine_execs SET tool_end_owed = 1,
-        tool_spec = (SELECT spec FROM exec_jobs WHERE exec_id = machine_execs.id)
-      WHERE id IN (SELECT exec_id FROM exec_jobs)
-      """)
-      try db.execute(sql: "DELETE FROM exec_jobs")
-    }
-    if fresh { try recordCompaction(Space.linksCompaction, in: db) }
-    try seedIfAbsent(in: db, identity: identity)
-  }
-
-  static func requireCompaction(_ name: String, in db: Database) throws {
-    guard try db.tableExists("schema_compactions"), try hasCompaction(name, in: db) else {
-      throw SpaceError.needsMigration(name)
+    try Migrations.apply(to: queue)
+    try queue.write { db in
+      try seedIfAbsent(in: db, identity: identity)
     }
   }
 

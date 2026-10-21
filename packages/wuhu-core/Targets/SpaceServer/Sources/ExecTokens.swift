@@ -5,6 +5,7 @@
 #endif
 import enum JSONValue.JSONValue
 import MachineContract
+import struct MainHub.WorkerID
 import struct OperationProtocol.OperationError
 import SessionDomain
 import struct SpaceContract.GroupID
@@ -45,6 +46,35 @@ final class ExecTokens: Sendable {
 
   func revokeSession(_ session: SessionID) {
     _ = sessions.withLock { $0.removeValue(forKey: session) }
+  }
+
+  // A worker's own token, minted once per worker by the registry: the routes
+  // that serve the loop's journal and queue take these and nothing else, and
+  // a drained worker's ends with it.
+  private let workers = Mutex<[WorkerID: [UInt8]]>([:])
+
+  func workerToken(_ worker: WorkerID) -> String {
+    workers.withLock { held in
+      if let token = held[worker] { return String(decoding: token, as: UTF8.self) }
+      let token = Array(Self.randomToken().utf8)
+      held[worker] = token
+      return String(decoding: token, as: UTF8.self)
+    }
+  }
+
+  func hasWorker(_ worker: WorkerID) -> Bool { workers.withLock { $0[worker] != nil } }
+
+  func revokeWorker(_ worker: WorkerID) {
+    _ = workers.withLock { $0.removeValue(forKey: worker) }
+  }
+
+  func worker(ofBearer bearer: String) -> WorkerID? {
+    let presented = Array(bearer.utf8)
+    return workers.withLock { held in
+      var found: WorkerID?
+      for (worker, token) in held where execTokenEqual(token, presented) { found = worker }
+      return found
+    }
   }
 
   func session(ofBearer bearer: String) -> SessionID? {
@@ -107,6 +137,63 @@ final class ExecTokens: Sendable {
       var found: V2Holder?
       for entry in held.values where execTokenEqual(entry.token, presented) { found = entry.holder }
       return found
+    }
+  }
+
+  /// Every token held here, as the main taking over from this one restores
+  /// them: a mounted session's, a worker's, a running exec's, and the OIDC
+  /// grants and machine v2 credentials issued to execs. A v2 credential not
+  /// yet issued is left out; its caller asks again.
+  struct Table: Codable, Sendable {
+    struct Exec: Codable, Sendable { var exec: String; var session: String; var token: String; var expiresAt: Double }
+    struct Grant: Codable, Sendable { var exec: String; var session: String; var machine: String; var token: String; var expiresAt: Double }
+    struct V2: Codable, Sendable { var session: String; var group: String; var scope: String; var key: String; var token: String; var expiresAt: Double }
+    var sessions: [String: String] = [:]
+    var workers: [String: String] = [:]
+    var execs: [Exec] = []
+    var grants: [Grant] = []
+    var v2: [V2] = []
+  }
+
+  func table() -> Table {
+    func text(_ bytes: [UInt8]) -> String { String(decoding: bytes, as: UTF8.self) }
+    var table = Table()
+    table.sessions = Dictionary(uniqueKeysWithValues: sessions.withLock { $0.map { ($0.key.rawValue, text($0.value)) } })
+    table.workers = Dictionary(uniqueKeysWithValues: workers.withLock { $0.map { ($0.key.rawValue, text($0.value)) } })
+    table.execs = held.withLock { held in
+      held.values.map { Table.Exec(exec: $0.holder.exec.rawValue, session: $0.holder.session.rawValue, token: text($0.token), expiresAt: $0.holder.expiresAt.timeIntervalSince1970) }
+    }
+    table.grants = idTokens.table()
+    table.v2 = v2.withLock { held in
+      held.values.filter(\.issued).map { entry in
+        let key = entry.holder.key
+        return Table.V2(session: key.session.rawValue, group: key.group.rawValue, scope: key.scope, key: key.key, token: text(entry.token), expiresAt: entry.holder.expiresAt.timeIntervalSince1970)
+      }
+    }
+    return table
+  }
+
+  /// Takes over `table`'s tokens; `active` says, for a v2 credential, whether
+  /// its exec still runs.
+  func restore(_ table: Table, active: (V2Key) -> @Sendable () async throws -> Bool) {
+    sessions.withLock { held in
+      for (session, token) in table.sessions { held[SessionID(session)] = Array(token.utf8) }
+    }
+    workers.withLock { held in
+      for (worker, token) in table.workers { held[WorkerID(worker)] = Array(token.utf8) }
+    }
+    held.withLock { held in
+      for exec in table.execs {
+        let holder = Holder(session: SessionID(exec.session), exec: ExecID(rawValue: exec.exec), expiresAt: Date(timeIntervalSince1970: exec.expiresAt))
+        held[holder.exec] = (Array(exec.token.utf8), holder)
+      }
+    }
+    idTokens.restore(table.grants)
+    v2.withLock { held in
+      for credential in table.v2 {
+        let key = V2Key(session: SessionID(credential.session), group: GroupID(rawValue: credential.group), scope: credential.scope, key: credential.key)
+        held[key] = (Array(credential.token.utf8), V2Holder(key: key, expiresAt: Date(timeIntervalSince1970: credential.expiresAt), active: active(key)), 0, true)
+      }
     }
   }
 
@@ -182,6 +269,29 @@ final class IDTokenGrants: Sendable {
 
   func revoke(_ exec: ExecID) {
     _ = held.withLock { $0.removeValue(forKey: exec) }
+  }
+
+  func table() -> [ExecTokens.Table.Grant] {
+    held.withLock { held in
+      held.values.map { token, grant in
+        ExecTokens.Table.Grant(
+          exec: grant.exec.rawValue, session: grant.session.rawValue, machine: grant.machine.rawValue,
+          token: String(decoding: token, as: UTF8.self), expiresAt: grant.expiresAt.timeIntervalSince1970,
+        )
+      }
+    }
+  }
+
+  func restore(_ grants: [ExecTokens.Table.Grant]) {
+    held.withLock { held in
+      for grant in grants {
+        let restored = Grant(
+          session: SessionID(grant.session), machine: MachineID(rawValue: grant.machine), exec: ExecID(rawValue: grant.exec),
+          expiresAt: Date(timeIntervalSince1970: grant.expiresAt),
+        )
+        held[restored.exec] = (Array(grant.token.utf8), restored)
+      }
+    }
   }
 
   /// When `exec`'s grant lapses, or nil when it holds none.

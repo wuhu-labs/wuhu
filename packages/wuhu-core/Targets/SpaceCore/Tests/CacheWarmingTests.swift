@@ -212,7 +212,7 @@ private final class WarmingTime: Sendable {
         let before = transcript.items.count
         transcript.appendAssistant(.init(content: []), id: UUID(), metadata: SessionFix.metadata)
         transcript.append(.notification(.init(id: UUID(), timestamp: time.now, kind: kind, subscriptionID: .init("nag"), content: .init(text: "nag only"))))
-        try await store.append(id, items: Array(transcript.items[before...]), transcript: transcript)
+        try await store.append(id, items: Array(transcript.items[before...]), inputOrigin: transcript.cacheWarmingInputOrigin)
         try await settle(store, id)
         time.advance()
         #expect(try await !ping(store, id, max: 1))

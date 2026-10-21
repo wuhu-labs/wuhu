@@ -23,9 +23,9 @@ import Testing
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let tokens = ChatGPTTokens(idToken: nil, accessToken: "access-one", refreshToken: "refresh-one", accountID: "fixture-account", expiresAt: now.addingTimeInterval(1000))
     try await store.replace(providerID: "codex", credential: .chatGPTOAuth(tokens))
-    let owner: any Main = Hub(space: try Space.inMemory(), credentials: .live(store: store, allowEnvironment: false))
+    let resolver = CredentialResolver.live(store: store, allowEnvironment: false)
     let first = try await withDependencies { $0.date = .constant(now) } operation: {
-      try #require(try await owner.providerCredentialBinding("codex"))
+      try #require(try await resolver.resolveBinding("codex"))
     }
     #expect(first.permitsOpaqueReplay)
     #expect(first.credential == .chatGPT(accessToken: "access-one", accountID: "fixture-account"))
@@ -33,36 +33,17 @@ import Testing
       $0.date = .constant(now.addingTimeInterval(900))
       $0.fetch = FetchClient { _ in Response(status: .ok, body: .string(#"{"access_token":"access-two","refresh_token":"refresh-two","expires_in":3600}"#)) }
     } operation: {
-      try #require(try await owner.providerCredentialBinding("codex"))
+      try #require(try await resolver.resolveBinding("codex"))
     }
     #expect(refreshed.identityEpoch == first.identityEpoch)
     #expect(refreshed.permitsOpaqueReplay)
     #expect(refreshed.credential == .chatGPT(accessToken: "access-two", accountID: "fixture-account"))
     try await store.replace(providerID: "codex", credential: .chatGPTOAuth(tokens))
     let replacement = try await withDependencies { $0.date = .constant(now) } operation: {
-      try #require(try await owner.providerCredentialBinding("codex"))
+      try #require(try await resolver.resolveBinding("codex"))
     }
     #expect(replacement.identityEpoch != first.identityEpoch)
-    #expect(try await owner.providerCredentialBinding("missing") == nil)
-  }
-
-  @Test func oidcIdentityIsAnOptionalSemanticOwnerEffect() async throws {
-    let audience = URL(string: "https://provider.example")!
-    let session = SessionID("owner-session")
-    let owner: any Main = Hub(
-      space: try Space.inMemory(), inferenceToken: { requested, caller in
-        #expect(requested == audience && caller == session)
-        return "fixture-bearer"
-      }, inferenceBindingIdentity: { requested, caller in
-        #expect(requested == audience && caller == session)
-        return "fixture-stable-identity"
-      },
-    )
-    #expect(try await owner.inferenceToken(audience: audience, session: session) == "fixture-bearer")
-    #expect(try await owner.inferenceBindingIdentity(audience: audience, session: session) == "fixture-stable-identity")
-    let unavailable: any Main = Hub(space: try Space.inMemory())
-    #expect(try await unavailable.inferenceBindingIdentity(audience: audience, session: session) == nil)
-    #expect(try await unavailable.providerCredentialBinding("missing") == nil)
+    #expect(try await resolver.resolveBinding("missing") == nil)
   }
 
   @Test func portableHandoffUsesConditionalSessionOwnerCommit() async throws {

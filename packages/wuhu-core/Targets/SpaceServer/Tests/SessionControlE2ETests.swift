@@ -2,15 +2,15 @@ import DeterministicDependencies
 import Foundation
 import GRDB
 import JSONValue
-import struct MainHub.SessionControl
+import class MainHub.SessionService
 import SessionDomain
 @testable import SpaceCore
 import SpaceServer
 import Testing
 
 // wuhu:session's operator verbs through the server's real wiring: the MCP
-// route's executor, the SessionService behind sessionControl, and the
-// session loops themselves. Nothing here fakes SessionControl.
+// route's executor, the session routes' SessionService, and the session
+// loops themselves. Nothing here fakes the service.
 @Suite(.deterministicDependencies) struct SessionControlE2ETests {
   @Test func unreadableResumeExplainsStartOverOnHTTPAndScriptSurfaces() async throws {
     try await withSessionDeps {

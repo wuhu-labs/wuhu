@@ -1,14 +1,12 @@
-import struct Credentials.CredentialResolver
-import struct InferenceKit.ProviderCatalog
 import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
 import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
+import func MainHub.withCallback
 import protocol MainHub.Worker
 import struct MainHub.WorkerActivity
 import enum MainHub.WorkerInput
 import SessionTools
-import TaskLifetime
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,34 +16,42 @@ import SessionDomain
 import SpaceCore
 import struct WuhuAI.ToolCall
 
+/// A worker: the loops, the tools and the scripts of the sessions main
+/// assigns to it. It runs from when it is made until `shutdown`.
 public struct SessionExecution: Worker {
   private let registry: SessionRegistry
-  private let liveness = LivenessTracker()
   private let scripts: Scripts
   private let execJobs: ExecJobs
   private let tools: ToolExecutor
-  private let scope = TaskScope()
+  private let running: @Sendable (SessionID) async throws -> [String]
 
   public init(
     main: any Main,
     connection: MainConnection,
     credential: @escaping @Sendable (SessionID) async throws -> String,
-    credentials: CredentialResolver = .unavailable,
-    completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    access: InferenceAccess = InferenceAccess(),
     execJobs: ExecJobs = ExecJobs(),
     loopConfig: @Sendable (ToolExecutor) -> LoopConfig,
   ) async {
     let scripts = Scripts(owner: main)
     let tools = ToolExecutor(
-      owner: main, main: connection, credential: credential, credentials: credentials, completionCatalog: completionCatalog, scripts: scripts, execJobs: execJobs,
+      owner: main, main: connection, credential: credential, access: access, scripts: scripts, execJobs: execJobs,
     )
     self.execJobs = execJobs
     self.scripts = scripts
     self.tools = tools
     var config = loopConfig(tools)
     let runningWork = config.runningWork
-    config.runningWork = { session in scripts.running(of: session) + (try await runningWork(session)) }
-    registry = SessionRegistry(main: main, loopConfig: config, liveness: liveness)
+    config.runningWork = { session in
+      scripts.running(of: session) + tools.runningExecJobs(of: session) + (try await runningWork(session))
+    }
+    running = config.runningWork
+    let mounted = config.mounted
+    config.mounted = { session, transcript in
+      await tools.adoptExecJobs(of: session, pending: Set(transcript.pendingToolCallIDs))
+      await mounted(session, transcript)
+    }
+    registry = SessionRegistry(main: main, loopConfig: config)
     await registry.activate()
   }
 
@@ -60,14 +66,20 @@ public struct SessionExecution: Worker {
     case .reload: try await registry.reload(session)
     case .archived:
       scripts.stopScripts(of: session)
+      await tools.cancelExecJobs(of: session)
       await registry.archived(session)
     }
   }
 
   public func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool {
-    try await registry.revoke(session, policy: policy)
+    let settled = try await registry.revoke(session, policy: policy)
+    // What the session left running outside its loop goes with it: the next
+    // worker adopts it when it mounts the session.
+    if settled, case .handOff = policy { await tools.releaseExecJobs(of: session) }
+    return settled
   }
 
+  /// A tool call run here as the loop runs it: what tests of the tools take.
   public func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
     try await tools.execute(session: session, call: call, state: state)
   }
@@ -87,19 +99,15 @@ public struct SessionExecution: Worker {
 
   public func activity() async -> WorkerActivity { scripts.activity }
 
-  public func drain() async {
-    _ = try? scope.run("worker-scripts") { await scripts.run() }
-    await withTaskCancellationHandler {
-      await liveness.drain()
-    } onCancel: {
-      scope.cancel()
-    }
-    await scope.close()
-  }
+  /// The sessions this worker holds: what it announces again when it opens
+  /// a new line to main.
+  public func holding() async -> [SessionID] { await registry.mounted() }
+
+  public func runningWork(_ session: SessionID) async throws -> [String] { try await running(session) }
 
   public func shutdown() async {
     await registry.stop()
+    await scripts.close()
     await execJobs.close()
-    await scope.close()
   }
 }

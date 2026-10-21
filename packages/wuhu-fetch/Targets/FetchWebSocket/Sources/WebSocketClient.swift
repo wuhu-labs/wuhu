@@ -57,6 +57,7 @@ public enum WebSocketClient {
     headers: [(String, String)] = [],
     maxFrameBytes: Int = 1 << 20,
     tls: ClientTLS? = nil,
+    unixSocketPath: String? = nil,
   ) async throws -> WebSocketDuplex {
     do {
       return try await WebSocketDuplex(dial(.init(
@@ -66,7 +67,7 @@ public enum WebSocketClient {
           messageBytes: Int.max,
           bufferedReceiveBytes: Int.max,
           outboundMessageBytes: Int.max,
-        ), tls: tls,
+        ), tls: tls, unixSocketPath: unixSocketPath,
       ), additionalHeaders: headers))
     } catch let WebSocketError.refused(status, _, body) { throw WebSocketClientError.refused(status: status, body: body) }
     catch WebSocketError.invalidURL(let reason) { throw WebSocketClientError.invalidURL(reason) }
@@ -99,59 +100,64 @@ public enum WebSocketClient {
     let cancellation = DialCancellation()
     return try await withTaskCancellationHandler {
       do {
-        let negotiation = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+        let bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
           .connectTimeout(request.connectTimeout.nioAmount)
-          .connect(host: target.host, port: target.port) { channel in
-            channel.eventLoop.makeCompletedFuture {
-              cancellation.install(channel)
-              let pipeline = channel.pipeline.syncOperations
-              if let sslHandler { try pipeline.addHandler(sslHandler()) }
-              let outcome = DialOutcome(on: channel.eventLoop)
-              let outcomeBound = NIOLoopBound(outcome, eventLoop: channel.eventLoop)
-              let refusal = RefusalCapture(limit: request.limits.refusalBodyBytes, outcome: outcome)
-              let encoder = HTTPRequestEncoder()
-              let decoder = ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes))
-              var head = HTTPRequestHead(version: .http1_1, method: .GET, uri: target.uri)
-              head.headers.add(name: "host", value: target.hostHeader)
-              for (name, value) in request.headers.values.merging(request.headers.sensitiveValues, uniquingKeysWith: { _, last in last }) {
-                head.headers.add(name: name, value: value)
-              }
-              for (name, value) in additionalHeaders { head.headers.add(name: name, value: value) }
-              let offeredProtocols = head.headers["sec-websocket-protocol"].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-              let upgrader = NIOTypedWebSocketClientUpgrader<WebSocketConnection>(
-                maxFrameSize: request.limits.frameBytes, enableAutomaticErrorHandling: false,
-                upgradePipelineHandler: { channel, head in
-                  channel.eventLoop.makeCompletedFuture {
-                    let selected = head.headers["sec-websocket-protocol"]
-                    guard selected.isEmpty || (selected.count == 1 && offeredProtocols.contains(selected[0])),
-                          !head.headers.contains(name: "sec-websocket-extensions")
-                    else {
-                      throw WebSocketError.protocolViolation("unoffered subprotocol or unsupported extension")
-                    }
-                    let bridge = MessageBridge(limits: request.limits)
-                    try channel.pipeline.syncOperations.addHandler(bridge)
-                    return bridge.connection(channel: channel, headers: head.headers.fetchHeaders, closeTimeout: request.closeTimeout)
-                  }
-                },
-              )
-              let upgrade = NIOTypedHTTPClientUpgradeHandler<WebSocketConnection>(
-                httpHandlers: [encoder, decoder, refusal],
-                upgradeConfiguration: .init(
-                  upgradeRequestHead: head,
-                  upgraders: [upgrader],
-                  notUpgradingCompletionHandler: { channel in channel.eventLoop.makeFailedFuture(WebSocketError.protocolViolation("invalid upgrade")) },
-                ),
-              )
-              try pipeline.addHandlers(encoder, decoder, refusal, upgrade)
-              upgrade.upgradeResultFuture.whenComplete { outcomeBound.value.complete($0) }
-              let timeout = channel.eventLoop.scheduleTask(in: request.connectTimeout.nioAmount) {
-                outcomeBound.value.complete(.failure(WebSocketError.connectTimeout))
-                cancellation.timeout()
-              }
-              outcome.promise.futureResult.whenComplete { _ in timeout.cancel() }
-              return outcome.promise.futureResult
+        let initialize: @Sendable (any Channel) -> EventLoopFuture<EventLoopFuture<WebSocketConnection>> = { channel in
+          channel.eventLoop.makeCompletedFuture {
+            cancellation.install(channel)
+            let pipeline = channel.pipeline.syncOperations
+            if let sslHandler { try pipeline.addHandler(sslHandler()) }
+            let outcome = DialOutcome(on: channel.eventLoop)
+            let outcomeBound = NIOLoopBound(outcome, eventLoop: channel.eventLoop)
+            let refusal = RefusalCapture(limit: request.limits.refusalBodyBytes, outcome: outcome)
+            let encoder = HTTPRequestEncoder()
+            let decoder = ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes))
+            var head = HTTPRequestHead(version: .http1_1, method: .GET, uri: target.uri)
+            head.headers.add(name: "host", value: target.hostHeader)
+            for (name, value) in request.headers.values.merging(request.headers.sensitiveValues, uniquingKeysWith: { _, last in last }) {
+              head.headers.add(name: name, value: value)
             }
+            for (name, value) in additionalHeaders { head.headers.add(name: name, value: value) }
+            let offeredProtocols = head.headers["sec-websocket-protocol"].flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+            let upgrader = NIOTypedWebSocketClientUpgrader<WebSocketConnection>(
+              maxFrameSize: request.limits.frameBytes, enableAutomaticErrorHandling: false,
+              upgradePipelineHandler: { channel, head in
+                channel.eventLoop.makeCompletedFuture {
+                  let selected = head.headers["sec-websocket-protocol"]
+                  guard selected.isEmpty || (selected.count == 1 && offeredProtocols.contains(selected[0])),
+                        !head.headers.contains(name: "sec-websocket-extensions")
+                  else {
+                    throw WebSocketError.protocolViolation("unoffered subprotocol or unsupported extension")
+                  }
+                  let bridge = MessageBridge(limits: request.limits)
+                  try channel.pipeline.syncOperations.addHandler(bridge)
+                  return bridge.connection(channel: channel, headers: head.headers.fetchHeaders, closeTimeout: request.closeTimeout)
+                }
+              },
+            )
+            let upgrade = NIOTypedHTTPClientUpgradeHandler<WebSocketConnection>(
+              httpHandlers: [encoder, decoder, refusal],
+              upgradeConfiguration: .init(
+                upgradeRequestHead: head,
+                upgraders: [upgrader],
+                notUpgradingCompletionHandler: { channel in channel.eventLoop.makeFailedFuture(WebSocketError.protocolViolation("invalid upgrade")) },
+              ),
+            )
+            try pipeline.addHandlers(encoder, decoder, refusal, upgrade)
+            upgrade.upgradeResultFuture.whenComplete { outcomeBound.value.complete($0) }
+            let timeout = channel.eventLoop.scheduleTask(in: request.connectTimeout.nioAmount) {
+              outcomeBound.value.complete(.failure(WebSocketError.connectTimeout))
+              cancellation.timeout()
+            }
+            outcome.promise.futureResult.whenComplete { _ in timeout.cancel() }
+            return outcome.promise.futureResult
           }
+        }
+        let negotiation = if let socket = request.unixSocketPath {
+          try await bootstrap.connect(unixDomainSocketPath: socket, channelInitializer: initialize)
+        } else {
+          try await bootstrap.connect(host: target.host, port: target.port, channelInitializer: initialize)
+        }
         let connection = try await negotiation.get()
         try Task.checkCancellation()
         return connection

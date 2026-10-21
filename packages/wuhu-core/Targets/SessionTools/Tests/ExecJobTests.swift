@@ -80,7 +80,7 @@ import struct WuhuAI.ToolArguments
         await rig.jobs.close()
         #expect(ackFinished.value, "shutdown joins terminal-ack transport even after the job is forgotten")
         let restarted = try ExecJobRig(after: rig)
-        await restarted.executor.adoptExecJobs()
+        await restarted.executor.adoptExecJobs(of: restarted.session)
         #expect(restarted.executor.runningExecJobs(of: restarted.session).isEmpty)
         #expect(try await restarted.execMessages().count == 1)
         #expect(scripted.startCount.value == 1)
@@ -478,7 +478,7 @@ import struct WuhuAI.ToolArguments
         await first.jobs.close()
         let second = try ExecJobRig(after: first)
         #expect(second.executor.runningExecJobs(of: second.session).isEmpty)
-        await second.executor.adoptExecJobs()
+        await second.executor.adoptExecJobs(of: second.session)
         #expect(second.executor.runningExecJobs(of: second.session) == [handle])
 
         release.yield(())
@@ -506,7 +506,7 @@ import struct WuhuAI.ToolArguments
         let handle = try await first.handle(of: "tc-lost")
         await first.jobs.close()
         let second = try ExecJobRig(after: first, exec: false)
-        await second.executor.adoptExecJobs()
+        await second.executor.adoptExecJobs(of: second.session)
         #expect(try await second.execMessages() == [
           "\(handle) was running when the server restarted, and its outcome is unknown: this server cannot rejoin it",
         ])
@@ -542,8 +542,8 @@ import struct WuhuAI.ToolArguments
         content: [.toolCall(.init(id: callID, name: "exec", arguments: .object(["machine": .string(rig.machine.rawValue), "cwd": "/work", "command": "make"])))],
         stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: [:],
       ))
-      try await rig.space.sessions.append(rig.session, items: [item], transcript: Transcript(items: [item]))
-      await rig.executor.adoptExecJobs()
+      try await rig.space.sessions.append(rig.session, items: [item], inputOrigin: Transcript(items: [item]).cacheWarmingInputOrigin)
+      await rig.executor.adoptExecJobs(of: rig.session)
       #expect(rig.jobs.jobs(of: rig.session).isEmpty)
       #expect(try await rig.space.execRecord(claim.record.id)?.toolEndOwed == true)
       #expect(rig.scripted.startCount.value == 0)
@@ -581,8 +581,8 @@ import struct WuhuAI.ToolArguments
         spec: spec,
       )
       #expect(try await rig.space.setExecEndOwed(claim.record.id, caller: rig.session.rawValue, owed: true))
-      await rig.executor.adoptExecJobs()
-      await rig.executor.adoptExecJobs()
+      await rig.executor.adoptExecJobs(of: rig.session)
+      await rig.executor.adoptExecJobs(of: rig.session)
       #expect(try await rig.execMessages() == [
         "\(execHandle(claim.record.id)) was running when the server restarted, and its outcome is unknown: this server cannot rejoin it",
       ])
@@ -636,14 +636,14 @@ import struct WuhuAI.ToolArguments
           try await first.space.writer.write { db in try db.execute(sql: "DROP TRIGGER fail_exec_notice") }
         }
         let second = try ExecJobRig(after: first)
-        await second.executor.adoptExecJobs()
+        await second.executor.adoptExecJobs(of: second.session)
         try await until("the terminal exec's owed end is delivered") {
           try await second.space.execRecord(record.id)?.toolEndOwed == false
         }
         #expect(try await second.execMessages() == ["\(handle) ended:\nworking\ndone\n"])
         #expect(scripted.startCount.value == 1)
         try await until("the recovered terminal stream is acknowledged") { acknowledgements.value == 1 }
-        await second.executor.adoptExecJobs()
+        await second.executor.adoptExecJobs(of: second.session)
         #expect(try await second.execMessages().count == 1)
         #expect(second.jobs.jobs(of: second.session).isEmpty)
         await second.jobs.close()
@@ -679,7 +679,7 @@ import struct WuhuAI.ToolArguments
         #expect(rig.jobs.jobs(of: rig.session).isEmpty)
         #expect(try await rig.space.execRecord(record.id)?.toolEndOwed == false)
         #expect(try await rig.execMessages().isEmpty)
-        await rig.executor.adoptExecJobs()
+        await rig.executor.adoptExecJobs(of: rig.session)
         #expect(acknowledgements.value == 1)
         #expect(scripted.kills.value == [record.id])
       }
@@ -712,7 +712,7 @@ import struct WuhuAI.ToolArguments
         let messages = Box<[String]>([])
         let log = Logger(label: "test.exec") { _ in ExecEndLogHandler(messages: messages) }
         try await ToolExecutor.$execLog.withValue(log) {
-          await second.executor.adoptExecJobs()
+          await second.executor.adoptExecJobs(of: second.session)
           #expect(second.jobs.jobs(of: second.session).count == 1)
           release.open()
           try await until("the terminal append refusal retires the local job") { second.jobs.jobs(of: second.session).isEmpty }
@@ -724,7 +724,7 @@ import struct WuhuAI.ToolArguments
           // Main's archive bookkeeping does not need the caller's token.
           try await second.space.forgetOwedExecs(caller: second.session.rawValue)
           #expect(try await second.space.execRecord(record.id)?.toolEndOwed == false)
-          await second.executor.adoptExecJobs()
+          await second.executor.adoptExecJobs(of: second.session)
           #expect(second.jobs.jobs(of: second.session).isEmpty)
           #expect(messages.value.count == 1)
         }

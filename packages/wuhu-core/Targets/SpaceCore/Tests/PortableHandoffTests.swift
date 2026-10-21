@@ -16,7 +16,7 @@ import WuhuAI
       var original = try await store.transcript(id)
       let old = TranscriptItem.assistant(.init(id: UUID(), timestamp: fixedDate, content: [.reasoning(.encrypted(.init(providerID: "openai", model: "m", summary: "portable", opaque: "old-secret", id: "native")))], stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: [:]))
       original.append(old)
-      try await store.append(id, items: [old], transcript: original)
+      try await store.append(id, items: [old], inputOrigin: original.cacheWarmingInputOrigin)
       if hydrated { original = try await store.hydrate(id).transcript.kernel }
       let projected = try original.portableHandoff(binding: .init(identity: "binding-b", epoch: "route-b"), budget: .init(maxInput: 100_000, maxOutput: 1000), runningWork: [])
       let generation = try await store.generationState(id).generation

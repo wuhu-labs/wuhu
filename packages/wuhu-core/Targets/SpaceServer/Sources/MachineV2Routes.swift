@@ -69,8 +69,8 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     guard input.device == nil else {
       return errorResponse(.badRequest, code: "invalidArgument", message: "A device link needs the machine's pubkey")
     }
-    guard let name = input.name, let normalized = MachineName.normalized(name), normalized.hasSuffix("-v2") else {
-      return errorResponse(.badRequest, code: "invalidMachineName", message: "Machine v2 requires its own name ending in -v2")
+    guard let name = input.name, let normalized = MachineName.normalized(name) else {
+      return errorResponse(.badRequest, code: "invalidMachineName", message: "Invalid machine name")
     }
     let group: GroupID
     switch try await machineRegistrationGroup(input.group, principal: principal, space: space) {

@@ -12,15 +12,6 @@ import StructuredQueries
 // A blob is inline when it has no `blob_objects` row: the absence of a row is
 // the "stored in blobs.content" case, so a space database written before this
 // table existed reads back correctly with no migration.
-let blobObjectSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "blob_objects" (
-  "hash" TEXT NOT NULL PRIMARY KEY,
-  "object_key" TEXT NOT NULL,
-  "size" INTEGER NOT NULL,
-  "line_count" INTEGER
-);
-"""
-
 @Table("blob_objects")
 struct BlobObjectRow {
   @Column("hash", primaryKey: true) var hash: String

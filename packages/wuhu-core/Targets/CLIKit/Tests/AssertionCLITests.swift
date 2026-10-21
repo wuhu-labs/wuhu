@@ -375,7 +375,7 @@ import Testing
         var executor = Executor(runner: runner, wallet: &wallet)
         let client = try await executor.authenticated("127.0.0.1:\(server.port)")
         let start = ExecStart(id: ExecID(rawValue: "ex_abcdefgh"), cwd: "/", command: ["true"], env: nil, secrets: nil, window: nil, maxOutput: nil, timeout: nil)
-        return try await ExecSession(client: client, start: start).run(input: nil) { _, _ in }
+        return try await ExecSession(client: client, start: start).run(input: .closed) { _, _ in }
       }
       guard case let .streamFailed(message) = termination else {
         Issue.record("expected a final assertion refusal, got \(termination)")

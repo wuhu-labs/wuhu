@@ -11,7 +11,9 @@ import struct Credentials.CredentialsStore
 import Dependencies
 import Fetch
 import Logging
+import struct OperationClient.OperationOwner
 import Serve
+import struct SessionDomain.SessionID
 import struct SpaceContract.AIDisclosure
 import SpaceCore
 import WebPush
@@ -30,7 +32,11 @@ public actor SpaceHost {
   private var stopped = false
   private var shutdownTask: Task<Void, Error>?
   private let runBody: @Sendable () async -> Void
-  private let shutdownBody: @Sendable () async throws -> Void
+  private let shutdownBody: @Sendable (_ handingOver: Bool) async throws -> Void
+  /// The worker processes, when the workers run out of process.
+  nonisolated let processWorkers: ProcessWorkers?
+  nonisolated let sessions: SessionRuntime?
+  nonisolated let execTokens: ExecTokens?
 
   public static func loadDisclosure(from file: URL) async throws -> AIDisclosure {
     try await loadAIDisclosure(
@@ -46,6 +52,19 @@ public actor SpaceHost {
     contentHostPattern: String? = nil, aiDisclosure: AIDisclosure? = nil,
     version: String = SpaceServer.unstampedVersion, webContent: WebContent = WebContent(),
     devImport: URL? = nil, devExport: URL? = nil,
+  ) async throws -> SpaceHost {
+    try await open(
+      folder: folder, deployment: deployment, configDirectory: configDirectory, allowEnvironmentCredentials: allowEnvironmentCredentials,
+      fallbackOrigin: fallbackOrigin, port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
+      aiDisclosure: aiDisclosure, version: version, webContent: webContent, devImport: devImport, devExport: devExport, placement: .inProcess,
+    )
+  }
+
+  static func open(
+    folder: URL, deployment: DeploymentRecord, configDirectory: URL?,
+    allowEnvironmentCredentials: Bool, fallbackOrigin: String, port: Int?, dev: Bool, publicRead: Bool,
+    contentHostPattern: String?, aiDisclosure: AIDisclosure?, version: String, webContent: WebContent,
+    devImport: URL?, devExport: URL?, placement: WorkerPlacement,
   ) async throws -> SpaceHost {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let space = try Space.open(file: folder.appendingPathComponent("space.sqlite"))
@@ -63,9 +82,11 @@ public actor SpaceHost {
         directory: folder.appendingPathComponent("web-push"),
         contact: URL(string: "https://wuhu.ai")!,
       )
+      let handover: Handover?
+      if case let .process(_, _, taken) = placement { handover = taken } else { handover = nil }
       try await space.reindexLinks()
       try await space.recordDeployment(deployment)
-      if let devImport {
+      if let devImport, handover == nil {
         try await space.importFolder(devImport)
       }
       let execTokens = ExecTokens(spaceURL: advertisedOrigin ?? fallbackOrigin)
@@ -101,7 +122,20 @@ public actor SpaceHost {
           let record = try await space.sessions.record(session)
           return try await serverIdentity.inferenceReplayIdentity(audience: audience, space: space.identity().rawValue, group: record.group.rawValue)
         },
+        outOfProcess: placement.outOfProcess,
+        takingOver: handover != nil,
       )
+      let processWorkers: ProcessWorkers? = if case let .process(executable, socket, _) = placement {
+        ProcessWorkers(
+          registry: sessions.workers, executable: executable, socket: socket, spaceID: id, environment: ProcessInfo.processInfo.environment,
+        )
+      } else { nil }
+      if let handover {
+        execTokens.restore(handover.tokens) { key in v2Service.credentialActive(group: key.group, owner: OperationOwner(scope: key.scope, key: key.key)) }
+        sessions.workers.restore(mintedCount: handover.minted)
+        processWorkers?.adopt(handover.workers)
+        for (session, due) in handover.wakes { await sessions.service.scheduleWake(SessionID(session), at: Date(timeIntervalSince1970: due)) }
+      }
       var pushConfiguration = HTTPClient.Configuration()
       pushConfiguration.httpVersion = .automatic
       pushConfiguration.timeout.connect = .seconds(10)
@@ -156,7 +190,8 @@ public actor SpaceHost {
       let requests = HostRequests()
       let scoped = spaceScopedHandler(id: id, handler: handler)
       let owned = spaceOwnedHandler(handler: scoped, requests: requests, sockets: sockets)
-      return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, runBody: {
+      return SpaceHost(space: space, id: id, credentials: credentials, sockets: sockets, requests: requests, handler: owned, processWorkers: processWorkers, sessions: sessions, execTokens: execTokens, runBody: {
+        do { try processWorkers?.start() } catch { logger.error("could not start a worker", metadata: ["error": "\(error)"]) }
         await withTaskGroup(of: Void.self) { group in
           group.addTask { await serverIdentity.run() }
           group.addTask { await hub.run() }
@@ -170,14 +205,16 @@ public actor SpaceHost {
           group.addTask { await pushRelayRuntime.run() }
           await group.waitForAll()
         }
-      }, shutdownBody: {
+      }, shutdownBody: { handingOver in
         await keyStreams.close()
         await releases.close()
         await v2Service.shutdown()
+        // Handing over, main has already let go of its workers: they run on.
         await sessions.service.shutdown()
+        if !handingOver { await processWorkers?.stop() }
         await metricsWriter.close()
         var failure: (any Error)?
-        if let devExport {
+        if let devExport, !handingOver {
           do {
             try await uncancellable("Export the space after serve has been cancelled") { try await space.exportFolder(devExport) }
           } catch { failure = error }
@@ -189,7 +226,14 @@ public actor SpaceHost {
     }
   }
 
-  private init(space: Space, id: String, credentials: CredentialResolver, sockets: HostSockets, requests: HostRequests, handler: @escaping UpgradingHandler, runBody: @escaping @Sendable () async -> Void, shutdownBody: @escaping @Sendable () async throws -> Void) {
+  private init(
+    space: Space, id: String, credentials: CredentialResolver, sockets: HostSockets, requests: HostRequests, handler: @escaping UpgradingHandler,
+    processWorkers: ProcessWorkers? = nil, sessions: SessionRuntime? = nil, execTokens: ExecTokens? = nil,
+    runBody: @escaping @Sendable () async -> Void, shutdownBody: @escaping @Sendable (Bool) async throws -> Void,
+  ) {
+    self.processWorkers = processWorkers
+    self.sessions = sessions
+    self.execTokens = execTokens
     self.space = space
     self.id = id
     self.credentials = credentials
@@ -212,15 +256,48 @@ public actor SpaceHost {
   }
 
   public func shutdown() async throws {
+    try await shutdown(handingOver: false)
+  }
+
+  /// What the worker socket serves: main's API, as this host owns its requests.
+  nonisolated var workerHandler: UpgradingHandler? {
+    guard let sessions else { return nil }
+    let api = sessions.api
+    return spaceOwnedHandler(handler: spaceScopedHandler(id: id) { try await api($0) }, requests: requests, sockets: sockets)
+  }
+
+  /// Puts new workers up and moves every session to them; the old workers exit.
+  func rollWorkers() async throws {
+    try await processWorkers?.roll()
+  }
+
+  /// Stops this main for the one it `execve`s into, and returns what that one
+  /// takes over. The workers run on, held by nobody until they announce to it.
+  func handOver() async throws -> Handover {
+    guard let sessions, let execTokens else { preconditionFailure("only a host with sessions hands over") }
+    await requests.quiesce(grace: .seconds(5))
+    let wakes = await sessions.service.scheduledWakes()
+    sessions.workers.detach()
+    try await shutdown(handingOver: true)
+    return Handover(
+      tokens: execTokens.table(), minted: sessions.workers.mintedCount, workers: processWorkers?.children ?? [],
+      wakes: Dictionary(uniqueKeysWithValues: wakes.map { ($0.key.rawValue, $0.value.timeIntervalSince1970) }),
+    )
+  }
+
+  private func shutdown(handingOver: Bool) async throws {
     if let shutdownTask { return try await shutdownTask.value }
     stopped = true
+    // Out of process, the workers are told to stop while their lines are
+    // still open; a main handing over leaves them running.
+    if !handingOver, processWorkers != nil { await sessions?.workers.shutdown() }
     let background = runTask
     background?.cancel()
     // Shutdown must finish even if its first caller is cancelled.
     let shutdown = try taskScope.run("space-shutdown") {
       await requests.shutdown(sockets: sockets)
       await background?.value
-      try await SpaceLogContext.$spaceID.withValue(id) { try await shutdownBody() }
+      try await SpaceLogContext.$spaceID.withValue(id) { try await shutdownBody(handingOver) }
     }
     shutdownTask = shutdown
     let result = await shutdown.result
@@ -258,4 +335,14 @@ func spaceOwnedHandler(handler: @escaping UpgradingHandler, requests: HostReques
       return .webSocket { socket in await sockets.run(session, socket: socket) }
     }
   }
+}
+
+/// Where a space's workers run: in main's process, or each in a process of
+/// its own started from `executable`, reaching main over `socket`.
+enum WorkerPlacement: Sendable {
+  case inProcess
+  /// `handover` is what the main this one took over from left.
+  case process(executable: String, socket: String, handover: Handover?)
+
+  var outOfProcess: Bool { if case .process = self { true } else { false } }
 }

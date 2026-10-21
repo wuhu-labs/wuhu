@@ -72,6 +72,9 @@ public struct WebSocketRequest: Sendable {
   public var tls: ClientTLS?
   public var connectTimeout: Duration
   public var closeTimeout: Duration
+  /// The Unix domain socket the connection goes to instead of the URL's host
+  /// and port; the URL still names the request's path and `host` header.
+  public var unixSocketPath: String?
 
   public init(
     url: URL,
@@ -80,7 +83,9 @@ public struct WebSocketRequest: Sendable {
     tls: ClientTLS? = nil,
     connectTimeout: Duration = .seconds(30),
     closeTimeout: Duration = .seconds(2),
+    unixSocketPath: String? = nil,
   ) {
+    self.unixSocketPath = unixSocketPath
     self.url = url
     self.headers = headers
     self.limits = limits

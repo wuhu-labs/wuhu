@@ -10,6 +10,15 @@ import SessionTools
 import Testing
 import WuhuAI
 
+// Parks until the task is cancelled, then runs `then`: what a test's worker
+// or scripts do when its task group ends.
+func whenCancelled(_ then: @Sendable () async -> Void) async {
+  let (parked, end) = AsyncStream<Void>.makeStream()
+  for await _ in parked {}
+  end.finish()
+  await then()
+}
+
 func callResult(
   _ harness: SessionHarness,
   _ session: String,
@@ -19,7 +28,7 @@ func callResult(
   let id = SessionID(session)
   let state = harness.toolStates.values.withLock { $0[id] ?? ToolExecutionState() }
   let callID = UUID().uuidString.lowercased()
-  let outcome = try await harness.runtime.worker.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
+  let outcome = try await harness.runtime.inProcessWorker!.execute(session: id, call: ToolCall(id: callID, name: tool, arguments: ToolArguments(arguments)), state: state)
   let payload = outcome.payload
   harness.toolStates.values.withLock {
     var state = $0[id] ?? ToolExecutionState()

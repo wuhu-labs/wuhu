@@ -28,8 +28,8 @@ import WuhuAI
     var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
     groups["work"]!.policy = policy ?? .quotaAware(holdDownSeconds: seconds)
     _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
-    let owner = Hub(space: harness.space, credentials: harness.credentials)
-    let catalog = try await groupCatalog(owner: owner)()
+    let owner = Hub(space: harness.space)
+    let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
     let created = try await harness.call("/v1/session", .object(["title": "Switch", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
     return (harness, owner, catalog, SessionID(created.id))
   }
@@ -46,7 +46,7 @@ import WuhuAI
         let repeated = try #require(await recordRouteFailure(InferenceError.rateLimited(retryAt: Date(timeIntervalSince1970: 30000)), session: id, owner: owner, catalog: catalog))
         #expect(repeated.deadline == first.deadline)
         #expect(repeated.firstFailureAt == first.firstFailureAt)
-        let rehydratedOwner = Hub(space: harness.space, credentials: harness.credentials)
+        let rehydratedOwner = Hub(space: harness.space)
         let held = try #require(await rehydratedOwner.modelRoute(id))
         #expect(held.failure == repeated)
         await #expect(throws: ModelRouteWaiting.self) { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage) }
@@ -114,7 +114,7 @@ import WuhuAI
       let old = try #require(await owner.modelRoute(id))
       let head = GenerationHead(id: UUID(), timestamp: Date(), summary: String(repeating: "important summary ", count: 50), snapshot: .init(preReads: ["/task.md"]), runningWork: ["exec.running"])
       let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
-      let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted, nil) == nil)
       harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
       harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
@@ -258,10 +258,11 @@ extension GroupSwitchingTests {
       let fs = await harness.space.fs(.shared)
       let (entry, _) = try await fs.read(ModelsDocument.groupPath)
       _ = try await fs.write(ModelsDocument.groupPath, Data("{}".utf8), ifMatch: entry)
-      let catalog = try await groupCatalog(owner: owner)()
+      let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
       let error = CatalogError.modelRouteInvalid(group: "work", member: "a")
       #expect(try await recordRouteFailure(error, session: id, owner: owner, catalog: catalog, inferenceStarted: false) == nil)
-      let infer = kernelInference(owner: owner, catalog: { catalog }, groupCatalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+      let access = InferenceAccess(credentials: harness.credentials)
+      let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
       let transcript = try await harness.store.transcript(id)
       await #expect(throws: error) {
         try await infer(.init(sessionID: id, attemptID: UUID(), transcript: transcript, mode: .normal))
@@ -382,7 +383,7 @@ extension GroupSwitchingTests {
       }
       let ready = quota
       let transcript = try await harness.store.transcript(id).compacted(head: .init(id: UUID(), timestamp: Date(), summary: "summary", snapshot: .init(), runningWork: []), kept: nil)
-      let prepare = compactionPlacement(owner: owner, catalog: { ready }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in ready }, usage: harness.runtime.usage)
       #expect(try await prepare(id, transcript, nil) == nil)
       var missing = source
       missing.credentials = .bound { provider in
@@ -390,7 +391,7 @@ extension GroupSwitchingTests {
         return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
       }
       let unavailable = missing
-      let invalid = compactionPlacement(owner: owner, catalog: { unavailable }, usage: harness.runtime.usage)
+      let invalid = compactionPlacement(owner: owner, catalog: { _ in unavailable }, usage: harness.runtime.usage)
       await #expect(throws: CatalogError.groupMember(group: "work", member: "b", reason: .missingCredential(provider: "alternate"))) { try await invalid(id, transcript, nil) }
     }
   }
@@ -410,7 +411,7 @@ extension GroupSwitchingTests {
       groups["work"]!.members.append(.init(id: "c", provider: "third", model: "test-model"))
       _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: groupEntry)
       let bResolutions = Mutex(0)
-      var catalog = try await groupCatalog(owner: owner)()
+      var catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
       catalog.credentials = .bound { provider in
         if provider == "alternate" {
           let call = bResolutions.withLock { $0 += 1; return $0 }
@@ -467,20 +468,21 @@ extension GroupSwitchingTests {
         }
         let source = try await harness.store.transcript(id)
         #expect(String(decoding: try JSONEncoder().encode(source), as: UTF8.self).contains("signature-before-compaction"))
-        let owner = Hub(space: harness.space, credentials: harness.credentials)
-        let catalog = try await groupCatalog(owner: owner)()
+        let owner = Hub(space: harness.space)
+        let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
         harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
         let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "preserved ordinary summary", snapshot: .init(preReads: ["/task.md"]), runningWork: ["exec.running"])
         let kept = 1 ..< source.items.count
         let compacted = source.compacted(head: head, kept: kept)
-        let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+        let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
         let transition = try #require(await prepare(id, compacted, nil))
         #expect(transition.route.member == "b")
         #expect(transition.route.switchCause == nil)
         let committed = try await owner.append(id, .compacted(closing: nil, head: head, kept: kept, completing: nil, transition: transition)).value(Transcript.self)
-        let infer = kernelInference(owner: owner, catalog: { catalog }, groupCatalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let access = InferenceAccess(credentials: harness.credentials)
+        let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: committed, mode: .normal))
         let emitted = requests.withLock { $0 }
         #expect(emitted.count == 2)

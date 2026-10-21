@@ -114,8 +114,8 @@ struct MachineV2Home: Sendable {
 
   func validate(_ config: MachineV2Config) throws {
     guard config.fingerprint.map(ServerTrust.isFingerprint) ?? true else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Malformed v2 certificate pin") }
-    guard config.machine == machine, config.name.hasSuffix("-v2"), let url = URL(string: config.server), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
-      throw MachineV2RuntimeError(.invalidConfiguration, message: "Expected explicit v2 machine, -v2 name and HTTPS origin")
+    guard config.machine == machine, let url = URL(string: config.server), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else {
+      throw MachineV2RuntimeError(.invalidConfiguration, message: "Expected explicit v2 machine and HTTPS origin")
     }
   }
 

@@ -3,29 +3,6 @@ import GRDB
 import SessionDomain
 import struct SpaceContract.GroupID
 
-let notificationSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "notifications" (
-  "n" INTEGER NOT NULL PRIMARY KEY,
-  "recipient" TEXT NOT NULL,
-  "source" TEXT NOT NULL,
-  "kind" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  "created_at" TEXT NOT NULL,
-  "grp" TEXT NOT NULL DEFAULT ''
-);
-CREATE TRIGGER IF NOT EXISTS "notifications_grp_required" BEFORE INSERT ON "notifications" WHEN NEW."grp" = ''
-  BEGIN SELECT RAISE(ABORT, 'grp required: notifications'); END;
-CREATE INDEX IF NOT EXISTS "notifications_by_grp" ON "notifications" ("recipient", "grp", "n");
-CREATE INDEX IF NOT EXISTS "notifications_by_recipient" ON "notifications" ("recipient", "n");
-CREATE INDEX IF NOT EXISTS "notifications_by_source" ON "notifications" ("recipient", "kind", "source", "n");
-CREATE TABLE IF NOT EXISTS "watermarks" (
-  "identity" TEXT NOT NULL,
-  "source" TEXT NOT NULL,
-  "last_read_n" INTEGER NOT NULL,
-  PRIMARY KEY ("identity", "source")
-);
-"""
-
 public enum NotificationKind: String, Hashable, Sendable, Codable {
   case conversationMessage = "conversation_message"
   case childFailed = "child_failed"

@@ -9,19 +9,6 @@ import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let sessionCommandSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "session_commands" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "kind" TEXT NOT NULL,
-  "instructions" TEXT,
-  "created_at" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "session_command_tokens" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "token" TEXT NOT NULL
-);
-"""
-
 public enum SessionCommand: Hashable, Sendable, Codable {
   case compact(instructions: String?)
 

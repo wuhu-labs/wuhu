@@ -120,7 +120,7 @@ struct SessionStoreTests {
       _ = try await store.drainQueue(sid)
 
       let marker = BookmarkMarker(id: UUID(), timestamp: Date(timeIntervalSinceReferenceDate: 0))
-      try await store.append(sid, items: [.bookmark(marker)], transcript: Transcript(items: [.bookmark(marker)]))
+      try await store.append(sid, items: [.bookmark(marker)], inputOrigin: Transcript(items: [.bookmark(marker)]).cacheWarmingInputOrigin)
 
       let stored = try await store.transcript(sid)
       #expect(stored.items.count == 3)
@@ -204,7 +204,7 @@ struct SessionStoreTests {
       // Colliding with an existing content id makes the append fail mid
       // transaction; the work flip it would have carried must vanish with it.
       await #expect(throws: DatabaseError.self) {
-        _ = try await store.writeToolResult(sid, SessionFix.toolResult(callID: "k-1", id: inputID))
+        try await store.append(sid, items: [.toolResult(SessionFix.toolResult(callID: "k-2", id: UUID())), .toolResult(SessionFix.toolResult(callID: "k-1", id: inputID))], inputOrigin: nil)
       }
       let hydration = try await store.hydrate(sid)
       #expect(hydration.record.work == .noWork)

@@ -32,7 +32,7 @@ function space(
   }
 }
 
-const home = (source: NodeSource) => loadNode(source, origin, '/', '', 0)
+const home = (source: NodeSource) => loadNode(source, origin, '/', '')
 
 Deno.test('/ opens index.html in the frame, ahead of index.md', async () => {
   const stats: string[] = []
@@ -78,7 +78,7 @@ Deno.test('an HTML conversation attachment opens as a file, not a frame', async 
   const path = '/_/conversations/chat/attachments/proof.html'
   const source = space({ [path]: '<html>proof</html>' })
   source.read = () => Promise.reject(new Error('must not read attachment'))
-  expectEqual(await loadNode(source, origin, path, '', 0), {
+  expectEqual(await loadNode(source, origin, path, ''), {
     state: 'file',
     path,
     src: origin + path,
@@ -89,7 +89,7 @@ Deno.test('an image conversation attachment retains its image view', async () =>
   const path = '/_/conversations/chat/attachments/proof.png'
   const source = space({ [path]: '' })
   source.read = () => Promise.reject(new Error('must not read image as text'))
-  expectEqual(await loadNode(source, origin, path, '', 0), {
+  expectEqual(await loadNode(source, origin, path, ''), {
     state: 'image',
     path,
     src: origin + path,
@@ -108,7 +108,7 @@ Deno.test('attachment definitions and directories never enter trusted frames', a
     })
     source.read = () =>
       Promise.reject(new Error('must not interpret attachment'))
-    expectEqual(await loadNode(source, origin, path, '', 0), {
+    expectEqual(await loadNode(source, origin, path, ''), {
       state: 'file',
       path,
       src: origin + path,
@@ -119,9 +119,22 @@ Deno.test('attachment definitions and directories never enter trusted frames', a
     stat: () => Promise.resolve({ kind: 'directory' }),
     read: () => Promise.reject(new Error('must not interpret attachment')),
   }
-  expectEqual(await loadNode(source, origin, path, '', 0), {
+  expectEqual(await loadNode(source, origin, path, ''), {
     state: 'file',
     path,
     src: origin + path,
+  })
+})
+
+Deno.test('a table opens without attempting a text read', async () => {
+  const source: NodeSource = {
+    stat: () => Promise.resolve({ kind: 'table' }),
+    read: () => {
+      throw new Error('must not read a table as text')
+    },
+  }
+  expectEqual(await loadNode(source, origin, '/tasks.table', ''), {
+    state: 'table',
+    path: '/tasks.table',
   })
 })

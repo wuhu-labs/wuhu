@@ -1,7 +1,9 @@
 import Dependencies
+import enum JSONValue.JSONValue
 import Logging
 import protocol MainHub.Main
 import struct MainHub.ScriptError
+import func MainHub.scriptHandle
 import struct MainHub.ScriptHandlerResult
 import struct MainHub.ScriptRunID
 import func MainHub.seconds
@@ -294,13 +296,10 @@ final class ScriptExecution: Sendable {
         return first ?? .killed(.cancelled)
       }
       // A process lives only as long as its script.
-      let minted = await processes.shutdown { exec in
-        try? await owner.scriptExecInput(session: self.session, script: ScriptRunID(self.id), exec: exec, input: .kill(.recorded))
-        try await owner.scriptExecInput(session: self.session, script: ScriptRunID(self.id), exec: exec, input: .release)
-      }
+      let minted = await processes.shutdown { [client] exec in try await killScriptExec(exec, via: client) }
       if !minted.isEmpty {
         do {
-          try await owner.releaseScriptExecs(script: id)
+          let _: JSONValue = try await client.api(.delete, "/v1/script-execs/\(pathSegment(id))")
         } catch is CancellationError {
           // The server is shutting down: the rows stay, and the next boot
           // reaps the processes and tells the owner.
@@ -325,7 +324,7 @@ final class ScriptExecution: Sendable {
     ScriptFiles(client: client, execution: self).install(in: engine)
     ScriptSpace(execution: self, client: client, streams: streams).install(in: engine)
     ScriptDiscovery(client: client).install(in: engine)
-    ScriptMachineBindings(execution: self, owner: owner).install(in: engine)
+    ScriptMachineBindings(execution: self, tools: tools).install(in: engine)
     do {
       try engine.defineModule("wuhu:space-core", source: spaceCoreModule)
       try engine.defineModule("wuhu:space", source: spaceModule + spaceFilesModule)

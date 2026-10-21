@@ -53,11 +53,20 @@ extension ToolExecutor {
     }
   }
 
+  /// The machines the session may use, as main lists them.
+  func machines(as session: SessionID) async throws -> [MachineStatus] {
+    try await client(session).api(.get, "/v1/machine")
+  }
+
+  /// The usable machine `reference` names: its id, or the name a human gave the box.
+  func machine(_ reference: String, as session: SessionID) async throws -> MachineStatus? {
+    try await machines(as: session).first { $0.id.rawValue == reference || $0.name?.lowercased() == reference.lowercased() }
+  }
+
   // A machines:// host is the id or the name a human gave the box.
-  private func machineID(_ host: String, as session: SessionID) async -> MachineID? {
+  func machineID(_ host: String, as session: SessionID) async -> MachineID? {
     if MachineID.isValid(host) { return MachineID(rawValue: host) }
-    guard let main = try? await client(session), let machines: [MachineStatus] = try? await main.api(.get, "/v1/machine") else { return nil }
-    return machines.first { $0.name?.lowercased() == host.lowercased() }?.id
+    return try? await machine(host, as: session)?.id
   }
 
   func deliverContext(_ session: SessionID, touching address: Address?, state: ToolExecutionState) async -> ScopeContext? {
@@ -85,7 +94,7 @@ extension ToolExecutor {
   }
 }
 
-private struct DiscoveryContext: Decodable {
+struct DiscoveryContext: Decodable {
   var group: GroupID
 }
 

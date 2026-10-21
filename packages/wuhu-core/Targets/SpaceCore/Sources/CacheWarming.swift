@@ -8,17 +8,6 @@ import GRDB
 import SessionDomain
 import StructuredQueries
 
-let cacheWarmingSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "session_cache_warming" (
-  "session_id" TEXT NOT NULL PRIMARY KEY REFERENCES "sessions" ("id") ON DELETE CASCADE,
-  "next_ping_at" REAL NOT NULL,
-  "interval_seconds" INTEGER NOT NULL,
-  "ping_count" INTEGER NOT NULL,
-  "warming_origin" INTEGER NOT NULL DEFAULT 0,
-  "last_offer_tokens" INTEGER
-);
-"""
-
 @Table("session_cache_warming")
 struct CacheWarmingRow {
   @Column("session_id", primaryKey: true) var sessionID: String

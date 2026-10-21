@@ -87,6 +87,12 @@ enum Main {
       )
       $0[UpgradeEnvironment.self] = .live
     }
+    // A worker main started: it serves main until main shuts it down.
+    if ProcessInfo.processInfo.environment[WorkerProcess.roleVariable] == WorkerProcess.role {
+      let code = await WorkerProcess.run(environment: ProcessInfo.processInfo.environment)
+      for shutdown in [inferenceClient.shutdown, client.shutdown, hopClient.shutdown] { try? await shutdown() }
+      exit(code)
+    }
     // Space traffic dials pin-mode when the user store has a recorded pin and
     // system-PKI mode otherwise; nothing is recorded outside wuhu use/trust.
     let trust: ServerTrust
@@ -107,6 +113,8 @@ enum Main {
         trust: trust,
       ),
       serve: { config in
+        // With its workers out of process, SIGHUP reboots main in place.
+        let (reboots, reboot) = AsyncStream<Void>.makeStream()
         let server = try rootScope.run("space-server") {
           try await SpaceServer.serve(
             folder: URL(fileURLWithPath: config.folder, isDirectory: true),
@@ -127,6 +135,7 @@ enum Main {
             webAppDirectory: config.webApp.map { URL(fileURLWithPath: $0, isDirectory: true) },
             webContent: try WebBundle.load(),
             otelEndpoint: config.otelEndpoint.flatMap(URL.init(string:)),
+            workers: config.workerProcess ? .process(reboots: reboots) : .inProcess,
           )
         }
         let sources = [SIGINT, SIGTERM].map { number in
@@ -136,8 +145,23 @@ enum Main {
           source.resume()
           return source
         }
-        defer { sources.forEach { $0.cancel() } }
-        try await server.value
+        var hangup: DispatchSourceSignal?
+        if config.workerProcess {
+          signal(SIGHUP, SIG_IGN)
+          let source = DispatchSource.makeSignalSource(signal: SIGHUP)
+          source.setEventHandler { reboot.yield() }
+          source.resume()
+          hangup = source
+        }
+        defer {
+          sources.forEach { $0.cancel() }
+          hangup?.cancel()
+        }
+        if case let .reboot(handover) = try await server.value {
+          let failure = handover.exec()
+          FileHandle.standardError.write(Data("could not re-execute wuhu serve: \(String(cString: strerror(failure)))\n".utf8))
+          exit(1)
+        }
       },
       user: { command in
         switch command {

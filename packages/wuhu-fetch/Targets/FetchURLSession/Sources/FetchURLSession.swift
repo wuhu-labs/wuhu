@@ -40,7 +40,7 @@ extension FetchClient {
   #endif
 }
 
-// allow unchecked-sendable: legacy URLSession delegate synchronization
+// swiftlint:disable:next no_unchecked_sendable - legacy URLSession delegate synchronization
 private final class URLSessionFetchTransport: @unchecked Sendable {
   private let delegate: StreamingURLSessionDelegate
   private let session: URLSession
@@ -166,10 +166,10 @@ private struct TransportBoundSequence<Base: AsyncSequence & Sendable>: AsyncSequ
   }
 }
 
-// allow unchecked-sendable: legacy URLSession delegate synchronization
+// swiftlint:disable:next no_unchecked_sendable - legacy URLSession delegate synchronization
 private final class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
   private var tasks: [Int: StreamingTaskState] = [:]
-  // allow nslock: legacy URLSession delegate synchronization
+  // swiftlint:disable:next no_nslock - legacy URLSession delegate synchronization
   private let lock = NSLock()
 
   #if canImport(Security)
@@ -242,7 +242,7 @@ private final class StreamingURLSessionDelegate: NSObject, URLSessionDataDelegat
   }
 }
 
-// allow unchecked-sendable: legacy URLSession delegate synchronization
+// swiftlint:disable:next no_unchecked_sendable - legacy URLSession delegate synchronization
 private final class StreamingTaskState: @unchecked Sendable {
   let body: AsyncThrowingStream<Bytes, Error>
 
@@ -254,7 +254,7 @@ private final class StreamingTaskState: @unchecked Sendable {
   private var responseContinuation: CheckedContinuation<URLResponse, Error>?
   private var bodyContinuation: AsyncThrowingStream<Bytes, Error>.Continuation?
   private var isFinished = false
-  // allow nslock: legacy URLSession delegate synchronization
+  // swiftlint:disable:next no_nslock - legacy URLSession delegate synchronization
   private let lock = NSLock()
 
   init() {

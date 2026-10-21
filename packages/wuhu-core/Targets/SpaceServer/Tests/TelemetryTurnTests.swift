@@ -1,5 +1,6 @@
 import DeterministicDependencies
 import class MainHub.Hub
+import class MainHub.SessionService
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

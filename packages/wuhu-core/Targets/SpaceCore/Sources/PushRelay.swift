@@ -1,28 +1,6 @@
 import Foundation
 import GRDB
 
-let pushRelaySchemaSQL = """
-CREATE TABLE IF NOT EXISTS "push_relay_grants" (
-  "grant_id" TEXT NOT NULL PRIMARY KEY,
-  "endpoint" TEXT NOT NULL,
-  "token" TEXT NOT NULL,
-  -- Carried only so a space created before the column was dropped from the
-  -- model still satisfies its own NOT NULL. Nothing reads it.
-  "platform" TEXT NOT NULL,
-  "recipient" TEXT NOT NULL REFERENCES "personas" ("name"),
-  "device_pubkey" TEXT NOT NULL REFERENCES "account_keys" ("pubkey") ON DELETE CASCADE,
-  "notification_cursor" INTEGER NOT NULL,
-  "consecutive_failures" INTEGER NOT NULL DEFAULT 0,
-  "retry_at" TEXT,
-  "created_at" TEXT NOT NULL,
-  "updated_at" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "push_relay_grants_by_recipient"
-  ON "push_relay_grants" ("recipient", "notification_cursor");
-CREATE INDEX IF NOT EXISTS "push_relay_grants_by_retry"
-  ON "push_relay_grants" ("retry_at");
-"""
-
 public struct PushRelayGrant: Hashable, Sendable {
   public var grant: String
   public var endpoint: String

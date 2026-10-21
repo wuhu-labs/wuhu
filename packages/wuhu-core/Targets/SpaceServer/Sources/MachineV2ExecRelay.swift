@@ -177,7 +177,9 @@ extension MachineV2Service {
 
   func killExec(_ record: ExecRecord) async throws {
     killedExecs.insert(record.id.rawValue)
-    try await execEndpoints[record.id.rawValue]?.operation?.stop("callerCancelled")
+    guard let operation = execEndpoints[record.id.rawValue]?.operation else { return }
+    try await operation.stop("callerCancelled")
+    try await space.markKillDelivered(record.id)
   }
 
   /// Relays the exec, then keeps its endpoint `endpointRetention` for a caller that comes back to read the end.

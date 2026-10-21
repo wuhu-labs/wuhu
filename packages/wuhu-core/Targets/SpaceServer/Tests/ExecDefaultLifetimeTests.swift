@@ -10,7 +10,6 @@ import MachineAgent
 import MachineChannel
 import MachineContract
 @testable import MainHub
-import struct MainHub.ExecBackend
 import OperationProtocol
 import OperationRuntime
 import Scratch
@@ -249,11 +248,12 @@ private func lifetimeExecutor(space: Space, hub: MachineHub, ready: LifetimeOutp
   let tokens = ExecTokens(spaceURL: "http://main")
   let connection = MainConnection()
   let executor = ToolExecutor(owner: owner, main: connection, credential: { tokens.sessionToken($0) })
-  SessionRuntime.bindMain(owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection, hub: hub)
-  let backend = execBackend(space: space, hub: hub)
+  let workers = WorkerRegistry(tokens: tokens)
+  workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
+  SessionRuntime.bindMain(owner: owner, workers: workers, tokens: tokens, connection: connection, hub: hub)
   connection.bindDial { url, _ in
     let index = ready.connections.withLock { value in defer { value += 1 }; return value }
-    return LifetimeTransport(base: try await backend.connect(.init(rawValue: url.lastPathComponent)), ready: ready, output: index == 0 ? ready.first : ready.second)
+    return LifetimeTransport(base: try await connectExecCaller(.init(rawValue: url.lastPathComponent), space: space, hub: hub), ready: ready, output: index == 0 ? ready.first : ready.second)
   }
   return executor
 }

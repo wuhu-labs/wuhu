@@ -196,11 +196,10 @@ extension MachineToolV2RoutingTests {
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: native ? ["/bin/sh", "-c", "printf hi; printf stderr >&2; exec 1>&- 2>&-; while [ ! -f '\(exitGate.path)' ]; do sleep .01; done; exit 7"] : ["echo-test"]))
-    let backend = execBackend(space: space, hub: hub)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
-      let transport = try await backend.connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       tasks.addTask { await endpoint.run(transport) }
       defer { tasks.cancelAll() }
       if !fastExit, !native { try await outgoing.sendStdin(Array("input".utf8)) }; await outgoing.closeStdin()

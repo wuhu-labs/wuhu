@@ -1,0 +1,66 @@
+import AsyncHTTPClient
+import Fetch
+import FetchAsyncHTTPClient
+import Foundation
+import MachineContract
+import MainHub
+import Scratch
+import Serve
+import ServeNIO
+import SessionDomain
+@testable import SpaceServer
+import Testing
+
+@Suite struct RebootTests {
+  // What main holds only in memory crosses to the main it becomes, once: a
+  // running exec's token and its OIDC grant still work there.
+  @Test func theHandoverCarriesTheTokensOnceAndOnlyToItsOwner() throws {
+    let before = ExecTokens(spaceURL: "http://main")
+    let now = Date()
+    let exec = before.credential(session: SessionID("s1"), exec: ExecID(rawValue: "ex_aaaaaaaa"), timeout: 600, now: now)
+    let grant = before.idTokens.environment(
+      spaceURL: "http://main", session: SessionID("s1"), machine: MachineID(rawValue: "mc_aaaaaaaa"), exec: ExecID(rawValue: "ex_aaaaaaaa"),
+      timeout: 600, now: now,
+    )
+    let folder = try ScratchFolder("handover")
+    defer { folder.remove() }
+    let file = URL(fileURLWithPath: folder.path).appendingPathComponent("handover.json")
+    try Handover(tokens: before.table(), minted: 3, workers: [.init(id: "worker-3", pid: 42)], wakes: ["s1": 99]).write(to: file)
+    let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+    #expect(permissions == 0o600)
+
+    let handover = try Handover.take(from: file)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+    let after = ExecTokens(spaceURL: "http://main")
+    after.restore(handover.tokens) { _ in { true } }
+    #expect(after.holder(ofBearer: exec.token, now: now)?.session == SessionID("s1"))
+    #expect(after.idTokens.grant(ofBearer: grant.request, now: now)?.exec == ExecID(rawValue: "ex_aaaaaaaa"))
+    #expect(handover.minted == 3 && handover.workers.map(\.pid) == [42] && handover.wakes == ["s1": 99])
+  }
+
+  // The listener outlives the server serving it: a request made while no
+  // server accepts waits in the backlog and is answered by the next one.
+  @Test func aRequestMadeBetweenTwoServersWaitsForTheSecond() async throws {
+    let socket = "/tmp/wr-\(UUID().uuidString.prefix(8)).sock"
+    defer { unlink(socket) }
+    let listeners = try Listeners.open(host: "127.0.0.1", port: 0, workerSocket: socket)
+    defer { for fd in [listeners.api, listeners.workers] { close(fd) } }
+    func serving(_ answer: String) async throws -> ServeNIOServer {
+      try await ServeNIOServer.bind(listeningSocket: listeners.lend(listeners.workers)) { _ in .response(jsonResponse(.string(answer))) }
+    }
+    let http = HTTPClient(eventLoopGroupProvider: .singleton)
+    let fetch = unixSocketFetch(.asyncHTTPClient(http), socket: socket)
+    func ask() async throws -> String { try await fetch.fetch(Request(url: URL(string: "http://main/v1/server")!)).text() }
+
+    let first = try await serving("one")
+    #expect(try await ask() == "\"one\"")
+    await first.stopAccepting()
+    await first.shutdown()
+    let waiting = Task { try await ask() }
+    try await Task.sleep(for: .milliseconds(200))
+    let second = try await serving("two")
+    #expect(try await waiting.value == "\"two\"")
+    await second.shutdown()
+    try await http.shutdown()
+  }
+}

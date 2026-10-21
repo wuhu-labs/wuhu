@@ -3,6 +3,9 @@ import struct Credentials.CredentialBinding
 import Dependencies
 import FetchWebSocket
 import class MainHub.Hub
+import class MainHub.SessionService
+import struct MainHub.SubtreeArchiveBusy
+import struct MainHub.UnfulfilledError
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

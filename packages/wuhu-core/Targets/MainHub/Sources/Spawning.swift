@@ -1,40 +1,5 @@
 import SessionDomain
 
-// The operator verbs a session may apply to itself and its descendants, and,
-// for archive and unarchive, to a session it created and, as a top-level
-// agent, to any session of its group. The session loops live above this
-// target, so the server hands them in.
-public struct SessionControl: Sendable {
-  public enum Verb: String, Sendable, CaseIterable {
-    case interrupt
-    case resume
-    case archive
-    case unarchive
-  }
-
-  public var perform: @Sendable (Verb, SessionID, Bool) async throws -> Void
-
-  public init(perform: @escaping @Sendable (Verb, SessionID, Bool) async throws -> Void) {
-    self.perform = perform
-  }
-}
-
-// A verb the session loop refused, with the reason a caller can read.
-public struct SessionControlRefusal: Error {
-  public enum Reason: Sendable {
-    case busy
-    case other
-  }
-
-  public var message: String
-  public var reason: Reason
-
-  public init(_ message: String, reason: Reason = .other) {
-    self.message = message
-    self.reason = reason
-  }
-}
-
 public struct SpawnOrder: Sendable {
   public var executor: String? = nil
   public var title: String

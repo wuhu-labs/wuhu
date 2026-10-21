@@ -120,17 +120,28 @@ Deno.test({
       }
       const client = {
         group: 'shared',
-        stat: (path: string) => {
+        stat: (path: string) =>
+        (
+          receive: (value: { kind: string }) => void,
+          failure: (error: Error) => void,
+        ) => {
           stats.push(path)
-          // A page still loading: its stat never answers.
-          if (path === '/slow.txt') return new Promise(() => {})
-          return path in files
-            ? Promise.resolve({ kind: 'file' })
-            : Promise.reject(new Error(`${path} missing`))
+          if (path !== '/slow.txt') {
+            queueMicrotask(() => {
+              if (path in files) receive({ kind: 'file' })
+              else failure(new Error(`${path} missing`))
+            })
+          }
+          return () => {}
         },
-        read: (path: string) =>
-          Promise.resolve({ content: files[path], token: 't1' }),
-        keptRead: () => Promise.reject(new Error('nothing kept')),
+        read:
+          (path: string) =>
+          (receive: (value: { content: string; token: string }) => void) => {
+            queueMicrotask(() =>
+              receive({ content: files[path]!, token: 't1' })
+            )
+            return () => {}
+          },
         remintContentSession: () => Promise.resolve(null),
       }
       const server = {
@@ -144,8 +155,6 @@ Deno.test({
           paths: new Map([['/notes', 'directory'], ['/notes/a.txt', 'file']]),
           rev: 1,
           themeRev: 0,
-          sidebarRev: 0,
-          viewRevs: {},
           avatarRevs: {},
         },
         sidebars: [],

@@ -7,6 +7,8 @@
 import struct Credentials.CredentialResolver
 import Dependencies
 import Fetch
+import struct InferenceKit.InferenceMetric
+import struct InferenceKit.InferenceMetricsSink
 import JSONValue
 import MachineContract
 import struct MainHub.CancelArguments
@@ -31,6 +33,7 @@ import SpaceCore
 import SpaceFS
 import SpaceTools
 import SystemFiles
+import struct WuhuAI.Usage
 
 let sessionRefusalMessage = "not available to a session"
 
@@ -58,12 +61,15 @@ func sessionGate(
   machines: MachineSeam,
   owner: Hub,
   tokens: ExecTokens,
+  runtime: SessionRuntime,
   credentials: CredentialResolver,
   identity: IdentityController?,
+  metrics: InferenceMetricsSink,
   routed: @escaping UpgradingHandler,
   otherwise: @escaping UpgradingHandler,
 ) -> UpgradingHandler {
-  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, identity: identity, routed: routed).upgradingHandler
+  let gated = sessionRouter(space: space, hub: hub, machines: machines, owner: owner, credentials: credentials, identity: identity, metrics: metrics, routed: routed).upgradingHandler
+  let workerRoutes = workerRouter(owner: owner, runtime: runtime).upgradingHandler
   @Dependency(\.date) var dateGen
   return { request in
     guard let header = request.headers[.authorization], header.hasPrefix("Bearer " + ExecTokens.prefix) else {
@@ -72,6 +78,8 @@ func sessionGate(
     switch await sessionVerdict(String(header.dropFirst("Bearer ".count)), tokens: tokens, space: space, now: dateGen.now) {
     case let .refused(response):
       return .response(response)
+    case .worker:
+      return try await workerRoutes(request)
     case let .session(holder):
       // An exec token acts in its session's group; naming another is refused
       // here, whatever the route.
@@ -87,6 +95,8 @@ func sessionGate(
 
 enum SessionVerdict {
   case session(GatedSession)
+  /// The worker's own token: the loop's routes, never a session's.
+  case worker
   case refused(Response)
 }
 
@@ -101,6 +111,7 @@ func execHasEnded(_ terminal: ExecTerminalState?) -> Bool {
 }
 
 func sessionVerdict(_ bearer: String, tokens: ExecTokens, space: Space, now: Date) async -> SessionVerdict {
+  if tokens.worker(ofBearer: bearer) != nil { return .worker }
   let session: SessionID
   var boundGroup: GroupID?
   var exec = true
@@ -155,6 +166,7 @@ private func sessionRouter(
   owner: Hub,
   credentials: CredentialResolver,
   identity: IdentityController?,
+  metrics: InferenceMetricsSink,
   routed: @escaping UpgradingHandler,
 ) -> Router {
   let store = space.sessions
@@ -175,15 +187,23 @@ private func sessionRouter(
   let callID: @Sendable (Request) -> ToolCallID = { request in
     request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:)) ?? ToolCallID("wst_\(uuid().uuidString.lowercased())")
   }
-  let receipted: @Sendable (Request, @Sendable () async throws -> Response) async throws -> Response = { request, body in
+  // The recorded answer stands only for the request it answered: a repeat of
+  // the tool call that asks something else is a conflict.
+  let answeredOther: @Sendable (ToolCallID, APIReceipt) -> Response = { toolCall, receipt in
+    errorResponse(.conflict, code: "conflict", message: "tool call \(toolCall.rawValue) was already answered for \(receipt.request ?? "another request")")
+  }
+  let receipted: @Sendable (Request, String, @Sendable () async throws -> Response) async throws -> Response = { request, identity, body in
     let toolCall = request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:))
     if let toolCall, let receipt = try await store.apiReceipt(principal().session, toolCallID: toolCall) {
+      if let recorded = receipt.request, recorded != identity { return answeredOther(toolCall, receipt) }
       return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
     }
     let response = try await body()
     guard let toolCall, 200 ..< 300 ~= response.status.code else { return response }
     let answer = String(decoding: try await response.data(), as: UTF8.self)
-    try await store.recordAPIReceipt(principal().session, toolCallID: toolCall, APIReceipt(status: response.status.code, body: answer))
+    try await store.recordAPIReceipt(
+      principal().session, toolCallID: toolCall, APIReceipt(status: response.status.code, body: answer, request: identity),
+    )
     return jsonResponse(JSONValue.parse(answer) ?? .null, status: response.status)
   }
   // A session verb runs on the hub as the session, and answers as the tool
@@ -263,15 +283,109 @@ private func sessionRouter(
       groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
     })
   }
+  // A directory on a machine, which only a machine has; a file's parents the
+  // byte route makes itself.
+  router.post("/v1/machine/:id/mkdir") { request, parameters in
+    let id = MachineID(rawValue: parameters["id"] ?? "")
+    guard case let .object(fields)? = JSONValue.parse(try await request.body?.text() ?? ""),
+          case let .string(path)? = fields["path"], path.hasPrefix("/")
+    else { return errorResponse(.badRequest, code: "invalidArgument", message: "mkdir takes an absolute path on the machine") }
+    guard try await space.resolveMachine(id.rawValue, usableFrom: principal().group) != nil else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(id.rawValue)")
+    }
+    switch try await MachineSeam.$caller.withValue(principal().session) { try await machines.vfs(id, .mkdir(path: path)) } {
+    case .ok: return jsonResponse(.object([:]))
+    case let .error(error): return jsonResponse(machineFailure(error).payload, status: .unprocessableContent)
+    default: return errorResponse(.unprocessableContent, code: "internal", message: "machine returned an unexpected mkdir result for \(path)")
+    }
+  }
   // A machine the byte route reaches sees the session as its caller.
   router.get("/v1/f/*") { request, parameters in
     try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
   }
   router.put("/v1/f/*") { request, parameters in
-    if let address = fileRouteAddress(request.url), let refused = await foreignHomeRefusal([address], space: space) {
+    let address = fileRouteAddress(request.url)
+    if let address, let refused = await foreignHomeRefusal([address], space: space) {
       return refused
     }
-    return try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
+    return try await receipted(request, "PUT \(address ?? request.url.path)") {
+      try await MachineSeam.$caller.withValue(principal().session) { try await forward(request, parameters) }
+    }
+  }
+  // The answer recorded for the client's tool call: a worker whose call is a
+  // replay learns its write already happened before paying for what precedes it.
+  router.get("/v1/receipt") { request, _ in
+    guard let toolCall = request.headers[ToolCallHeader.name].map(ToolCallID.init(rawValue:)) else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "a receipt is read with the \(ToolCallHeader.name) header")
+    }
+    guard let receipt = try await store.apiReceipt(principal().session, toolCallID: toolCall) else {
+      return errorResponse(.notFound, code: "notFound", message: "no answer recorded for tool call \(toolCall.rawValue)")
+    }
+    // `?address=` asks for the write of that address and nothing else.
+    if let address = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "address" })?.value,
+       receipt.request != "PUT \(address)"
+    {
+      return answeredOther(toolCall, receipt)
+    }
+    return jsonResponse(JSONValue.parse(receipt.body) ?? .null, status: Status(code: receipt.status))
+  }
+  // The caller's prompt home, frozen at its prompt revision: the first read
+  // fixes the revision, every later one reads the same files.
+  router.get("/v1/prompt") { _, _ in
+    let session = principal().session
+    do {
+      let home = try await space.sessionHome(session, at: try await store.activatePromptRevision(session))
+      return try Response.json(SessionPromptOutput(
+        home: home.path, group: home.group.rawValue,
+        spaceLayer: promptScope(home.spaceLayer), groupLayer: promptScope(home.groupLayer), homeLayer: promptScope(home.home),
+      ))
+    } catch {
+      return sessionErrorResponse(error)
+    }
+  }
+  // Bytes a tool answer stored by hash: an image `read` delivered to the
+  // transcript. Only the session whose read stored it, and only its worker:
+  // an exec's token prints whatever it reads.
+  router.get("/v1/blob/:hash") { _, parameters in
+    guard let hash = parameters["hash"] else { return errorResponse(.badRequest, code: "invalidArgument", message: "a blob is named by its hash") }
+    guard !principal().exec else {
+      return errorResponse(.forbidden, code: "unauthorized", message: "a blob is read by the session's worker, never from an exec")
+    }
+    do {
+      let bytes = Data(try await space.sessionBlobBytes(hash, for: principal().session))
+      var headers = Headers()
+      headers[.contentType] = "application/octet-stream"
+      headers[.contentLength] = String(bytes.count)
+      return Response(status: .ok, headers: headers, body: .bytes(bytes, contentType: "application/octet-stream"))
+    } catch SpaceError.notFound {
+      return errorResponse(.notFound, code: "notFound", message: "no blob \(hash)")
+    }
+  }
+  // One inference the worker ran for the caller, into the server's metrics,
+  // once per attempt id however often it is reported. Only the worker reports;
+  // an exec's token would let any command bill its session.
+  router.post("/v1/inferences") { request, _ in
+    guard !principal().exec else {
+      return errorResponse(.forbidden, code: "unauthorized", message: "an inference is reported by the session's worker, never from an exec")
+    }
+    let input = try await request.json(InferenceReportInput.self)
+    guard let outcome = InferenceMetric.Outcome(rawValue: input.outcome) else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "unknown inference outcome: \(input.outcome)")
+    }
+    let usage = input.usage.map { [$0.inputTokens, $0.outputTokens, $0.cacheReadTokens, $0.cacheWriteTokens, $0.reasoningTokens ?? 0, $0.totalTokens] } ?? []
+    guard !input.id.isEmpty, input.timestamp.isFinite, ([input.durationMs, input.ttftMs ?? 0, input.status ?? 0] + usage).allSatisfy({ $0 >= 0 }) else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "an inference report names its attempt and counts nothing negative")
+    }
+    await metrics.record(InferenceMetric(
+      id: input.id, timestamp: Date(timeIntervalSince1970: input.timestamp), session: principal().session,
+      provider: input.provider, model: input.model, servedModel: input.servedModel, effort: input.effort,
+      outcome: outcome, errorKind: input.errorKind, status: input.status,
+      ttftMs: input.ttftMs.map(Int64.init), durationMs: Int64(input.durationMs),
+      usage: input.usage.map {
+        Usage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens, cacheReadTokens: $0.cacheReadTokens, cacheWriteTokens: $0.cacheWriteTokens, reasoningTokens: $0.reasoningTokens, totalTokens: $0.totalTokens)
+      },
+    ))
+    return jsonResponse(.object([:]))
   }
   router.get("/v1/observe") { request, _ in
     await observeResponse(space: space, url: request.url, principal: Principal(actor: .session(principal().session), group: principal().group))
@@ -290,7 +404,7 @@ private func sessionRouter(
     if let refused = await foreignHomeRefusal(writtenAddresses(name, input, fields: fields), space: space) {
       return refused
     }
-    return try await receipted(request) {
+    return try await receipted(request, "POST /v1/tools/\(name)") {
       do {
         let context = SpaceToolContext(
           space: space, machines: machines, principal: Principal(actor: .session(principal().session), group: principal().group),
@@ -317,7 +431,11 @@ private func sessionRouter(
       }
       try await hub.requireExecKind(input.machine)
       let record: ExecRecord
-      if let callID = request.headers[ToolCallHeader.name] {
+      if let script = input.script {
+        // A run_script execution's process: owned by the script, released when it ends.
+        record = try await space.mintScriptExec(machine: input.machine, session: principal().session.rawValue, script: script)
+        await hub.noteMinted(record)
+      } else if let callID = request.headers[ToolCallHeader.name] {
         let claim = try await space.claimExec(
           machine: input.machine, caller: principal().session.rawValue,
           toolCallID: ToolCallID(rawValue: callID), spec: input.spec?.jsonString(),
@@ -334,6 +452,13 @@ private func sessionRouter(
     } catch is SpaceError {
       return errorResponse(.notFound, code: "notFound", message: "unknown machine: \(input.machine.rawValue)")
     }
+  }
+  router.delete("/v1/script-execs/:script") { _, parameters in
+    guard let script = parameters["script"], !script.isEmpty else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown script")
+    }
+    try await space.releaseScriptExecs(script: script, session: principal().session.rawValue)
+    return try Response.json([String: String]())
   }
   router.get("/v1/exec") { _, _ in
     let context = SpaceToolContext(space: space, principal: Principal(actor: .session(principal().session), group: principal().group))
@@ -646,4 +771,11 @@ private func toolRefusal(_ payload: ToolResultPayload) -> Response {
   let message = if case let .failure(failure) = payload { failure.message } else { "unexpected tool result" }
   let code = if case let .failure(failure) = payload { failure.code ?? "refused" } else { "refused" }
   return errorResponse(.unprocessableContent, code: code, message: message)
+}
+
+private func promptScope(_ scope: InstructionScope) -> PromptScope {
+  PromptScope(
+    sections: scope.sections.map { PromptSection(path: $0.path, text: $0.text) },
+    skills: scope.skills.map { SessionHomeSkill(name: $0.name, description: $0.description, path: $0.path) },
+  )
 }

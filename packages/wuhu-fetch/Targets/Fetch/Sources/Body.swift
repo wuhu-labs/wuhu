@@ -319,14 +319,14 @@ actor BodyStorage {
   }
 }
 
-// allow unchecked-sendable: async-iterator type erasure
+// swiftlint:disable:next no_unchecked_sendable - async-iterator type erasure
 class _AnyBodyIteratorBox: @unchecked Sendable {
   func next() async throws -> Bytes? {
     fatalError("Override me")
   }
 }
 
-// allow unchecked-sendable: async-iterator type erasure
+// swiftlint:disable:next no_unchecked_sendable - async-iterator type erasure
 final class _AnyAsyncIteratorBox<Base: AsyncIteratorProtocol>: _AnyBodyIteratorBox, @unchecked Sendable
   where Base.Element == Bytes
 {

@@ -1,4 +1,50 @@
 # Linted per package by `bazel test //packages:swiftlint`, the `lint` CI lane (bazel/swiftlint).
+excluded:
+  - packages/gika/Targets/Assets/Sources/Assets.generated.swift
+  - packages/gika/Targets/Assets/Sources/Localization.generated.swift
+
 only_rules:
   - duplicate_conditions
   - testable_import_outside_tests
+  - custom_rules
+  - no_unchecked_sendable
+  - no_observable_object
+  - superfluous_disable_command
+  - blanket_disable_command
+
+superfluous_disable_command:
+  severity: error
+
+blanket_disable_command:
+  severity: error
+
+custom_rules:
+  ban_disable_requires_reason:
+    regex: '(?m)//\h*swiftlint:(?!disable:next\h+no_\w+\h+-\h+\S[^\r\n]*$)[^\r\n]*\bno_\w+\b[^\r\n]*'
+    match_kinds: [comment]
+    message: 'A ban exception must be "// swiftlint:disable:next <one no_* rule> - <reason>"'
+    severity: error
+  no_nslock:
+    included: '.*/Sources/.*\.swift$'
+    regex: '\bNSLock\b'
+    match_kinds: [identifier, typeidentifier]
+    message: 'Use Synchronization.Mutex or an actor instead of NSLock'
+    severity: error
+  no_jsonserialization:
+    included: '.*/Sources/.*\.swift$'
+    regex: '\bJSONSerialization\b'
+    match_kinds: [identifier, typeidentifier]
+    message: 'Use Codable or JSONValue instead of JSONSerialization'
+    severity: error
+  no_task_sleep:
+    included: '.*/Sources/.*\.swift$'
+    regex: '\bTask\s*\.\s*sleep\b'
+    match_kinds: [identifier, typeidentifier]
+    message: 'Use an injected Clock dependency instead of Task.sleep'
+    severity: error
+  no_combine_import:
+    included: '.*/Sources/.*\.swift$'
+    regex: '\bimport\s+Combine\b'
+    match_kinds: [keyword, identifier]
+    message: 'Use Swift Observation and TCA stores instead of Combine'
+    severity: error

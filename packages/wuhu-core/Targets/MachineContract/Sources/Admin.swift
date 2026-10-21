@@ -57,6 +57,8 @@ public struct MachineStatus: Codable, Equatable, Sendable {
 public struct ExecMintInput: Codable, Equatable, Sendable {
   public let machine: MachineID
   public let spec: JSONValue?
+  /// The run_script execution that owns the exec: it is killed when the script ends.
+  public let script: String?
 }
 
 @Contract
@@ -82,6 +84,8 @@ public struct ExecStatus: Codable, Equatable, Sendable {
   public let startedAt: Double
   public let state: ExecState
   public let toolCallID: String?
+  /// The kill reached the machine: a cancelled exec may still settle with its real output and exit.
+  public let killDelivered: Bool?
 }
 
 public enum MachineAdminErrorCode: String, Sendable {

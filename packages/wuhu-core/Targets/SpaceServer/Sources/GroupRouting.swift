@@ -62,17 +62,17 @@ func readModelsDocument(space: Space, includeGroups: Bool = true) async throws -
   return try ModelsDocument(json: data, groupsJSON: groups)
 }
 
-func groupCatalog(owner: any Main) -> @Sendable () async throws -> ProviderCatalog {
+// Main's own catalog for placing and validating routes: `/models.json` and
+// `/model-groups.json` from `shared`, re-read per use (models are data in the
+// space, edited at runtime), signed with `access`.
+func groupCatalog(space: Space, access: InferenceAccess) -> @Sendable () async throws -> ProviderCatalog {
   {
-    guard let data = try await owner.capabilityDocument("/models.json") else { throw SpaceError.notFound("/models.json") }
-    let groups = try await owner.capabilityDocument("/model-groups.json")
-    return ProviderCatalog(
-      document: try ModelsDocument(json: data, groupsJSON: groups),
-      credentials: CredentialResolver.bound { try await owner.providerCredentialBinding($0) },
-      oidcToken: { try await owner.inferenceToken(audience: $0, session: $1) },
-      oidcReadiness: { try await owner.inferenceReadiness(audience: $0) },
-      oidcBindingIdentity: { try await owner.inferenceBindingIdentity(audience: $0, session: $1) },
-    )
+    let fs = await space.fs(.shared)
+    let data = try await fs.read(ModelsDocument.spacePath).1
+    let groups: Data?
+    do { groups = try await fs.read(ModelsDocument.groupPath).1 }
+    catch SpaceError.notFound { groups = nil }
+    return access.catalog(try ModelsDocument(json: data, groupsJSON: groups))
   }
 }
 

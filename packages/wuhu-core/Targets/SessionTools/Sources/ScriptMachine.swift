@@ -1,10 +1,9 @@
+import enum MainHub.Address
 import struct MainHub.ExecEnvironment
 import func MainHub.execEnvironment
-import protocol MainHub.Main
+import func MainHub.execHandle
 import func MainHub.renderedFailure
 import struct MainHub.ScriptError
-import struct MainHub.ScriptExecStream
-import struct MainHub.ScriptRunID
 import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -12,16 +11,22 @@ import struct MainHub.ToolProblem
   import Foundation
 #endif
 import JSONValue
-import struct MachineContract.Base64Data
+import struct MachineContract.ExecID
+import struct MachineContract.ExecMintOutput
 import enum MachineContract.ExecOutputStream
+import struct MachineContract.ExecStart
+import struct MachineContract.ExecStatus
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineError
 import struct MachineContract.MachineID
-import enum MachineContract.VFSOp
-import enum MachineContract.VFSResult
 import QuickJSKit
+import SpaceClient
+import struct SpaceContract.Entry
+import struct SpaceContract.ListOutput
+import struct SpaceContract.WriteOutput
 import SpaceCore
 import SpaceTools
+import Synchronization
 
 // What wuhu:machine reaches: the machines' files, and execs minted for the
 // script that runs them.
@@ -32,23 +37,22 @@ let scriptWriteBytes = (12 << 20) - (64 << 10)
 
 final class ScriptMachineBindings: Sendable {
   private let execution: ScriptExecution
-  private let owner: any Main
+  private let tools: ToolExecutor
 
-  init(execution: ScriptExecution, owner: any Main) {
+  init(execution: ScriptExecution, tools: ToolExecutor) {
     self.execution = execution
-    self.owner = owner
+    self.tools = tools
   }
 
   func install(in engine: JSEngine) {
     engine.define("__wuhu_machine_own_exec", promising: { [self] arguments in
       await spaceAnswer {
+        let client = execution.client
         switch string(arguments, 0) {
-        case "list": return try JSONValueEncoder().encode(try await owner.ownExecs(session: execution.session))
-        case "status": return try JSONValueEncoder().encode(try await owner.ownExecStatus(string(arguments, 1), session: execution.session))
+        case "list": return try JSONValueEncoder().encode(try await client.api(.get, "/v1/exec") as [ExecStatus])
+        case "status": return try JSONValueEncoder().encode(try await client.api(.get, "/v1/exec/\(pathSegment(string(arguments, 1)))") as ExecStatus)
         case "kill":
-          let id = try await owner.ownExecStatus(string(arguments, 1), session: execution.session).id
-          do { try await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: id, input: .kill(.recorded)) }
-          catch { throw Wire.failure(error) }
+          let _: JSONValue = try await client.api(.post, "/v1/exec/\(pathSegment(string(arguments, 1)))/kill")
           return .null
         default: throw ToolRunError.failed(code: .invalidArgument, message: "unknown exec operation", hint: nil)
         }
@@ -85,15 +89,17 @@ final class ScriptMachineBindings: Sendable {
   // MARK: Machines and files
 
   private func machines() async throws -> JSONValue {
-    return .array(try await owner.scriptMachines(session: execution.session).map { record in
+    .array(try await tools.machines(as: execution.session).map { machine in
       .object([
-        "id": .string(record.id.rawValue),
-        "name": record.name.map(JSONValue.string) ?? .null,
-        "attached": .bool(record.attached),
+        "id": .string(machine.id.rawValue),
+        "name": machine.name.map(JSONValue.string) ?? .null,
+        "attached": .bool(machine.attached),
       ])
     })
   }
 
+  // The machine's files over main's file tools and byte routes, addressed as
+  // machines://<id>/<path>; the machine's refusal reads as its code and message.
   private func files(_ arguments: [JSONValue]) async throws -> JSONValue {
     let machine = try await attachedMachine(string(arguments, 0))
     let operation = string(arguments, 1)
@@ -104,42 +110,40 @@ final class ScriptMachineBindings: Sendable {
       }
       return path
     }
-    func vfs(_ op: VFSOp) async throws -> VFSResult {
+    func address(_ path: String) -> String { Address.machine(machine, path).rendered }
+    let main = try await tools.client(execution.session)
+    func machineCall<Output>(_ run: () async throws -> Output) async throws -> Output {
       do {
-        return try await owner.scriptMachineFile(session: execution.session, machine: machine, operation: op)
+        return try await run()
+      } catch let failure as SpaceClient.ToolFailure {
+        throw ScriptError("\(failure.error.code.rawValue): \(failure.error.message)")
       } catch let error as ScriptError {
         throw error
       } catch {
         throw ScriptError(renderedFailure(Wire.failure(error)))
       }
     }
-    func unexpected(_ result: VFSResult) -> ScriptError {
-      if case let .error(error) = result { return failure(error) }
-      return ScriptError("machine returned an unexpected result for \(operation)")
-    }
 
     switch operation {
     case "stat":
-      switch try await vfs(.stat(path: path())) {
-      case let .entry(entry):
-        return .object(["kind": .string(entry.kind.rawValue), "size": .integer(entry.size), "mtime": .number(entry.mtime), "token": .string(entry.token)])
-      case let .error(error) where error.code == .notFound:
-        return .null
-      case let other:
-        throw unexpected(other)
+      let target = address(try path())
+      let found: Entry? = try await machineCall {
+        do { return try await main.tool("stat", .object(["path": .string(target)])) }
+        catch let failure as SpaceClient.ToolFailure where failure.error.code == .notFound { return nil }
       }
+      guard let found else { return .null }
+      return .object(["kind": .string(found.kind.rawValue), "size": .integer(found.size), "mtime": .number(found.mtime), "token": .string(found.token)])
     case "list":
-      let result = try await vfs(.ls(path: path()))
-      guard case let .entries(entries) = result else { throw unexpected(result) }
-      return .array(entries.map { entry in
+      let target = address(try path())
+      let listed: ListOutput = try await machineCall { try await main.tool("ls", .object(["path": .string(target)])) }
+      return .array(listed.entries.map { entry in
         .object(["name": .string(entry.name), "kind": .string(entry.kind.rawValue), "size": .integer(entry.size), "mtime": .number(entry.mtime)])
       })
     case "read", "readText":
       let target = try path()
-      let result = try await vfs(.read(path: target))
-      guard case let .file(_, data) = result else { throw unexpected(result) }
-      guard operation == "readText" else { return .string(Data(data.bytes).base64EncodedString()) }
-      guard let text = String(bytes: data.bytes, encoding: .utf8) else {
+      let bytes = try await machineCall { try await main.file(address(target)).data }
+      guard operation == "readText" else { return .string(bytes.base64EncodedString()) }
+      guard let text = String(bytes: bytes, encoding: .utf8) else {
         throw ScriptError("\(target) is not UTF-8 text; read it with read()")
       }
       return .string(text)
@@ -150,24 +154,21 @@ final class ScriptMachineBindings: Sendable {
         throw ScriptError("a write carries at most \(scriptWriteBytes) bytes; \(target) got \(bytes.count)")
       }
       let ifMatch: String? = if case let .string(token)? = fields["ifMatch"] { token } else { nil }
-      if let slash = target.lastIndex(of: "/"), slash != target.startIndex {
-        let result = try await vfs(.mkdir(path: String(target[..<slash])))
-        guard case .ok = result else { throw unexpected(result) }
-      }
-      let result = try await vfs(.write(path: target, data: Base64Data(bytes), ifMatch: ifMatch))
-      guard case let .written(token) = result else { throw unexpected(result) }
-      return .string(token)
+      let written: WriteOutput = try await machineCall { try await main.putFileBytes(address(target), Data(bytes), ifMatch: ifMatch) }
+      return .string(written.token)
     case "remove":
-      let result = try await vfs(.rm(path: path(), ifMatch: nil))
-      guard case .ok = result else { throw unexpected(result) }
+      let target = address(try path())
+      let _: JSONValue = try await machineCall { try await main.tool("rm", .object(["path": .string(target)])) }
       return .null
     case "mkdir":
-      let result = try await vfs(.mkdir(path: path()))
-      guard case .ok = result else { throw unexpected(result) }
+      let target = try path()
+      let _: JSONValue = try await machineCall {
+        try await main.api(.post, "/v1/machine/\(machine.rawValue)/mkdir", body: .object(["path": .string(target)]))
+      }
       return .null
     case "move":
-      let result = try await vfs(.mv(from: path("from"), to: path("to")))
-      guard case .ok = result else { throw unexpected(result) }
+      let (from, to) = (address(try path("from")), address(try path("to")))
+      let _: JSONValue = try await machineCall { try await main.tool("mv", .object(["from": .string(from), "to": .string(to)])) }
       return .null
     default:
       throw ScriptError("unknown machine operation \(operation)")
@@ -233,36 +234,24 @@ final class ScriptMachineBindings: Sendable {
     let (machine, command, options, environment) = try await start(arguments)
     try execution.buffers.withLock { try $0.claim(options.maxOutput, for: .execOutput) }
     defer { execution.buffers.withLock { $0.unclaim(options.maxOutput) } }
-    let run = try await mint(machine, command: command, options: options, environment: environment, spawn: false)
-    let outcome: ExecOutcome = try await {
-      var output: [ExecOutputStream: [UInt8]] = [:]
-      for try await event in run.events {
-        switch event {
-        case let .event(.output(stream, _, data)): output[stream, default: []] += data.bytes
-        case let .event(.exit(status)): return .exited(status, stdout: output[.stdout] ?? [], stderr: output[.stderr] ?? [])
-        case .event(.truncated), .event(.timedOut): continue
-        case let .event(.failed(error)): return .lost(error.message)
-        case let .lost(reason): return .lost(reason)
-        }
-      }
-      throw CancellationError()
-    }()
-    try await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .release)
-    switch outcome {
-    case let .exited(status, stdout, stderr):
-      guard case var .object(fields) = self.status(status) else { preconditionFailure("status is an object") }
-      fields["stdout"] = .string(text(stdout))
-      fields["stderr"] = .string(text(stderr))
-      fields["truncated"] = .bool(stdout.count + stderr.count >= options.maxOutput)
-      return .object(fields)
-    case let .lost(reason):
-      throw ScriptError("\(reason) while exec \(run.id.rawValue) ran; it gets killed if the machine comes back")
+    let (id, exec) = try await mint(machine, command: command, options: options, environment: environment, spawn: false)
+    let output = Mutex<[ExecOutputStream: [UInt8]]>([:])
+    let exit = Mutex<ExitStatus?>(nil)
+    let termination = try await exec.run(
+      autoAcknowledge: true, failOnRemoteError: true, input: .closed,
+      output: { stream, bytes in output.withLock { $0[stream, default: []] += bytes } },
+      onEvent: { event in if case let .exit(status) = event { exit.withLock { $0 = status } } },
+    )
+    guard let status = exit.withLock({ $0 }) else {
+      guard let reason = lostReason(termination, id: id) else { throw CancellationError() }
+      throw ScriptError("\(reason) while exec \(id.rawValue) ran; it gets killed if the machine comes back")
     }
-  }
-
-  private enum ExecOutcome: Sendable {
-    case exited(ExitStatus, stdout: [UInt8], stderr: [UInt8])
-    case lost(String)
+    let (stdout, stderr) = output.withLock { ($0[.stdout] ?? [], $0[.stderr] ?? []) }
+    guard case var .object(fields) = self.status(status) else { preconditionFailure("status is an object") }
+    fields["stdout"] = .string(text(stdout))
+    fields["stderr"] = .string(text(stderr))
+    fields["truncated"] = .bool(stdout.count + stderr.count >= options.maxOutput)
+    return .object(fields)
   }
 
   private func spawn(_ arguments: [JSONValue]) async throws -> JSONValue {
@@ -272,18 +261,15 @@ final class ScriptMachineBindings: Sendable {
     defer { execution.processes.settle(process) }
     try execution.buffers.withLock { try $0.claim(scriptProcessWindow, for: .processOutput) }
     do {
-      let run = try await mint(machine, command: command, options: options, environment: environment, spawn: true)
+      let (id, exec) = try await mint(machine, command: command, options: options, environment: environment, spawn: true)
       process = ScriptProcess(
-        id: run.id,
+        id: id,
         machine: machine,
         acceptsStdin: options.stdin,
-        events: run.events,
-        owner: owner,
-        session: execution.session,
-        script: ScriptRunID(execution.id),
+        exec: exec,
         giveBack: { [execution] bytes in execution.buffers.withLock { $0.unclaim(bytes) } },
       )
-      return .object(["id": .string(run.id.rawValue)])
+      return .object(["id": .string(id.rawValue)])
     } catch {
       execution.buffers.withLock { $0.unclaim(scriptProcessWindow) }
       throw error
@@ -312,24 +298,27 @@ final class ScriptMachineBindings: Sendable {
 
   // MARK: Helpers
 
-  private func mint(_ machine: MachineID, command: String, options: Options, environment: ExecEnvironment, spawn: Bool) async throws -> ScriptExecStream {
-    let run = try await owner.startScriptExec(session: execution.session, script: ScriptRunID(execution.id), request: .init(
-      machine: machine, cwd: options.cwd, command: command, environment: environment, window: scriptProcessWindow,
-      maxOutput: spawn ? nil : options.maxOutput, timeout: spawn ? nil : options.timeout,
-      acceptsStdin: spawn && options.stdin, autoAcknowledge: !spawn,
-    ))
-    guard execution.processes.minted(run.id) else {
-      try? await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .kill(.recorded))
-      try? await owner.scriptExecInput(session: execution.session, script: ScriptRunID(execution.id), exec: run.id, input: .release)
+  // An exec minted for this script on main, with its caller leg ready to dial.
+  private func mint(_ machine: MachineID, command: String, options: Options, environment: ExecEnvironment, spawn: Bool) async throws -> (ExecID, ExecSession) {
+    let client = execution.client
+    let minted: ExecMintOutput
+    do {
+      minted = try await client.api(.post, "/v1/exec", body: .object(["machine": .string(machine.rawValue), "script": .string(execution.id)]))
+    } catch { throw scriptFailure(error) }
+    guard execution.processes.minted(minted.id) else {
+      try? await killScriptExec(minted.id, via: client)
       throw CancellationError()
     }
-    return run
+    let start = ExecStart(
+      id: minted.id, cwd: options.cwd, command: ["sh", "-c", command],
+      env: environment.env, secrets: environment.secrets, window: scriptProcessWindow,
+      maxOutput: spawn ? nil : options.maxOutput, timeout: spawn ? nil : options.timeout,
+    )
+    return (minted.id, ExecSession(client: client, start: start))
   }
 
   private func attachedMachine(_ reference: String) async throws -> MachineID {
-    let machines = try await owner.scriptMachines(session: execution.session)
-    let resolved = try await owner.resolveMachine(reference, session: execution.session)
-    guard let machine = machines.first(where: { $0.id == resolved?.id }) else {
+    guard let machine = try await tools.machine(reference, as: execution.session) else {
       throw ScriptError("no machine named \(reference)")
     }
     guard machine.attached else { throw ScriptError("machine \(reference) is not attached") }
@@ -393,4 +382,25 @@ private func number(_ value: JSONValue?) -> Double? {
   case let .number(value)?: value.isFinite ? value : nil
   default: nil
   }
+}
+
+// Why a script's exec ended without an exit; nil after an exit (its event was
+// seen) or a cancelled run. A machine-lost verdict never proves process exit.
+func lostReason(_ termination: ExecSession.Termination, id: ExecID) -> String? {
+  switch termination {
+  case .exited, .signaled, .interrupted: nil
+  case let .machineLost(machine): "machine \(machine.rawValue) stopped responding; remote process outcome is unknown"
+  case .tailLost: "\(execHandle(id)) is finished and its stream is no longer replayable"
+  case .unreachable: "machine connection for \(execHandle(id)) failed; the run may still be tracked server-side"
+  case .cancelled: "\(execHandle(id)) was cancelled"
+  case let .streamFailed(message): message
+  }
+}
+
+// Kills a script's exec on main; one that has already ended is no failure.
+func killScriptExec(_ id: ExecID, via client: SpaceClient) async throws {
+  do {
+    let _: JSONValue = try await client.api(.post, "/v1/exec/\(id.rawValue)/kill")
+  } catch let failure as SpaceClient.ToolFailure where failure.error.code.rawValue == "alreadyEnded" {
+  } catch let failure as SpaceClient.TransportFailure where failure.code == "alreadyEnded" {}
 }

@@ -3,6 +3,15 @@ import class MainHub.Hub
 import SessionTools
 @testable import SpaceServer
 
+// Parks until the task is cancelled, then runs `then`: what a test's worker
+// or scripts do when its task group ends.
+func whenCancelled(_ then: @Sendable () async -> Void) async {
+  let (parked, end) = AsyncStream<Void>.makeStream()
+  for await _ in parked {}
+  end.finish()
+  await then()
+}
+
 // The loop worker with main bound in process, as the kernel wires it.
 func firingWorker(_ owner: Hub) async -> SessionExecution {
   let tokens = ExecTokens(spaceURL: "http://main")
@@ -15,6 +24,8 @@ func firingWorker(_ owner: Hub) async -> SessionExecution {
       budget: { _ in .init(maxInput: 100_000, maxOutput: 1000) },
     )
   }
-  SessionRuntime.bindMain(owner: owner, worker: worker, tokens: tokens, connection: connection)
+  let workers = WorkerRegistry(tokens: tokens)
+  workers.announce(workers.mint().id, endpoint: worker)
+  SessionRuntime.bindMain(owner: owner, workers: workers, tokens: tokens, connection: connection)
   return worker
 }

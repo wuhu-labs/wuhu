@@ -1,3 +1,6 @@
+import enum MainHub.SessionError
+import class MainHub.SessionService
+import struct MainHub.UnfulfilledError
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

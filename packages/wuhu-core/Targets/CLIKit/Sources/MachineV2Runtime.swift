@@ -51,7 +51,7 @@ public enum MachineV2Runtime {
     if arguments.count == 1 || arguments == ["machine-v2", "--help"] || (arguments.count >= 2 && ["run", "leave", "preflight", "join"].contains(arguments[1]) && arguments.contains("--help")) {
       await stdout("""
       usage: wuhu machine-v2 add --name <name>
-             wuhu machine-v2 join <https-origin> [fingerprint] [--name <name-v2>] < v2-token
+             wuhu machine-v2 join <https-origin> [fingerprint] [--name <name>] < v2-token
              wuhu machine-v2 install|upgrade <id> --binary <signed-wuhu>
              wuhu machine-v2 rollback|uninstall <id>
              wuhu machine-v2 run|leave <id>
@@ -65,7 +65,7 @@ public enum MachineV2Runtime {
     let trust = try ServerTrust(environment: environment)
     switch arguments[1] {
     case "join":
-      guard (3 ... 6).contains(arguments.count) else { throw UsageError(message: "machine-v2 join <https-origin> [fingerprint] [--name <name-v2>] < v2-token") }
+      guard (3 ... 6).contains(arguments.count) else { throw UsageError(message: "machine-v2 join <https-origin> [fingerprint] [--name <name>] < v2-token") }
       var fingerprint: String?; var name: String?
       var i = 3
       while i < arguments.count {
@@ -114,16 +114,15 @@ public enum MachineV2Runtime {
       named = String(decoding: hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
     guard !named.isEmpty else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Machine name must not be empty") }
-    let namedV2 = named.hasSuffix("-v2") ? named : named + "-v2"
     guard fingerprint.map(ServerTrust.isFingerprint) ?? true else { throw MachineV2RuntimeError(.invalidConfiguration) }
     let pin = try fingerprint ?? ServerTrust.hostKey(url: origin).flatMap { try trust.pin(forHost: $0) }
     let fetch = pinnedFetch(pin, plain: fetch)
     let key = Curve25519.Signing.PrivateKey()
-    let request = Request(url: URL(string: server + "/v1/machine-v2/enroll")!, method: .post, body: try .json(["token": token, "pubkey": key.pubkeyLabel, "name": namedV2]))
+    let request = Request(url: URL(string: server + "/v1/machine-v2/enroll")!, method: .post, body: try .json(["token": token, "pubkey": key.pubkeyLabel, "name": named]))
     let response = try await fetch(request)
     guard response.status.code == 200 else { throw MachineV2RuntimeError(.enrollmentFailed, message: "Enrollment HTTP \(response.status.code)") }
     let enrolled = try await response.body.json(EnrollConsumeOutput.self, upTo: 8192)
-    guard let machine = enrolled.machine, let enrolledName = enrolled.machineName, enrolledName.hasSuffix("-v2") else { throw MachineV2RuntimeError(.machineNotV2) }
+    guard let machine = enrolled.machine, let enrolledName = enrolled.machineName else { throw MachineV2RuntimeError(.machineNotV2) }
     var verify = Request(url: URL(string: server + "/v1/machine-v2/" + machine)!)
     verify.headers = try await authentication(server: server, machine: machine, key: key, fetch: fetch)
     let verification = try await fetch(verify)

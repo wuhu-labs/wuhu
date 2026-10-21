@@ -8,6 +8,7 @@ public enum ErrorCode: String, Codable, Equatable, Sendable {
   case invalidPath
   case invalidArgument
   case unauthorized
+  case forbidden
   case unsupported
   case unavailable
   /// A result larger than the call's byte allowance: a query result or a file read.

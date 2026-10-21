@@ -1,3 +1,8 @@
+import { kept } from '~/lib/cached-then-live'
+import { coalescedRefresh } from './coalesced-refresh'
+import type { Observation } from './observation'
+import { isFileRefusal } from './errors'
+import type { RevisionEvents } from '~/lib/contract.gen'
 import { api, inGroup, post, withAssertion } from './http'
 import type { ViewerCache, ViewerCaches } from './open-cache'
 import type {
@@ -84,6 +89,18 @@ function contentOriginOf(
 // One group of a space: its tools act in that group, and its pages live on
 // that group's content origin.
 export class SpaceClient {
+  private readonly fileListeners = new Set<
+    (event: RevisionEvents | null) => void
+  >()
+
+  readonly filesChanged = (event: RevisionEvents): void => {
+    for (const listener of this.fileListeners) listener(event)
+  }
+
+  readonly filesConnected = (): void => {
+    for (const listener of this.fileListeners) listener(null)
+  }
+
   private contentSession: Promise<void> | undefined
   private reminting: Promise<string | null> | undefined
 
@@ -162,33 +179,107 @@ export class SpaceClient {
     return this.tool('ls', hidden ? { path, hidden } : { path })
   }
 
-  stat(path: string): Promise<Entry> {
-    return this.tool('stat', { path })
+  stat(path: string): Observation<Entry> {
+    return this.observeFile(
+      'meta',
+      `stat:${path}`,
+      path,
+      () => this.tool<Entry>('stat', { path }),
+    )
   }
 
-  async read(path: string): Promise<ReadOutput> {
-    const output = await this.tool<ReadOutput>('read', { path })
-    void this.cache?.put('document', path, output)
+  read(path: string): Observation<ReadOutput> {
+    return this.observeFile(
+      'document',
+      path,
+      path,
+      () => this.tool<ReadOutput>('read', { path }),
+    )
+  }
+
+  private observeFile<Value>(
+    kind: 'meta' | 'document',
+    key: string,
+    path: string,
+    load: () => Promise<Value>,
+  ): Observation<Value> {
+    return (receive, failed) => {
+      let closed = false
+      let previous: string | undefined
+      let retry = false
+      const paint = (value: Value) => {
+        if (closed) return
+        const encoded = JSON.stringify(value)
+        if (encoded !== previous) {
+          previous = encoded
+          receive(value)
+        }
+      }
+      const refresh = coalescedRefresh(async () => {
+        const value = await load()
+        await this.cache?.put(kind, key, value).catch(() => undefined)
+        return value
+      }, (value) => {
+        retry = false
+        paint(value)
+      }, (error) => {
+        retry = !isFileRefusal(error)
+        if (previous === undefined || !retry) {
+          previous = undefined
+          failed(error)
+        }
+      })
+      const changed = (event: RevisionEvents | null) => {
+        if (
+          retry ||
+          event?.events.some((event) =>
+            [event.path, ...(event.kind === 'move' ? [event.to] : [])].some((
+              at,
+            ) => at === path || path.startsWith(`${at}/`))
+          )
+        ) void refresh.run()
+      }
+      void kept(this.cache?.get<Value>(kind, key)).then(paint, () => {}).then(
+        () => {
+          if (closed) return
+          this.fileListeners.add(changed)
+          void refresh.run()
+        },
+      )
+      return () => {
+        closed = true
+        refresh.close()
+        this.fileListeners.delete(changed)
+      }
+    }
+  }
+
+  async sync(
+    path: string,
+    baseToken: string,
+    content: string,
+  ): Promise<SyncOutput> {
+    const output = await this.tool<SyncOutput>('sync', {
+      path,
+      baseToken,
+      content,
+    })
+    await this.cache?.put('document', path, {
+      token: output.token,
+      content: output.content,
+    })
     return output
   }
 
-  // The copy the last read left, if any.
-  async keptRead(path: string): Promise<ReadOutput> {
-    const kept = await this.cache?.get<ReadOutput>('document', path)
-    if (kept === undefined) throw new Error(`${path} was never read here`)
-    return kept
+  async write(path: string, content: string): Promise<WriteOutput> {
+    const output = await this.tool<WriteOutput>('write', { path, content })
+    await this.cache?.put('document', path, { token: output.token, content })
+    return output
   }
 
-  sync(path: string, baseToken: string, content: string): Promise<SyncOutput> {
-    return this.tool('sync', { path, baseToken, content })
-  }
-
-  write(path: string, content: string): Promise<WriteOutput> {
-    return this.tool('write', { path, content })
-  }
-
-  observeURL(glob: string, from: number, batch = false): string {
-    const params = new URLSearchParams({ glob, from: String(from) })
+  observeURL(glob: string, from: number | null, batch = false): string {
+    const params = new URLSearchParams({ glob })
+    if (from !== null) params.set('from', String(from))
     if (batch) params.set('batch', '1')
     return `/v1/observe?${params}`
   }

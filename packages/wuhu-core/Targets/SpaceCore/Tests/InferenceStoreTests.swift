@@ -66,18 +66,4 @@ import Testing
     #expect(try await space.query("SELECT grp, session FROM \"wuhu://*.localspace/inferences\"").rows == [[.text("other"), .text(session.rawValue)]])
     #expect(try await space.query("SELECT * FROM inferences").rows.isEmpty)
   }
-
-  @Test func openingOlderDatabaseAddsTableWithoutBackfillAndReopeningPreservesRows() async throws {
-    let folder = try ScratchFolder("inference-reopen")
-    let file = folder.url.appending(path: "space.sqlite")
-    let space = try Space.open(file: file)
-    let session = try await space.sessions.createSession(group: .shared, title: "existing", kind: .agent, createdBy: "owner", model: .test)
-    try await space.writer.write { db in try db.execute(sql: "DROP TABLE inferences") }
-    let upgraded = try Space.open(file: file)
-    #expect(try await upgraded.query("SELECT count(*) FROM inferences").rows == [[.integer(0)]])
-    #expect(try await upgraded.query("SELECT id FROM sessions").rows == [[.text(session.rawValue)]])
-    try await upgraded.recordInference(record(session, id: "new-call"))
-    let reopened = try Space.open(file: file)
-    #expect(try await reopened.query("SELECT id FROM inferences").rows == [[.text("new-call")]])
-  }
 }

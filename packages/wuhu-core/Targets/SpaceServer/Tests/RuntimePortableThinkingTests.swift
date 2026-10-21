@@ -61,7 +61,7 @@ import Testing
         var source = try await harness.store.transcript(id)
         let items = thinkingHistory(binding: nil, scope: nil)
         source.items += items
-        try await harness.store.append(id, items: items, transcript: source)
+        try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
         try await harness.running {
           try await until("legacy turn completes without error", timeout: .seconds(40)) {
             let record = try await harness.store.record(id)

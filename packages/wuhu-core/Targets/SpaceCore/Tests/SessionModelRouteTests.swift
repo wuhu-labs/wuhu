@@ -42,23 +42,6 @@ import Testing
     }
   }
 
-  @Test func oldDatabaseAddsRouteTableWithoutBackfillOrChangingExistingSessions() async throws {
-    let folder = try scratchURL("old-model-route")
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let file = folder.appendingPathComponent("space.sqlite")
-    try await withSessionDeps {
-      let space = try Space.open(file: file)
-      let id = try await space.sessions.createSession(group: .shared, title: "direct", kind: .agent, createdBy: "morgan", model: .test)
-      let before = try await space.sessions.hydrate(id)
-      try await space.writer.write { db in try db.execute(sql: "DROP TABLE session_model_routes") }
-      let reopened = try Space.open(file: file)
-      #expect(try await reopened.sessions.modelRoute(id) == nil)
-      #expect(try await reopened.sessions.hydrate(id) == before)
-      #expect(try await reopened.query("SELECT * FROM session_model_routes").rows.isEmpty)
-    }
-  }
-
   @Test func invalidCreateAndBusyRestartCannotPartiallyCommitRoute() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

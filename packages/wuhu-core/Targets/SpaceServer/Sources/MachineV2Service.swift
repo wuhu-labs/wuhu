@@ -230,9 +230,19 @@ actor MachineV2Service {
     let previouslyIssued = try await operations.lookup(owner)?.start.input.object?["sessionCredential"] != nil
     @Dependency(\.date) var date
     return try tokens.credential(session: session, group: group, scope: owner.scope, key: owner.key, timeout: timeout, now: date.now, previouslyIssued: previouslyIssued, reserveAttempt: true, active: {
-      guard let record = try await operations.lookup(owner) else { return false }
-      return record.start.kind == "exec.v1" && record.live && record.snapshot?.verdict == nil && record.stopReason == nil
+      try await Self.runs(owner, in: operations)
     })
+  }
+
+  /// Whether the exec a v2 credential was issued for still runs: what a
+  /// credential restored from the main before this one checks.
+  nonisolated func credentialActive(group: GroupID, owner: OperationOwner) -> @Sendable () async throws -> Bool {
+    { try await Self.runs(owner, in: self.operations(group: group)) }
+  }
+
+  private static func runs(_ owner: OperationOwner, in operations: MachineOperations) async throws -> Bool {
+    guard let record = try await operations.lookup(owner) else { return false }
+    return record.start.kind == "exec.v1" && record.live && record.snapshot?.verdict == nil && record.stopReason == nil
   }
 
   func run() async throws {

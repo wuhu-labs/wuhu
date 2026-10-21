@@ -17,11 +17,10 @@ struct ScriptAI {
     let claims = MachineWriteClaims()
     engine.define("__wuhu_capability", promising: { [session, tools] arguments in
       try await capabilityAnswer {
-        try await tools.owner.refuseUnlessLive(session)
         guard case let .string(kind)? = arguments.first else {
           throw CapabilityError(.invalidArgument, "capability needs a capability kind.")
         }
-        return try await tools.capabilities().capability(kind)
+        return try await tools.capability(session, kind)
       }
     })
     engine.define("__wuhu_generate_image", promising: { [session, tools] arguments in
@@ -47,15 +46,13 @@ struct ScriptAI {
     engine.define("__wuhu_transcribe", promising: { [session, tools] arguments in
       try await capabilityAnswer {
         guard case let .string(audio)? = arguments.first else { throw CapabilityError(.invalidArgument, "transcribe needs a private audio path.") }
-        let value = try await tools.transcribe(session, audio: audio, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "model", "language", "timestamps", "diarize"]))
-        return try JSONValueEncoder().encode(value)
+        return try await tools.transcribe(session, audio: audio, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "model", "language", "timestamps", "diarize"]))
       }
     })
-    engine.define("__wuhu_web_search", promising: { [tools] arguments in
+    engine.define("__wuhu_web_search", promising: { [session, tools] arguments in
       try await capabilityAnswer {
         guard case let .string(query)? = arguments.first else { throw CapabilityError(.invalidArgument, "webSearch needs a query.") }
-        let value = try await tools.capabilities().search(query, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "count"]))
-        return try JSONValueEncoder().encode(value)
+        return try await tools.search(session, query, options: capabilityOptions(arguments[safe: 1], allowed: ["provider", "count"]))
       }
     })
     try engine.defineModule("wuhu:ai", source: aiModule)

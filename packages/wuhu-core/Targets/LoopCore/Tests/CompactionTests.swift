@@ -3,6 +3,7 @@ import Foundation
 import JSONValue
 @testable import LoopCore
 import class MainHub.Hub
+import class MainHub.SessionService
 import SessionDomain
 import SessionTools
 import SpaceCore

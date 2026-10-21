@@ -7,30 +7,6 @@ import struct SessionDomain.SessionID
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let inferenceSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "inferences" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "session" TEXT NOT NULL,
-  "at" TEXT NOT NULL,
-  "provider" TEXT NOT NULL,
-  "model" TEXT NOT NULL,
-  "served_model" TEXT,
-  "effort" TEXT NOT NULL,
-  "input" INTEGER,
-  "cache_read" INTEGER,
-  "cache_write" INTEGER,
-  "output" INTEGER,
-  "reasoning" INTEGER,
-  "outcome" TEXT NOT NULL,
-  "error" TEXT,
-  "duration_ms" INTEGER,
-  "ttft_ms" INTEGER,
-  "grp" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "inferences_by_session_at" ON "inferences" ("session", "at");
-CREATE INDEX IF NOT EXISTS "inferences_by_grp_at" ON "inferences" ("grp", "at");
-"""
-
 public struct InferenceRecord: Sendable {
   public let id: String
   public let session: SessionID
@@ -131,7 +107,7 @@ extension Space {
           ttftMs: inference.ttftMs,
           grp: session.group.rawValue,
         )
-      }.execute(db)
+      } onConflict: { $0.id }.execute(db)
     }
   }
 }

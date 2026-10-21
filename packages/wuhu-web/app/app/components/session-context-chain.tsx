@@ -22,14 +22,12 @@ export function useDocument(
 ): [Load, (next: Load) => void] {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   useEffect(() => {
-    let cancelled = false
     setLoad({ state: 'loading' })
-    client.read(path).then(
+    const stop = client.read(path)(
       (read) => {
-        if (!cancelled) setLoad({ state: 'ready', read })
+        setLoad({ state: 'ready', read })
       },
       (failure: unknown) => {
-        if (cancelled) return
         setLoad(
           isNotFound(failure)
             ? { state: 'missing' }
@@ -37,9 +35,7 @@ export function useDocument(
         )
       },
     )
-    return () => {
-      cancelled = true
-    }
+    return stop
   }, [client, path])
   return [load, setLoad]
 }

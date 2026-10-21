@@ -16,7 +16,7 @@ import WuhuAI
           var changed = request.transcript
           let marker = TranscriptItem.bookmark(.init(id: UUID(), timestamp: Date()))
           changed.append(marker)
-          try await sessions.append(id, items: [marker], transcript: changed)
+          try await sessions.append(id, items: [marker], inputOrigin: changed.cacheWarmingInputOrigin)
           throw ReplayBoundaryRequired(binding: .init(identity: "new", epoch: "route"), budget: .init(maxInput: 100_000, maxOutput: 1000))
         },
         { _ in Fix.reply("resumed") },

@@ -71,6 +71,24 @@ extension ServeNIOServer {
     }
   }
 
+  /// Serves TLS on `socket`, a stream socket already bound and listening,
+  /// as `bind(listeningSocket:options:hooks:eventLoopGroup:upgrading:)` does.
+  public static func bind(
+    listeningSocket socket: CInt,
+    tls identity: TLSIdentity,
+    subdomains: [String: TLSIdentity] = [:],
+    options: ServeOptions = .init(),
+    hooks: ServeNIOHooks = .init(),
+    eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup.singleton,
+    upgrading handler: @escaping UpgradingHandler,
+  ) async throws -> Self {
+    let state = ServeNIOServerState()
+    let bootstrap: ServerBootstrap
+    do { bootstrap = try makeTLSBootstrap(identity: identity, subdomains: subdomains, options: options, hooks: hooks, eventLoopGroup: eventLoopGroup, state: state, handler: handler) }
+    catch { hooks.onStartupFailure(error); throw error }
+    return try await self.adopt(bootstrap.withBoundSocket(socket), hooks: hooks, state: state)
+  }
+
   private static func makeTLSBootstrap(
     identity: TLSIdentity,
     subdomains: [String: TLSIdentity],

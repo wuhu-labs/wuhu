@@ -1,11 +1,11 @@
 import DeterministicDependencies
 import Foundation
+import GRDB
 import enum InferenceKit.CatalogError
 import JSONValue
-import struct MainHub.SessionControl
 import SessionDomain
 @testable import SessionTools
-@_spi(Testing) import SpaceCore
+@testable @_spi(Testing) import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies)
@@ -71,21 +71,24 @@ struct ScriptSessionTests {
 
   @Test func scriptsCreateSessionsAndActOnlyOnTheirOwnTree() async throws {
     let space = try Space.inMemory()
-    let verbs = Box<[String]>([])
-    let control = SessionControl { verb, id, _ in
-      let title = try await space.sessions.record(id).title
-      verbs.withLock { $0.append("\(verb.rawValue) \(title)") }
-    }
     try await withRig(
       space: { space },
       resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
       },
-      control: control,
       prepare: { space, _ in _ = try await makeSession(space, name: "stranger") },
     ) { rig in
       try await rig.run("sessions")
-      rig.probe("verbs: \(verbs.value)")
+      // The verbs ran on the real service: Wuhu Infra stays archived, the
+      // twin went through interrupt, resume, archive and back, the stranger
+      // was archived by its group admin.
+      let lifecycles = try await rig.space.writer.read { db in
+        try Row.fetchAll(
+          db,
+          sql: "SELECT DISTINCT title, lifecycle FROM sessions WHERE title IN ('Wuhu Infra', 'twin', 'stranger') ORDER BY title",
+        ).map { "\($0["title"] as String): \($0["lifecycle"] as String)" }
+      }
+      rig.probe("lifecycles: \(lifecycles)")
       rig.probe("tags: \(try await rig.space.sessions.record(rig.session).tags)")
       try rig.expect("sessions")
     }
@@ -98,7 +101,6 @@ struct ScriptSessionTests {
       resolveModelExecutor: { provider, model, effort in
         .kernel(ModelSpecifier(provider: provider, model: model, effort: effort ?? "high"))
       },
-      control: SessionControl { _, _, _ in },
       prepare: { space, session in _ = try await space.sessions.archive(session, grace: .seconds(3600)) },
     ) { rig in
       try await rig.run("sessions-archived")

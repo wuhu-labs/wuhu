@@ -13,6 +13,6 @@ once one exits: ok
 
 [script.00000000: any update() after this arrives as a message; cancel("script.00000000") ends it while it runs.]
 === probe
-killed when the script ended: 10 of 10
+killed when the script ended: 8 of 10
 === probe
 owner rows left: 0

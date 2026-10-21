@@ -58,14 +58,14 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         let groups = ["work": ModelsDocument.Group(members: [.init(id: "a", provider: "testing", model: "test-model"), .init(id: "b", provider: "alternate", model: "test-model")], defaultEffort: "high", policy: .quotaAware())]
         _ = try await fs.write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: nil)
         _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: nil)
-        let owner = Hub(space: space, credentials: boundKeys)
-        let catalog = try await groupCatalog(owner: owner)()
+        let owner = Hub(space: space)
+        let catalog = try await groupCatalog(space: space, access: InferenceAccess(credentials: boundKeys))()
         let usage = UsageBoard()
         let placed = try #require(await modelRoutePreparer(catalog: { catalog }, usage: usage)(.modelGroup(id: "work", effort: "high"), .create))
         id = try await space.sessions.createSession(group: .shared, title: "Switch", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), snapshot: .init(), modelRoute: placed)
         old = try #require(await owner.modelRoute(id))
         let transcript = try await compacted(space.sessions, id)
-        let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: usage)
+        let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: usage)
         let transition = try #require(await prepare(id, transcript, .init(model: "alternate/test-model", effort: "low")))
         route = transition.route
         #expect(route.group == nil && route.member == nil)
@@ -92,7 +92,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       let old = try #require(await owner.modelRoute(id))
       let generation = try await harness.store.generationState(id).generation
       let transcript = try await compacted(harness.store, id)
-      let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let refusals: [(CompactionTarget, CatalogError)] = [
         (.init(model: "nope/x"), .unknownProvider("nope")),
         (.init(model: "testing/missing"), .unknownModel(provider: "testing", model: "missing")),
@@ -108,7 +108,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
         provider == "alternate" ? nil : .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
       }
       let unready = missing
-      let refusing = compactionPlacement(owner: owner, catalog: { unready }, usage: harness.runtime.usage)
+      let refusing = compactionPlacement(owner: owner, catalog: { _ in unready }, usage: harness.runtime.usage)
       await #expect(throws: CatalogError.missingCredential(provider: "alternate")) { try await refusing(id, transcript, .init(model: "alternate/test-model")) }
       #expect(try await owner.modelRoute(id) == old)
       #expect(try await harness.store.modelRouteHistory(id) == [old])
@@ -121,7 +121,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       let (harness, owner, catalog, id) = try await GroupSwitchingTests().setup()
       let old = try #require(await owner.modelRoute(id))
       try #require(old.member == "a")
-      let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted(harness.store, id), .init(model: "work")) == nil)
       let reset = Date().timeIntervalSince1970 + 18000
       harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
@@ -153,9 +153,9 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
       groups["team/claude"] = groups["work"]
       _ = try await fs.write(ModelsDocument.groupPath, JSONEncoder().encode(groups), ifMatch: entry)
-      let catalog = try await groupCatalog(owner: owner)()
+      let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
       let (id, bound) = try await directSession(harness, owner: owner, catalog: catalog)
-      let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let joining = try #require(await prepare(id, compacted(harness.store, id), .init(model: "team/claude")))
       #expect(joining.route.group == "team/claude" && joining.route.member != nil)
       #expect(routeNotice(joining.transcript)?.hasPrefix("Model switched testing/test-model → team/claude:") == true)
@@ -170,7 +170,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
     try await withSessionDeps {
       let (harness, owner, catalog, _) = try await GroupSwitchingTests().setup()
       let (id, bound) = try await directSession(harness, owner: owner, catalog: catalog)
-      let prepare = compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)
+      let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       let transcript = try await compacted(harness.store, id)
       #expect(try await prepare(id, transcript, .init(model: "testing/test-model")) == nil)
       let transition = try #require(await prepare(id, transcript, .init(model: "testing/test-model", effort: "low")))

@@ -3,8 +3,11 @@ import Dependencies
 import Fetch
 import Foundation
 import JSONValue
+import MachineChannel
+import struct MachineContract.ExecID
 import Serve
 import ServeTesting
+import SessionDomain
 import SpaceContract
 import SpaceCore
 @testable import SpaceServer
@@ -103,4 +106,14 @@ struct Harness {
 func json(_ response: Response) async throws -> JSONValue {
   let text = try await response.text()
   return try #require(JSONValue.parse(text))
+}
+
+// An exec's in-process caller leg: what the WebSocket route hands a dialing client.
+func connectExecCaller(_ id: ExecID, space: Space, hub: MachineHub) async throws -> any FrameTransport {
+  guard let record = try await space.execRecord(id) else { throw MachineHubError.execNotFound(id) }
+  let (server, client) = WebSocket.pair()
+  _ = try? hub.callerScope.run("in-process-exec-caller") {
+    await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous)
+  }
+  return WebSocketTransport(client)
 }

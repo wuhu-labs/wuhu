@@ -287,7 +287,7 @@ func withIdentityScript(
       let scripts = Scripts(owner: owner)
       let rig = IdentityScriptRig(space: space, session: session, executor: SessionRuntime.toolExecutor(owner: owner, scripts: scripts, identity: identity))
       try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { await scripts.run() }
+        group.addTask { await whenCancelled { await scripts.close() } }
         defer { group.cancelAll() }
         try await body(rig)
       }

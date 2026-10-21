@@ -52,10 +52,6 @@ export function sidebarPaths(paths: PathMap): string[] {
     .sort()
 }
 
-export function touchesSidebars(path: string): boolean {
-  return path === directory.slice(0, -1) || path.startsWith(directory)
-}
-
 export function sidebarName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/, '')
 }

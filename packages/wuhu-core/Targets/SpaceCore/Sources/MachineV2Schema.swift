@@ -1,21 +1,5 @@
 import StructuredQueries
 
-let machineV2SchemaSQL = """
-CREATE TABLE IF NOT EXISTS machine_v2_key_check (id TEXT PRIMARY KEY, sealed TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS machine_v2_retention (id TEXT PRIMARY KEY, grp TEXT NOT NULL, kind TEXT NOT NULL, expired_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS machine_v2_retention_expiry ON machine_v2_retention(grp, kind, expired_at);
-CREATE TABLE IF NOT EXISTS machine_v2_maintenance (id TEXT PRIMARY KEY, ran_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS machine_v2_members (machine_id TEXT PRIMARY KEY REFERENCES machines(id), grp TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS machine_v2_presence (machine_id TEXT PRIMARY KEY, grp TEXT NOT NULL, state TEXT NOT NULL, description TEXT, observed_at TEXT NOT NULL, reason TEXT);
-CREATE TABLE IF NOT EXISTS machine_v2_operations (id TEXT PRIMARY KEY, grp TEXT NOT NULL, owner_scope TEXT NOT NULL, invocation_key TEXT NOT NULL, machine_id TEXT NOT NULL, correlation_id TEXT NOT NULL, input_digest TEXT NOT NULL, dispatch_consumed INTEGER NOT NULL, record TEXT NOT NULL, active INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(grp, owner_scope, invocation_key));
-CREATE TABLE IF NOT EXISTS machine_v2_channels (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES machine_v2_operations(id) ON DELETE CASCADE, name TEXT NOT NULL, committed TEXT NOT NULL, accepted TEXT NOT NULL, pending TEXT);
-CREATE TABLE IF NOT EXISTS machine_v2_output (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES machine_v2_operations(id) ON DELETE CASCADE, channel TEXT NOT NULL, sequence INTEGER NOT NULL, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS machine_v2_trace (id TEXT PRIMARY KEY, grp TEXT NOT NULL, request_id TEXT NOT NULL, correlation_id TEXT NOT NULL, path TEXT NOT NULL, event TEXT NOT NULL, start_at TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, status INTEGER, head_ms INTEGER, error_code TEXT, problem_id INTEGER);
-CREATE INDEX IF NOT EXISTS machine_v2_trace_correlation ON machine_v2_trace(grp, correlation_id, start_at);
-CREATE TABLE IF NOT EXISTS machine_v2_problem_index (id TEXT PRIMARY KEY, grp TEXT NOT NULL, fingerprint TEXT NOT NULL, row_id INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS machine_v2_incidents (id TEXT PRIMARY KEY, grp TEXT NOT NULL, trace_group TEXT NOT NULL, fingerprint TEXT NOT NULL, correlation_id TEXT, problem_id INTEGER);
-"""
-
 @Table("machine_v2_operations")
 struct MachineV2OperationRow {
   @Column(primaryKey: true) var id: String

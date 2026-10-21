@@ -7,6 +7,7 @@ import InferenceKit
 import LoopCore
 import MachineContract
 import class MainHub.Hub
+import class MainHub.SessionService
 import Scratch
 import ServeTesting
 import SessionDomain
@@ -115,21 +116,20 @@ private final class IdentityHarness: Sendable {
       compact: { _, _ in CompactionResult(summary: "compacted") },
       budget: { _ in ContextBudget(maxInput: 1_000_000, maxOutput: 1000) },
     )
-    let slot = SessionServiceSlot()
-    let catalog = groupCatalog(owner: Hub(space: space))
+    let catalog = groupCatalog(space: space, access: InferenceAccess())
     let owner = Hub(
       space: space, machines: machineSeam(hub: hub),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: UsageBoard()),
-      control: sessionControl { slot.service },
     )
     let connection = MainConnection()
+    let workers = WorkerRegistry(tokens: tokens)
     let worker = await SessionExecution(main: owner, connection: connection, credential: { tokens.sessionToken($0) }) { _ in config }
-    let service = SessionService(sessions: self.store, worker: worker)
-    slot.bind(service)
+    workers.announce(workers.mint().id, endpoint: worker)
+    let service = SessionService(sessions: self.store, worker: workers)
     self.serviceTask = Task { try? await service.start() }
-    let runtime = SessionRuntime(space: space, service: service, worker: worker, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection)
+    let runtime = SessionRuntime(space: space, service: service, workers: workers, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, sessions: runtime, dev: true, execTokens: tokens)
     let inner = ServeTesting.client(upgrading: handler)
     let hosts = self.hosts

@@ -8,6 +8,7 @@ import class MainHub.Hub
 import SessionDomain
 import SessionTools
 import SpaceCore
+@testable import SpaceServer
 import Synchronization
 import Testing
 import WuhuAI
@@ -54,48 +55,61 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   // A row written before images moved to the blob store and a row written after
   // it must reach the provider as the same bytes: the reference is a storage
   // decision, and the prompt may not notice it.
-  @Test(arguments: [false, true]) func `a stored reference and a legacy inline image render the same request`(viaOwner: Bool) async throws {
-    let space = try Space.inMemory()
-    let hash = try await space.storeImage(pngBytes)
+  @Test(arguments: [false, true]) func `a stored reference and a legacy inline image render the same request`(viaClient: Bool) async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      let session = try await fixtureSession(space)
+      let hash = try await space.storeImage(pngBytes, for: Principal(actor: .session(session), group: .shared))
 
-    let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
-    let referenced = try await requestBody(
-      imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count)),
-      resolver: mediaResolver(space, viaOwner: viaOwner),
-    )
-
-    #expect(legacy == referenced)
-    #expect(legacy.contains("data:image/png;base64,\(pngBytes.base64EncodedString())"))
-  }
-
-  @Test(arguments: [false, true]) func `a reference we own that cannot be read fails the turn rather than dropping the image`(viaOwner: Bool) async throws {
-    let space = try Space.inMemory()
-    let missing = ImageContent(mimeType: "image/png", source: .blob(String(repeating: "0", count: 64)), byteCount: 11)
-    await #expect(throws: (any Error).self) {
-      let context = await imageRead(missing).renderRequest(
-        session: SessionID("s-1"),
-        systemPrompt: "sys",
+      let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
+      let referenced = try await requestBody(
+        imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count)),
+        resolver: try await mediaResolver(space, session: session, viaClient: viaClient),
       )
-      _ = try await endpoint
-        .withMediaResolver(mediaResolver(space, viaOwner: viaOwner))
-        .withFetch(FetchClient { _ in throw RequestInterrupted() })
-        .inference(context: context)
-        .collect()
+
+      #expect(legacy == referenced)
+      #expect(legacy.contains("data:image/png;base64,\(pngBytes.base64EncodedString())"))
     }
   }
 
-  @Test(arguments: [false, true]) func `a reference nobody owns is left for another resolver`(viaOwner: Bool) async throws {
-    let space = try Space.inMemory()
-    let resolved = try await mediaResolver(space, viaOwner: viaOwner)
-      .resolve(MediaContent(url: URL(string: "https://example.com/a.png")!, mimeType: "image/png"))
-    #expect(resolved == nil)
+  @Test(arguments: [false, true]) func `a reference we own that cannot be read fails the turn rather than dropping the image`(viaClient: Bool) async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      let session = try await fixtureSession(space)
+      let missing = ImageContent(mimeType: "image/png", source: .blob(String(repeating: "0", count: 64)), byteCount: 11)
+      await #expect(throws: (any Error).self) {
+        let context = await imageRead(missing).renderRequest(
+          session: SessionID("s-1"),
+          systemPrompt: "sys",
+        )
+        _ = try await endpoint
+          .withMediaResolver(try await mediaResolver(space, session: session, viaClient: viaClient))
+          .withFetch(FetchClient { _ in throw RequestInterrupted() })
+          .inference(context: context)
+          .collect()
+      }
+    }
+  }
+
+  @Test(arguments: [false, true]) func `a reference nobody owns is left for another resolver`(viaClient: Bool) async throws {
+    try await withSessionDeps {
+      let space = try Space.inMemory()
+      let resolver = try await mediaResolver(space, session: try await fixtureSession(space), viaClient: viaClient)
+      let resolved = try await resolver.resolve(MediaContent(url: URL(string: "https://example.com/a.png")!, mimeType: "image/png"))
+      #expect(resolved == nil)
+    }
   }
 }
 
-private func mediaResolver(_ space: Space, viaOwner: Bool) -> any MediaResolver {
-  if viaOwner {
-    OwnerMediaResolver(owner: Hub(space: space), limits: .claude, group: .shared)
-  } else {
-    SpaceMediaResolver(space: space, limits: .claude, group: .shared)
-  }
+// The client resolver reads through the session's routes (`/v1/f`, `/v1/blob/:hash`)
+// and must render the same bytes as the server-side one.
+private func fixtureSession(_ space: Space) async throws -> SessionID {
+  try await space.sessions.createSession(
+    group: .shared, title: "media", kind: .agent, createdBy: "fixture", model: .init(provider: "test", model: "test", effort: "high"),
+  )
+}
+
+private func mediaResolver(_ space: Space, session: SessionID, viaClient: Bool) async throws -> any MediaResolver {
+  guard viaClient else { return SpaceMediaResolver(space: space, limits: .claude, group: .shared) }
+  return SessionRuntime.toolExecutor(owner: Hub(space: space)).mediaResolver(session, limits: .claude)
 }

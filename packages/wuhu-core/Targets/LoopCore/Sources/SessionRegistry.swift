@@ -1,4 +1,6 @@
 import Dependencies
+import enum MainHub.SessionError
+import func MainHub.withCallback
 import Synchronization
 import TaskLifetime
 #if canImport(FoundationEssentials)
@@ -13,7 +15,6 @@ import struct SessionDomain.SessionID
 actor SessionRegistry {
   private let main: any Main
   private let loopConfig: LoopConfig
-  private let liveness: LivenessTracker
 
   private enum Slot {
     case mounted(SessionActor)
@@ -46,11 +47,17 @@ actor SessionRegistry {
   init(
     main: any Main,
     loopConfig: LoopConfig,
-    liveness: LivenessTracker,
   ) {
     self.main = main
     self.loopConfig = loopConfig
-    self.liveness = liveness
+  }
+
+  /// The sessions whose loops are mounted here.
+  func mounted() -> [SessionID] {
+    slots.compactMap { id, slot in
+      guard case .mounted = slot else { return nil }
+      return id
+    }.sorted { $0.rawValue < $1.rawValue }
   }
 
   func activate() {
@@ -92,7 +99,7 @@ actor SessionRegistry {
     if case let .mounted(existing)? = slots[id] {
       session = existing
     } else {
-      session = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
+      session = SessionActor(id: id, main: main, loopConfig: loopConfig)
       slots[id] = .mounted(session)
       await session.activate(in: taskScope)
     }
@@ -111,6 +118,11 @@ actor SessionRegistry {
     do {
       switch policy {
       case .cancel: break
+      case .handOff:
+        // Nothing of an unmounted session is here: it is handed off at once.
+        if let mounted = session {
+          _ = try await withCallback(of: Bool.self) { mounted.post(.prepareRevoke(.handOff, $0)) }
+        }
       case .whenSettled:
         let mounted: SessionActor
         if let existing = session { mounted = existing }
@@ -121,12 +133,12 @@ actor SessionRegistry {
             slots[id] = .revoked
             return true
           }
-          mounted = SessionActor(id: id, main: main, loopConfig: loopConfig, liveness: liveness)
+          mounted = SessionActor(id: id, main: main, loopConfig: loopConfig)
           session = mounted
           slots[id] = .revoking(mounted)
           await mounted.activate(in: taskScope)
         }
-        let settled = try await withCallback(of: Bool.self) { mounted.post(.prepareRevoke($0)) }
+        let settled = try await withCallback(of: Bool.self) { mounted.post(.prepareRevoke(.whenSettled, $0)) }
         guard settled else {
           guard !stopped else { throw CancellationError() }
           slots[id] = .mounted(mounted)
@@ -140,7 +152,7 @@ actor SessionRegistry {
       }
       guard !stopped else { throw CancellationError() }
       switch policy {
-      case .whenSettled: slots[id] = .revoked
+      case .whenSettled, .handOff: slots[id] = .revoked
       case .cancel: slots[id] = nil
       }
       return true

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ReadOutput, RevisionEvents } from '~/lib/contract.gen'
+import type { ReadOutput } from '~/lib/contract.gen'
 import {
   applySync,
   type DocumentState,
@@ -10,17 +10,11 @@ import {
   useRemote,
 } from '~/lib/document-sync'
 import { editableDocument, joinEditable } from '~/lib/frontmatter'
-import { useObserve } from '~/lib/use-observe'
 import type { SpaceClient } from '~/sdk/client'
 import { errorMessage } from '~/sdk/errors'
-import { globSubscription } from '~/sdk/subscriptions'
 import { DocumentEditor } from './document-editor'
 
 const saveDelayMs = 800
-
-function latestRevision(current: number, event: RevisionEvents): number {
-  return Math.max(current, event.rev)
-}
 
 export function MarkdownDocument({
   client,
@@ -35,13 +29,6 @@ export function MarkdownDocument({
   const [state, setState] = useState(() => documentState(initial))
   const stateRef = useRef(state)
   const saving = useRef(false)
-  const handledRevision = useRef(0)
-  const observed = useObserve(
-    globSubscription(client, path, 0),
-    latestRevision,
-    0,
-  ).data
-
   // No unmounted guard: React drops setState on unmounted components silently,
   // and a ref-based guard breaks under StrictMode's dev double-mount (the
   // cleanup runs once and nothing ever sets it back).
@@ -91,17 +78,8 @@ export function MarkdownDocument({
   }, [persist, state.draft, state.phase])
 
   useEffect(() => {
-    if (observed <= handledRevision.current || state.phase === 'conflict') {
-      return
-    }
-    handledRevision.current = observed
-    if (state.phase === 'dirty') {
-      void persist()
-      return
-    }
-    if (state.phase === 'saving') return
     let cancelled = false
-    client.read(path).then(
+    const stop = client.read(path)(
       (read) => {
         if (cancelled) return
         update((current) =>
@@ -122,8 +100,9 @@ export function MarkdownDocument({
     )
     return () => {
       cancelled = true
+      stop()
     }
-  }, [client, observed, path, persist, state.phase, update])
+  }, [client, path, update])
 
   // The status line earns its ink only while editing or in trouble; a clean
   // document reads as a document, not as a save indicator.

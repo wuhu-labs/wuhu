@@ -1,33 +1,6 @@
 import Dependencies
 import Foundation
 
-let authSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "accounts" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "kind" TEXT NOT NULL CHECK ("kind" IN ('human', 'space', 'machine', 'contractor')),
-  "name" TEXT,
-  "created_at" TEXT NOT NULL,
-  "removed_at" TEXT
-);
-CREATE TABLE IF NOT EXISTS "account_keys" (
-  "pubkey" TEXT NOT NULL PRIMARY KEY,
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "capabilities" TEXT NOT NULL,
-  "created_by" TEXT REFERENCES "accounts" ("id"),
-  "created_at" TEXT NOT NULL,
-  "expires_at" TEXT
-);
-CREATE INDEX IF NOT EXISTS "account_keys_by_account" ON "account_keys" ("account_id");
-CREATE TABLE IF NOT EXISTS "read_sessions" (
-  "token_hash" TEXT NOT NULL PRIMARY KEY,
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "created_at" TEXT NOT NULL,
-  "expires_at" TEXT NOT NULL,
-  "grp" TEXT
-);
-CREATE INDEX IF NOT EXISTS "read_sessions_by_account" ON "read_sessions" ("account_id");
-"""
-
 public struct AccountID: Hashable, Sendable {
   static let prefix: String = "ac_"
   static let suffixLength: Int = 8

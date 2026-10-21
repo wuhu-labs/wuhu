@@ -1,14 +1,12 @@
+import enum MachineContract.ExecEvent
 import struct MachineContract.ExecID
 import enum MachineContract.ExecOutputStream
 import enum MachineContract.ExitStatus
 import struct MachineContract.MachineID
-import protocol MainHub.Main
 import struct MainHub.ScriptError
-import enum MainHub.ScriptExecEvent
-import enum MainHub.ScriptExecInput
-import struct MainHub.ScriptRunID
 import ServerTelemetry
 import SessionDomain
+import SpaceClient
 import SpaceCore
 import Synchronization
 
@@ -139,6 +137,7 @@ final class ScriptProcess: Sendable {
     var ready: [Output] = []
     var end: End?
     var stdinClosed = false
+    var writes = 0
     var discarding = false
     var claimed = scriptProcessWindow
     var waiters: [AsyncStream<Void>.Continuation] = []
@@ -148,10 +147,7 @@ final class ScriptProcess: Sendable {
   let machine: MachineID
   let acceptsStdin: Bool
   private let span = ServerTracing.enabled ? ServerSpan(.machine) : nil
-  private let events: AsyncThrowingStream<ScriptExecEvent, any Error>
-  private let owner: any Main
-  private let session: SessionID
-  private let script: ScriptRunID
+  private let exec: ExecSession
   private let giveBack: @Sendable (Int) -> Void
   private let state = Mutex(State())
 
@@ -159,19 +155,13 @@ final class ScriptProcess: Sendable {
     id: ExecID,
     machine: MachineID,
     acceptsStdin: Bool,
-    events: AsyncThrowingStream<ScriptExecEvent, any Error>,
-    owner: any Main,
-    session: SessionID,
-    script: ScriptRunID,
+    exec: ExecSession,
     giveBack: @escaping @Sendable (Int) -> Void,
   ) {
     self.id = id
     self.machine = machine
     self.acceptsStdin = acceptsStdin
-    self.events = events
-    self.owner = owner
-    self.session = session
-    self.script = script
+    self.exec = exec
     self.giveBack = giveBack
     state.withLock { $0.stdinClosed = !acceptsStdin }
   }
@@ -202,36 +192,39 @@ final class ScriptProcess: Sendable {
     await pump()
   }
 
+  // The caller leg, held until the exit or the script's end; output is
+  // acknowledged only as the script takes it.
   private func pump() async {
     do {
-      for try await event in events {
-        switch event {
-        case let .event(.output(stream, cursor, data)):
-          let through = change { state -> Int? in
-            state.received = cursor + data.count
-            guard state.discarding else {
-              state.pending.append(Chunk(stream: stream, cursor: cursor, bytes: data.bytes))
-              return nil
-            }
-            state.acknowledged = state.received
-            return state.received
-          }
-          if let through { try? await input(.acknowledge(through: through)) }
-        case let .event(.exit(status)):
-          finish(.exited(status))
-          return
-        case .event(.truncated), .event(.timedOut):
-          continue
-        case let .event(.failed(error)):
-          finish(.lost(error.message))
-          return
-        case let .lost(reason):
-          finish(.lost(reason))
-          return
-        }
-      }
+      let termination = try await exec.run(
+        autoAcknowledge: false, failOnRemoteError: true, input: acceptsStdin ? .caller : .closed,
+        output: { _, _ in },
+        onEvent: { [self] event in await received(event) },
+      )
+      if let reason = lostReason(termination, id: id) { finish(.lost(reason)) }
     } catch {
       if !Task.isCancelled { finish(.lost("\(error)")) }
+    }
+  }
+
+  private func received(_ event: ExecEvent) async {
+    switch event {
+    case let .output(stream, cursor, data):
+      let through = change { state -> Int? in
+        state.received = cursor + data.count
+        guard state.discarding else {
+          state.pending.append(Chunk(stream: stream, cursor: cursor, bytes: data.bytes))
+          return nil
+        }
+        state.acknowledged = state.received
+        return state.received
+      }
+      if let through { await exec.acknowledge(through: through) }
+    case let .exit(status):
+      finish(.exited(status))
+    // A failure ends the run; its message arrives as the termination.
+    case .truncated, .timedOut, .failed:
+      break
     }
   }
 
@@ -322,23 +315,32 @@ final class ScriptProcess: Sendable {
     }
   }
 
+  // A write waits for the machine's window, so a process that stops reading
+  // holds the script, not the server's memory.
   func write(_ bytes: [UInt8]) async throws {
     guard acceptsStdin else { throw ScriptError("process \(id.rawValue) was spawned without { stdin: true }") }
-    guard !state.withLock(\.stdinClosed) else { throw ScriptError("stdin of process \(id.rawValue) is closed") }
-    try await input(.write(bytes))
+    try state.withLock { state in
+      guard state.end == nil else { throw ScriptError("process \(id.rawValue) has ended; stdin takes no more writes") }
+      guard !state.stdinClosed else { throw ScriptError("stdin of process \(id.rawValue) is closed") }
+      state.writes += 1
+    }
+    defer { change { $0.writes -= 1 } }
+    try await exec.sendStdin(bytes)
   }
 
+  // Closes after the writes in flight, so an unawaited write never lands on a closed stdin.
   func end() async throws {
     guard acceptsStdin else { throw ScriptError("process \(id.rawValue) was spawned without { stdin: true }") }
-    let closing = state.withLock { state in
+    let closing: Bool = try await take { state in
+      guard state.writes == 0 else { return nil }
       defer { state.stdinClosed = true }
-      return !state.stdinClosed
+      return (!state.stdinClosed, nil)
     }
-    if closing { try await input(.closeStdin) }
+    if closing { await exec.closeStdin() }
   }
 
   func kill() async {
-    try? await input(.kill(.caller))
+    await exec.kill()
   }
 
   // The reader went away before the end (it broke out, or threw): with one
@@ -355,11 +357,7 @@ final class ScriptProcess: Sendable {
       state.acknowledged = state.received
       return state.received
     }
-    if let through { try? await input(.acknowledge(through: through)) }
-  }
-
-  private func input(_ input: ScriptExecInput) async throws {
-    try await owner.scriptExecInput(session: session, script: script, exec: id, input: input)
+    if let through { await exec.acknowledge(through: through) }
   }
 
   private func lostError(_ reason: String) -> ScriptError {
@@ -386,7 +384,7 @@ final class ScriptProcess: Sendable {
       }
       if freed > 0 { giveBack(freed) }
       if let (value, cursor) = outcome {
-        if let cursor { try? await input(.acknowledge(through: cursor)) }
+        if let cursor { await exec.acknowledge(through: cursor) }
         return value
       }
       for await _ in signal {}

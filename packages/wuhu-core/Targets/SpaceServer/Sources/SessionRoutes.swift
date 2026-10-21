@@ -5,6 +5,7 @@ import enum InferenceKit.CatalogError
 import struct InferenceKit.ModelsDocument
 import JSONValue
 import LoopCore
+import MainHub
 import Serve
 import ServeRouting
 import SessionDomain
@@ -169,12 +170,21 @@ func addSessionRoutes(
       do { input = try await request.json(SessionArchiveInput.self) }
       catch { return errorResponse(.badRequest, code: "invalidArgument", message: "invalid archive body") }
     }
+    // A session archiving itself: never by force (its parent, an ancestor or a
+    // human does that), and a call made inside its own turn finds it busy.
+    var caller: SessionID?
     do {
       if case let .principal(principal) = try await principalOf(request) {
         try await store.refuseArchiving(id, by: principal.actor)
+        if case let .session(session) = principal.actor { caller = session }
+      }
+      if caller == id, input.force == true {
+        return errorResponse(.unprocessableContent, code: "invalidArgument", message: "session \(id.rawValue) can't force-archive itself; its parent, an ancestor or a human archives it")
       }
       try await service.archive(id, force: input.force ?? false)
       return jsonResponse(.object([:]))
+    } catch let busy as SubtreeArchiveBusy where caller == id && busy.sessions.contains(where: { $0.id == id }) {
+      return errorResponse(.conflict, code: "conflict", message: "session \(id.rawValue) can't archive itself mid-turn: this call is part of its own turn, which keeps it busy; its parent, an ancestor or a human archives it; \(busy.message)")
     } catch { return sessionErrorResponse(error) }
   }
 

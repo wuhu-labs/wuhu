@@ -40,3 +40,16 @@ export function errorDetail(status: number, text: string): ErrorDetail {
 export function errorMessage(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
+
+export function isFileRefusal(failure: unknown): boolean {
+  return failure instanceof ApiError && [
+    'notFound',
+    'invalidArgument',
+    'forbidden',
+    'unsupported',
+    'invalidPath',
+    'byteLimitExceeded',
+    'unknownKind',
+    'conflict',
+  ].includes(failure.code)
+}

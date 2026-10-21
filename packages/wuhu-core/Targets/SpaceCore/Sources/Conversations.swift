@@ -10,50 +10,6 @@ import struct SpaceContract.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let conversationSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "conversations" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "kind" TEXT NOT NULL,
-  "owner_session" TEXT,
-  "window_messages" INTEGER NOT NULL,
-  "window_seconds" INTEGER NOT NULL,
-  "created_at" TEXT NOT NULL,
-  "grp" TEXT NOT NULL DEFAULT ''
-);
-CREATE TRIGGER IF NOT EXISTS "conversations_grp_required" BEFORE INSERT ON "conversations" WHEN NEW."grp" = ''
-  BEGIN SELECT RAISE(ABORT, 'grp required: conversations'); END;
-CREATE INDEX IF NOT EXISTS "conversations_by_grp" ON "conversations" ("grp");
-CREATE TABLE IF NOT EXISTS "conversation_titles" (
-  "conversation_id" TEXT NOT NULL PRIMARY KEY,
-  "title" TEXT
-);
-CREATE TABLE IF NOT EXISTS "conversation_members" (
-  "conversation_id" TEXT NOT NULL,
-  "member" TEXT NOT NULL,
-  "member_kind" TEXT NOT NULL,
-  "joined_at" TEXT NOT NULL,
-  PRIMARY KEY ("conversation_id", "member")
-);
-CREATE TABLE IF NOT EXISTS "messages" (
-  "n" INTEGER NOT NULL PRIMARY KEY,
-  "id" TEXT NOT NULL,
-  "conversation_id" TEXT NOT NULL,
-  "sender_id" TEXT NOT NULL,
-  "sender_session_id" TEXT,
-  "sender_timezone" TEXT NOT NULL,
-  "reply_target" TEXT,
-  "kind" TEXT NOT NULL,
-  "request_id" TEXT,
-  "deadline_at" TEXT,
-  "content" TEXT NOT NULL,
-  "created_at" TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "messages_by_id" ON "messages" ("id");
-CREATE INDEX IF NOT EXISTS "messages_by_conversation" ON "messages" ("conversation_id", "n");
-CREATE INDEX IF NOT EXISTS "messages_by_sender_session" ON "messages" ("sender_session_id", "n");
-CREATE INDEX IF NOT EXISTS "messages_by_request" ON "messages" ("request_id", "n");
-"""
-
 extension UUID {
   public static func deterministic(_ parts: String...) -> UUID {
     let digest = SHA256.hash(data: Data(parts.joined(separator: "|").utf8))

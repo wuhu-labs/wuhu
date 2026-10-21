@@ -107,6 +107,8 @@ final class ExecJob: Sendable {
     case detached
     /// Cancelled or archived: the end is not announced.
     case cancelled
+    /// Handed off: the next worker follows the exec and announces its end.
+    case released
   }
 
   enum Outcome: Sendable {
@@ -123,6 +125,8 @@ final class ExecJob: Sendable {
   let spec: String
   /// Set on a job re-adopted after a restart, whose own call is long gone.
   let adopted: Bool
+  /// The task following the exec on the relay, to stop following without an ack.
+  let driver = Mutex<Task<Void, Never>?>(nil)
   let ended = OneShot<Outcome>()
   let committed = OneShot<Bool>()
   let deliveryRecorded = OneShot<Bool>()

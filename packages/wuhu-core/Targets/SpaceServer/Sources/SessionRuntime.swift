@@ -3,15 +3,12 @@ import struct Credentials.SpaceSecretStores
 import Dependencies
 import ExecutionOwner
 import struct FileSearch.SearchError
-import struct MainHub.ExecBackend
 import class MainHub.Hub
 import protocol MainHub.Main
 import enum MainHub.RevocationPolicy
 import struct MainHub.ScriptHandlerInvocation
 import struct MainHub.ScriptHandlerResult
-import struct MainHub.ScriptMachineAccess
-import struct MainHub.SessionControl
-import struct MainHub.SessionControlRefusal
+import class MainHub.SessionService
 import struct MainHub.SubscriptionFiring
 import protocol MainHub.Worker
 import struct MainHub.WorkerActivity
@@ -43,16 +40,25 @@ import WuhuAI
 public struct SessionRuntime: Sendable {
   let streamScope = TaskScope()
   public let service: SessionService
-  public let worker: any Worker
+  /// The workers that announced themselves, and which holds each session.
+  public let workers: WorkerRegistry
+  /// The worker this process runs, when it runs one.
+  public let inProcessWorker: SessionExecution?
   public let attempts: AttemptHub
   // What the worker presents to main's API for a mounted session, and the
   // line it presents it over.
   let tokens: ExecTokens
   let connection: MainConnection
+  /// Main's API as its worker socket serves it, once the handler is built.
+  let api = MainAPI()
+  /// Main's OIDC signing, which workers in their own processes ask for.
+  var signing = InferenceAccess()
   let store: SessionStore
   let firing: SubscriptionFiring
   let sockets: ResponsesSocketRegistry?
   let owner: Hub
+  /// Where an inference a worker reports lands: `POST /v1/inferences`.
+  let metrics: InferenceMetricsSink
   private let startup: (@Sendable () async -> Void)?
   let usage: UsageBoard
   let refresher: UsageRefresher?
@@ -62,10 +68,15 @@ public struct SessionRuntime: Sendable {
   let prepareModelRoute: @Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?
   let budget: @Sendable (SessionID) async -> ContextBudget
 
-  init(space: Space, service: SessionService, worker: any Worker, attempts: AttemptHub, owner: Hub, tokens: ExecTokens, connection: MainConnection) {
+  init(
+    space: Space, service: SessionService, workers: WorkerRegistry, inProcessWorker: SessionExecution? = nil, attempts: AttemptHub, owner: Hub,
+    access: InferenceAccess = InferenceAccess(), metrics: InferenceMetricsSink = .noop, tokens: ExecTokens, connection: MainConnection,
+  ) {
     startup = nil
+    self.inProcessWorker = inProcessWorker
+    self.metrics = metrics
     self.service = service
-    self.worker = worker
+    self.workers = workers
     self.attempts = attempts
     self.tokens = tokens
     self.connection = connection
@@ -74,13 +85,13 @@ public struct SessionRuntime: Sendable {
     usage = UsageBoard()
     refresher = nil
     warmer = CacheWarmer(space: space, usage: usage)
-    let catalog = groupCatalog(owner: owner)
+    let catalog = groupCatalog(space: space, access: access)
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     self.owner = owner
     resolveModelExecutor = modelExecutorResolver(space: space)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, worker: worker)
+    firing = SubscriptionFiring(space: space, worker: workers)
   }
 
   init(
@@ -90,16 +101,20 @@ public struct SessionRuntime: Sendable {
     usage: UsageBoard,
     sockets: ResponsesSocketRegistry?,
     refresher: UsageRefresher?,
-    worker: any Worker,
+    workers: WorkerRegistry,
+    inProcessWorker: SessionExecution?,
     startup: (@Sendable () async -> Void)? = nil,
     owner: Hub,
+    metrics: InferenceMetricsSink,
     catalog: @escaping @Sendable () async throws -> ProviderCatalog,
     tokens: ExecTokens,
     connection: MainConnection,
   ) {
     self.startup = startup
+    self.inProcessWorker = inProcessWorker
+    self.metrics = metrics
     self.service = service
-    self.worker = worker
+    self.workers = workers
     self.attempts = attempts
     self.tokens = tokens
     self.connection = connection
@@ -113,7 +128,7 @@ public struct SessionRuntime: Sendable {
     resolveModelGroup = modelGroupExecutorResolver(catalog: catalog)
     prepareModelRoute = modelRoutePreparer(catalog: catalog, usage: usage)
     budget = budgetResolver(owner: owner)
-    firing = SubscriptionFiring(space: space, worker: worker)
+    firing = SubscriptionFiring(space: space, worker: workers)
   }
 
   public func run() async {
@@ -166,113 +181,50 @@ extension SessionRuntime {
     oidcToken: (@Sendable (URL, SessionID) async throws -> String)? = nil,
     oidcReadiness: (@Sendable (URL) async throws -> Void)? = nil,
     oidcBindingIdentity: (@Sendable (URL, SessionID) async throws -> String)? = nil,
+    outOfProcess: Bool = false,
+    takingOver: Bool = false,
   ) async -> SessionRuntime {
     let attempts = AttemptHub()
     let tokens = tokens ?? ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
-    let executionCredentials = credentials
-    let executionMetrics = metrics
-    let thresholds = CompactionThresholds()
-    @Dependency(\.date) var date
-    // Models are data in the space, edited at runtime (`wuhu models update`):
-    // the catalog is re-read per use, never cached at boot.
-    let catalogs: @Sendable (Bool) async throws -> ProviderCatalog = { includeGroups in
-      let fs = await space.fs(.shared)
-      let data = try await fs.read(ModelsDocument.spacePath).1
-      let groups: Data?
-      if includeGroups {
-        do { groups = try await fs.read(ModelsDocument.groupPath).1 }
-        catch SpaceError.notFound { groups = nil }
-      } else { groups = nil }
-      return ProviderCatalog(
-        document: try ModelsDocument(json: data, groupsJSON: groups),
-        credentials: executionCredentials,
-        oidcToken: { audience, session in
-          guard let oidcToken else { throw InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.") }
-          return try await oidcToken(audience, session)
-        },
-        oidcReadiness: { audience in
-          guard oidcToken != nil else { throw InferenceError.invalidInput(status: 422, body: "OIDC authentication is not configured on this server.") }
-          try await oidcReadiness?(audience)
-        },
-        oidcBindingIdentity: { try await oidcBindingIdentity?($0, $1) },
-        receiveCodexResponseHeaders: { providerID, headers in
-          usage.record(providerID, plan: headers["x-codex-plan-type"], windows: codexUsage(headers: headers), at: date.now)
-        },
-      )
-    }
-
-    let catalog: @Sendable () async throws -> ProviderCatalog = { try await catalogs(true) }
-    let providerCatalog: @Sendable () async throws -> ProviderCatalog = { try await catalogs(false) }
-    let serviceSlot = SessionServiceSlot()
+    // What this process brings to the inferences it runs; the catalog is data
+    // in the space (`wuhu models update`), re-read per use, never cached at boot.
+    let access = InferenceAccess(
+      credentials: credentials, oidcToken: oidcToken, oidcReadiness: oidcReadiness, oidcBindingIdentity: oidcBindingIdentity,
+      trace: attemptLog?.traceClient,
+    )
+    let catalog = groupCatalog(space: space, access: access)
     let machines = machineSeam(hub: hub)
-    let exec = execBackend(space: space, hub: hub)
     let toolOwner = Hub(
       space: space,
-      metrics: metrics, credentials: credentials, inferenceToken: oidcToken, inferenceReadiness: oidcReadiness, inferenceBindingIdentity: oidcBindingIdentity, attemptLog: attemptLog,
       secrets: secrets,
       machines: machines,
-      scriptMachines: ScriptMachineAccess(files: machines, exec: exec),
       resolveModelExecutor: modelExecutorResolver(space: space),
       resolveModelGroup: modelGroupExecutorResolver(catalog: catalog),
       prepareModelRoute: modelRoutePreparer(catalog: catalog, usage: usage),
-      completionMetrics: executionMetrics,
-      control: sessionControl { serviceSlot.service },
     )
-    let owner: any Main = toolOwner
-    let execJobs = ExecJobs()
-    let jobExecutor = ToolExecutor(
-      owner: owner, main: connection, credential: { tokens.sessionToken($0) }, execJobs: execJobs,
-    )
-    let startup: @Sendable () async -> Void = {
+    // The loop, the kernel pieces and the tools reach main as a worker does:
+    // through its routes, with the worker's token. `toolOwner` serves them.
+    let workers = WorkerRegistry(tokens: tokens)
+    // A main taking over from the one before it in this process stopped no
+    // script: they run on in the workers.
+    let startup: (@Sendable () async -> Void)? = takingOver ? nil : { @Sendable in
       await toolOwner.announceScriptRestart()
-      await jobExecutor.adoptExecJobs()
     }
-    let sockets = ResponsesSocketRegistry()
-    let budget = budgetResolver(owner: owner)
-    let execution = await SessionExecution(
-      main: owner, connection: connection, credential: { tokens.sessionToken($0) }, credentials: executionCredentials, completionCatalog: catalog, execJobs: execJobs,
-    ) { executor in
-      var config = LoopConfig(
-        executeTool: { invocation in
-          try await executor.execute(session: invocation.sessionID, call: invocation.call, state: invocation.state)
-        },
-        inference: kernelInference(
-          owner: owner, catalog: providerCatalog, groupCatalog: catalog, sockets: sockets, attempts: attempts,
-          usage: usage,
-          committedWarming: { id, policy in
-            do { try await space.sessions.scheduleCacheWarming(id, intervalSeconds: policy.intervalSeconds) }
-            catch { Logger(label: "wuhu.cache-warmer").error("could not schedule cache warming", metadata: ["session": "\(id.rawValue)", "error": "\(error)"]) }
-          },
-        ),
-
-        compact: { id, transcript in
-          await mechanicalCompaction(of: transcript, images: budget(id).images)
-        },
-        budget: budget,
-        prepareCompaction: compactionPlacement(owner: owner, catalog: catalog, usage: usage),
-        killInterruptedTool: { invocation in
-          guard invocation.call.name == "exec" else { return }
-          await executor.killInterrupted(
-            session: invocation.sessionID, callID: ToolCallID(invocation.call.id),
-          )
-        },
-        invalidateInference: { await sockets.invalidate($0) },
-        allowCacheWarming: { try await CacheWarmer(space: space, usage: usage).allows($0) },
-        thresholds: thresholds,
-      )
-
-      config.scheduleWake = { session, due in await serviceSlot.service?.scheduleWake(session, at: due) }
-      config.runningWork = { jobExecutor.runningExecJobs(of: $0) }
-      return config
+    // Out of process, the workers announce themselves over main's worker socket.
+    var worker: KernelWorker?
+    if !outOfProcess {
+      let credential = workers.mint()
+      let inProcess = await KernelWorker(connection: connection, credential: credential.token, access: access, attempts: attempts, usage: usage)
+      workers.announce(credential.id, endpoint: inProcess.execution)
+      worker = inProcess
     }
     let service = SessionService(
-      sessions: space.sessions, worker: execution, runningWork: { jobExecutor.runningExecJobs(of: $0) },
+      sessions: space.sessions, worker: workers,
       archived: { session in
-        await jobExecutor.cancelExecJobs(of: session)
         do {
           for record in try await space.liveToolExecs(caller: session.rawValue) {
-            do { try await exec.kill(record.id) }
+            do { try await hub.kill(record.id) }
             catch { Logger(label: "wuhu.exec").error("could not kill archived session's exec: \(error)") }
           }
         } catch { Logger(label: "wuhu.exec").error("could not read archived session's live execs: \(error)") }
@@ -281,56 +233,54 @@ extension SessionRuntime {
         tokens.revokeSession(session)
       },
     )
-    serviceSlot.bind(service)
-    return SessionRuntime(
+    var runtime = SessionRuntime(
       space: space,
       service: service,
       attempts: attempts,
       usage: usage,
-      sockets: sockets,
+      sockets: worker?.sockets,
       refresher: UsageRefresher(board: usage, space: space, credentials: credentials),
-      worker: execution,
+      workers: workers,
+      inProcessWorker: worker?.execution,
       startup: startup,
-      owner: toolOwner, catalog: catalog,
+      owner: toolOwner, metrics: metrics, catalog: catalog,
       tokens: tokens, connection: connection,
     )
+    runtime.signing = access
+    return runtime
   }
 }
 
 // MARK: - Tools without loops
 
-// A worker that is only its tool executor: the gate routes a session's verbs
-// through it, and nothing runs a loop. Tests of the tools alone take it.
+// A worker that is only its tool executor: nothing runs a loop. Tests of the
+// tools alone take it.
 struct ToolOnlyWorker: Worker {
-  let executor: ToolExecutor
-
-  func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome {
-    try await executor.execute(session: session, call: call, state: state)
-  }
-
-  func deliver(_ session: SessionID, _ input: WorkerInput) async throws { preconditionFailure("no loops run behind a tool-only worker") }
-  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { preconditionFailure("no loops run behind a tool-only worker") }
+  // No loop is mounted, so a verb reaches nothing and a revocation is settled at once.
+  func deliver(_ session: SessionID, _ input: WorkerInput) async throws {}
+  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { true }
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { preconditionFailure("no loops run behind a tool-only worker") }
   func activity() async -> WorkerActivity { WorkerActivity(scripts: [:]) }
-  func drain() async {}
+  func runningWork(_ session: SessionID) async throws -> [String] { [] }
   func shutdown() async {}
 }
 
 extension SessionRuntime {
-  /// Main's API bound in process to `worker` as the kernel binds it, with no
-  /// loops running: what a test of the tools alone needs.
+  /// Main's API bound in process to the announced `workers` as the kernel
+  /// binds it, with no loops running: what a test of the tools alone needs.
   @discardableResult
   static func bindMain(
-    owner: Hub, worker: any Worker, tokens: ExecTokens, connection: MainConnection, hub: MachineHub? = nil,
-    origin: String? = nil, contentHostPattern: String? = nil, secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
+    owner: Hub, workers: WorkerRegistry, tokens: ExecTokens, connection: MainConnection, hub: MachineHub? = nil,
+    origin: String? = nil, contentHostPattern: String? = nil, credentials: CredentialResolver = .unavailable, secrets: SpaceSecretStores? = nil,
+    identity: IdentityController? = nil,
   ) -> UpgradingHandler {
     let runtime = SessionRuntime(
-      space: owner.space, service: SessionService(sessions: owner.space.sessions, worker: worker),
-      worker: worker, attempts: AttemptHub(), owner: owner, tokens: tokens, connection: connection,
+      space: owner.space, service: SessionService(sessions: owner.space.sessions, worker: workers),
+      workers: workers, attempts: AttemptHub(), owner: owner, metrics: .recording(in: owner.space), tokens: tokens, connection: connection,
     )
     return SpaceServer.configuredHandler(
       space: owner.space, hub: hub ?? MachineHub(space: owner.space), sessions: runtime, origin: origin, contentHostPattern: contentHostPattern,
-      dev: true, secrets: secrets, identityController: identity, machines: owner.machines,
+      dev: true, credentials: credentials, secrets: secrets, identityController: identity, machines: owner.machines,
     )
   }
 
@@ -341,8 +291,7 @@ extension SessionRuntime {
     hub: MachineHub? = nil,
     scripts: Scripts? = nil,
     execJobs: ExecJobs = ExecJobs(),
-    credentials: CredentialResolver = .unavailable,
-    completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    access: InferenceAccess = InferenceAccess(),
     origin: String? = nil,
     contentHostPattern: String? = nil,
     secrets: SpaceSecretStores? = nil,
@@ -350,80 +299,19 @@ extension SessionRuntime {
   ) -> ToolExecutor {
     let tokens = ExecTokens(spaceURL: "http://main")
     let connection = MainConnection()
+    let workers = WorkerRegistry(tokens: tokens)
+    let credential = workers.mint()
     let executor = ToolExecutor(
-      owner: owner, main: connection, credential: { tokens.sessionToken($0) },
-      credentials: credentials, completionCatalog: completionCatalog, scripts: scripts, execJobs: execJobs,
+      owner: MainClient(connection: connection, credential: { credential.token }), main: connection, credential: { tokens.sessionToken($0) },
+      access: access, scripts: scripts, execJobs: execJobs,
     )
+    workers.announce(credential.id, endpoint: ToolOnlyWorker())
     bindMain(
-      owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection, hub: hub,
-      origin: origin, contentHostPattern: contentHostPattern, secrets: secrets, identity: identity,
+      owner: owner, workers: workers, tokens: tokens, connection: connection, hub: hub,
+      origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     )
     return executor
   }
-}
-
-// The kernel's tool executor is built before the service that runs the
-// loops, so its session verbs reach the service through this slot.
-final class SessionServiceSlot: Sendable {
-  private struct State: Sendable { weak var service: SessionService? }
-  private let slot = Mutex(State())
-
-  func bind(_ service: SessionService) {
-    slot.withLock { $0.service = service }
-  }
-
-  var service: SessionService? {
-    slot.withLock { $0.service }
-  }
-}
-
-func sessionControl(_ service: @escaping @Sendable () -> SessionService?) -> SessionControl {
-  SessionControl { verb, id, force in
-    guard let service = service() else {
-      throw SessionControlRefusal("the session loops are not running yet")
-    }
-    do {
-      switch verb {
-      case .interrupt: try await service.interrupt(id)
-      case .resume: try await service.resume(id)
-      case .archive: try await service.archive(id, force: force)
-      case .unarchive: try await service.unarchive(id)
-      }
-    } catch let busy as SubtreeArchiveBusy {
-      throw SessionControlRefusal(busy.message, reason: busy.sessions.contains { $0.id == id } ? .busy : .other)
-    } catch let SessionError.unreadableData(id) {
-      throw SessionControlRefusal(SessionError.unreadableData(id).description)
-    } catch SessionError.archiveInProgress {
-      throw SessionControlRefusal("session \(id.rawValue) is being archived; retry after the archive finishes")
-    } catch SessionError.archiveReservationLost {
-      throw SessionControlRefusal("session \(id.rawValue) changed during archive; archive stopped, retry it")
-    } catch SessionError.archiveGraceExpired {
-      throw SessionControlRefusal("session \(id.rawValue) is archived and its grace has expired")
-    }
-  }
-}
-
-func execBackend(space: Space, hub: MachineHub) -> ExecBackend {
-  ExecBackend(
-    connect: { id in
-      guard let record = try await space.execRecord(id) else {
-        throw MachineHubError.execNotFound(id)
-      }
-      let (server, client) = WebSocket.pair()
-      // Bounded, not leaked: the hub session ends when the transport
-      // closes its socket end (tool completion, cancellation, or kill).
-      _ = try? hub.callerScope.run("in-process-exec-caller") { await hub.runCallerSession(record, socket: server, leg: record.caller.map { .session(SessionID(rawValue: $0)) } ?? .anonymous) }
-      return WebSocketTransport(client)
-    },
-    status: { try await space.execRecord($0) },
-    mintScript: { machine, session, script in
-      try await hub.requireExecKind(machine)
-      let record = try await space.mintScriptExec(machine: machine, session: session.rawValue, script: script)
-      await hub.noteMinted(record)
-      return record
-    },
-    kill: { try await hub.kill($0) },
-  )
 }
 
 func modelExecutorResolver(space: Space) -> @Sendable (String, String, String?) async throws -> SessionExecutor {
@@ -535,7 +423,7 @@ extension ToolResultPayload {
 
 // A kernel session's prompt, frozen at its prompt revision.
 func systemPrompt(space: Space, record: SessionRecord) async throws -> String {
-  try await systemPrompt(owner: Hub(space: space), record: record)
+  kernelPrompt(for: record, home: try await space.sessionHome(record.id, at: try await space.sessions.activatePromptRevision(record.id)))
 }
 
 private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
@@ -549,4 +437,17 @@ private func machineOperationFailure(_ error: OperationError) -> ToolRunError {
   default: .unavailable
   }
   return .failed(code: code, message: "\(error.code.rawValue): \(error.message)", hint: nil)
+}
+
+/// Main's API handler, as `configuredHandler` builds it: what the worker
+/// socket serves.
+final class MainAPI: Sendable {
+  private let handler = Mutex<UpgradingHandler?>(nil)
+
+  func bind(_ api: @escaping UpgradingHandler) { handler.withLock { $0 = api } }
+
+  func callAsFunction(_ request: Request) async throws -> UpgradeResult {
+    guard let api = handler.withLock({ $0 }) else { return .response(Response(status: .serviceUnavailable)) }
+    return try await api(request)
+  }
 }

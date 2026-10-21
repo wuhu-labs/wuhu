@@ -29,11 +29,13 @@ public actor Space {
 
   init(
     writer: any DatabaseWriter,
+    identity: SpaceIdentity? = nil,
     objects: (any ObjectStore)? = nil,
     log: Logger = Logger(label: "wuhu.space"),
     catalog: ViewCatalog = .groups,
     trace: (@Sendable (String) -> Void)? = nil,
-  ) {
+  ) throws {
+    try SpaceMeta.prepare(writer, identity: identity)
     @Dependency(\.date) var date
     @Dependency(\.continuousClock) var clock
     @Dependency(\.withRandomNumberGenerator) var rng
@@ -63,9 +65,8 @@ public actor Space {
       throw SpaceIdentityError.invalid(identity.rawValue)
     }
     let queue = try DatabaseQueue(path: file.path, configuration: makeConfiguration())
-    try queue.write { db in try SpaceMeta.prepare(db, identity: identity) }
     let store = objects ?? FileSystemObjectStore(root: file.deletingLastPathComponent().appending(path: "objects"))
-    return Space(writer: queue, objects: store, log: log)
+    return try Space(writer: queue, identity: identity, objects: store, log: log)
   }
 
   public static func inMemory(objects: (any ObjectStore)? = nil) throws -> Space {
@@ -81,8 +82,7 @@ public actor Space {
   ) throws -> Space {
     let queue = try DatabaseQueue(path: "file:/space-\(UUID())?vfs=memdb", configuration: configuration)
     try SpaceMeta.memorySchema.get().backup(to: queue)
-    try queue.write { db in try SpaceMeta.prepare(db) }
-    return Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace)
+    return try Space(writer: queue, objects: objects, log: log, catalog: catalog, trace: trace)
   }
 
   static func makeConfiguration(journalMode: Configuration.JournalModeConfiguration = .wal) -> Configuration {

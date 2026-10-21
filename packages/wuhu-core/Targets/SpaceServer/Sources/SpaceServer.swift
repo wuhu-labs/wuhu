@@ -16,6 +16,7 @@ import Fetch
 import struct InferenceKit.ModelsDocument
 import JSONValue
 import Logging
+import MachineChannel
 import MachineContract
 import NIOCore
 import OrderedCollections
@@ -249,8 +250,8 @@ public enum SpaceServer {
     let gated: (@escaping UpgradingHandler) -> UpgradingHandler = { walled in
       guard let sessions else { return walled }
       return sessionGate(
-        space: space, hub: hub, machines: machines, owner: sessions.owner, tokens: sessions.tokens, credentials: credentials,
-        identity: identityController, routed: routed, otherwise: walled,
+        space: space, hub: hub, machines: machines, owner: sessions.owner, tokens: sessions.tokens, runtime: sessions, credentials: credentials,
+        identity: identityController, metrics: sessions.metrics, routed: routed, otherwise: walled,
       )
     }
     let content = contentHandler(
@@ -259,25 +260,8 @@ public enum SpaceServer {
     let api: UpgradingHandler = dev ? gated(routed) : gated(walled(routed: routed, space: space, webContent: webContent, keyStreams: keyStreams))
     // The worker's tools reach main through this API, in process, as the
     // session whose token they carry.
-    sessions?.connection.bind(.inProcess(api), dial: { url, headers in
-      var request = Request(url: url)
-      for (name, value) in headers { request.headers[name] = value }
-      request.headers["connection"] = "Upgrade"
-      request.headers["upgrade"] = "websocket"
-      request.headers["sec-websocket-key"] = "dGhlIHNhbXBsZSBub25jZQ=="
-      request.headers["sec-websocket-version"] = "13"
-      switch try await api(request) {
-      case let .webSocket(serve):
-        let (server, client) = WebSocket.pair()
-        try hub.callerScope.run("worker-exec-caller") { await serve(server) }
-        return WebSocketTransport(client)
-      case let .response(response):
-        let body = try await response.data()
-        throw SpaceClient.DialRefusal(status: response.status.code, body: Array(body))
-      case .boundedWebSocket:
-        throw SpaceClient.DialRefusal(status: 422, body: Array(#"{"code":"unsupported","message":"exec requires a frame WebSocket transport"}"#.utf8))
-      }
-    })
+    sessions?.connection.bind(.inProcess(api), dial: inProcessDial(api: api, hub: hub))
+    sessions?.api.bind(api)
     return hostRouted(contentHost, api: api, content: content)
   }
 
@@ -358,6 +342,7 @@ public enum SpaceServer {
     }
   }
 
+  @discardableResult
   public static func serve(
     folder: URL,
     host: String = "127.0.0.1",
@@ -378,7 +363,8 @@ public enum SpaceServer {
     webContent: WebContent = WebContent(),
     otelEndpoint: URL? = nil,
     hooks: ServeNIOHooks = ServeNIOHooks(),
-  ) async throws {
+    workers: ServeWorkers = .inProcess,
+  ) async throws -> ServeEnd {
     let aiDisclosure: AIDisclosure?
     if let aiDisclosureFile {
       aiDisclosure = try await loadAIDisclosure(
@@ -438,19 +424,44 @@ public enum SpaceServer {
       webContent.webApp = webApp
       logger.notice("web app override: \(webAppDirectory.path) (\(webApp.files.count) files)")
     }
+    // Out of process, main holds its listeners itself, so they outlive a
+    // reboot, and serves its workers on a socket in the folder.
+    var listeners: Listeners?
+    var placement = WorkerPlacement.inProcess
+    if case .process = workers {
+      try MainLock.acquire(folder: folder)
+      let run = folder.appendingPathComponent("run", isDirectory: true)
+      try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+      let socket = run.appendingPathComponent("worker.sock").path
+      // sockaddr_un holds 104 bytes on macOS, 108 on Linux, the NUL included.
+      guard socket.utf8.count < 104 else { throw WorkerSocketPathTooLong(path: socket) }
+      let inherited = Reboot.inherited()
+      listeners = try inherited?.listeners ?? Listeners.open(host: host, port: port, workerSocket: socket)
+      placement = .process(executable: currentExecutable(), socket: socket, handover: try inherited.map { try Handover.take(from: $0.handover) })
+      logger.notice(inherited == nil ? "workers run in their own processes" : "main rebooted in place; workers announce again")
+    }
     let spaceHost = try await SpaceHost.open(
-      folder: folder, deployment: deployment, configDirectory: configDirectory,
+      folder: folder, deployment: deployment, configDirectory: configDirectory, allowEnvironmentCredentials: true,
       fallbackOrigin: "https://\(host):\(port)", port: port, dev: dev, publicRead: publicRead, contentHostPattern: contentHostPattern,
       aiDisclosure: aiDisclosure, version: version, webContent: webContent,
-      devImport: devImport, devExport: devExport,
+      devImport: devImport, devExport: devExport, placement: placement,
     )
     let directory = SingleSpaceDirectory(host: spaceHost)
     var options = ServeOptions()
     options.maximumWebSocketFrameBytes = MachineHub.maximumFrameBytes
     options.maximumBodyBytes = maximumPostBodyBytes
     let api: ServeNIOServer
+    var workerAPI: ServeNIOServer?
     do {
-      api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
+      if let listeners {
+        api = try await ServeNIOServer.bind(
+          listeningSocket: listeners.lend(listeners.api), tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks,
+          upgrading: directory.handler,
+        )
+        workerAPI = try await ServeNIOServer.bind(listeningSocket: listeners.lend(listeners.workers), options: options, upgrading: spaceHost.workerHandler!)
+      } else {
+        api = try await ServeNIOServer.bind(host: host, port: port, tls: identity, subdomains: groupHosts(advertisedOrigin), options: options, hooks: hooks, upgrading: directory.handler)
+      }
     } catch {
       try? await spaceHost.shutdown()
       throw error
@@ -459,19 +470,83 @@ public enum SpaceServer {
     do { telemetry = try otelEndpoint.map { try ServerTelemetryRuntime(endpoint: $0, version: version) } }
     catch {
       await api.shutdown()
+      await workerAPI?.shutdown()
       try? await spaceHost.shutdown()
       throw error
     }
-    await withTaskGroup(of: Void.self) { group in
-      if let telemetry { group.addTask { await telemetry.run() } }
-      group.addTask { await spaceHost.run() }
-      await api.runUntilCancelled()
-      try? await spaceHost.shutdown()
-      group.cancelAll()
+    // Serves until cancelled, or until a reboot has put new workers up; then
+    // main hands over while its services still run, so nothing it stops
+    // reaches the workers.
+    let handover = await withTaskGroup(of: Bool?.self, returning: Result<Handover, any Error>?.self) { group in
+      if let telemetry { group.addTask { await telemetry.run(); return nil } }
+      group.addTask { await spaceHost.run(); return nil }
+      group.addTask {
+        await api.runUntilCancelled()
+        return false
+      }
+      if case let .process(reboots) = workers {
+        group.addTask {
+          for await _ in reboots {
+            logger.notice("reboot: putting new workers up")
+            do {
+              try await spaceHost.rollWorkers()
+              return true
+            } catch {
+              logger.error("reboot abandoned: the workers stay", metadata: ["error": "\(error)"])
+            }
+          }
+          return nil
+        }
+      }
+      var rebooting = false
+      while let next = await group.next() {
+        guard let next else { continue }
+        rebooting = next
+        break
+      }
+      defer { group.cancelAll() }
+      guard rebooting else {
+        try? await spaceHost.shutdown()
+        return nil
+      }
+      // New connections wait in the listeners' backlogs from here until the
+      // next main accepts them.
+      logger.notice("reboot: main hands over")
+      await api.stopAccepting()
+      await workerAPI?.stopAccepting()
+      do { return .success(try await spaceHost.handOver()) } catch { return .failure(error) }
     }
+    await api.shutdown()
+    await workerAPI?.shutdown()
     if let telemetry { await telemetry.shutdown() }
-    try await spaceHost.shutdown()
+    guard let handover, let listeners else {
+      try await spaceHost.shutdown()
+      return .stopped
+    }
+    let file = folder.appendingPathComponent("run", isDirectory: true).appendingPathComponent("handover.json")
+    try handover.get().write(to: file)
+    return .reboot(Reboot(listeners: listeners, handover: file))
   }
+}
+
+/// Where `serve` runs the space's workers.
+public enum ServeWorkers: Sendable {
+  case inProcess
+  /// Each in a process of its own; every value `reboots` yields reboots
+  /// main in place (`SIGHUP`).
+  case process(reboots: AsyncStream<Void>)
+}
+
+/// How `serve` ended.
+public enum ServeEnd: Sendable {
+  case stopped
+  /// Main handed over: `Reboot.exec()` becomes the main that takes over.
+  case reboot(Reboot)
+}
+
+public struct WorkerSocketPathTooLong: Error, CustomStringConvertible {
+  public let path: String
+  public var description: String { "the worker socket's path is too long for a Unix socket (\(path.utf8.count) bytes): \(path); serve a folder with a shorter path" }
 }
 
 /// One listener, two planes: the bare host is the API and the web app,
@@ -581,5 +656,29 @@ func toolFailure(_ error: MachineHubError, machine: MachineID) -> ToolRunError {
     .failed(code: .unavailable, message: "machine not attached: \(machine.rawValue)", hint: nil)
   case .searchNeedsV2:
     .failed(code: .unsupported, message: "machine \(machine.rawValue) runs the v1 agent; find and grep need a machine v2 agent", hint: "enroll the box as a machine v2 to search it")
+  }
+}
+
+/// A worker's WebSocket dial into main's API in process: the exec caller leg
+/// an exec tool call follows, served in the hub's caller scope.
+func inProcessDial(api: @escaping UpgradingHandler, hub: MachineHub) -> @Sendable (URL, [(String, String)]) async throws -> any FrameTransport {
+  { url, headers in
+    var request = Request(url: url)
+    for (name, value) in headers { request.headers[name] = value }
+    request.headers["connection"] = "Upgrade"
+    request.headers["upgrade"] = "websocket"
+    request.headers["sec-websocket-key"] = "dGhlIHNhbXBsZSBub25jZQ=="
+    request.headers["sec-websocket-version"] = "13"
+    switch try await api(request) {
+    case let .webSocket(serve):
+      let (server, client) = WebSocket.pair()
+      try hub.callerScope.run("worker-exec-caller") { await serve(server) }
+      return WebSocketTransport(client)
+    case let .response(response):
+      let body = try await response.data()
+      throw SpaceClient.DialRefusal(status: response.status.code, body: Array(body))
+    case .boundedWebSocket:
+      throw SpaceClient.DialRefusal(status: 422, body: Array(#"{"code":"unsupported","message":"exec requires a frame WebSocket transport"}"#.utf8))
+    }
   }
 }

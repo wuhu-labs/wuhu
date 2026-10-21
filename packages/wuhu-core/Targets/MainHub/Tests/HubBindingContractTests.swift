@@ -1,4 +1,3 @@
-import Credentials
 import Dependencies
 import DeterministicDependencies
 import ExecutionOwner
@@ -14,35 +13,6 @@ import SpaceCore
 import Testing
 
 @Suite(.deterministicDependencies) struct HubBindingContractTests {
-  @Test func preservesVerifiedCredentialAndOIDCIdentity() async throws {
-    let space = try Space.inMemory()
-    let expected = CredentialBinding(credential: .apiKey("fixture-key"), identityEpoch: "authoritative-epoch")
-    let audience = URL(string: "https://provider.example")!
-    let session = SessionID("forwarding-session")
-    let execution: any Main = Hub(
-      space: space, credentials: .bound { provider in
-        #expect(provider == "fixture")
-        return expected
-      }, inferenceToken: { requested, caller in
-        #expect(requested == audience && caller == session)
-        return "fixture-token"
-      }, inferenceBindingIdentity: { requested, caller in
-        #expect(requested == audience && caller == session)
-        return "stable-owner-identity"
-      },
-    )
-    let owner: any Main = execution
-    let forwarded = try #require(try await owner.providerCredentialBinding("fixture"))
-    #expect(forwarded.credential == expected.credential)
-    #expect(forwarded.identityEpoch == expected.identityEpoch)
-    #expect(forwarded.permitsOpaqueReplay == expected.permitsOpaqueReplay)
-    #expect(try await owner.providerCredentialBinding("fixture")?.credential == expected.credential)
-    #expect(try await owner.inferenceToken(audience: audience, session: session) == "fixture-token")
-    #expect(try await owner.inferenceBindingIdentity(audience: audience, session: session) == "stable-owner-identity")
-    let unavailable: any Main = Hub(space: space)
-    #expect(try await unavailable.inferenceBindingIdentity(audience: audience, session: session) == nil)
-  }
-
   @Test func commitsConditionalPortableHandoff() async throws {
     let space = try Space.inMemory()
     let id = try await space.sessions.createSession(group: .shared, title: "tool owner handoff", kind: .agent, createdBy: "fixture", model: .init(provider: "fixture", model: "model", effort: "high"))

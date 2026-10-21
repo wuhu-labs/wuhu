@@ -98,7 +98,7 @@ extension ToolExecutor {
   // Main's version token for `address`: a space file's journal revision, a
   // machine file's mtime or the opaque token its agent minted; the binary's
   // files have no revision, and journal 0 keeps the access log well-formed.
-  private func revision(_ token: String, at address: Address) throws(ToolProblem) -> FileRevision {
+  func revision(_ token: String, at address: Address) throws(ToolProblem) -> FileRevision {
     switch address {
     case .space:
       guard let rev = Int64(token) else { throw ToolProblem("main minted a non-revision token for \(address.rendered)") }

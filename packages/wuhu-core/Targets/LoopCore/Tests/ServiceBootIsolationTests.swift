@@ -1,5 +1,6 @@
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

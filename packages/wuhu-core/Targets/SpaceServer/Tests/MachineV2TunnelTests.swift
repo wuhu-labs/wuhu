@@ -29,7 +29,7 @@ import Testing
         guard case let .response(response) = result else { throw OperationError(.invalidResponse) }
         return response
       }
-      let add = try await http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "scratch-v2"))
+      let add = try await http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "scratch"))
       let output = try await add.body.json(MachineAddOutput.self)
       _ = try await http("/v1/enroll/consume", method: .post, input: ["token": output.token, "pubkey": key.pubkeyLabel])
       machine = try #require(try await space.machine(output.id))

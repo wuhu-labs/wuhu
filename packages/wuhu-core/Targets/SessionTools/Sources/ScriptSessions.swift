@@ -6,7 +6,6 @@ import struct MainHub.RequestArguments
 import struct MainHub.ScriptError
 import func MainHub.seconds
 import struct MainHub.SendMessageArguments
-import struct MainHub.SessionControl
 import struct MainHub.ToolProblem
 #if canImport(FoundationEssentials)
   import FoundationEssentials
@@ -139,13 +138,15 @@ struct ScriptSessions {
           guard case let .string(tag) = value else { throw ToolProblem("setTags: every tag is a string") }
           return tag
         }
-        try await tools.owner.setTags(session, of: SessionID(target), to: tags)
+        do {
+          let _: JSONValue = try await tools.client(session).api(.post, "/v1/session/\(pathSegment(target))/tags", body: .object(["tags": .array(tags.map(JSONValue.string))]))
+        } catch { throw scriptFailure(error) }
         return .null
       }
     })
     engine.define("__wuhu_session_control", promising: { [session, tools] arguments in
       try await scripted {
-        guard case let .string(raw)? = arguments[safe: 0], let verb = SessionControl.Verb(rawValue: raw),
+        guard case let .string(verb)? = arguments[safe: 0], ["archive", "unarchive", "interrupt", "resume"].contains(verb),
               case let .string(target)? = arguments[safe: 1]
         else {
           throw ToolProblem("\(verbName(arguments[safe: 0])) wants a session id")
@@ -156,7 +157,9 @@ struct ScriptSessions {
         case nil: force = false
         default: throw ToolProblem("archive: force must be a boolean")
         }
-        try await tools.owner.control(verb, session, of: SessionID(target), force: force)
+        do {
+          let _: JSONValue = try await tools.client(session).api(.post, "/v1/session/\(pathSegment(target))/\(verb)", body: verb == "archive" ? .object(["force": .bool(force)]) : nil)
+        } catch { throw scriptFailure(error) }
         return .null
       }
     })
@@ -209,6 +212,8 @@ private func scripted(_ body: () async throws -> JSONValue) async throws -> JSON
     return .object(["error": .string(incomplete.message), "code": .string(IncompleteSession.code), "id": .string(incomplete.id)])
   } catch is CancellationError {
     throw CancellationError()
+  } catch let failure as ScriptError {
+    throw failure
   } catch {
     throw ScriptError(renderedFailure(Wire.failure(error)))
   }

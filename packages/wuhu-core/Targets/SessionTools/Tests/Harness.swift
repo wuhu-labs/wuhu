@@ -1,10 +1,13 @@
 import Clocks
 import ControlledTime
+import struct Credentials.CredentialResolver
+import struct Credentials.SpaceSecretStores
 import Dependencies
 import Fetch
 import FileSearch
 import Foundation
 import JSONValue
+import struct LoopCore.SessionExecution
 import MachineChannel
 import struct MachineContract.Ack
 import struct MachineContract.Base64Data
@@ -18,7 +21,6 @@ import struct MachineContract.MachineID
 import enum MachineContract.VFSDefaults
 import enum MachineContract.VFSOp
 import enum MachineContract.VFSResult
-import struct MainHub.ExecBackend
 import class MainHub.Hub
 import protocol MainHub.Worker
 import Serve
@@ -163,7 +165,7 @@ struct ToolWorld {
     self.session = session
   }
 
-  init(worker: any Worker, session: SessionID) {
+  init(worker: SessionExecution, session: SessionID) {
     execute = { try await worker.execute(session: $0, call: $1, state: $2) }
     self.session = session
   }
@@ -387,23 +389,6 @@ final class ScriptedExecMachine: Sendable {
     (fresh, freshContinuation) = AsyncStream.makeStream()
   }
 
-  func backend(_ space: Space) -> ExecBackend {
-    self.space.withLock { $0 = space }
-    return ExecBackend(
-      connect: { [self] id in
-        dial(id)
-      },
-      status: { id in try await space.execRecord(id) },
-      mintScript: { machine, session, script in
-        try await space.mintScriptExec(machine: machine, session: session.rawValue, script: script)
-      },
-      kill: { [kills] id in
-        kills.withLock { $0.append(id) }
-        try? await space.finishExec(id, .cancelled)
-      },
-    )
-  }
-
   func dial(_ id: ExecID) -> any FrameTransport {
     let (caller, machineSide) = InMemoryTransport.pair()
     links.withLock { $0[id] = machineSide }
@@ -411,7 +396,11 @@ final class ScriptedExecMachine: Sendable {
     return TerminalAckTransport(base: caller, observe: onTerminalAck)
   }
 
-  func executor(owner: MainHub.Hub, jobs: ExecJobs = ExecJobs(), reachable: Bool = true) -> ToolExecutor {
+  func executor(
+    owner: MainHub.Hub, jobs: ExecJobs = ExecJobs(), reachable: Bool = true, scripts: Scripts? = nil,
+    access: InferenceAccess = InferenceAccess(), origin: String? = nil, contentHostPattern: String? = nil,
+    secrets: SpaceSecretStores? = nil, identity: IdentityController? = nil,
+  ) -> ToolExecutor {
     let space = owner.space
     self.space.withLock { $0 = space }
     let tokens = ExecTokens(spaceURL: "http://main")
@@ -419,9 +408,12 @@ final class ScriptedExecMachine: Sendable {
     let executor = ToolExecutor(owner: owner, main: connection, credential: {
       guard reachable else { throw MainUnavailable() }
       return tokens.sessionToken($0)
-    }, execJobs: jobs)
+    }, access: access, scripts: scripts, execJobs: jobs)
+    let workers = WorkerRegistry(tokens: tokens)
+    workers.announce(workers.mint().id, endpoint: ToolOnlyWorker())
     let fallback = FetchClient.inProcess(SessionRuntime.bindMain(
-      owner: owner, worker: ToolOnlyWorker(executor: executor), tokens: tokens, connection: connection,
+      owner: owner, workers: workers, tokens: tokens, connection: connection,
+      origin: origin, contentHostPattern: contentHostPattern, credentials: access.credentials, secrets: secrets, identity: identity,
     ))
     connection.bind(FetchClient { [self] request in
       guard request.url.path == "/v1/exec" || request.url.path.hasPrefix("/v1/exec/") else { return try await fallback(request) }
@@ -430,6 +422,10 @@ final class ScriptedExecMachine: Sendable {
       if request.url.path == "/v1/exec" {
         if request.method == .post {
           let input = try await request.json(ExecMintInput.self)
+          if let script = input.script {
+            let record = try await space.mintScriptExec(machine: input.machine, session: session.rawValue, script: script)
+            return try Response.json(ExecMintOutput(id: record.id))
+          }
           let callID = try #require(request.headers["wuhu-tool-call"])
           let claim = try await space.claimExec(machine: input.machine, caller: session.rawValue, toolCallID: .init(callID), spec: input.spec?.jsonString())
           return try Response.json(ExecMintOutput(id: claim.record.id))

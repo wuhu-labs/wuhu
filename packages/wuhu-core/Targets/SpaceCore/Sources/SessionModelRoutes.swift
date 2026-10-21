@@ -4,34 +4,6 @@ import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let sessionModelRouteSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "session_model_routes" (
-  "session_id" TEXT NOT NULL PRIMARY KEY REFERENCES "sessions" ("id") ON DELETE CASCADE,
-  "grp" TEXT NOT NULL,
-  "group_id" TEXT,
-  "member_id" TEXT,
-  "provider" TEXT NOT NULL,
-  "model" TEXT NOT NULL,
-  "route_epoch" TEXT NOT NULL,
-  "phase" TEXT NOT NULL,
-  "payload" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "session_model_route_history" (
-  "decision_id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  "session_id" TEXT NOT NULL REFERENCES "sessions" ("id") ON DELETE CASCADE,
-  "route_epoch" TEXT NOT NULL,
-  "grp" TEXT NOT NULL,
-  "group_id" TEXT,
-  "member_id" TEXT,
-  "provider" TEXT NOT NULL,
-  "model" TEXT NOT NULL,
-  "reason" TEXT NOT NULL,
-  "placed_at" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  UNIQUE ("session_id", "route_epoch")
-);
-"""
-
 @Table("session_model_routes")
 struct SessionModelRouteRow {
   @Column("session_id", primaryKey: true) var sessionID: String

@@ -86,8 +86,8 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let identity = Mutex("old-account")
         let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { _ in .init(credential: .apiKey("fake"), identityEpoch: identity.withLock { $0 }) })
         let id = try await harness.createSession(provider: provider, model: modelName)
-        let owner = Hub(space: harness.space, credentials: harness.credentials)
-        let initialCatalog = try await groupCatalog(owner: owner)()
+        let owner = Hub(space: harness.space)
+        let initialCatalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
         guard case let .kernel(specifier) = try await owner.record(id).executor else { Issue.record("expected kernel"); return }
         let held = try await owner.append(id, .modelRouteEstablished(.init(group: nil, member: nil, specifier: specifier, bindingFingerprint: initialCatalog.document.providers[provider]!.routeFingerprint, epoch: UUID().uuidString, reason: .create, placedAt: Date(), evidence: []))).value(SessionModelRoute.self)
         let old = try await initialCatalog.resolve(held.specifier, session: id, routeEpoch: held.epoch)
@@ -98,14 +98,15 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
           let (entry, _) = try await fs.read("/models.json")
           _ = try await fs.write("/models.json", Data(models.replacingOccurrences(of: "localhost:1", with: "localhost:2").utf8), ifMatch: entry)
         }
-        let catalog = try await groupCatalog(owner: owner)()
+        let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
         let resolved = try await catalog.resolve(held.specifier, session: id, routeEpoch: held.epoch)
         let target = ReplayBinding(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch)
         var source = try await harness.store.transcript(id)
         let items = thinkingHistory(binding: oldBinding, scope: oldBinding?.identity, signed: boundary != .compaction)
         source.items += items
-        try await harness.store.append(id, items: items, transcript: source)
-        let infer = kernelInference(owner: owner, catalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
+        let access = InferenceAccess(credentials: harness.credentials)
+        let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var adopted: Transcript
         if boundary == .compaction {
           adopted = try await owner.append(id, .compacted(closing: nil, head: .init(id: UUID(), timestamp: Date(), summary: "ordinary compaction", snapshot: .init(), replayBinding: target, runningWork: []), kept: 0 ..< source.items.count, completing: nil, transition: nil)).value(Transcript.self)
@@ -164,7 +165,7 @@ extension PortableThinkingTests {
         var source = try await harness.store.transcript(id)
         let items = thinkingHistory(binding: .init(identity: resolved.bindingIdentity, epoch: resolved.routeEpoch), scope: resolved.replayScope)
         source.items += items
-        try await harness.store.append(id, items: items, transcript: source)
+        try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
         harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
         harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
@@ -184,11 +185,12 @@ extension PortableThinkingTests {
         } else {
           let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "compacted", snapshot: .init(), runningWork: [])
           let compacted = source.compacted(head: head, kept: 0 ..< source.items.count)
-          let transition = try #require(await compactionPlacement(owner: owner, catalog: { catalog }, usage: harness.runtime.usage)(id, compacted, nil))
+          let transition = try #require(await compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)(id, compacted, nil))
           _ = try await owner.append(id, .compacted(closing: nil, head: head, kept: 0 ..< source.items.count, completing: nil, transition: transition)).value(Transcript.self)
         }
         #expect(try await owner.modelRoute(id)?.member == "b")
-        let infer = kernelInference(owner: owner, catalog: { catalog }, groupCatalog: { catalog }, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
+        let access = InferenceAccess(credentials: harness.credentials)
+        let infer = kernelInference(owner: owner, executor: SessionRuntime.toolExecutor(owner: owner, access: access), access: access, sockets: .init(), attempts: .init(), usage: harness.runtime.usage)
         var adopted = try await harness.store.transcript(id)
         _ = try await infer(.init(sessionID: id, attemptID: UUID(), transcript: adopted, mode: .normal))
         #expect(bodies.withLock { $0.last?.object?["thinking"] } == nil)

@@ -14,8 +14,6 @@ import struct MachineContract.MachineID
 import class MainHub.Hub
 import func MainHub.resolveScriptModule
 import struct MainHub.ScriptError
-import struct MainHub.ScriptMachineAccess
-import struct MainHub.SessionControl
 import OrderedCollections
 import Scratch
 import SessionDomain
@@ -874,7 +872,6 @@ func withRig(
   resolveModelExecutor: (@Sendable (String, String, String?) async throws -> SessionExecutor)? = nil,
   resolveModelGroup: (@Sendable (String, String?) async throws -> SessionExecutor)? = nil,
   prepareModelRoute: (@Sendable (SessionExecutor, ModelPlacementReason) async throws -> SessionModelRoute?)? = nil,
-  control: SessionControl? = nil,
   group: GroupID = .shared,
   task: Bool = false,
   childAgent: Bool = false,
@@ -903,20 +900,28 @@ func withRig(
       defer { try? FileManager.default.removeItem(at: folder) }
       let stores = SpaceSecretStores(configDirectory: folder, spaceID: "spc_test")
       try await prepare(space, session)
-      let access = world.map { ScriptMachineAccess(files: $0.files.seam, exec: $0.execs.backend(space)) }
-      let main = Hub(space: space, credentials: credentials, secrets: stores, machines: machines, scriptMachines: access, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute, control: control)
+      let main = Hub(space: space, secrets: stores, machines: machines ?? world?.files.seam, resolveModelExecutor: resolveModelExecutor, resolveModelGroup: resolveModelGroup, prepareModelRoute: prepareModelRoute)
       let scripts = Scripts(owner: main)
-      let executor = SessionRuntime.toolExecutor(
-        owner: main, scripts: scripts, credentials: credentials,
-        origin: contentHost.map { _ in "https://space.test" }, contentHostPattern: contentHost, secrets: stores, identity: identity,
-      )
+      let origin = contentHost.map { _ in "https://space.test" }
+      // With a machine world, the executor's main answers `/v1/exec*` from the scripted machine.
+      let executor = if let world {
+        world.execs.executor(
+          owner: main, scripts: scripts, access: .init(credentials: credentials),
+          origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
+        )
+      } else {
+        SessionRuntime.toolExecutor(
+          owner: main, scripts: scripts, access: .init(credentials: credentials),
+          origin: origin, contentHostPattern: contentHost, secrets: stores, identity: identity,
+        )
+      }
       let rig = try ScriptRig(
         space: space, main: main, scripts: scripts, stores: stores, group: group, session: session, time: time, executor: executor,
       )
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
           await main.announceScriptRestart()
-          await scripts.run()
+          await whenCancelled { await scripts.close() }
         }
         if let world {
           group.addTask { await world.execs.pump() }

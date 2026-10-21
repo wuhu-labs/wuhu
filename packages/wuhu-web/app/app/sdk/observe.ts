@@ -96,6 +96,8 @@ export interface StoreConfig<Data, Event> {
   cache?: ViewerCache | null
   network?: Network
   saveDelayMs?: number
+  onEvent?(event: Event): void
+  onOpen?(): void
 }
 
 const defaultBackoff: readonly number[] = [250, 500, 1000, 2000, 4000, 8000]
@@ -223,6 +225,7 @@ export function observeStore<Data, Event>(
       cancelOpenDeadline = null
       attempt = 0
       setLiveness('live')
+      config.onOpen?.()
       armStaleDeadline()
     })
     opened.onActivity(armStaleDeadline)
@@ -231,6 +234,7 @@ export function observeStore<Data, Event>(
       const event = JSON.parse(raw) as Event
       if (!apply(event)) return
       remember(event)
+      config.onEvent?.(event)
       emit()
     })
     opened.onError((status) => {

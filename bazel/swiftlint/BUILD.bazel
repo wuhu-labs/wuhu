@@ -5,9 +5,16 @@ exports_files(["ExtraRules.swift"])
 
 swiftlint_test(
     name = "violations_test",
-    srcs = glob(["testdata/Sources/*.swift"]),
+    srcs = ["testdata/Sources/Violations.swift"],
     expected_violations = [
         "duplicate_conditions",
+        "no_nslock",
+        "no_jsonserialization",
+        "no_task_sleep",
+        "no_combine_import",
+        "no_unchecked_sendable",
+        "no_observable_object",
+        "superfluous_disable_command",
         "testable_import_outside_tests",
     ],
 )
@@ -15,4 +22,51 @@ swiftlint_test(
 swiftlint_test(
     name = "test_sources_test",
     srcs = glob(["testdata/Tests/*.swift"]),
+)
+
+swiftlint_test(
+    name = "allowed_sources_test",
+    srcs = ["testdata/Sources/Allowed.swift"],
+)
+
+swiftlint_test(
+    name = "missing_reason_test",
+    srcs = ["testdata/Sources/MissingReason.swift"],
+    expected_violations = ["ban_disable_requires_reason"],
+)
+
+swiftlint_test(
+    name = "blanket_disable_test",
+    srcs = ["testdata/Sources/BlanketDisable.swift"],
+    expected_violations = ["blanket_disable_command"],
+)
+
+swiftlint_test(
+    name = "disable_all_test",
+    srcs = ["testdata/Sources/DisableAll.swift"],
+    expected_violations = ["blanket_disable_command"],
+)
+
+swiftlint_test(
+    name = "thisdisable_test",
+    srcs = ["testdata/Sources/ThisDisable.swift"],
+    expected_violations = ["ban_disable_requires_reason"],
+)
+
+swiftlint_test(
+    name = "previousdisable_test",
+    srcs = ["testdata/Sources/PreviousDisable.swift"],
+    expected_violations = ["ban_disable_requires_reason"],
+)
+
+swiftlint_test(
+    name = "multipledisable_test",
+    srcs = ["testdata/Sources/MultipleDisable.swift"],
+    expected_violations = ["ban_disable_requires_reason"],
+)
+
+swiftlint_test(
+    name = "paireddisable_test",
+    srcs = ["testdata/Sources/PairedDisable.swift"],
+    expected_violations = ["ban_disable_requires_reason"],
 )

@@ -10,6 +10,7 @@ import JSONValue
 import OrderedCollections
 import QuickJSKit
 import SessionDomain
+import SpaceClient
 import SpaceCore
 import WuhuAI
 
@@ -110,17 +111,14 @@ struct CompletionRequest {
 
 extension ToolExecutor {
   func complete(_ session: SessionID, _ request: CompletionRequest) async throws -> String {
-    try await owner.refuseUnlessLive(session)
     let catalog: ProviderCatalog
     do {
-      if let completionCatalog { catalog = try await completionCatalog() }
-      else {
-        let bytes = try await owner.capabilityDocument(ModelsDocument.spacePath)
-        let groups = try await owner.capabilityDocument(ModelsDocument.groupPath)
-        catalog = ProviderCatalog(document: try ModelsDocument(json: bytes ?? Data(), groupsJSON: groups), credentials: credentials)
-      }
+      catalog = try await self.catalog(session, includeGroups: true)
     } catch is CancellationError {
       throw CancellationError()
+    } catch let refused as SpaceClient.TransportFailure where refused.errorCode == .forbidden {
+      // Main refuses an archived session every call; this is its first.
+      throw CompletionError(code: .invalidArgument, message: refused.message)
     } catch {
       throw CompletionError(code: .providerNotConfigured, message: "The /models.json catalog is missing, unreadable or malformed.")
     }
@@ -204,7 +202,7 @@ extension ToolExecutor {
       durationMs: started.duration(to: clock.now).completionMilliseconds,
       usage: usage,
     )
-    try await owner.recordCompletion(metric)
+    try await report(metric)
     if let failure {
       if case .cancelled = failure { throw CancellationError() }
       throw CompletionError(code: .inferenceFailed, message: "The requested model's inference failed; no fallback was attempted.")

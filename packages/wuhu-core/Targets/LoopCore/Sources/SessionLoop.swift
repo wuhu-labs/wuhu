@@ -1,5 +1,6 @@
 import Dependencies
 import enum Fetch.TransportFailureKind
+import func MainHub.deadlineSleep
 import ServerTelemetry
 import TaskLifetime
 #if canImport(FoundationEssentials)
@@ -262,9 +263,11 @@ extension SessionActor {
       call: toolCall,
       state: (try live).transcript.environment.tools,
     )
+    inFlightTool = invocation
     let result = await runLongRunningTask { [loopConfig] in
       try await loopConfig.executeTool(invocation)
     }
+    inFlightTool = nil
 
     let callID = ToolCallID(toolCall.id)
     switch result {
@@ -274,6 +277,8 @@ extension SessionActor {
       return .completed(outcome.payload)
     case .failure(is CancellationError):
       guard !Task.isCancelled else { return .cancelled }
+      // Released by a hand-off: the call stays pending for the next worker.
+      if (try live).revoking { return .cancelled }
       if case .interrupting = (try live).sessionStatus {
         await loopConfig.killInterruptedTool(invocation)
         try await writeToolResult(.toolCall(callID), .failure(.init(message: interruptedToolMessage)))
@@ -422,7 +427,7 @@ extension SessionActor {
         if mode == .normal, entry.toolCalls.isEmpty, let nag = appended.environment.nag(task: (try live).isTask, now: now) {
           appended.append(.notification(nag.notification(id: uuid(), at: now)))
         }
-        try await main.append(id, .transcriptAppended(items: Array(appended.items[before...]), transcript: appended, completing: compactClaim)).value(Void.self)
+        try await main.append(id, .transcriptAppended(items: Array(appended.items[before...]), inputOrigin: appended.cacheWarmingInputOrigin, completing: compactClaim)).value(Void.self)
         try modify {
           $0.transcript = appended
           if compactClaim != nil { $0.compactRequestClaim = nil }
@@ -666,7 +671,7 @@ extension SessionActor {
   private func appended(_ items: [TranscriptItem]) async throws {
     var appended = (try live).transcript
     for item in items { appended.append(item) }
-    try await main.append(id, .transcriptAppended(items: items, transcript: appended, completing: nil)).value(Void.self)
+    try await main.append(id, .transcriptAppended(items: items, inputOrigin: appended.cacheWarmingInputOrigin, completing: nil)).value(Void.self)
     try modify { $0.transcript = appended }
   }
 }

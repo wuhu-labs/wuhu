@@ -5,33 +5,6 @@ import SessionDomain
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let deviceSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "devices" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "pubkey" TEXT NOT NULL UNIQUE,
-  "installation" TEXT NOT NULL,
-  "kind" TEXT NOT NULL CHECK ("kind" IN ('phone', 'pad', 'mac', 'vision', 'web')),
-  "name" TEXT NOT NULL,
-  "machine_id" TEXT REFERENCES "machines" ("id"),
-  "created_at" TEXT NOT NULL,
-  "last_seen_at" TEXT NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "devices_by_installation" ON "devices" ("account_id", "installation");
-CREATE TABLE IF NOT EXISTS "device_commands" (
-  "n" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "device_id" TEXT NOT NULL REFERENCES "devices" ("id"),
-  "payload" TEXT NOT NULL,
-  "issued_by" TEXT NOT NULL,
-  "created_at" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "device_commands_by_device" ON "device_commands" ("device_id", "n");
-CREATE TABLE IF NOT EXISTS "message_devices" (
-  "message_id" TEXT NOT NULL PRIMARY KEY,
-  "device_id" TEXT NOT NULL REFERENCES "devices" ("id")
-);
-"""
-
 @Table("devices")
 struct DeviceRow {
   @Column("id", primaryKey: true) var id: String

@@ -439,7 +439,7 @@ import Testing
     _ = try await withDependencies {
       $0.continuousClock = ImmediateClock()
     } operation: {
-      try await ExecSession(client: client, start: start).run(input: nil) { _, _ in }
+      try await ExecSession(client: client, start: start).run(input: .closed) { _, _ in }
     }
     #expect(await fetched.requests.first?.headers["wuhu-group"] == "alice")
     #expect(await observed.requests.first?.headers["wuhu-group"] == "alice")

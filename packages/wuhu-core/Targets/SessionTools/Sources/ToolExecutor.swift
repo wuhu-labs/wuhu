@@ -1,4 +1,3 @@
-import struct Credentials.CredentialResolver
 import struct MainHub.CancelArguments
 import struct MainHub.CreateSessionArguments
 import struct MainHub.ExecArguments
@@ -21,7 +20,6 @@ import struct MainHub.ToolProblem
 #endif
 import Fetch
 import struct InferenceKit.CapabilityError
-import struct InferenceKit.ProviderCatalog
 import JSONValue
 import struct MachineContract.ExecID
 import struct MachineContract.MachineID
@@ -38,8 +36,8 @@ public struct ToolExecutor: Sendable {
   let owner: any Main
   let main: MainConnection
   let credential: @Sendable (SessionID) async throws -> String
-  let credentials: CredentialResolver
-  let completionCatalog: (@Sendable () async throws -> ProviderCatalog)?
+  /// What the worker brings to the inferences it runs itself (the loop's and scripts' `complete()`).
+  let access: InferenceAccess
   let execJobs: ExecJobs
   let scripts: Scripts?
 
@@ -49,16 +47,14 @@ public struct ToolExecutor: Sendable {
     owner: any Main,
     main: MainConnection,
     credential: @escaping @Sendable (SessionID) async throws -> String,
-    credentials: CredentialResolver = .unavailable,
-    completionCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+    access: InferenceAccess = InferenceAccess(),
     scripts: Scripts? = nil,
     execJobs: ExecJobs = ExecJobs(),
   ) {
     self.owner = owner
     self.main = main
     self.credential = credential
-    self.credentials = credentials
-    self.completionCatalog = completionCatalog
+    self.access = access
     self.execJobs = execJobs
     self.scripts = scripts
   }

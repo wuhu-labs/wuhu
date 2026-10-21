@@ -7,6 +7,7 @@ import Logging
 @testable import LoopCore
 import class MainHub.Hub
 import protocol MainHub.Main
+import class MainHub.SessionService
 import SessionDomain
 import SessionTools
 import SpaceCore
@@ -320,7 +321,7 @@ extension SessionService {
       await slot.withLock { $0.value }?.scheduleWake(id, at: due)
     }
     let worker = await SessionExecution(main: main, loopConfig: config)
-    self.init(sessions: sessions, worker: worker, archiveGrace: .seconds(24 * 3600), runningWork: loopConfig.runningWork, beforeArchive: beforeArchive, log: log)
+    self.init(sessions: sessions, worker: worker, archiveGrace: .seconds(24 * 3600), beforeArchive: beforeArchive, log: log)
     slot.withLock { $0.value = self }
   }
 }

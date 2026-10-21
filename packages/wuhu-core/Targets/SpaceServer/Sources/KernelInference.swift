@@ -7,6 +7,7 @@ import SessionTools
   import Foundation
 #endif
 import InferenceKit
+import Logging
 import LoopCore
 import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.ReplayBinding
@@ -18,8 +19,8 @@ import WuhuAI
 
 func kernelInference(
   owner: any Main,
-  catalog: @escaping @Sendable () async throws -> ProviderCatalog,
-  groupCatalog: (@Sendable () async throws -> ProviderCatalog)? = nil,
+  executor: ToolExecutor,
+  access: InferenceAccess,
   sockets: ResponsesSocketRegistry,
   attempts: AttemptHub,
   usage: UsageBoard,
@@ -27,7 +28,10 @@ func kernelInference(
   committedWarming: @escaping @Sendable (SessionID, CacheWarmingPolicy) async -> Void = { _, _ in },
 ) -> @Sendable (InferenceRequest) async throws -> InferenceReply {
   @Dependency(\.date) var date
-  let metrics = InferenceMetricsSink { await owner.recordMetric($0) }
+  let metrics = InferenceMetricsSink { metric in
+    do { try await executor.report(metric) }
+    catch { Logger(label: "wuhu.inference").error("inference report failed", metadata: ["session": "\(metric.session.rawValue)", "error": "\(error)"]) }
+  }
   return { request in
     let record: SessionRecord
     let resolved: ResolvedModel
@@ -35,11 +39,10 @@ func kernelInference(
     var routingCatalog: ProviderCatalog?
     do {
       record = try await owner.record(request.sessionID)
-      let selectedCatalog: ProviderCatalog
-      if case .modelGroup = record.executor, let groupCatalog {
-        selectedCatalog = try await groupCatalog()
-      } else {
-        selectedCatalog = try await catalog()
+      var includeGroups = false
+      if case .modelGroup = record.executor { includeGroups = true }
+      let selectedCatalog = try await executor.catalog(request.sessionID, includeGroups: includeGroups) { providerID, headers in
+        usage.record(providerID, plan: headers["x-codex-plan-type"], windows: codexUsage(headers: headers), at: date.now)
       }
       routingCatalog = selectedCatalog
       let model: ModelSpecifier
@@ -99,11 +102,11 @@ func kernelInference(
       let inferenceExecutor = InferenceExecutor(
         session: request.sessionID,
         model: resolved,
-        systemPrompt: try await systemPrompt(owner: owner, record: record),
+        systemPrompt: try await systemPrompt(executor: executor, record: record),
         tools: SessionToolExecutor.kernel.tools,
         compactToolName: KernelToolset.compactToolName,
         hub: attempts,
-        trace: owner.tracesAttempts ? AttemptTraceClient(open: { try await owner.openAttemptTrace($0) }) : nil,
+        trace: access.trace,
         metrics: metrics,
         webSocket: lease?.session,
         receiveQuota: { event in
@@ -112,7 +115,7 @@ func kernelInference(
             usage.record(resolved.specifier.provider, plan: parsed.plan, windows: parsed.windows, at: date.now)
           }
         },
-        mediaResolver: { [group = record.group] in OwnerMediaResolver(owner: owner, limits: $0, group: group) },
+        mediaResolver: { executor.mediaResolver(request.sessionID, limits: $0) },
       )
       let completed = try await inferenceExecutor.run(
         attemptID: request.attemptID,

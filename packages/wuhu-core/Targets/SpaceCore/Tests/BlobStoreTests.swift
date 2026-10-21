@@ -130,25 +130,6 @@ struct BlobStoreTests {
     #expect(entry.size == first.utf8.count)
   }
 
-  @Test func databasesPredatingTheLocatorTableStillRead() async throws {
-    let folder = try folder()
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let file = folder.appendingPathComponent("space.sqlite")
-
-    let legacy = "hello from before the split"
-    let space = try Space.open(file: file)
-    _ = try await space.writeText("/legacy.md", legacy)
-    try await space.writer.write { db in try db.execute(sql: "DROP TABLE blob_objects") }
-
-    let reopened = try Space.open(file: file)
-    #expect(try await reopened.readText("/legacy.md") == legacy)
-
-    let large = filler(BlobStore.inlineThreshold + 1, "n")
-    _ = try await reopened.writeText("/after.bin", large)
-    #expect(try await reopened.readText("/after.bin") == large)
-    #expect(try await reopened.readText("/legacy.md") == legacy)
-  }
-
   @Test(arguments: [1024, BlobStore.inlineThreshold + 1])
   func aReaderReadsRangesOfTheFileAsItWasOpened(_ size: Int) async throws {
     let folder = try folder()

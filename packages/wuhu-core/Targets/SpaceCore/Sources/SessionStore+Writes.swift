@@ -165,22 +165,30 @@ extension SessionStore {
   // `transcript` is the caller's state with `items` already appended: the work
   // flag is derived from the whole generation, and reading it back here would
   // decode every payload in the session under the space's one write lock.
-  public func append(_ id: SessionID, items: [TranscriptItem], transcript: Transcript, completingCompactRequest: CompactRequestClaim? = nil) async throws {
+  /// `items` go after the generation's tail; `inputOrigin` is the appended
+  /// transcript's `cacheWarmingInputOrigin`, the one thing of it the store
+  /// keeps. The same append again (a worker's retry) records nothing.
+  public func append(_ id: SessionID, items: [TranscriptItem], inputOrigin: Bool?, completingCompactRequest: CompactRequestClaim? = nil) async throws {
     guard !items.isEmpty else { return }
-    precondition(
-      transcript.items.suffix(items.count).map(\.id) == items.map(\.id),
-      "append takes the transcript that already carries those items",
-    )
     let key = id.rawValue
     let now = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
+      // The same append again (a worker retrying what it could not see
+      // commit) is the first one: its first item is already held, nothing
+      // new. An append that repeats an item among new ones is a bug and
+      // still fails on the content key.
+      let known = try Int.fetchOne(
+        db, sql: "SELECT count(*) FROM session_contents WHERE session_id = ? AND id = ?",
+        arguments: [key, items[0].id.uuidString.lowercased()],
+      ) ?? 0
+      if known > 0 { return }
       let runtime = try Sessions.runtime(key, in: db)
       try Sessions.completeCompactRequest(completingCompactRequest, key: key, generation: runtime.generation, in: db)
       try Sessions.append(key, generation: runtime.generation, items: items, in: db)
       if items.contains(where: { if case .assistant = $0 { true } else { false } }) {
-        try CacheWarmingRow.recordInference(key, origin: transcript.cacheWarmingInputOrigin, now: dateGen.now, in: db)
+        try CacheWarmingRow.recordInference(key, origin: inputOrigin, now: dateGen.now, in: db)
       }
-      try Sessions.refreshWork(key, transcript: transcript, now: now, in: db)
+      try Sessions.refreshWork(key, transcript: try Sessions.transcript(key, in: db), now: now, in: db)
     }
   }
 

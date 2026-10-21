@@ -244,7 +244,7 @@ private struct Rig {
     let hub = MachineHub(space: space)
     await hub.configureV2(first)
     let running = Task { try await first.run() }
-    let transport = try await execBackend(space: space, hub: hub).connect(minted.id)
+    let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
     let attached = leg(transport)
     let caller = Task { await endpoint.run(attached) }
     #expect(try await eventually { try await ready(first) })
@@ -299,7 +299,7 @@ private struct Rig {
       tasks.addTask { await rig.agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let transport = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       let following = events.follow(outgoing)
       defer { caller.cancel(); following.cancel() }
@@ -360,7 +360,7 @@ private struct Rig {
       let finished = try await rig.space.mintExec(machine: rig.machine.id, group: .shared)
       let endpoint = ChannelEndpoint()
       let outgoing = await endpoint.startExec(.init(id: finished.id, cwd: "/tmp", command: ["exit", "out"], timeout: 30))
-      let transport = try await execBackend(space: rig.space, hub: hub).connect(finished.id)
+      let transport = try await connectExecCaller(finished.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
       var status: MachineContract.ExitStatus?
@@ -403,7 +403,7 @@ private struct Rig {
       tasks.addTask { await rig.agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let transport = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
       #expect(try await eventually { await rig.agent.operations.values.contains { $0.verdict != nil } })
@@ -436,7 +436,7 @@ private struct Rig {
         tasks.addTask { await rig.agent.run() }
         tasks.addTask { try await withDependencies { $0.continuousClock = clock } operation: { try await service.run() } }
         defer { tasks.cancelAll(); rig.side.release() }
-        let transport = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+        let transport = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
         let caller = Task { await endpoint.run(transport) }
         defer { caller.cancel() }
         let events = Events()
@@ -478,7 +478,7 @@ private struct Rig {
       let firstHub = MachineHub(space: rig.space)
       await firstHub.configureV2(first)
       let running = Task { try await first.run() }
-      let firstLeg = try await execBackend(space: rig.space, hub: firstHub).connect(minted.id)
+      let firstLeg = try await connectExecCaller(minted.id, space: rig.space, hub: firstHub)
       let firstCaller = Task { await endpoint.run(firstLeg) }
       #expect(try await eventually { events.stdout == "before" })
       await first.shutdown()
@@ -492,7 +492,7 @@ private struct Rig {
       let secondHub = MachineHub(space: rig.space)
       await secondHub.configureV2(second)
       tasks.addTask { try await second.run() }
-      let secondLeg = try await execBackend(space: rig.space, hub: secondHub).connect(minted.id)
+      let secondLeg = try await connectExecCaller(minted.id, space: rig.space, hub: secondHub)
       let secondCaller = Task { await endpoint.run(secondLeg) }
       defer { secondCaller.cancel() }
       _ = await following.value
@@ -577,7 +577,7 @@ private struct Rig {
       let firstHub = MachineHub(space: rig.space)
       await firstHub.configureV2(first)
       let running = Task { try await first.run() }
-      let firstLeg = try await execBackend(space: rig.space, hub: firstHub).connect(minted.id)
+      let firstLeg = try await connectExecCaller(minted.id, space: rig.space, hub: firstHub)
       let firstCaller = Task { await endpoint.run(firstLeg) }
       await events.firstStdout.wait()
       await store.saving.wait()
@@ -600,7 +600,7 @@ private struct Rig {
       let secondHub = MachineHub(space: rig.space)
       await secondHub.configureV2(second)
       tasks.addTask { try await second.run() }
-      let secondLeg = try await execBackend(space: rig.space, hub: secondHub).connect(minted.id)
+      let secondLeg = try await connectExecCaller(minted.id, space: rig.space, hub: secondHub)
       let secondCaller = Task { await endpoint.run(secondLeg) }
       defer { secondCaller.cancel() }
       rig.side.release()
@@ -630,7 +630,7 @@ private struct Rig {
       let firstHub = MachineHub(space: rig.space)
       await firstHub.configureV2(first)
       let running = Task { try await first.run() }
-      let firstLeg = try await execBackend(space: rig.space, hub: firstHub).connect(minted.id)
+      let firstLeg = try await connectExecCaller(minted.id, space: rig.space, hub: firstHub)
       let losing = LosingOutput(firstLeg, retainingPrefix: 3)
       let firstCaller = Task { await endpoint.run(losing) }
       await events.firstStdout.wait()
@@ -648,7 +648,7 @@ private struct Rig {
       let secondHub = MachineHub(space: rig.space)
       await secondHub.configureV2(second)
       tasks.addTask { try await second.run() }
-      let secondLeg = try await execBackend(space: rig.space, hub: secondHub).connect(minted.id)
+      let secondLeg = try await connectExecCaller(minted.id, space: rig.space, hub: secondHub)
       let secondCaller = Task { await endpoint.run(secondLeg) }
       defer { secondCaller.cancel() }
       rig.side.release()
@@ -680,7 +680,7 @@ private struct Rig {
         let firstHub = MachineHub(space: rig.space)
         await firstHub.configureV2(first)
         let running = Task { try await first.run() }
-        let firstLeg = try await execBackend(space: rig.space, hub: firstHub).connect(minted.id)
+        let firstLeg = try await connectExecCaller(minted.id, space: rig.space, hub: firstHub)
         let firstCaller = Task { await endpoint.run(firstLeg) }
         #expect(try await eventually { events.stdout == "x" })
         await first.shutdown()
@@ -695,7 +695,7 @@ private struct Rig {
         await secondHub.configureV2(second)
         tasks.addTask { try await second.run() }
         #expect(try await eventually(5) { rig.side.reasons.withLock { $0 } == ["timeout"] })
-        let secondLeg = try await execBackend(space: rig.space, hub: secondHub).connect(minted.id)
+        let secondLeg = try await connectExecCaller(minted.id, space: rig.space, hub: secondHub)
         let secondCaller = Task { await endpoint.run(secondLeg) }
         defer { secondCaller.cancel() }
         #expect(try await eventually(20) { events.status != nil })
@@ -724,7 +724,7 @@ private struct Rig {
       let firstHub = MachineHub(space: rig.space)
       await firstHub.configureV2(first)
       let running = Task { try await first.run() }
-      let firstLeg = try await execBackend(space: rig.space, hub: firstHub).connect(minted.id)
+      let firstLeg = try await connectExecCaller(minted.id, space: rig.space, hub: firstHub)
       let firstCaller = Task { await endpoint.run(firstLeg) }
       #expect(try await eventually { events.stdout == "before" })
       await first.shutdown()
@@ -743,7 +743,7 @@ private struct Rig {
       tasks.addTask { try await second.run() }
       #expect(try await eventually { await second.recovered(.shared) })
       rig.side.release()
-      let secondLeg = try await execBackend(space: rig.space, hub: secondHub).connect(minted.id)
+      let secondLeg = try await connectExecCaller(minted.id, space: rig.space, hub: secondHub)
       let secondCaller = Task { await endpoint.run(secondLeg) }
       defer { secondCaller.cancel() }
       _ = await following.value
@@ -803,14 +803,13 @@ extension MachineV2ExecLifecycleTests {
       tasks.addTask { try await Tunnel.serve(over: link.first, limits: .init(streams: streams), handler: agent.handler) }
       defer { tasks.cancelAll(); side.release() }
       #expect(try await eventually { await tunnelHub.streams(machine.id.rawValue) == streams })
-      let backend = execBackend(space: space, hub: hub)
       var execs: [(endpoint: ChannelEndpoint, events: Events, follow: Task<Void, Never>, caller: Task<Void, Never>)] = []
       for index in 0 ..< count {
         let minted = try await space.mintExec(machine: machine.id, group: .shared)
         let endpoint = ChannelEndpoint()
         let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["gate", "a\(index)", "b\(index)"], timeout: 60))
         let events = Events()
-        let transport = try await backend.connect(minted.id)
+        let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
         execs.append((endpoint, events, events.follow(outgoing), Task { await endpoint.run(transport) }))
       }
       defer { for exec in execs { exec.caller.cancel(); exec.follow.cancel() } }
@@ -859,7 +858,7 @@ extension MachineV2ExecLifecycleTests {
       let hub = MachineHub(space: rig.space)
       await hub.configureV2(second)
       tasks.addTask { try await second.run() }
-      let leg = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+      let leg = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(leg) }
       defer { caller.cancel() }
       rig.side.release()
@@ -894,7 +893,7 @@ extension MachineV2ExecLifecycleTests {
         let hub = MachineHub(space: rig.space)
         await hub.configureV2(second)
         tasks.addTask { try await second.run() }
-        let leg = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+        let leg = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
         let caller = Task { await endpoint.run(leg) }
         defer { caller.cancel() }
         #expect(try await eventually(5) { events.status != nil })
@@ -936,7 +935,7 @@ extension MachineV2ExecLifecycleTests {
       await hub.configureV2(second)
       tasks.addTask { try await second.run() }
       rig.side.release()
-      let leg = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+      let leg = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(leg) }
       defer { caller.cancel() }
       _ = await following.value
@@ -977,7 +976,7 @@ extension MachineV2ExecLifecycleTests {
       await hub.configureV2(second)
       tasks.addTask { try await second.run() }
       rig.side.release()
-      let leg = try await execBackend(space: rig.space, hub: hub).connect(healthy.id)
+      let leg = try await connectExecCaller(healthy.id, space: rig.space, hub: hub)
       let caller = Task { await endpoint.run(leg) }
       defer { caller.cancel() }
       _ = await following.value
@@ -1011,7 +1010,7 @@ extension MachineV2ExecLifecycleTests {
       let events = Events()
       let following = events.follow(outgoing)
       defer { following.cancel() }
-      let leg = try await execBackend(space: rig.space, hub: hub).connect(minted.id)
+      let leg = try await connectExecCaller(minted.id, space: rig.space, hub: hub)
       // The connection ends with nothing on it: the caller reads how the exec ended from its record.
       await endpoint.run(leg)
       #expect(events.log.withLock { $0 }.isEmpty)

@@ -136,7 +136,7 @@ private func fileRouteFailure(_ error: ToolRunError) -> Response {
     case .notFound: .notFound
     case .conflict: .conflict
     case .invalidPath, .invalidArgument, .byteLimitExceeded: .badRequest
-    case .unauthorized: .forbidden
+    case .unauthorized, .forbidden: .forbidden
     case .unsupported, .unknownKind: .unsupportedMediaType
     case .unavailable: .serviceUnavailable
     case .internal: .internalServerError

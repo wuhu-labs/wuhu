@@ -30,7 +30,8 @@ import {
 } from './model-route.ts'
 import { useObserve } from './use-observe.ts'
 import { applyRevision, loadPaths, type PathMap } from './tree.ts'
-import { type SidebarFile, sidebarPaths, touchesSidebars } from './sidebars.ts'
+import { type DiscoveredTree, TreeDiscovery } from './tree-discovery.ts'
+import { type SidebarFile, sidebarPaths } from './sidebars.ts'
 import { useSidebarFiles } from './use-sidebar-files.ts'
 import { memberGroups, sharedGroup } from './groups.ts'
 import { DirectoryProvider } from './use-directory.tsx'
@@ -58,8 +59,6 @@ interface FileState {
   paths: PathMap
   rev: number
   themeRev: number
-  sidebarRev: number
-  viewRevs: Record<string, number>
   avatarRevs: Record<string, number>
 }
 
@@ -68,12 +67,9 @@ function foldFiles(state: FileState, event: RevisionEvents): FileState {
     (event) => [event.path, event.kind === 'move' ? event.to : null],
   )
     .filter((path): path is string => path !== null)
-  const views = touched.filter((path) => path.endsWith('.view'))
   const avatars = touched.map(sessionOfAvatarPath)
     .filter((session): session is string => session !== null)
-  const viewRevs = views.length ? { ...state.viewRevs } : state.viewRevs
   const avatarRevs = avatars.length ? { ...state.avatarRevs } : state.avatarRevs
-  for (const path of views) viewRevs[path] = event.rev
   for (const session of avatars) avatarRevs[session] = event.rev
   return {
     paths: applyRevision(state.paths, event),
@@ -81,10 +77,6 @@ function foldFiles(state: FileState, event: RevisionEvents): FileState {
     themeRev: touched.includes('/theme.css')
       ? state.themeRev + 1
       : state.themeRev,
-    sidebarRev: touched.some(touchesSidebars)
-      ? state.sidebarRev + 1
-      : state.sidebarRev,
-    viewRevs,
     avatarRevs,
   }
 }
@@ -145,8 +137,6 @@ const emptyFeed: GroupFeed = {
     paths: new Map(),
     rev: 0,
     themeRev: 0,
-    sidebarRev: 0,
-    viewRevs: {},
     avatarRevs: {},
   },
   sidebars: null,
@@ -263,62 +253,64 @@ function GroupFeedReporter({
 }
 
 function useGroupFeed(client: SpaceClient): GroupFeed {
-  const [loaded, setLoaded] = useState<{ paths: PathMap; rev: number } | null>(
-    null,
-  )
-  const [error, setError] = useState<string | null>(null)
+  const [tree, setTree] = useState<DiscoveredTree>({
+    paths: new Map(),
+    rev: 0,
+    from: null,
+    error: null,
+  })
   const [themeSeed] = useState(() => Date.now())
   const cache = useViewerCache(client.group)
   const contentOrigin = useContentOrigin(client)
-
-  // A kept tree skips the crawl: the glob feed replays every change since
-  // the revision it was kept at.
+  const discovery = useMemo(() =>
+    new TreeDiscovery({
+      kept: async () => {
+        const tree = await cache?.get<KeptTree>('meta', 'tree')
+        return tree === undefined
+          ? undefined
+          : { paths: new Map(tree.paths), rev: tree.rev }
+      },
+      load: () => loadPaths(client),
+    }, setTree), [client, cache])
+  const [ready, setReady] = useState<TreeDiscovery | null>(null)
   useEffect(() => {
     let cancelled = false
-    const kept = cache?.get<KeptTree>('meta', 'tree') ??
-      Promise.resolve(undefined)
-    kept.then((tree) =>
-      tree === undefined
-        ? loadPaths(client)
-        : { paths: new Map(tree.paths), rev: tree.rev }
-    ).then(
-      (snapshot) => {
-        if (!cancelled) setLoaded(snapshot)
-      },
-      (failure: unknown) => {
-        if (!cancelled) setError(String(failure))
-      },
-    )
+    void discovery.restore().then(() => {
+      if (!cancelled) setReady(discovery)
+    })
     return () => {
       cancelled = true
+      discovery.close()
     }
-  }, [client, cache])
-
-  const files = useObserve<FileState, RevisionEvents>(
-    loaded ? globSubscription(client, '**', loaded.rev) : null,
-    foldFiles,
-    {
-      paths: loaded?.paths ?? new Map(),
-      rev: loaded?.rev ?? 0,
-      themeRev: themeSeed,
-      sidebarRev: 0,
-      viewRevs: {},
-      avatarRevs: {},
+  }, [discovery])
+  const events = useMemo(() => ({
+    onEvent: (event: RevisionEvents) => {
+      discovery.opened()
+      client.filesChanged(event)
     },
+    onOpen: () => {
+      discovery.opened()
+      client.filesConnected()
+    },
+  }), [discovery, client])
+  const files = useObserve<FileState, RevisionEvents>(
+    ready === discovery ? globSubscription(client, '**', tree.from) : null,
+    foldFiles,
+    { paths: tree.paths, rev: tree.rev, themeRev: themeSeed, avatarRevs: {} },
+    events,
   )
   const { paths, rev } = files.data
   useEffect(() => {
-    if (cache === null || loaded === null) return
+    if (cache === null || tree.from === null) return
     const timer = setTimeout(() => {
       void cache.put('meta', 'tree', { paths: [...paths], rev })
     }, keepTreeDelayMs)
     return () => clearTimeout(timer)
-  }, [cache, loaded, paths, rev])
+  }, [cache, tree.from !== null, paths, rev])
 
   const sidebars = useSidebarFiles(
     client,
     sidebarPaths(paths),
-    files.data.sidebarRev,
   )
   const channels = useObserve<ChannelSummary[] | null, QueryOutput>(
     sqlSubscription(channelsSQL, client.group),
@@ -340,13 +332,21 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
   const sessions = useMemo(() => withRoutes(rows, routes), [rows, routes])
 
   return useMemo(() => ({
-    loaded: loaded !== null,
-    error,
+    loaded: tree.from !== null,
+    error: tree.error,
     files: files.data,
     sidebars,
     liveness: files.liveness,
     sessions,
     channels,
     contentOrigin,
-  }), [loaded, error, files, sidebars, sessions, channels, contentOrigin])
+  }), [
+    tree.from !== null,
+    tree.error,
+    files,
+    sidebars,
+    sessions,
+    channels,
+    contentOrigin,
+  ])
 }

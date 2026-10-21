@@ -232,7 +232,6 @@ private final class Collected: Sendable {
       id: minted.id, cwd: "/tmp", command: ["echo-test"],
       maxOutput: c.site == .outputLimit ? 3 : nil, timeout: c.site == .timeout ? 1 : nil,
     ))
-    let backend = execBackend(space: space, hub: hub)
     let collected = Collected()
     let echoed = Gate()
     try await withThrowingTaskGroup(of: Void.self) { tasks in
@@ -242,7 +241,7 @@ private final class Collected: Sendable {
       // Arm after the service's own presence probe, so the injected loss lands on the relay's exchange.
       await seen.probed.wait()
       fault.withLock { $0.armed = true }
-      let transport = try await backend.connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       let events = Task {
         for try await event in outgoing.events {
@@ -370,13 +369,12 @@ private final class Collected: Sendable {
     let minted = try await space.mintExec(machine: record.id, group: .shared)
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["echo-test"], timeout: 1))
-    let backend = execBackend(space: space, hub: hub)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
       await probed.wait()
-      let transport = try await backend.connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
       await describing.wait()
@@ -436,12 +434,11 @@ private final class Collected: Sendable {
     execID.withLock { $0 = minted.id }
     let endpoint = ChannelEndpoint()
     let outgoing = await endpoint.startExec(.init(id: minted.id, cwd: "/tmp", command: ["echo-test"], timeout: 1))
-    let backend = execBackend(space: space, hub: hub)
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask { await agent.run() }
       tasks.addTask { try await service.run() }
       defer { tasks.cancelAll() }
-      let transport = try await backend.connect(minted.id)
+      let transport = try await connectExecCaller(minted.id, space: space, hub: hub)
       let caller = Task { await endpoint.run(transport) }
       defer { caller.cancel() }
       await started.wait()

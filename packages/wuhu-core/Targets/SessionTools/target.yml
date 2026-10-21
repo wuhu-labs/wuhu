@@ -19,6 +19,7 @@ dependencies:
   - FileSearch
   - InferenceKit
   - Fetch
+  - FetchSSE
   - SessionDomain
   - SpaceClient
   - SpaceContract

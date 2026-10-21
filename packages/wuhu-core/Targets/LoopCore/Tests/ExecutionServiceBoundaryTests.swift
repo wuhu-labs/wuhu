@@ -2,11 +2,15 @@ import Clocks
 import Dependencies
 import Foundation
 @testable import LoopCore
+import MainHub
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
+import struct MainHub.UnfulfilledError
 import SessionDomain
 import SessionTools
 import SpaceCore
+import Synchronization
 import Testing
 
 private struct ReplyLost: Error {}
@@ -118,6 +122,29 @@ private struct ReplyLost: Error {}
     }
   }
 
+  // Main boots before its worker has announced, or between two of them: the
+  // session waits for one, and is never failed for it.
+  @Test func bootWakeWaitsForAWorkerInsteadOfFailingTheSession() async throws {
+    try await withKernelDeps { time in
+      let space = try Space.inMemory()
+      let sessions = space.sessions
+      let id = try await sessions.createSession(group: .shared, title: "boot", kind: .agent, createdBy: "morgan", model: .test)
+      _ = try await sessions.enqueue(id, input: Fix.message("boot"))
+      let execution = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig(inference: { _ in Fix.reply("done") }))
+      let worker = Unannounced(execution, absentFor: 5)
+      let service = SessionService(sessions: sessions, worker: worker)
+      try await runService(service) { _ in
+        for _ in 1 ... 5 {
+          try await time.asleep("waiting for a worker", dueIn: 1)
+          await time.advance(by: 1)
+        }
+        try await until("boot settles") { try await sessions.settledWork(id) }
+        #expect(try await sessions.record(id).work != .errored)
+        #expect(worker.refused.withLock { $0 } == 5)
+      }
+    }
+  }
+
   @Test func parentRemindersReplaceDeadlinesCancelAndJoinAtShutdown() async throws {
     try await withKernelDeps { time in
       let space = try Space.inMemory()
@@ -181,4 +208,36 @@ private struct ReplyLost: Error {}
       await service.shutdown()
     }
   }
+}
+
+// A worker main cannot reach yet: the first verbs find no worker announced.
+private final class Unannounced: Worker, Sendable {
+  let execution: SessionExecution
+  let absentFor: Int
+  let refused = Mutex(0)
+
+  init(_ execution: SessionExecution, absentFor: Int) {
+    self.execution = execution
+    self.absentFor = absentFor
+  }
+
+  private func reach() throws {
+    let absent = refused.withLock { count in
+      guard count < absentFor else { return false }
+      count += 1
+      return true
+    }
+    if absent { throw NoWorkerError() }
+  }
+
+  func deliver(_ session: SessionID, _ input: WorkerInput) async throws {
+    try reach()
+    try await execution.deliver(session, input)
+  }
+
+  func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool { try await execution.revoke(session, policy: policy) }
+  func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult { try await execution.fire(invocation) }
+  func activity() async -> WorkerActivity { await execution.activity() }
+  func runningWork(_ session: SessionID) async throws -> [String] { try await execution.runningWork(session) }
+  func shutdown() async { await execution.shutdown() }
 }

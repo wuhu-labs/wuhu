@@ -1,30 +1,50 @@
 import InferenceKit
 import LoopCore
+import class MainHub.Hub
 import protocol MainHub.Main
 import SessionDomain
 import SessionTools
 import SpaceCore
 import SystemFiles
 
-func budgetResolver(owner: any Main) -> @Sendable (SessionID) async -> ContextBudget {
+// The loop's: the models document as the session reads it from main.
+func budgetResolver(owner: any Main, executor: ToolExecutor) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
     guard let record = try? await owner.record(id),
           let specifier = await activeModelSpecifier(record, owner: owner),
-          let data = try? await owner.capabilityDocument("/models.json"),
-          let document = try? ModelsDocument(json: data),
-          let model = try? ProviderCatalog(document: document, credentials: .unavailable).validate(specifier),
-          let provider = document.providers[specifier.provider]
-    else { return ContextBudget(maxInput: 1 << 22, maxOutput: 0) }
-    return model.budget(provider.dialect)
+          let catalog = try? await executor.catalog(id, includeGroups: false)
+    else { return fallbackBudget }
+    return contextBudget(specifier, catalog.document) ?? fallbackBudget
   }
 }
 
-func systemPrompt(owner: any Main, record: SessionRecord) async throws -> String {
-  kernelPrompt(for: record, home: try await owner.promptHome(record.id))
+// Main's own, for what it shows of a session's context: the shared group's models document.
+func budgetResolver(owner: Hub) -> @Sendable (SessionID) async -> ContextBudget {
+  { id in
+    guard let record = try? await owner.record(id),
+          let specifier = await activeModelSpecifier(record, owner: owner),
+          let data = try? await owner.space.fs(.shared).read(ModelsDocument.spacePath).1,
+          let document = try? ModelsDocument(json: data)
+    else { return fallbackBudget }
+    return contextBudget(specifier, document) ?? fallbackBudget
+  }
 }
 
-// The kernel's layout of a home already read: `systemPrompt(owner:record:)`
-// is the only caller that feeds it the frozen one.
+private let fallbackBudget = ContextBudget(maxInput: 1 << 22, maxOutput: 0)
+
+private func contextBudget(_ specifier: ModelSpecifier, _ document: ModelsDocument) -> ContextBudget? {
+  guard let model = try? ProviderCatalog(document: document, credentials: .unavailable).validate(specifier),
+        let provider = document.providers[specifier.provider]
+  else { return nil }
+  return model.budget(provider.dialect)
+}
+
+func systemPrompt(executor: ToolExecutor, record: SessionRecord) async throws -> String {
+  kernelPrompt(for: record, home: try await executor.promptHome(record.id))
+}
+
+// The kernel's layout of a home already read: `systemPrompt(executor:record:)`
+// and main's own `systemPrompt(space:record:)` feed it the frozen one.
 func kernelPrompt(for record: SessionRecord, home: SessionHome) -> String {
   layoutPrompt(
     fixed: kernelFixedPrompt,

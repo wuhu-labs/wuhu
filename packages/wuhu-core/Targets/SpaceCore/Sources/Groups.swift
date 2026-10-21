@@ -9,56 +9,6 @@ import GRDB
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
 
-let groupSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "schema_compactions" (
-  "name" TEXT NOT NULL PRIMARY KEY,
-  "applied_at" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "group_epoch" (
-  "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
-  "n" INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "groups" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "created_at" TEXT NOT NULL,
-  "space_layer" INTEGER NOT NULL DEFAULT 1 CHECK ("space_layer" IN (0, 1)),
-  "removed_at" TEXT
-);
-CREATE TABLE IF NOT EXISTS "group_members" (
-  "grp" TEXT NOT NULL REFERENCES "groups" ("id"),
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "joined_at" TEXT NOT NULL,
-  PRIMARY KEY ("grp", "account_id")
-);
-CREATE INDEX IF NOT EXISTS "group_members_by_account" ON "group_members" ("account_id");
-CREATE TABLE IF NOT EXISTS "group_edges" (
-  "src" TEXT NOT NULL REFERENCES "groups" ("id"),
-  "dst" TEXT NOT NULL REFERENCES "groups" ("id"),
-  "kind" TEXT NOT NULL CHECK ("kind" IN ('read', 'admin')),
-  "created_at" TEXT NOT NULL,
-  "created_by" TEXT,
-  PRIMARY KEY ("src", "dst", "kind")
-);
-CREATE TABLE IF NOT EXISTS "message_groups" (
-  "message_id" TEXT NOT NULL PRIMARY KEY,
-  "grp" TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "session_space_layer" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "space_layer" INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "group_reads" (
-  "grp" TEXT NOT NULL,
-  "readable" TEXT NOT NULL,
-  "via" TEXT NOT NULL,
-  PRIMARY KEY ("grp", "readable", "via")
-);
-INSERT OR IGNORE INTO "schema_compactions" ("name", "applied_at") VALUES ('wuhu-45', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-INSERT OR IGNORE INTO "group_epoch" ("id", "n") VALUES (1, 1);
-INSERT OR IGNORE INTO "groups" ("id", "created_at") VALUES ('shared', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-INSERT OR IGNORE INTO "group_reads" ("grp", "readable", "via") VALUES ('shared', 'shared', 'self');
-"""
-
 public enum Actor: Hashable, Sendable {
   case session(SessionID)
   case person(persona: String, account: AccountID)

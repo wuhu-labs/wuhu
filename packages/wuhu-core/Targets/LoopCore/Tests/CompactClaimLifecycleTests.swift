@@ -1,6 +1,8 @@
 import GRDB
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
+import struct MainHub.SubtreeArchiveBusy
 import SessionTools
 #if canImport(FoundationEssentials)
   import FoundationEssentials

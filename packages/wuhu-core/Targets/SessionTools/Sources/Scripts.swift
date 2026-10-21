@@ -1,3 +1,4 @@
+import func MainHub.scriptHandle
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -18,11 +19,12 @@ import struct MainHub.WorkerActivity
 import SessionDomain
 import SpaceCore
 import Synchronization
+import TaskLifetime
 
 public final class Scripts: Sendable {
   let owner: any Main
-  private let launches: AsyncStream<ScriptExecution>
-  private let launch: AsyncStream<ScriptExecution>.Continuation
+  // Every execution runs in here, from its start until it ends or `close`.
+  private let scope = TaskScope()
   private let running = Mutex<[String: ScriptExecution]>([:])
   // Scripts that ended here, so cancel can tell "already ended" from
   // "unknown". Bounded and in-process: past either, an id reads as unknown.
@@ -30,19 +32,14 @@ public final class Scripts: Sendable {
 
   public init(owner: any Main) {
     self.owner = owner
-    (launches, launch) = AsyncStream.makeStream()
   }
 
-  public func run() async {
-    await withDiscardingTaskGroup { group in
-      for await execution in launches {
-        group.addTask {
-          await execution.run(owner: self.owner)
-          self.ended.withLock { $0.record(execution.id, session: execution.session) }
-          _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
-        }
-      }
-    }
+  deinit { scope.cancel() }
+
+  /// Stops every execution and waits for them to end; nothing starts after.
+  public func close() async {
+    scope.cancel()
+    await scope.close()
   }
 
   func start(_ source: String, session: SessionID, lifetime: Duration, tools: ToolExecutor) async throws -> ScriptExecution {
@@ -60,7 +57,16 @@ public final class Scripts: Sendable {
     )
     try Task.checkCancellation()
     running.withLock { $0[id] = execution }
-    launch.yield(execution)
+    do {
+      try scope.run("script \(id)") {
+        await execution.run(owner: self.owner)
+        self.ended.withLock { $0.record(execution.id, session: execution.session) }
+        _ = self.running.withLock { $0.removeValue(forKey: execution.id) }
+      }
+    } catch {
+      _ = running.withLock { $0.removeValue(forKey: id) }
+      throw ToolProblem("this worker is stopping; run_script did not start")
+    }
     return execution
   }
 
@@ -162,7 +168,6 @@ extension ToolExecutor {
 }
 
 /// How a script's id is shown and cancelled: `script.<id>`.
-public func scriptHandle(_ id: String) -> String { "script.\(id)" }
 
 struct EndedScripts {
   static let capacity = 4096

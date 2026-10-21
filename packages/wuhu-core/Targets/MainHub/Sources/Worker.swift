@@ -5,15 +5,43 @@
 #endif
 import SessionDomain
 import SpaceCore
-import struct WuhuAI.ToolCall
 
-public enum WorkerInput: Sendable {
+/// How main knows a worker: minted by main with the worker's credential,
+/// presented back when the worker announces itself.
+public struct WorkerID: Hashable, Sendable {
+  public let rawValue: String
+  public init(_ rawValue: String) { self.rawValue = rawValue }
+}
+
+/// No worker has announced itself, so a session's verb has nowhere to go.
+public struct NoWorkerError: Error, CustomStringConvertible {
+  public init() {}
+  public var description: String { "no worker is announced to main" }
+}
+
+/// Main could not reach a worker for now: none is announced, or the line to
+/// the one holding the session closed. A worker announcing (again) ends it,
+/// so the verb is retried, never failed.
+public func isWorkerUnreachable(_ error: any Error) -> Bool {
+  error is NoWorkerError || error is WorkerLineSevered
+}
+
+public enum WorkerInput: Sendable, Codable {
   case wake, interrupt, resume, reload, archived
 }
 
-public enum RevocationPolicy: Sendable {
-  case whenSettled, cancel
+public enum RevocationPolicy: Sendable, Codable {
+  /// Once the turn is over: archive and restart take a settled session.
+  case whenSettled
+  /// At the end of the step in flight, for the session to go on elsewhere:
+  /// an inference or a script finishes here first; an exec is left pending,
+  /// and the next worker rejoins it. What the loop knows is in the store.
+  case handOff
+  case cancel
 }
+
+/// How a running script is named to its session (`script.<id>`).
+public func scriptHandle(_ id: String) -> String { "script.\(id)" }
 
 public struct ScriptRunID: Hashable, Sendable {
   public let rawValue: String
@@ -58,12 +86,15 @@ public struct ScriptHandlerInvocation: Sendable {
   }
 }
 
+/// What main asks of a worker. A worker runs from when it is made until
+/// `shutdown`; main never runs it, and never executes a tool.
 public protocol Worker: Sendable {
   func deliver(_ session: SessionID, _ input: WorkerInput) async throws
   func revoke(_ session: SessionID, policy: RevocationPolicy) async throws -> Bool
-  func execute(session: SessionID, call: ToolCall, state: ToolExecutionState) async throws -> ToolOutcome
   func fire(_ invocation: ScriptHandlerInvocation) async throws -> ScriptHandlerResult
   func activity() async -> WorkerActivity
-  func drain() async
+  /// The cancel ids of what runs for the session outside its loop
+  /// (`script.<id>`, `exec.<id>`), as a Start over lists them.
+  func runningWork(_ session: SessionID) async throws -> [String]
   func shutdown() async
 }

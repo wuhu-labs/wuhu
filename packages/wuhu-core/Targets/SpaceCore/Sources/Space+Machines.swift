@@ -34,7 +34,7 @@ public enum MachineName {
   }
 }
 
-public enum ExecTerminalState: Equatable, Sendable {
+public enum ExecTerminalState: Equatable, Sendable, Codable {
   case exited(code: Int)
   case signaled(signal: Int)
   case cancelled
@@ -68,7 +68,7 @@ public enum ExecTerminalState: Equatable, Sendable {
   }
 }
 
-public struct ExecRecord: Equatable, Sendable {
+public struct ExecRecord: Equatable, Sendable, Codable {
   public let id: ExecID
   public let machine: MachineID
   public let streamID: Int
@@ -336,9 +336,9 @@ extension Space {
     )
   }
 
-  public func releaseScriptExecs(script: String) async throws {
+  public func releaseScriptExecs(script: String, session: String) async throws {
     try await writer.write { db in
-      try ScriptExecRow.where { $0.scriptID.eq(script) }.delete().execute(db)
+      try ScriptExecRow.where { $0.scriptID.eq(script) && $0.sessionID.eq(session) }.delete().execute(db)
     }
   }
 
@@ -496,6 +496,16 @@ extension Space {
       try Row.fetchAll(
         db,
         sql: "SELECT * FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1 ORDER BY started_at, id",
+      ).map(Self.execRecord(from:))
+    }
+  }
+
+  public func owedExecs(caller: String) async throws -> [ExecRecord] {
+    try await writer.read { db in
+      try Row.fetchAll(
+        db,
+        sql: "SELECT * FROM machine_execs WHERE caller = ? AND tool_call_id IS NOT NULL AND tool_end_owed = 1 ORDER BY started_at, id",
+        arguments: [caller],
       ).map(Self.execRecord(from:))
     }
   }

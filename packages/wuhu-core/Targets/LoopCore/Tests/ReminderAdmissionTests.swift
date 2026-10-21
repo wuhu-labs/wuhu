@@ -1,6 +1,7 @@
 import Clocks
 import Dependencies
 import class MainHub.Hub
+import class MainHub.SessionService
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else

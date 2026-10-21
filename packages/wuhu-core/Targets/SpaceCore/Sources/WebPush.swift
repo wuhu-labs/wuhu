@@ -1,27 +1,6 @@
 import Foundation
 import GRDB
 
-let webPushSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "web_push_subscriptions" (
-  "endpoint" TEXT NOT NULL PRIMARY KEY,
-  "recipient" TEXT NOT NULL REFERENCES "personas" ("name"),
-  "device_pubkey" TEXT NOT NULL REFERENCES "account_keys" ("pubkey") ON DELETE CASCADE,
-  "p256dh" TEXT NOT NULL,
-  "auth" TEXT NOT NULL,
-  "vapid_key_id" TEXT NOT NULL,
-  "notification_cursor" INTEGER NOT NULL,
-  "consecutive_failures" INTEGER NOT NULL DEFAULT 0,
-  "retry_at" TEXT,
-  "expires_at" TEXT,
-  "created_at" TEXT NOT NULL,
-  "updated_at" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "web_push_subscriptions_by_recipient"
-  ON "web_push_subscriptions" ("recipient", "notification_cursor");
-CREATE INDEX IF NOT EXISTS "web_push_subscriptions_by_retry"
-  ON "web_push_subscriptions" ("retry_at");
-"""
-
 public struct WebPushSubscriptionRegistration: Hashable, Sendable {
   public var endpoint: String
   public var recipient: String

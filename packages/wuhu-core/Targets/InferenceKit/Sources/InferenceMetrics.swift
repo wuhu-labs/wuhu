@@ -15,6 +15,9 @@ public struct InferenceMetric: Sendable, Equatable {
     case cancelled
   }
 
+  /// The attempt, minted where the inference ran: a report that reaches the
+  /// server twice records once.
+  public var id: String
   public var timestamp: Date
   public var session: SessionID
   public var provider: String
@@ -29,6 +32,7 @@ public struct InferenceMetric: Sendable, Equatable {
   public var usage: Usage?
 
   public init(
+    id: String = UUID().uuidString.lowercased(),
     timestamp: Date,
     session: SessionID,
     provider: String,
@@ -42,6 +46,7 @@ public struct InferenceMetric: Sendable, Equatable {
     durationMs: Int64,
     usage: Usage? = nil,
   ) {
+    self.id = id
     self.timestamp = timestamp
     self.session = session
     self.provider = provider

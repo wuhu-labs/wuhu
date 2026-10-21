@@ -1,17 +1,6 @@
 import Foundation
 import GRDB
 
-let personaSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "personas" (
-  "name" TEXT NOT NULL PRIMARY KEY,
-  "allocation" INTEGER NOT NULL UNIQUE,
-  "pubkey" TEXT NOT NULL,
-  "account_id" TEXT NOT NULL REFERENCES "accounts" ("id"),
-  "created_at" TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS "personas_by_account" ON "personas" ("account_id");
-"""
-
 public struct PersonaRecord: Equatable, Sendable {
   public let name: String
   public let key: String

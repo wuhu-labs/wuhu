@@ -2,13 +2,6 @@ import GRDB
 import struct SpaceContract.GroupID
 import SpaceFS
 
-let messageViewingSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "message_viewing" (
-  "message_id" TEXT NOT NULL PRIMARY KEY,
-  "path" TEXT NOT NULL
-);
-"""
-
 /// The space path of the doc or page a person had open when sending. It is
 /// stored group-qualified and handed to each reader as its own group names it.
 public struct Viewing: Hashable, Sendable {

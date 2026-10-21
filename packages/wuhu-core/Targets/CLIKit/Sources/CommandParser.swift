@@ -361,6 +361,7 @@ extension Command {
       let key = try parser.option("--key", verb: verb)
       let webApp = try parser.option("--web-app", verb: verb)
       let otelEndpoint = try parser.option("--otel-endpoint", verb: verb)
+      let workerProcess = parser.flag("--worker-process")
       if let otelEndpoint {
         guard let url = URL(string: otelEndpoint), ["http", "https"].contains(url.scheme), url.host != nil,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil
@@ -427,6 +428,7 @@ extension Command {
         groupCertificate: groupCert,
         groupPrivateKey: groupKey,
         otelEndpoint: otelEndpoint, webApp: webApp,
+        workerProcess: workerProcess,
         ignoredOptions: ignored,
       ))
     default:
@@ -1279,7 +1281,7 @@ extension Command {
     \(exitCodes)
     """,
     "serve": """
-    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>]
+    usage: wuhu serve <folder> [--host <address>] [--port N] [--origin <url>] [--dev] [--public-read] [--dev-import <folder>] [--dev-export <folder>] [--cert <pem> --key <pem>] [--group-certificate <pem> --group-private-key <pem>] [--content-host-pattern <pattern>] [--ai-disclosure <json-file>] [--web-app <dir>] [--otel-endpoint <url>] [--worker-process]
 
     runs the space server on one TLS port (--port, default 5530). Without
     --cert/--key a self-signed certificate is generated into <folder>/tls
@@ -1305,6 +1307,12 @@ extension Command {
     on LibreSSL, fails an Ed25519 handshake) or one that isn't the leaf's.
     --web-app serves the SPA from <dir> (loaded once at boot; index.html
     required) instead of the embedded build; the override is logged at boot.
+    --worker-process runs the sessions' loops, inference and tools in a
+    worker process of their own, which reaches the server over
+    <folder>/run/worker.sock. SIGHUP then reboots the server in place:
+    a new worker takes the sessions over at the end of each one's step in
+    flight, and the server re-executes itself, keeping its listeners and
+    its worker.
     --host sets the bind address; it defaults to 127.0.0.1 (loopback
     only). Pass --host 0.0.0.0 to expose the server on the LAN.
     --origin advertises the server's canonical https:// origin through

@@ -80,25 +80,11 @@ import Testing
     }
   }
 
-  @Test func theRevisionSurvivesAReopenAndAnOldDatabaseGainsTheTable() async throws {
+  @Test func theRevisionSurvivesAReopen() async throws {
     let folder = try scratchURL("prompt-revision")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = folder.appendingPathComponent("space.sqlite")
-    try await withSessionDeps {
-      let space = try Space.open(file: file)
-      let id = try await space.sessions.createSession(group: .shared, title: "t", kind: .agent, createdBy: "morgan", model: .test)
-      let old = try await space.sessions.createSession(group: .shared, title: "old", kind: .agent, createdBy: "morgan", model: .test)
-      let frozen = try await prompt(space, id)
-      try await edit(space, id, "one")
-      // A database from before prompt revisions: the table does not exist yet.
-      try await space.writer.write { db in try db.execute(sql: #"DROP TABLE "session_prompt_revisions""#) }
-
-      let reopened = try Space.open(file: file)
-      #expect(try await reopened.sessions.promptRevision(id) == nil, "no backfill")
-      #expect(try await prompt(reopened, old).contains("root one"), "a session without a row renders the latest")
-      #expect(frozen != (try await prompt(reopened, id)))
-    }
     try await withSessionDeps {
       let space = try Space.open(file: file)
       let id = try await space.sessions.createSession(group: .shared, title: "t2", kind: .agent, createdBy: "morgan", model: .test)

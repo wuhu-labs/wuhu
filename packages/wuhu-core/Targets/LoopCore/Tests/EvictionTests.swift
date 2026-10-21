@@ -3,6 +3,9 @@ import Foundation
 @testable import LoopCore
 import class MainHub.Hub
 import struct MainHub.SessionAccess
+import class MainHub.SessionService
+import struct MainHub.UnfulfilledError
+import func MainHub.withCallback
 import SessionDomain
 import SpaceCore
 import Testing

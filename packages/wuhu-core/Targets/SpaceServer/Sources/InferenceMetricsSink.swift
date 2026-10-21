@@ -28,14 +28,7 @@ func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: 
     }
     await writer.append(metric.jsonLine())
     do {
-      try await space.recordInference(InferenceRecord(
-        id: UUID().uuidString.lowercased(), session: metric.session, at: metric.timestamp,
-        provider: metric.provider, model: metric.model, servedModel: metric.servedModel, effort: metric.effort,
-        input: metric.usage?.uncachedInputTokens, cacheRead: metric.usage?.cacheReadTokens,
-        cacheWrite: metric.usage?.cacheWriteTokens, output: metric.usage?.outputTokens,
-        reasoning: metric.usage?.reasoningTokens, outcome: metric.outcome.rawValue, error: metric.errorKind,
-        durationMs: metric.durationMs, ttftMs: metric.ttftMs,
-      ))
+      try await space.recordInference(InferenceRecord(metric))
     } catch {
       logger.error("inference database write failed", metadata: ["session": "\(metric.session.rawValue)", "error": "\(error)"])
     }
@@ -49,6 +42,27 @@ func inferenceMetricsSink(space: Space, writer: InferenceMetricsWriter, logger: 
       "status": "\(metric.status.map(String.init) ?? "none")",
       "duration_ms": "\(metric.durationMs)",
     ])
+  }
+}
+
+extension InferenceRecord {
+  init(_ metric: InferenceMetric) {
+    self.init(
+      id: metric.id, session: metric.session, at: metric.timestamp,
+      provider: metric.provider, model: metric.model, servedModel: metric.servedModel, effort: metric.effort,
+      input: metric.usage?.uncachedInputTokens, cacheRead: metric.usage?.cacheReadTokens,
+      cacheWrite: metric.usage?.cacheWriteTokens, output: metric.usage?.outputTokens,
+      reasoning: metric.usage?.reasoningTokens, outcome: metric.outcome.rawValue, error: metric.errorKind,
+      durationMs: metric.durationMs, ttftMs: metric.ttftMs,
+    )
+  }
+}
+
+extension InferenceMetricsSink {
+  /// Every inference into the space's `inferences` table and nothing else:
+  /// what a server without the telemetry writer (tests) records.
+  static func recording(in space: Space) -> InferenceMetricsSink {
+    InferenceMetricsSink { metric in try? await space.recordInference(InferenceRecord(metric)) }
   }
 }
 

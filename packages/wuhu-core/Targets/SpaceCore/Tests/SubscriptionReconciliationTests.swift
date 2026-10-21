@@ -29,7 +29,7 @@ import Testing
         ))
         var loaded = try await store.transcript(id)
         loaded.append(result)
-        try await store.append(id, items: [result], transcript: loaded)
+        try await store.append(id, items: [result], inputOrigin: loaded.cacheWarmingInputOrigin)
         loaded = try await store.transcript(id)
         let staleSnapshot = StateSnapshot(carrying: loaded.environment.tools, preReads: ["/keep.md"])
         #expect(staleSnapshot.subscriptions == [subscriptionID: .timer(schedule)])

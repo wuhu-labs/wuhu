@@ -29,13 +29,14 @@ func addCapabilityRoutes(_ router: inout Router, space: Space, credentials: Cred
   }
   router.post("/v1/image") { request, _ in
     do {
-      let input = try await request.body?.json(ImageInput.self, upTo: 36 << 20)
+      // Five references of 25 MiB each, base64 (4/3) plus the rest of the request.
+      let input = try await request.body?.json(ImageInput.self, upTo: 170 << 20)
       guard let input, (input.images?.count ?? 0) <= 5 else { throw CapabilityError(.invalidArgument, "Image requests need a prompt and at most five PNG references.") }
       let images = try (input.images ?? []).map { raw in
         guard let bytes = Data(base64Encoded: raw), bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]), !bytes.isEmpty else { throw CapabilityError(.invalidArgument, "Image references must be base64 PNG bytes.") }
         return bytes
       }
-      guard images.reduce(0, { $0 + $1.count }) <= 25 * 1024 * 1024 else { throw CapabilityError(.invalidArgument, "Image references exceed the 25 MiB aggregate bound.") }
+      guard images.allSatisfy({ $0.count <= 25 * 1024 * 1024 }) else { throw CapabilityError(.invalidArgument, "Each image reference is at most 25 MiB.") }
       let result = try await spaceCapabilities(space: space, credentials: credentials).image(input.prompt, images: images, options: .init(provider: input.provider, model: input.model, quality: input.quality, size: input.size))
       guard result.count >= 24, result.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else { throw CapabilityError(.providerUnavailable, "The provider returned an image that is not a PNG.") }
       return try .json(ImageOutput(b64JSON: result.base64EncodedString(), mimeType: "image/png"))

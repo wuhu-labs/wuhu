@@ -213,7 +213,8 @@ extension SessionStore {
       try Row.fetchAll(
         db,
         sql: """
-        SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)) AS parked
+        SELECT id, NOT (work = 'has_work' OR id IN (SELECT session_id FROM session_commands)
+          OR id IN (SELECT caller FROM machine_execs WHERE tool_call_id IS NOT NULL AND tool_end_owed = 1)) AS parked
         FROM sessions
         WHERE lifecycle = 'live' AND executor IN ('kernel', 'claude-code')
           AND (executor = 'claude-code' OR work = 'has_work' OR id IN (SELECT session_id FROM session_commands) OR work = 'no_work')
@@ -321,15 +322,19 @@ extension SessionStore {
   }
 }
 
-/// A `/v1/tools/<name>` response as the session's tool call got it: its status
-/// and JSON body, answered again to a repeat of the same call.
+/// A `/v1/tools/<name>` or `PUT /v1/f/*` response as the session's tool call
+/// got it: its status and JSON body, answered again to a repeat of the same
+/// call. `request` is what was answered (the verb and the address written),
+/// so a repeat that asks something else is refused, not answered.
 public struct APIReceipt: Hashable, Sendable {
   public let status: Int
   public let body: String
+  public let request: String?
 
-  public init(status: Int, body: String) {
+  public init(status: Int, body: String, request: String? = nil) {
     self.status = status
     self.body = body
+    self.request = request
   }
 }
 

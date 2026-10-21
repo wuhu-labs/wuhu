@@ -12,12 +12,15 @@ import Testing
     }
   }
 
-  @Test func ownedExecWithoutMachineAccessKeepsInternalFailure() async throws {
+  // A script kills its own exec through the same route as the CLI: with the
+  // machine away, main records the cancellation for the machine's return.
+  @Test func ownedExecOnAnAbsentMachineIsCancelledThroughTheRoute() async throws {
     try await withRig { rig in
       let machine = try await rig.space.addMachine(name: "unavailable").id
       let own = try await rig.space.mintExec(machine: machine, caller: rig.session.rawValue)
       let result = try await rig.evaluate("import {killExec} from 'wuhu:machine'; try {await killExec(\(JSONValue.string(own.id.rawValue).jsonString()));result('allowed')}catch(e){result(e.code)}")
-      #expect(result == "internal")
+      #expect(result == "allowed")
+      #expect(try await rig.space.execRecord(own.id)?.terminal == .cancelled)
     }
   }
 

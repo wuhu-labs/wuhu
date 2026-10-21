@@ -5,93 +5,6 @@ import struct SpaceContract.GroupID
 import StructuredQueries
 import StructuredQueriesSQLite
 
-let sessionSchemaSQL = """
-CREATE TABLE IF NOT EXISTS "sessions" (
-  "id" TEXT NOT NULL PRIMARY KEY,
-  "allocation" INTEGER NOT NULL UNIQUE,
-  "kind" TEXT NOT NULL,
-  "parent" TEXT,
-  "title" TEXT NOT NULL,
-  "tags" TEXT NOT NULL,
-  "created_by" TEXT NOT NULL,
-  "executor" TEXT NOT NULL,
-  "executor_config" TEXT NOT NULL,
-  "created_at" TEXT NOT NULL,
-  "last_activity_at" TEXT NOT NULL,
-  "hold" TEXT NOT NULL,
-  "work" TEXT NOT NULL,
-  "lifecycle" TEXT NOT NULL,
-  "grace_expires_at" TEXT,
-  "error_message" TEXT,
-  "run_state" TEXT NOT NULL,
-  "run_heartbeat_at" TEXT,
-  "run_progress_at" TEXT,
-  "grp" TEXT NOT NULL DEFAULT ''
-);
-CREATE TRIGGER IF NOT EXISTS "sessions_grp_required" BEFORE INSERT ON "sessions" WHEN NEW."grp" = ''
-  BEGIN SELECT RAISE(ABORT, 'grp required: sessions'); END;
-CREATE INDEX IF NOT EXISTS "sessions_by_grp" ON "sessions" ("grp", "last_activity_at");
-CREATE TABLE IF NOT EXISTS "session_runtime" (
-  "session_id" TEXT NOT NULL PRIMARY KEY,
-  "generation" INTEGER NOT NULL,
-  "queue_tail" INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS "session_generations" (
-  "session_id" TEXT NOT NULL,
-  "generation" INTEGER NOT NULL,
-  "kept_count" INTEGER NOT NULL,
-  PRIMARY KEY ("session_id", "generation")
-);
-CREATE TABLE IF NOT EXISTS "session_contents" (
-  "session_id" TEXT NOT NULL,
-  "id" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  PRIMARY KEY ("session_id", "id")
-);
-CREATE TABLE IF NOT EXISTS "session_pointers" (
-  "session_id" TEXT NOT NULL,
-  "generation" INTEGER NOT NULL,
-  "position" INTEGER NOT NULL,
-  "content_id" TEXT NOT NULL,
-  PRIMARY KEY ("session_id", "generation", "position")
-);
-CREATE TABLE IF NOT EXISTS "session_queue" (
-  "session_id" TEXT NOT NULL,
-  "id" INTEGER NOT NULL,
-  "input_id" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  "enqueued_at" TEXT NOT NULL,
-  "drained_at" TEXT,
-  PRIMARY KEY ("session_id", "id")
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "session_queue_dedup" ON "session_queue" ("session_id", "input_id");
-CREATE TABLE IF NOT EXISTS "session_receipts" (
-  "session_id" TEXT NOT NULL,
-  "tool_call_id" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  "recorded_at" TEXT NOT NULL,
-  PRIMARY KEY ("session_id", "tool_call_id")
-);
-CREATE TABLE IF NOT EXISTS "session_api_receipts" (
-  "session_id" TEXT NOT NULL,
-  "tool_call_id" TEXT NOT NULL,
-  "status" INTEGER NOT NULL,
-  "body" TEXT NOT NULL,
-  "recorded_at" TEXT NOT NULL,
-  PRIMARY KEY ("session_id", "tool_call_id")
-);
-CREATE TABLE IF NOT EXISTS "session_subscriptions" (
-  "session_id" TEXT NOT NULL,
-  "subscription_id" TEXT NOT NULL,
-  "payload" TEXT NOT NULL,
-  "next_fire_at" TEXT,
-  "marker" TEXT,
-  "last_fired_at" TEXT,
-  "armed_at" TEXT NOT NULL,
-  PRIMARY KEY ("session_id", "subscription_id")
-);
-"""
-
 enum Sessions {
   // Foundation emits keyed containers in an order of its own choosing, and not
   // the same one twice, so stored payloads are sorted into canonical bytes.
@@ -297,19 +210,19 @@ enum Sessions {
   static func apiReceipt(_ key: String, toolCallID: String, in db: Database) throws -> APIReceipt? {
     guard let row = try Row.fetchOne(
       db,
-      sql: "SELECT status, body FROM session_api_receipts WHERE session_id = ? AND tool_call_id = ?",
+      sql: "SELECT status, body, request FROM session_api_receipts WHERE session_id = ? AND tool_call_id = ?",
       arguments: [key, toolCallID],
     ) else { return nil }
-    return APIReceipt(status: row["status"], body: row["body"])
+    return APIReceipt(status: row["status"], body: row["body"], request: row["request"])
   }
 
   static func recordAPIReceipt(_ key: String, toolCallID: String, _ receipt: APIReceipt, now: String, in db: Database) throws {
     try db.execute(
       sql: """
-      INSERT OR IGNORE INTO session_api_receipts (session_id, tool_call_id, status, body, recorded_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO session_api_receipts (session_id, tool_call_id, status, body, recorded_at, request)
+      VALUES (?, ?, ?, ?, ?, ?)
       """,
-      arguments: [key, toolCallID, receipt.status, receipt.body, now],
+      arguments: [key, toolCallID, receipt.status, receipt.body, now, receipt.request],
     )
   }
 

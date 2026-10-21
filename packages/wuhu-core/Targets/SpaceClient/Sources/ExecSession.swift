@@ -14,25 +14,65 @@ import struct MachineContract.ExecStart
 import enum MachineContract.ExecState
 import struct MachineContract.ExecStatus
 import struct MachineContract.MachineID
+import struct MachineContract.MachineStatus
 
 public struct ExecSession: Sendable {
   let client: SpaceClient
   let start: ExecStart
   private let execution = Execution()
 
+  // The caller leg's handle; a call made before `run` has started waits for it.
   private actor Execution {
-    var outgoing: OutgoingExec?
+    private var outgoing: OutgoingExec?
+    private var waiting: [CheckedContinuation<OutgoingExec, Never>] = []
+    /// Output arrived: the process ran on the machine.
+    private(set) var ran = false
 
-    func set(_ outgoing: OutgoingExec) { self.outgoing = outgoing }
+    func noteRan() { ran = true }
 
-    func acknowledgeExit() async {
-      guard let outgoing else { preconditionFailure("exec session has not started") }
-      await outgoing.acknowledgeExit()
+    func set(_ outgoing: OutgoingExec) {
+      self.outgoing = outgoing
+      for waiter in waiting { waiter.resume(returning: outgoing) }
+      waiting = []
+    }
+
+    func ready() async -> OutgoingExec {
+      if let outgoing { return outgoing }
+      return await withCheckedContinuation { waiting.append($0) }
     }
   }
 
   public func acknowledgeExit() async {
-    await execution.acknowledgeExit()
+    await execution.ready().acknowledgeExit()
+  }
+
+  /// Consumption acknowledgement for a run without `autoAcknowledge`.
+  public func acknowledge(through cursor: Int) async {
+    await execution.ready().acknowledge(through: cursor)
+  }
+
+  /// Kill over the caller leg; the exec's exit still arrives as an event.
+  public func kill() async {
+    await execution.ready().kill()
+  }
+
+  /// Stdin for a run with `input: .caller`: waits for the machine's window,
+  /// and is dropped once the exec has exited or stdin is closed.
+  public func sendStdin(_ bytes: [UInt8]) async throws {
+    try await execution.ready().sendStdin(bytes)
+  }
+
+  public func closeStdin() async {
+    await execution.ready().closeStdin()
+  }
+
+  public enum Stdin: Sendable {
+    /// Half-closed at once, so interactive invocation never dangles (ruling 7: no PTY, ever).
+    case closed
+    /// Pumped from the stream; EOF half-closes.
+    case stream(AsyncStream<[UInt8]>)
+    /// Driven by the caller through `sendStdin`/`closeStdin`.
+    case caller
   }
 
   public init(client: SpaceClient, start: ExecStart) {
@@ -62,7 +102,7 @@ public struct ExecSession: Sendable {
   public func run(
     autoAcknowledge: Bool = true,
     failOnRemoteError: Bool = false,
-    input: AsyncStream<[UInt8]>?,
+    input: Stdin,
     output: @escaping @Sendable (ExecOutputStream, [UInt8]) async -> Void,
     onEvent: (@Sendable (ExecEvent) async -> Void)? = nil,
     onTermination: (@Sendable (Termination) async -> Void)? = nil,
@@ -91,19 +131,20 @@ public struct ExecSession: Sendable {
     }
   }
 
-  // Ruling 7: no PTY, ever. A nil input gets an immediate half-close so
-  // interactive invocation never dangles; a stream half-closes on EOF.
-  private func pumpStdin(_ input: AsyncStream<[UInt8]>?, into exec: OutgoingExec) async -> Termination? {
-    guard let input else {
+  private func pumpStdin(_ input: Stdin, into exec: OutgoingExec) async -> Termination? {
+    switch input {
+    case .closed:
       await exec.closeStdin()
-      return nil
+    case let .stream(chunks):
+      do {
+        for await chunk in chunks {
+          try await exec.sendStdin(chunk)
+        }
+        await exec.closeStdin()
+      } catch {}
+    case .caller:
+      break
     }
-    do {
-      for await chunk in input {
-        try await exec.sendStdin(chunk)
-      }
-      await exec.closeStdin()
-    } catch {}
     return nil
   }
 
@@ -119,6 +160,7 @@ public struct ExecSession: Sendable {
         await onEvent?(event)
         switch event {
         case let .output(stream, _, data):
+          if total == 0 { await execution.noteRan() }
           total += data.count
           await output(stream, data.bytes)
         case let .exit(status):
@@ -178,15 +220,16 @@ public struct ExecSession: Sendable {
           break
         case .machineLost:
           return .machineLost(status.machine)
-        case .cancelled:
+        case .cancelled where !(await self.mayStillSettle(status)):
           return .cancelled
-        case .exited, .signaled, .reaped:
-          // Reaped still drains: the machine buffered the killed process's
-          // output to termination, so the redial replays the tail and the
-          // exit event, not a fabricated verdict.
+        case .cancelled, .exited, .signaled, .reaped:
+          // Cancelled and reaped still drain: the machine may settle the row
+          // with the killed process's buffered output and exit, so the redial
+          // replays the tail and the exit event, not a fabricated verdict. A
+          // second sever means the tail is gone.
           drains += 1
           if drains >= 2 {
-            return .tailLost
+            return status.state == .cancelled ? .cancelled : .tailLost
           }
         }
       }
@@ -201,6 +244,17 @@ public struct ExecSession: Sendable {
       attempt += 1
     }
     return nil
+  }
+
+  // A cancelled exec drains when the machine can still settle it: the kill
+  // reached the machine, the process had produced output, or the machine is
+  // attached now. One whose machine never got it and is away never ran there
+  // (`killOnDetachedMachineSurfacesCancelled`), so nothing waits out the grace.
+  private func mayStillSettle(_ status: ExecStatus) async -> Bool {
+    if status.killDelivered == true { return true }
+    if await execution.ran { return true }
+    guard let machines: [MachineStatus] = try? await self.client.api(.get, "/v1/machine") else { return true }
+    return machines.first { $0.id == status.machine }?.attached ?? true
   }
 
   private func fetchStatus(_ url: URL) async -> ExecStatus? {

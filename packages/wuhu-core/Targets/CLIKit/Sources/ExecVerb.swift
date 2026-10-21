@@ -28,7 +28,7 @@ extension Executor {
     )
     let runner = self.runner
     let termination = try await ExecSession(client: client, start: start).run(
-      input: runner.stdinIsTerminal ? nil : runner.stdinChunks(),
+      input: runner.stdinIsTerminal ? .closed : .stream(runner.stdinChunks()),
       output: { stream, bytes in
         switch stream {
         case .stdout: await runner.stdoutBytes(bytes)

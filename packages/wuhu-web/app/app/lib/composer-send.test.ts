@@ -89,7 +89,7 @@ const draft = (text: string): Draft => ({
 // it (lib/use-shown-node.ts) to the moment Send posts. The route's ownership
 // of it, across navigation, is space-viewing.test.tsx.
 async function sendFrom(files: Record<string, string>, requested: string) {
-  const shown = await loadShownNode(space(files), origin, requested, '', 0)
+  const shown = await loadShownNode(space(files), origin, requested, '')
   await composerSend({
     target: { kind: 'session', id: 'desk' },
     group: 'team',

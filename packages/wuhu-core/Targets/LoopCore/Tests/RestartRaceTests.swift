@@ -1,4 +1,5 @@
 import class MainHub.Hub
+import class MainHub.SessionService
 #if canImport(FoundationEssentials)
   import FoundationEssentials
 #else
@@ -122,14 +123,16 @@ import Testing
         }
       }
       let seen = Box<[Transcript]>([])
-      let worker = await SessionExecution(main: Hub(space: space), loopConfig: makeConfig(inference: { request in
+      var config = makeConfig(inference: { request in
         seen.withLock { $0.append(request.transcript) }
         return Fix.reply("reloaded work finished")
-      }))
-      let service = SessionService(sessions: sessions, worker: worker, runningWork: { _ in
+      })
+      config.runningWork = { _ in
         if !writeFailure { _ = try await sessions.enqueue(id, input: Fix.message("racing delivery")) }
         return ["exec.detached"]
-      })
+      }
+      let worker = await SessionExecution(main: Hub(space: space), loopConfig: config)
+      let service = SessionService(sessions: sessions, worker: worker)
       do {
         if writeFailure {
           await #expect(throws: DatabaseError.self) { try await service.restart(id, executor: nil, note: "discarded") }

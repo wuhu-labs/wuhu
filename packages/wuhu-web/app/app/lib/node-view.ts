@@ -52,14 +52,12 @@ export async function loadNode(
   contentOrigin: ContentOrigin,
   requested: string,
   suffix: string,
-  viewRev: number,
 ): Promise<NodeView> {
   return (await loadShownNode(
     source,
     contentOrigin,
     requested,
     suffix,
-    viewRev,
   ))
     .view
 }
@@ -69,7 +67,6 @@ export async function loadShownNode(
   contentOrigin: ContentOrigin,
   requested: string,
   suffix: string,
-  viewRev: number,
 ): Promise<ShownNode> {
   const { path, entry } = requested === '/'
     ? await homepage(source)
@@ -82,7 +79,6 @@ export async function loadShownNode(
       path,
       entry,
       suffix,
-      viewRev,
     ),
   }
 }
@@ -93,7 +89,6 @@ async function resolvedView(
   path: string,
   { kind, size }: NodeEntry,
   suffix: string,
-  viewRev: number,
 ): Promise<NodeView> {
   if (/^\/_\/conversations\/[^/]+\/attachments(?:\/|$)/.test(path)) {
     if (kind !== 'directory' && fileOpening(path) !== 'text') {
@@ -143,7 +138,7 @@ async function resolvedView(
     }
   }
   if (path.endsWith('.view')) {
-    const { content } = await source.read(path)
+    const { content, token } = await source.read(path)
     const opening = viewOpening(content)
     if (opening.state === 'text') return opening
     const doc = opening.doc
@@ -156,7 +151,7 @@ async function resolvedView(
         notice: 'Server reports no web origin — showing the raw view doc.',
       }
     }
-    const params = new URLSearchParams({ path, rev: String(viewRev) })
+    const params = new URLSearchParams({ path, rev: token })
     return {
       state: 'html',
       origin,

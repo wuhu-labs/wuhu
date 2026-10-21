@@ -24,7 +24,7 @@ import WuhuAI
       var source = try await store.hydrate(id).transcript.kernel
       let assistant = TranscriptItem.assistant(.init(id: UUID(), timestamp: fixedDate, content: [.text("portable text"), .reasoning(.encrypted(.init(providerID: "anthropic", model: "m", summary: "readable", opaque: "signature-a", id: "native-a", replayScope: "scope-a")))], stopReason: .stop, usage: .init(inputTokens: 1, outputTokens: 1, totalTokens: 2), toolCallIDs: [:], replayBinding: .init(identity: "scope-a", epoch: old.epoch)))
       source.append(assistant)
-      try await store.append(id, items: [assistant], transcript: source)
+      try await store.append(id, items: [assistant], inputOrigin: source.cacheWarmingInputOrigin)
       let generation = try await store.generationState(id).generation
       var next = SessionModelRouteTests().route(member: "secondary", reason: .compaction)
       next.switchCause = .quota
