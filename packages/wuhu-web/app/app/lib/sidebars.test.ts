@@ -38,13 +38,18 @@ Deno.test('definitions live directly under /.sidebars as json files, sorted', ()
     entries: [
       entry('work.json', 'file'),
       entry('agents.json', 'file'),
+      entry('zoo.sidebar.jsx', 'file'),
+      entry('everything.sidebar.jsx', 'file'),
+      entry('loose.jsx', 'file'),
       entry('notes.md', 'file'),
       entry('old.json', 'directory'),
     ],
   }
   equal(sidebarPaths(listing), [
+    '/.sidebars/everything.sidebar.jsx',
     '/.sidebars/agents.json',
     '/.sidebars/work.json',
+    '/.sidebars/zoo.sidebar.jsx',
   ])
 })
 

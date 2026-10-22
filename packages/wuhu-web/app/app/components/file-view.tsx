@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Icon } from '@wuhu/ui'
+import { Glyph } from '@wuhu/ui'
 import { attachmentName, formatSize } from '~/lib/attachments'
 import { fileKind } from '~/lib/file-opening'
 import { crossOriginFor } from '~/lib/groups'
@@ -56,7 +56,7 @@ export function FileCard({
     : `${fileKind(path)} · ${formatSize(size)}`
   return (
     <div className='wuhu-attachment-file wuhu-file-card'>
-      <Icon name='doc' w={13} h={16} />
+      <Glyph name='doc' w={13} h={16} />
       <span>
         <strong>{attachmentName(path)}</strong>
         <span>{detail}</span>

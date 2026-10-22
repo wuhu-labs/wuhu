@@ -1,4 +1,4 @@
-import { Icon } from '@wuhu/ui'
+import { Glyph } from '@wuhu/ui'
 import {
   attachmentDetail,
   attachmentDisplay,
@@ -82,7 +82,7 @@ export function Attachments({
           target={download ? undefined : '_blank'}
           rel={download ? undefined : 'noreferrer'}
         >
-          <Icon name='doc' w={13} h={16} />
+          <Glyph name='doc' w={13} h={16} />
           <span>
             <strong>{attachmentName(attachment.path)}</strong>
             <span>{attachmentDetail(attachment)}</span>

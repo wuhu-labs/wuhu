@@ -3,7 +3,13 @@ import { sharedGroup } from './groups.ts'
 import { groupAddress, placeHref } from './links.ts'
 import { spaceDestination } from './space-url.ts'
 
-export const everything = 'everything'
+// Everything is shared's own sidebar file, which the server writes when it
+// is missing; manipulate_ui and older memories still call it "everything".
+export const everything = '/.sidebars/everything.sidebar.jsx'
+
+export function sidebarAlias(sidebar: string): string {
+  return sidebar === 'everything' ? everything : sidebar
+}
 
 // Every view lives in one group: its Everything, or one of its sidebar files.
 export interface SidebarView {
@@ -26,9 +32,20 @@ export interface SidebarSection {
   sql: string
 }
 
+// A `.sidebar.jsx` file is a script: its name, icon and content come from
+// running it. A `.json` file is a definition of SQL sections.
 export type SidebarFile =
-  & { path: string; title: string; icon?: string }
-  & ({ sections: SidebarSection[] } | { failure: string })
+  | { path: string; title: string; script: true }
+  | (
+    & { path: string; title: string; icon?: string }
+    & ({ sections: SidebarSection[] } | { failure: string })
+  )
+
+export type DefinitionFile = Exclude<SidebarFile, { script: true }>
+
+export function isScript(path: string): boolean {
+  return path.endsWith('.sidebar.jsx')
+}
 
 export interface SidebarNode {
   id: string
@@ -41,16 +58,26 @@ export interface SidebarNode {
 
 export const sidebarDirectory = '/.sidebars'
 
-// The definitions: the folder's own .json files, in path order.
+// The folder's own .json and .sidebar.jsx files: Everything first, then
+// path order.
 export function sidebarPaths(listing: ListOutput): string[] {
   return listing.entries
-    .filter((entry) => entry.kind === 'file' && entry.name.endsWith('.json'))
+    .filter((entry) =>
+      entry.kind === 'file' &&
+      (entry.name.endsWith('.json') || isScript(entry.name))
+    )
     .map((entry) => `${sidebarDirectory}/${entry.name}`)
-    .sort()
+    .sort((a, b) =>
+      Number(b === everything) - Number(a === everything) ||
+      (a < b ? -1 : a > b ? 1 : 0)
+    )
 }
 
 export function sidebarName(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/, '')
+  return path.slice(path.lastIndexOf('/') + 1).replace(
+    /\.(json|sidebar\.jsx)$/,
+    '',
+  )
 }
 
 function nonblank(value: unknown): value is string {
@@ -219,6 +246,13 @@ export function rowTarget(
   }
 }
 
+// A sidebar's `home`, or a widget's `to`, as an href; null when it names
+// nowhere.
+export function pageHref(address: string, group: string): string | null {
+  if (address === 'chat' || !validDestination(address)) return null
+  return rowTarget(address, null, group)?.href ?? null
+}
+
 // The choice is this browser's, per account and space.
 function memoryKey(scope: string): string {
   return `wuhu.view/${scope}`
@@ -226,7 +260,9 @@ function memoryKey(scope: string): string {
 
 export function recallSidebar(scope: string | null): SidebarView {
   const kept = scope == null ? null : localStorage.getItem(memoryKey(scope))
-  return kept == null ? sharedEverything : JSON.parse(kept)
+  if (kept == null) return sharedEverything
+  const view = JSON.parse(kept) as SidebarView
+  return { ...view, sidebar: sidebarAlias(view.sidebar) }
 }
 
 export function rememberSidebar(

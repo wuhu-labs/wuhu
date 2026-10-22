@@ -10,3 +10,10 @@
 /app/lib/contract.gen.ts
 /app/lib/space-url.vectors.json
 /app/lib/viewing.vectors.json
+
+# QuickJS for scripts (in-graph via //tools/quickjs-wasm:quickjs)
+/app/lib/widgets/quickjs/emscripten-module.browser.mjs
+/app/lib/widgets/quickjs/emscripten-module.wasm
+# IconaMoon (in-graph via //tools/iconamoon:sprite)
+/public/_/iconamoon.svg
+/app/lib/widgets/iconamoon-names.json

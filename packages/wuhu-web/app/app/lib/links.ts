@@ -152,3 +152,12 @@ export function spaceLink(
   }
   return withGroup(`/${segments.join('/')}${suffix}`, group)
 }
+
+// A document's name without its kind's extension; other files keep theirs.
+export function fileName(path: string): string {
+  const names = path.split('/').filter(Boolean)
+  const last = names.at(-1)
+  if (last === undefined) return '/'
+  if (names.length > 1 && /^index\.[a-z]+$/i.test(last)) return names.at(-2)!
+  return last.replace(/\.(md|html?|view|table)$/i, '')
+}

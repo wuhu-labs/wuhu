@@ -93,7 +93,7 @@ const glyphs = {
   ),
 } satisfies Record<string, ReactNode>
 
-export type IconName = keyof typeof traced | keyof typeof glyphs
+export type GlyphName = keyof typeof traced | keyof typeof glyphs
 
 interface IconStyle extends CSSProperties {
   '--icon'?: string
@@ -101,8 +101,8 @@ interface IconStyle extends CSSProperties {
   '--h'?: string
 }
 
-export function Icon(
-  { name, w, h }: { name: IconName; w?: number; h?: number },
+export function Glyph(
+  { name, w, h }: { name: GlyphName; w?: number; h?: number },
 ) {
   if (name in glyphs) {
     const size = w ?? 20
@@ -127,4 +127,25 @@ export function Icon(
     '--h': `${h ?? dh}px`,
   }
   return <i className='wui-icon' style={style} aria-hidden='true' />
+}
+
+// An IconaMoon icon by its own name (`comment`, `home-fill`, …), drawn from
+// the app's one sprite of the whole set in currentColor.
+export function Icon(
+  { name, size = 20, className }: {
+    name: string
+    size?: number
+    className?: string
+  },
+) {
+  return (
+    <svg
+      className={className ? `wui-iconamoon ${className}` : 'wui-iconamoon'}
+      width={size}
+      height={size}
+      aria-hidden='true'
+    >
+      <use href={`/_/iconamoon.svg#${encodeURIComponent(name)}`} />
+    </svg>
+  )
 }

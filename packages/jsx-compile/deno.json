@@ -1,0 +1,27 @@
+{
+  "owner": "wuhu",
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": true
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1.0.13",
+    "sucrase": "npm:sucrase@3.35.1"
+  },
+  "tasks": {
+    "fmt": "deno fmt --check .",
+    "lint": "deno lint",
+    "typecheck": "deno check src test",
+    "test": "deno test test",
+    "bundle": "deno bundle --frozen --format iife --platform browser --minify src/compile.ts --outdir"
+  },
+  "artifacts": {
+    "bundle": {
+      "task": "bundle",
+      "platforms": [
+        "linux",
+        "mac"
+      ]
+    }
+  }
+}

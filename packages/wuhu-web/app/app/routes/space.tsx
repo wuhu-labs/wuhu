@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 import {
   AppShell,
   GlassButton,
-  Icon,
+  Glyph,
   NavButtons,
   type PageLayout,
   TitlePill,
@@ -16,9 +16,9 @@ import {
   SettingsRail,
   SettingsSidebar,
 } from '~/components/settings-nav'
+import { ScriptSidebar, scriptSidebar } from '~/components/script-sidebar'
 import {
   CustomSidebar,
-  EverythingSidebar,
   SessionAvatar,
   SidebarRail,
 } from '~/components/space-sidebar'
@@ -35,12 +35,12 @@ import {
 } from '~/lib/composer-target'
 import type { QueryOutput } from '~/lib/contract.gen'
 import { memberGroups, sharedGroup } from '~/lib/groups'
-import { placeGroup, screens, withoutGroup } from '~/lib/links'
+import { fileName, placeGroup, screens, withoutGroup } from '~/lib/links'
 import {
   type SessionCapability,
   sessionCapability,
 } from '~/lib/session-capability'
-import { everything, sameView } from '~/lib/sidebars'
+import { everything, isScript, pageHref, sameView } from '~/lib/sidebars'
 import {
   SpaceFeedsProvider,
   spaceScope,
@@ -58,6 +58,8 @@ import { DraftsProvider, useDrafts } from '~/lib/use-drafts'
 import { useObserve } from '~/lib/use-observe'
 import { useShownNode } from '~/lib/use-shown-node'
 import { useSidebarView } from '~/lib/use-sidebar-view'
+import { usePageVisible } from '~/lib/use-page-visible'
+import { useScripts } from '~/lib/widgets/use-script'
 import { useThemeStylesheet } from '~/lib/use-theme'
 import { type ShownPage, viewingOf } from '~/lib/viewing'
 import { ViewerCacheContext } from '~/lib/viewer-cache'
@@ -170,15 +172,6 @@ function usePageTitle(
   const view = shown.view
   return (view.state === 'html' ? view.title : declared) ?? rowTitle ??
     fileName(shown.path)
-}
-
-// A document's name without its kind's extension; other files keep theirs.
-function fileName(path: string): string {
-  const names = path.split('/').filter(Boolean)
-  const last = names.at(-1)
-  if (last === undefined) return '/'
-  if (names.length > 1 && /^index\.[a-z]+$/i.test(last)) return names.at(-2)!
-  return last.replace(/\.(md|html?|view|table)$/i, '')
 }
 
 // What a navigation carries: the sidebar row's title, or, inside Settings,
@@ -381,7 +374,39 @@ export function SpaceBody(
   // A view whose file left the space falls back to Everything without
   // forgetting the choice.
   const file = sidebarFiles?.find((found) => found.path === view.sidebar) ??
-    null
+    sidebarFiles?.find((found) => found.path === everything) ?? null
+  const sharedClient = server.client(sharedGroup)
+  const visible = usePageVisible()
+  const scripts = useScripts(
+    sharedClient,
+    useMemo(
+      () =>
+        sidebarFiles?.filter((found) => 'script' in found).map((found) =>
+          found.path
+        ) ?? [],
+      [sidebarFiles],
+    ),
+    file?.path ?? null,
+    sidebarOpen && visible,
+  )
+  // A script sidebar opens its home when picked, or once its first run
+  // answers if it had not yet; navigating away first cancels that.
+  const [opening, setOpening] = useState<
+    { sidebar: string; from: string } | null
+  >(null)
+  const openHome = (sidebar: string): boolean => {
+    const tree = scriptSidebar(sidebar, scripts.get(sidebar))
+    if (tree == null) return false
+    const home = typeof tree === 'object' && tree.home != null
+      ? pageHref(tree.home, sharedGroup)
+      : null
+    if (home != null && home !== here) go(home)
+    return true
+  }
+  useEffect(() => {
+    if (opening == null) return
+    if (opening.from !== here || openHome(opening.sidebar)) setOpening(null)
+  })
 
   return (
     <>
@@ -401,14 +426,14 @@ export function SpaceBody(
                   ? go(settingsFrom, settingsFromTitle)
                   : go(screens.settings)}
             >
-              <Icon name='gear' w={18} h={18} />
+              <Glyph name='gear' w={18} h={18} />
             </GlassButton>
             <GlassButton
               aria-label='New agent'
               title='New agent'
               onClick={() => setCreating(true)}
             >
-              <Icon name='plus' w={15} h={16} />
+              <Glyph name='plus' w={15} h={16} />
             </GlassButton>
           </>
         }
@@ -417,10 +442,16 @@ export function SpaceBody(
           : (
             <SidebarRail
               files={sidebarFiles}
+              scripts={scripts}
               current={file?.path ?? everything}
               onPick={(sidebar) => {
                 const next = { group: sharedGroup, sidebar }
                 if (!sameView(next, view)) selectView(next)
+                setOpening(
+                  !isScript(sidebar) || openHome(sidebar)
+                    ? null
+                    : { sidebar, from: here },
+                )
               }}
             />
           )}
@@ -433,10 +464,17 @@ export function SpaceBody(
             />
           )
           : file == null
+          ? null
+          : 'script' in file
           ? (
-            <EverythingSidebar
-              sessions={shared.sessions}
+            <ScriptSidebar
+              key={file.path}
+              path={file.path}
+              state={scripts.get(file.path)}
+              client={sharedClient}
+              sessions={sessions}
               channels={shared.channels}
+              active={sidebarOpen && visible}
               here={here}
               onNavigate={go}
             />

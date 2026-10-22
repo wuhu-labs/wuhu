@@ -85,6 +85,7 @@ public actor SpaceHost {
       let handover: Handover?
       if case let .process(_, _, taken) = placement { handover = taken } else { handover = nil }
       try await space.reindexLinks()
+      try await provisionEverythingSidebar(space)
       try await space.recordDeployment(deployment)
       if let devImport, handover == nil {
         try await space.importFolder(devImport)

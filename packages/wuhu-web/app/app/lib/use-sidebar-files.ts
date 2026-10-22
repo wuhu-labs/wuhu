@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  isScript,
   sidebarDirectory,
   type SidebarFile,
   sidebarFile,
@@ -34,7 +35,11 @@ export function useSidebarFiles(client: SpaceClient): SidebarFile[] | null {
       }
     }
     publish()
-    const stops = paths.map((path) =>
+    for (const path of paths.filter(isScript)) {
+      loaded.set(path, { path, title: sidebarName(path), script: true })
+    }
+    publish()
+    const stops = paths.filter((path) => !isScript(path)).map((path) =>
       client.read(path)(
         (output) => {
           loaded.set(path, sidebarFile(path, output.content))

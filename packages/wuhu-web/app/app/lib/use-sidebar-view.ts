@@ -7,7 +7,12 @@ import {
 } from './device-commands.ts'
 import type { QueryOutput } from './contract.gen.ts'
 import { sharedGroup } from './groups.ts'
-import { recallSidebar, rememberSidebar, type SidebarView } from './sidebars.ts'
+import {
+  recallSidebar,
+  rememberSidebar,
+  sidebarAlias,
+  type SidebarView,
+} from './sidebars.ts'
 import { useSpaceFeeds } from './space-feeds.tsx'
 import { useObserve } from './use-observe.ts'
 import { registerDevice } from '~/sdk/device'
@@ -56,7 +61,7 @@ export function useSidebarView(
     played.current = next.played
     // manipulate_ui names "everything" or one of Shared's sidebar paths.
     if (next.sidebar != null) {
-      select({ group: sharedGroup, sidebar: next.sidebar })
+      select({ group: sharedGroup, sidebar: sidebarAlias(next.sidebar) })
     }
   }, [commands, select])
 

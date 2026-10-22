@@ -1,0 +1,13 @@
+--- a/c/interface.c
++++ b/c/interface.c
+@@ -47,8 +47,8 @@
+ 
+ #ifdef QTS_USE_QUICKJS_NG
+ // quickjs-ng amalgam only provides quickjs.h and quickjs-libc.h
+-#include "../vendor/quickjs-ng/quickjs-libc.h"
+-#include "../vendor/quickjs-ng/quickjs.h"
++#include "quickjs-libc.h"
++#include "quickjs.h"
+ // Compatibility: quickjs-ng uses C99 bool instead of custom BOOL type
+ #ifndef BOOL
+ #define BOOL bool

@@ -3,21 +3,20 @@ import {
   AvatarSlot,
   Count,
   EntityCard,
+  Glyph,
+  type GlyphName,
   Icon,
-  type IconName,
   LeadIcon,
   ListCard,
   Row,
 } from '@wuhu/ui'
+import type { ReactNode } from 'react'
 import type { QueryOutput } from '~/lib/contract.gen'
 import { initialsFrom } from '~/lib/directory'
-import { cardGroups, inCreationOrder, sessionStatusLine } from '~/lib/cards'
-import type { ChannelSummary } from '~/lib/channels'
-import { sharedGroup } from '~/lib/groups'
-import { conversationHref, sessionHref } from '~/lib/links'
+import { cardGroups, sessionStatusLine } from '~/lib/cards'
 import type { SessionRecord, SessionSummary } from '~/lib/session-model'
 import {
-  everything,
+  type DefinitionFile,
   type RowTarget,
   rowTarget,
   type SidebarFile,
@@ -26,9 +25,12 @@ import {
   type SidebarSection,
 } from '~/lib/sidebars'
 import { useObserve } from '~/lib/use-observe'
+import type { ScriptState } from '~/lib/widgets/use-script'
+import { knownIcon } from '~/lib/widgets/tree'
 import { errorMessage } from '~/sdk/errors'
 import { sqlSubscription } from '~/sdk/subscriptions'
 import { Avatar } from './avatar'
+import { scriptSidebar } from './script-sidebar'
 
 interface Navigation {
   // The address on screen, pathname plus search, to light up its row.
@@ -52,98 +54,6 @@ export function SessionAvatar(
   )
 }
 
-// Everything: one card per top-level agent, its child agents one level down
-// (tasks are not listed), and one card of channels when there is any.
-export function EverythingSidebar({
-  sessions,
-  channels,
-  here,
-  onNavigate,
-}: Navigation & {
-  sessions: SessionRecord[] | null
-  channels: ChannelSummary[] | null
-}) {
-  const listed = inCreationOrder(
-    sessions?.filter((s) => s.lifecycle !== 'archived') ?? [],
-  )
-
-  const tops = listed.filter((s) => s.kind === 'agent' && s.parent == null)
-  return (
-    <>
-      {tops.map((agent) => {
-        const children = listed.filter((s) =>
-          s.kind === 'agent' && s.parent === agent.id
-        )
-        const href = sessionHref(agent.id, agent.group)
-        if (children.length === 0) {
-          return (
-            <AgentCard
-              key={agent.id}
-              href={href}
-              current={here === href}
-              onNavigate={onNavigate}
-              lead={<SessionAvatar session={agent} size={34} />}
-              name={agent.title}
-              status={sessionStatusLine(agent)}
-              count={<Count value={agent.unread} />}
-            />
-          )
-        }
-        return (
-          <EntityCard
-            key={agent.id}
-            href={href}
-            current={here === href}
-            onNavigate={onNavigate}
-            lead={<SessionAvatar session={agent} size={34} />}
-            title={agent.title}
-            status={sessionStatusLine(agent)}
-            trail={<Count value={agent.unread} />}
-          >
-            {children.map((child) => {
-              const childHref = sessionHref(child.id, child.group)
-              return (
-                <Row
-                  key={child.id}
-                  href={childHref}
-                  current={here === childHref}
-                  onNavigate={onNavigate}
-                  lead={<SessionAvatar session={child} size={26} />}
-                  label={child.title}
-                  status={sessionStatusLine(child)}
-                  trail={<Count value={child.unread} tone='grey' />}
-                />
-              )
-            })}
-          </EntityCard>
-        )
-      })}
-      {channels != null && channels.length > 0 && (
-        <ListCard title='Channels'>
-          {channels.map((channel) => {
-            const href = conversationHref(channel.id, sharedGroup)
-            return (
-              <Row
-                key={channel.id}
-                href={href}
-                current={here === href}
-                onNavigate={onNavigate}
-                lead={
-                  <LeadIcon>
-                    <Icon name='bubble' w={16} h={16} />
-                  </LeadIcon>
-                }
-                label={channel.title}
-                trail={<Count value={channel.unread} />}
-              />
-            )
-          })}
-        </ListCard>
-      )}
-    </>
-  )
-}
-
 // A custom sidebar: the first section's top-level rows each their own card
 // with one level of children; every later section one titled card of its
 // top-level rows.
@@ -154,7 +64,7 @@ export function CustomSidebar({
   here,
   onNavigate,
 }: Navigation & {
-  file: SidebarFile
+  file: DefinitionFile
   group: string
   sessions: SessionRecord[] | null
 }) {
@@ -312,20 +222,20 @@ function rowLead({ node, target, session }: Resolved, size: number) {
   return (
     <LeadIcon>
       {glyph === 'doc'
-        ? <Icon name='doc' w={13} h={16} />
-        : <Icon name={glyph} w={16} h={16} />}
+        ? <Glyph name='doc' w={13} h={16} />
+        : <Glyph name={glyph} w={16} h={16} />}
     </LeadIcon>
   )
 }
 
 // One glyph for HTML pages, one for Markdown documents.
-function documentGlyph(target: RowTarget): IconName {
+function documentGlyph(target: RowTarget): GlyphName {
   if (target.kind === 'conversation') return 'bubble'
   return /\.html?($|[?#])/.test(target.href) ? 'grid' : 'doc'
 }
 
 // The SF Symbol a definition names, drawn with the design's nearest glyph.
-const symbolGlyphs: Record<string, IconName> = {
+const symbolGlyphs: Record<string, GlyphName> = {
   hammer: 'hammer',
   book: 'book',
   'book.closed': 'book',
@@ -344,44 +254,45 @@ const symbolGlyphs: Record<string, IconName> = {
   'chart.xyaxis.line': 'graph',
 }
 
-// The rail: Everything, then one button per sidebar file.
+// The rail: one button per sidebar file, Everything first. A script's name
+// and icon come from its last run.
 export function SidebarRail({
   files,
+  scripts,
   current,
   onPick,
 }: {
   files: SidebarFile[] | null
+  scripts: ReadonlyMap<string, ScriptState>
   current: string
   onPick: (sidebar: string) => void
 }) {
-  return (
-    <>
+  return files?.map((file) => {
+    let title = file.title
+    let glyph: ReactNode = null
+    if ('script' in file) {
+      const tree = scriptSidebar(file.path, scripts.get(file.path))
+      if (typeof tree === 'object' && tree != null) {
+        title = tree.name
+        if (tree.icon != null && knownIcon(tree.icon)) {
+          glyph = <Icon name={tree.icon} size={20} />
+        }
+      }
+    } else {
+      const symbol = file.icon == null ? undefined : symbolGlyphs[file.icon]
+      if (symbol) glyph = <Glyph name={symbol} w={18} h={18} />
+    }
+    return (
       <button
+        key={file.path}
         type='button'
-        title='Everything'
-        aria-label='Everything'
-        aria-pressed={current === everything}
-        onClick={() => onPick(everything)}
+        title={title}
+        aria-label={title}
+        aria-pressed={current === file.path}
+        onClick={() => onPick(file.path)}
       >
-        <Icon name='bubble' w={18} h={18} />
+        {glyph ?? initialsFrom(title).slice(0, 1)}
       </button>
-      {files?.map((file) => {
-        const glyph = file.icon == null ? undefined : symbolGlyphs[file.icon]
-        return (
-          <button
-            key={file.path}
-            type='button'
-            title={file.title}
-            aria-label={file.title}
-            aria-pressed={current === file.path}
-            onClick={() => onPick(file.path)}
-          >
-            {glyph ? <Icon name={glyph} w={18} h={18} /> : initialsFrom(
-              file.title,
-            ).slice(0, 1)}
-          </button>
-        )
-      })}
-    </>
-  )
+    )
+  })
 }

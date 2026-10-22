@@ -1,4 +1,4 @@
-import { Icon, ListCard, Row } from '@wuhu/ui'
+import { Glyph, ListCard, Row } from '@wuhu/ui'
 import { Avatar } from '~/components/avatar'
 import { aiSharing } from '~/lib/ai-sharing'
 import { sendKeyLabel, useSendKey } from '~/lib/composer'
@@ -73,7 +73,7 @@ export function SettingsRail({
         aria-pressed={topic === 'space'}
         onClick={() => onNavigate(settingsHref('space'))}
       >
-        <Icon name='grid' w={17} h={17} />
+        <Glyph name='grid' w={17} h={17} />
       </button>
     </>
   )

@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@jitl/quickjs-ffi-types": "./ffi-types.mjs"
+  }
+}

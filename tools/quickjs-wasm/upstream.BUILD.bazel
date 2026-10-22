@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "c/interface.c",
+    "vendor/quickjs-ng-patches/0001-bellard-module-detection.patch",
+    "exportedRuntimeMethods.json",
+    "templates/pre-extension.js",
+    "templates/pre-wasmMemory.js",
+])

@@ -5,7 +5,8 @@ import HTTPTypes
 import JSONValue
 import SpaceContract
 import SpaceCore
-import SpaceServer
+import struct SpaceFS.SpacePath
+@testable import SpaceServer
 import Testing
 
 // A 1x1 transparent PNG: a real byte sequence with a signature, a NUL run, and
@@ -129,6 +130,83 @@ private let onePixelPNG = Data([
       body: .bytes(Data("defaced".utf8), contentType: "application/octet-stream"),
     ))
     #expect(webWrite.status == .methodNotAllowed)
+  }
+
+  @Test func aJSXFileReadsCompiledAsJavaScript() async throws {
+    let harness = try Harness()
+    let source = "export const sizes = ['small']\nexport default () => <Figure value={1} label=\"One\" />\n"
+    let written = try await json(try await harness.put("/.widgets/one.widget.jsx", Data(source.utf8)))
+    let token = try #require(written.field("token")?.text)
+
+    let compiled = try await harness.get(harness.api, "/v1/f/.widgets/one.widget.jsx", query: ["as": "js"])
+    #expect(compiled.status == .ok)
+    #expect(compiled.headers[.contentType] == "text/javascript; charset=utf-8")
+    #expect(compiled.headers[.eTag] == "\"\(token).js\"")
+    let code = String(decoding: try await compiled.data(), as: UTF8.self)
+    #expect(code.contains("export const sizes = ['small']"))
+    #expect(code.contains("h(Figure, { value: 1, label: \"One\""))
+
+    let raw = try await harness.get(harness.api, "/v1/f/.widgets/one.widget.jsx")
+    #expect(String(decoding: try await raw.data(), as: UTF8.self) == source)
+  }
+
+  @Test func theProvisionedEverythingCompiles() async throws {
+    let harness = try Harness()
+    try await provisionEverythingSidebar(harness.space)
+
+    let compiled = try await harness.get(harness.api, "/v1/f/.sidebars/everything.sidebar.jsx", query: ["as": "js"])
+    #expect(compiled.status == .ok)
+    #expect(String(decoding: try await compiled.data(), as: UTF8.self).contains("h(Sidebar"))
+  }
+
+  @Test func aCompileHasAStepBudget() async throws {
+    let compiler = JSXCompiler(stepBudget: 2000)
+    #expect(try await compiler.javaScript("export default () => <Figure value={1} />", file: "/a.widget.jsx", version: "1").contains("h(Figure"))
+    let huge = (0 ..< 20000).map { "export const v\($0) = <List rows={[{ label: '\($0)' }]} />" }.joined(separator: "\n")
+    let failure = await #expect(throws: JSXCompiler.Failure.self) { try await compiler.javaScript(huge, file: "/huge.widget.jsx", version: "1") }
+    #expect(failure?.message == "/huge.widget.jsx: too long to compile")
+    #expect(try await compiler.javaScript("export default () => <Figure value={2} />", file: "/b.widget.jsx", version: "1").contains("value: 2"))
+  }
+
+  @Test func aSyntaxErrorNamesTheFileLineAndColumn() async throws {
+    let harness = try Harness()
+    #expect(try await harness.put("/bad.sidebar.jsx", Data("export default () => <Sidebar name=>".utf8)).status == .ok)
+
+    let compiled = try await harness.get(harness.api, "/v1/f/bad.sidebar.jsx", query: ["as": "js"])
+    #expect(compiled.status == .badRequest)
+    let failure = try await json(compiled)
+    #expect(failure.field("code") == .string("invalidArgument"))
+    let message = try #require(failure.field("message")?.text)
+    #expect(message.hasPrefix("/bad.sidebar.jsx: "))
+    #expect(message.contains("(1:"))
+  }
+
+  @Test func onlyJSXHasAJavaScriptForm() async throws {
+    let harness = try Harness()
+    #expect(try await harness.put("/note.md", Data("# Note".utf8)).status == .ok)
+
+    let compiled = try await harness.get(harness.api, "/v1/f/note.md", query: ["as": "js"])
+    #expect(compiled.status == .badRequest)
+    #expect((try await json(compiled)).field("code") == .string("invalidArgument"))
+  }
+
+  @Test func everythingIsWrittenWhenMissingAndKeptWhenEdited() async throws {
+    let harness = try Harness()
+    let path = try SpacePath(validating: "/.sidebars/everything.sidebar.jsx")
+
+    try await provisionEverythingSidebar(harness.space)
+    let provisioned = try await harness.context.readBytes("/.sidebars/everything.sidebar.jsx")
+    #expect(String(decoding: provisioned.data, as: UTF8.self).contains("<Sidebar name='Everything'"))
+
+    _ = try await harness.space.writeFile(path, data: Data("export default () => <Sidebar name='Mine' />".utf8), in: .shared, acting: .shared, ifMatch: nil, createOnly: false)
+    try await provisionEverythingSidebar(harness.space)
+    let edited = try await harness.context.readBytes("/.sidebars/everything.sidebar.jsx")
+    #expect(String(decoding: edited.data, as: UTF8.self).contains("'Mine'"))
+
+    #expect(try await harness.post("rm", ["path": "/.sidebars/everything.sidebar.jsx"]).status == .ok)
+    try await provisionEverythingSidebar(harness.space)
+    let restored = try await harness.context.readBytes("/.sidebars/everything.sidebar.jsx")
+    #expect(String(decoding: restored.data, as: UTF8.self).contains("<Sidebar name='Everything'"))
   }
 }
 

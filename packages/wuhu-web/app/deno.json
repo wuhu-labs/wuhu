@@ -6,12 +6,19 @@
     ".react-router",
     "build",
     "app/lib/viewing.vectors.json",
-    "public/_/worklets/bubble.js"
+    "public/_/worklets/bubble.js",
+    "public/_/iconamoon.svg",
+    "app/lib/widgets/quickjs/emscripten-module.browser.mjs",
+    "app/lib/widgets/iconamoon-names.json"
   ],
   "generated": {
     "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
     "app/lib/space-url.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/space-url-vectors.json",
-    "app/lib/viewing.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/viewing-vectors.json"
+    "app/lib/viewing.vectors.json": "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/viewing-vectors.json",
+    "app/lib/widgets/quickjs/emscripten-module.browser.mjs": "//tools/quickjs-wasm:emscripten-module.browser.mjs",
+    "app/lib/widgets/quickjs/emscripten-module.wasm": "//tools/quickjs-wasm:emscripten-module.wasm",
+    "app/lib/widgets/iconamoon-names.json": "//tools/iconamoon:names.json",
+    "public/_/iconamoon.svg": "//tools/iconamoon:iconamoon.svg"
   },
   "exportedDirs": {
     "shell-sdk": "app/lib/shell-sdk"

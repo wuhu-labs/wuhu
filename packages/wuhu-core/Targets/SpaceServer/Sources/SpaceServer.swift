@@ -151,7 +151,13 @@ public enum SpaceServer {
         }
       }
     }
-    addFileRoutes(&router, contextOf: contextOf)
+    addFileRoutes(&router, compiler: JSXCompiler(), contextOf: contextOf)
+    router.post("/v1/fetch") { request, _ in
+      switch try await requestPrincipal(request, space: space, date: clock) {
+      case let .principal(principal): await widgetFetchResponse(space: space, principal: principal, proxy: pageFetch, request: request)
+      case let .refused(response): response
+      }
+    }
     addToolRosterRoutes(&router)
     router.get("/v1/observe") { request, _ in
       let principal: Principal

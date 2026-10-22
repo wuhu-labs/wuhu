@@ -13,6 +13,7 @@ import NIOCore
 import NIOHTTP1
 import Serve
 import func SessionTools.fetchOrigin
+import struct SpaceContract.GroupID
 import SpaceCore
 
 typealias PageFetchHandler = @Sendable (Request, Set<String>, String, String, String, String, NIODeadline) async throws -> Response
@@ -88,19 +89,60 @@ struct PageFetchError: Error, Sendable {
   static let timeout = Self(code: "fetchTimeout", message: "proxied fetch exceeded its 60 s total time limit", status: .gatewayTimeout)
 }
 
+/// `POST /_/space/fetch` on a group host: a content page's fetch, admitted by
+/// the page's own origin and the viewer's read cookie.
 func pageFetchResponse(space: Space, caller: WebCaller, proxy: PageFetchHandler?, request: Request, deadline: NIODeadline = .now() + .seconds(60), spaceIdentity: @Sendable (Space) async throws -> String = { try await $0.identity().rawValue }) async -> Response {
-  do {
-    guard request.method == .post else {
-      throw PageFetchError(code: "fetchMethodInvalid", message: "proxied fetch uses POST /_/space/fetch", status: .methodNotAllowed)
-    }
+  await proxiedFetchResponse(space: space, group: caller.group, proxy: proxy, request: request, deadline: deadline, spaceIdentity: spaceIdentity) {
     guard let origin = request.headers[.origin], caller.contentOrigins.contains(origin),
           request.headers[HTTPField.Name("Sec-Fetch-Site")!] == "same-origin"
-    else { return closedFetchResponse(crossOriginRefusal()) }
+    else { return .refused(closedFetchResponse(crossOriginRefusal())) }
+    guard case let .admitted(viewer?) = try await cookieAdmission(space: space, group: caller.group, cookies: caller.cookies, request: request) else {
+      throw PageFetchError.viewerRequired
+    }
+    return .viewer(viewer)
+  }
+}
+
+/// `POST /v1/fetch`: a widget's fetch, as the person whose key signed the
+/// request, in the group it names, with the widget or sidebar file's path as
+/// the page. A widget never writes, so only GET and HEAD go out.
+func widgetFetchResponse(space: Space, principal: Principal, proxy: PageFetchHandler?, request: Request, deadline: NIODeadline = .now() + .seconds(60)) async -> Response {
+  await proxiedFetchResponse(space: space, group: principal.group, proxy: proxy, request: request, deadline: deadline) {
+    guard case let .person(_, account) = principal.actor else { throw PageFetchError.viewerRequired }
+    let query = queryValues(of: request.url)
+    guard ["GET", "HEAD"].contains(query["method"] ?? "GET") else {
+      throw PageFetchError(code: "fetchMethodInvalid", message: "a widget's fetch is GET or HEAD", status: .badRequest)
+    }
+    guard let page = query["page"].flatMap(pagePath),
+          page.rawValue.hasSuffix(".widget.jsx") || page.rawValue.hasSuffix(".sidebar.jsx"),
+          (try? await space.fs(principal.group).read(page.rawValue)) != nil
+    else {
+      throw PageFetchError(code: "fetchPageInvalid", message: "a widget's fetch names a .widget.jsx or .sidebar.jsx file the viewer can read", status: .forbidden)
+    }
+    return .viewer(account)
+  }
+}
+
+private enum FetchAdmission {
+  case viewer(AccountID)
+  case refused(Response)
+}
+
+extension PageFetchError {
+  static let viewerRequired = Self(code: "fetchViewerRequired", message: "proxied fetch requires a signed-in viewer; anonymous viewers cannot fetch", status: .unauthorized)
+}
+
+// Everything after admission is one path for pages and widgets: the group's
+// allow list, the request rules, and a token minted for the viewer and page.
+private func proxiedFetchResponse(space: Space, group: GroupID, proxy: PageFetchHandler?, request: Request, deadline: NIODeadline, spaceIdentity: @Sendable (Space) async throws -> String = { try await $0.identity().rawValue }, admit: () async throws -> FetchAdmission) async -> Response {
+  do {
+    guard request.method == .post else {
+      throw PageFetchError(code: "fetchMethodInvalid", message: "proxied fetch is a POST", status: .methodNotAllowed)
+    }
     let account: AccountID
-    switch try await cookieAdmission(space: space, group: caller.group, cookies: caller.cookies, request: request) {
-    case let .admitted(viewer?): account = viewer
-    default:
-      throw PageFetchError(code: "fetchViewerRequired", message: "proxied fetch requires a signed-in viewer; anonymous viewers cannot fetch", status: .unauthorized)
+    switch try await admit() {
+    case let .viewer(viewer): account = viewer
+    case let .refused(response): return response
     }
     let query = queryValues(of: request.url)
     guard let raw = query["url"], let url = URL(string: raw), fetchOrigin(url) != nil,
@@ -122,7 +164,7 @@ func pageFetchResponse(space: Space, caller: WebCaller, proxy: PageFetchHandler?
       }
       if !hopHeaders.contains(name.lowercased()), field != .cookie, name.lowercased() != "host" { headers[field] = text }
     }
-    let fs = await space.fs(caller.group)
+    let fs = await space.fs(group)
     guard let (_, listData) = try? await fs.read("/fetch.json"),
           case let .object(config)? = JSONValue.parse(String(decoding: listData, as: UTF8.self)),
           case let .array(entries)? = config["allow"], !entries.isEmpty
@@ -155,7 +197,7 @@ func pageFetchResponse(space: Space, caller: WebCaller, proxy: PageFetchHandler?
     let allowedOrigins = allow
     let response = try await fetchWithinDeadline(deadline) {
       try await proxy(
-        outgoing, allowedOrigins, spaceID, caller.group.rawValue, page.rawValue, viewer, deadline,
+        outgoing, allowedOrigins, spaceID, group.rawValue, page.rawValue, viewer, deadline,
       )
     }
     return response.viewed(by: account)

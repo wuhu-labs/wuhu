@@ -432,6 +432,22 @@
         "space-html-pages": true
       },
       "judge": "PASS only if {sb}/welcome.html exists and its head carries <meta name=\"wuhu-layout\" content=\"immersive\">, its background paints to the window edge, and its content is padded by the --wuhu-inset-* variables so it clears the sidebar, top bar and composer. Fail if it fakes full-bleed another way (negative margins, a fixed full-window element without the meta tag, asking the shell through a made-up API) or writes outside the sandbox."
+    },
+    {
+      "id": "script-sidebar",
+      "issue": 406,
+      "title": "Writes a script sidebar with widgets",
+      "prompt": "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}.",
+      "required": [
+        "sidebar_script",
+        "places_widgets",
+        "widget_scripts",
+        "small_declared"
+      ],
+      "skills": {
+        "sidebars": true
+      },
+      "judge": "PASS only if a /.sidebars/bench-{tag}*.sidebar.jsx file default-exports a function returning one <Sidebar name=...> whose children are PageCards for the agents (queried from sessions, not hardcoded) and <Widget src=\"/.widgets/...widget.jsx\"> placements, one with size='small'; the widgets are separate /.widgets/bench-{tag}*.widget.jsx files that query docs and return one catalog card each (Figure for the count, List with rows linking via to for the docs), the small one declaring export const sizes including 'small'. Fail a JSON sidebar or widget, inline widget markup in the sidebar, invented elements or props, writes or handlers in a widget, or a reply that claims the native app shows it."
     }
   ]
 }

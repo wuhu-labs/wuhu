@@ -46,6 +46,7 @@ public enum MediaType {
     "tgz": "application/gzip",
     "txt": "text/plain",
     "view": "application/json",
+    "wasm": "application/wasm",
     "wav": "audio/wav",
     "webm": "video/webm",
     "webmanifest": "application/manifest+json",

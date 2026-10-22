@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import '@wuhu/ui/tokens.css';
 @import '@wuhu/ui/content.css';
+@import '@wuhu/ui/catalog.css';
 @import './settings.css';
 @import './editor.css';
 

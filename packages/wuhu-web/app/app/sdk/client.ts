@@ -3,7 +3,7 @@ import { coalescedRefresh } from './coalesced-refresh'
 import type { Observation } from './observation'
 import { isFileRefusal } from './errors'
 import type { RevisionEvents } from '~/lib/contract.gen'
-import { api, inGroup, post, withAssertion } from './http'
+import { api, authorizedRequest, inGroup, post, withAssertion } from './http'
 import type { ViewerCache, ViewerCaches } from './open-cache'
 import type {
   GroupSummary,
@@ -205,6 +205,20 @@ export class SpaceClient {
       path,
       path,
       () => this.tool<ReadOutput>('read', { path }),
+    )
+  }
+
+  // A sidebar or widget script compiled to plain JS, again on every change.
+  script(path: string): Observation<string> {
+    const encoded = path.split('/').map(encodeURIComponent).join('/')
+    return this.observeFile(
+      'document',
+      `script:${path}`,
+      path,
+      () =>
+        authorizedRequest(`/v1/f${encoded}?as=js`, {
+          headers: inGroup(this.group),
+        }).then((response) => response.text()),
     )
   }
 

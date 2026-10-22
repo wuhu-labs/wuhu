@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react'
 import { Glass, GlassButton } from './glass.tsx'
-import { Icon } from './icons.tsx'
+import { Glyph } from './icons.tsx'
 
 // How the page sits in the window: `scroll` runs the full height under the
 // floating titlebar and composer; `framed` is one white card between them that
@@ -159,7 +159,7 @@ export function AppShell({
               aria-pressed={sidebarOpen}
               onClick={onToggleSidebar}
             >
-              <Icon name='sidebar' w={19} h={16} />
+              <Glyph name='sidebar' w={19} h={16} />
             </GlassButton>
             <div className='wui-sidebar-tools'>{tools}</div>
           </div>
@@ -199,7 +199,7 @@ export function NavButtons({
         disabled={!canBack}
         onClick={onBack}
       >
-        <Icon name='chevron-left' w={7.4} h={11} />
+        <Glyph name='chevron-left' w={7.4} h={11} />
       </button>
       <span className='wui-nav-divider' />
       <button
@@ -209,7 +209,7 @@ export function NavButtons({
         disabled={!canForward}
         onClick={onForward}
       >
-        <Icon name='chevron-right' w={7.4} h={11} />
+        <Glyph name='chevron-right' w={7.4} h={11} />
       </button>
     </Glass>
   )

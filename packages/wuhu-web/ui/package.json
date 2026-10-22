@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/mod.ts",
     "./tokens.css": "./src/tokens.css",
-    "./content.css": "./src/content.css"
+    "./content.css": "./src/content.css",
+    "./catalog.css": "./src/catalog.css"
   },
   "peerDependencies": {
     "react": "^19.2.0",

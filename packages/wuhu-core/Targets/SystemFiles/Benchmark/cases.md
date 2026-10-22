@@ -178,3 +178,9 @@ _Afterwards:_ `{sb}/access.html` exists, imports `wuhu:space`, reads `groups()` 
 _Prompt:_ "Make me a one-screen welcome page at {sb}/welcome.html with a big headline over a soft gradient. In the app it should fill the whole window, behind the sidebar and the controls, not sit in a card."
 
 _Afterwards:_ `{sb}/welcome.html` exists, its head carries `<meta name="wuhu-layout" content="immersive">`, it pads by `--wuhu-inset-*`, and it uses no `/_/query` or `/v1/`. The judge fails a page that fakes full-bleed without the tag.
+
+## script-sidebar
+
+_Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}."
+
+_Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget.

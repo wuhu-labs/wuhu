@@ -10,6 +10,7 @@
     "npm:@babel/preset-typescript@^7.27.1": "7.29.7_@babel+core@7.29.7",
     "npm:@floating-ui/dom@^1.8.0": "1.8.0",
     "npm:@happy-dom/global-registrator@^21.0.1": "21.0.1",
+    "npm:@jitl/quickjs-ng-wasmfile-release-sync@0.32.0": "0.32.0",
     "npm:@react-router/dev@8.1.0": "8.1.0_react-router@8.1.0__react@19.2.7__react-dom@19.2.7___react@19.2.7_typescript@5.9.3_vite@8.1.3__@types+node@22.20.0_@types+node@22.20.0_react@19.2.7_react-dom@19.2.7__react@19.2.7",
     "npm:@react-router/node@8.1.0": "8.1.0_react-router@8.1.0__react@19.2.7__react-dom@19.2.7___react@19.2.7_typescript@5.9.3_react@19.2.7_react-dom@19.2.7__react@19.2.7",
     "npm:@tailwindcss/vite@4.3.2": "4.3.2_vite@8.1.3__@types+node@22.20.0_@types+node@22.20.0",
@@ -33,6 +34,7 @@
     "npm:babel-plugin-react-compiler@1.0.0": "1.0.0",
     "npm:katex@~0.18.5": "0.18.5",
     "npm:lowlight@^3.3.0": "3.3.0",
+    "npm:quickjs-emscripten-core@0.32.0": "0.32.0",
     "npm:react-dom@^19.2.7": "19.2.7_react@19.2.7",
     "npm:react-markdown@^10.1.0": "10.1.0_@types+react@19.2.17_react@19.2.7",
     "npm:react-router@8.1.0": "8.1.0_react@19.2.7_react-dom@19.2.7__react@19.2.7",
@@ -319,6 +321,15 @@
       "dependencies": [
         "@types/node",
         "happy-dom"
+      ]
+    },
+    "@jitl/quickjs-ffi-types@0.32.0": {
+      "integrity": "sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg=="
+    },
+    "@jitl/quickjs-ng-wasmfile-release-sync@0.32.0": {
+      "integrity": "sha512-XAX2jjZWWh3M0YaRqi82xMKNW/gkF6mo3MpW3UY2cmVxnQai1JuboVsJQVoLU629iEL4XWvHtO4h5lo7NRnAcg==",
+      "dependencies": [
+        "@jitl/quickjs-ffi-types"
       ]
     },
     "@jridgewell/gen-mapping@0.3.13": {
@@ -1972,6 +1983,12 @@
         "prosemirror-transform"
       ]
     },
+    "quickjs-emscripten-core@0.32.0": {
+      "integrity": "sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==",
+      "dependencies": [
+        "@jitl/quickjs-ffi-types"
+      ]
+    },
     "react-dom@19.2.7_react@19.2.7": {
       "integrity": "sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==",
       "dependencies": [
@@ -2303,6 +2320,7 @@
             "npm:@babel/preset-typescript@^7.27.1",
             "npm:@floating-ui/dom@^1.8.0",
             "npm:@happy-dom/global-registrator@^21.0.1",
+            "npm:@jitl/quickjs-ng-wasmfile-release-sync@0.32.0",
             "npm:@react-router/dev@8.1.0",
             "npm:@react-router/node@8.1.0",
             "npm:@tailwindcss/vite@4.3.2",
@@ -2327,6 +2345,7 @@
             "npm:babel-plugin-react-compiler@1.0.0",
             "npm:katex@~0.18.5",
             "npm:lowlight@^3.3.0",
+            "npm:quickjs-emscripten-core@0.32.0",
             "npm:react-dom@^19.2.7",
             "npm:react-markdown@^10.1.0",
             "npm:react-router@8.1.0",

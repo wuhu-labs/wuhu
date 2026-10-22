@@ -1,0 +1,133 @@
+load("@emsdk//emscripten_toolchain:wasm_rules.bzl", "wasm_cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//bazel/rules:deno.bzl", "deno_command_test")
+load("//bazel/rules:rules.bzl", "wuhu_platforms")
+load(":defs.bzl", "wasm_files")
+
+package(default_visibility = ["//visibility:private"])
+
+
+genrule(
+    name = "symbols",
+    srcs = ["symbols.ts", "@quickjs_emscripten//:c/interface.c"],
+    outs = ["symbols.json"],
+    tools = ["//bazel/rules:deno"],
+    cmd = "$(location //bazel/rules:deno) run --allow-read --allow-write $(location symbols.ts) $(location @quickjs_emscripten//:c/interface.c) $@",
+)
+
+genrule(
+    name = "engine_source",
+    srcs = [
+        "engine.ts",
+        "@quickjs//:quickjs.c",
+        "@quickjs_emscripten//:vendor/quickjs-ng-patches/0001-bellard-module-detection.patch",
+    ],
+    outs = ["quickjs.c"],
+    tools = ["//bazel/rules:deno"],
+    cmd = "$(location //bazel/rules:deno) run --allow-read --allow-write $(location engine.ts) $(location @quickjs//:quickjs.c) $(location @quickjs_emscripten//:vendor/quickjs-ng-patches/0001-bellard-module-detection.patch) $@",
+)
+
+cc_library(
+    name = "engine",
+    srcs = [":engine_source", "@quickjs//:dtoa.c", "@quickjs//:libregexp.c", "@quickjs//:libunicode.c"],
+    copts = ["-Oz", "-funsigned-char"],
+    local_defines = ["_GNU_SOURCE"],
+    deps = ["@quickjs//:headers"],
+    tags = ["manual"],
+)
+
+cc_binary(
+    name = "emscripten-module",
+    srcs = [
+        "@quickjs//:quickjs-libc.c",
+        "@quickjs//:quickjs-libc.h",
+        "@quickjs_emscripten//:c/interface.c",
+    ],
+    copts = ["-Oz", "-funsigned-char", "-Wno-unused-variable"],
+    local_defines = ["_GNU_SOURCE", "QTS_USE_QUICKJS_NG"],
+    additional_linker_inputs = [
+        ":symbols",
+        "@quickjs_emscripten//:exportedRuntimeMethods.json",
+        "@quickjs_emscripten//:templates/pre-extension.js",
+        "@quickjs_emscripten//:templates/pre-wasmMemory.js",
+    ],
+    linkopts = [
+        "-Oz",
+        "--no-entry",
+        "-sMODULARIZE=1",
+        "-sIMPORTED_MEMORY=1",
+        "-sEXPORT_NAME=QuickJSRaw",
+        "-sEXPORT_ES6=1",
+        "-sENVIRONMENT=web,worker",
+        "-sINVOKE_RUN=0",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-sALLOW_TABLE_GROWTH=1",
+        "-sSTACK_SIZE=5MB",
+        "-sSUPPORT_ERRNO=0",
+        "-sFILESYSTEM=0",
+        "-sEXPORTED_FUNCTIONS=@$(location :symbols)",
+        "-sEXPORTED_RUNTIME_METHODS=@$(location @quickjs_emscripten//:exportedRuntimeMethods.json)",
+        "--pre-js", "$(location @quickjs_emscripten//:templates/pre-extension.js)",
+        "--pre-js", "$(location @quickjs_emscripten//:templates/pre-wasmMemory.js)",
+    ],
+    deps = [":engine"],
+    tags = ["manual"],
+)
+
+wasm_cc_binary(
+    name = "wasm",
+    cc_target = ":emscripten-module",
+    threads = "off",
+    outputs = ["raw/emscripten-module.js", "raw/emscripten-module.wasm"],
+    target_compatible_with = wuhu_platforms(["linux", "mac"]),
+)
+
+wasm_files(
+    name = "wasm_files",
+    binary = ":wasm",
+    target_compatible_with = wuhu_platforms(["linux", "mac"]),
+)
+
+genrule(
+    name = "quickjs",
+    visibility = ["//visibility:public"],
+    srcs = [":wasm_files"],
+    outs = ["emscripten-module.browser.mjs", "emscripten-module.wasm"],
+    cmd = "for f in $(SRCS); do case $$f in *.js) cp $$f $(location emscripten-module.browser.mjs) ;; *.wasm) cp $$f $(location emscripten-module.wasm) ;; esac; done",
+    target_compatible_with = wuhu_platforms(["linux", "mac"]),
+)
+
+genrule(
+    name = "ffi",
+    srcs = ["@quickjs_ffi//:dist/ffi.mjs"],
+    outs = ["ffi.mjs"],
+    cmd = "cp $< $@",
+)
+
+genrule(
+    name = "core",
+    srcs = ["@quickjs_core//:modules"],
+    outs = [
+        "core/chunk-TAV5CUKK.mjs",
+        "core/chunk-V2S4ZYJR.mjs",
+        "core/index.mjs",
+        "core/module-ES6BEMUI.mjs",
+        "core/module-asyncify-2EFITU5U.mjs",
+    ],
+    cmd = "cp $(SRCS) $(RULEDIR)/core/",
+)
+
+genrule(
+    name = "ffi_types",
+    srcs = ["@quickjs_ffi_types//:dist/index.mjs"],
+    outs = ["ffi-types.mjs"],
+    cmd = "cp $< $@",
+)
+
+deno_command_test(
+    name = "smoke",
+    size = "small",
+    srcs = ["smoke.ts", "smoke-worker.ts", "imports.json", ":quickjs", ":ffi", ":core", ":ffi_types"],
+    command = ["run", "--allow-read", "--allow-net=127.0.0.1", "--allow-import=127.0.0.1", "--import-map=tools/quickjs-wasm/imports.json", "tools/quickjs-wasm/smoke.ts"],
+    target_compatible_with = wuhu_platforms(["linux", "mac"]),
+)

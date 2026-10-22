@@ -7,6 +7,8 @@ description: Put a widget on someone's Home Screen or Lock Screen — write /.wi
 
 A widget is a document, not a feature: a JSON file at `/.widgets/<name>.json` in your group. The Wuhu app draws it on the iPhone Home Screen and Lock Screen through one of four templates. You choose the template and write the query; the app owns the look. Once the file exists, the person adds the **Space widget** from the widget gallery, then long-presses it, chooses **Edit Widget**, picks the space, then your file.
 
+A widget in the web app's sidebar is a different file, `/.widgets/<name>.widget.jsx`: read the `sidebars` skill for those.
+
 ## File
 
 ```json

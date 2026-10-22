@@ -1,3 +1,4 @@
+import Assertion
 import Clocks
 import Crypto
 import Dependencies
@@ -11,6 +12,7 @@ import NIOPosix
 import OrderedCollections
 import Serve
 import ServeNIO
+import struct SessionDomain.SessionID
 import func SessionTools.fetchOrigin
 import SpaceContract
 import SpaceCore
@@ -366,6 +368,66 @@ import Testing
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     #expect(try await json(request(r, body: Data(repeating: 0, count: (10 << 20) + 1))).object?["code"] == "fetchBodyTooLarge")
     #expect(try await json(request(r, method: "OPTIONS")).object?["code"] == "fetchMethodInvalid")
+  }
+
+  @Test func aWidgetFetchesAsTheSigningPersonWithItsFileAsThePage() async throws {
+    let seen = Mutex<[Request]>([])
+    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { request, _ in
+      seen.withLock { $0.append(request) }
+      return Response.text("pool ok")
+    })
+    let r = try await rig(proxy: proxy)
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await r.h.space.addKey(key.pubkeyLabel, account: AccountID(rawValue: r.account), capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let bearer = try AssertionClaims(key: key.pubkeyLabel, space: try await r.h.space.identity().rawValue, expiresAt: fixedDate.addingTimeInterval(3600))
+      .signed(by: key).rawValue
+    func widgetFetch(signed: Bool = true, url: String = "http://backend.test/status", headers: [String: String] = [:], page: String = "/.widgets/pool.widget.jsx", method: String = "GET") async throws -> Response {
+      var parts = URLComponents(string: "https://space.test/v1/fetch")!
+      parts.queryItems = [
+        URLQueryItem(name: "url", value: url), URLQueryItem(name: "page", value: page), URLQueryItem(name: "method", value: method),
+        URLQueryItem(name: "headers", value: JSONValue.object(OrderedDictionary(uniqueKeysWithValues: headers.map { ($0.key, .string($0.value)) })).jsonString()),
+      ]
+      var fields = Headers()
+      if signed { fields[.authorization] = "Bearer " + bearer }
+      return try await r.h.api(Request(url: parts.url!, method: .post, headers: fields))
+    }
+    #expect(try await json(widgetFetch()).object?["code"] == "fetchPageInvalid")
+    _ = try await r.h.direct("write", ["path": "/.widgets/pool.widget.jsx", "content": "export default () => null"])
+    _ = try await r.h.direct("write", ["path": "/dash.html", "content": "<p>dash</p>"])
+    #expect(try await json(widgetFetch()).object?["code"] == "fetchListMissing")
+    try await list(r, #"{"allow":["http://backend.test"]}"#)
+    #expect(try await json(widgetFetch(page: "/dash.html")).object?["code"] == "fetchPageInvalid")
+    #expect(try await json(widgetFetch(page: "/.widgets/missing.widget.jsx")).object?["code"] == "fetchPageInvalid")
+    #expect(try await json(widgetFetch(method: "POST")).object?["code"] == "fetchMethodInvalid")
+    #expect(try await json(widgetFetch(url: "http://unlisted.test")).object?["code"] == "fetchOriginForbidden")
+    #expect(try await json(widgetFetch(headers: ["Authorization": "secret"])).object?["code"] == "fetchAuthorizationForbidden")
+    #expect(try await widgetFetch(signed: false).status == .unauthorized)
+    #expect(seen.withLock { $0.isEmpty })
+    let response = try await widgetFetch()
+    #expect(response.headers[HTTPField.Name("Wuhu-Fetch-Result")!] == "upstream")
+    #expect(try await response.text() == "pool ok")
+    let claims = try jwtClaims(#require(seen.withLock { $0.first?.headers[.authorization] }))
+    #expect(claims.object?["aud"] == "http://backend.test")
+    #expect(claims.object?["group"] == "shared")
+    #expect(claims.object?["path"] == "/.widgets/pool.widget.jsx")
+    // A device key adopts its account's persona on first use.
+    let persona = try await r.h.space.persona(account: AccountID(rawValue: r.account))?.name
+    #expect(claims.object?["viewer"] == persona.map(JSONValue.string))
+  }
+
+  @Test func aSessionCannotFetchAsAWidget() async throws {
+    let proxy = PageFetch(identity: try identity(), issuer: "https://space.test", hop: { _, _ in Issue.record("must not connect"); return Response.text("bad") })
+    let r = try await rig(proxy: proxy)
+    try await list(r, #"{"allow":["http://backend.test"]}"#)
+    _ = try await r.h.direct("write", ["path": "/.widgets/pool.widget.jsx", "content": "export default () => null"])
+    var parts = URLComponents(string: "https://space.test/v1/fetch")!
+    parts.queryItems = [URLQueryItem(name: "url", value: "http://backend.test/status"), URLQueryItem(name: "page", value: "/.widgets/pool.widget.jsx")]
+    let response = await widgetFetchResponse(
+      space: r.h.space, principal: Principal(actor: .session(SessionID(rawValue: "quiet-lake-fox")), group: .shared),
+      proxy: proxy.response, request: Request(url: parts.url!, method: .post),
+    )
+    #expect(response.status == .unauthorized)
+    #expect(try await json(response).object?["code"] == "fetchViewerRequired")
   }
 }
 

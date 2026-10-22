@@ -1,0 +1,15 @@
+package(default_visibility = ["//visibility:private"])
+
+exports_files(
+    glob(["svg/*.svg"]) + ["aliases.json", "LICENSE"],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "sprite",
+    srcs = glob(["svg/*.svg"]) + ["aliases.json"],
+    outs = ["iconamoon.svg", "names.json"],
+    tools = ["sprite.ts", "//bazel/rules:deno"],
+    cmd = "$(location //bazel/rules:deno) run --allow-read --allow-write $(location sprite.ts) $$(dirname $(location svg/3d.svg)) $(location aliases.json) $(location iconamoon.svg) $(location names.json)",
+    visibility = ["//visibility:public"],
+)

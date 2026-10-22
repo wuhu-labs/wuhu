@@ -6,6 +6,7 @@ module(
 
 bazel_dep(name = "apple_support", version = "2.8.0", repo_name = "build_bazel_apple_support")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "emsdk", version = "5.0.3")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_apple", version = "4.5.3", repo_name = "build_bazel_rules_apple")
 bazel_dep(name = "rules_cc", version = "0.2.25")
@@ -140,6 +141,15 @@ swift_interop_hint(
     module_name = "CQuickJS",
 )
 
+exports_files(glob(["*.c"]), visibility = ["@//tools/quickjs-wasm:__pkg__"])
+
+cc_library(
+    name = "headers",
+    visibility = ["@//tools/quickjs-wasm:__pkg__"],
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
 cc_library(
     name = "quickjs",
     srcs = [
@@ -177,6 +187,40 @@ cc_library(
     sha256 = "c4e813951b7c46845096a948e978c620b11ab4cf5fd622ca09c727ec31f42623",
     strip_prefix = "quickjs-0.15.1",
     url = "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz",
+)
+
+http_archive(
+    name = "quickjs_emscripten",
+    build_file = "//tools/quickjs-wasm:upstream.BUILD.bazel",
+    patch_args = ["-p1"],
+    patches = ["//tools/quickjs-wasm:interface-includes.patch"],
+    sha256 = "cf3f2aa0d27ab3be9c1599682c2815de6ad8e9498daeca6eecd2434850b6c4b1",
+    strip_prefix = "quickjs-emscripten-0.32.0",
+    url = "https://github.com/justjake/quickjs-emscripten/archive/refs/tags/v0.32.0.tar.gz",
+)
+
+http_archive(
+    name = "quickjs_ffi",
+    build_file_content = 'exports_files(["dist/ffi.mjs"], visibility = ["//visibility:public"])',
+    sha256 = "feb879d9c539f03717afe939d798defc40632642e91eccccbcabe54fafbe0025",
+    strip_prefix = "package",
+    url = "https://registry.npmjs.org/@jitl/quickjs-ng-wasmfile-release-sync/-/quickjs-ng-wasmfile-release-sync-0.32.0.tgz",
+)
+
+http_archive(
+    name = "quickjs_core",
+    build_file_content = 'filegroup(name = "modules", srcs = glob(["dist/*.mjs"]), visibility = ["//visibility:public"])',
+    sha256 = "2ea4461a54e87217adf3f2b327c130d8f6b034e334f9e7d87c0580d0406a206e",
+    strip_prefix = "package",
+    url = "https://registry.npmjs.org/quickjs-emscripten-core/-/quickjs-emscripten-core-0.32.0.tgz",
+)
+
+http_archive(
+    name = "quickjs_ffi_types",
+    build_file_content = 'exports_files(["dist/index.mjs"], visibility = ["//visibility:public"])',
+    sha256 = "d7bf18745d8fb2144587fcfd15982a1a87347f6675538615623c3267c51965b1",
+    strip_prefix = "package",
+    url = "https://registry.npmjs.org/@jitl/quickjs-ffi-types/-/quickjs-ffi-types-0.32.0.tgz",
 )
 
 # Apple CC toolchain configuration.

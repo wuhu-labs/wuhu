@@ -18,7 +18,7 @@ import SpaceTools
 let maximumFileRouteBytes = 64 << 20
 
 // The files are the acting group's: `contextOf` resolves the request's principal.
-func addFileRoutes(_ router: inout Router, contextOf: @escaping @Sendable (Request) async throws -> ToolContextVerdict) {
+func addFileRoutes(_ router: inout Router, compiler: JSXCompiler, contextOf: @escaping @Sendable (Request) async throws -> ToolContextVerdict) {
   router.get("/v1/f/*") { request, _ in
     guard let address = fileRouteAddress(request.url) else {
       return errorResponse(.badRequest, code: ErrorCode.invalidPath.rawValue, message: "malformed file path")
@@ -38,15 +38,29 @@ func addFileRoutes(_ router: inout Router, contextOf: @escaping @Sendable (Reque
     case let .context(resolved): context = resolved
     case let .refused(response): return response
     }
+    // `?as=js` reads a `.jsx` script compiled to plain JS.
+    let form = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "as" })?.value
+    if let form, form != "js" || !address.hasSuffix(".jsx") {
+      return fileRouteFailure(.failed(code: .invalidArgument, message: "as=js reads a .jsx file compiled to JavaScript; nothing else has another form", hint: nil))
+    }
     do {
       let file = try await context.readBytes(address, rev: rev, byteLimit: limit)
-      let contentType = mimeType(for: address)
+      var (data, token, contentType) = (file.data, file.token, mimeType(for: address))
+      if form != nil {
+        do throws(JSXCompiler.Failure) {
+          data = Data(try await compiler.javaScript(String(decoding: data, as: UTF8.self), file: address, version: token).utf8)
+        } catch {
+          return fileRouteFailure(.failed(code: .invalidArgument, message: error.message, hint: nil))
+        }
+        token += ".js"
+        contentType = "text/javascript; charset=utf-8"
+      }
       var headers = Headers()
       headers[.contentType] = contentType
-      headers[.contentLength] = String(file.data.count)
-      headers[.eTag] = quoted(file.token)
+      headers[.contentLength] = String(data.count)
+      headers[.eTag] = quoted(token)
       if let rev = file.rev { headers[fileRevisionHeader] = String(rev) }
-      return Response(status: .ok, headers: headers, body: .bytes(file.data, contentType: contentType))
+      return Response(status: .ok, headers: headers, body: .bytes(data, contentType: contentType))
     } catch let error as ToolRunError {
       return fileRouteFailure(error)
     }

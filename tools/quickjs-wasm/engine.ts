@@ -1,0 +1,6 @@
+const source = await Deno.readTextFile(Deno.args[0])
+const patch = await Deno.readTextFile(Deno.args[1])
+const added = patch.split('\n')
+  .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+  .map((line) => line.slice(1)).join('\n')
+await Deno.writeTextFile(Deno.args[2], `${source}\n${added}\n`)

@@ -255,6 +255,11 @@ body {
   display: block;
 }
 
+.wui-iconamoon {
+  flex: none;
+  display: block;
+}
+
 /* ── Glass ─────────────────────────────────────────────────────────────── */
 .wui-glass {
   all: unset;

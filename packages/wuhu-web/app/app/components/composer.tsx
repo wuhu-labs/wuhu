@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ComposerRow, Glass, GlassButton, Icon } from '@wuhu/ui'
+import { ComposerRow, Glass, GlassButton, Glyph } from '@wuhu/ui'
 import { isComposerSendKey, sendKeyLabel, useSendKey } from '~/lib/composer'
 import { type Drafts, restoreDraft, withDictation } from '~/lib/drafts'
 import { useDictation } from '~/lib/use-dictation'
@@ -119,7 +119,7 @@ export function Composer({
               dictation.toggle()
             }}
           >
-            <Icon name='mic' w={13} h={18} />
+            <Glyph name='mic' w={13} h={18} />
           </GlassButton>
         )}
         <GlassButton
@@ -130,7 +130,7 @@ export function Composer({
           disabled={!canSend}
           onClick={send}
         >
-          <Icon name='send' w={18} h={19} />
+          <Glyph name='send' w={18} h={19} />
         </GlassButton>
       </ComposerRow>
     </>

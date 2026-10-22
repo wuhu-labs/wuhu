@@ -8,7 +8,7 @@ export {
   useShell,
 } from './shell.tsx'
 export { Glass, GlassButton, type GlassSize } from './glass.tsx'
-export { Icon, type IconName } from './icons.tsx'
+export { Glyph, type GlyphName, Icon } from './icons.tsx'
 export {
   AgentCard,
   AvatarSlot,
@@ -22,3 +22,9 @@ export {
   type StatusTone,
   Tree,
 } from './kit.tsx'
+export {
+  CatalogCard,
+  type CatalogElement,
+  CatalogError,
+  type CatalogLinks,
+} from './catalog.tsx'
