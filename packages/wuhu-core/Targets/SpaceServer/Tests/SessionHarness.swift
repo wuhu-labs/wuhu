@@ -15,7 +15,7 @@ import ServeTesting
 import SessionDomain
 import SessionTools
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -312,4 +312,15 @@ extension SessionStreamEvent {
 
 final class SessionTestToolStates: Sendable {
   let values = Mutex<[SessionID: ToolExecutionState]>([:])
+}
+
+extension SessionHarness {
+  /// An ordinary group, created before group creation has an API of its own.
+  func addGroup(_ id: GroupID) async throws {
+    try await space.writer.write { db in
+      try db.execute(
+        sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [id.rawValue],
+      )
+    }
+  }
 }

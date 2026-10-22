@@ -13,6 +13,7 @@ import FetchWebSocket
 public func withRecording(
   _ name: String,
   matchIgnoringBodyFields: Set<String> = [],
+  matchIgnoringSystemPrompt: Bool = false,
   file: String = #filePath,
   body: () async throws -> Void,
 ) async throws {
@@ -39,6 +40,7 @@ public func withRecording(
     mode: mode,
     recordingsRoot: recordingsRoot,
     matchIgnoringBodyFields: matchIgnoringBodyFields,
+    matchIgnoringSystemPrompt: matchIgnoringSystemPrompt,
     webSocketConnector: connector,
   )
 

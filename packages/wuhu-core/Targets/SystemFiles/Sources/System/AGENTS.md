@@ -24,6 +24,12 @@ Working logs, drafts, candidates, test tables, scripts and handler modules are y
 - Paths must not contain `@`, `%`, `#`, `?`, control characters, or `.`/`..` components. `/_/` is system-owned: session homes live under `/_/sessions/`, machine notes under `/_/machines/<name>/`, and message attachments are write-once under `/_/conversations/<id>/attachments/YYYY/MM/DD/HHmmssZ/`. Nothing else under `/_/` is writable.
 - `wuhu://system/` is not in the space: it holds this file (`wuhu://system/AGENTS.md`) and the system skills (`wuhu://system/skills/<name>/SKILL.md`), ships with the server, and is read-only. read, grep and find take it; a `run_script` module imports from it as `wuhu://system/skills/<name>/<file>.js`.
 
+## Group access
+
+Groups are open or private. Your session reads and writes open groups, including `shared`, and uses its group's explicit read/write/admin role in other private groups; roles do not chain through groups you can read. A private group limits who reaches in, never your reach out to open groups. A read role permits reading and querying, not writes or posting messages. The settings group is readable from every group but writable only by human space admins. `groups()` reports current reach; grants can change while you work.
+
+Secrets default to the owner group only, even when that group is open; its admin can opt into sharing with everyone who writes it. Machines likewise have an owner-only/reachable switch; using a reachable machine requires write access to its owner group. A live top-level agent remains admin of its own group. Group access is administered through HTTP or CLI, not `run_script` exports.
+
 ## Tables and the query sandbox
 
 - A path ending in `.table` is a filesystem node AND a real SQLite table named by its quoted path: `SELECT * FROM "/tasks.table"`.

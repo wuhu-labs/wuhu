@@ -178,7 +178,11 @@ struct SecretRig: Sendable {
   }
 
   func addMachine(_ name: String) async throws -> Machine {
-    let response = try await server.http(.post, "/v1/machine", json: .object(["name": .string(name)]))
+    // Reachable: these tests move machines into other groups a shared-served
+    // dev seat still has to reach.
+    let response = try await server.http(
+      .post, "/v1/machine", json: .object(["name": .string(name), "scope": "reachable"]),
+    )
     #expect(response.status == .ok)
     let output = try await response.json(MachineAddOutput.self)
     return Machine(id: output.id, key: try await enrollMachineKey(server, token: output.token))
@@ -189,7 +193,7 @@ struct SecretRig: Sendable {
     try await space.writer.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [name])
     }
-    try await space.addReadEdge(from: .shared, to: group)
+    try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: group, by: .anonymous, acting: group)
     return group
   }
 

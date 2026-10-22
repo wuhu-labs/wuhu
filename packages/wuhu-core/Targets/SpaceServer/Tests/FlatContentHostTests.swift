@@ -40,7 +40,6 @@ import Testing
     _ = try await h.direct("write", .object(["path": "/plan.md", "content": "shared plan"]))
     let account = try await h.space.addAccount(kind: .human, name: "alice").id
     let group = try await h.space.ensurePersonalGroup(account: account)
-    try await h.space.addReadEdge(from: group, to: .shared)
     _ = try await h.space.fs(group).write("/plan.md", Data("alice plan".utf8), ifMatch: nil)
     let info = try await json(h.api(Request(url: URL(string: origin + "/v1/server")!)))
     #expect(info.object?["contentHost"] == "{group}--alex.wuhu.test:5530")
@@ -60,7 +59,6 @@ import Testing
     for name in ["xn--", "xn--foo", "ab--cd"] {
       let account = try await h.space.addAccount(kind: .human, name: name).id
       let group = try await h.space.ensurePersonalGroup(account: account)
-      try await h.space.addReadEdge(from: group, to: .shared)
       #expect(group.rawValue != name)
       #expect(group.rawValue.split(separator: "-").count == 3)
       #expect(parsed.group(host: group.rawValue + "--alex.wuhu.test") == group)

@@ -37,7 +37,6 @@ import Testing
       harness: harness, alice: alice, aliceGroup: try await harness.space.ensurePersonalGroup(account: alice),
       bob: bob, bobGroup: try await harness.space.ensurePersonalGroup(account: bob),
     )
-    try await harness.space.addReadEdge(from: rig.aliceGroup, to: .shared)
     _ = try await run(rig, .shared, "table.create", [
       "path": "/tasks.table", "header": ["columns": [["name": "title", "type": "string"], ["name": "meta", "type": "json"]]],
     ])

@@ -5,6 +5,8 @@ import JSONValue
 public struct MachineAddInput: Codable, Equatable, Sendable {
   public let name: String?
   public let group: String?
+  /// Whoever can reach the machine's group, or only its own group.
+  public let scope: String?
   /// Machine v2 only: the machine's own key, enrolled in the same call instead of minting a join token.
   public let pubkey: String?
   /// Machine v2 only, with `pubkey`: the caller's device this machine runs on.
@@ -51,6 +53,13 @@ public struct MachineStatus: Codable, Equatable, Sendable {
   public let name: String?
   public let group: String
   public let attached: Bool
+  /// `owner` (its own group only) or `reachable` (every group that can reach it).
+  public let scope: String?
+}
+
+@Contract
+public struct MachineScopeInput: Codable, Equatable, Sendable {
+  public let scope: String
 }
 
 @Contract

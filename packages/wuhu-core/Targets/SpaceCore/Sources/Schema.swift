@@ -97,6 +97,7 @@ struct MachineRow {
   @Column("name") var name: String?
   @Column("created_at") var createdAt: String
   @Column("grp") var grp: String
+  @Column("scope") var scope: String
 }
 
 @Table("script_execs")

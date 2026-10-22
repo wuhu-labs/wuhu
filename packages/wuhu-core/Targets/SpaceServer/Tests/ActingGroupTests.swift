@@ -23,9 +23,7 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens)
     let (bearer, key) = try await harness.enrolledBearer()
     let alice = try await harness.space.ensurePersonalGroup(account: key.account)
-    try await harness.space.addReadEdge(from: alice, to: .shared)
     let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
-    try await harness.space.addReadEdge(from: bob, to: .shared)
     return People(harness: harness, bearer: bearer, alice: alice, bob: bob)
   }
 
@@ -133,7 +131,13 @@ import Testing
       let readable = try await get("/common.bin?group=shared", group: p.alice.rawValue)
       #expect(readable.status == .ok)
       #expect(try await readable.text() == "shared")
-      let unreadable = try await get("/hers.bin?group=\(p.alice.rawValue)", group: nil)
+      // A person's own entry travels with the account, whatever seat it takes.
+      let hers = try await get("/hers.bin?group=\(p.alice.rawValue)", group: nil)
+      #expect(hers.status == .ok)
+      #expect(try await hers.text() == "alice")
+      // Someone else's own group is not.
+      _ = try await p.harness.space.fs(p.bob).write("/bobs.bin", Data("bob".utf8), ifMatch: nil)
+      let unreadable = try await get("/bobs.bin?group=\(p.bob.rawValue)", group: nil)
       #expect(unreadable.status == .notFound)
       #expect(try await code(unreadable) == "notFound")
       #expect(try await get("/hers.bin?group=No%2FSuch", group: nil).status == .badRequest)
@@ -144,7 +148,6 @@ import Testing
     let harness = try Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let alice = try await harness.space.ensurePersonalGroup(account: account.id)
-    try await harness.space.addReadEdge(from: alice, to: .shared)
     _ = try await harness.space.fs(alice).write("/hers-1.md", Data("x".utf8), ifMatch: nil)
     _ = try await harness.space.fs(.shared).write("/common-1.md", Data("x".utf8), ifMatch: nil)
     let response = try await harness.get(harness.web, "/_/observe", query: ["glob": "**", "from": "0"])

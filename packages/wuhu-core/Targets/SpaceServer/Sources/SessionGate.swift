@@ -649,7 +649,7 @@ private func sessionRouter(
       guard let id = sessionID(parameters) else { return unknownSession(parameters) }
       do {
         if verb == "archive" || verb == "unarchive" {
-          try await store.refuseArchiving(id, by: .session(principal().session))
+          try await store.refuseArchiving(id, by: .session(principal().session), acting: principal().group)
         } else {
           try await store.refuseControl(of: id, by: principal().session)
         }

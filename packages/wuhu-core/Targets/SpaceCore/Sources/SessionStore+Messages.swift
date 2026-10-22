@@ -62,10 +62,30 @@ extension SessionStore {
         }
       }
       if group == principal.group { return true }
-      if try Groups.reads(principal.group, in: db).contains(group) { return true }
+      if try GroupAccess.readable(by: principal.actor, acting: principal.group, in: db).contains(group) { return true }
       let parts = path.split(separator: "/", omittingEmptySubsequences: true)
       guard parts.count >= 4, parts[3] == "attachments", let member = principal.member else { return false }
       return conversation?.members.contains { $0.member == member } == true
+    }
+  }
+
+  /// Whether `principal` may write `path` in `group`: a write role there, or
+  /// membership of the conversation whose attachments folder holds it (a DM
+  /// keeps today's rule).
+  public func writesFile(_ path: String, in group: GroupID, as principal: Principal) async throws -> Bool {
+    guard try await readsFile(path, in: group, as: principal) else { return false }
+    if case .anonymous = principal.actor { return true }
+    let held = try await writer.read { db in
+      try GroupAccess.role(of: principal.actor, in: group, acting: principal.group, in: db)
+    }
+    if (held ?? .read) >= .write { return true }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+    guard parts.count >= 4, parts[1] == "conversations", parts[3] == "attachments", let member = principal.member else {
+      return false
+    }
+    return try await writer.read { db in
+      guard let record = try Conversations.record(String(parts[2]), in: db), record.group == group else { return false }
+      return record.members.contains { $0.member == member }
     }
   }
 
@@ -278,13 +298,30 @@ struct Poster {
     case .anonymous:
       return true
     case let actor?:
-      return try Groups.isAdmin(actor, of: group, in: db)
+      return try GroupAccess.role(of: actor, in: group, acting: self.group, in: db) == .admin
     case nil:
-      guard let account = try String.fetchOne(
-        db, sql: "SELECT account_id FROM personas WHERE name = ?", arguments: [persona],
-      ) else { return false }
-      return try Groups.isHumanAdmin(AccountID(rawValue: account), of: group, in: db)
+      guard let account = try personaAccount(in: db) else { return false }
+      return try GroupAccess.isHumanAdmin(account, of: group, in: db)
     }
+  }
+
+  /// The groups this poster reads: its account's entries and its acting group's
+  /// reach.
+  func readable(in db: Database) throws -> Set<GroupID> {
+    switch actor {
+    case .anonymous:
+      return try GroupAccess.reach(of: group, in: db)
+    case let actor?:
+      return try GroupAccess.readable(by: actor, acting: group, in: db)
+    case nil:
+      guard let account = try personaAccount(in: db) else { return try GroupAccess.reach(of: group, in: db) }
+      return try GroupAccess.readable(by: .person(persona: persona, account: account), acting: group, in: db)
+    }
+  }
+
+  private func personaAccount(in db: Database) throws -> AccountID? {
+    try String.fetchOne(db, sql: "SELECT account_id FROM personas WHERE name = ?", arguments: [persona])
+      .map(AccountID.init(rawValue:))
   }
 }
 
@@ -302,7 +339,7 @@ extension SessionStore {
     in db: Database,
   ) throws -> ConversationRecord {
     let me = senderSession?.rawValue ?? sender.id
-    let readable = try Groups.reads(poster.group, in: db)
+    let readable = try poster.readable(in: db)
     switch target {
     case let .conversation(id):
       guard let record = try Conversations.record(id.rawValue, in: db),
@@ -464,7 +501,7 @@ extension SessionStore {
     candidates += recent.map { $0.session.rawValue }
     if let owner = conversation.ownerSession { candidates.append(owner.rawValue) }
     if case let .session(parent) = replySender { candidates.append(parent.rawValue) }
-    let readable = try Groups.reads(poster.group, in: db)
+    let readable = try poster.readable(in: db)
     let sessions = try RoutingSessionRow.where { $0.id.in(candidates) }.fetchAll(db).map { row in
       (SessionID(row.id), (
         kind: row.kind,
@@ -482,11 +519,25 @@ extension Conversations {
   static func reads(_ conversation: ConversationRecord, reader: String?, group: GroupID, in db: Database) throws -> Bool {
     let session = try reader.map { try Sessions.exists($0, in: db) } ?? false
     if conversation.ownerSession != nil || (conversation.kind == .users && session) {
-      return try Groups.reads(group, in: db).contains(conversation.group)
+      return try reach(reader: reader, group: group, in: db).contains(conversation.group)
     }
     guard let reader else { return conversation.kind != .users && conversation.group == group }
     if conversation.members.contains(where: { $0.member == reader && (conversation.kind != .users || $0.kind == .user) }) { return true }
     return conversation.kind != .users && conversation.group == group
+  }
+
+  /// The groups a reader reaches: a session's own group's reach, a persona's
+  /// account and acting group.
+  private static func reach(reader: String?, group: GroupID, in db: Database) throws -> Set<GroupID> {
+    guard let reader, try !Sessions.exists(reader, in: db) else {
+      return try GroupAccess.reach(of: group, in: db)
+    }
+    guard let account = try String.fetchOne(
+      db, sql: "SELECT account_id FROM personas WHERE name = ?", arguments: [reader],
+    ) else { return try GroupAccess.reach(of: group, in: db) }
+    return try GroupAccess.readable(
+      by: .person(persona: reader, account: AccountID(rawValue: account)), acting: group, in: db,
+    )
   }
 }
 

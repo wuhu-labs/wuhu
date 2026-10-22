@@ -5,39 +5,41 @@ import GRDB
 import struct SpaceContract.GroupID
 
 extension Space {
-  public func addAccount(kind: AccountKind, name: String?, admin: Bool = false) async throws -> AccountRecord {
+  public func addAccount(kind: AccountKind, name: String?, admin: Bool = false, guest: Bool = false) async throws -> AccountRecord {
     // "owner" (SpaceContract's ownerIdentity) is the generic principal that
     // unenrolled --dev seats act as; no account may squat it in any casing.
     if let name, name.lowercased() == Notifications.ownerRecipient {
       throw SpaceError.reservedAccountName(name)
     }
     if admin, kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
+    if guest, kind != .human { throw SpaceError.notAPerson(name ?? kind.rawValue) }
+    if admin, guest { throw SpaceError.notAPerson(name ?? kind.rawValue) }
     let id = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
     let createdAt = dateGen.now
     let created = SQLiteDateFormat.string(from: createdAt)
     let rng = rng
     try await writer.write { db in
       try db.execute(
-        sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES (?, ?, ?, ?)",
-        arguments: [id.rawValue, kind.rawValue, name, created],
+        sql: "INSERT INTO accounts (id, kind, name, created_at, guest) VALUES (?, ?, ?, ?, ?)",
+        arguments: [id.rawValue, kind.rawValue, name, created, guest],
       )
-      guard kind == .human else { return }
+      guard kind == .human, !guest else { return }
       _ = try Groups.ensurePersonalGroup(account: id, created: created, rng: rng, in: db)
       if admin { try Groups.grant(.admin, in: .settings, to: id, created: created, in: db) }
     }
-    return AccountRecord(id: id, kind: kind, name: name, isAdmin: admin, createdAt: createdAt, removedAt: nil)
+    return AccountRecord(id: id, kind: kind, name: name, isAdmin: admin, guest: guest, createdAt: createdAt, removedAt: nil)
   }
 
   public func account(_ id: AccountID) async throws -> AccountRecord? {
     try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ?", arguments: [id.rawValue])
+      try Row.fetchOne(db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ?", arguments: [id.rawValue])
         .map(Self.accountRecord(from:))
     }
   }
 
   public func accounts() async throws -> [AccountRecord] {
     try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL ORDER BY created_at, id")
+      try Row.fetchAll(db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL ORDER BY created_at, id")
         .map(Self.accountRecord(from:))
     }
   }
@@ -52,7 +54,7 @@ extension Space {
     let created = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
       guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
+        db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
         arguments: [id.rawValue],
       ) else {
         throw SpaceError.notFound(id.rawValue)
@@ -61,7 +63,7 @@ extension Space {
       if record.isAdmin, !admin, try Self.liveAdminCount(in: db) == 1 {
         throw SpaceError.lastAdmin(id.rawValue)
       }
-      if admin, record.kind != .human { throw SpaceError.notAPerson(id.rawValue) }
+      if admin, record.kind != .human || record.guest { throw SpaceError.notAPerson(id.rawValue) }
       if admin {
         try Groups.grant(.admin, in: .settings, to: id, created: created, in: db)
       } else {
@@ -69,7 +71,7 @@ extension Space {
       }
       return AccountRecord(
         id: record.id, kind: record.kind, name: record.name,
-        isAdmin: admin, createdAt: record.createdAt, removedAt: nil,
+        isAdmin: admin, guest: record.guest, createdAt: record.createdAt, removedAt: nil,
       )
     }
   }
@@ -81,7 +83,7 @@ extension Space {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
       guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
+        db, sql: "SELECT *, \(GroupAccess.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
         arguments: [id.rawValue],
       ) else {
         throw SpaceError.notFound(id.rawValue)
@@ -289,7 +291,7 @@ extension Space {
 
   static func liveAdminCount(in db: Database) throws -> Int {
     try Int.fetchOne(
-      db, sql: "SELECT count(*) FROM (SELECT \(Groups.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL) WHERE is_admin",
+      db, sql: "SELECT count(*) FROM (SELECT \(GroupAccess.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL) WHERE is_admin",
     ) ?? 0
   }
 
@@ -299,6 +301,7 @@ extension Space {
       kind: AccountKind(rawValue: row["kind"])!,
       name: row["name"],
       isAdmin: row["is_admin"],
+      guest: row["guest"],
       createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
       removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
     )

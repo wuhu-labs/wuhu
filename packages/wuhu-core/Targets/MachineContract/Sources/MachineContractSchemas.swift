@@ -19,6 +19,7 @@ public enum MachineContractSchemas {
     ("MachineRotateOutput", MachineRotateOutput.jsonSchema),
     ("MachineRevokeInput", MachineRevokeInput.jsonSchema),
     ("MachineStatus", MachineStatus.jsonSchema),
+    ("MachineScopeInput", MachineScopeInput.jsonSchema),
     ("MachineV2Artifact", MachineV2Artifact.jsonSchema),
     ("MachineV2UpgradeStatus", MachineV2UpgradeStatus.jsonSchema),
     ("MachineV2Upgrade", MachineV2Upgrade.jsonSchema),

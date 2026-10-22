@@ -18,11 +18,13 @@ public struct MachineRecord: Equatable, Sendable {
   public let account: AccountID
   public let name: String?
   public let createdAt: Date
-  /// The group the machine belongs to: groups that read it may exec on it.
+  /// The group the machine belongs to: groups that can use it may exec on it.
   public let group: GroupID
+  /// Who may use it: its own group, or every group that can reach that one.
+  public let scope: ReachScope
 
-  public init(id: MachineID, account: AccountID, name: String?, createdAt: Date, group: GroupID) {
-    self.id = id; self.account = account; self.name = name; self.createdAt = createdAt; self.group = group
+  public init(id: MachineID, account: AccountID, name: String?, createdAt: Date, group: GroupID, scope: ReachScope = .owner) {
+    self.id = id; self.account = account; self.name = name; self.createdAt = createdAt; self.group = group; self.scope = scope
   }
 }
 
@@ -107,7 +109,7 @@ public struct ScriptExecOwner: Equatable, Sendable {
 extension Space {
   /// A machine enrolled by a person joins that person's group; `shared` holds
   /// every machine from before groups.
-  public func addMachine(name: String?, group: GroupID = .shared) async throws -> MachineRecord {
+  public func addMachine(name: String?, group: GroupID = .shared, scope: ReachScope = .owner) async throws -> MachineRecord {
     let requested = try name.map { try Self.requireMachineName($0) }
     let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
     let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
@@ -120,10 +122,13 @@ extension Space {
         arguments: [account.rawValue, AccountKind.machine.rawValue, requested, stored],
       )
       try MachineRow.insert {
-        MachineRow(id: id.rawValue, accountID: account.rawValue, name: requested, createdAt: stored, grp: group.rawValue)
+        MachineRow(
+          id: id.rawValue, accountID: account.rawValue, name: requested, createdAt: stored, grp: group.rawValue,
+          scope: scope.rawValue,
+        )
       }.execute(db)
     }
-    return MachineRecord(id: id, account: account, name: requested, createdAt: createdAt, group: group)
+    return MachineRecord(id: id, account: account, name: requested, createdAt: createdAt, group: group, scope: scope)
   }
 
   public func renameMachine(_ id: MachineID, name: String) async throws -> MachineRecord {
@@ -199,16 +204,50 @@ extension Space {
     }
   }
 
-  /// The machines `group` may exec on: those whose group it reads.
+  /// The machines `group` may use, by the same switch that admits a single
+  /// one: the list shows only what it can exec on.
   public func machines(usableFrom group: GroupID) async throws -> [MachineRecord] {
-    let readable = try await reads(group)
-    return try await machines().filter { readable.contains($0.group) }
+    let snapshot = try await writer.read { db in try GroupAccess.Snapshot(db) }
+    let all = try await machines()
+    return try all.filter { try Self.canUse($0, from: group, snapshot: snapshot) }
   }
 
   /// A machine `group` may not use resolves as no machine at all.
   public func resolveMachine(_ reference: String, usableFrom group: GroupID) async throws -> MachineRecord? {
-    guard let record = try await resolveMachine(reference), try await reads(group).contains(record.group) else { return nil }
+    guard let record = try await resolveMachine(reference) else { return nil }
+    guard try await canUse(record, from: group) else { return nil }
     return record
+  }
+
+  /// Whether `group` may use `record`: `owner` is its own group alone;
+  /// `reachable` is every group with write in its owner group.
+  public func canUse(_ record: MachineRecord, from group: GroupID) async throws -> Bool {
+    let snapshot = try await writer.read { db in try GroupAccess.Snapshot(db) }
+    return try Self.canUse(record, from: group, snapshot: snapshot)
+  }
+
+  private nonisolated static func canUse(
+    _ record: MachineRecord, from group: GroupID, snapshot: GroupAccess.Snapshot,
+  ) throws -> Bool {
+    switch record.scope {
+    case .owner:
+      return group == record.group
+    case .reachable:
+      return try (snapshot.role(from: group.rawValue, in: record.group.rawValue) ?? .read) >= .write
+    }
+  }
+
+  /// Switches who may use a machine: its own group, or every group that can
+  /// reach that one.
+  public func setMachineScope(_ id: MachineID, scope: ReachScope) async throws -> MachineRecord {
+    try await writer.write { db in
+      guard var row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
+        throw SpaceError.notFound(id.rawValue)
+      }
+      row.scope = scope.rawValue
+      try MachineRow.update(row).execute(db)
+      return Self.machineRecord(from: row)
+    }
   }
 
   /// Hands the machine to `group`. Its notes live with its current group, so
@@ -230,7 +269,9 @@ extension Space {
         throw SpaceError.notFound(id.rawValue)
       }
       let from = GroupID(rawValue: row.grp)
-      let movedRow = MachineRow(id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue)
+      let movedRow = MachineRow(
+        id: row.id, accountID: row.accountID, name: row.name, createdAt: row.createdAt, grp: group.rawValue, scope: row.scope,
+      )
       try MachineRow.update(movedRow).execute(db)
       if var member = try MachineV2MemberRow.where({ $0.machineID.eq(id.rawValue) }).fetchOne(db) {
         member.grp = group.rawValue
@@ -583,7 +624,9 @@ extension Space {
   }
 
   private static func storeMachineName(_ name: String, on row: MachineRow, in db: Database) throws -> MachineRecord {
-    let renamed = MachineRow(id: row.id, accountID: row.accountID, name: name, createdAt: row.createdAt, grp: row.grp)
+    let renamed = MachineRow(
+      id: row.id, accountID: row.accountID, name: name, createdAt: row.createdAt, grp: row.grp, scope: row.scope,
+    )
     try MachineRow.update(renamed).execute(db)
     try db.execute(sql: "UPDATE accounts SET name = ? WHERE id = ?", arguments: [name, row.accountID])
     return machineRecord(from: renamed)
@@ -600,6 +643,7 @@ extension Space {
       name: row.name,
       createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
       group: GroupID(rawValue: row.grp),
+      scope: ReachScope(rawValue: row.scope) ?? .owner,
     )
   }
 

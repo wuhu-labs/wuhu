@@ -170,7 +170,7 @@ import Testing
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving { server in
-      let account = try await rig.space.addAccount(kind: .human, name: "alice")
+      let account = try await rig.space.addAccount(kind: .human, name: "alice", admin: true)
       let minted = try await rig.space.mintJoinToken(account: account.id, capabilities: [.device, .seat], createdBy: nil, lifetime: 600)
       let invite = "https://127.0.0.1:\(server.port)/_/enroll#token=\(minted.token.rawValue)&space=\(server.space)&fp=\(server.fingerprint)"
       #expect(await rig.run(["login"], io: CLIIO(stdin: invite + "\n")) == 0)
@@ -229,7 +229,7 @@ import Testing
     let rig = try EnrollRig()
     defer { rig.cleanUp() }
     try await rig.serving(origin: "https://wuhu.origin.test:9443") { server in
-      let account = try await rig.space.addAccount(kind: .human, name: "alice")
+      let account = try await rig.space.addAccount(kind: .human, name: "alice", admin: true)
       let minted = try await rig.space.mintJoinToken(account: account.id, capabilities: [.device, .seat], createdBy: nil, lifetime: 600)
       let invite = "https://127.0.0.1:\(server.port)/_/enroll#token=\(minted.token.rawValue)&space=\(server.space)&fp=\(server.fingerprint)"
       #expect(await rig.run(["login"], io: CLIIO(stdin: invite + "\n")) == 0)

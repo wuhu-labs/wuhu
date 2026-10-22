@@ -336,6 +336,8 @@ import struct WuhuAI.ToolCall
       return Response(status: .ok, body: .string(request.url.absoluteString))
     }
     try await withRig(fetch: echo, group: GroupID(rawValue: "alice")) { rig in
+      // shared's secrets open to every group that reaches it.
+      try await rig.space.setSecretsScope(.reachable, of: .shared, by: .anonymous, acting: .shared)
       try await rig.stores.group("shared").set("K", to: "shared-value")
       try await rig.stores.group("shared").set("S", to: "other-value")
       try await rig.run("secret-groups")
@@ -888,7 +890,6 @@ func withRig(
         try await space.writer.write { db in
           try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
         }
-        try await space.addReadEdge(from: group, to: .shared)
       }
       var session = try await makeSession(space, group: group)
       if task || childAgent {

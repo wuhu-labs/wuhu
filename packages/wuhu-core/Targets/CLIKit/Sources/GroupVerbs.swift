@@ -1,5 +1,6 @@
 import JSONValue
 import SpaceClient
+import struct SpaceContract.GroupDetail
 import enum SpaceContract.GroupHeader
 import struct SpaceContract.GroupSummary
 import struct SpaceContract.ServerInfo
@@ -7,8 +8,7 @@ import struct SpaceContract.ServerInfo
 extension Executor {
   // A selected group is never dropped: a server that does not advertise
   // groups would act in its only group, which is not the one asked for.
-  mutating func requireGroups(space: String, selected: String?) async throws {
-    guard !self.groupsConfirmed.contains(space) else { return }
+  mutating func requireGroups(space: String, selected: String?) async throws { guard !self.groupsConfirmed.contains(space) else { return }
     guard try await self.advertisesGroups(space: space) else {
       throw CLIError(message: "this server has no groups" + (selected.map { "; \($0) comes from \(self.group.label)" } ?? ""))
     }
@@ -60,6 +60,56 @@ extension Executor {
       return
     }
     await self.runner.stdout("\(group) (" + (self.session == nil ? "the server's default" : "this session's group") + ")\n")
+  }
+
+  // A group's access state: open or private, the secrets switch, the list.
+  mutating func groupShow(_ group: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let detail: GroupDetail = try await self.authenticated(space).api(.get, "/v1/group/\(group)")
+    await self.runner.stdout(detailLines(detail))
+  }
+
+  mutating func groupOpen(_ group: String, open: Bool) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let detail: GroupDetail = try await self.authenticated(space).api(
+      .put, "/v1/group/\(group)", body: .object(["open": .bool(open)]),
+    )
+    await self.runner.stdout(detailLines(detail))
+  }
+
+  mutating func groupSecrets(_ group: String, scope: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let detail: GroupDetail = try await self.authenticated(space).api(
+      .put, "/v1/group/\(group)", body: .object(["secrets": .string(scope)]),
+    )
+    await self.runner.stdout(detailLines(detail))
+  }
+
+  mutating func groupGrant(group: String, role: String, subject: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    _ = try await self.authenticated(space).api(.put, "/v1/group/\(group)/access", body: .object([
+      "kind": .string(subjectKind(subject)), "id": .string(subject), "role": .string(role),
+    ])) as JSONValue
+    await self.runner.stdout("\(subject) \(role) in \(group)\n")
+  }
+
+  mutating func groupRevoke(group: String, subject: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    _ = try await self.authenticated(space).api(
+      .delete, "/v1/group/\(group)/access?kind=\(subjectKind(subject))&id=\(subject)",
+    ) as JSONValue
+    await self.runner.stdout("\(subject) is no longer in \(group)\n")
+  }
+
+  // An account id is prefixed; anything else names a group.
+  private func subjectKind(_ subject: String) -> String {
+    subject.hasPrefix("ac_") ? "account" : "group"
+  }
+
+  private func detailLines(_ detail: GroupDetail) -> String {
+    var lines = ["group \(detail.id) \(detail.open ? "open" : "private") secrets \(detail.secrets)"]
+    lines += detail.entries.map { "\($0.kind) \($0.id) \($0.role)" }
+    return lines.joined(separator: "\n") + "\n"
   }
 
   // Only an answer without the feature means no groups; a failed probe is

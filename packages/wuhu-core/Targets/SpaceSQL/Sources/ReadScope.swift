@@ -191,8 +191,6 @@ public struct ViewCatalog: Sendable {
         views.append(View(name: table, table: table))
       } else if table == "groups" {
         views.append(View(name: table, table: table, columns: ["id", "created_at"], filter: "removed_at IS NULL"))
-      } else if table == "group_reads" {
-        views.append(View(name: table, table: table, columns: ["readable", "via"], filter: "grp = \(literal(acting))"))
       }
     }
     return views

@@ -166,3 +166,9 @@ _Afterwards:_ deterministic checks require the progress (bundle 3 of 7) in the r
 ## Group-local instructions
 
 `group-instructions` is a text-only smoke for group-local prompt composition, settings catalog discovery, and non-inheritable personal-group administration. It expects no tools or writes.
+
+## 8. group-access
+
+_Prompt:_ "Make me a small page at {sb}/access.html I can open on my phone. It should list the groups this space has, whether I can read each one, and the machines I can use, and keep itself current. Build it with what this space already gives you, not a REST API."
+
+_Afterwards:_ `{sb}/access.html` exists, imports `wuhu:space`, reads `groups()` (and `wuhu:machine`'s `machines()`, or the same reachable listing) instead of `/_/query`, `/v1/` or a made-up endpoint, refreshes instead of hardcoding the current lists, carries the html-page case's mobile defaults, and the reply is a short pointer naming the page. The modules report what this session actually reads and uses.

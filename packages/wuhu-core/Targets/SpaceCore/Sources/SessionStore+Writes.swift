@@ -301,9 +301,10 @@ extension SessionStore {
   /// Archive and unarchive: the session itself, its creator (an ancestor, or
   /// whoever created it top-level), or an admin of its group. The --dev seat
   /// is unrestricted.
-  public func refuseArchiving(_ target: SessionID, by actor: Actor) async throws {
+  public func refuseArchiving(_ target: SessionID, by actor: Actor, acting: GroupID) async throws {
     try await writer.read { db in
       let record = try Sessions.record(target.rawValue, in: db)
+      let admin = try GroupAccess.role(of: actor, in: record.group, acting: acting, in: db) == .admin
       let allowed: Bool
       let label: String
       switch actor {
@@ -311,13 +312,13 @@ extension SessionStore {
         label = id.rawValue
         allowed = try id == target || record.createdBy == id.rawValue
           || Sessions.ancestors(target.rawValue, in: db).contains(id.rawValue)
-          || Groups.isAdmin(actor, of: record.group, in: db)
+          || admin
       case let .person(persona, account):
         label = persona
         allowed = try Bool.fetchOne(
           db, sql: "SELECT EXISTS (SELECT 1 FROM personas WHERE name = ? AND account_id = ?)",
           arguments: [record.createdBy, account.rawValue],
-        ) == true || Groups.isHumanAdmin(account, of: record.group, in: db)
+        ) == true || admin
       case .anonymous:
         label = "anonymous"
         allowed = true

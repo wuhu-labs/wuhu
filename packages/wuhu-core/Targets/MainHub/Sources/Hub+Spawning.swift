@@ -88,7 +88,7 @@ extension Hub {
     }
     let group: GroupID
     do {
-      group = try await space.homeGroup(order.group.map(GroupID.init(rawValue:)), creator: creator.group)
+      group = try await space.homeGroup(order.group.map(GroupID.init(rawValue:)), creator: Principal(actor: .session(caller), group: creator.group))
     } catch let error as SpaceError {
       throw ToolProblem(renderedFailure(Wire.failure(error)))
     }

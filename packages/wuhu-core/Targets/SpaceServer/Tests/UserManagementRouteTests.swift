@@ -172,7 +172,7 @@ import Testing
     let accountID = AccountID(rawValue: carolID)
     let personal = try #require(try await harness.space.personalGroup(of: accountID))
     #expect(try await harness.space.memberGroups(of: accountID) == [personal])
-    #expect(try await harness.space.reads(personal) == [personal, .settings])
+    #expect(try await harness.space.reads(personal) == [personal, .settings, .shared])
     #expect(try await harness.space.isHumanAdmin(accountID, of: personal))
     #expect(try await !harness.space.isHumanAdmin(accountID, of: .shared))
     #expect(try await harness.space.ensurePersonalGroup(account: accountID) == personal)

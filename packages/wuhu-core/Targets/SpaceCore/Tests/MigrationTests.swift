@@ -33,7 +33,8 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 1)
+    // The three already-applied migrations stay applied.
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 2)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -76,7 +77,9 @@ import Testing
     let original = try await baseline(database)
     try await database.writeWithoutTransaction { db in
       try db.execute(sql: "PRAGMA foreign_keys = OFF")
-      try db.execute(sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'missing', '2026-01-01T00:00:00Z')")
+      try db.execute(
+        sql: "INSERT INTO read_sessions (token_hash, account_id, created_at, expires_at) VALUES ('stale', 'missing', '2026-01-01T00:00:00Z', '2027-01-01T00:00:00Z')",
+      )
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
     let connection = try DatabaseQueue(path: database.path)
@@ -92,7 +95,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 1)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 2)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -328,8 +331,12 @@ import Testing
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM personas") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM join_tokens") } == 0)
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT subscription_id FROM session_subscriptions ORDER BY 1") } == ["timer.keep"])
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM group_members WHERE account_id = 'ac_wrap00001'") } == 0)
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM group_members WHERE account_id = 'ac_dangling0'") } == 1)
+    #expect(try await reopened.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ac_wrap00001'")
+    } == 0)
+    #expect(try await reopened.read { db in
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ac_dangling0'")
+    } == 0)
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
     let fresh = try self.database()
     let freshSpace = try Space(writer: fresh)
@@ -351,7 +358,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "998", "999"])
+    } == ["001", "002", "003", "004", "998", "999"])
     try await original.close()
   }
 }

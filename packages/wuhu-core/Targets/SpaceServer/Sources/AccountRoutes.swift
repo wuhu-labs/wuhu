@@ -24,7 +24,9 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
       }
       let input = try await request.json(AccountCreateInput.self)
       do {
-        let record = try await space.addAccount(kind: .human, name: input.name, admin: input.admin ?? false)
+        let record = try await space.addAccount(
+          kind: .human, name: input.name, admin: input.admin ?? false, guest: input.guest ?? false,
+        )
         return try Response.json(accountPayload(record))
       } catch let SpaceError.reservedAccountName(name) {
         return errorResponse(
@@ -114,6 +116,7 @@ private func accountPayload(_ record: AccountRecord) -> AccountPayload {
     name: record.name,
     admin: record.isAdmin,
     createdAt: record.createdAt.timeIntervalSince1970,
+    guest: record.guest,
   )
 }
 

@@ -93,7 +93,7 @@ import Testing
       await #expect(throws: SessionStoreError.unknownConversation(id.rawValue)) {
         try await space.sessions.post(.conversation(id), messageID: MessageID("before"), sender: person(agent.rawValue), senderSession: agent, content: .init(text: "no access"))
       }
-      try await space.addReadEdge(from: bob, to: alice)
+      try await space.setGrant(.group, bob.rawValue, role: .write, in: alice, by: .anonymous, acting: alice)
       #expect(try await space.sessions.reads(space.sessions.conversation(id), reader: agent.rawValue, group: bob))
       #expect(try await !space.sessions.reads(space.sessions.conversation(id), reader: "bob", group: bob))
       let principal = Principal(actor: .session(agent), group: bob)
@@ -118,7 +118,7 @@ import Testing
     try await withSessionDeps {
       let space = try makeSpace()
       let foreign = try await plainGroup(space, "foreign")
-      try await space.addReadEdge(from: .shared, to: foreign)
+      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
       let agent = try await space.sessions.createSession(group: .shared, title: "Reader", kind: .agent, createdBy: "alice", model: .test)
       for group in [GroupID.shared, foreign] {
         let id = try await space.sessions.createConversation(members: ["alice", "bob"], in: group)
@@ -157,7 +157,7 @@ import Testing
       let newer = try await store.createConversation(members: ["alice"], title: "Newer", in: .shared)
       let foreign = try await plainGroup(space, "foreign")
       let remote = try await store.createConversation(members: ["alice"], in: foreign)
-      try await space.addReadEdge(from: .shared, to: foreign)
+      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
       #expect(try await !store.reads(store.conversation(older), reader: nil, group: .shared))
       for operation in [0, 1, 2] {
         await #expect(throws: SessionStoreError.unknownConversation(older.rawValue)) {

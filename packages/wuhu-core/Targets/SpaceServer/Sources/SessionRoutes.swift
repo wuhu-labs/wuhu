@@ -42,11 +42,14 @@ func addSessionRoutes(
     }
     let group: GroupID
     do {
-      group = try await space.homeGroup(input.group.map(GroupID.init(rawValue:)), creator: principal.group)
+      if case let .person(_, account) = principal.actor, try await space.isGuest(account) {
+        return errorResponse(.forbidden, code: "groupForbidden", message: "a guest creates no sessions")
+      }
+      group = try await space.homeGroup(input.group.map(GroupID.init(rawValue:)), creator: principal)
     } catch SpaceError.groupForbidden(let named) {
       return errorResponse(
         .forbidden, code: "groupForbidden",
-        message: "group \(named) is not readable from group \(principal.group.rawValue)",
+        message: "group \(named) is not writable from group \(principal.group.rawValue)",
       )
     }
     do {
@@ -174,7 +177,7 @@ func addSessionRoutes(
     var caller: SessionID?
     do {
       if case let .principal(principal) = try await principalOf(request) {
-        try await store.refuseArchiving(id, by: principal.actor)
+        try await store.refuseArchiving(id, by: principal.actor, acting: principal.group)
         if case let .session(session) = principal.actor { caller = session }
       }
       if caller == id, input.force == true {
@@ -198,7 +201,7 @@ func addSessionRoutes(
       if let refused = try await refusingUnseen(id, request, space: space, principalOf: principalOf) { return refused }
       do {
         if verb == "unarchive", case let .principal(principal) = try await principalOf(request) {
-          try await store.refuseArchiving(id, by: principal.actor)
+          try await store.refuseArchiving(id, by: principal.actor, acting: principal.group)
         }
         try await action(service)(id)
         return jsonResponse(.object([:]))
@@ -1021,7 +1024,7 @@ func refusingUnseen(
   }
   do {
     let record = try await space.sessions.record(id)
-    guard try await space.reads(principal.group).contains(record.group) else {
+    guard try await space.reads(for: principal).contains(record.group) else {
       throw SessionStoreError.unknownSession(id.rawValue)
     }
     return nil

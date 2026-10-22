@@ -63,6 +63,7 @@ enum RecordingMode: Sendable {
 enum RecordReplayError: Error, CustomStringConvertible {
   case noRecordingsFound(String)
   case requestBodyMismatch(expected: String, actual: String)
+  case systemPromptChanged(session: String)
   case unexpectedStatus(Int, String)
 
   var description: String {
@@ -74,6 +75,8 @@ enum RecordReplayError: Error, CustomStringConvertible {
       """
     case let .requestBodyMismatch(expected, actual):
       return "Request body mismatch.\nExpected: \(expected)\nActual: \(actual)"
+    case let .systemPromptChanged(session):
+      return "The system prompt of session \(session) changed between turns of one run: the generation's cache prefix must stay fixed."
     case let .unexpectedStatus(code, body):
       return "Unexpected HTTP status \(code). Body: \(body.prefix(500))"
     }

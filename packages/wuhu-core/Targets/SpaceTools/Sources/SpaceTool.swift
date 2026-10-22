@@ -35,7 +35,7 @@ public struct SpaceToolContext: Sendable {
       if case let .session(session) = principal.actor {
         try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
       }
-      try await space.refuseWrite(path, in: group, by: principal.actor)
+      try await space.refuseWrite(path, in: group, by: principal.actor, acting: principal.group)
       return
     }
     if let owner = path.homeOwner { throw SpaceError.foreignHome(path: path.rawValue, owner: owner) }
@@ -44,12 +44,12 @@ public struct SpaceToolContext: Sendable {
     }
   }
 
-  /// The seam as `acting` may use it: a machine of a group it does not read is
-  /// no machine at all, on every route that builds a context. (An id with no
-  /// row names nothing the hub could reach either.)
+  /// The seam as `acting` may use it: a machine it may not use is no machine at
+  /// all, on every route that builds a context. (An id with no row names
+  /// nothing the hub could reach either.)
   static func gated(_ seam: MachineSeam, space: Space, acting: GroupID) -> MachineSeam {
     @Sendable func requireUsable(_ machine: MachineID) async throws {
-      guard let record = try await space.machine(machine), try await !space.reads(acting).contains(record.group) else { return }
+      guard let record = try await space.machine(machine), try await !space.canUse(record, from: acting) else { return }
       throw ToolRunError.failed(code: .notFound, message: "unknown machine: \(machine.rawValue)", hint: nil)
     }
     return MachineSeam(
@@ -290,7 +290,7 @@ struct SpaceView: SpaceVFS {
     if case let .session(session) = actor {
       try SessionHome.refuseForeignWrite(to: p, in: group, by: session, home: acting)
     }
-    try await space.refuseWrite(p, in: group, by: actor)
+    try await space.refuseWrite(p, in: group, by: actor, acting: acting)
   }
 
   func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {

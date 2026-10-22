@@ -333,8 +333,9 @@ private func attachmentHome(_ path: String, host: GroupID, viewer: AccountID?, s
         let conversation = try? await space.sessions.conversation(id),
         conversation.group != host
   else { return nil }
-  if try await space.reads(host).contains(conversation.group) { return conversation.group }
-  guard let member = try await webPrincipal(viewer, group: host, space: space).member,
+  let principal = try await webPrincipal(viewer, group: host, space: space)
+  if try await space.reads(for: principal).contains(conversation.group) { return conversation.group }
+  guard let member = principal.member,
         try await space.sessions.readsAttachment(path, in: conversation.group, member: member)
   else { return nil }
   return conversation.group
@@ -356,9 +357,9 @@ private func isActiveAttachment(_ path: String) -> Bool {
 }
 
 // The content-origin wall. Space content — files, /_/query, /_/observe — is
-// admitted by a live read-session cookie minted on this host, for a member of
-// the host's group; product chrome (shell.js, bundled views, the /_/session
-// minter itself) stays open so a browser can reach the point of
+// admitted by a live read-session cookie minted on this host, for whoever may
+// read the host's group; product chrome (shell.js, bundled views, the
+// /_/session minter itself) stays open so a browser can reach the point of
 // authenticating. --public-read opens `shared.<host>` reads on purpose; it never
 // opens another group host or the API. An admitted cookie names its account in
 // Wuhu-Viewer, which the page service worker files what it keeps under.
@@ -372,17 +373,16 @@ func admission(space: Space, group: GroupID, dev: Bool, publicRead: Bool, cookie
   return try await cookieAdmission(space: space, group: group, cookies: cookies, request: request)
 }
 
-/// A live read session minted on this host, for a member of its group.
+/// A live read session minted on this host, for whoever may read its group.
 func cookieAdmission(space: Space, group: GroupID, cookies: ContentCookies, request: Request) async throws -> ContentAdmission {
   // Every wuhu_read the browser sent is tried: a sibling host may toss its
   // own cookie at the parent domain, and it must not shadow this host's.
   for raw in readCookieTokens(request: request, cookies: cookies) {
     guard let account = try await space.account(readSession: ReadSessionToken(rawValue: raw), in: group) else { continue }
-    let settingsAdmin = group == .settings ? try await space.isHumanAdmin(account, of: .settings) : false
-    let member = group == .shared || settingsAdmin ? true : try await space.isMember(account, of: group)
-    guard member else {
+    let actor = Actor.person(persona: account.rawValue, account: account)
+    guard try await space.role(of: actor, in: group, acting: group) != nil else {
       return .refused(errorResponse(
-        .forbidden, code: "groupForbidden", message: "you are not a member of group \(group.rawValue)",
+        .forbidden, code: "groupForbidden", message: "you may not read group \(group.rawValue)",
       ))
     }
     return .admitted(account)
@@ -429,8 +429,9 @@ private func mintReadSession(space: Space, group: GroupID, dev: Bool, now: Date,
   }
   switch try await bearerVerdict(request: request, space: space, now: now) {
   case let .verified(credential):
-    if group != .shared, try await !space.isMember(credential.key.account, of: group) {
-      return errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(group.rawValue)")
+    let actor = Actor.person(persona: credential.key.account.rawValue, account: credential.key.account)
+    if try await space.role(of: actor, in: group, acting: group) == nil {
+      return errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(group.rawValue)")
     }
     let supersedes = readCookieTokens(request: request, cookies: cookies).first.map(ReadSessionToken.init(rawValue:))
     let token = try await space.createReadSession(

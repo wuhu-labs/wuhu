@@ -27,7 +27,10 @@ struct RecordingContext: Sendable {
   private let collector: RecordingCollector?
   private let recordDir: URL
 
-  init(name: String, mode: RecordingMode, recordingsRoot: URL, matchIgnoringBodyFields: Set<String> = [], webSocketConnector: WebSocketConnector = .live) {
+  init(
+    name: String, mode: RecordingMode, recordingsRoot: URL, matchIgnoringBodyFields: Set<String> = [],
+    matchIgnoringSystemPrompt: Bool = false, webSocketConnector: WebSocketConnector = .live,
+  ) {
     self.recordDir = recordingsRoot.appendingPathComponent(name)
     let recordDir = self.recordDir
 
@@ -55,7 +58,9 @@ struct RecordingContext: Sendable {
       let replaySockets = SocketReplay(directory: recordDir)
       self.replaySockets = replaySockets
       self.webSocketConnector = replaySockets.connector
-      let ledger = ReplayLedger(recordDir: recordDir, ignoredFields: matchIgnoringBodyFields)
+      let ledger = ReplayLedger(
+        recordDir: recordDir, ignoredFields: matchIgnoringBodyFields, ignoringSystemPrompt: matchIgnoringSystemPrompt,
+      )
       self.fetchClient = FetchClient { request in
         try await replayResponse(request: request, ledger: ledger, recordDir: recordDir)
       }
@@ -88,14 +93,27 @@ struct RecordingContext: Sendable {
 private actor ReplayLedger {
   private let recordDir: URL
   private let ignoredFields: Set<String>
+  /// Compare only the role of each system message: the prompt it carries is
+  /// pinned by the prompt-revision tests, not by a model recording.
+  private let ignoringSystemPrompt: Bool
+  /// Each session's system prompt, as first seen live in this run: turns of one
+  /// session must keep the same bytes (the cache prefix never moves).
+  private var systemPrompts: [String: String] = [:]
   private var unclaimed: [(index: Int, body: JSONValue)]?
 
-  init(recordDir: URL, ignoredFields: Set<String>) {
+  init(recordDir: URL, ignoredFields: Set<String>, ignoringSystemPrompt: Bool = false) {
     self.recordDir = recordDir
     self.ignoredFields = ignoredFields
+    self.ignoringSystemPrompt = ignoringSystemPrompt
   }
 
   func claim(_ body: JSONValue) throws -> Int {
+    if ignoringSystemPrompt {
+      for (session, prompt) in Self.systemPrompts(in: body) {
+        if let seen = systemPrompts[session], seen != prompt { throw RecordReplayError.systemPromptChanged(session: session) }
+        systemPrompts[session] = prompt
+      }
+    }
     let fixtures = try load()
     guard !fixtures.isEmpty else { throw RecordReplayError.noRecordingsFound(recordDir.lastPathComponent) }
     let wanted = comparable(body)
@@ -110,9 +128,51 @@ private actor ReplayLedger {
   }
 
   private func comparable(_ body: JSONValue) -> JSONValue {
-    guard case var .object(fields) = body, !ignoredFields.isEmpty else { return uuidNormalized(body) }
+    guard case var .object(fields) = body else { return uuidNormalized(body) }
     for field in ignoredFields { fields.removeValue(forKey: field) }
+    if ignoringSystemPrompt {
+      // Chat dialect: role-carrying messages. Responses dialect: a leading
+      // role-less item holding the prompt, or a role "system"/"developer".
+      for key in ["messages", "input"] {
+        guard case let .array(items)? = fields[key] else { continue }
+        fields[key] = .array(items.map { item in
+          guard Self.isSystem(item), case var .object(entry) = item else { return item }
+          entry["content"] = .string("<system>")
+          return .object(entry)
+        })
+      }
+    }
     return uuidNormalized(.object(fields))
+  }
+
+  private static func isSystem(_ item: JSONValue) -> Bool {
+    guard case let .object(entry) = item, case let .string(role)? = entry["role"] else { return false }
+    return role == "system" || role == "developer"
+  }
+
+  /// The system prompts in `body`, keyed by the session they belong to (read
+  /// from the prompt itself; an unidentified prompt is skipped).
+  private static func systemPrompts(in body: JSONValue) -> [(String, String)] {
+    guard case let .object(fields) = body else { return [] }
+    let pattern = /session id is ([a-z0-9-]+)/
+    var prompts: [(String, String)] = []
+    for key in ["messages", "input"] {
+      guard case let .array(items)? = fields[key] else { continue }
+      for item in items {
+        guard isSystem(item), case let .object(entry) = item else { continue }
+        let text: String? = switch entry["content"] {
+        case let .string(content): content
+        case let .array(parts)?: parts.compactMap { part -> String? in
+            guard case let .object(fields) = part, case let .string(text)? = fields["text"] else { return nil }
+            return text
+          }.joined()
+        default: nil
+        }
+        guard let text, let session = text.firstMatch(of: pattern).map({ String($0.output.1) }) else { continue }
+        prompts.append((session, text))
+      }
+    }
+    return prompts
   }
 
   private func load() throws -> [(index: Int, body: JSONValue)] {

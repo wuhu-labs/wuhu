@@ -9,9 +9,10 @@ import JSONValue
 import SpaceSQL
 
 extension Space {
-  /// What `principal` may read: its acting group and every group that group reads.
+  /// What `principal` may read: its acting group, every open group, the groups
+  /// listing its group and the groups listing its account.
   public func readScope(for principal: Principal, viewer: String? = nil) async throws -> ReadScope {
-    try await ReadScope(acting: principal.group, readable: reads(principal.group), viewer: viewer, member: principal.member)
+    try await ReadScope(acting: principal.group, readable: reads(for: principal), viewer: viewer, member: principal.member)
   }
 
   public func query(

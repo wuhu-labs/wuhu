@@ -117,7 +117,12 @@ private final class ToolsWitness: Sendable {
   @Test func delegatedTaskReportsFinalAndTheAgentRelaysIt() async throws {
     try await withReplayableDeps {
       let witness = ToolsWitness()
-      try await withRecording("gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools", "prompt_cache_key"]) {
+      // The system prompt's text is pinned by the prompt-revision tests; this
+      // recording replays the loop, so it compares every message but that one.
+      try await withRecording(
+        "gpt-5.6-luna-session-tree", matchIgnoringBodyFields: ["tools", "prompt_cache_key"],
+        matchIgnoringSystemPrompt: true,
+      ) {
         let hold = ChildHold()
         try await withDependencies {
           $0.fetch = hold.wrapping(witness.wrapping($0.fetch))

@@ -146,7 +146,6 @@ extension MachineV2TunnelTests {
     let f = try await Fixture()
     let person = try await f.space.addAccount(kind: .human, name: "other", admin: false)
     let group = try await f.space.ensurePersonalGroup(account: person.id)
-    try await f.space.addReadEdge(from: group, to: .shared)
     let credential = MachineV2Hub.Credential(pubkey: f.key.pubkeyLabel, machines: [f.machine.id.rawValue])
     _ = try await f.hub.attach(credential, client: FetchClient { _ in Response(status: .ok) }, abort: {})
     _ = try await f.space.moveMachine(f.machine.id, to: group)

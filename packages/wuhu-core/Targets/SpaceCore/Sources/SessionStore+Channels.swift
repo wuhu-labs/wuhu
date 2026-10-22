@@ -35,7 +35,7 @@ enum Channels {
     let allowed: Bool
     switch principal.actor {
     case .session:
-      allowed = try Groups.reads(principal.group, in: db).contains(record.group)
+      allowed = try GroupAccess.role(of: principal.actor, in: record.group, acting: principal.group, in: db).map { $0 >= .write } ?? false
     case let .person(persona, _):
       allowed = record.members.contains { $0.member == persona && $0.kind == .user }
     case .anonymous:

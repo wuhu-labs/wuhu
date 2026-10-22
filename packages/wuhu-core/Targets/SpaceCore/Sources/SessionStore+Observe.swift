@@ -103,7 +103,7 @@ extension SessionStore {
   ) -> AsyncThrowingStream<[MessageRecord], any Error> {
     let key = conversation.rawValue
     let writer = writer
-    return observation(scope: taskScope, writer: writer, tables: ["messages", "conversations", "conversation_members", "group_reads", "groups", "sessions"], state: n) { db, cursor in
+    return observation(scope: taskScope, writer: writer, tables: ["messages", "conversations", "conversation_members", "group_roles", "groups", "sessions"], state: n) { db, cursor in
       guard let record = try Conversations.record(key, in: db),
             try principal.map({ try Conversations.reads(record, reader: $0.member, group: $0.group, in: db) }) ?? true
       else {

@@ -140,7 +140,6 @@ import Testing
     try await harness.runScenario { h in
       let machine = try await h.addAndJoin()
       let team = try await h.space.ensurePersonalGroup(account: try await h.space.addAccount(kind: .human, name: nil).id)
-      try await h.space.addReadEdge(from: team, to: .shared)
       let io = CLIIO()
       #expect(await h.run(["machine", "move", machine.id, "--group", team.rawValue], io: io) == 0)
       #expect(await io.stdoutText() == "moved box to group \(team.rawValue)\n")

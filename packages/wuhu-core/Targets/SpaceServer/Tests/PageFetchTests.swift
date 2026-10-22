@@ -273,7 +273,6 @@ import Testing
     try await list(r, #"{"allow":["http://backend.test"]}"#)
     let account = try await r.h.space.addAccount(kind: .human, name: "bob").id
     let group = try await r.h.space.ensurePersonalGroup(account: account)
-    try await r.h.space.addReadEdge(from: group, to: .shared)
     let token = try await r.h.space.createReadSession(account: account, group: group, expiresAt: fixedDate.addingTimeInterval(3600))
     var url = URLComponents(string: "https://\(group.rawValue).space.test/_/space/fetch")!
     url.queryItems = [URLQueryItem(name: "url", value: "http://backend.test"), URLQueryItem(name: "page", value: "/dash.html")]

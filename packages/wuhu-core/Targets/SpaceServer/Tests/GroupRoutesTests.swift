@@ -23,9 +23,7 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530")
     let (bearer, key) = try await harness.enrolledBearer()
     let alice = try await harness.space.ensurePersonalGroup(account: key.account)
-    try await harness.space.addReadEdge(from: alice, to: .shared)
     let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
-    try await harness.space.addReadEdge(from: bob, to: .shared)
     return People(harness: harness, bearer: bearer, key: key, alice: alice, bob: bob)
   }
 

@@ -9,7 +9,8 @@ import Serve
 import ServeTesting
 import SessionDomain
 import SpaceContract
-import SpaceCore
+import struct SpaceContract.GroupID
+@testable import SpaceCore
 @testable import SpaceServer
 import SpaceTools
 import Testing

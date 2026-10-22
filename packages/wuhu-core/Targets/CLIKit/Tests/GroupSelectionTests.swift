@@ -356,9 +356,29 @@ import Testing
     #expect(try await request.json(JSONValue.self) == [:])
   }
 
+  @Test func groupAccessVerbsParseTheirSubjects() throws {
+    #expect(try Command.parse(["group", "open", "studio"]) == .groupOpen("studio", open: true))
+    #expect(try Command.parse(["group", "close", "studio"]) == .groupOpen("studio", open: false))
+    #expect(try Command.parse(["group", "secrets", "studio", "reachable"]) == .groupSecrets("studio", scope: "reachable"))
+    #expect(
+      try Command.parse(["group", "grant", "studio", "ac_abc12345", "read"])
+        == .groupGrant(group: "studio", role: "read", subject: "ac_abc12345"),
+    )
+    #expect(try Command.parse(["group", "revoke", "studio", "team"]) == .groupRevoke(group: "studio", subject: "team"))
+    #expect(try Command.parse(["group", "show", "studio"]) == .groupShow("studio"))
+    #expect(throws: UsageError.self) { try Command.parse(["group", "grant", "studio", "team", "own"]) }
+    #expect(throws: UsageError.self) { try Command.parse(["group", "secrets", "studio", "none"]) }
+  }
+
   @Test func machineAddAcceptsEitherGroupFlagPosition() throws {
     #expect(try Command.parse(["machine", "add", "--group", "shared"]) == .machineAdd(name: nil, group: "shared"))
     #expect(try Command.parse(["machine", "add", "--name", "box", "--group", "shared"]) == .machineAdd(name: "box", group: "shared"))
+    #expect(
+      try Command.parse(["machine", "add", "--scope", "reachable"]) == .machineAdd(name: nil, group: nil, scope: "reachable"),
+    )
+    #expect(try Command.parse(["machine", "scope", "box", "owner"]) == .machineScope(machine: "box", scope: "owner"))
+    #expect(throws: UsageError.self) { try Command.parse(["machine", "scope", "box", "everyone"]) }
+    #expect(throws: UsageError.self) { try Command.parse(["machine", "add", "--scope", "everyone"]) }
     let expected = Invocation(group: nil, command: .machineAdd(name: nil, group: "shared"))
     #expect(try Invocation.parse(["machine", "add", "--group", "shared"]) == expected)
     #expect(try Invocation.parse(["--group", "shared", "machine", "add"]) == expected)

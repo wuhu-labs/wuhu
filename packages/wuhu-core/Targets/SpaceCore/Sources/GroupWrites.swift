@@ -8,9 +8,9 @@ import GRDB
 import struct SpaceContract.GroupID
 import struct SpaceFS.SpacePath
 
-/// Which group files a write is judged against: a group's instructions (its
-/// `/AGENTS.md` and `/.agents/skills/**`), and the settings group, which only
-/// space admins write.
+/// What writing a group's files takes: its instructions (its `/AGENTS.md` and
+/// `/.agents/skills/**`) follow the same rule as every other file, and the
+/// settings group takes only a space admin.
 enum GroupWrites {
   static func isInstructions(_ path: SpacePath) -> Bool {
     let components = path.components
@@ -19,32 +19,12 @@ enum GroupWrites {
     return false
   }
 
-  static func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, in db: Database) throws {
+  static func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID, in db: Database) throws {
     if case .anonymous = actor { return }
-    let admitted = if group == .settings {
-      try settingsAdmin(actor, in: db)
-    } else {
-      isInstructions(path) ? try admits(actor, to: group, in: db) : true
+    guard let held = try GroupAccess.role(of: actor, in: group, acting: acting, in: db) else {
+      throw SpaceError.notFound(path.rawValue)
     }
-    guard admitted else { throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue) }
-  }
-
-  /// A group's instructions take its members (or an admin of it); every group
-  /// follows the same rule.
-  static func admits(_ actor: Actor, to group: GroupID, in db: Database) throws -> Bool {
-    switch actor {
-    case .anonymous:
-      return true
-    case let .session(id):
-      return try Sessions.group(of: id.rawValue, in: db) == group
-    case let .person(_, account):
-      return try Groups.isMember(account, of: group, in: db) || Groups.isHumanAdmin(account, of: group, in: db)
-    }
-  }
-
-  private static func settingsAdmin(_ actor: Actor, in db: Database) throws -> Bool {
-    guard case let .person(_, account) = actor else { return false }
-    return try Groups.isHumanAdmin(account, of: .settings, in: db)
+    guard held >= .write else { throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue) }
   }
 }
 
@@ -54,22 +34,29 @@ extension Space {
     GroupWrites.isInstructions(path)
   }
 
-  /// Writing a group's instructions takes one of its members (a session of the
-  /// group, or a member person); the settings group takes a space admin. The
-  /// --dev seat is unrestricted.
-  public func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor) async throws {
-    try await writer.read { db in try GroupWrites.refuseWrite(path, in: group, by: actor, in: db) }
+  /// Writing a group's file takes a write role in it; the settings group takes
+  /// a space admin. The --dev seat is unrestricted.
+  public func refuseWrite(_ path: SpacePath, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
+    try await writer.read { db in try GroupWrites.refuseWrite(path, in: group, by: actor, acting: acting, in: db) }
   }
 
   /// The group a new top-level agent lands in: `requested`, else the
-  /// creator's; the creator's group must read it, and the settings group takes
-  /// no sessions.
-  public func homeGroup(_ requested: GroupID?, creator: GroupID) async throws -> GroupID {
-    guard requested != .settings, creator != .settings else { throw SpaceError.groupForbidden(GroupID.settings.rawValue) }
-    guard let requested, requested != creator else { return creator }
-    guard try await groupExists(requested), try await reads(creator).contains(requested) else {
-      throw SpaceError.groupForbidden(requested.rawValue)
+  /// creator's. A person may place one where they write; a session only where
+  /// its group administers — never by landing in an open group it merely
+  /// writes. The settings group takes no sessions.
+  public func homeGroup(_ requested: GroupID?, creator: Principal) async throws -> GroupID {
+    guard requested != .settings, creator.group != .settings else { throw SpaceError.groupForbidden(GroupID.settings.rawValue) }
+    guard let requested, requested != creator.group else { return creator.group }
+    guard try await groupExists(requested) else { throw SpaceError.groupForbidden(requested.rawValue) }
+    let admitted: Bool = switch creator.actor {
+    case .anonymous:
+      true
+    case .person:
+      try await role(of: creator, in: requested).map { $0 >= .write } == true
+    case .session:
+      try await role(of: creator, in: requested) == .admin
     }
+    guard admitted else { throw SpaceError.groupForbidden(requested.rawValue) }
     return requested
   }
 }

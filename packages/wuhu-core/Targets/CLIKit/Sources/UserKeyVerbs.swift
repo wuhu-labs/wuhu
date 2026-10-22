@@ -10,14 +10,14 @@ import struct SpaceContract.UserPayload
 import struct SpaceContract.UsersOutput
 
 extension Executor {
-  mutating func userAdd(name: String, admin: Bool, ttl: Int?) async throws {
+  mutating func userAdd(name: String, admin: Bool, ttl: Int?, guest: Bool = false) async throws {
     let space = try self.wallet.pinnedSpace()
     let client = try await self.authenticated(space, requiringPerson: true)
     let info: ServerInfo = try await client.api(.get, "/v1/server")
-    let account: AccountPayload = try await client.api(.post, "/v1/accounts", body: .object([
-      "name": .string(name), "admin": .bool(admin),
-    ]))
-    await self.runner.stdout("account \(account.id) (\(name))\(account.admin ? " admin" : "")\n")
+    var body: JSONValue = .object(["name": .string(name), "admin": .bool(admin)])
+    if guest { body.set("guest", .bool(true)) }
+    let account: AccountPayload = try await client.api(.post, "/v1/accounts", body: body)
+    await self.runner.stdout("account \(account.id) (\(name))\(account.admin ? " admin" : "")\(account.guest == true ? " guest" : "")\n")
     try await self.printUserInvite(account: account.id, ttl: ttl, client: client, server: info.origin ?? client.base)
   }
 

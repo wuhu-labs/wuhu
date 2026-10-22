@@ -27,7 +27,7 @@ import Testing
       #expect(!bob.isAdmin)
       let personal = try #require(try await rig.space.personalGroup(of: bob.id))
       #expect(try await rig.space.memberGroups(of: bob.id) == [personal])
-      #expect(try await rig.space.reads(personal) == [personal, .settings])
+      #expect(try await rig.space.reads(personal) == [personal, .settings, .shared])
       #expect(try await rig.space.isHumanAdmin(bob.id, of: personal))
       #expect(try await rig.space.ensurePersonalGroup(account: bob.id) == personal)
       #expect(await added.stderrText() == "one-time link; it dies at first use or in 3600 seconds\n")

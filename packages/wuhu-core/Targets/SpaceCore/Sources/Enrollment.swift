@@ -32,7 +32,7 @@ public struct MintedJoinToken: Equatable, Sendable {
 }
 
 extension Space {
-  public func addMachineV2(name: String, group: GroupID = .shared) async throws -> (machine: MachineRecord, token: MintedJoinToken) {
+  public func addMachineV2(name: String, group: GroupID = .shared, scope: ReachScope = .owner) async throws -> (machine: MachineRecord, token: MintedJoinToken) {
     guard let name = MachineName.normalized(name) else { throw SpaceError.invalidMachineName(name) }
     let id = MachineID(rawValue: "mc_" + randomSuffix(MachineID.suffixLength))
     let account = AccountID(rawValue: AccountID.prefix + randomSuffix(AccountID.suffixLength))
@@ -45,13 +45,15 @@ extension Space {
       try EnrollmentMachineAccountRow.insert {
         EnrollmentMachineAccountRow(id: account.rawValue, kind: AccountKind.machine.rawValue, name: name, createdAt: stamp, removedAt: nil)
       }.execute(db)
-      try MachineRow.insert { MachineRow(id: id.rawValue, accountID: account.rawValue, name: name, createdAt: stamp, grp: group.rawValue) }.execute(db)
+      try MachineRow.insert {
+        MachineRow(id: id.rawValue, accountID: account.rawValue, name: name, createdAt: stamp, grp: group.rawValue, scope: scope.rawValue)
+      }.execute(db)
       try MachineV2MemberRow.insert { MachineV2MemberRow(machineID: id.rawValue, grp: group.rawValue, createdAt: stamp) }.execute(db)
       try EnrollmentTokenRow.insert {
         EnrollmentTokenRow(tokenHash: Self.credentialDigest(token.rawValue), accountID: account.rawValue, capabilities: Self.stored([.execMachine]), createdBy: nil, createdAt: stamp, expiresAt: SQLiteDateFormat.string(from: expiresAt), grp: GroupID.shared.rawValue)
       }.execute(db)
     }
-    return (MachineRecord(id: id, account: account, name: name, createdAt: createdAt, group: group), MintedJoinToken(token: token, expiresAt: expiresAt))
+    return (MachineRecord(id: id, account: account, name: name, createdAt: createdAt, group: group, scope: scope), MintedJoinToken(token: token, expiresAt: expiresAt))
   }
 
   /// One-call enrollment for a machine whose key already exists on the caller's
@@ -98,7 +100,7 @@ extension Space {
       try EnrollmentMachineAccountRow.insert {
         EnrollmentMachineAccountRow(id: account.rawValue, kind: AccountKind.machine.rawValue, name: name, createdAt: stamp, removedAt: nil)
       }.execute(db)
-      let row = MachineRow(id: id.rawValue, accountID: account.rawValue, name: name, createdAt: stamp, grp: group.rawValue)
+      let row = MachineRow(id: id.rawValue, accountID: account.rawValue, name: name, createdAt: stamp, grp: group.rawValue, scope: ReachScope.owner.rawValue)
       try MachineRow.insert { row }.execute(db)
       try MachineV2MemberRow.insert { MachineV2MemberRow(machineID: id.rawValue, grp: group.rawValue, createdAt: stamp) }.execute(db)
       let key = try Self.insertKey(pubkey, account: account, capabilities: [.execMachine], createdBy: enrolledBy, createdAt: now, expiresAt: nil, in: db)

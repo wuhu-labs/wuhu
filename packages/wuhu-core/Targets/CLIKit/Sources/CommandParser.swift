@@ -493,7 +493,7 @@ extension Command {
 
   private static func parseGroup(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "group: missing <list|use|current|set>")
+      throw UsageError(message: "group: missing <list|use|current|show|open|close|secrets|grant|revoke>")
     }
     switch subcommand {
     case "list":
@@ -511,6 +511,36 @@ extension Command {
     case "current":
       try parser.finish(verb: "group current")
       return .groupCurrent
+    case "show":
+      let id = try parser.required("group", verb: "group show")
+      try parser.finish(verb: "group show")
+      return .groupShow(id)
+    case "open", "close":
+      let id = try parser.required("group", verb: "group \(subcommand)")
+      try parser.finish(verb: "group \(subcommand)")
+      return .groupOpen(id, open: subcommand == "open")
+    case "secrets":
+      let id = try parser.required("group", verb: "group secrets")
+      let scope = try parser.required("owner|reachable", verb: "group secrets")
+      try parser.finish(verb: "group secrets")
+      guard scope == "owner" || scope == "reachable" else {
+        throw UsageError(message: "group secrets: <owner|reachable>, not \(scope)")
+      }
+      return .groupSecrets(id, scope: scope)
+    case "grant":
+      let id = try parser.required("group", verb: "group grant")
+      let subject = try parser.required("subject", verb: "group grant")
+      let role = try parser.required("read|write|admin", verb: "group grant")
+      try parser.finish(verb: "group grant")
+      guard ["read", "write", "admin"].contains(role) else {
+        throw UsageError(message: "group grant: role is read, write or admin, not \(role)")
+      }
+      return .groupGrant(group: id, role: role, subject: subject)
+    case "revoke":
+      let id = try parser.required("group", verb: "group revoke")
+      let subject = try parser.required("subject", verb: "group revoke")
+      try parser.finish(verb: "group revoke")
+      return .groupRevoke(group: id, subject: subject)
     default:
       throw UsageError(message: "group: unknown subcommand \(subcommand)")
     }
@@ -650,14 +680,18 @@ extension Command {
 
   private static func parseMachine(_ parser: inout ArgumentCursor) throws -> Self {
     guard let subcommand = parser.pop() else {
-      throw UsageError(message: "machine: missing <add|join|run|list|name|rotate|revoke|move>")
+      throw UsageError(message: "machine: missing <add|join|run|list|name|scope|rotate|revoke|move>")
     }
     switch subcommand {
     case "add":
       let name = try parser.option("--name", verb: "machine add")
       let group = try parser.option("--group", verb: "machine add")
+      let scope = try parser.option("--scope", verb: "machine add")
       try parser.finish(verb: "machine add")
-      return .machineAdd(name: name, group: group)
+      guard scope == nil || scope == "owner" || scope == "reachable" else {
+        throw UsageError(message: "machine add: --scope is owner or reachable, not \(scope ?? "")")
+      }
+      return .machineAdd(name: name, group: group, scope: scope)
     case "join":
       let name = try parser.option("--name", verb: "machine join")
       let server = try parser.required("server-url", verb: "machine join")
@@ -697,6 +731,14 @@ extension Command {
       try parser.finish(verb: "machine move")
       guard let group else { throw UsageError(message: "machine move: --group <group> is required") }
       return .machineMove(machine: machine, group: group)
+    case "scope":
+      let machine = try parser.required("machine", verb: "machine scope")
+      let scope = try parser.required("owner|reachable", verb: "machine scope")
+      try parser.finish(verb: "machine scope")
+      guard scope == "owner" || scope == "reachable" else {
+        throw UsageError(message: "machine scope: <owner|reachable>, not \(scope)")
+      }
+      return .machineScope(machine: machine, scope: scope)
     default:
       throw UsageError(message: "machine: unknown subcommand \(subcommand)")
     }
@@ -709,6 +751,7 @@ extension Command {
     switch subcommand {
     case "add":
       let admin = parser.flag("--admin")
+      let guest = parser.flag("--guest")
       let folder = try parser.option("--space", verb: "user add")
       let name = try parser.option("--name", verb: "user add")
       if let folder {
@@ -720,8 +763,9 @@ extension Command {
         throw UsageError(message: "user add: --ttl must be a positive number of seconds")
       }
       guard let name else { throw UsageError(message: "user add: --name <name> is required without --space") }
+      guard !(guest && admin) else { throw UsageError(message: "user add: a guest administers nothing") }
       try parser.finish(verb: "user add")
-      return .userAdd(name: name, admin: admin, ttl: ttl)
+      return .userAdd(name: name, admin: admin, ttl: ttl, guest: guest)
     case "admin":
       let account = try parser.required("account-id", verb: "user admin")
       try parser.finish(verb: "user admin")

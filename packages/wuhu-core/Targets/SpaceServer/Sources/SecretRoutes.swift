@@ -42,7 +42,7 @@ func addSecretRoutes(
       return errorResponse(.badRequest, code: "invalidArgument", message: "expected a secret body {\"value\": ...}: \(error)")
     }
     return try await secretVerdict(secrets, space, request, principalOf) { store, principal, group in
-      let admitted = if principal.actor == .anonymous { true } else { try await space.isAdmin(principal.actor, of: group) }
+      let admitted = if principal.actor == .anonymous { true } else { try await space.isAdmin(principal.actor, of: group, acting: principal.group) }
       guard admitted else {
         var message = "setting a secret needs an admin of group \(group.rawValue)"
         if case let .session(session) = principal.actor { message += await notAdmin(session, of: group, space: space) }
@@ -82,9 +82,30 @@ func notAdmin(_ session: SessionID, of group: GroupID, space: Space) async -> St
   return ""
 }
 
-// The store `body` gets is the acting group's, or the `?group=` one when the
-// acting group reads it; `body` also gets that group, which is the one its
-// admin checks are against.
+// A group's secrets open to its owner group alone, or — with the switch — to
+// every group that writes it. The --dev seat is unrestricted.
+private func admitsSecrets(of group: GroupID, principal: Principal, space: Space) async throws -> Bool {
+  if case .anonymous = principal.actor { return true }
+  guard let record = try await space.group(group) else { return false }
+  switch record.secretsScope {
+  case .owner:
+    return group == principal.group
+  case .reachable:
+    // The acting group's role, as a machine's switch reads it.
+    return try await space.writes(principal.group, in: group)
+  }
+}
+
+private func secretsScopeNote(of group: GroupID, principal: Principal, space: Space) async -> String {
+  guard let record = try? await space.group(group) else { return "out of reach" }
+  return record.secretsScope == .owner
+    ? "open to group \(group.rawValue) alone"
+    : "not writable from group \(principal.group.rawValue)"
+}
+
+// The store `body` gets is the acting group's, or the `?group=` one when
+// the switch and the caller's reach admit it; `body` also gets that group,
+// which is the one its admin checks are against.
 private func secretVerdict(
   _ secrets: SpaceSecretStores?,
   _ space: Space,
@@ -104,13 +125,17 @@ private func secretVerdict(
     var group = principal.group
     if let named = queryValues(of: request.url)["group"], named != group.rawValue {
       try SpaceSecrets.validate(group: named)
-      guard try await space.reads(principal.group).contains(GroupID(rawValue: named)) else {
+      let target = GroupID(rawValue: named)
+      guard try await space.groupExists(target) else {
+        return errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)")
+      }
+      guard try await admitsSecrets(of: target, principal: principal, space: space) else {
         return errorResponse(
           .forbidden, code: "unauthorized",
-          message: "group \(group.rawValue) does not read group \(named), so its secrets are out of reach",
+          message: "group \(target.rawValue)'s secrets are \(await secretsScopeNote(of: target, principal: principal, space: space))",
         )
       }
-      group = GroupID(rawValue: named)
+      group = target
     }
     return try await body(try secrets.group(group.rawValue), principal, group)
   } catch let error as SecretError {

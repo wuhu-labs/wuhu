@@ -82,14 +82,17 @@ func watchResponse(space: Space, glob: String, from rawFrom: String?, principal:
   }
   if batch {
     return .sse(initial: initial, forwarding: events) { commit in
-      .message(JSONValue.object([
+      guard (try? await space.reads(for: principal).contains(watched.group)) == true else { return nil }
+      return .message(JSONValue.object([
         "rev": .integer(commit.rev),
         "events": .array(commit.events.map { Wire.mutationJSON($0, prefix: watched.prefix) }),
       ]).jsonString(), event: "revision")
     }
   }
   return .sse(initial: initial, forwarding: events.mutations) { event in
-    .message(Wire.mutationJSON(event, prefix: watched.prefix).jsonString())
+    // A group the reader no longer reaches stops streaming to it, mid-stream.
+    guard (try? await space.reads(for: principal).contains(watched.group)) == true else { return nil }
+    return .message(Wire.mutationJSON(event, prefix: watched.prefix).jsonString())
   }
 }
 

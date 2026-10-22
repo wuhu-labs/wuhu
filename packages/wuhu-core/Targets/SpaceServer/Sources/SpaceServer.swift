@@ -190,7 +190,9 @@ public enum SpaceServer {
     addDiscoveryRoutes(&router, space: space, contentHost: discoveryContentHost)
     addIdentityRoutes(&router, space: space, identity: identityController, dev: dev)
     addIDTokenRoute(&router, space: space, tokens: execTokens, identity: identityController)
-    addGroupRoutes(&router, space: space, dev: dev)
+    addGroupRoutes(&router, space: space, dev: dev) { request in
+      try await requestPrincipal(request, space: space, date: clock)
+    }
     addMachineRoutes(
       &router, space: space, hub: hub, machineV2Hub: machineV2Hub, challenges: OneShotChallenges(prefix: "mch_"), fingerprint: fingerprint,
     ) { request in

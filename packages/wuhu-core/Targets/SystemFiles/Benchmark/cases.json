@@ -387,6 +387,14 @@
       ],
       "judge": "PASS only if shared instructions and skills are not injected into studio; models.json is read from wuhu://settings.localspace/models.json and only a human space admin edits it; personal groups confer no admin over studio. No tools or files.",
       "issue": 399
+    },
+    {
+      "id": "group-access",
+      "issue": 400,
+      "title": "Reads a session's group access from the shared modules",
+      "prompt": "Make me a small page at {sb}/access.html I can open on my phone. It should list the groups this space has, whether I can read each one, and the machines I can use, and keep itself current. Build it with what this space already gives you, not a REST API.",
+      "required": ["access_page", "uses_access_modules", "reply_names_page"],
+      "judge": "PASS only if the page exists at the sandbox path, imports wuhu:space and reads groups() (with wuhu:machine's machines(), or the same reachable listing) instead of /_/query, /v1/ or a made-up endpoint, refreshes rather than hardcoding the current lists, carries the mobile defaults the html-page case asks for, and the reply is a short pointer naming the page."
     }
   ]
 }

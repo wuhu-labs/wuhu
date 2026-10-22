@@ -45,7 +45,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
   @Test func identicalNotesAndRepositoriesAcrossMachinesLoadOnce() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let studio = try await space.addMachine(name: "studio").id.rawValue
+      let studio = try await space.addMachine(name: "studio", scope: .reachable).id.rawValue
       let mini = try await space.addMachine(name: "mini").id.rawValue
       for machine in [studio, mini] {
         _ = try await space.fs(.shared).write("/_/machines/\(machine)/AGENTS.md", Data("repo manual".utf8), ifMatch: nil)
@@ -135,8 +135,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       try await space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
       }
-      try await space.addReadEdge(from: alice, to: .shared)
-      let studio = try await space.addMachine(name: "studio").id.rawValue
+      let studio = try await space.addMachine(name: "studio", scope: .reachable).id.rawValue
       let mini = try await space.addMachine(name: "mini").id.rawValue
       try await space.writer.write { db in
         try db.execute(sql: "UPDATE machines SET grp = 'alice' WHERE id = ?", arguments: [mini])

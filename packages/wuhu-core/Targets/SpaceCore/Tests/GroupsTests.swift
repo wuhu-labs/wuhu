@@ -12,8 +12,9 @@ import Testing
   static let alice = GroupID(rawValue: "alice")
   static let bob = GroupID(rawValue: "bob")
 
-  // alice reads shared; bob reads nothing. alice holds /plan.md, /t.table and
-  // a session; shared holds /readme.md.
+  // shared is open, so every group reads it; alice and bob are private groups
+  // that read nothing else. alice holds /plan.md, /t.table and a session;
+  // shared holds /readme.md.
   func seeded() async throws -> Space {
     let space = try makeSpace()
     try await space.writer.write { db in
@@ -21,8 +22,6 @@ import Testing
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addReadEdge(from: Self.alice, to: .shared)
-    try await space.addReadEdge(from: Self.bob, to: Self.bob)
     _ = try await space.fs(Self.alice).write("/plan.md", bytes("# Plan\n\nSee [readme](wuhu://shared.localspace/readme.md).\n"), ifMatch: nil)
     _ = try await space.fs(.shared).write("/readme.md", bytes("# Readme\n"), ifMatch: nil)
     _ = try await space.createTable(path("/t.table"), header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: Self.alice, acting: Self.alice)
@@ -66,9 +65,7 @@ import Testing
     #expect(try await rows(space, Self.alice, "SELECT src, dst_grp, dst FROM \"wuhu://alice.localspace/links\"") == [
       [.text("/plan.md"), .text("shared"), .text("/readme.md")],
     ])
-    #expect(try await rows(space, Self.alice, "SELECT readable, via FROM group_reads ORDER BY readable") == [
-      [.text("alice"), .text("self")], [.text("shared"), .text("alice->shared")],
-    ])
+    #expect(try await space.reads(Self.alice) == [Self.alice, .shared, .settings])
   }
 
   @Test func aStreamCarriesOnlyItsGroup() async throws {
@@ -120,22 +117,28 @@ import Testing
     #expect(try await rows(space, .shared, "SELECT n FROM \"/t.table\" ORDER BY n") == [[.integer(7)], [.integer(8)]])
   }
 
-  @Test func bobReachesNothingOfAlices() async throws {
+  @Test func bobReachesSharedAndNothingOfAlices() async throws {
     let space = try await seeded()
     #expect(try await rows(space, Self.bob, "SELECT * FROM docs").isEmpty)
     #expect(try await rows(space, Self.bob, "SELECT * FROM sessions").isEmpty)
     #expect(await refusal(space, Self.bob, "SELECT * FROM \"/t.table\"") == .unknownRelation("/t.table"))
     #expect(await refusal(space, Self.bob, "SELECT * FROM \"wuhu://alice.localspace/t.table\"") == .unknownRelation("wuhu://alice.localspace/t.table"))
     #expect(await refusal(space, Self.bob, "SELECT * FROM \"wuhu://alice.localspace/docs\"") == .unknownRelation("wuhu://alice.localspace/docs"))
-    #expect(await refusal(space, Self.bob, "SELECT * FROM \"wuhu://shared.localspace/docs\"") == .unknownRelation("wuhu://shared.localspace/docs"))
-    #expect(try await rows(space, Self.bob, "SELECT DISTINCT grp FROM \"wuhu://*.localspace/docs\"").isEmpty)
+    #expect(try await rows(space, Self.bob, "SELECT path FROM \"wuhu://shared.localspace/docs\"") == [[.text("/readme.md")]])
+    #expect(try await rows(space, Self.bob, "SELECT DISTINCT grp FROM \"wuhu://*.localspace/docs\"") == [[.text("shared")]])
     #expect(await refusal(space, Self.bob, "SELECT * FROM \"alice:/t.table\"") == .queryForbiddenTable("alice:/t.table"))
   }
 
-  @Test func removingTheReadEdgeEndsAnOpenObservation() async throws {
+  @Test func removingTheListEntryEndsAnOpenObservation() async throws {
     let space = try await seeded()
+    let vault = GroupID(rawValue: "vault")
+    try await space.writer.write { db in
+      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('vault', '2026-01-01T00:00:00.000Z')")
+    }
+    try await space.setGrant(.group, Self.alice.rawValue, role: .write, in: vault, by: .anonymous, acting: vault)
+    _ = try await space.fs(vault).write("/readme.md", bytes("# Vault\n"), ifMatch: nil)
     let stream = await space.observeQuery(
-      "SELECT path FROM \"wuhu://shared.localspace/docs\"", throttle: .zero, as: Principal(actor: .anonymous, group: Self.alice),
+      "SELECT path FROM \"wuhu://vault.localspace/docs\"", throttle: .zero, as: Principal(actor: .anonymous, group: Self.alice),
     )
     let frames = Collector<Rows>()
     let ending = Task { () -> (any Error)? in
@@ -147,9 +150,9 @@ import Testing
       }
     }
     #expect(try await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
-    try await space.removeReadEdge(from: Self.alice, to: .shared)
+    try await space.removeGrant(.group, Self.alice.rawValue, in: vault, by: .anonymous, acting: vault)
     let error = await ending.value
-    #expect(error as? SpaceError == .unknownRelation("wuhu://shared.localspace/docs"))
+    #expect(error as? SpaceError == .unknownRelation("wuhu://vault.localspace/docs"))
   }
 
   @Test func aRowWithoutAGroupIsRefused() async throws {
@@ -175,11 +178,11 @@ import Testing
     let child = try await store.createSession(
       group: .shared, title: "Sc", kind: .agent, parent: agent, createdBy: "owner", executor: .kernel(.test),
     )
-    #expect(try await space.isAdmin(.session(agent), of: .shared))
-    #expect(try await !space.isAdmin(.session(task), of: .shared))
-    #expect(try await !space.isAdmin(.session(child), of: .shared))
-    #expect(try await !space.isAdmin(.session(agent), of: GroupID(rawValue: "elsewhere")))
-    #expect(try await !space.isAdmin(.anonymous, of: .shared))
+    #expect(try await space.isAdmin(.session(agent), of: .shared, acting: .shared))
+    #expect(try await !space.isAdmin(.session(task), of: .shared, acting: .shared))
+    #expect(try await !space.isAdmin(.session(child), of: .shared, acting: .shared))
+    #expect(try await !space.isAdmin(.session(agent), of: GroupID(rawValue: "elsewhere"), acting: .shared))
+    #expect(try await !space.isAdmin(.anonymous, of: .shared, acting: .shared))
   }
 
   // administeredGroups(by:) names exactly the groups isAdmin admits, for an
@@ -205,13 +208,13 @@ import Testing
       (.anonymous, []),
     ]
     for (actor, expected) in cases {
-      #expect(try await space.administeredGroups(by: actor) == expected, "\(actor)")
+      #expect(try await space.administeredGroups(by: actor, acting: .shared) == expected, "\(actor)")
       for group in everyGroup {
-        #expect(try await space.isAdmin(actor, of: group) == expected.contains(group), "\(actor) of \(group)")
+        #expect(try await space.isAdmin(actor, of: group, acting: .shared) == expected.contains(group), "\(actor) of \(group)")
       }
     }
     _ = try await space.removeAccount(alice.id)
-    #expect(try await space.administeredGroups(by: .person(persona: alicesGroup.rawValue, account: alice.id)).isEmpty)
+    #expect(try await space.administeredGroups(by: .person(persona: alicesGroup.rawValue, account: alice.id), acting: .shared).isEmpty)
   }
 
   @Test func aPersonAdministersTheirOwnGroupAndTheSpaceOnlyFromTheAdminTable() async throws {
@@ -223,16 +226,16 @@ import Testing
     #expect(try await space.isHumanAdmin(morgan.id, of: .shared))
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
     #expect(try await space.isHumanAdmin(alice.id, of: alicesGroup))
-    #expect(try await space.reads(alicesGroup) == [alicesGroup, .settings])
+    #expect(try await space.reads(alicesGroup) == [alicesGroup, .settings, .shared])
     #expect(try await Dictionary(uniqueKeysWithValues: space.accounts().map { ($0.name, $0.isAdmin) }) == ["morgan": true, "alice": false])
 
     _ = try await space.setAdmin(alice.id, admin: true)
     #expect(try await space.isHumanAdmin(alice.id, of: .shared))
-    #expect(try await space.isAdmin(alicePerson, of: alicesGroup))
+    #expect(try await space.isAdmin(alicePerson, of: alicesGroup, acting: alicesGroup))
     _ = try await space.setAdmin(alice.id, admin: false)
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
     // Her own group is still hers: the personal group is not a grant.
-    #expect(try await space.isAdmin(alicePerson, of: alicesGroup))
+    #expect(try await space.isAdmin(alicePerson, of: alicesGroup, acting: alicesGroup))
     await #expect(throws: SpaceError.lastAdmin(morgan.id.rawValue)) { try await space.setAdmin(morgan.id, admin: false) }
     await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .machine, name: "bot", admin: true) }
     _ = try await space.removeAccount(alice.id)

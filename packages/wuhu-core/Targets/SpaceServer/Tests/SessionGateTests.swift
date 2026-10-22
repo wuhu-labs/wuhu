@@ -7,6 +7,8 @@ import MachineContract
 import ServeTesting
 import SessionDomain
 import SpaceContract
+import struct SpaceFS.SpacePath
+import SpaceTools
 @_spi(Testing) import SpaceCore
 @testable import SpaceServer
 import Testing
@@ -91,25 +93,29 @@ import Testing
     }
   }
 
-  @Test func tableHTTPChecksReadableSharedLayerWrites() async throws {
+  @Test func tableHTTPWritesTakeAWriteRole() async throws {
     try await withSessionDeps {
       let t = try await tree()
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
       let group = try await t.harness.space.ensurePersonalGroup(account: account.id)
-      try await t.harness.space.addReadEdge(from: group, to: .shared)
+      let owner = GroupID(rawValue: "owner")
+      try await t.harness.addGroup(owner)
+      // owner's list admits the reader's group at read only.
+      try await t.harness.space.setGrant(.group, group.rawValue, role: .read, in: owner, by: .anonymous, acting: owner)
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: group))
+      let readerBox = try await t.harness.space.addMachine(name: "reader-box", group: group)
+      let machine = try #require(try await t.harness.space.resolveMachine(readerBox.id.rawValue, usableFrom: group))
       let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)
       let token = t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token
-      let path = "wuhu://shared.localspace/.agents/skills/test/data.table"
+      let path = "wuhu://owner.localspace/.agents/skills/test/data.table"
       let header: JSONValue = ["columns": [["name": "s", "type": "string"]]]
-      let refused = try await t.harness.post("/v1/tools/table.create", ["path": .string(path), "header": header], bearer: token)
-      #expect(refused.status == .unprocessableContent)
-      #expect(try await refused.json(ToolError.self).code == .unauthorized)
-      let created = try await t.harness.call("/v1/tools/table.create", ["path": .string(path), "header": header], as: TableWriteOutput.self, bearer: t.token)
+      let ownerSeat = SpaceToolContext(space: t.harness.space, principal: Principal(actor: .anonymous, group: owner))
+      let created = try await SpaceToolbox.all.first { $0.name == "table.create" }!
+        .run(ownerSeat, input: ["path": .string(path), "header": header])
       #expect(try await t.harness.post("/v1/tools/table.schema", ["path": .string(path)], bearer: token).status == .ok)
       for (verb, input) in [
-        ("table.alter", JSONValue.object(["path": .string(path), "header": header, "ifMatch": .string(created.token)])),
+        ("table.create", JSONValue.object(["path": .string("wuhu://owner.localspace/x.table"), "header": header])),
+        ("table.alter", JSONValue.object(["path": .string(path), "header": header, "ifMatch": .string(created.object?["token"]?.stringValue ?? "")])),
         ("table.mutate", JSONValue.object(["path": .string(path), "ops": [["kind": "insert", "values": ["injected"]]]])),
       ] {
         let response = try await t.harness.post("/v1/tools/\(verb)", input, bearer: token)

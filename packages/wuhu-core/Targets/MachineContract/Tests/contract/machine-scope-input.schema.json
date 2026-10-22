@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"MachineScopeInput","type":"object","properties":{"scope":{"type":"string"}},"required":["scope"],"additionalProperties":false}

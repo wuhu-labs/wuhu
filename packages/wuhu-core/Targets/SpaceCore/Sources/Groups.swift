@@ -51,32 +51,41 @@ public struct GroupRecord: Hashable, Sendable {
   public let createdAt: Date
   /// The person whose own group this is; nil for an ordinary group.
   public let personalAccount: AccountID?
+  public let visibility: GroupVisibility
+  public let secretsScope: ReachScope
   public let removedAt: Date?
-}
-
-/// The roles an account holds in a group. A space admin holds `admin` in the
-/// settings group, which administers every group.
-enum GroupRole: String, Sendable {
-  case admin
 }
 
 extension Space {
   public func groups() async throws -> [GroupRecord] {
     try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT id, created_at, personal_account, removed_at FROM groups ORDER BY created_at, id").map { row in
-        GroupRecord(
-          id: GroupID(rawValue: row["id"]),
-          createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
-          personalAccount: (row["personal_account"] as String?).map(AccountID.init(rawValue:)),
-          removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
-        )
-      }
+      try Row.fetchAll(
+        db,
+        sql: "SELECT id, created_at, personal_account, visibility, secrets_scope, removed_at FROM groups ORDER BY created_at, id",
+      ).map { Self.groupRecord(from: $0) }
     }
   }
 
-  /// The groups `group` reads, itself and the settings group included.
+  public func group(_ id: GroupID) async throws -> GroupRecord? {
+    try await writer.read { db in
+      try Row.fetchOne(
+        db,
+        sql: "SELECT id, created_at, personal_account, visibility, secrets_scope, removed_at FROM groups WHERE id = ? AND removed_at IS NULL",
+        arguments: [id.rawValue],
+      ).map(Self.groupRecord(from:))
+    }
+  }
+
+  /// The groups sessions acting in `group` read.
   public func reads(_ group: GroupID) async throws -> Set<GroupID> {
-    try await writer.read { db in try Groups.reads(group, in: db) }
+    try await writer.read { db in try GroupAccess.reach(of: group, in: db) }
+  }
+
+  /// The groups `principal` reads.
+  public func reads(for principal: Principal) async throws -> Set<GroupID> {
+    try await writer.read { db in
+      try GroupAccess.readable(by: principal.actor, acting: principal.group, in: db)
+    }
   }
 
   /// A live group: one that exists and was not removed.
@@ -88,22 +97,17 @@ extension Space {
     }
   }
 
-  public func isMember(_ account: AccountID, of group: GroupID) async throws -> Bool {
-    try await writer.read { db in try Groups.isMember(account, of: group, in: db) }
-  }
-
+  /// The groups an account is listed in, by any role.
   public func memberGroups(of account: AccountID) async throws -> Set<GroupID> {
     try await writer.read { db in
       Set(try String.fetchAll(
-        db, sql: "SELECT grp FROM group_members WHERE account_id = ?", arguments: [account.rawValue],
+        db,
+        sql: """
+        SELECT r.grp FROM group_roles r JOIN groups g ON g.id = r.grp
+        WHERE r.account_id = ? AND g.removed_at IS NULL
+        """,
+        arguments: [account.rawValue],
       ).map(GroupID.init(rawValue:)))
-    }
-  }
-
-  /// The groups any of `groups` reads, themselves included.
-  public func reads(_ groups: Set<GroupID>) async throws -> Set<GroupID> {
-    try await writer.read { db in
-      try groups.reduce(into: []) { readable, group in readable.formUnion(try Groups.reads(group, in: db)) }
     }
   }
 
@@ -112,19 +116,71 @@ extension Space {
     try await writer.read { db in Principal(actor: .session(session), group: try Sessions.group(of: session.rawValue, in: db)) }
   }
 
-  /// Top-level agents (kind agent, no parent, live) in `group`, plus its admins.
-  public func isAdmin(_ actor: Actor, of group: GroupID) async throws -> Bool {
-    try await writer.read { db in try Groups.isAdmin(actor, of: group, in: db) }
+  /// What `actor` may do in `group` acting out of `acting`.
+  public func role(of actor: Actor, in group: GroupID, acting: GroupID) async throws -> GroupRole? {
+    try await writer.read { db in try GroupAccess.role(of: actor, in: group, acting: acting, in: db) }
+  }
+
+  public func role(of principal: Principal, in group: GroupID) async throws -> GroupRole? {
+    try await role(of: principal.actor, in: group, acting: principal.group)
+  }
+
+  /// Whether `group` may write `target`: the same role a machine's or a
+  /// secret's switch reads.
+  public func writes(_ group: GroupID, in target: GroupID) async throws -> Bool {
+    try await writer.read { db in try GroupAccess.writes(group, in: target, in: db) }
+  }
+
+  /// The groups `principal` may write: its role in each is write or admin.
+  public func writableGroups(for principal: Principal) async throws -> Set<GroupID> {
+    try await writer.read { db in
+      let snapshot = try GroupAccess.Snapshot(db)
+      switch principal.actor {
+      case .anonymous:
+        return try GroupAccess.reach(of: principal.group, in: db)
+      case let .session(id):
+        guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
+        return Set(snapshot.all.filter { (snapshot.role(of: session, in: $0.rawValue) ?? .read) >= .write })
+      case let .person(_, account):
+        guard let row = try GroupAccess.accountRow(account, in: db) else { return [] }
+        return Set(snapshot.all.filter {
+          (snapshot.role(of: row, in: $0.rawValue, acting: principal.group.rawValue) ?? .read) >= .write
+        })
+      }
+    }
+  }
+
+  public func isAdmin(_ actor: Actor, of group: GroupID, acting: GroupID) async throws -> Bool {
+    try await role(of: actor, in: group, acting: acting) == .admin
   }
 
   /// Every group `actor` administers, by the same rule as `isAdmin`, in one read.
-  public func administeredGroups(by actor: Actor) async throws -> Set<GroupID> {
-    try await writer.read { db in try Groups.administeredGroups(by: actor, in: db) }
+  public func administeredGroups(by actor: Actor, acting: GroupID) async throws -> Set<GroupID> {
+    try await writer.read { db in
+      let snapshot = try GroupAccess.Snapshot(db)
+      switch actor {
+      case .anonymous:
+        return []
+      case let .session(id):
+        guard let session = try GroupAccess.sessionRow(id, in: db) else { return [] }
+        return snapshot.administered(by: session)
+      case let .person(_, account):
+        guard let row = try GroupAccess.accountRow(account, in: db) else { return [] }
+        return snapshot.administered(by: row)
+      }
+    }
   }
 
-  /// A live person holding `admin` in `group`, or in the settings group.
+  /// A live person holding `admin` in `group`, directly or as a space admin.
   public func isHumanAdmin(_ account: AccountID, of group: GroupID) async throws -> Bool {
-    try await writer.read { db in try Groups.isHumanAdmin(account, of: group, in: db) }
+    try await writer.read { db in
+      guard let row = try GroupAccess.accountRow(account, in: db) else { return false }
+      return try GroupAccess.Snapshot(db).isHumanAdmin(row, of: group.rawValue)
+    }
+  }
+
+  public func isGuest(_ account: AccountID) async throws -> Bool {
+    try await writer.read { db in try GroupAccess.isGuest(account, in: db) }
   }
 
   public func personalGroup(of account: AccountID) async throws -> GroupID? {
@@ -140,158 +196,127 @@ extension Space {
     }
   }
 
-  public func addReadEdge(from src: GroupID, to dst: GroupID, by creator: String? = nil) async throws {
-    let created = SQLiteDateFormat.string(from: dateGen.now)
-    try await writer.write { db in
-      try Groups.insertReadEdge(src: src, dst: dst, created: created, by: creator, in: db)
-      try Groups.recompute(in: db)
+  /// A group's list: visible to anyone who can read it.
+  public func grants(of group: GroupID, by principal: Principal) async throws -> [GroupGrant] {
+    try await writer.read { db in
+      if case .anonymous = principal.actor { return try GroupAccess.Snapshot(db).grants(of: group.rawValue) }
+      guard try GroupAccess.role(of: principal.actor, in: group, acting: principal.group, in: db) != nil else {
+        throw SpaceError.groupForbidden(group.rawValue)
+      }
+      return try GroupAccess.Snapshot(db).grants(of: group.rawValue)
     }
   }
 
-  public func removeReadEdge(from src: GroupID, to dst: GroupID) async throws {
+  public func setGrant(
+    _ subject: GroupGrant.Subject, _ id: String, role: GroupRole, in group: GroupID, by actor: Actor, acting: GroupID,
+  ) async throws {
+    let created = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
-      try Groups.removeReadEdge(src: src, dst: dst, in: db)
-      try Groups.recompute(in: db)
+      // A settings admin row is the account admin verb's to set: it guards the
+      // last admin, which a list edit would bypass.
+      guard group != .settings else { throw SpaceError.settingsGroupAccess }
+      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
+      let snapshot = try GroupAccess.Snapshot(db)
+      guard let target = snapshot.live(group.rawValue) else { throw SpaceError.groupForbidden(group.rawValue) }
+      guard target.personalAccount == nil else { throw SpaceError.personalGroupPrivate(group.rawValue) }
+      try Self.requireGrantSubject(subject, id, role: role, in: group, in: db)
+      try db.execute(sql: "DELETE FROM group_roles WHERE grp = ? AND \(Self.grantSubjectColumn(subject)) = ?", arguments: [group.rawValue, id])
+      try db.execute(
+        sql: """
+        INSERT INTO group_roles (\(Self.grantSubjectColumn(subject)), grp, role, created_at) VALUES (?, ?, ?, ?)
+        """,
+        arguments: [id, group.rawValue, role.rawValue, created],
+      )
     }
+  }
+
+  public func removeGrant(_ subject: GroupGrant.Subject, _ id: String, in group: GroupID, by actor: Actor, acting: GroupID) async throws {
+    try await writer.write { db in
+      guard group != .settings else { throw SpaceError.settingsGroupAccess }
+      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
+      let snapshot = try GroupAccess.Snapshot(db)
+      guard let target = snapshot.live(group.rawValue) else { throw SpaceError.groupForbidden(group.rawValue) }
+      guard target.personalAccount == nil else { throw SpaceError.personalGroupPrivate(group.rawValue) }
+      try db.execute(sql: "DELETE FROM group_roles WHERE grp = ? AND \(Self.grantSubjectColumn(subject)) = ?", arguments: [group.rawValue, id])
+      guard db.changesCount > 0 else { throw SpaceError.notFound(id) }
+    }
+  }
+
+  /// No group is listed in itself, and a guest is no admin.
+  private static func requireGrantSubject(
+    _ subject: GroupGrant.Subject, _ id: String, role: GroupRole, in group: GroupID, in db: Database,
+  ) throws {
+    switch subject {
+    case .account:
+      guard let account = try GroupAccess.accountRow(AccountID(rawValue: id), in: db), account.removedAt == nil else {
+        throw SpaceError.notFound(id)
+      }
+      guard !(role == .admin && account.guest) else { throw SpaceError.groupForbidden(group.rawValue) }
+    case .group:
+      guard id != group.rawValue else { throw SpaceError.groupForbidden(group.rawValue) }
+      guard let target = try GroupRow.where({ $0.id.eq(id) }).fetchOne(db), target.removedAt == nil else {
+        throw SpaceError.notFound(id)
+      }
+    }
+  }
+
+  private static func grantSubjectColumn(_ subject: GroupGrant.Subject) -> String {
+    subject == .account ? "account_id" : "source_group"
+  }
+
+  /// Opens a group to every member, or closes it back to its list.
+  public func setVisibility(_ visibility: GroupVisibility, of group: GroupID, by actor: Actor, acting: GroupID) async throws {
+    try await writer.write { db in
+      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
+      guard let target = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db), target.removedAt == nil else {
+        throw SpaceError.groupForbidden(group.rawValue)
+      }
+      guard target.personalAccount == nil, group != .settings else { throw SpaceError.groupForbidden(group.rawValue) }
+      try db.execute(
+        sql: "UPDATE groups SET visibility = ? WHERE id = ?", arguments: [visibility.rawValue, group.rawValue],
+      )
+    }
+  }
+
+  /// Whether a group's secrets open to its owner group alone or to everyone who
+  /// can reach it.
+  public func setSecretsScope(_ scope: ReachScope, of group: GroupID, by actor: Actor, acting: GroupID) async throws {
+    try await writer.write { db in
+      try GroupAccess.requireAdmin(actor, of: group, acting: acting, in: db)
+      try db.execute(
+        sql: "UPDATE groups SET secrets_scope = ? WHERE id = ?", arguments: [scope.rawValue, group.rawValue],
+      )
+    }
+  }
+
+  private static func groupRecord(from row: Row) -> GroupRecord {
+    GroupRecord(
+      id: GroupID(rawValue: row["id"]),
+      createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
+      personalAccount: (row["personal_account"] as String?).map(AccountID.init(rawValue:)),
+      visibility: GroupVisibility(rawValue: row["visibility"]) ?? .private,
+      secretsScope: ReachScope(rawValue: row["secrets_scope"]) ?? .owner,
+      removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
+    )
   }
 }
 
 enum Groups {
-  /// The admin rows that make `account` a space admin: the settings group's.
-  /// `account` is a SQL expression.
-  static func spaceAdminSQL(account: String) -> String {
-    """
-    SELECT 1 FROM group_roles r
-      WHERE r.grp = '\(GroupID.settings.rawValue)' AND r.account_id = \(account) AND r.role = 'admin'
-    """
-  }
-
-  /// `is_admin` of an `accounts` row: a live person who is a space admin.
-  static let spaceAdminColumn: String =
-    "EXISTS (\(spaceAdminSQL(account: "accounts.id"))) AND accounts.kind = 'human' AS is_admin"
-
-  /// The groups `group` reads. The settings group is every group's to read;
-  /// only space admins write it.
-  static func reads(_ group: GroupID, in db: Database) throws -> Set<GroupID> {
-    let readable = try String.fetchAll(db, sql: "SELECT readable FROM group_reads WHERE grp = ?", arguments: [group.rawValue])
-    return Set(readable.map(GroupID.init(rawValue:))).union([group, .settings])
-  }
-
-  /// Whether `account` belongs to `group`. A personal group has one member:
-  /// its owner.
-  static func isMember(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {
-    try Bool.fetchOne(
-      db,
-      sql: """
-      SELECT EXISTS (
-        SELECT 1 FROM group_members m JOIN groups g ON g.id = m.grp
-        WHERE m.grp = ? AND m.account_id = ? AND (g.personal_account IS NULL OR g.personal_account = ?)
-      )
-      """,
-      arguments: [group.rawValue, account.rawValue, account.rawValue],
-    ) ?? false
-  }
-
   static func personalGroup(of account: AccountID, in db: Database) throws -> GroupID? {
     try String.fetchOne(
-      db,
-      sql: "SELECT id FROM groups WHERE personal_account = ? AND removed_at IS NULL ORDER BY created_at, id LIMIT 1",
+      db, sql: "SELECT id FROM groups WHERE personal_account = ? AND removed_at IS NULL ORDER BY created_at, id LIMIT 1",
       arguments: [account.rawValue],
     ).map(GroupID.init(rawValue:))
-  }
-
-  /// Whether `group` is someone's own group.
-  static func isPersonal(_ group: GroupID, in db: Database) throws -> Bool {
-    try Bool.fetchOne(
-      db, sql: "SELECT EXISTS (SELECT 1 FROM groups WHERE id = ? AND personal_account IS NOT NULL)",
-      arguments: [group.rawValue],
-    ) ?? false
-  }
-
-  static func isAdmin(_ actor: Actor, of group: GroupID, in db: Database) throws -> Bool {
-    switch actor {
-    case let .session(id):
-      guard group != .settings else { return false }
-      return try Bool.fetchOne(
-        db,
-        sql: """
-        SELECT EXISTS (SELECT 1 FROM sessions
-          WHERE id = ? AND grp = ? AND kind = 'agent' AND parent IS NULL AND lifecycle = 'live')
-        """,
-        arguments: [id.rawValue, group.rawValue],
-      ) ?? false
-    case let .person(_, account):
-      return try isHumanAdmin(account, of: group, in: db)
-    case .anonymous:
-      return false
-    }
-  }
-
-  static func administeredGroups(by actor: Actor, in db: Database) throws -> Set<GroupID> {
-    let ids: [String]
-    switch actor {
-    case let .session(id):
-      ids = try String.fetchAll(
-        db,
-        sql: "SELECT grp FROM sessions WHERE id = ? AND kind = 'agent' AND parent IS NULL AND lifecycle = 'live'",
-        arguments: [id.rawValue],
-      )
-    case let .person(_, account):
-      ids = try administeredGroupIDs(of: account, in: db)
-    case .anonymous:
-      ids = []
-    }
-    return Set(ids.map(GroupID.init(rawValue:)))
-  }
-
-  /// The groups the account holds `admin` in, plus, for a space admin, every
-  /// group but another person's own.
-  private static func administeredGroupIDs(of account: AccountID, in db: Database) throws -> [String] {
-    guard try Bool.fetchOne(
-      db,
-      sql: "SELECT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ? AND a.kind = 'human' AND a.removed_at IS NULL)",
-      arguments: [account.rawValue],
-    ) == true else { return [] }
-    let held = try String.fetchAll(
-      db,
-      sql: """
-      SELECT g.id FROM groups g
-        WHERE g.removed_at IS NULL AND EXISTS (
-          SELECT 1 FROM group_roles r WHERE r.grp = g.id AND r.account_id = ? AND r.role = 'admin'
-        )
-      """,
-      arguments: [account.rawValue],
-    )
-    let spaceAdmin = try Bool.fetchOne(
-      db,
-      sql: "SELECT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ? AND EXISTS (\(spaceAdminSQL(account: "a.id"))))",
-      arguments: [account.rawValue],
-    ) ?? false
-    guard spaceAdmin else { return held }
-    return held + (try String.fetchAll(db, sql: "SELECT id FROM groups WHERE removed_at IS NULL AND personal_account IS NULL"))
-  }
-
-  static func isHumanAdmin(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {
-    guard try Bool.fetchOne(
-      db, sql: "SELECT EXISTS (SELECT 1 FROM accounts WHERE id = ? AND kind = 'human' AND removed_at IS NULL)",
-      arguments: [account.rawValue],
-    ) == true else { return false }
-    return try Bool.fetchOne(
-      db,
-      sql: """
-      SELECT EXISTS (SELECT 1 FROM group_roles WHERE grp = ? AND account_id = ? AND role = 'admin')
-        OR (EXISTS (\(spaceAdminSQL(account: "?")))
-          AND NOT EXISTS (SELECT 1 FROM groups WHERE id = ? AND personal_account IS NOT NULL))
-      """,
-      arguments: [group.rawValue, account.rawValue, account.rawValue, group.rawValue],
-    ) ?? false
   }
 
   /// Writes `account`'s `role` in `group`, idempotently.
   static func grant(_ role: GroupRole, in group: GroupID, to account: AccountID, created: String, in db: Database) throws {
     try db.execute(
-      sql: "INSERT OR IGNORE INTO group_roles (grp, account_id, role, created_at) VALUES (?, ?, ?, ?)",
-      arguments: [group.rawValue, account.rawValue, role.rawValue, created],
+      sql: "DELETE FROM group_roles WHERE account_id = ? AND grp = ?", arguments: [account.rawValue, group.rawValue],
+    )
+    try db.execute(
+      sql: "INSERT INTO group_roles (account_id, grp, role, created_at) VALUES (?, ?, ?, ?)",
+      arguments: [account.rawValue, group.rawValue, role.rawValue, created],
     )
   }
 
@@ -326,20 +351,14 @@ enum Groups {
     try db.execute(
       sql: "INSERT INTO groups (id, created_at, personal_account) VALUES (?, ?, ?)", arguments: [name, created, account.rawValue],
     )
-    try db.execute(
-      sql: "INSERT OR IGNORE INTO group_members (grp, account_id, joined_at) VALUES (?, ?, ?)",
-      arguments: [group.rawValue, account.rawValue, created],
-    )
     try grant(.admin, in: group, to: account, created: created, in: db)
-    try recompute(in: db)
     return group
   }
 
   /// The persona allocation drawn for a human account before it adopted a persona.
   static func reservedPersona(of account: AccountID, in db: Database) throws -> (id: Int64, name: String)? {
     guard let id = try Int64.fetchOne(
-      db,
-      sql: """
+      db, sql: """
       SELECT id FROM allocations
       WHERE kind = 'persona' AND created_by = ? AND id NOT IN (SELECT allocation FROM personas)
       ORDER BY id LIMIT 1
@@ -347,51 +366,5 @@ enum Groups {
       arguments: [account.rawValue],
     ), let name = try Allocations.name(of: id, in: db) else { return nil }
     return (id, name)
-  }
-
-  static func insertReadEdge(src: GroupID, dst: GroupID, created: String, by creator: String?, in db: Database) throws {
-    guard try !isPersonal(dst, in: db) else { throw SpaceError.personalGroupPrivate(dst.rawValue) }
-    try db.execute(
-      sql: "INSERT OR IGNORE INTO group_edges (src, dst, kind, created_at, created_by) VALUES (?, ?, 'read', ?, ?)",
-      arguments: [src.rawValue, dst.rawValue, created, creator],
-    )
-  }
-
-  static func removeReadEdge(src: GroupID, dst: GroupID, in db: Database) throws {
-    try db.execute(
-      sql: "DELETE FROM group_edges WHERE src = ? AND dst = ? AND kind = 'read'",
-      arguments: [src.rawValue, dst.rawValue],
-    )
-  }
-
-  /// Rebuilds `group_reads` from the read edges and bumps the epoch. `via` names the first hop.
-  static func recompute(in db: Database) throws {
-    let groups = try String.fetchAll(db, sql: "SELECT id FROM groups ORDER BY id")
-    var edges: [String: [String]] = [:]
-    for row in try Row.fetchAll(db, sql: "SELECT src, dst FROM group_edges WHERE kind = 'read' ORDER BY src, dst") {
-      edges[row["src"], default: []].append(row["dst"])
-    }
-    try db.execute(sql: "DELETE FROM group_reads")
-    for group in groups {
-      try db.execute(
-        sql: "INSERT INTO group_reads (grp, readable, via) VALUES (?, ?, 'self')", arguments: [group, group],
-      )
-      for hop in edges[group, default: []] {
-        var seen: Set<String> = [hop]
-        var queue = [hop]
-        while let next = queue.popLast() {
-          if next != group {
-            try db.execute(
-              sql: "INSERT OR IGNORE INTO group_reads (grp, readable, via) VALUES (?, ?, ?)",
-              arguments: [group, next, "\(group)->\(hop)"],
-            )
-          }
-          for further in edges[next, default: []] where seen.insert(further).inserted {
-            queue.append(further)
-          }
-        }
-      }
-    }
-    try db.execute(sql: "UPDATE group_epoch SET n = n + 1 WHERE id = 1")
   }
 }

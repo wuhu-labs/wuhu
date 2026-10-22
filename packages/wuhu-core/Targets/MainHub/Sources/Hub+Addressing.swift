@@ -91,10 +91,10 @@ extension Hub {
     if case let .space(path, group) = address, try await !space.sessions.readsFile(path, in: group ?? acting, as: principal) {
       throw SpaceError.notFound(path)
     }
-    // A machine of a group the session's group doesn't read is no machine.
+    // A machine the session may not use is no machine.
     // (An id with no row names nothing the hub could reach either.)
     if case let .machine(id, _) = address, let record = try await space.machine(id),
-       try await !space.reads(acting).contains(record.group)
+       try await !space.canUse(record, from: acting)
     {
       throw ToolProblem("unknown machine: \(Addressing.machineHost(raw) ?? id.rawValue)")
     }

@@ -6,6 +6,7 @@ import enum MachineContract.VFSOp
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
+import struct SpaceContract.GroupID
 import SpaceCore
 @testable import SpaceServer
 import SystemFiles
@@ -232,12 +233,12 @@ struct MessagingTests {
       let arguments: ToolArguments = .object(["message": "copy", "attachments": .array([.string(reference)])])
       let denied = try await world.run("send_message", arguments)
       #expect(try failureMessage(denied).contains("not found"))
-      try await space.addReadEdge(from: .shared, to: foreign)
+      try await space.setGrant(.group, GroupID.shared.rawValue, role: .write, in: foreign, by: .anonymous, acting: foreign)
       let sent = try await world.run("send_message", arguments)
       guard case let .sendMessage(outcome) = sent else { throw Mismatch("expected copied attachment, got \(sent)") }
       let copied = try #require(try await space.sessions.messages(conversation: outcome.conversationID).last?.content.attachments.first?.path)
       #expect(try await space.fs(.shared).read(copied).1 == Data("secret".utf8))
-      try await space.removeReadEdge(from: .shared, to: foreign)
+      try await space.removeGrant(.group, GroupID.shared.rawValue, in: foreign, by: .anonymous, acting: foreign)
       let revoked = try await world.run("send_message", arguments)
       #expect(try failureMessage(revoked).contains("not found"))
       #expect(try await space.sessions.messages(conversation: outcome.conversationID).count == 1)

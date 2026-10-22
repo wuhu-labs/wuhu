@@ -83,6 +83,9 @@ public struct ShareLoginOutput: Codable, Equatable, Sendable {
 public struct AccountCreateInput: Codable, Equatable, Sendable {
   public let name: String?
   public let admin: Bool?
+  /// A person admitted to the groups they are listed in only: no open-group
+  /// reach, no sessions.
+  public let guest: Bool?
 }
 
 @Contract
@@ -92,6 +95,7 @@ public struct AccountPayload: Codable, Equatable, Sendable {
   public let name: String?
   public let admin: Bool
   public let createdAt: Double
+  public let guest: Bool?
 }
 
 @Contract

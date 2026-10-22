@@ -143,7 +143,9 @@ struct SessionTreeToolTests {
       let space = try Space.inMemory()
       let alice = try await plainGroup(space, "alice")
       let bob = try await plainGroup(space, "bob")
-      try await space.addReadEdge(from: alice, to: .shared)
+      // A session places a top-level agent outside its group only where its
+      // group administers; shared is open but alice writes there, not admin.
+      try await space.setGrant(.group, alice.rawValue, role: .admin, in: .shared, by: .anonymous, acting: .shared)
       let agent = try await makeSession(space, name: "agent", group: alice)
       var world = ToolWorld(executor: creating(space), session: agent)
 

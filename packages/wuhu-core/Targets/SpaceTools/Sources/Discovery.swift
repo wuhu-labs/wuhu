@@ -30,10 +30,10 @@ extension SpaceToolContext {
     switch caller.actor {
     case .session:
       member = [caller.group]
-      readable = try await space.reads(caller.group)
-    case let .person(_, account):
-      member = try await space.memberGroups(of: account)
-      readable = try await space.reads(member)
+      readable = try await space.reads(for: caller)
+    case .person:
+      member = try await space.writableGroups(for: caller)
+      readable = try await space.reads(for: caller)
     case .anonymous:
       let all = dev ? Set(live.map(\.id)) : []
       member = all
@@ -43,10 +43,10 @@ extension SpaceToolContext {
     let administered: Set<GroupID> = if case .anonymous = caller.actor {
       dev ? Set(live.map(\.id)) : []
     } else {
-      try await space.administeredGroups(by: caller.actor)
+      try await space.administeredGroups(by: caller.actor, acting: caller.group)
     }
     return live
-      .filter { group in group.id != .settings && (group.personalAccount == nil || member.contains(group.id)) }
+      .filter { $0.id != .settings && $0.personalAccount == nil }
       .map { group in
         GroupSummary(
           id: group.id.rawValue, member: member.contains(group.id), readable: readable.contains(group.id),

@@ -77,8 +77,13 @@ func addMachineV2Routes(_ router: inout Router, space: Space, hub: MachineV2Hub,
     case let .success(resolved): group = resolved
     case let .failure(response): return response
     }
+    let scope: ReachScope
+    switch machineScope(input.scope) {
+    case let .success(resolved): scope = resolved
+    case let .failure(response): return response
+    }
     do {
-      let (machine, token) = try await space.addMachineV2(name: normalized, group: group)
+      let (machine, token) = try await space.addMachineV2(name: normalized, group: group, scope: scope)
       return try Response.json(MachineAddOutput(id: machine.id, token: token.token.rawValue, fingerprint: fingerprint, group: machine.group.rawValue))
     } catch let SpaceError.machineNameTaken(name) {
       return errorResponse(.conflict, code: "machineNameTaken", message: "Machine name \(name) is already taken")

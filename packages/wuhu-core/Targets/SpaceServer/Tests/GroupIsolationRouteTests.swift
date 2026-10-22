@@ -46,13 +46,10 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens, secrets: stores, machineV2: true)
     let (alice, aliceKey) = try await harness.enrolledBearer()
     let aliceGroup = try await harness.space.ensurePersonalGroup(account: aliceKey.account)
-    try await harness.space.addReadEdge(from: aliceGroup, to: .shared)
     let (bob, bobKey) = try await harness.enrolledBearer()
     let bobGroup = try await harness.space.ensurePersonalGroup(account: bobKey.account)
-    try await harness.space.addReadEdge(from: bobGroup, to: .shared)
     let (admin, adminKey) = try await harness.enrolledBearer()
     let adminGroup = try await harness.space.ensurePersonalGroup(account: adminKey.account)
-    try await harness.space.addReadEdge(from: adminGroup, to: .shared)
     _ = try await harness.space.setAdmin(adminKey.account, admin: true)
     let p = try await harness.store.createSession(group: aliceGroup, title: "P", kind: .agent, createdBy: "owner", executor: Self.model)
     let s = try await harness.store.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", executor: Self.model)
@@ -177,12 +174,14 @@ import Testing
 
         // `?group=` picks the store, and the admin check follows it: alice
         // administers her group, not shared.
+        // shared's secrets are its own group's alone until its switch says
+        // otherwise; the list may not be named from another group at all.
         let named = try await send(w, .put, "/v1/secret/Y?group=shared", value, bearer: w.alice, group: w.aliceGroup)
         #expect(named.status == .forbidden)
-        #expect(try await code(named) == "adminRequired")
+        #expect(try await code(named) == "unauthorized")
         let namedRemoval = try await send(w, .delete, "/v1/secret/Y?group=shared", bearer: w.alice, group: w.aliceGroup)
         #expect(namedRemoval.status == .forbidden)
-        #expect(try await code(namedRemoval) == "adminRequired")
+        #expect(try await code(namedRemoval) == "unauthorized")
 
         // A value goes to the worker's token only; an exec's, which the
         // command can print, is refused.
@@ -228,7 +227,9 @@ import Testing
   @Test func aPersonsMachineJoinsTheirGroupAndOnlyItsReadersUseIt() async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, "/v1/machine", .object(["name": "hers"]), bearer: w.alice)
+        let added = try await send(
+          w, .post, "/v1/machine", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+        )
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
@@ -239,7 +240,7 @@ import Testing
           #expect(response.status == .ok)
           return try JSONValueDecoder().decode([MachineStatus].self, from: try await json(response)).compactMap(\.name).sorted()
         }
-        #expect(try await listed(w.alice, group: w.aliceGroup) == ["common", "hers"])
+        #expect(try await listed(w.alice, group: w.aliceGroup) == ["hers"])
         #expect(try await listed(w.alice) == ["common"])
         #expect(try await listed(w.admin) == ["common"])
 
@@ -278,10 +279,13 @@ import Testing
         try await w.harness.space.writer.write { db in
           try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
         }
+        // A space admin administers every group but another person's own, so
+        // it may act in one it holds no entry in.
+        let actingAsTarget = try await send(
+          w, .post, path, ["name": "admin-acting-v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
+        )
+        #expect(actingAsTarget.status == .ok)
         let body: JSONValue = ["name": "admin-only-v2", "group": .string(project.rawValue)]
-        let actingAsTarget = try await send(w, .post, path, body, bearer: w.admin, group: project)
-        #expect(actingAsTarget.status == .forbidden)
-        #expect(try await code(actingAsTarget) == "groupForbidden")
         let added = try await send(w, .post, path, body, bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
@@ -319,7 +323,7 @@ import Testing
         let (_, strangerKey) = try await w.harness.enrolledBearer()
         let foreign = try await w.harness.space.upsertDevice(pubkey: strangerKey.pubkey, installation: "other-mac", kind: "mac", name: "Other Mac")
         func body(_ name: String, device: String, pubkey: String = Curve25519.Signing.PrivateKey().pubkeyLabel) -> JSONValue {
-          ["name": .string(name), "pubkey": .string(pubkey), "device": .string(device)]
+          ["name": .string(name), "pubkey": .string(pubkey), "device": .string(device), "group": .string(w.aliceGroup.rawValue)]
         }
 
         let refused = try await send(w, .post, "/v1/machine-v2", body("borrowed", device: foreign.id), bearer: w.alice)
@@ -349,21 +353,29 @@ import Testing
     }
   }
 
-  @Test func aBodylessMachineRegistrationKeepsThePersonalDefault() async throws {
+  @Test func aBodylessMachineRegistrationTakesTheActingGroupAndItsAdmin() async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, "/v1/machine", bearer: w.alice)
+        let refused = try await send(w, .post, "/v1/machine", bearer: w.alice)
+        #expect(refused.status == .forbidden)
+        #expect(try await code(refused) == "adminRequired")
+        let added = try await send(w, .post, "/v1/machine", bearer: w.admin)
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
-        #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
+        #expect(try await w.harness.space.machine(id)?.group == .shared)
       }
     }
   }
 
-  @Test func aPersonsV2MachineDefaultsToTheirPersonalGroup() async throws {
+  @Test func aPersonsV2MachineTakesItsNamedGroupAndThatGroupsAdmin() async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, "/v1/machine-v2", .object(["name": "hers-v2"]), bearer: w.alice)
+        let refused = try await send(w, .post, "/v1/machine-v2", .object(["name": "hers-v2"]), bearer: w.alice)
+        #expect(refused.status == .forbidden)
+        let added = try await send(
+          w, .post, "/v1/machine-v2",
+          .object(["name": "hers-v2", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+        )
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
@@ -375,11 +387,17 @@ import Testing
     try await withSessionDeps {
       try await world { w in
         let principal = Principal(actor: .session(w.p), group: w.aliceGroup)
-        for requested in [nil, "shared", "missing"] {
-          switch try await machineRegistrationGroup(requested, principal: principal, space: w.harness.space) {
-          case let .success(group): #expect(group == w.aliceGroup)
-          case .failure: Issue.record("a session's group policy must not use a requested target")
-          }
+        switch try await machineRegistrationGroup(nil, principal: principal, space: w.harness.space) {
+        case let .success(group): #expect(group == w.aliceGroup)
+        case .failure: Issue.record("a session's own group is where its machine lands")
+        }
+        switch try await machineRegistrationGroup("shared", principal: principal, space: w.harness.space) {
+        case let .success(group): Issue.record("a session enrolls elsewhere only where its group administers; got \(group)")
+        case let .failure(response): #expect(response.status == .forbidden)
+        }
+        switch try await machineRegistrationGroup("missing", principal: principal, space: w.harness.space) {
+        case .success: Issue.record("an unknown group is no target")
+        case let .failure(response): #expect(response.status == .notFound)
         }
       }
     }
@@ -428,7 +446,7 @@ import Testing
   @Test func anExecIsSeenAndJoinedOnlyFromAGroupThatReadsItsHome() async throws {
     try await withSessionDeps {
       try await world { w in
-        let common = try await w.harness.space.addMachine(name: "common")
+        let common = try await w.harness.space.addMachine(name: "common", scope: .reachable)
         let mint: JSONValue = .object(["machine": .string(common.id.rawValue)])
         func minted(_ bearer: String, group: GroupID? = nil) async throws -> ExecID {
           let response = try await send(w, .post, "/v1/exec", mint, bearer: bearer, group: group)
@@ -482,7 +500,9 @@ import Testing
   @Test func movingAMachineNeedsAnAdminOfBothGroups() async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, "/v1/machine", .object(["name": "hers"]), bearer: w.alice)
+        let added = try await send(
+          w, .post, "/v1/machine", .object(["name": "hers", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+        )
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
         let toShared: JSONValue = .object(["group": "shared"])
         let path = "/v1/machine/\(id.rawValue)/group"

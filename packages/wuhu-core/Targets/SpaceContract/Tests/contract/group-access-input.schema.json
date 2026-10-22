@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"GroupAccessInput","type":"object","properties":{"kind":{"type":"string"},"id":{"type":"string"},"role":{"type":"string"}},"required":["kind","id","role"],"additionalProperties":false}

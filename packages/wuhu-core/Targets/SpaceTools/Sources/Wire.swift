@@ -219,6 +219,12 @@ public enum Wire {
       )
     case let .personalGroupPrivate(group):
       .failed(code: .invalidArgument, message: "group \(group) is personal: only its owner reads it", hint: nil)
+    case .settingsGroupAccess:
+      .failed(
+        code: .unauthorized,
+        message: "the settings group's admins are accounts, not list entries",
+        hint: "grant or revoke a space admin with POST /v1/accounts/:id/admin, or wuhu user admin",
+      )
     case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName,
          .notAFile, .notADirectory, .pathIsDirectory, .invalidRevision,
          .columnCountMismatch, .columnTypeChanged, .invalidTableHeader, .reservedTablePath,

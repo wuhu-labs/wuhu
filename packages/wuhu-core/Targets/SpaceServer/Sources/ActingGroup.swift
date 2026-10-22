@@ -26,9 +26,8 @@ enum PrincipalVerdict: Sendable {
 }
 
 /// A session acts in its own group only. A person names one with the
-/// `wuhu-group` header, else acts in `shared`; any other group needs
-/// membership, or a space admin's stand in the settings group. Acting in
-/// `shared` without a membership stays until shared is open to every member.
+/// `wuhu-group` header, else acts in `shared`; a group they may not read is
+/// refused. The --dev seat acts anywhere that exists.
 func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
   if case let .session(session, group) = credential {
@@ -41,17 +40,20 @@ func principal(for request: Request, credential: RequestCredential, space: Space
   case let .refused(response): return .refused(response)
   }
   guard let named, named != GroupID.shared.rawValue else {
+    if case .person = actor, try await space.role(of: actor, in: .shared, acting: .shared) == nil {
+      return .refused(errorResponse(
+        .forbidden, code: "groupForbidden", message: "you may not read group \(GroupID.shared.rawValue)",
+      ))
+    }
     return .principal(.shared(actor))
   }
   let group = GroupID(rawValue: named)
   guard try await space.groupExists(group) else {
     return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)"))
   }
-  if case let .person(_, account) = actor {
-    let settingsAdmin = group == .settings ? try await space.isHumanAdmin(account, of: .settings) : false
-    guard try await space.isMember(account, of: group) || settingsAdmin else {
-      return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(named)"))
-    }
+  if case .anonymous = actor { return .principal(Principal(actor: actor, group: group)) }
+  guard try await space.role(of: actor, in: group, acting: group) != nil else {
+    return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you may not read group \(named)"))
   }
   return .principal(Principal(actor: actor, group: group))
 }

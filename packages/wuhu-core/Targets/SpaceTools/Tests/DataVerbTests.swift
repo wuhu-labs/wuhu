@@ -106,7 +106,6 @@ import Testing
     let context = try makeContext()
     let account = try await context.space.addAccount(kind: .human, name: "ada")
     let group = try await plainGroup(context.space, "ada")
-    try await context.space.addReadEdge(from: group, to: .shared)
     let page = SpaceToolContext(
       space: context.space, principal: Principal(actor: .person(persona: "ada", account: account.id), group: group),
       page: try SpacePath(validating: "/apps/tasks.html"),
@@ -128,7 +127,6 @@ import Testing
     let admin = try await space.addAccount(kind: .human, name: "root", admin: true)
     #expect(try await space.isHumanAdmin(admin.id, of: .shared))
     let home = try await plainGroup(space, "home")
-    try await space.addReadEdge(from: home, to: .shared)
     let other = try await space.addAccount(kind: .human, name: "bob")
     let sibling = try await space.ensurePersonalGroup(account: other.id)
     let actor = Actor.person(persona: "root", account: admin.id)

@@ -122,7 +122,6 @@ import Testing
 
     let carol = try await space.addAccount(kind: .human, name: "carol").id
     let carolGroup = try await space.ensurePersonalGroup(account: carol)
-    try await space.addReadEdge(from: carolGroup, to: .shared)
     let carolHost = "\(carolGroup.rawValue).space.test:5530"
     #expect(try await get(r, carolHost, path, cookie: try await cookie(r, carol, carolGroup)).status == .notFound)
   }
@@ -150,7 +149,11 @@ import Testing
   @Test func aSharedPageCannotReachAGroupByAddress() async throws {
     let r = try await rig()
     let sql = "SELECT%20*%20FROM%20%22wuhu://\(r.aliceGroup.rawValue).localspace/docs%22"
-    let response = try await get(r, Self.sharedHost, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared))
+    // Alice reads her own group from every seat she takes, so a shared page
+    // opened as her reaches it; Bob's page does not.
+    let hers = try await get(r, Self.sharedHost, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.alice, .shared))
+    #expect(hers.status == .ok)
+    let response = try await get(r, Self.sharedHost, "/_/query?sql=\(sql)", cookie: try await cookie(r, r.bob, .shared))
     #expect(response.status == .unprocessableContent)
     #expect(try await response.text().contains("no such table: wuhu://\(r.aliceGroup.rawValue).localspace/docs"))
   }

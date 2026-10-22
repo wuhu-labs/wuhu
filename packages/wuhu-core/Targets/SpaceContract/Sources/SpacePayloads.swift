@@ -196,12 +196,48 @@ public struct AIProviderDisclosure: Codable, Equatable, Sendable {
 @Contract
 public struct GroupSummary: Codable, Equatable, Sendable {
   public let id: String
-  /// The caller acts and creates here: a person's membership, a session's own group.
+  /// The caller writes here: an open group, or one listing its group or its account.
   public let member: Bool?
-  /// Some group the caller is a member of reads this one.
+  /// The caller reads this group.
   public let readable: Bool?
   /// The caller administers this group: the rule `is_admin` uses.
   public let admin: Bool?
+}
+
+/// One entry of a private group's list.
+@Contract
+public struct GroupAccessEntry: Codable, Equatable, Sendable {
+  /// `account` or `group`.
+  public let kind: String
+  public let id: String
+  /// `read`, `write` or `admin`.
+  public let role: String
+}
+
+/// A group as its admin sees it.
+@Contract
+public struct GroupDetail: Codable, Equatable, Sendable {
+  public let id: String
+  public let open: Bool
+  public let secrets: String
+  public let personal: Bool
+  public let entries: [GroupAccessEntry]
+}
+
+@Contract
+public struct GroupUpdateInput: Codable, Equatable, Sendable {
+  public let open: Bool?
+  /// `owner` or `reachable`.
+  public let secrets: String?
+}
+
+@Contract
+public struct GroupAccessInput: Codable, Equatable, Sendable {
+  /// `account` or `group`.
+  public let kind: String
+  public let id: String
+  /// `read`, `write` or `admin`.
+  public let role: String
 }
 
 /// The request header that names the group a person's request acts in.

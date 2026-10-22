@@ -66,7 +66,7 @@ import Testing
           ("/ordinary.md", "ok"),
           ("/.agents/skills/example/file.md", "ok"),
           ("wuhu://shared.localspace/shared.md", "ok"),
-          ("wuhu://shared.localspace/.agents/skills/example/shared.md", home == .shared ? "ok" : "unauthorized"),
+          ("wuhu://shared.localspace/.agents/skills/example/shared.md", "ok"),
           ("/_/sessions/\(rig.session.rawValue)/file.md", "ok"),
           ("/_/sessions/stranger/file.md", "unauthorized"),
           ("wuhu://missing.localspace/file.md", "notFound"),

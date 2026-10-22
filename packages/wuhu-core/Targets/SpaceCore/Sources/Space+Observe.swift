@@ -118,7 +118,9 @@ extension Space {
     let reads = reads
     let clock = clock
     let resolve: @Sendable () async throws -> ReadScope = {
-      let readable = try await writer.read { db in try Groups.reads(principal.group, in: db) }
+      let readable = try await writer.read { db in
+        try GroupAccess.readable(by: principal.actor, acting: principal.group, in: db)
+      }
       return ReadScope(acting: principal.group, readable: readable, viewer: viewer, member: principal.member)
     }
     return AsyncThrowingStream<Rows, any Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
@@ -140,10 +142,11 @@ extension Space {
     }
   }
 
-  // The region is the space tables the statement reads, whole, and the read
+  // The region is the space tables the statement reads, whole, and the access
   // graph: a write to a row no view shows wakes the observation, and the
   // unchanged snapshot is not yielded. Each wake re-resolves the scope, so a
-  // removed read edge ends the observation with the refusal a new query meets.
+  // granted or withdrawn group ends the observation with the refusal a new
+  // query meets.
   private static func runQueryObservation(
     sql: String,
     arguments: [DatabaseValue],
@@ -155,7 +158,7 @@ extension Space {
     continuation: AsyncThrowingStream<Rows, any Error>.Continuation,
   ) async {
     func region(_ tables: ReadTables) -> AsyncStream<Void> {
-      regionWakes(tables.names.union(["group_reads"]).sorted().map { Table($0) }, in: writer)
+      regionWakes(tables.names.union(["group_roles", "groups"]).sorted().map { Table($0) }, in: writer)
     }
     var scope: ReadScope
     var tables: ReadTables

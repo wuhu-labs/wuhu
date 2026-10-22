@@ -23,7 +23,7 @@ import Testing
     try await base.space.writer.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00Z')")
     }
-    try await base.space.addReadEdge(from: group, to: .shared)
+    try await base.space.setGrant(.account, account.id.rawValue, role: .admin, in: group, by: .anonymous, acting: group)
     let alice = SpaceToolContext(space: base.space, principal: Principal(actor: .person(persona: group.rawValue, account: account.id), group: group))
     return Rig(shared: base, alice: alice, group: group)
   }

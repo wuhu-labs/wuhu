@@ -73,10 +73,16 @@ import Testing
       try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'gone'")
     } == 0)
     #expect(try await !space.isHumanAdmin(removed, of: .shared))
-    // The dangling member neither blocks the upgrade nor becomes an admin.
-    #expect(try await space.isMember(AccountID(rawValue: "ghost"), of: GroupID(rawValue: "ops")))
+    // The dangling membership neither blocks the upgrade nor becomes a role:
+    // the account it named never existed.
     #expect(try await space.writer.read { db in
-      try String.fetchAll(db, sql: "SELECT account_id FROM group_roles WHERE grp = 'ops' ORDER BY 1")
+      try Int.fetchOne(db, sql: "SELECT count(*) FROM group_roles WHERE account_id = 'ghost'")
+    } == 0)
+    #expect(try await space.writer.read { db in
+      try String.fetchAll(
+        db,
+        sql: "SELECT account_id FROM group_roles WHERE grp = 'ops' AND role = 'admin' ORDER BY 1",
+      )
     } == ["operator", "person"])
     // A space admin does not administer someone else's own group.
     #expect(try await space.isHumanAdmin(owner, of: GroupID(rawValue: "ops")))

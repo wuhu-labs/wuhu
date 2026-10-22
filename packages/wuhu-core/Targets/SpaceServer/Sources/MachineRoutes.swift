@@ -56,9 +56,14 @@ func addMachineRoutes(
     case let .success(resolved): group = resolved
     case let .failure(response): return response
     }
+    let scope: ReachScope
+    switch machineScope(input.scope) {
+    case let .success(resolved): scope = resolved
+    case let .failure(response): return response
+    }
     let added: MachineRecord
     do {
-      added = try await space.addMachine(name: input.name, group: group)
+      added = try await space.addMachine(name: input.name, group: group, scope: scope)
     } catch let SpaceError.invalidMachineName(raw) {
       return errorResponse(.badRequest, code: "invalidMachineName", message: "invalid machine name: \(raw)")
     } catch let SpaceError.machineNameTaken(taken) {
@@ -81,7 +86,10 @@ func addMachineRoutes(
     }
     let attached = await hub.attachedMachines()
     let statuses = try await space.machines(usableFrom: principal.group).map { record in
-      MachineStatus(id: record.id, name: record.name, group: record.group.rawValue, attached: attached.contains(record.id))
+      MachineStatus(
+        id: record.id, name: record.name, group: record.group.rawValue, attached: attached.contains(record.id),
+        scope: record.scope.rawValue,
+      )
     }
     return try Response.json(statuses)
   }
@@ -106,6 +114,7 @@ func addMachineRoutes(
       let renamed = try await space.renameMachine(record.id, name: input.name)
       return try Response.json(MachineStatus(
         id: renamed.id, name: renamed.name, group: renamed.group.rawValue, attached: await hub.attachedMachines().contains(renamed.id),
+        scope: renamed.scope.rawValue,
       ))
     } catch let SpaceError.invalidMachineName(raw) {
       return errorResponse(
@@ -181,7 +190,7 @@ func addMachineRoutes(
       return unknownMachine(parameters)
     }
     let admitted = try await admits(principal, of: record.group, space: space)
-    let readable = try await space.reads(principal.group).contains(record.group)
+    let readable = try await space.reads(for: principal).contains(record.group)
     guard admitted || readable else {
       return unknownMachine(parameters)
     }
@@ -199,6 +208,43 @@ func addMachineRoutes(
     let moved = try await space.moveMachine(record.id, to: target)
     return try Response.json(MachineStatus(
       id: moved.id, name: moved.name, group: moved.group.rawValue, attached: await hub.attachedMachines().contains(moved.id),
+      scope: moved.scope.rawValue,
+    ))
+  }
+
+  // The switch: its own group alone, or every group that can reach it. Like a
+  // rename, it is the machine's group's admins' to change.
+  router.put("/v1/machine/:id/scope") { request, parameters in
+    let input: MachineScopeInput
+    do {
+      input = try await request.json(MachineScopeInput.self)
+    } catch {
+      return errorResponse(
+        .badRequest, code: "invalidArgument",
+        message: "expected a scope body {\"scope\": \"owner\" | \"reachable\"}: \(error)",
+      )
+    }
+    let scope: ReachScope
+    switch machineScope(input.scope) {
+    case let .success(resolved): scope = resolved
+    case let .failure(response): return response
+    }
+    let record: MachineRecord
+    switch try await usable(request, parameters) {
+    case let .success((principal, resolved)):
+      guard try await admits(principal, of: resolved.group, space: space) else {
+        return errorResponse(
+          .forbidden, code: MachineAdminErrorCode.adminRequired.rawValue,
+          message: "switching machine \(resolved.name ?? resolved.id.rawValue) needs an admin of group \(resolved.group.rawValue)",
+        )
+      }
+      record = resolved
+    case let .failure(response): return response
+    }
+    let switched = try await space.setMachineScope(record.id, scope: scope)
+    return try Response.json(MachineStatus(
+      id: switched.id, name: switched.name, group: switched.group.rawValue, attached: await hub.attachedMachines().contains(switched.id),
+      scope: switched.scope.rawValue,
     ))
   }
 
@@ -348,27 +394,41 @@ enum Admission<Value> {
 }
 
 func machineRegistrationGroup(_ requested: String?, principal: Principal, space: Space) async throws -> Admission<GroupID> {
-  if case .session = principal.actor { return .success(principal.group) }
+  let group: GroupID
   if let requested {
-    let group = GroupID(rawValue: requested)
+    group = GroupID(rawValue: requested)
     guard try await space.groupExists(group) else {
       return .failure(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(requested)"))
     }
-    guard try await admits(principal, of: group, space: space) else {
-      return .failure(errorResponse(.forbidden, code: "adminRequired", message: "adding a machine needs an admin of group \(requested)"))
-    }
-    return .success(group)
+  } else {
+    group = principal.group
   }
-  switch principal.actor {
-  case let .person(_, account): return try await .success(space.ensurePersonalGroup(account: account))
-  case .session: return .success(principal.group)
-  case .anonymous: return .success(.shared)
+  let admitted: Bool = if case .anonymous = principal.actor {
+    true
+  } else {
+    try await space.role(of: principal, in: group) == .admin
   }
+  guard admitted else {
+    return .failure(errorResponse(
+      .forbidden, code: "adminRequired", message: "adding a machine needs an admin of group \(group.rawValue)",
+    ))
+  }
+  return .success(group)
 }
 
 // The --dev seat is unrestricted.
 private func admits(_ principal: Principal, of group: GroupID, space: Space) async throws -> Bool {
-  principal.actor == .anonymous ? true : try await space.isAdmin(principal.actor, of: group)
+  principal.actor == .anonymous ? true : try await space.isAdmin(principal.actor, of: group, acting: principal.group)
+}
+
+func machineScope(_ raw: String?) -> Admission<ReachScope> {
+  guard let raw else { return .success(.owner) }
+  guard let scope = ReachScope(rawValue: raw) else {
+    return .failure(errorResponse(
+      .badRequest, code: "invalidArgument", message: "scope is owner or reachable, not \(raw)",
+    ))
+  }
+  return .success(scope)
 }
 
 // What can't be undone takes a person: a human admin of the group, or the --dev seat.

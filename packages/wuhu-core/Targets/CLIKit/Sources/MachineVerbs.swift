@@ -19,12 +19,13 @@ import struct SpaceClient.SpaceClient
 import struct SpaceContract.EnrollConsumeOutput
 
 extension Executor {
-  mutating func machineAdd(name: String?, group: String?, v2: Bool = false) async throws {
+  mutating func machineAdd(name: String?, group: String?, v2: Bool = false, scope: String? = nil) async throws {
     let space = try self.wallet.pinnedSpace()
     let server = await self.advertisedServer(space: space)
     var body: JSONValue = .object([:])
     body.set("name", name.map(JSONValue.string))
     body.set("group", group.map(JSONValue.string))
+    body.set("scope", scope.map(JSONValue.string))
     let output: MachineAddOutput = try await self.api(.post, v2 ? "/v1/machine-v2" : "/v1/machine", space: space, body: body)
     await self.runner.stdout("machine \(output.id.rawValue)\n" + tokenLines(output.token, fingerprint: output.fingerprint))
     if let group, output.group != group {
@@ -90,6 +91,13 @@ extension Executor {
     let body: JSONValue = .object(["group": .string(group)])
     let status: MachineStatus = try await self.api(.put, "/v1/machine/\(machine)/group", space: space, body: body)
     await self.runner.stdout("moved \(status.name ?? status.id.rawValue) to group \(group)\n")
+  }
+
+  mutating func machineScope(machine: String, scope: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let body: JSONValue = .object(["scope": .string(scope)])
+    let status: MachineStatus = try await self.api(.put, "/v1/machine/\(machine)/scope", space: space, body: body)
+    await self.runner.stdout("\(status.name ?? status.id.rawValue) \(status.scope ?? scope)\n")
   }
 
   mutating func machineJoin(server: String, fingerprint: String?, name: String?) async throws {

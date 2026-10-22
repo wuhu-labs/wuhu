@@ -290,7 +290,7 @@ enum Command: Equatable {
   case observe(ObserveCommand)
   case serve(ServeCommand)
   case user(UserCommand)
-  case userAdd(name: String, admin: Bool, ttl: Int?)
+  case userAdd(name: String, admin: Bool, ttl: Int?, guest: Bool = false)
   case userInvite(account: String, ttl: Int?)
   case userAdmin(account: String)
   case userList
@@ -301,7 +301,7 @@ enum Command: Equatable {
   case keyRevoke(pubkey: String)
   case login
   case shareLogin(ttl: Int?)
-  case machineAdd(name: String?, group: String?)
+  case machineAdd(name: String?, group: String?, scope: String? = nil)
   case machineV2Add(name: String, group: String?)
   case machineJoin(server: String, fingerprint: String?, name: String?)
   case machineRun
@@ -350,6 +350,12 @@ enum Command: Equatable {
   case groupList
   case groupUse(String?)
   case groupCurrent
+  case groupShow(String)
+  case groupOpen(String, open: Bool)
+  case groupSecrets(String, scope: String)
+  case groupGrant(group: String, role: String, subject: String)
+  case groupRevoke(group: String, subject: String)
+  case machineScope(machine: String, scope: String)
 }
 
 extension String {

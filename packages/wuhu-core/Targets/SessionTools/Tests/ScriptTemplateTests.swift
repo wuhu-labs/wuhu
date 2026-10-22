@@ -46,9 +46,9 @@ import Testing
         ("/templates/a.md", "/_/sessions/stranger", "unauthorized"),
         ("/_/sessions/stranger/t.md", nil, "unauthorized"),
         ("/_/sessions/stranger/t.md", "/allowed", "ok"),
-        ("wuhu://shared.localspace/.agents/skills/x/t.md", nil, "unauthorized"),
+        ("wuhu://shared.localspace/.agents/skills/x/t.md", nil, "ok"),
         ("wuhu://shared.localspace/templates/shared.md", "/.agents/skills/x", "ok"),
-        ("/templates/a.md", "wuhu://shared.localspace/.agents/skills/x", "unauthorized"),
+        ("/templates/a.md", "wuhu://shared.localspace/.agents/skills/x", "ok"),
         ("wuhu://missing.localspace/t.md", nil, "notFound"),
         ("/templates/a.md", "wuhu://missing.localspace/target", "notFound"),
       ]

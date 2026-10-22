@@ -6,8 +6,8 @@ import struct SpaceContract.GroupID
 import SpaceFS
 import Testing
 
-// P is a top-level agent in alice, which reads shared; S is one in shared,
-// which reads nothing else.
+// P is a top-level agent in the private group alice; S is one in the open
+// group shared. A private group's sessions still reach every open group.
 @Suite(.deterministicDependencies) struct GroupMessagingTests {
   static let alice = GroupID(rawValue: "alice")
   static let bob = GroupID(rawValue: "bob")
@@ -27,7 +27,6 @@ import Testing
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addReadEdge(from: Self.alice, to: .shared)
     let p = try await space.sessions.createSession(group: Self.alice, title: "P", kind: .agent, createdBy: "owner", model: .test)
     let s = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
     return Rig(space: space, p: p, s: s)
@@ -164,16 +163,24 @@ import Testing
 
   @Test func aTopLevelAgentTakesAReadableGroupOnly() async throws {
     let rig = try await makeRig()
-    #expect(try await rig.space.homeGroup(nil, creator: Self.alice) == Self.alice)
-    #expect(try await rig.space.homeGroup(.shared, creator: Self.alice) == .shared)
+    let alice = Principal(actor: .session(rig.p), group: Self.alice)
+    let shared = Principal(actor: .session(rig.s), group: .shared)
+    #expect(try await rig.space.homeGroup(nil, creator: alice) == Self.alice)
+    #expect(try await rig.space.homeGroup(nil, creator: shared) == .shared)
+    // A session places an agent elsewhere only where its own group administers:
+    // writing an open group does not make its sessions its admins.
+    await #expect(throws: SpaceError.groupForbidden(GroupID.shared.rawValue)) {
+      _ = try await rig.space.homeGroup(.shared, creator: alice)
+    }
+    try await rig.space.setGrant(
+      .group, Self.alice.rawValue, role: .admin, in: Self.bob, by: .anonymous, acting: Self.bob,
+    )
+    #expect(try await rig.space.homeGroup(Self.bob, creator: alice) == Self.bob)
     await #expect(throws: SpaceError.groupForbidden(GroupID.settings.rawValue)) {
-      _ = try await rig.space.homeGroup(.settings, creator: Self.alice)
+      _ = try await rig.space.homeGroup(.settings, creator: alice)
     }
     await #expect(throws: SpaceError.groupForbidden(Self.alice.rawValue)) {
-      _ = try await rig.space.homeGroup(Self.alice, creator: .shared)
-    }
-    await #expect(throws: SpaceError.groupForbidden(Self.bob.rawValue)) {
-      _ = try await rig.space.homeGroup(Self.bob, creator: Self.alice)
+      _ = try await rig.space.homeGroup(Self.alice, creator: shared)
     }
   }
 
@@ -181,15 +188,14 @@ import Testing
     let rig = try await makeRig()
     let agents = try path("/AGENTS.md")
     let skill = try path("/.agents/skills/x/SKILL.md")
-    // A group's instructions take the sessions of that group, and no other.
-    try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.s))
-    try await rig.space.refuseWrite(skill, in: .shared, by: .session(rig.s))
-    try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.p))
-    await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "alice")) {
-      try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.s))
-    }
-    await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "shared")) {
-      try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.p))
+    // A group's files take a write role in it: its own sessions, and the
+    // sessions of any group an open group admits.
+    try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.s), acting: .shared)
+    try await rig.space.refuseWrite(skill, in: .shared, by: .session(rig.s), acting: .shared)
+    try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.p), acting: Self.alice)
+    try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.p), acting: Self.alice)
+    await #expect(throws: SpaceError.notFound("/AGENTS.md")) {
+      try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.s), acting: .shared)
     }
   }
 
@@ -198,11 +204,13 @@ import Testing
     let models = try path("/models.json")
     for path in [models, try path("/AGENTS.md"), try path("/notes/plan.md")] {
       await #expect(throws: SpaceError.forbiddenWrite(path: path.rawValue, group: "settings")) {
-        try await rig.space.refuseWrite(path, in: .settings, by: .session(rig.s))
+        try await rig.space.refuseWrite(path, in: .settings, by: .session(rig.s), acting: .shared)
       }
     }
     let morgan = try await rig.space.addAccount(kind: .human, name: "morgan", admin: true)
-    try await rig.space.refuseWrite(models, in: .settings, by: .person(persona: "morgan", account: morgan.id))
+    try await rig.space.refuseWrite(
+      models, in: .settings, by: .person(persona: "morgan", account: morgan.id), acting: .settings,
+    )
   }
 
   @Test func aGroupRendersOnlyItsOwnInstructions() async throws {

@@ -50,8 +50,8 @@ struct Executor {
       try await self.shareLogin(ttl: ttl)
     case let .machineV2Add(name, group):
       try await self.machineAdd(name: name, group: group, v2: true)
-    case let .machineAdd(name, group):
-      try await self.machineAdd(name: name, group: group)
+    case let .machineAdd(name, group, scope):
+      try await self.machineAdd(name: name, group: group, scope: scope)
     case let .machineJoin(server, fingerprint, name):
       try await self.machineJoin(server: server, fingerprint: fingerprint, name: name)
     case .machineRun:
@@ -67,6 +67,8 @@ struct Executor {
       try await self.machineRevoke(id: id)
     case let .machineMove(machine, group):
       try await self.machineMove(machine: machine, group: group)
+    case let .machineScope(machine, scope):
+      try await self.machineScope(machine: machine, scope: scope)
     case .deviceList:
       try await self.deviceList()
     case let .deviceSet(id, name, machine):
@@ -250,8 +252,8 @@ struct Executor {
       preconditionFailure("serve is routed before the executor")
     case .user:
       preconditionFailure("user is routed before the executor")
-    case let .userAdd(name, admin, ttl):
-      try await self.userAdd(name: name, admin: admin, ttl: ttl)
+    case let .userAdd(name, admin, ttl, guest):
+      try await self.userAdd(name: name, admin: admin, ttl: ttl, guest: guest)
     case let .userInvite(account, ttl):
       try await self.userInvite(account: account, ttl: ttl)
     case let .userAdmin(account):
@@ -336,6 +338,16 @@ struct Executor {
       try await self.groupUse(group)
     case .groupCurrent:
       try await self.groupCurrent()
+    case let .groupShow(group):
+      try await self.groupShow(group)
+    case let .groupOpen(group, open):
+      try await self.groupOpen(group, open: open)
+    case let .groupSecrets(group, scope):
+      try await self.groupSecrets(group, scope: scope)
+    case let .groupGrant(group, role, subject):
+      try await self.groupGrant(group: group, role: role, subject: subject)
+    case let .groupRevoke(group, subject):
+      try await self.groupRevoke(group: group, subject: subject)
     }
     return 0
   }

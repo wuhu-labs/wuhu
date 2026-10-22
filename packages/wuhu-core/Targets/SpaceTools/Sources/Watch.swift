@@ -13,8 +13,10 @@ public struct WatchedGlob: Sendable {
   public let prefix: String
 
   public init(_ glob: String, as principal: Principal, in space: Space) async throws {
+    let readable = try await space.reads(for: principal)
     guard glob.lowercased().hasPrefix("wuhu://") else {
       (group, pattern, prefix) = (principal.group, glob, "")
+      guard readable.contains(principal.group) else { throw SpaceError.notFound(glob) }
       return
     }
     let host = glob.dropFirst("wuhu://".count).prefix { $0 != "/" }
@@ -24,7 +26,6 @@ public struct WatchedGlob: Sendable {
     group = GroupID(rawValue: named)
     prefix = "wuhu://" + host.lowercased()
     pattern = String(glob.dropFirst("wuhu://".count + host.count))
-    let readable = try await space.reads(principal.group)
     guard readable.contains(group) else {
       throw SpaceError.notFound(glob)
     }

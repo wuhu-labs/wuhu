@@ -35,7 +35,6 @@ import struct WuhuAI.ToolArguments
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addReadEdge(from: Self.alice, to: .shared)
     return Rig(
       space: space,
       executor: SessionRuntime.toolExecutor(owner: Hub(space: space)),
@@ -70,9 +69,10 @@ import struct WuhuAI.ToolArguments
       guard case .write = try await write(rig, as: st, "/AGENTS.md") else {
         throw Mismatch("a task in shared writes shared's instructions")
       }
-      await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "shared")) {
-        try await rig.space.refuseWrite(try SpacePath(validating: "/AGENTS.md"), in: .shared, by: .session(t))
-      }
+      // shared is open: a private group's session writes its files too.
+      try await rig.space.refuseWrite(
+        try SpacePath(validating: "/AGENTS.md"), in: .shared, by: .session(t), acting: Self.alice,
+      )
 
       let foreign = try failureMessage(try await write(rig, as: rig.b, "wuhu://alice.localspace/AGENTS.md"))
       #expect(foreign.hasPrefix("notFound: "))
@@ -165,7 +165,9 @@ import struct WuhuAI.ToolArguments
         }
         return result.machines.compactMap(\.name).sorted()
       }
-      #expect(try await roster(rig.p) == ["common", "hers"])
+      // A machine is usable by its own group alone until its switch says
+      // otherwise, and the list shows only what a session can use.
+      #expect(try await roster(rig.p) == ["hers"])
       #expect(try await roster(rig.s) == ["common"])
       #expect(try await roster(rig.b) == [])
 
