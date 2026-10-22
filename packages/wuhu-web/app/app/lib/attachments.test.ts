@@ -1,5 +1,4 @@
 import {
-  admitFiles,
   attachmentDetail,
   attachmentDisplay,
   attachmentName,
@@ -92,63 +91,6 @@ Deno.test("another group's attachment opens at its hostless path on the viewer's
       'https://bob.space.example:5531/_/conversations/c/attachments/a/dm.txt',
     )
   }
-})
-
-const MiB = 1024 * 1024
-const sized = (name: string, size: number) => ({ name, size })
-
-Deno.test('files under every limit are all admitted', () => {
-  const incoming = [sized('a.png', MiB), sized('b.pdf', 50 * MiB)]
-  assertEquals(admitFiles([], incoming), { admitted: incoming, refusal: null })
-})
-
-Deno.test('a ninth file is refused by name', () => {
-  const held = Array.from({ length: 7 }, (_, i) => sized(`${i}.png`, 1))
-  const result = admitFiles(held, [sized('h.png', 1), sized('i.png', 1)])
-  assertEquals(result.admitted.map((file) => file.name), ['h.png'])
-  assertEquals(
-    result.refusal,
-    'Not attached. i.png: a message can carry at most 8 files.',
-  )
-})
-
-Deno.test('a file over 50 MiB is refused and the rest still fit', () => {
-  const result = admitFiles([], [
-    sized('big.mov', 50 * MiB + 1),
-    sized('ok.txt', 10),
-  ])
-  assertEquals(result.admitted.map((file) => file.name), ['ok.txt'])
-  assertEquals(
-    result.refusal,
-    'Not attached. big.mov: a file can be at most 50 MiB.',
-  )
-})
-
-Deno.test('files past 150 MiB in all are refused', () => {
-  const held = [sized('a.mov', 50 * MiB), sized('b.mov', 50 * MiB)]
-  const result = admitFiles(held, [
-    sized('c.mov', 50 * MiB),
-    sized('d.mov', 1),
-    sized('e.mov', 50 * MiB),
-  ])
-  assertEquals(result.admitted.map((file) => file.name), ['c.mov'])
-  assertEquals(
-    result.refusal,
-    'Not attached. d.mov, e.mov: a message can carry at most 150 MiB in all.',
-  )
-})
-
-Deno.test('an oversized file is named as oversized even past the count', () => {
-  const held = Array.from({ length: 8 }, (_, i) => sized(`${i}.png`, 1))
-  const result = admitFiles(held, [
-    sized('big.mov', 51 * MiB),
-    sized('j.png', 1),
-  ])
-  assertEquals(result.admitted, [])
-  assertEquals(
-    result.refusal,
-    'Not attached. big.mov: a file can be at most 50 MiB. j.png: a message can carry at most 8 files.',
-  )
 })
 
 Deno.test('active attachment types are files even if their payload says image', () => {

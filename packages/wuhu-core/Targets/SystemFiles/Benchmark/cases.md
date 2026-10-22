@@ -172,3 +172,9 @@ _Afterwards:_ deterministic checks require the progress (bundle 3 of 7) in the r
 _Prompt:_ "Make me a small page at {sb}/access.html I can open on my phone. It should list the groups this space has, whether I can read each one, and the machines I can use, and keep itself current. Build it with what this space already gives you, not a REST API."
 
 _Afterwards:_ `{sb}/access.html` exists, imports `wuhu:space`, reads `groups()` (and `wuhu:machine`'s `machines()`, or the same reachable listing) instead of `/_/query`, `/v1/` or a made-up endpoint, refreshes instead of hardcoding the current lists, carries the html-page case's mobile defaults, and the reply is a short pointer naming the page. The modules report what this session actually reads and uses.
+
+## immersive-page
+
+_Prompt:_ "Make me a one-screen welcome page at {sb}/welcome.html with a big headline over a soft gradient. In the app it should fill the whole window, behind the sidebar and the controls, not sit in a card."
+
+_Afterwards:_ `{sb}/welcome.html` exists, its head carries `<meta name="wuhu-layout" content="immersive">`, it pads by `--wuhu-inset-*`, and it uses no `/_/query` or `/v1/`. The judge fails a page that fakes full-bleed without the tag.

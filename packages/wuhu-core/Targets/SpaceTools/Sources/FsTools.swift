@@ -162,7 +162,10 @@ extension SpaceToolbox {
 
   static let stat = SpaceTool("stat", schema: StatInput.jsonSchema) { (context, input: StatInput) in
     let target = try await context.resolve(input.path)
-    return Wire.entry(try await target.backend.stat(target.path))
+    let entry = try await target.backend.stat(target.path)
+    // Space pages only: on a machine the head would cost a remote read per stat.
+    let head = target.isSpace ? await PageHead.read(entry, at: target.path, in: target.backend) : nil
+    return Wire.stat(entry, head: head)
   }
 }
 

@@ -80,10 +80,17 @@ export function conversationSubscription(
 export function sqlSubscription(
   sql: string,
   group: string,
+  // Bound to the statement's `?` placeholders.
+  params?: readonly (string | number | null)[],
 ): GroupSubscription<QueryOutput> {
   // Not URLSearchParams: it form-encodes spaces as "+", which the server's
   // query parser keeps literal.
-  const url = `/v1/observe?sql=${encodeURIComponent(sql)}&throttleMs=150`
+  const bound = params == null
+    ? ''
+    : `&params=${encodeURIComponent(JSON.stringify(params))}`
+  const url = `/v1/observe?sql=${
+    encodeURIComponent(sql)
+  }${bound}&throttleMs=150`
   return {
     group,
     from: null,
@@ -91,7 +98,7 @@ export function sqlSubscription(
     cursorOf: () => null,
     retention: {
       kind: 'query',
-      key: normalizeSQL(sql),
+      key: normalizeSQL(sql) + bound,
       retain: (_, output) => [output],
     },
   }

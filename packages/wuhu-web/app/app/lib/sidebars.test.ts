@@ -5,7 +5,6 @@ import {
   sidebarPaths,
   validDestination,
 } from './sidebars.ts'
-import type { PathMap } from './tree.ts'
 
 function equal(actual: unknown, expected: unknown) {
   const a = JSON.stringify(actual)
@@ -28,16 +27,25 @@ const output = (rows: unknown[][], order = 'sort_order') => ({
 })
 
 Deno.test('definitions live directly under /.sidebars as json files, sorted', () => {
-  const paths: PathMap = new Map([
-    ['/.sidebars', 'directory'],
-    ['/.sidebars/work.json', 'file'],
-    ['/.sidebars/agents.json', 'file'],
-    ['/.sidebars/notes.md', 'file'],
-    ['/.sidebars/old', 'directory'],
-    ['/.sidebars/old/x.json', 'file'],
-    ['/sidebars.json', 'file'],
+  const entry = (name: string, kind: 'file' | 'directory') => ({
+    name,
+    kind,
+    size: 0,
+    token: name,
+    mtime: 0,
+  })
+  const listing = {
+    entries: [
+      entry('work.json', 'file'),
+      entry('agents.json', 'file'),
+      entry('notes.md', 'file'),
+      entry('old.json', 'directory'),
+    ],
+  }
+  equal(sidebarPaths(listing), [
+    '/.sidebars/agents.json',
+    '/.sidebars/work.json',
   ])
-  equal(sidebarPaths(paths), ['/.sidebars/agents.json', '/.sidebars/work.json'])
 })
 
 Deno.test('a definition needs a title and unique, complete sections', () => {
@@ -49,6 +57,7 @@ Deno.test('a definition needs a title and unique, complete sections', () => {
     {
       path: '/.sidebars/workshop.json',
       title: 'The Workshop',
+      icon: 'hammer',
       sections: [{ id: 'docs', title: 'Documents', sql: 'SELECT * FROM docs' }],
     },
   )

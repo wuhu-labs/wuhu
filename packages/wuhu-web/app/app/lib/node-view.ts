@@ -1,5 +1,5 @@
 import { ApiError } from '~/sdk/errors'
-import type { EntryKind, ReadOutput } from './contract.gen.ts'
+import type { EntryKind, PageLayout, ReadOutput } from './contract.gen.ts'
 import { fileOpening, type OpenedFile, openFile } from './file-opening.ts'
 import type { ContentOrigin } from './use-content-origin.ts'
 import { viewOpening } from './view-opening.ts'
@@ -8,12 +8,22 @@ export type NodeView =
   | Exclude<OpenedFile, { state: 'text' }>
   | { state: 'error'; message: string }
   | { state: 'text'; content: string; notice?: string }
-  | { state: 'html'; origin: string; src: string }
+  // A page is framed unless its head opts into immersive; its title is its
+  // head's <title> (both from stat).
+  | {
+    state: 'html'
+    origin: string
+    src: string
+    layout?: PageLayout
+    title?: string
+  }
   | { state: 'table'; path: string }
 
 interface NodeEntry {
   kind: EntryKind
   size?: number
+  layout?: PageLayout | null
+  title?: string | null
 }
 
 // A stat rejects with notFound for a path that is not there; any other
@@ -87,7 +97,7 @@ async function resolvedView(
   source: NodeSource,
   contentOrigin: ContentOrigin,
   path: string,
-  { kind, size }: NodeEntry,
+  { kind, size, layout, title }: NodeEntry,
   suffix: string,
 ): Promise<NodeView> {
   if (/^\/_\/conversations\/[^/]+\/attachments(?:\/|$)/.test(path)) {
@@ -128,6 +138,8 @@ async function resolvedView(
         state: 'html',
         origin,
         src: origin + encodeURI(path) + suffix,
+        ...(layout == null ? {} : { layout }),
+        ...(title == null ? {} : { title }),
       }
     }
     const { content } = await source.read(path)

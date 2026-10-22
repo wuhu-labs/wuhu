@@ -6,7 +6,6 @@ import ReactMarkdown, {
 } from 'react-markdown'
 import { Link, useOutletContext } from 'react-router'
 import remarkGfm from 'remark-gfm'
-import { splitFrontmatter } from '~/lib/frontmatter'
 import { spaceLink } from '~/lib/links'
 import { remarkBlocks } from '~/lib/markdown-blocks'
 import type { SpaceContext } from '~/routes/space'
@@ -117,23 +116,5 @@ export function Markdown({
     >
       {children}
     </ReactMarkdown>
-  )
-}
-
-// A stored document carries its frontmatter; rendering it as markdown turns the
-// closing `---` into a setext heading. The block is metadata, so it leaves the
-// body and comes back as <DocMeta>.
-export function MarkdownView({
-  content,
-  sourcePath,
-}: {
-  content: string
-  sourcePath?: string
-}) {
-  const { body } = splitFrontmatter(content)
-  return (
-    <article className='wuhu-markdown'>
-      <Markdown sourcePath={sourcePath}>{body}</Markdown>
-    </article>
   )
 }

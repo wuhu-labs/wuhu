@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { SidebarNote, SidebarRow } from '@wuhu/ui'
 import { errorMessage } from '~/sdk/errors'
 import {
   currentWebPushState,
@@ -9,11 +8,12 @@ import {
 } from '~/sdk/web-push'
 
 const unavailable: Partial<Record<WebPushState['kind'], string>> = {
-  unsupported: 'Notifications unavailable',
-  'install-required': 'Add to Home Screen for notifications',
-  blocked: 'Notifications blocked in system settings',
+  unsupported: 'Notifications are unavailable in this browser.',
+  'install-required': 'Install the app to get notifications.',
+  blocked: 'Notifications are blocked in system settings.',
 }
 
+// Notifications for this browser: on or off, or why they cannot be.
 export function WebPushControl() {
   const [state, setState] = useState<WebPushState>({ kind: 'working' })
 
@@ -33,38 +33,31 @@ export function WebPushControl() {
   }, [])
 
   const notice = unavailable[state.kind]
-  if (notice) return <SidebarNote>{notice}</SidebarNote>
-
+  if (notice) return <p className='wuhu-muted'>{notice}</p>
   const enabled = state.kind === 'enabled'
-  const working = state.kind === 'working'
   return (
-    <>
-      <SidebarRow
-        quiet
-        icon='message'
-        label={working
-          ? 'Checking notifications…'
-          : enabled
-          ? 'Notifications on'
-          : 'Enable notifications'}
-        status={enabled ? { tone: 'mint', label: 'on' } : undefined}
-        onClick={working ? undefined : () => {
+    <div className='wuhu-form-actions'>
+      {state.kind === 'error' && (
+        <span className='wuhu-alert'>{state.message}</span>
+      )}
+      <button
+        type='button'
+        className='wuhu-button-secondary'
+        disabled={state.kind === 'working'}
+        onClick={() => {
           setState({ kind: 'working' })
           const operation = enabled ? disableWebPush() : enableWebPush()
           void operation.then(setState, (failure: unknown) => {
             setState({ kind: 'error', message: errorMessage(failure) })
           })
         }}
-      />
-      {state.kind === 'error' && (
-        <SidebarRow
-          quiet
-          icon='message'
-          label='Notifications unavailable'
-          title={state.message}
-          status={{ tone: 'rose', label: 'unavailable' }}
-        />
-      )}
-    </>
+      >
+        {state.kind === 'working'
+          ? 'Checking notifications…'
+          : enabled
+          ? 'Turn off notifications'
+          : 'Turn on notifications'}
+      </button>
+    </div>
   )
 }

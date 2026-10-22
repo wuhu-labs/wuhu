@@ -1,8 +1,7 @@
-import type { QueryOutput } from './contract.gen.ts'
+import type { ListOutput, QueryOutput } from './contract.gen.ts'
 import { sharedGroup } from './groups.ts'
 import { groupAddress, placeHref } from './links.ts'
 import { spaceDestination } from './space-url.ts'
-import type { PathMap } from './tree.ts'
 
 export const everything = 'everything'
 
@@ -28,7 +27,7 @@ export interface SidebarSection {
 }
 
 export type SidebarFile =
-  & { path: string; title: string }
+  & { path: string; title: string; icon?: string }
   & ({ sections: SidebarSection[] } | { failure: string })
 
 export interface SidebarNode {
@@ -40,15 +39,13 @@ export interface SidebarNode {
   badge?: number | null
 }
 
-const directory = '/.sidebars/'
+export const sidebarDirectory = '/.sidebars'
 
-export function sidebarPaths(paths: PathMap): string[] {
-  return [...paths]
-    .filter(([path, kind]) =>
-      kind !== 'directory' && path.startsWith(directory) &&
-      path.endsWith('.json') && !path.slice(directory.length).includes('/')
-    )
-    .map(([path]) => path)
+// The definitions: the folder's own .json files, in path order.
+export function sidebarPaths(listing: ListOutput): string[] {
+  return listing.entries
+    .filter((entry) => entry.kind === 'file' && entry.name.endsWith('.json'))
+    .map((entry) => `${sidebarDirectory}/${entry.name}`)
     .sort()
 }
 
@@ -64,7 +61,7 @@ function nonblank(value: unknown): value is string {
 // in the one failure sentence.
 function decode(
   content: string,
-): { title: string; sections: SidebarSection[] } {
+): { title: string; icon?: string; sections: SidebarSection[] } {
   const value = JSON.parse(content)
   const sections: SidebarSection[] = value.sections.map(
     ({ id, title, sql }: SidebarSection) => ({ id, title, sql }),
@@ -77,7 +74,11 @@ function decode(
     ) &&
     new Set(sections.map(({ id }) => id)).size === sections.length
   if (!valid) throw new Error('invalid sidebar definition')
-  return { title: value.title, sections }
+  return {
+    title: value.title,
+    ...(value.icon == null ? {} : { icon: value.icon }),
+    sections,
+  }
 }
 
 export function sidebarFile(path: string, content: string): SidebarFile {

@@ -1,11 +1,8 @@
 import {
-  entryHref,
   fileHref,
-  isSystemAddress,
   placeGroup,
   sessionHref,
   spaceLink,
-  systemAddress,
   withGroup,
   withoutGroup,
 } from './links.ts'
@@ -135,8 +132,8 @@ Deno.test('a place in another group carries it in the query', () => {
     '/notes/a.md?group=sail-clock-pepper',
   )
   assertEquals(
-    sessionHref('s1', 'sail-clock-pepper', 'context'),
-    '/_/sessions/s1?view=context&group=sail-clock-pepper',
+    sessionHref('s1', 'sail-clock-pepper'),
+    '/_/sessions/s1?group=sail-clock-pepper',
   )
   assertEquals(
     withGroup('/notes/a.md?q=1#top', 'sail-clock-pepper'),
@@ -203,13 +200,6 @@ Deno.test('an old group-host link opens that group in the SPA', () => {
   )
 })
 
-Deno.test('a localspace entry opens in its own group', () => {
-  assertEquals(
-    entryHref('wuhu://sail-clock-pepper.localspace/AGENTS.md', 'shared'),
-    '/AGENTS.md?group=sail-clock-pepper',
-  )
-})
-
 Deno.test('fileHref encodes file-path segments without an /f prefix', () => {
   assertEquals(
     fileHref('/notes/Brief & plan.md', 'shared'),
@@ -220,32 +210,6 @@ Deno.test('fileHref encodes file-path segments without an /f prefix', () => {
     fileHref('/_/sessions/s1/AGENTS.md', 'shared'),
     '/_/sessions/s1/AGENTS.md',
   )
-})
-
-Deno.test('a system entry opens on the system screen, a space entry as a file', () => {
-  const skill = 'wuhu://system/skills/space-html-pages/SKILL.md'
-  assertEquals(isSystemAddress(skill), true)
-  assertEquals(
-    entryHref(skill, 'shared'),
-    '/_/system/skills/space-html-pages/SKILL.md',
-  )
-  assertEquals(systemAddress(entryHref(skill, 'shared')), skill)
-  assertEquals(
-    entryHref('wuhu://system/AGENTS.md', 'shared'),
-    '/_/system/AGENTS.md',
-  )
-  assertEquals(
-    systemAddress('/_/system/skills/a%20b/SKILL.md'),
-    'wuhu://system/skills/a b/SKILL.md',
-  )
-  assertEquals(isSystemAddress('/.agents/skills/ci-watch/SKILL.md'), false)
-  assertEquals(
-    entryHref('/.agents/skills/ci-watch/SKILL.md', 'shared'),
-    '/.agents/skills/ci-watch/SKILL.md',
-  )
-  for (const pathname of ['/_/system', '/_/system/', '/_/systems/a.md']) {
-    assertEquals(systemAddress(pathname), null)
-  }
 })
 
 Deno.test('flat group hosts link into this tenant, not another tenant', () => {

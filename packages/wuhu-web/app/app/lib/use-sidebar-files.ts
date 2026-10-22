@@ -1,15 +1,32 @@
 import { useEffect, useState } from 'react'
-import { type SidebarFile, sidebarFile, sidebarName } from './sidebars.ts'
+import {
+  sidebarDirectory,
+  type SidebarFile,
+  sidebarFile,
+  sidebarName,
+  sidebarPaths,
+} from './sidebars.ts'
 import type { SpaceClient } from '~/sdk/client'
-import { errorMessage } from '~/sdk/errors'
+import { errorMessage, isFileRefusal } from '~/sdk/errors'
 
-export function useSidebarFiles(
-  client: SpaceClient,
-  paths: readonly string[],
-): SidebarFile[] | null {
+// A group's sidebar definitions, live: the folder's listing, then each file.
+// A group without the folder has none.
+export function useSidebarFiles(client: SpaceClient): SidebarFile[] | null {
+  const [paths, setPaths] = useState<readonly string[] | null>(null)
+  useEffect(
+    () =>
+      client.list(sidebarDirectory)(
+        (listing) => setPaths(sidebarPaths(listing)),
+        (failure) => {
+          if (isFileRefusal(failure)) setPaths([])
+        },
+      ),
+    [client],
+  )
   const [files, setFiles] = useState<SidebarFile[] | null>(null)
-  const key = paths.join('\n')
+  const key = paths?.join('\n') ?? null
   useEffect(() => {
+    if (paths === null) return
     const loaded = new Map<string, SidebarFile>()
     const publish = () => {
       if (loaded.size === paths.length) {

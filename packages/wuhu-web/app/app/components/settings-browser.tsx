@@ -4,13 +4,13 @@ import {
   setSendKey,
   useSendKey,
 } from '~/lib/composer'
+import { WebPushControl } from './web-push-control'
 
-// Choices this browser keeps for itself, in localStorage.
+// Choices this browser keeps for itself.
 export function BrowserCard() {
   const key = useSendKey()
   return (
     <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-eyebrow'>This browser</p>
       <p className='wuhu-muted'>
         These stay in this browser. Your other devices keep their own.
       </p>
@@ -27,6 +27,7 @@ export function BrowserCard() {
           ))}
         </select>
       </label>
+      <WebPushControl />
     </section>
   )
 }

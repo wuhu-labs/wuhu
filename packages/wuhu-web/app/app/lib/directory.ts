@@ -126,47 +126,6 @@ export function senderName(
   )
 }
 
-export function principalName(
-  directory: Directory,
-  sessions: SessionTitles,
-  principal: string,
-): string {
-  return displayFor(directory, principal, undefined, sessions)
-}
-
-export function memberName(
-  directory: Directory,
-  member: { member: string; memberHandle?: string | null; kind?: string },
-  sessions: SessionTitles = noSessionTitles,
-): string {
-  return displayFor(
-    directory,
-    member.member,
-    member.memberHandle,
-    sessions,
-    member.kind,
-  )
-}
-
-export function memberHandle(
-  directory: Directory,
-  member: { member: string; memberHandle?: string | null; kind?: string },
-  sessions: SessionTitles,
-): string | undefined {
-  if (
-    senderIsSession(sessions, {
-      sender: member.member,
-      senderKind: member.kind,
-    })
-  ) {
-    return undefined
-  }
-  const entry = directory.get(member.member)
-  if (entry?.displayName == null || entry.handle == null) return undefined
-  const handle = `@${entry.handle}`
-  return handle === entry.displayName ? undefined : handle
-}
-
 export function initialsFrom(source: string): string {
   const words = source.split(/[\s._-]+/).filter(Boolean)
   const letters = words.length > 1

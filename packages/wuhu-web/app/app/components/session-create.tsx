@@ -29,7 +29,8 @@ import type {
 import { fetchModelCatalog } from '~/sdk/providers'
 import { fetchTemplates } from '~/sdk/templates'
 import { errorMessage } from '~/sdk/errors'
-import { type CreatedSession, screens, sessionHref } from '~/lib/links'
+import { type CreatedSession, sessionHref } from '~/lib/links'
+import { settingsHref } from '~/components/settings-nav'
 import { createSession } from '~/sdk/session'
 import { groupLabel } from '~/lib/groups'
 import { useDirectory } from '~/lib/use-directory'
@@ -325,7 +326,7 @@ function CreateForm({
           </label>
           <p className='wuhu-muted'>
             {template?.description ? `${template.description} ` : ''}
-            <Link to={screens.templates} onClick={onDone}>
+            <Link to={settingsHref('space', 'templates')} onClick={onDone}>
               Manage templates
             </Link>
           </p>

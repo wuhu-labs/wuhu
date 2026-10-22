@@ -67,8 +67,9 @@ export function useOlderIntent(
   }, [canvas])
 }
 
+// Nothing once the whole history is in: its start needs no label.
 export function HistoryEdge({ edge }: { edge: Edge | undefined }) {
-  if (!edge) return null
+  if (!edge || (edge.status === 'ready' && !edge.hasEarlier)) return null
   return (
     <div
       className='wuhu-history-edge'
@@ -101,7 +102,7 @@ export function HistoryEdge({ edge }: { edge: Edge | undefined }) {
             {edge.gap ? '↑ Load missing history' : '↑ Load older'}
           </button>
         )
-        : <span>Beginning of history</span>}
+        : null}
     </div>
   )
 }

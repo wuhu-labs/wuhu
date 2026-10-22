@@ -12,29 +12,9 @@ export function memberGroups(groups: readonly GroupSummary[]): string[] {
     : ids
 }
 
-// Where the view's group stands: itself while the groups are loading or when
-// the viewer is a member there, else Shared.
-export function memberOr(
-  group: string,
-  members: readonly string[] | null,
-): string {
-  return members == null || members.includes(group) ? group : sharedGroup
-}
-
 // A personal group's id is its person's.
 export function groupLabel(group: string, directory: Directory): string {
   return group === sharedGroup ? 'Shared' : displayFor(directory, group)
-}
-
-// A sender from outside the conversation's group carries that group's label.
-export function senderGroupLabel(
-  senderGroup: string | null | undefined,
-  group: string,
-  directory: Directory,
-): string | null {
-  return senderGroup == null || senderGroup === group
-    ? null
-    : groupLabel(senderGroup, directory)
 }
 
 // A group host is another site than Shared's, so its reads carry the cookie.

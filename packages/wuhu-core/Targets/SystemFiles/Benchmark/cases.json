@@ -416,6 +416,22 @@
         "no_files_written"
       ],
       "judge": "PASS only if the answer uses createGroup({alias:\"research_notes\", owner:\"morgan\"}) imported from wuhu:space in run_script, expects {id,alias} with a permanent three-word id, says Morgan becomes admin and the session does not, and refuses a guest owner or reserved alias rather than taking ownership, using HTTP/CLI as the session, or overwriting an alias. Equivalent quote/format variants are fine."
+    },
+    {
+      "id": "immersive-page",
+      "issue": 405,
+      "title": "Opts a page into the immersive layout",
+      "prompt": "Make me a one-screen welcome page at {sb}/welcome.html with a big headline over a soft gradient. In the app it should fill the whole window, behind the sidebar and the controls, not sit in a card.",
+      "required": [
+        "page_exists",
+        "immersive_meta",
+        "pads_by_insets",
+        "no_legacy_api"
+      ],
+      "skills": {
+        "space-html-pages": true
+      },
+      "judge": "PASS only if {sb}/welcome.html exists and its head carries <meta name=\"wuhu-layout\" content=\"immersive\">, its background paints to the window edge, and its content is padded by the --wuhu-inset-* variables so it clears the sidebar, top bar and composer. Fail if it fakes full-bleed another way (negative margins, a fixed full-window element without the meta tag, asking the shell through a made-up API) or writes outside the sandbox."
     }
   ]
 }

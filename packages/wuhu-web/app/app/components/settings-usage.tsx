@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Pill } from '@wuhu/ui'
 import type { ProviderDescriptor } from '~/lib/contract.gen'
 import { relativeSpan } from '~/lib/relative-time'
 import {
@@ -43,7 +42,6 @@ export function UsageCard() {
   const cards = providers == null ? [] : usageCards(providers, now)
   return (
     <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-eyebrow'>Plan usage</p>
       <p className='wuhu-muted'>
         What each provider's plan has left, refreshed every minute
       </p>
@@ -68,8 +66,10 @@ function UsageCell({ card, now }: { card: Card; now: Date }) {
     <div className='wuhu-usage' data-state={card.kind}>
       <div className='wuhu-usage-head'>
         <strong>{card.provider}</strong>
-        {card.kind !== 'unobserved' && card.plan && <Pill>{card.plan}</Pill>}
-        {card.kind === 'stale' && <Pill tone='amber'>stale</Pill>}
+        {card.kind !== 'unobserved' && card.plan && (
+          <span className='wuhu-muted'>{card.plan}</span>
+        )}
+        {card.kind === 'stale' && <span className='wuhu-alert'>stale</span>}
       </div>
       {card.kind === 'unobserved'
         ? <p className='wuhu-usage-note'>Not observed yet</p>

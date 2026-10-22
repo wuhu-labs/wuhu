@@ -114,6 +114,22 @@ public struct StatInput: Codable, Equatable, Sendable {
   public let path: String
 }
 
+/// An entry's metadata; for an HTML page in the space, also what its head
+/// declares within its first 16 KiB.
+@Contract
+public struct StatOutput: Codable, Equatable, Sendable {
+  public let name: String
+  public let kind: EntryKind
+  public let size: Int
+  public let lineCount: Int?
+  public let token: String
+  public let mtime: Double
+  /// The layout its `wuhu-layout` meta declares.
+  public let layout: PageLayout?
+  /// Its `<title>`, entities decoded and whitespace collapsed.
+  public let title: String?
+}
+
 @Contract
 public struct GrepInput: Codable, Equatable, Sendable {
   /// An ICU regular expression, matched against each line.

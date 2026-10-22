@@ -1,12 +1,7 @@
-import { directoryOf, senderName } from './directory.ts'
 import {
   foldMessage,
   type MessageMap,
   orderedMessages,
-  ownerOf,
-  quoteExcerpt,
-  quoteFor,
-  replyDraft,
 } from './conversation.ts'
 import type { ConversationMessagePayload } from './contract.gen.ts'
 
@@ -54,93 +49,4 @@ Deno.test('a message whose ordinal moved replaces the stored copy', () => {
   const second = foldMessage(first, message(10, 'a'))
   assertEquals(second === first, false)
   assertEquals(second.get('a')?.n, 10)
-})
-
-Deno.test('a message with no reply target quotes nothing', () => {
-  const target = message(9, 'a')
-  assertEquals(quoteFor(mapOf(target), target).kind, 'none')
-  assertEquals(
-    quoteFor(mapOf(target), message(10, 'b', { replyTarget: '' })).kind,
-    'none',
-  )
-})
-
-Deno.test('a reply target present in the page resolves to the quoted message', () => {
-  const target = message(9, 'a', { sender: 'hare-teal-plum', text: 'on it' })
-  const reply = message(10, 'b', { replyTarget: 'a' })
-  const quote = quoteFor(mapOf(target, reply), reply)
-  if (quote.kind !== 'quote') {
-    throw new Error(`expected a quote, got ${quote.kind}`)
-  }
-  assertEquals(quote.message.sender, 'hare-teal-plum')
-  assertEquals(quote.message.text, 'on it')
-})
-
-Deno.test('a reply target outside the page is reported missing, not dropped', () => {
-  const reply = message(10, 'b', { replyTarget: 'gone' })
-  assertEquals(quoteFor(mapOf(reply), reply), {
-    kind: 'missing',
-    messageId: 'gone',
-  })
-})
-
-Deno.test('a quote excerpt collapses whitespace and clips to one line', () => {
-  assertEquals(quoteExcerpt('  a\n\n  b  \tc '), 'a b c')
-  assertEquals(quoteExcerpt('abcdef', 3), 'abc…')
-  assertEquals(quoteExcerpt('abc', 3), 'abc')
-})
-
-Deno.test('a reply draft keeps the sender id and kind for presentation-time resolution', () => {
-  assertEquals(
-    replyDraft(
-      message(9, 'a', {
-        sender: 'owner',
-        senderKind: 'user',
-        senderHandle: 'old',
-        text: 'hi',
-      }),
-    ),
-    {
-      messageId: 'a',
-      sender: 'owner',
-      senderKind: 'user',
-      senderHandle: 'old',
-      text: 'hi',
-    },
-  )
-})
-
-Deno.test('the reader decides sides once resolved, and owns nothing without a principal', () => {
-  assertEquals(ownerOf(undefined), null)
-  const none = ownerOf(null)!
-  assertEquals([none('morgan'), none('spoon')], [false, false])
-  const known = ownerOf('morgan')!
-  assertEquals([known('morgan'), known('spoon')], [true, false])
-})
-
-Deno.test('a pending reply resolves against the current directory without changing its sender id', () => {
-  const draft = replyDraft(
-    message(9, 'a', {
-      sender: 'person',
-      senderKind: 'user',
-      senderHandle: 'old',
-      text: 'hi',
-    }),
-  )
-  assertEquals(draft.sender, 'person')
-  assertEquals(
-    senderName(directoryOf([{ id: 'person', handle: 'vivian' }]), draft),
-    '@vivian',
-  )
-  assertEquals(
-    senderName(
-      directoryOf([{
-        id: 'person',
-        handle: 'vivian',
-        displayName: 'Vivian Cao',
-      }]),
-      draft,
-    ),
-    'Vivian Cao',
-  )
 })

@@ -138,3 +138,16 @@ Deno.test('a table opens without attempting a text read', async () => {
     path: '/tasks.table',
   })
 })
+
+Deno.test('an HTML page carries the layout its stat names', async () => {
+  const source: NodeSource = {
+    stat: () => Promise.resolve({ kind: 'file', layout: 'immersive' }),
+    read: () => Promise.reject(new Error('not read')),
+  }
+  expectEqual(await loadNode(source, origin, '/story.html', ''), {
+    state: 'html',
+    origin,
+    src: `${origin}/story.html`,
+    layout: 'immersive',
+  })
+})

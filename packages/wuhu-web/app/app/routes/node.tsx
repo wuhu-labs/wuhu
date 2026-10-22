@@ -1,77 +1,42 @@
-import { useLocation, useOutletContext } from 'react-router'
+import { Link, useOutletContext } from 'react-router'
+import { useShell } from '@wuhu/ui'
 import { ContentFrame } from '~/components/content-frame'
-import { DocMeta } from '~/components/doc-meta'
 import { FileCard, FileImage } from '~/components/file-view'
 import { MarkdownDocument } from '~/components/markdown-document'
 import { TableView } from '~/components/table-view'
 import type { QueryOutput } from '~/lib/contract.gen'
+import { fileHref } from '~/lib/links'
 import type { NodeView } from '~/lib/node-view'
-import { tableSubscription } from '~/sdk/subscriptions'
-import { spaceDestination } from '~/lib/space-url'
 import { useObserve } from '~/lib/use-observe'
+import { tableSubscription } from '~/sdk/subscriptions'
 import type { SpaceContext } from './space'
 
-export default function Node() {
-  const location = useLocation()
-  const destination = spaceDestination(location.pathname)
-  if (destination?.kind !== 'path') {
-    return (
-      <div className='wuhu-content wuhu-page'>
-        <p className='wuhu-alert'>Nothing lives at this address.</p>
-      </div>
-    )
-  }
-  return <NodePage />
-}
-
 // Renders the page SpaceBody holds for this address (lib/use-shown-node.ts),
-// the same state a send names.
-function NodePage() {
+// the same state a send names. The shell has already laid it out: Markdown
+// scrolls, HTML is framed or immersive, everything else is framed content.
+export default function Node() {
   const { group, client, shown } = useOutletContext<SpaceContext>()
+  const { insets } = useShell()
   const view: NodeView = shown?.view ?? { state: 'loading' }
-  const reading = view.state === 'markdown'
-  return (
-    <div
-      className={reading
-        ? 'wuhu-content wuhu-page'
-        : 'wuhu-content wuhu-page wuhu-page-wide'}
-    >
-      <NodeBody group={group} client={client} view={view} />
-    </div>
-  )
-}
-
-function NodeBody({
-  group,
-  client,
-  view,
-}: {
-  group: string
-  client: SpaceContext['client']
-  view: NodeView
-}) {
   switch (view.state) {
     case 'loading':
-      return <p className='wuhu-muted'>Loading…</p>
+      return null
     case 'error':
-      return <p className='wuhu-alert'>{view.message}</p>
+      return (
+        <div className='wuhu-reader'>
+          <p className='wuhu-alert'>{view.message}</p>
+        </div>
+      )
     case 'markdown':
       return (
-        <>
-          <DocMeta path={view.path} group={group} />
+        <div className='wuhu-content wuhu-reader'>
           <MarkdownDocument
             client={client}
             path={view.path}
             initial={{ content: view.content, token: view.token }}
+            breadcrumb={<Breadcrumb path={view.path} group={group} />}
           />
-        </>
-      )
-    case 'text':
-      return (
-        <>
-          {view.notice && <p className='wuhu-muted'>{view.notice}</p>}
-          <pre className='wuhu-text'>{view.content}</pre>
-        </>
+        </div>
       )
     case 'html':
       return (
@@ -79,24 +44,69 @@ function NodeBody({
           group={group}
           origin={view.origin}
           src={view.src}
+          insets={insets}
           remint={client.remintContentSession}
         />
+      )
+    case 'text':
+      return (
+        <div className='wuhu-content wuhu-framed'>
+          {view.notice && <p className='wuhu-muted'>{view.notice}</p>}
+          <pre className='wuhu-text'>{view.content}</pre>
+        </div>
       )
     case 'image':
       return (
-        <FileImage
-          group={group}
-          path={view.path}
-          size={view.size}
-          src={view.src}
-          remint={client.remintContentSession}
-        />
+        <div className='wuhu-content wuhu-framed'>
+          <FileImage
+            group={group}
+            path={view.path}
+            size={view.size}
+            src={view.src}
+            remint={client.remintContentSession}
+          />
+        </div>
       )
     case 'file':
-      return <FileCard path={view.path} size={view.size} src={view.src} />
+      return (
+        <div className='wuhu-content wuhu-framed'>
+          <FileCard path={view.path} size={view.size} src={view.src} />
+        </div>
+      )
     case 'table':
-      return <LiveTable path={view.path} group={group} />
+      return (
+        <div className='wuhu-content wuhu-framed'>
+          <LiveTable path={view.path} group={group} />
+        </div>
+      )
   }
+}
+
+// Where the document sits: its folders, each a link, then its name.
+function Breadcrumb({ path, group }: { path: string; group: string }) {
+  const segments = path.split('/').filter(Boolean)
+  return (
+    <nav className='wuhu-breadcrumb' aria-label='Location'>
+      <Link to={fileHref('/', group)}>files</Link>
+      {segments.map((segment, index) => (
+        <span key={index}>
+          <span aria-hidden='true'>/</span>
+          {index === segments.length - 1
+            ? <span aria-current='page'>{segment}</span>
+            : (
+              <Link
+                to={fileHref(
+                  `/${segments.slice(0, index + 1).join('/')}`,
+                  group,
+                )}
+              >
+                {segment}
+              </Link>
+            )}
+        </span>
+      ))}
+    </nav>
+  )
 }
 
 const noRows: QueryOutput = { columns: [], rows: [] }

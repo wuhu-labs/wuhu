@@ -209,126 +209,123 @@ export default function Login() {
   }
 
   return (
-    <div className='wui-root'>
-      <div className='wui-canvas'>
-        <main className='wuhu-standalone flex items-center justify-center'>
-          <div className='wuhu-card w-full max-w-sm'>
-            <h1 className='wuhu-dialog-title'>Log in</h1>
-            <p className='wuhu-muted mt-2'>
-              This space admits enrolled devices only. On an enrolled device,
-              mint a one-time invite with{' '}
-              <code>wuhu share-login</code>, then bring it here.
-            </p>
-            <label className='wuhu-field wuhu-field-mono mt-5'>
-              <span>Paste the invite link</span>
-              <input
-                placeholder='https://…/_/enroll#token=…'
-                value={pasted}
-                onChange={(event) => setPasted(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && pasted.trim() !== '') {
-                    acceptPasted()
-                  }
-                }}
-              />
-            </label>
-            <button
-              type='button'
-              disabled={pasted.trim() === ''}
-              onClick={acceptPasted}
-              className='wuhu-button wuhu-button-block mt-3'
-            >
-              Continue
-            </button>
-            {decoded && (
-              <div data-wuhu-decoded-invite className='wuhu-panel mt-5'>
-                <p className='wuhu-muted'>
-                  Decoded invite — check it points where you expect
-                </p>
-                <p className='wuhu-panel-code mt-1'>{decoded.display}</p>
-                <div className='mt-3 flex gap-2'>
-                  <button
-                    type='button'
-                    onClick={() =>
-                      void navigate(`${screens.enroll}${decoded.hash}`)}
-                    className='wuhu-button flex-1'
-                  >
-                    Continue
-                  </button>
-                  <button
-                    type='button'
-                    onClick={() =>
-                      setDecoded(null)}
-                    className='wuhu-button-secondary'
-                  >
-                    Discard
-                  </button>
-                </div>
-              </div>
-            )}
-            <video
-              ref={video}
-              playsInline
-              muted
-              data-wuhu-scan-preview
-              className={`wuhu-scan-preview mt-5 ${scanning ? '' : 'hidden'}`}
+    <>
+      <main className='wuhu-standalone flex items-center justify-center'>
+        <div className='wuhu-card w-full max-w-sm'>
+          <h1 className='wuhu-dialog-title'>Log in</h1>
+          <p className='wuhu-muted mt-2'>
+            This space admits enrolled devices only. On an enrolled device, mint
+            a one-time invite with{' '}
+            <code>wuhu share-login</code>, then bring it here.
+          </p>
+          <label className='wuhu-field wuhu-field-mono mt-5'>
+            <span>Paste the invite link</span>
+            <input
+              placeholder='https://…/_/enroll#token=…'
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && pasted.trim() !== '') {
+                  acceptPasted()
+                }
+              }}
             />
-            {scanning
-              ? (
+          </label>
+          <button
+            type='button'
+            disabled={pasted.trim() === ''}
+            onClick={acceptPasted}
+            className='wuhu-button wuhu-button-block mt-3'
+          >
+            Continue
+          </button>
+          {decoded && (
+            <div data-wuhu-decoded-invite className='wuhu-panel mt-5'>
+              <p className='wuhu-muted'>
+                Decoded invite — check it points where you expect
+              </p>
+              <p className='wuhu-panel-code mt-1'>{decoded.display}</p>
+              <div className='mt-3 flex gap-2'>
                 <button
                   type='button'
-                  onClick={stopScan}
+                  onClick={() =>
+                    void navigate(`${screens.enroll}${decoded.hash}`)}
+                  className='wuhu-button flex-1'
+                >
+                  Continue
+                </button>
+                <button
+                  type='button'
+                  onClick={() => setDecoded(null)}
+                  className='wuhu-button-secondary'
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
+          <video
+            ref={video}
+            playsInline
+            muted
+            data-wuhu-scan-preview
+            className={`wuhu-scan-preview mt-5 ${scanning ? '' : 'hidden'}`}
+          />
+          {scanning
+            ? (
+              <button
+                type='button'
+                onClick={stopScan}
+                className='wuhu-button-secondary wuhu-button-block mt-2'
+              >
+                Stop scanning
+              </button>
+            )
+            : (
+              <div
+                data-dragging={dragging}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setDragging(true)
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  setDragging(false)
+                  acceptImage(event.dataTransfer.files[0])
+                }}
+                className='wuhu-dropzone mt-5'
+              >
+                …or scan the QR code
+                <button
+                  type='button'
+                  onClick={() => void startScan()}
                   className='wuhu-button-secondary wuhu-button-block mt-2'
                 >
-                  Stop scanning
+                  Scan with camera
                 </button>
-              )
-              : (
-                <div
-                  data-dragging={dragging}
-                  onDragOver={(event) => {
-                    event.preventDefault()
-                    setDragging(true)
-                  }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={(event) => {
-                    event.preventDefault()
-                    setDragging(false)
-                    acceptImage(event.dataTransfer.files[0])
-                  }}
-                  className='wuhu-dropzone mt-5'
+                <button
+                  type='button'
+                  onClick={() => picker.current?.click()}
+                  className='wuhu-button-secondary wuhu-button-block mt-2'
                 >
-                  …or scan the QR code
-                  <button
-                    type='button'
-                    onClick={() => void startScan()}
-                    className='wuhu-button-secondary wuhu-button-block mt-2'
-                  >
-                    Scan with camera
-                  </button>
-                  <button
-                    type='button'
-                    onClick={() => picker.current?.click()}
-                    className='wuhu-button-secondary wuhu-button-block mt-2'
-                  >
-                    Choose a photo…
-                  </button>
-                  <input
-                    ref={picker}
-                    type='file'
-                    accept='image/*'
-                    className='hidden'
-                    onChange={(event) => {
-                      acceptImage(event.target.files?.[0])
-                      event.target.value = ''
-                    }}
-                  />
-                </div>
-              )}
-            {error && <p className='wuhu-alert mt-3'>{error}</p>}
-          </div>
-        </main>
-      </div>
-    </div>
+                  Choose a photo…
+                </button>
+                <input
+                  ref={picker}
+                  type='file'
+                  accept='image/*'
+                  className='hidden'
+                  onChange={(event) => {
+                    acceptImage(event.target.files?.[0])
+                    event.target.value = ''
+                  }}
+                />
+              </div>
+            )}
+          {error && <p className='wuhu-alert mt-3'>{error}</p>}
+        </div>
+      </main>
+    </>
   )
 }

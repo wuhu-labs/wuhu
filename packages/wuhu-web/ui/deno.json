@@ -19,7 +19,6 @@
   "tasks": {
     "fmt": "deno fmt --check .",
     "typecheck": "deno check src",
-    "lint": "deno lint src",
-    "test": "deno test --quiet --allow-env=NODE_ENV,WS_NO_BUFFER_UTIL src"
+    "lint": "deno lint src"
   }
 }

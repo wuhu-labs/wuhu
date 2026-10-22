@@ -1,5 +1,5 @@
 import { SpaceServer } from './client.ts'
-import type { Entry, ReadOutput } from '~/lib/contract.gen'
+import type { ReadOutput, StatOutput } from '~/lib/contract.gen'
 import type { Observation } from './observation.ts'
 
 function result<T>() {
@@ -82,6 +82,9 @@ function files() {
           },
         { status },
       ))
+    }
+    if (url === '/v1/tools/ls') {
+      return Promise.resolve(Response.json({ rev: calls.length, entries: [] }))
     }
     if (url === '/v1/tools/write') {
       return Promise.resolve(Response.json({ token: 'written', rev: 12 }))
@@ -182,7 +185,7 @@ Deno.test('read paints kept, fetches once, and follows the existing group feed',
 Deno.test('ordinary reconnect preserves successful read/stat snapshots', async () => {
   const fake = files()
   const read = values(fake.client.read('/note.txt'))
-  const stat = values<Entry>(fake.client.stat('/note.txt'))
+  const stat = values<StatOutput>(fake.client.stat('/note.txt'))
   try {
     await read.queue[0]!.promise
     await stat.queue[0]!.promise
@@ -372,6 +375,24 @@ Deno.test('reconnect retries an unreachable read without a separate stream', asy
     equal(fake.calls, ['/v1/tools/read', '/v1/tools/read'])
   } finally {
     read.stop()
+    fake.close()
+  }
+})
+
+Deno.test('a change under a path refreshes its listing, not its stat', async () => {
+  const fake = files()
+  const stat = values<StatOutput>(fake.client.stat('/note.txt'))
+  const list = values(fake.client.list('/note.txt'))
+  try {
+    await stat.queue[0]!.promise
+    await list.queue[0]!.promise
+    fake.touch('/note.txt/inside.md')
+    await list.queue[1]!.promise
+    equal(fake.calls.filter((url) => url.endsWith('/stat')).length, 1)
+    equal(fake.calls.filter((url) => url.endsWith('/ls')).length, 2)
+  } finally {
+    stat.stop()
+    list.stop()
     fake.close()
   }
 })

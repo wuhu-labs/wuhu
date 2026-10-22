@@ -6,11 +6,11 @@ import type { RevisionEvents } from '~/lib/contract.gen'
 import { api, inGroup, post, withAssertion } from './http'
 import type { ViewerCache, ViewerCaches } from './open-cache'
 import type {
-  Entry,
   GroupSummary,
   ListOutput,
   ReadOutput,
   ServerInfo,
+  StatOutput,
   SyncOutput,
   WriteOutput,
 } from '~/lib/contract.gen'
@@ -179,12 +179,23 @@ export class SpaceClient {
     return this.tool('ls', hidden ? { path, hidden } : { path })
   }
 
-  stat(path: string): Observation<Entry> {
+  stat(path: string): Observation<StatOutput> {
     return this.observeFile(
       'meta',
       `stat:${path}`,
       path,
-      () => this.tool<Entry>('stat', { path }),
+      () => this.tool<StatOutput>('stat', { path }),
+    )
+  }
+
+  // A folder's entries, again whenever something under it changes.
+  list(path: string): Observation<ListOutput> {
+    return this.observeFile(
+      'meta',
+      `ls:${path}`,
+      path,
+      () => this.ls(path),
+      true,
     )
   }
 
@@ -202,6 +213,8 @@ export class SpaceClient {
     key: string,
     path: string,
     load: () => Promise<Value>,
+    // A listing also changes with what is under it.
+    listing = false,
   ): Observation<Value> {
     return (receive, failed) => {
       let closed = false
@@ -229,13 +242,17 @@ export class SpaceClient {
           failed(error)
         }
       })
+      // A change at the path or above it; for a listing, also under it.
       const changed = (event: RevisionEvents | null) => {
         if (
           retry ||
           event?.events.some((event) =>
             [event.path, ...(event.kind === 'move' ? [event.to] : [])].some((
               at,
-            ) => at === path || path.startsWith(`${at}/`))
+            ) =>
+              at === path || path.startsWith(`${at}/`) ||
+              (listing && at.startsWith(`${path === '/' ? '' : path}/`))
+            )
           )
         ) void refresh.run()
       }

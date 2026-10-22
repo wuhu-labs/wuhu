@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useOutletContext, useSearchParams } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useOutletContext } from 'react-router'
 import { policyLinks } from '~/components/ai-sharing-dialog'
 import { Avatar } from '~/components/avatar'
 import { BrowserCard } from '~/components/settings-browser'
-import { ToolsCard } from '~/components/settings-tools'
+import {
+  settingsPlace,
+  type SettingsRow,
+  settingsRowLabel,
+} from '~/components/settings-nav'
 import { UsageCard } from '~/components/settings-usage'
+import { TemplateCreateDialog } from '~/components/template-create'
+import type { SessionTemplateDescriptor } from '~/lib/contract.gen'
 import { displayNameFor, handleFor } from '~/lib/directory'
 import { inviteCountdown } from '~/lib/invite'
+import { fileHref } from '~/lib/links'
 import { qrModules, qrSvgPath } from '~/lib/qr'
+import { templateDirectory, templateLine } from '~/lib/templates'
 import {
   profileChangedEvent,
   setOwnHandle,
@@ -18,26 +26,31 @@ import type { SpaceContext } from '~/routes/space'
 import { enrolledDevice, logout } from '~/sdk/auth'
 import { uploadAvatar } from '~/sdk/avatar'
 import { errorMessage } from '~/sdk/errors'
-import { screens } from '~/lib/links'
 import {
   mintShareLogin,
   revokeInvite,
   type ShareLogin,
 } from '~/sdk/share-login'
+import { fetchTemplates } from '~/sdk/templates'
 
 export function meta() {
   return [{ title: 'Settings · Wuhu' }]
 }
 
-const tabs = [
-  { id: 'you', label: 'You', search: '' },
-  { id: 'space', label: 'Space', search: '?tab=space' },
-]
-
+// The selected row's detail; the rows themselves are the sidebar's
+// (components/settings-nav.tsx).
 export default function Settings() {
+  const { row } = settingsPlace(useLocation().search)
+  return (
+    <div className='wuhu-content wuhu-settings'>
+      <h1 className='wuhu-settings-title'>{settingsRowLabel(row)}</h1>
+      <SettingsDetail row={row} />
+    </div>
+  )
+}
+
+function SettingsDetail({ row }: { row: SettingsRow }) {
   const { contentOrigin, reviewAISharing } = useOutletContext<SpaceContext>()
-  const [params] = useSearchParams()
-  const tab = params.get('tab') === 'space' ? tabs[1] : tabs[0]
   const [enrolled, setEnrolled] = useState(false)
 
   useEffect(() => {
@@ -58,47 +71,86 @@ export default function Settings() {
       .finally(() => globalThis.location.assign('/'))
   }
 
+  switch (row) {
+    case 'profile':
+      return <ProfileCard />
+    case 'devices':
+      return <DevicesCard signOut={enrolled ? signOut : null} />
+    case 'browser':
+      return <BrowserCard />
+    case 'ai-sharing':
+      return <PrivacyCard review={reviewAISharing} />
+    case 'templates':
+      return <TemplatesCard />
+    case 'usage':
+      return <UsageCard />
+  }
+}
+
+function TemplatesCard() {
+  const { group } = useOutletContext<SpaceContext>()
+  const [templates, setTemplates] = useState<
+    SessionTemplateDescriptor[] | null
+  >(null)
+  const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const load = useCallback(() => {
+    fetchTemplates(group).then(
+      (found) => {
+        setTemplates(found)
+        setError(null)
+      },
+      (failure: unknown) => setError(errorMessage(failure)),
+    )
+  }, [group])
+
+  useEffect(load, [load])
+
   return (
-    <div className='wuhu-content wuhu-page'>
-      <p className='wuhu-eyebrow'>{tab.label}</p>
-      <h1 className='wuhu-title'>Settings</h1>
-      <nav className='wuhu-tabs wuhu-settings-tabs'>
-        {tabs.map((option) => (
-          <Link
-            key={option.id}
-            to={`${screens.settings}${option.search}`}
-            className={option === tab ? 'active' : undefined}
-            aria-current={option === tab ? 'page' : undefined}
-          >
-            {option.label}
+    <section className='wuhu-card wuhu-settings-card'>
+      <p className='wuhu-muted'>
+        A template is a reusable brief plus a model choice. New sessions created
+        from one start with its AGENTS.md in their home and its provider, model
+        and effort filled in.
+      </p>
+      {error && <p className='wuhu-alert'>{error}</p>}
+      {!error && templates == null && <p className='wuhu-muted'>Loading…</p>}
+      {templates != null && templates.length === 0 && (
+        <p className='wuhu-muted'>No templates yet.</p>
+      )}
+      {templates?.map((template) => (
+        <div key={template.name} className='wuhu-template'>
+          <Link to={fileHref(templateDirectory(template.name), group)}>
+            <strong>{template.name}</strong>
+            <span className='wuhu-muted'>{template.kind ?? 'any'}</span>
           </Link>
-        ))}
-      </nav>
-      {tab.id === 'you'
-        ? (
-          <div className='wuhu-settings'>
-            <ProfileCard />
-            <DevicesCard signOut={enrolled ? signOut : null} />
-            <BrowserCard />
-            <PrivacyCard review={reviewAISharing} />
-          </div>
-        )
-        : (
-          <div className='wuhu-settings'>
-            <section className='wuhu-card wuhu-settings-card'>
-              <p className='wuhu-eyebrow'>Templates</p>
-              <Link className='wuhu-settings-link' to={screens.templates}>
-                <strong>Session templates</strong>
-                <span className='wuhu-muted'>
-                  A reusable brief plus a model choice for new sessions
-                </span>
-              </Link>
-            </section>
-            <ToolsCard />
-            <UsageCard />
-          </div>
-        )}
-    </div>
+          <p className='wuhu-mono'>{templateLine(template)}</p>
+          {template.description && (
+            <p className='wuhu-muted'>{template.description}</p>
+          )}
+        </div>
+      ))}
+      <div className='wuhu-form-actions'>
+        <button
+          type='button'
+          className='wuhu-button'
+          onClick={() => setCreating(true)}
+        >
+          New template
+        </button>
+      </div>
+      <TemplateCreateDialog
+        open={creating}
+        taken={(name) =>
+          templates?.some((template) => template.name === name) ?? false}
+        onClose={() => setCreating(false)}
+        onCreated={() => {
+          setCreating(false)
+          load()
+        }}
+      />
+    </section>
   )
 }
 
@@ -144,7 +196,6 @@ function ProfileCard() {
 
   return (
     <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-eyebrow'>Profile</p>
       <div className='wuhu-profile-row'>
         <div className='wuhu-avatar-picker'>
           <Avatar
@@ -252,7 +303,6 @@ function DevicesCard({ signOut }: { signOut: (() => void) | null }) {
 
   return (
     <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-eyebrow'>Devices</p>
       <p className='wuhu-muted'>
         Scan from the phone's Wuhu login page, or open the link. One-time,
         expires in 10 minutes.
@@ -313,7 +363,6 @@ function DevicesCard({ signOut }: { signOut: (() => void) | null }) {
 function PrivacyCard({ review }: { review: () => void }) {
   return (
     <section className='wuhu-card wuhu-settings-card'>
-      <p className='wuhu-eyebrow'>Privacy and support</p>
       <button type='button' className='wuhu-settings-link' onClick={review}>
         <strong>AI sharing</strong>
         <span className='wuhu-muted'>

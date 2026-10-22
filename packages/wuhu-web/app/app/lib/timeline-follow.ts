@@ -16,8 +16,7 @@ export function atBottom(metrics: ScrollMetrics): boolean {
     bottomSlackPx
 }
 
-// The pin and the jump-to-latest control both read `following`. Only the
-// reader moving up lets go of the latest message: content growing under a
+// Only the reader moving up lets go of the latest message: content growing under a
 // pinned view, or the scroll event the pin itself raises, keeps it.
 export function followAfterScroll(
   previous: Follow,
@@ -37,15 +36,4 @@ export function scrollAfterResize(
   metrics: ScrollMetrics,
 ): number | null {
   return follow.following ? metrics.scrollHeight - metrics.clientHeight : null
-}
-
-// A toggle the reader makes keeps what they clicked where it was on screen:
-// the view lets go of the latest message and moves as far as the clicked line
-// moved.
-export function holdAnchor(
-  scrollTop: number,
-  before: number,
-  after: number,
-): Follow {
-  return { following: false, scrollTop: scrollTop + after - before }
 }

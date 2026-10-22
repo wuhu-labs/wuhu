@@ -1,8 +1,7 @@
 {
   "workspace": [
     "./app",
-    "./ui",
-    "./lab"
+    "./ui"
   ],
   "links": [
     "../vite-deno-resolver"

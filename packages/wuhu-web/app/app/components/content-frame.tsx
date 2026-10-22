@@ -1,37 +1,34 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { withGroup } from '~/lib/links'
-import {
-  contentMessage,
-  deviceSafeArea,
-  shellContext,
-  totalInsets,
-  zeroInsets,
-} from '~/lib/shell'
+import type { Insets } from '@wuhu/ui'
+import { contentMessage, shellContext } from '~/lib/shell'
 
+// A space page in its sandboxed frame. The shell tells it what its chrome
+// covers, again whenever that changes (a growing composer, the sidebar).
 export function ContentFrame({
   group,
   origin,
   src,
+  insets,
   remint,
 }: {
   group: string
   origin: string
   src: string
+  insets: Insets
   // Mints a fresh read cookie once the content origin refused the old one.
   remint: () => Promise<unknown>
 }) {
   const frame = useRef<HTMLIFrameElement>(null)
   const navigate = useNavigate()
+  const { top, left, right, bottom } = insets
   const sendContext = useCallback(() => {
     frame.current?.contentWindow?.postMessage(
-      shellContext(
-        globalThis.location.origin,
-        totalInsets(deviceSafeArea(), zeroInsets),
-      ),
+      shellContext(globalThis.location.origin, { top, left, right, bottom }),
       origin,
     )
-  }, [origin])
+  }, [origin, top, left, right, bottom])
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -53,14 +50,8 @@ export function ContentFrame({
       }
     }
     globalThis.addEventListener('message', receive)
-    globalThis.addEventListener('resize', sendContext)
-    globalThis.visualViewport?.addEventListener('resize', sendContext)
     sendContext()
-    return () => {
-      globalThis.removeEventListener('message', receive)
-      globalThis.removeEventListener('resize', sendContext)
-      globalThis.visualViewport?.removeEventListener('resize', sendContext)
-    }
+    return () => globalThis.removeEventListener('message', receive)
   }, [group, navigate, origin, remint, sendContext, src])
 
   return (

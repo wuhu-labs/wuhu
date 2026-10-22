@@ -11,7 +11,7 @@ Each tool is one route, `POST /v1/tools/<name>`, taking the tool's input as its 
 | [`rm`](rm.md) | [`RemoveInput`](../../../SpaceContract/Tests/contract/remove-input.schema.json) | [`RevisionOutput`](../../../SpaceContract/Tests/contract/revision-output.schema.json) |
 | [`mv`](mv.md) | [`MoveInput`](../../../SpaceContract/Tests/contract/move-input.schema.json) | [`MoveOutput`](../../../SpaceContract/Tests/contract/move-output.schema.json) |
 | [`ls`](ls.md) | [`ListInput`](../../../SpaceContract/Tests/contract/list-input.schema.json) | [`ListOutput`](../../../SpaceContract/Tests/contract/list-output.schema.json) |
-| [`stat`](stat.md) | [`StatInput`](../../../SpaceContract/Tests/contract/stat-input.schema.json) | [`Entry`](../../../SpaceContract/Tests/contract/entry.schema.json) |
+| [`stat`](stat.md) | [`StatInput`](../../../SpaceContract/Tests/contract/stat-input.schema.json) | [`StatOutput`](../../../SpaceContract/Tests/contract/stat-output.schema.json) |
 | [`grep`](grep.md) | [`GrepInput`](../../../SpaceContract/Tests/contract/grep-input.schema.json) | [`GrepOutput`](../../../SpaceContract/Tests/contract/grep-output.schema.json) |
 | [`find`](find.md) | [`FindInput`](../../../SpaceContract/Tests/contract/find-input.schema.json) | [`FindOutput`](../../../SpaceContract/Tests/contract/find-output.schema.json) |
 | [`history`](history.md) | [`HistoryInput`](../../../SpaceContract/Tests/contract/history-input.schema.json) | [`HistoryOutput`](../../../SpaceContract/Tests/contract/history-output.schema.json) |

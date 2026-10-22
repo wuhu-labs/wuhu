@@ -179,34 +179,34 @@
   color: var(--fg-muted, var(--_fg-muted));
 }
 
-/* Tiptap's task list: ul[data-type] > li[data-type] > label + div, the same
+/* Tiptap's task list: ul[data-type] > li > label + div, the same
    look as remark's ul.contains-task-list. */
 .wuhu-markdown ul[data-type='taskList'] {
   padding-left: 0.2rem;
   list-style: none;
 }
 
-.wuhu-markdown li[data-type='taskItem'] {
+.wuhu-markdown ul[data-type='taskList'] > li {
   display: flex;
   align-items: baseline;
   gap: 0.55rem;
 }
 
-.wuhu-markdown li[data-type='taskItem'] > label {
+.wuhu-markdown ul[data-type='taskList'] > li > label {
   flex: none;
   display: inline-flex;
 }
 
-.wuhu-markdown li[data-type='taskItem'] > div {
+.wuhu-markdown ul[data-type='taskList'] > li > div {
   min-width: 0;
   flex: 1;
 }
 
-.wuhu-markdown li[data-type='taskItem'] > div > p {
+.wuhu-markdown ul[data-type='taskList'] > li > div > p {
   margin-top: 0;
 }
 
-.wuhu-markdown li[data-type='taskItem'] input[type='checkbox'] {
+.wuhu-markdown ul[data-type='taskList'] > li input[type='checkbox'] {
   width: 1em;
   height: 1em;
   margin: 0;
@@ -218,14 +218,14 @@
   cursor: pointer;
 }
 
-.wuhu-markdown li[data-type='taskItem'] input[type='checkbox']:checked {
+.wuhu-markdown ul[data-type='taskList'] > li input[type='checkbox']:checked {
   border-color: var(--accent, var(--_accent));
   background: var(--accent, var(--_accent))
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
     center / 0.8em no-repeat;
 }
 
-.wuhu-markdown li[data-type='taskItem'][data-checked='true'] > div {
+.wuhu-markdown ul[data-type='taskList'] > li[data-checked='true'] > div {
   color: var(--fg-muted, var(--_fg-muted));
 }
 
@@ -333,12 +333,6 @@
 .wuhu-code-copy:hover {
   color: var(--fg, var(--_fg));
   background: var(--wui-hover);
-}
-
-@media (hover: none) {
-  .wuhu-code-copy {
-    opacity: 1;
-  }
 }
 
 .wuhu-markdown .wuhu-code pre {

@@ -82,7 +82,7 @@ export function Attachments({
           target={download ? undefined : '_blank'}
           rel={download ? undefined : 'noreferrer'}
         >
-          <Icon name='note' />
+          <Icon name='doc' w={13} h={16} />
           <span>
             <strong>{attachmentName(attachment.path)}</strong>
             <span>{attachmentDetail(attachment)}</span>

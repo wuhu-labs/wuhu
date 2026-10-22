@@ -1,7 +1,6 @@
 import { decideAISharing } from './ai-sharing.ts'
 import type { EntryKind } from './contract.gen.ts'
 import { composerSend } from './composer-send.ts'
-import type { Draft } from './drafts.ts'
 import { loadShownNode, type NodeSource, type NodeView } from './node-view.ts'
 import { viewingOf } from './viewing.ts'
 import { ApiError } from '../sdk/errors.ts'
@@ -77,24 +76,15 @@ function space(files: Record<string, string>): NodeSource {
   }
 }
 
-const draft = (text: string): Draft => ({
-  text,
-  reply: null,
-  files: [],
-  preparing: false,
-  refusal: null,
-})
-
 // What the docked composer sends, from the node page as the root route holds
-// it (lib/use-shown-node.ts) to the moment Send posts. The route's ownership
-// of it, across navigation, is space-viewing.test.tsx.
+// it (lib/use-shown-node.ts) to the moment Send posts.
 async function sendFrom(files: Record<string, string>, requested: string) {
   const shown = await loadShownNode(space(files), origin, requested, '')
   await composerSend({
     target: { kind: 'session', id: 'desk' },
     group: 'team',
     viewing: viewingOf({ group: 'shared', requested, ...shown }),
-  })(draft('look'))
+  })('look')
 }
 
 const post = (extra: Record<string, string>) => ({

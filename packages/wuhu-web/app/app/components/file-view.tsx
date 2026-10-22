@@ -56,7 +56,7 @@ export function FileCard({
     : `${fileKind(path)} · ${formatSize(size)}`
   return (
     <div className='wuhu-attachment-file wuhu-file-card'>
-      <Icon name='note' />
+      <Icon name='doc' w={13} h={16} />
       <span>
         <strong>{attachmentName(path)}</strong>
         <span>{detail}</span>

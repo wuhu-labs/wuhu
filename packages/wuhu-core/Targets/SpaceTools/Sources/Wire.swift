@@ -40,20 +40,32 @@ public enum Wire {
   }
 
   static func entry(_ entry: SpaceFS.Entry) -> JSONValue {
+    object(entryFields(entry))
+  }
+
+  /// An entry and, for an HTML page, what its head declares.
+  static func stat(_ entry: SpaceFS.Entry, head: PageHead?) -> JSONValue {
+    object(entryFields(entry) + [
+      ("layout", head?.layout.map { .string($0.rawValue) }),
+      ("title", head?.title.map(JSONValue.string)),
+    ])
+  }
+
+  private static func entryFields(_ entry: SpaceFS.Entry) -> [(String, JSONValue?)] {
     let kind: EntryKind = switch entry.kind {
     case .file: .file
     case .directory: .directory
     case .table: .table
     case .symlink: .symlink
     }
-    return object([
+    return [
       ("name", .string(entry.name)),
       ("kind", .string(kind.rawValue)),
       ("size", .integer(entry.size)),
       ("lineCount", entry.lineCount.map(JSONValue.integer)),
       ("token", .string(string(entry.token))),
       ("mtime", .number(entry.mtime.timeIntervalSince1970)),
-    ])
+    ]
   }
 
   // Rehydration by declared column type (SPEC.md): a json column's stored

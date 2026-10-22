@@ -16,7 +16,7 @@ Deno.test('the file card names the file, its kind and size, and downloads it', (
     />,
   )
   assertEquals(
-    markup.replace(/<svg.*?<\/svg>/g, '<svg/>'),
+    markup.replace(/<svg.*?<\/svg>|<i class="wui-icon"[^>]*><\/i>/g, '<svg/>'),
     '<div class="wuhu-attachment-file wuhu-file-card"><svg/>' +
       '<span><strong>build-logs.zip</strong><span>ZIP file · 41 KB</span></span>' +
       '<a class="wuhu-button-secondary" href="https://shared.space.test/evidence/build-logs.zip?download=1">Download</a>' +

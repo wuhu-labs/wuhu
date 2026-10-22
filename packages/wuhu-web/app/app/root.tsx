@@ -45,6 +45,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   useEffect(() => {
     if ('serviceWorker' in navigator) void registerServiceWorker()
+    // Chat bubbles paint their outline and tail with it once the browser
+    // has loaded it (the CSS Paint API); until then, and elsewhere, they stay
+    // plain pills.
+    const paint =
+      (CSS as { paintWorklet?: { addModule(url: string): Promise<void> } })
+        .paintWorklet
+    paint?.addModule('/_/worklets/bubble.js').then(() => {
+      document.documentElement.dataset.bubbles = 'painted'
+    }, () => undefined)
   }, [])
   return <Outlet />
 }

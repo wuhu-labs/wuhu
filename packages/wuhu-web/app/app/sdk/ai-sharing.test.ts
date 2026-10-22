@@ -1,11 +1,6 @@
 import { aiSharing, aiSharingRefusal, decideAISharing } from '~/lib/ai-sharing'
 import { postConversationMessage } from './conversation.ts'
-import {
-  compactSession,
-  createSession,
-  restartSession,
-  unarchiveSession,
-} from './session.ts'
+import { createSession } from './session.ts'
 import { transcribe } from './transcribe.ts'
 
 function equal(actual: unknown, expected: unknown) {
@@ -36,8 +31,6 @@ globalThis.indexedDB = {
     }),
 } as unknown as IDBFactory
 
-const desk = { id: 'desk', group: 'shared' }
-
 const calls: [string, () => Promise<unknown>][] = [
   ['POST /v1/session', () => createSession({ title: 'Audit' }, 'shared')],
   [
@@ -48,12 +41,6 @@ const calls: [string, () => Promise<unknown>][] = [
     'POST /v1/transcribe',
     () => transcribe(new Blob([new Uint8Array(4)], { type: 'audio/webm' })),
   ],
-  ['POST /v1/session/desk/compact', () => compactSession(desk, '')],
-  [
-    'POST /v1/session/desk/restart',
-    () => restartSession(desk, { timezone: 'UTC' }),
-  ],
-  ['POST /v1/session/desk/unarchive', () => unarchiveSession(desk)],
 ]
 
 async function refusals(): Promise<string[]> {

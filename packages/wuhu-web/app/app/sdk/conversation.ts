@@ -18,14 +18,12 @@ export function conversationPostInput(
   address: MessageAddress,
   message: string,
   timezone: string,
-  replyTarget?: string | null,
   viewing?: string | null,
 ): ConversationPostInput {
   return {
     ...address,
     message,
     timezone,
-    ...(replyTarget == null || replyTarget === '' ? {} : { replyTarget }),
     ...(viewing == null ? {} : { viewing }),
   }
 }
@@ -43,26 +41,6 @@ export function markReadInput(conversation: string): { source: string } {
   return { source: conversation }
 }
 
-// Files ride as multipart `file` parts after the JSON `message` part; a post
-// without files stays plain JSON.
-export function conversationPostRequest(
-  input: ConversationPostInput,
-  files: readonly File[],
-  group: string,
-): RequestInit {
-  if (files.length === 0) {
-    return {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...inGroup(group) },
-      body: JSON.stringify(input),
-    }
-  }
-  const form = new FormData()
-  form.append('message', JSON.stringify(input))
-  for (const file of files) form.append('file', file, file.name)
-  return { method: 'POST', headers: inGroup(group), body: form }
-}
-
 // Posts as a person acting in `group`: the box's own group reads it, and the
 // message is recorded as sent from there. `viewing` names the doc or page on
 // screen at Send (lib/viewing.ts), omitted when there is none. A server that
@@ -72,26 +50,17 @@ export async function postConversationMessage(
   address: MessageAddress,
   group: string,
   message: string,
-  replyTarget?: string | null,
-  files: readonly File[] = [],
   viewing: string | null = null,
 ): Promise<ConversationPostOutput> {
   await requireAISharing()
   const send = (viewing: string | null) =>
-    api<ConversationPostOutput>(
-      '/v1/conversation/message',
-      conversationPostRequest(
-        conversationPostInput(
-          address,
-          message,
-          browserTimezone(),
-          replyTarget,
-          viewing,
-        ),
-        files,
-        group,
+    api<ConversationPostOutput>('/v1/conversation/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...inGroup(group) },
+      body: JSON.stringify(
+        conversationPostInput(address, message, browserTimezone(), viewing),
       ),
-    )
+    })
   try {
     return await send(viewing)
   } catch (failure) {

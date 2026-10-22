@@ -9,6 +9,14 @@ public enum EntryKind: String, Codable, Equatable, Sendable {
   case symlink
 }
 
+/// How a page asks the shell to lay it out. Absent means framed; an HTML page
+/// opts into `immersive` with `<meta name="wuhu-layout" content="immersive">`
+/// in its head.
+@Contract
+public enum PageLayout: String, Codable, Equatable, Sendable {
+  case immersive
+}
+
 @Contract
 public struct Entry: Codable, Equatable, Sendable {
   public let name: String

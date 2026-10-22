@@ -1,341 +1,387 @@
 import {
-  type DotTone,
-  Picker,
-  Pill,
-  PrimaryAction,
-  Sidebar,
-  SidebarActions,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarNote,
-  SidebarRow,
-  SidebarScroll,
-  SidebarSection,
-  useChrome,
+  AgentCard,
+  AvatarSlot,
+  Count,
+  EntityCard,
+  Icon,
+  type IconName,
+  LeadIcon,
+  ListCard,
+  Row,
 } from '@wuhu/ui'
-import { useEffect, useState } from 'react'
-import {
-  isSessionWorking,
-  type SessionRecord,
-  type SessionSummary,
-} from '~/lib/session-model'
-import { errorMessage } from '~/sdk/errors'
-import type { SessionAddress } from '~/sdk/session'
-import { displayNameFor, handleFor } from '~/lib/directory'
-import { screens, sessionHref, withGroup } from '~/lib/links'
-import { ancestors, flatten, nest, stableOrder } from '~/lib/outline'
-import { groupLabel, memberGroups, memberOr } from '~/lib/groups'
+import type { QueryOutput } from '~/lib/contract.gen'
+import { initialsFrom } from '~/lib/directory'
+import { cardGroups, inCreationOrder, sessionStatusLine } from '~/lib/cards'
+import type { ChannelSummary } from '~/lib/channels'
+import { sharedGroup } from '~/lib/groups'
+import { conversationHref, sessionHref } from '~/lib/links'
+import type { SessionRecord, SessionSummary } from '~/lib/session-model'
 import {
   everything,
-  sameView,
-  sidebarName,
-  sidebarPaths,
-  type SidebarView,
+  type RowTarget,
+  rowTarget,
+  type SidebarFile,
+  type SidebarNode,
+  sidebarNodes,
+  type SidebarSection,
 } from '~/lib/sidebars'
-import { useSpaceFeeds } from '~/lib/space-feeds'
-import { spaceDestination } from '~/lib/space-url'
-import { buildTree } from '~/lib/tree'
-import { useDirectory, useOwnPrincipal } from '~/lib/use-directory'
+import { useObserve } from '~/lib/use-observe'
+import { errorMessage } from '~/sdk/errors'
+import { sqlSubscription } from '~/sdk/subscriptions'
 import { Avatar } from './avatar'
-import { ChannelSection } from './channel-section'
-import { CustomSidebar } from './custom-sidebar'
-import { SessionRow } from './session-row'
-import { SpaceTree } from './space-tree'
-import { WebPushControl } from './web-push-control'
 
-// A session's state as one colour, for the composer's target chip.
-export function sessionTone(
-  session: Pick<SessionSummary, 'lifecycle' | 'hold' | 'work' | 'runState'>,
-): DotTone {
-  if (session.lifecycle !== 'live' || session.hold !== 'normal') return 'idle'
-  if (session.work === 'errored') return 'rose'
-  if (session.work !== 'no_work' && session.work !== 'has_work') return 'idle'
-  if (session.runState === 'unknown') return 'idle'
-  if (isSessionWorking(session)) return 'amber'
-  return 'mint'
+interface Navigation {
+  // The address on screen, pathname plus search, to light up its row.
+  here: string
+  // A custom row passes its title along: the page pill's name for a page
+  // with no title of its own.
+  onNavigate: (href: string, title?: string) => void
 }
 
-function viewKey(view: SidebarView): string {
-  return `${view.group}\n${view.sidebar}`
-}
-
-export function SpaceSidebar({
-  account,
-  activePath,
-  expanded,
-  onArchiveSession,
-  onNavigate: navigateTo,
-  onNewDocument,
-  onNewSession,
-  onSelectView,
-  onToggle,
-  pathname,
-  placeGroup,
-  space,
-  view,
-}: {
-  account: { initials: string; name: string; detail?: string }
-  activePath: string | null
-  expanded: ReadonlySet<string>
-  onArchiveSession: (session: SessionAddress) => Promise<void>
-  onNavigate: (to: string) => void
-  onNewDocument: (directory: string, group: string) => void
-  onNewSession: () => void
-  onSelectView: (view: SidebarView) => void
-  onToggle: (path: string) => void
-  pathname: string
-  placeGroup: string
-  // The host names the space, as native's sidebar does.
-  space: string
-  view: SidebarView
-}) {
-  const { compact, setMode } = useChrome()
-  const feeds = useSpaceFeeds()
-  const members = feeds.groups == null ? [] : memberGroups(feeds.groups)
-  const directory = useDirectory()
-  const principal = useOwnPrincipal()
-  const [archiveError, setArchiveError] = useState<string | null>(null)
-  // Disclosure is per view: Everything opens nothing until asked, a custom
-  // sidebar opens every branch until asked, so one toggle set serves both.
-  const [toggled, setToggled] = useState<Record<string, ReadonlySet<string>>>(
-    {},
-  )
-  // Compact chrome shows the sidebar over the canvas, so following a link there
-  // has to dismiss it or the destination stays covered.
-  const onNavigate = (to: string) => {
-    if (compact) setMode('focus')
-    navigateTo(to)
-  }
-
-  // A chosen view whose group or file left shows Everything without losing
-  // the choice, so either coming back brings the view back.
-  const group = memberOr(view.group, feeds.groups == null ? null : members)
-  const { error, files, loaded, sessions, channels, sidebars } = feeds.feed(
-    group,
-  )
-  const shown: SidebarView = {
-    group,
-    sidebar: group === view.group &&
-        sidebarPaths(files.paths).includes(view.sidebar)
-      ? view.sidebar
-      : everything,
-  }
-  const selected = sidebars?.find((file) => file.path === shown.sidebar)
-  const title = selected?.title ??
-    (shown.sidebar === everything ? 'Everything' : sidebarName(shown.sidebar))
-  const sections = members.map((member) => ({
-    id: member,
-    label: groupLabel(member, directory),
-    options: [
-      { path: everything, title: 'Everything' },
-      ...feeds.feed(member).sidebars ?? [],
-    ].map((option) => ({
-      id: option.path,
-      label: option.title,
-      selected: sameView(shown, { group: member, sidebar: option.path }),
-      onSelect: () => onSelectView({ group: member, sidebar: option.path }),
-    })),
-  }))
-  const ambiguous = sections.flatMap((section) => section.options)
-    .filter((option) => option.label === title).length > 1
-  const key = viewKey(shown)
-  const toggles = toggled[key] ?? new Set<string>()
-  const toggle = (id: string) =>
-    setToggled((current) => {
-      const next = new Set(current[key])
-      if (!next.delete(id)) next.add(id)
-      return { ...current, [key]: next }
-    })
-
-  const here = withGroup(pathname, placeGroup)
-  const destination = spaceDestination(pathname)
-  const activeSession = destination?.kind === 'session' ? destination.id : null
-  const lineage = activeSession == null || sessions == null
-    ? ''
-    : ancestors(sessions, activeSession).join('\n')
-  const everythingKey = viewKey({ group, sidebar: everything })
-  useEffect(() => {
-    if (lineage === '') return
-    setToggled((current) => {
-      const open = current[everythingKey] ?? new Set<string>()
-      const missing = lineage.split('\n').filter((id) => !open.has(id))
-      if (missing.length === 0) return current
-      return { ...current, [everythingKey]: new Set([...open, ...missing]) }
-    })
-  }, [lineage, everythingKey])
-
-  const handle = principal == null ? undefined : handleFor(directory, principal)
-  const known = principal == null
-    ? undefined
-    : displayNameFor(directory, principal) ??
-      (handle == null ? undefined : `@${handle}`)
-  const archive = (session: SessionAddress) => {
-    setArchiveError(null)
-    onArchiveSession(session).catch((failure: unknown) => {
-      setArchiveError(errorMessage(failure))
-    })
-  }
+// A session's photo, else its initials.
+export function SessionAvatar(
+  { session, size }: {
+    session: Pick<SessionSummary, 'id' | 'title'>
+    size: number
+  },
+) {
   return (
-    <Sidebar>
-      <SidebarHeader
-        brand='Wuhu'
-        href='/'
-        onNavigate={() => onNavigate('/')}
-        status={feeds.liveness === 'live'
-          ? undefined
-          : <Pill tone='amber' dot>reconnecting</Pill>}
-      />
-      <SidebarActions>
-        <PrimaryAction
-          label='New agent'
-          onClick={() => {
-            if (compact) setMode('focus')
-            onNewSession()
-          }}
-        />
-      </SidebarActions>
-      <SidebarScroll>
-        <Picker
-          eyebrow={ambiguous
-            ? `${space} · ${groupLabel(group, directory)}`
-            : undefined}
-          title={title}
-          label={`Switch view, ${title}`}
-          sections={sections}
-        />
-        {shown.sidebar !== everything &&
-          (selected == null
-            ? <SidebarNote>Loading…</SidebarNote>
-            : (
-              <CustomSidebar
-                file={selected}
-                group={group}
-                sessions={feeds.sessions}
-                here={here}
-                collapsed={toggles}
-                onToggle={toggle}
-                onNavigate={onNavigate}
-              />
-            ))}
-        {shown.sidebar === everything && (
-          <>
-            <SidebarSection
-              title='Agents'
-              count={sessions == null
-                ? undefined
-                : `${
-                  sessions.filter((s) =>
-                    s.lifecycle !== 'archived' && s.hold !== 'released'
-                  ).length
-                } active`}
-            >
-              {archiveError && (
-                <SidebarNote tone='alert'>{archiveError}</SidebarNote>
-              )}
-              <SessionOutline
-                sessions={sessions}
-                here={here}
-                open={toggles}
-                onToggle={toggle}
-                onArchive={archive}
-                onNavigate={onNavigate}
-              />
-              <SidebarRow
-                label='All agents'
-                icon='archive'
-                quiet
-                href={screens.sessions}
-                active={pathname === screens.sessions}
-                onClick={() => onNavigate(screens.sessions)}
-              />
-            </SidebarSection>
-            <ChannelSection
-              channels={channels}
-              group={group}
-              here={here}
-              onNavigate={onNavigate}
-            />
-            <SidebarSection title='Documents'>
-              {error && <SidebarNote tone='alert'>{error}</SidebarNote>}
-              {!error && !loaded && <SidebarNote>Loading…</SidebarNote>}
-              {!error && loaded && (
-                <SpaceTree
-                  tree={buildTree(files.paths)}
-                  group={group}
-                  activePath={placeGroup === group ? activePath : null}
-                  expanded={expanded}
-                  onToggle={onToggle}
-                  onNavigate={onNavigate}
-                  onNewDocument={onNewDocument}
-                />
-              )}
-            </SidebarSection>
-          </>
-        )}
-      </SidebarScroll>
-      <SidebarFooter
-        initials={account.initials}
-        avatar={<Avatar principal={principal} name={known} />}
-        name={known ?? account.name}
-        detail={known != null && handle != null && known !== `@${handle}`
-          ? `@${handle}`
-          : account.detail}
-        settingsLabel='Settings'
-        onOpen={() => onNavigate(screens.settings)}
-        onSettings={() => onNavigate(screens.settings)}
-      >
-        <WebPushControl />
-      </SidebarFooter>
-    </Sidebar>
+    <AvatarSlot size={size}>
+      <Avatar principal={session.id} name={session.title} session size={size} />
+    </AvatarSlot>
   )
 }
 
-function SessionOutline({
+// Everything: one card per top-level agent, its child agents one level down
+// (tasks are not listed), and one card of channels when there is any.
+export function EverythingSidebar({
+  sessions,
+  channels,
+  here,
+  onNavigate,
+}: Navigation & {
+  sessions: SessionRecord[] | null
+  channels: ChannelSummary[] | null
+}) {
+  const listed = inCreationOrder(
+    sessions?.filter((s) => s.lifecycle !== 'archived') ?? [],
+  )
+
+  const tops = listed.filter((s) => s.kind === 'agent' && s.parent == null)
+  return (
+    <>
+      {tops.map((agent) => {
+        const children = listed.filter((s) =>
+          s.kind === 'agent' && s.parent === agent.id
+        )
+        const href = sessionHref(agent.id, agent.group)
+        if (children.length === 0) {
+          return (
+            <AgentCard
+              key={agent.id}
+              href={href}
+              current={here === href}
+              onNavigate={onNavigate}
+              lead={<SessionAvatar session={agent} size={34} />}
+              name={agent.title}
+              status={sessionStatusLine(agent)}
+              count={<Count value={agent.unread} />}
+            />
+          )
+        }
+        return (
+          <EntityCard
+            key={agent.id}
+            href={href}
+            current={here === href}
+            onNavigate={onNavigate}
+            lead={<SessionAvatar session={agent} size={34} />}
+            title={agent.title}
+            status={sessionStatusLine(agent)}
+            trail={<Count value={agent.unread} />}
+          >
+            {children.map((child) => {
+              const childHref = sessionHref(child.id, child.group)
+              return (
+                <Row
+                  key={child.id}
+                  href={childHref}
+                  current={here === childHref}
+                  onNavigate={onNavigate}
+                  lead={<SessionAvatar session={child} size={26} />}
+                  label={child.title}
+                  status={sessionStatusLine(child)}
+                  trail={<Count value={child.unread} tone='grey' />}
+                />
+              )
+            })}
+          </EntityCard>
+        )
+      })}
+      {channels != null && channels.length > 0 && (
+        <ListCard title='Channels'>
+          {channels.map((channel) => {
+            const href = conversationHref(channel.id, sharedGroup)
+            return (
+              <Row
+                key={channel.id}
+                href={href}
+                current={here === href}
+                onNavigate={onNavigate}
+                lead={
+                  <LeadIcon>
+                    <Icon name='bubble' w={16} h={16} />
+                  </LeadIcon>
+                }
+                label={channel.title}
+                trail={<Count value={channel.unread} />}
+              />
+            )
+          })}
+        </ListCard>
+      )}
+    </>
+  )
+}
+
+// A custom sidebar: the first section's top-level rows each their own card
+// with one level of children; every later section one titled card of its
+// top-level rows.
+export function CustomSidebar({
+  file,
+  group,
   sessions,
   here,
-  open,
-  onToggle,
-  onArchive,
   onNavigate,
-}: {
+}: Navigation & {
+  file: SidebarFile
+  group: string
   sessions: SessionRecord[] | null
-  here: string
-  open: ReadonlySet<string>
-  onToggle: (id: string) => void
-  onArchive: (session: SessionAddress) => void
-  onNavigate: (to: string) => void
 }) {
-  // Rows keep the place they were first drawn in while the sidebar is
-  // mounted; the roster's activity order would move them under the pointer.
-  const [order, setOrder] = useState<readonly string[]>([])
-  const listed = stableOrder(
-    sessions?.filter((s) => s.lifecycle !== 'archived') ?? [],
-    order,
-  )
-  const ids = listed.map((s) => s.id)
-  // React's "adjusting state while rendering" exception: the order is this
-  // component's own state, derived from the previous render's, and the same
-  // render settles it. A remount starts the order over on purpose.
-  if (ids.join('\n') !== order.join('\n')) setOrder(ids)
-
-  if (sessions == null) return <SidebarNote>Loading…</SidebarNote>
-  if (listed.length === 0) return <SidebarNote>No agents yet</SidebarNote>
-  return flatten(nest(listed), (id) => open.has(id)).map((row) => (
-    <SessionRow
-      key={row.item.id}
-      session={row.item}
-      depth={row.depth}
-      expanded={row.hasChildren ? row.open : undefined}
-      active={here === sessionHref(row.item.id, row.item.group)}
-      menu={[
-        {
-          label: 'Archive agent',
-          icon: 'archive',
-          onSelect: () => onArchive(row.item),
-        },
-      ]}
-      onToggle={row.hasChildren ? () => onToggle(row.item.id) : undefined}
+  if ('failure' in file) {
+    return (
+      <ListCard title={file.title}>
+        <p className='wuhu-alert'>{file.failure}</p>
+      </ListCard>
+    )
+  }
+  return file.sections.map((section, index) => (
+    <CustomSection
+      key={section.id}
+      section={section}
+      first={index === 0}
+      group={group}
+      sessions={sessions}
+      here={here}
       onNavigate={onNavigate}
     />
   ))
+}
+
+interface Resolved {
+  node: SidebarNode
+  target: RowTarget
+  session: SessionRecord | null
+}
+
+function CustomSection({
+  section,
+  first,
+  group,
+  sessions,
+  here,
+  onNavigate,
+}: Navigation & {
+  section: SidebarSection
+  first: boolean
+  group: string
+  sessions: SessionRecord[] | null
+}) {
+  const observed = useObserve<QueryOutput | null, QueryOutput>(
+    sqlSubscription(section.sql, group),
+    (_, output) => output,
+    null,
+  )
+  let nodes: SidebarNode[] = []
+  let failure: string | null = null
+  if (observed.data != null) {
+    try {
+      nodes = sidebarNodes(observed.data)
+    } catch (refusal) {
+      failure = errorMessage(refusal)
+    }
+  }
+  const firstAgent =
+    sessions?.find((session) =>
+      session.group === group && session.kind === 'agent' &&
+      session.lifecycle !== 'archived'
+    )?.id ?? null
+  const resolved = nodes.flatMap((node): Resolved[] => {
+    const target = rowTarget(node.destination, firstAgent, group)
+    if (target == null) return []
+    const session = target.kind === 'session'
+      ? sessions?.find((record) => record.id === target.id) ?? null
+      : null
+    return [{ node, target, session }]
+  })
+  const groups = cardGroups(
+    resolved.map((row) => ({
+      ...row,
+      id: row.node.id,
+      parent: row.node.parent,
+    })),
+  )
+  const row = (item: Resolved, size: number) => ({
+    href: item.target.href,
+    current: here === item.target.href,
+    onNavigate: (href: string) => onNavigate(href, item.node.title),
+    lead: rowLead(item, size),
+    status: item.session && sessionStatusLine(item.session),
+  })
+
+  if (failure != null) {
+    return (
+      <ListCard title={section.title}>
+        <p className='wuhu-alert'>{failure}</p>
+      </ListCard>
+    )
+  }
+  if (!first) {
+    if (groups.length === 0) return null
+    return (
+      <ListCard title={section.title}>
+        {groups.map(({ item }) => (
+          <Row
+            key={item.node.id}
+            {...row(item, 32)}
+            label={item.node.title}
+            trail={<Count value={badgeOf(item)} />}
+          />
+        ))}
+      </ListCard>
+    )
+  }
+  return groups.map(({ item, children }) =>
+    children.length === 0
+      ? (
+        <AgentCard
+          key={item.node.id}
+          {...row(item, 34)}
+          name={item.node.title}
+          count={<Count value={badgeOf(item)} />}
+        />
+      )
+      : (
+        <EntityCard
+          key={item.node.id}
+          {...row(item, 34)}
+          title={item.node.title}
+          trail={<Count value={badgeOf(item)} />}
+        >
+          {children.map((child) => (
+            <Row
+              key={child.node.id}
+              {...row(child, 26)}
+              label={child.node.title}
+              trail={<Count value={badgeOf(child)} />}
+            />
+          ))}
+        </EntityCard>
+      )
+  )
+}
+
+// The row's own badge, else, for a row naming a session's box, its unread;
+// `chat` shows the agent it opens, not that agent's mail.
+function badgeOf({ node, session }: Resolved): number {
+  if (node.badge != null) return Math.max(0, node.badge)
+  return session != null && node.destination !== 'chat' ? session.unread : 0
+}
+
+function rowLead({ node, target, session }: Resolved, size: number) {
+  if (session != null) return <SessionAvatar session={session} size={size} />
+  if (target.kind === 'session') {
+    return (
+      <SessionAvatar
+        session={{ id: target.id, title: node.title }}
+        size={size}
+      />
+    )
+  }
+  const glyph = documentGlyph(target)
+  return (
+    <LeadIcon>
+      {glyph === 'doc'
+        ? <Icon name='doc' w={13} h={16} />
+        : <Icon name={glyph} w={16} h={16} />}
+    </LeadIcon>
+  )
+}
+
+// One glyph for HTML pages, one for Markdown documents.
+function documentGlyph(target: RowTarget): IconName {
+  if (target.kind === 'conversation') return 'bubble'
+  return /\.html?($|[?#])/.test(target.href) ? 'grid' : 'doc'
+}
+
+// The SF Symbol a definition names, drawn with the design's nearest glyph.
+const symbolGlyphs: Record<string, IconName> = {
+  hammer: 'hammer',
+  book: 'book',
+  'book.closed': 'book',
+  pencil: 'pencil',
+  clock: 'clock',
+  sparkles: 'sparkles',
+  folder: 'folder',
+  doc: 'doc',
+  'doc.text': 'doc',
+  bubble: 'bubble',
+  'bubble.left': 'bubble',
+  message: 'bubble',
+  gear: 'gear',
+  gearshape: 'gear',
+  'square.grid.2x2': 'grid',
+  'chart.xyaxis.line': 'graph',
+}
+
+// The rail: Everything, then one button per sidebar file.
+export function SidebarRail({
+  files,
+  current,
+  onPick,
+}: {
+  files: SidebarFile[] | null
+  current: string
+  onPick: (sidebar: string) => void
+}) {
+  return (
+    <>
+      <button
+        type='button'
+        title='Everything'
+        aria-label='Everything'
+        aria-pressed={current === everything}
+        onClick={() => onPick(everything)}
+      >
+        <Icon name='bubble' w={18} h={18} />
+      </button>
+      {files?.map((file) => {
+        const glyph = file.icon == null ? undefined : symbolGlyphs[file.icon]
+        return (
+          <button
+            key={file.path}
+            type='button'
+            title={file.title}
+            aria-label={file.title}
+            aria-pressed={current === file.path}
+            onClick={() => onPick(file.path)}
+          >
+            {glyph ? <Icon name={glyph} w={18} h={18} /> : initialsFrom(
+              file.title,
+            ).slice(0, 1)}
+          </button>
+        )
+      })}
+    </>
+  )
 }

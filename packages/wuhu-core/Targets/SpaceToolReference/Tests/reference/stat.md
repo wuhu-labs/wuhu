@@ -1,8 +1,8 @@
 # `stat`
 
-One path's metadata: kind, size, line count, version token and modification time.
+One path's metadata: kind, size, line count, version token and modification time. For an HTML page in the space, also the layout and title its head declares within its first 16 KiB.
 
-`POST /v1/tools/stat` takes a [`StatInput`](../../../SpaceContract/Tests/contract/stat-input.schema.json) body and answers `200` with a [`Entry`](../../../SpaceContract/Tests/contract/entry.schema.json).
+`POST /v1/tools/stat` takes a [`StatInput`](../../../SpaceContract/Tests/contract/stat-input.schema.json) body and answers `200` with a [`StatOutput`](../../../SpaceContract/Tests/contract/stat-output.schema.json).
 
 ## Input
 
@@ -20,6 +20,8 @@ One path's metadata: kind, size, line count, version token and modification time
 | `lineCount` | integer or null | no |
 | `token` | string | yes |
 | `mtime` | number | yes |
+| `layout` | one of `"immersive"` or null | no |
+| `title` | string or null | no |
 
 ## Errors
 

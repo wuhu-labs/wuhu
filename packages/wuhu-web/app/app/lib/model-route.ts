@@ -1,4 +1,4 @@
-import type { QueryOutput, SessionModelRouteOutput } from './contract.gen.ts'
+import type { QueryOutput } from './contract.gen.ts'
 
 // The group member a session runs on. `reason` is the latest placement
 // decision's reason as the server wrote it; unknown reasons render verbatim.
@@ -12,27 +12,6 @@ export interface SessionRoute {
   // Changes whenever the server rewrites the open failure without moving the
   // route; readers refetch the failure on a change.
   failureRevision: string | null
-}
-
-export interface RouteFailure {
-  reason: string
-  source: string | null
-  code: string | null
-  deadline: Date | null
-  retryAt: Date | null
-}
-
-export type RouteStage =
-  | 'pinned'
-  | 'waiting'
-  | 'blocked'
-  | 'recovered'
-  | 'switched'
-
-export interface RouteNote {
-  stage: RouteStage
-  text: string
-  tone: 'rose' | 'amber' | 'neutral' | 'live'
 }
 
 // `previous_member` is the member of the decision before the latest one, and
@@ -77,111 +56,4 @@ export function routeRows(output: QueryOutput): Map<string, SessionRoute> {
     })
   }
   return routes
-}
-
-function date(value: unknown): Date | null {
-  const raw = text(value)
-  if (raw == null) return null
-  const parsed = new Date(raw)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
-export function routeFailureOf(
-  output: SessionModelRouteOutput,
-): RouteFailure | null {
-  const route = output.route as Record<string, unknown> | null | undefined
-  const failure = route?.failure as Record<string, unknown> | null | undefined
-  const reason = text(failure?.reason)
-  if (failure == null || reason == null) return null
-  return {
-    reason,
-    source: text(failure.source),
-    code: text(failure.code),
-    deadline: date(failure.deadline),
-    retryAt: date(failure.retryAt),
-  }
-}
-
-function cause(reason: string | null): string {
-  switch (reason) {
-    case 'quota':
-      return 'quota exhaustion'
-    case 'authentication':
-      return 'an authentication failure'
-    case 'upstreamOutage':
-      return 'an upstream outage'
-    case null:
-      return 'a refusal'
-    default:
-      return reason
-  }
-}
-
-function shortTime(when: Date): string {
-  return when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-const pinReasons = new Set(['create', 'startOver', 'compaction'])
-
-// A waiting route turns blocked once its switch deadline passes with the
-// session still waiting: no other member could take it. `recovered` is live
-// only; nothing records a route that stopped waiting without moving. A reason
-// this client does not know renders verbatim. Beside a failure line, a
-// blocked note leaves the cause to that line.
-export function routeNote(
-  route: SessionRoute,
-  failure: RouteFailure | null,
-  recovered: boolean,
-  now: Date,
-  time: (when: Date) => string = shortTime,
-  failureLine = false,
-): RouteNote {
-  const placed = `${route.group} → ${route.member}`
-  if (route.phase === 'waiting') {
-    const deadline = failure?.deadline ?? null
-    if (deadline != null && now >= deadline) {
-      const signIn = failure?.reason === 'authentication' ||
-        failure?.source === 'credentialRefresh'
-      const next = signIn
-        ? ' · sign-in required'
-        : failure?.retryAt
-        ? ` · next retry ${time(failure.retryAt)}`
-        : ''
-      return {
-        stage: 'blocked',
-        text: `${route.group} blocked on ${route.member}${
-          failureLine ? '' : `: ${cause(failure?.reason ?? null)}`
-        }${next}`,
-        tone: 'rose',
-      }
-    }
-    return {
-      stage: 'waiting',
-      text: `Waiting on ${route.member}${
-        deadline == null ? '' : ` · switch eligible ${time(deadline)}`
-      }`,
-      tone: 'amber',
-    }
-  }
-  if (recovered) {
-    return { stage: 'recovered', text: `${placed} · recovered`, tone: 'live' }
-  }
-  const reason = route.reason
-  if (reason == null || pinReasons.has(reason)) {
-    return { stage: 'pinned', text: placed, tone: 'neutral' }
-  }
-  if (reason.startsWith('lastResort:')) {
-    const from = route.previousMember != null &&
-        route.previousMember !== route.member
-      ? ` from ${route.previousMember}`
-      : ''
-    return {
-      stage: 'switched',
-      text: `${placed} · switched${from} after ${
-        cause(reason.slice('lastResort:'.length))
-      }`,
-      tone: 'neutral',
-    }
-  }
-  return { stage: 'pinned', text: `${placed} · ${reason}`, tone: 'neutral' }
 }

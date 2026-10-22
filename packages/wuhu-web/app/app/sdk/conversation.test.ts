@@ -1,8 +1,4 @@
-import {
-  conversationPostInput,
-  conversationPostRequest,
-  markReadInput,
-} from './conversation.ts'
+import { conversationPostInput, markReadInput } from './conversation.ts'
 import { conversationSubscription } from './subscriptions.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
@@ -36,27 +32,12 @@ Deno.test('a DM post addresses the user identity', () => {
   )
 })
 
-Deno.test('replyTarget rides along only when one was picked', () => {
-  assertEquals(
-    conversationPostInput({ session: 's' }, 'hi', 'UTC', '9f0a'),
-    { session: 's', message: 'hi', timezone: 'UTC', replyTarget: '9f0a' },
-  )
-  for (const empty of [null, undefined, '']) {
-    assertEquals(
-      'replyTarget' in
-        conversationPostInput({ session: 's' }, 'hi', 'UTC', empty),
-      false,
-    )
-  }
-})
-
 Deno.test('viewing rides along only when a page is on screen', () => {
   assertEquals(
     conversationPostInput(
       { conversation: 'c' },
       'hi',
       'UTC',
-      null,
       'wuhu://shared.localspace/notes/plan.md',
     ),
     {
@@ -69,7 +50,7 @@ Deno.test('viewing rides along only when a page is on screen', () => {
   for (const none of [null, undefined]) {
     assertEquals(
       'viewing' in
-        conversationPostInput({ session: 's' }, 'hi', 'UTC', null, none),
+        conversationPostInput({ session: 's' }, 'hi', 'UTC', none),
       false,
     )
   }
@@ -103,33 +84,4 @@ Deno.test('the observe stream is cursored on the space-global ordinal', () => {
 
 Deno.test('marking read names the conversation as the watermark source', () => {
   assertEquals(markReadInput('cave-lime-otter'), { source: 'cave-lime-otter' })
-})
-
-Deno.test('a post without files is plain JSON', () => {
-  const input = conversationPostInput({ session: 's' }, 'hi', 'UTC')
-  const request = conversationPostRequest(input, [], 'shared')
-  assertEquals(request.headers, {
-    'content-type': 'application/json',
-    'wuhu-group': 'shared',
-  })
-  assertEquals(request.body, JSON.stringify(input))
-})
-
-Deno.test('files go as multipart: one message part, then a file part each', async () => {
-  const input = conversationPostInput({ session: 's' }, '', 'UTC')
-  const files = [
-    new File(['png'], 'a.png', { type: 'image/png' }),
-    new File(['%PDF'], 'b.pdf', { type: 'application/pdf' }),
-  ]
-  const request = conversationPostRequest(input, files, 'sail-clock-pepper')
-  assertEquals(request.headers, { 'wuhu-group': 'sail-clock-pepper' })
-  const form = request.body as FormData
-  assertEquals([...form.keys()], ['message', 'file', 'file'])
-  assertEquals(JSON.parse(form.get('message') as string), input)
-  const parts = form.getAll('file') as File[]
-  assertEquals(parts.map((part) => [part.name, part.type]), [
-    ['a.png', 'image/png'],
-    ['b.pdf', 'application/pdf'],
-  ])
-  assertEquals(await parts[1].text(), '%PDF')
 })

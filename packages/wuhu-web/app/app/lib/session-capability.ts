@@ -19,14 +19,3 @@ export function canCompose(capability: SessionCapability): boolean {
   return capability.kind === 'agent' ||
     (capability.kind === 'conversation' && capability.allowed)
 }
-
-export function canManageSession(capability: SessionCapability): boolean {
-  return capability.kind === 'agent' || capability.kind === 'task'
-}
-
-export type SessionAction = 'compact' | 'restart' | 'archive' | 'unarchive'
-
-export function sessionActions(capability: SessionCapability): SessionAction[] {
-  if (canManageSession(capability)) return ['compact', 'restart', 'archive']
-  return capability.kind === 'archived' ? ['unarchive'] : []
-}

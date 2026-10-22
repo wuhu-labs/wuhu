@@ -1,9 +1,4 @@
-import {
-  contentMessage,
-  shellContext,
-  totalInsets,
-  zeroInsets,
-} from './shell.ts'
+import { contentMessage, shellContext } from './shell.ts'
 
 function assertEquals<T>(actual: T, expected: T): void {
   const a = JSON.stringify(actual)
@@ -39,27 +34,13 @@ Deno.test('contentMessage accepts only exact shell protocol messages', () => {
   assertEquals(contentMessage(['wuhu:ready']), null)
 })
 
-Deno.test('shell context names the viewer a member and carries zero insets', () => {
-  assertEquals(zeroInsets, { top: 0, left: 0, right: 0, bottom: 0 })
-  assertEquals(shellContext('https://shell.test', zeroInsets), {
+Deno.test('shell context names the viewer a member and carries the insets', () => {
+  const insets = { top: 70, left: 0, right: 0, bottom: 75 }
+  assertEquals(shellContext('https://shell.test', insets), {
     type: 'wuhu:context',
     mode: 'shell',
     access: 'member',
     shellOrigin: 'https://shell.test',
-    insets: zeroInsets,
+    insets,
   })
-})
-
-Deno.test('host sends device safe area plus chrome on all four edges', () => {
-  const insets = totalInsets(
-    { top: 59, left: 7, right: 11, bottom: 34 },
-    { top: 52, left: 280, right: 13, bottom: 74 },
-  )
-  assertEquals(shellContext('https://shell.test', insets).insets, {
-    top: 111,
-    left: 287,
-    right: 24,
-    bottom: 108,
-  })
-  assertEquals(totalInsets(insets, zeroInsets), insets)
 })

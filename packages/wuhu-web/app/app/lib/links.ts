@@ -2,20 +2,14 @@ import {
   destinationPath,
   parseSpaceURL,
   type SpaceDestination,
-  spaceDestination,
   spaceHost,
 } from './space-url.ts'
 import { sharedGroup } from './groups.ts'
 
-export type SessionView = 'transcript' | 'context'
-
 export const screens = {
   enroll: '/_/enroll',
   login: '/_/login',
-  sessions: '/_/sessions',
   settings: '/_/settings',
-  system: '/_/system',
-  templates: '/_/templates',
 } as const
 
 // The history state New session navigates with: the roster may not list the
@@ -55,13 +49,8 @@ export function placeHref(
   return withGroup(destinationPath(destination), group)
 }
 
-export function sessionHref(
-  id: string,
-  group: string,
-  view?: SessionView,
-): string {
-  const path = destinationPath({ kind: 'session', id })
-  return withGroup(view == null ? path : `${path}?view=${view}`, group)
+export function sessionHref(id: string, group: string): string {
+  return placeHref({ kind: 'session', id }, group)
 }
 
 export function conversationHref(id: string, group: string): string {
@@ -84,38 +73,6 @@ export function groupAddress(
   return match == null
     ? { group, path: address }
     : { group: match[1].toLowerCase(), path: match[2] }
-}
-
-const systemOrigin = 'wuhu://system'
-
-// `wuhu://system/…` names a read-only file built into the server. Only the
-// read tool serves it, so the SPA opens it on its own screen, never as a space
-// path.
-export function isSystemAddress(path: string): boolean {
-  return path.startsWith(`${systemOrigin}/`)
-}
-
-// Where a session-context entry opens: a space path, or a system address.
-export function entryHref(path: string, group: string): string {
-  if (isSystemAddress(path)) {
-    const rest = path.slice(systemOrigin.length)
-    return screens.system + destinationPath({ kind: 'path', path: rest })
-  }
-  const address = groupAddress(path, group)
-  return fileHref(address.path, address.group)
-}
-
-export function systemAddress(pathname: string): string | null {
-  if (!pathname.startsWith(`${screens.system}/`)) return null
-  const destination = spaceDestination(pathname.slice(screens.system.length))
-  return destination?.kind === 'path' && destination.path !== '/'
-    ? systemOrigin + destination.path
-    : null
-}
-
-export function sessionView(search: string): SessionView | null {
-  const view = new URLSearchParams(search).get('view')
-  return view === 'transcript' || view === 'context' ? view : null
 }
 
 const externalHref = /^([a-z][a-z0-9+.-]*:|\/\/)/i

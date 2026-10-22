@@ -45,10 +45,6 @@ export function parseTranscriptItem(raw: unknown): TranscriptItem | null {
   return { kind, value } as TranscriptItem
 }
 
-export function isEmptyDirect(state: DirectState): boolean {
-  return state.items.size === 0 && state.bubbles.size === 0
-}
-
 export function foldDirect(
   state: DirectState,
   event: SessionStreamEvent,

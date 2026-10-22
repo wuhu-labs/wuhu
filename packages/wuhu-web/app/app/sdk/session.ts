@@ -1,15 +1,8 @@
-import { api, inGroup, post } from './http'
+import { inGroup, post } from './http'
 import { requireAISharing } from '~/lib/ai-sharing'
 import type {
-  SessionCompactInput,
-  SessionContext,
-  SessionContextOutput,
   SessionCreateInput,
   SessionCreateOutput,
-  SessionHomeOutput,
-  SessionModelRouteOutput,
-  SessionRestartInput,
-  SessionRestartOutput,
 } from '~/lib/contract.gen'
 
 export interface Attachment {
@@ -151,74 +144,4 @@ export async function createSession(
 export interface SessionAddress {
   id: string
   group: string
-}
-
-export async function archiveSession(session: SessionAddress): Promise<void> {
-  await api(`/v1/session/${session.id}/archive`, {
-    method: 'POST',
-    headers: inGroup(session.group),
-  })
-}
-
-export async function unarchiveSession(
-  session: SessionAddress,
-): Promise<void> {
-  await requireAISharing()
-  await api(`/v1/session/${session.id}/unarchive`, {
-    method: 'POST',
-    headers: inGroup(session.group),
-  })
-}
-
-export async function fetchSessionContext(
-  session: SessionAddress,
-): Promise<SessionContext | null> {
-  const output = await api<SessionContextOutput>(
-    `/v1/session/${session.id}/context`,
-    { headers: inGroup(session.group) },
-  )
-  return output.context ?? null
-}
-
-export function fetchModelRoute(
-  session: SessionAddress,
-): Promise<SessionModelRouteOutput> {
-  return api(`/v1/session/${session.id}/model-route`, {
-    headers: inGroup(session.group),
-  })
-}
-
-export function fetchSessionHome(
-  session: SessionAddress,
-): Promise<SessionHomeOutput> {
-  return api(`/v1/session/${session.id}/home`, {
-    headers: inGroup(session.group),
-  })
-}
-
-export async function compactSession(
-  session: SessionAddress,
-  instructions: string,
-): Promise<void> {
-  await requireAISharing()
-  const input: SessionCompactInput = instructions.trim() === ''
-    ? {}
-    : { instructions: instructions.trim() }
-  await post(
-    `/v1/session/${session.id}/compact`,
-    input,
-    inGroup(session.group),
-  )
-}
-
-export async function restartSession(
-  session: SessionAddress,
-  input: SessionRestartInput,
-): Promise<SessionRestartOutput> {
-  await requireAISharing()
-  return post(
-    `/v1/session/${session.id}/restart`,
-    input,
-    inGroup(session.group),
-  )
 }

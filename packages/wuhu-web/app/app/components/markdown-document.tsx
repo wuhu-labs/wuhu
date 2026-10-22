@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReadOutput } from '~/lib/contract.gen'
 import {
   applySync,
@@ -16,14 +16,18 @@ import { DocumentEditor } from './document-editor'
 
 const saveDelayMs = 800
 
+// A Markdown page: the breadcrumb row with Edit/Done on its right, then the
+// document, read or edited in place.
 export function MarkdownDocument({
   client,
   path,
   initial,
+  breadcrumb,
 }: {
   client: SpaceClient
   path: string
   initial: ReadOutput
+  breadcrumb: ReactNode
 }) {
   const [editing, setEditing] = useState(false)
   const [state, setState] = useState(() => documentState(initial))
@@ -104,46 +108,28 @@ export function MarkdownDocument({
     }
   }, [client, path, update])
 
-  // The status line earns its ink only while editing or in trouble; a clean
-  // document reads as a document, not as a save indicator.
-  const status = editing || state.phase !== 'clean' ? statusText(state) : ''
   return (
     <section className='wuhu-document' data-wuhu-document={path}>
-      <div className='wuhu-document-toolbar'>
-        <span
-          className={state.phase === 'error' || state.phase === 'conflict'
-            ? 'wuhu-alert'
-            : 'wuhu-muted'}
-          data-wuhu-document-status={state.phase}
+      <div className='wuhu-document-utility'>
+        {breadcrumb}
+        <button
+          type='button'
+          className='wuhu-document-edit'
+          aria-pressed={editing}
+          disabled={editing && state.phase === 'conflict'}
+          onClick={() => {
+            if (editing) void persist()
+            setEditing(!editing)
+          }}
         >
-          {status}
-        </span>
-        <div className='wuhu-document-actions'>
-          {editing && (
-            <button
-              type='button'
-              className='wuhu-quiet-button'
-              disabled={state.phase === 'conflict'}
-              onClick={() => {
-                void persist()
-                setEditing(false)
-              }}
-            >
-              Save
-            </button>
-          )}
-          <button
-            type='button'
-            className='wuhu-quiet-button'
-            onClick={() => {
-              if (editing) void persist()
-              setEditing(!editing)
-            }}
-          >
-            {editing ? 'Preview' : 'Edit'}
-          </button>
-        </div>
+          {editing ? 'Done' : 'Edit'}
+        </button>
       </div>
+      {state.phase === 'error' && (
+        <p className='wuhu-alert' role='alert'>
+          {state.error ?? 'Save failed'}
+        </p>
+      )}
       {state.phase === 'conflict' && (
         <div className='wuhu-document-conflict' role='alert'>
           <strong>
@@ -188,19 +174,4 @@ export function MarkdownDocument({
       />
     </section>
   )
-}
-
-function statusText(state: DocumentState): string {
-  switch (state.phase) {
-    case 'clean':
-      return 'Saved'
-    case 'dirty':
-      return 'Unsaved changes'
-    case 'saving':
-      return 'Saving…'
-    case 'conflict':
-      return 'Needs your choice'
-    case 'error':
-      return state.error ?? 'Save failed'
-  }
 }

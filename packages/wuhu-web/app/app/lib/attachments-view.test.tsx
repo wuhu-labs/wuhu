@@ -32,7 +32,7 @@ Deno.test('a video plays inline beside the images and a file is a row that opens
     />,
   )
   assertEquals(
-    markup.replace(/<svg.*?<\/svg>/g, '<svg/>'),
+    markup.replace(/<svg.*?<\/svg>|<i class="wui-icon"[^>]*><\/i>/g, '<svg/>'),
     '<div class="wuhu-attachments">' +
       '<div class="wuhu-attachment-media">' +
       '<a class="wuhu-attachment-tile" href="https://space.test/a/shot.png" target="_blank" rel="noreferrer">' +

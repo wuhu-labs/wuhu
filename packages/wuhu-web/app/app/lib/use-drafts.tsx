@@ -6,8 +6,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { type Draft, Drafts } from './drafts.ts'
-import { indexedDBVault } from './draft-vault.ts'
+import { Drafts } from './drafts.ts'
 
 const DraftsContext = createContext<Drafts | null>(null)
 
@@ -16,13 +15,9 @@ export function DraftsProvider(
   { scope, children }: { scope: string | null; children: ReactNode },
 ) {
   const [drafts] = useState(() =>
-    scope === null
-      ? null
-      : new Drafts(scope, localStorage, indexedDBVault, Date.now)
+    scope === null ? null : new Drafts(scope, localStorage, Date.now)
   )
-  useEffect(() => {
-    void drafts?.sweep()
-  }, [drafts])
+  useEffect(() => drafts?.sweep(), [drafts])
   return <DraftsContext value={drafts}>{children}</DraftsContext>
 }
 
@@ -30,6 +25,6 @@ export function useDrafts(): Drafts | null {
   return useContext(DraftsContext)
 }
 
-export function useDraft(drafts: Drafts, target: string): Draft {
+export function useDraft(drafts: Drafts, target: string): string {
   return useSyncExternalStore(drafts.subscribe, () => drafts.get(target))
 }

@@ -37,29 +37,3 @@ export function objectStore(
     }
   }
 }
-
-// Walks the store's keys in one transaction, deleting each one `keep` refuses.
-export async function deleteKeys(
-  databaseName: string,
-  storeName: string,
-  keep: (key: IDBValidKey) => boolean,
-): Promise<void> {
-  const database = await openDatabase(databaseName, storeName)
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(storeName, 'readwrite')
-      const store = transaction.objectStore(storeName)
-      store.openKeyCursor().onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursor | null>).result
-        if (cursor === null) return
-        if (!keep(cursor.primaryKey)) store.delete(cursor.primaryKey)
-        cursor.continue()
-      }
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () =>
-        reject(transaction.error ?? new Error('indexedDB sweep failed'))
-    })
-  } finally {
-    database.close()
-  }
-}

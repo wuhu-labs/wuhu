@@ -407,6 +407,21 @@ import Testing
     #expect(stat.size == "one\ntwo".utf8.count)
   }
 
+  @Test func statNamesTheLayoutAndTitleAnHTMLPageDeclares() async throws {
+    let context = try makeContext()
+    _ = try await seedFile("/story.html", "<!doctype html><html><head><meta charset=utf-8>\n<TITLE>\n  Loki &amp; me &#8250; six months\n</TITLE><META name='wuhu-layout' Content=\"immersive\"></head><body></body></html>", context)
+    _ = try await seedFile("/plain.html", "<html><head><title>x</title></head><body><meta name=wuhu-layout content=immersive></body></html>", context)
+    _ = try await seedFile("/odd.html", "<head><meta name=\"wuhu-layout\" content=\"wide\"></head>", context)
+    _ = try await seedFile("/late.html", "<head><style>body{}</style><script>let x = '<body>'</script><!-- <body> --><meta name=wuhu-layout content=immersive></head>", context)
+    _ = try await seedFile("/notes.md", "<title>no</title><meta name=\"wuhu-layout\" content=\"immersive\">", context)
+    var heads: [[String?]] = []
+    for path in ["/story.html", "/plain.html", "/odd.html", "/late.html", "/notes.md"] {
+      let stat = try await run("stat", .object(["path": .string(path)]), context, as: StatOutput.self)
+      heads.append([stat.layout?.rawValue, stat.title])
+    }
+    #expect(heads == [["immersive", "Loki & me \u{203A} six months"], [nil, "x"], [nil, nil], ["immersive", nil], [nil, nil]])
+  }
+
   @Test func lsCarriesTheCommittedRev() async throws {
     let context = try makeContext()
     let first = try await seedFile("/notes/a.md", "one", context)

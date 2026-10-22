@@ -1,5 +1,4 @@
 import { SpaceClient, SpaceServer } from './client.ts'
-import { applyRevision, type PathMap } from '~/lib/tree.ts'
 import {
   bounded,
   type EventStream,
@@ -18,6 +17,7 @@ import {
 } from './subscriptions.ts'
 import type {
   ConversationMessagePayload,
+  RevisionEvents,
   SessionStreamEvent,
 } from '~/lib/contract.gen'
 import { byteLength } from '~/lib/shell-sdk/open-cache.js'
@@ -500,10 +500,13 @@ Deno.test('glob revision folds once, checkpoints only complete batches, and resu
     '**',
     4,
   )
-  const store = observeStore<PathMap, Parameters<typeof applyRevision>[1]>({
+  const store = observeStore<string[], RevisionEvents>({
     subscription,
-    fold: applyRevision,
-    initial: new Map([['/a', 'file'], ['/b', 'file'], ['/c', 'file']]),
+    fold: (paths, revision) =>
+      paths.filter((path) =>
+        !revision.events.some((event) => event.path === path)
+      ),
+    initial: ['/a', '/b', '/c'],
     open: net.open,
     timer,
   })
@@ -520,7 +523,7 @@ Deno.test('glob revision folds once, checkpoints only complete batches, and resu
       { kind: 'delete', path: '/c', rev: 5 },
     ],
   })
-  assertEquals([...store.getSnapshot().data], [])
+  assertEquals(store.getSnapshot().data, [])
   assertEquals(publishes, 1)
   net.last.fail()
   timer.fire()

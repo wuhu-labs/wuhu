@@ -105,6 +105,16 @@ body {
 
 Do not add `--wuhu-inset-left` or `--wuhu-inset-right` to a `max-width` column's padding. With `margin: auto` and `border-box`, that centers the column in the whole window and then shifts its content within the column instead of centering it beside the docked sidebar.
 
+### Framed or immersive
+
+By default the shell frames a page: a rounded card beside the sidebar, between the top bar and the composer, with insets that keep it clear of nothing but its own edges. A page that wants the whole window, painting under the sidebar, the top bar and the composer, opts in with one tag in its head:
+
+```html
+<meta name="wuhu-layout" content="immersive">
+```
+
+The server reads the tag when it answers the page's `stat` (`layout: "immersive"`), so the shell lays the page out right on its first frame; an absent tag or any other value is framed. The same `stat` carries the page's `<title>`, which the shell shows as the page's name, so give every page one. Both are read from the first 16 KiB, before `<body>`, skipping comments, scripts and styles: put the tag and the title near the top of `<head>`, ahead of large inline styles. An immersive page gets every inset (the sidebar on the left, the composer's live height at the bottom) and decides what to do with them: paint backgrounds to the edge and pad content by the four variables as above. A page whose `html` and `body` are transparent shows the app's own background through.
+
 Inside a shell, ordinary same-origin link clicks are sent to shell history as `{type:"wuhu:navigate", path}`, where `path` carries the query and fragment too. The shell decides whether the destination is markdown, a data view, or another embedded page. Standalone links remain raw. This contract covers link clicks only; do not expect History API calls inside a page to drive shell navigation.
 
 ## Mobile defaults

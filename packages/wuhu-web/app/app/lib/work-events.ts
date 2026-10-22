@@ -270,32 +270,3 @@ function itemEvents(
       })]
   }
 }
-
-export function runningCall(
-  state: DirectState,
-  working: boolean,
-  live: boolean,
-): string | null {
-  if (
-    !working || !live || state.executingInference == null ||
-    state.activeAttempt != null
-  ) return null
-  const position = state.executingInference
-  const item = state.items.get(position)
-  if (
-    item?.kind !== 'assistant' ||
-    !['tool_use', 'toolUse'].includes(item.value.stopReason)
-  ) return null
-  for (const [at, entry] of state.items) {
-    if (at > position && entry.kind === 'assistant') return null
-  }
-  const received = new Set(
-    [...state.items.values()].flatMap((entry) =>
-      entry.kind === 'toolResult' ? [toolResultOf(entry.value).callID] : []
-    ),
-  )
-  const next = assistantBlocks(item.value.content).find((block) =>
-    block.kind === 'toolCall' && !received.has(block.call.callID)
-  )
-  return next?.kind === 'toolCall' ? next.call.callID : null
-}

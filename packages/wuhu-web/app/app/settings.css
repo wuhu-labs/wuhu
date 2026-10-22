@@ -1,57 +1,9 @@
-.wuhu-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 1.4rem;
-}
-
 .wuhu-settings-card {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
 }
 
-.wuhu-settings-card > .wuhu-eyebrow {
-  margin: 0;
-}
-
-.wuhu-settings-link {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 12px;
-  color: inherit;
-  font-size: 0.9rem;
-}
-
-.wuhu-settings-link:hover {
-  background: var(--wui-hover);
-}
-
-button.wuhu-settings-link {
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 0.9rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.wuhu-tabs.wuhu-settings-tabs {
-  width: fit-content;
-  margin: 1.2rem 0 0;
-}
-
-.wuhu-settings-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem 1.2rem;
-  padding: 0 0.6rem;
-  font-size: 0.85rem;
-}
-
-.wuhu-settings-links a,
 .wuhu-ai-sharing a {
   color: var(--color-mint-deep);
 }
@@ -68,8 +20,7 @@ button.wuhu-settings-link {
   margin: 0;
 }
 
-.wuhu-usage,
-.wuhu-tool {
+.wuhu-usage {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -143,65 +94,6 @@ button.wuhu-settings-link {
   white-space: nowrap;
 }
 
-.wuhu-tools-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.wuhu-tools-bar .wuhu-tabs.wuhu-settings-tabs {
-  margin: 0;
-}
-
-.wuhu-tool > button {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.wuhu-tool-name {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.82rem;
-}
-
-.wuhu-tool-name .wui-icon {
-  width: 12px;
-  height: 12px;
-  color: var(--color-grey-faint);
-}
-
-.wuhu-tool-description {
-  overflow: hidden;
-  color: var(--color-grey-muted);
-  font-size: 0.8rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wuhu-tool-description[data-open='true'] {
-  white-space: pre-wrap;
-}
-
-.wuhu-tool-schema {
-  margin: 0;
-  padding: 0.6rem 0.7rem;
-  overflow-x: auto;
-  border-radius: 8px;
-  background: var(--code-bg, rgba(var(--wui-border-ink), 0.05));
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-}
-
 .wuhu-avatar {
   display: inline-grid;
   flex: none;
@@ -212,11 +104,6 @@ button.wuhu-settings-link {
   font-weight: 700;
   vertical-align: -0.28em;
   object-fit: cover;
-}
-
-.wuhu-entry-head .wuhu-avatar,
-.wuhu-session-meta .wuhu-avatar {
-  align-self: center;
 }
 
 .wuhu-profile-row {
@@ -252,7 +139,6 @@ button.wuhu-settings-link {
   border-radius: 10px;
   color: var(--color-grey-faint);
   background: var(--wui-field);
-  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 
@@ -263,7 +149,6 @@ button.wuhu-settings-link {
   border: 0;
   color: var(--color-ink);
   background: transparent;
-  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 
@@ -298,18 +183,4 @@ button.wuhu-settings-link {
 
 .wuhu-settings-logout {
   margin-right: auto;
-}
-
-@media (max-width: 47.999rem) {
-  .wuhu-profile-row {
-    flex-wrap: wrap;
-  }
-
-  .wuhu-usage-window {
-    grid-template-columns: 5.5rem minmax(2.5rem, 1fr) 2.5rem;
-  }
-
-  .wuhu-usage-reset {
-    grid-column: 2 / -1;
-  }
 }

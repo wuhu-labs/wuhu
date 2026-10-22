@@ -1,9 +1,4 @@
-import {
-  canCompose,
-  canManageSession,
-  sessionActions,
-  sessionCapability,
-} from './session-capability.ts'
+import { canCompose, sessionCapability } from './session-capability.ts'
 import { conversationCapability } from './use-conversation-access.ts'
 
 function equal(actual: unknown, expected: unknown) {
@@ -30,10 +25,6 @@ Deno.test('only a known live agent box or authorized conversation takes input', 
     false,
     false,
   ])
-  equal(
-    [agent, task, archived, sessionCapability(null)].map(canManageSession),
-    [true, true, false, false],
-  )
 })
 
 Deno.test('conversation access waits for membership and roster, and excludes tasks', () => {
@@ -79,16 +70,4 @@ Deno.test('conversation access waits for membership and roster, and excludes tas
     ),
     false,
   )
-})
-
-Deno.test('the session menu offers lifecycle actions by capability', () => {
-  const agent = sessionCapability({ kind: 'agent', lifecycle: 'live' })
-  const task = sessionCapability({ kind: 'task', lifecycle: 'live' })
-  const archived = sessionCapability({ kind: 'task', lifecycle: 'archived' })
-  const unknown = sessionCapability(null)
-  equal(sessionActions(agent), ['compact', 'restart', 'archive'])
-  equal(sessionActions(task), ['compact', 'restart', 'archive'])
-  equal(sessionActions(archived), ['unarchive'])
-  equal(sessionActions(unknown), [])
-  equal(sessionActions({ kind: 'conversation', allowed: true }), [])
 })

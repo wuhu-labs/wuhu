@@ -2,7 +2,6 @@ import {
   atBottom,
   type Follow,
   followAfterScroll,
-  holdAnchor,
   scrollAfterResize,
 } from './timeline-follow.ts'
 
@@ -116,9 +115,4 @@ Deno.test('growth, then the scroll event the pin raises, keeps following', () =>
     followAfterScroll(pinned, { ...grown, scrollHeight: 3000 }),
     { following: true, scrollTop: 1200 },
   )
-})
-
-Deno.test('a toggle lets go of the latest and keeps the clicked line in place', () => {
-  equal(holdAnchor(1200, 300, 300), { following: false, scrollTop: 1200 })
-  equal(holdAnchor(1200, 300, 340), { following: false, scrollTop: 1240 })
 })

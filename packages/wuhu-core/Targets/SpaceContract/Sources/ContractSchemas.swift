@@ -3,6 +3,7 @@ import JSONValue
 public enum ContractSchemas {
   public static let all: [(name: String, schema: JSONValue)] = [
     ("EntryKind", EntryKind.jsonSchema),
+    ("PageLayout", PageLayout.jsonSchema),
     ("Entry", Entry.jsonSchema),
     ("EditOp", EditOp.jsonSchema),
     ("Match", Match.jsonSchema),
@@ -23,6 +24,7 @@ public enum ContractSchemas {
     ("ListInput", ListInput.jsonSchema),
     ("ListOutput", ListOutput.jsonSchema),
     ("StatInput", StatInput.jsonSchema),
+    ("StatOutput", StatOutput.jsonSchema),
     ("GrepInput", GrepInput.jsonSchema),
     ("GrepOutput", GrepOutput.jsonSchema),
     ("SearchSkipReason", SearchSkipReason.jsonSchema),

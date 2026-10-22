@@ -49,8 +49,8 @@ public enum ToolReference {
       summary: "List a folder's entries, at the head or at `rev`. At `/` the system folder `/_` and `/users` are left out unless `hidden` is true.",
     ),
     Entry(
-      tool: "stat", input: "StatInput", output: "Entry",
-      summary: "One path's metadata: kind, size, line count, version token and modification time.",
+      tool: "stat", input: "StatInput", output: "StatOutput",
+      summary: "One path's metadata: kind, size, line count, version token and modification time. For an HTML page in the space, also the layout and title its head declares within its first 16 KiB.",
     ),
     Entry(
       tool: "grep", input: "GrepInput", output: "GrepOutput",
