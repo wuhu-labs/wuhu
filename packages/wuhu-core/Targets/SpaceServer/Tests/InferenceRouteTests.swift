@@ -24,8 +24,6 @@ private func execBearer(_ harness: SessionHarness, _ tokens: ExecTokens, session
   return tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
 }
 
-private func principal(_ session: SessionID) -> Principal { Principal(actor: .session(session), group: .shared) }
-
 @Suite(.deterministicDependencies) struct InferenceRouteTests {
   @Test func promptIsFrozenAtTheSessionsPromptRevision() async throws {
     try await withSessionDeps {
@@ -46,23 +44,35 @@ private func principal(_ session: SessionID) -> Principal { Principal(actor: .se
     }
   }
 
-  @Test func blobBytesAreServedToTheSessionThatReadThem() async throws {
+  @Test func mediaIsWorkerOnlyWithoutBlobOwnershipOrFileReaderChecks() async throws {
     try await withSessionDeps {
       let tokens = ExecTokens(spaceURL: "https://space.test:5530")
       let harness = try await SessionHarness(execTokens: tokens)
       let (session, token) = try await worker(harness, tokens)
       let (_, otherToken) = try await worker(harness, tokens)
       let bytes = Data([1, 2, 3, 4])
-      let hash = try await harness.space.storeImage(bytes, for: principal(session))
-      let found = try await harness.get("/v1/blob/\(hash)", bearer: token)
+      let hash = try await harness.space.storeImage(bytes)
+      let found = try await harness.get("/v1/media", query: ["url": "wuhu-blob:\(hash)"], bearer: token)
       #expect(found.status == .ok)
       #expect(try await found.body.data() == bytes)
-      let foreign = try await harness.get("/v1/blob/\(hash)", bearer: otherToken)
-      #expect(foreign.status == .notFound)
-      let missing = try await harness.get("/v1/blob/\(String(repeating: "0", count: 64))", bearer: token)
+      let foreign = try await harness.get("/v1/media", query: ["url": "wuhu-blob:\(hash)"], bearer: otherToken)
+      #expect(foreign.status == .ok)
+      let missing = try await harness.get("/v1/media", query: ["url": "wuhu-blob:\(String(repeating: "0", count: 64))"], bearer: token)
       #expect(missing.status == .notFound)
-      let exec = try await harness.get("/v1/blob/\(hash)", bearer: try await execBearer(harness, tokens, session: session))
+      let execToken = try await execBearer(harness, tokens, session: session)
+      let exec = try await harness.get("/v1/media", query: ["url": "wuhu-blob:\(hash)"], bearer: execToken)
       #expect(exec.status == .forbidden)
+      let account = try await harness.space.addAccount(kind: .human, name: "attachment owner")
+      let group = try #require(try await harness.space.personalGroup(of: account.id))
+      _ = try await harness.space.fs(group).write("/attachment.png", bytes, ifMatch: nil)
+      let reference = "wuhu-space:wuhu://\(group.rawValue).localspace/attachment.png"
+      let attachment = try await harness.get("/v1/media", query: ["url": reference], bearer: token)
+      #expect(attachment.status == .ok)
+      #expect(try await attachment.body.data() == bytes)
+      let refused = try await harness.get("/v1/media", query: ["url": reference], bearer: execToken)
+      #expect(refused.status == .forbidden)
+      let malformed = try await harness.get("/v1/media", query: ["url": "https://example.com/image.png"], bearer: token)
+      #expect(malformed.status == .badRequest)
     }
   }
 

@@ -4,6 +4,8 @@
 
 `Space.inMemory()` opens an isolated SQLite memdb database with no scratch directory or database file. The memory opener uses SQLite’s in-memory rollback journal, while file-backed spaces retain WAL. Memory readers hold read transactions: a concurrent writer commit waits for them, up to the five-second busy timeout, then throws a SQLite busy error. Cancellation interrupts long queries and releases their read transaction. Sandbox readers attach the same memory database; files, tables, revisions, identities and queries follow the same implementation as `Space.open`. An unavailable memory VFS throws a SQLite database error, never opens a disk substitute. Memory databases copy a schema template without an identity, then run ordinary preparation. Both opening paths run the same ordered GRDB migrations and seed their own identity; existing file-backed data is retained. Migration 001 establishes the baseline for fresh and existing databases. Applied migrations are recorded transactionally in `grdb_migrations` and never run again. The once-only links reindex remains post-open maintenance because it reads external object storage and parses documents.
 
+Migration 005 removes the obsolete session blob ownership table without changing stored image bytes or transcript references. Worker media reads resolve both blob hashes and attachment paths independently of the session’s current group access.
+
 
 ## Scope context
 

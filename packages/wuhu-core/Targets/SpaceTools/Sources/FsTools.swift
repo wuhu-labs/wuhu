@@ -36,7 +36,7 @@ extension SpaceToolbox {
       )
     }
     let pixels = ImageMedia.pixelSize(ofBytes: data)
-    let hash = try await context.space.storeImage(data, for: context.principal)
+    let hash = try await context.space.storeImage(data)
     return Wire.object([
       ("token", .string(Wire.string(token))),
       ("content", .string("image \(mimeType), \(pixels.map { "\($0.width)x\($0.height) px, " } ?? "")\(data.count) bytes; delivered as an attached image")),

@@ -1,5 +1,8 @@
 # SpaceServer
 
+`GET /v1/media?url=…` is the worker's single transcript-media read. It accepts `wuhu-blob:` hashes and `wuhu-space:` attachment references; hostless space paths use the session's group. Exec tokens are refused before resolving any media. Worker reads do not consult blob ownership or the session's current file-reader rules, so immutable history remains usable after access changes. Ordinary tool file reads retain their reader checks.
+
+
 ## In-process execution ownership
 
 `SessionRuntime.assemble` composes one directly conforming Hub actor for session persistence, inference and script machine access; a worker owns tool execution, QuickJS scripts and handlers. Worker code receives `any Main`, semantic values and machine stream facets, not `Space`, `SessionStore`, a writer or blob storage. Hub construction is inert and its credentials, signing, metrics, traces, model-placement and machine capabilities are injected. The server retains admission, subscription scheduling, authorization, persistence and machine-hub composition; it invokes handlers through `Worker.fire` and persists their returned state and wakes. Session loops, provider sockets, QuickJS scripts and handlers run in the server process, in a `KernelWorker` that reaches main only through `MainConnection` with its worker token (the loop's worker routes, including the session's token, park wake and cache warming) and holds nothing of main's. A worker may instead open its line at `/v1/worker/line`; main announces it there and publishes its attempt and usage notices into its own hub and board. Ordinary restart reconstructs durable work, not live sockets or JavaScript heaps.

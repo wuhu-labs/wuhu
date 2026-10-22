@@ -1,3 +1,4 @@
+import Dependencies
 import DeterministicDependencies
 import ExecutionOwner
 import Fetch
@@ -7,7 +8,8 @@ import JSONValue
 import class MainHub.Hub
 import SessionDomain
 import SessionTools
-import SpaceCore
+import struct SpaceContract.GroupID
+@testable import SpaceCore
 @testable import SpaceServer
 import Synchronization
 import Testing
@@ -59,7 +61,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
     try await withSessionDeps {
       let space = try Space.inMemory()
       let session = try await fixtureSession(space)
-      let hash = try await space.storeImage(pngBytes, for: Principal(actor: .session(session), group: .shared))
+      let hash = try await space.storeImage(pngBytes)
 
       let legacy = try await requestBody(imageRead(ImageContent(mimeType: "image/png", data: pngBytes)), resolver: nil)
       let referenced = try await requestBody(
@@ -69,6 +71,51 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
 
       #expect(legacy == referenced)
       #expect(legacy.contains("data:image/png;base64,\(pngBytes.base64EncodedString())"))
+    }
+  }
+
+  @Test(arguments: [false, true]) func storedMediaRunsTheNextTurnWithoutOwnershipOrCurrentReadAccess(attachment: Bool) async throws {
+    try await withSessionDeps {
+      let bodies = Mutex<[String]>([])
+      try await withDependencies {
+        $0.fetch = FetchClient { request in
+          let body = try await request.body?.text() ?? ""
+          bodies.withLock { $0.append(body) }
+          let event = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"done\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"
+          return Response(status: .ok, body: .bytes(Data(event.utf8), contentType: "text/event-stream"))
+        }
+      } operation: {
+        let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
+        let harness = try await SessionHarness(assembledModels: models)
+        let session = try await harness.createSession()
+        if attachment {
+          let group = GroupID(rawValue: "attachments")
+          try await harness.space.writer.write { db in
+            try db.execute(sql: "INSERT INTO groups (id, created_at, visibility) VALUES (?, '2026-01-01T00:00:00Z', 'open')", arguments: [group.rawValue])
+          }
+          _ = try await harness.space.fs(group).write("/image.png", pngBytes, ifMatch: nil)
+          #expect(try await harness.space.reads(.shared).contains(group))
+          let message = TranscriptItem.direct(.init(
+            id: UUID(), sender: .init(id: "sender", timeZone: .gmt), timestamp: anchor,
+            content: .init(text: "see image", attachments: [.image(path: "wuhu://\(group.rawValue).localspace/image.png", mimeType: "image/png", size: pngBytes.count)]),
+          ))
+          try await harness.store.append(session, items: [message], inputOrigin: nil)
+          try await harness.space.setVisibility(.private, of: group, by: .anonymous, acting: group)
+          #expect(try await !harness.space.reads(.shared).contains(group))
+        } else {
+          let hash = try await harness.space.storeImage(pngBytes)
+          let read = imageRead(ImageContent(mimeType: "image/png", source: .blob(hash), byteCount: pngBytes.count))
+          try await harness.store.append(session, items: read.items, inputOrigin: nil)
+        }
+        try await harness.running {
+          try await harness.deliver("next turn", to: session)
+          try await until("media inference committed") {
+            guard !bodies.withLock({ $0.isEmpty }) else { return false }
+            return try await harness.store.record(session).work == .noWork
+          }
+        }
+        #expect(bodies.withLock { $0.contains { $0.contains("data:image/png;base64,\(pngBytes.base64EncodedString())") } })
+      }
     }
   }
 
@@ -101,7 +148,7 @@ private func requestBody(_ transcript: Transcript, resolver: (any MediaResolver)
   }
 }
 
-// The client resolver reads through the session's routes (`/v1/f`, `/v1/blob/:hash`)
+// The client resolver reads through the session's routes (`/v1/media`)
 // and must render the same bytes as the server-side one.
 private func fixtureSession(_ space: Space) async throws -> SessionID {
   try await space.sessions.createSession(

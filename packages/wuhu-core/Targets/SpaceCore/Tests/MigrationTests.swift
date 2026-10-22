@@ -18,7 +18,7 @@ import Testing
     let machine = try await space.addMachine(name: "box").id
     let exec = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("call"))
     try await database.write { db in
-      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002')")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002', '005')")
       try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_spec")
       try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_end_owed")
       try db.execute(sql: "ALTER TABLE session_api_receipts DROP COLUMN request")
@@ -358,7 +358,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "998", "999"])
     try await original.close()
   }
 }

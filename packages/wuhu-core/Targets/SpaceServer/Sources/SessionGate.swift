@@ -343,22 +343,24 @@ private func sessionRouter(
       return sessionErrorResponse(error)
     }
   }
-  // Bytes a tool answer stored by hash: an image `read` delivered to the
-  // transcript. Only the session whose read stored it, and only its worker:
-  // an exec's token prints whatever it reads.
-  router.get("/v1/blob/:hash") { _, parameters in
-    guard let hash = parameters["hash"] else { return errorResponse(.badRequest, code: "invalidArgument", message: "a blob is named by its hash") }
+  // Transcript media belongs to the worker's immutable history, not its current file access.
+  // Exec credentials are readable by commands and must never reach this route.
+  router.get("/v1/media") { request, _ in
     guard !principal().exec else {
-      return errorResponse(.forbidden, code: "unauthorized", message: "a blob is read by the session's worker, never from an exec")
+      return errorResponse(.forbidden, code: "unauthorized", message: "media is read by the session's worker, never from an exec")
+    }
+    guard let address = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "url" })?.value,
+          let url = URL(string: address), let reference = MediaReference(url)
+    else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "media is named by a wuhu-blob: or wuhu-space: URL")
     }
     do {
-      let bytes = Data(try await space.sessionBlobBytes(hash, for: principal().session))
-      var headers = Headers()
-      headers[.contentType] = "application/octet-stream"
-      headers[.contentLength] = String(bytes.count)
-      return Response(status: .ok, headers: headers, body: .bytes(bytes, contentType: "application/octet-stream"))
+      let bytes = try await space.mediaBytes(reference, group: principal().group)
+      return Response(status: .ok, body: .bytes(bytes, contentType: "application/octet-stream"))
     } catch SpaceError.notFound {
-      return errorResponse(.notFound, code: "notFound", message: "no blob \(hash)")
+      return errorResponse(.notFound, code: "notFound", message: "no media \(address)")
+    } catch {
+      return sessionErrorResponse(error)
     }
   }
   // One inference the worker ran for the caller, into the server's metrics,

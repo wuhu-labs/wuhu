@@ -150,9 +150,11 @@ public struct SpaceClient: Sendable {
     try await self.file(path).data
   }
 
-  /// `GET /v1/blob/:hash`: bytes a tool answer stored by hash (an image a `read` delivered).
-  public func blob(_ hash: String) async throws -> Data {
-    let response = try await self.fetch(Request(url: try self.url("/v1/blob/\(hash)")))
+  /// Transcript media is read only by the worker, independently of the session's current file access.
+  public func media(_ reference: URL) async throws -> Data {
+    var components = URLComponents(url: try self.url("/v1/media"), resolvingAgainstBaseURL: false)!
+    components.queryItems = [URLQueryItem(name: "url", value: reference.absoluteString)]
+    let response = try await self.fetch(Request(url: components.url!))
     guard 200 ..< 300 ~= response.status.code else {
       throw await Self.failure(from: response)
     }

@@ -12,32 +12,10 @@ import protocol WuhuAI.MediaResolver
 import enum WuhuAI.ResolvedMedia
 
 extension Space {
-  // An image a tool read for `principal`. A session's read is remembered as
-  // the session's, so the blob is served back to that session and no other.
-  public func storeImage(_ data: Data, for principal: Principal) async throws -> String {
+  public func storeImage(_ data: Data) async throws -> String {
     let blob = try await blobs.stage(Array(data))
-    try await writer.write { db in
-      try Substrate.record(blob, in: db)
-      if case let .session(session) = principal.actor {
-        _ = try Sessions.record(session.rawValue, in: db)
-        try db.execute(
-          sql: "INSERT OR IGNORE INTO session_blobs (session_id, hash) VALUES (?, ?)",
-          arguments: [session.rawValue, blob.hash],
-        )
-      }
-    }
+    try await writer.write { db in try Substrate.record(blob, in: db) }
     return blob.hash
-  }
-
-  // A blob's bytes for the session whose read stored it; any other hash is
-  // not found, whether or not the store has it.
-  public func sessionBlobBytes(_ hash: String, for session: SessionID) async throws -> [UInt8] {
-    try await blobs.read(writer, prefetching: { _ in [hash] }) { db, cache in
-      guard try Row.fetchOne(
-        db, sql: "SELECT 1 FROM session_blobs WHERE session_id = ? AND hash = ?", arguments: [session.rawValue, hash],
-      ) != nil else { throw SpaceError.notFound(hash) }
-      return try cache.blob(of: hash, in: db).content
-    }
   }
 
   // Only the kernel's own request path gets to defer image bytes to a
