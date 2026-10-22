@@ -354,9 +354,6 @@ import Testing
     #expect(renamed.status == .ok)
     #expect(try await renamed.json(MachineStatus.self) == MachineStatus(id: added.id, name: "studio", group: "shared", attached: false, scope: "owner"))
 
-    #expect(try await server.http(.post, "/v1/machine/mini/rotate").status == .notFound)
-    #expect(try await server.http(.post, "/v1/machine/studio/rotate").status == .ok)
-
     let junk = try await server.http(.put, "/v1/machine/studio/name", json: .object(["name": .string("my box")]))
     #expect(junk.status == .badRequest)
     let second = try await (try await server.http(.post, "/v1/machine", json: .object(["name": .string("laptop")])))
@@ -366,6 +363,9 @@ import Testing
 
     let duplicate = try await server.http(.post, "/v1/machine", json: .object(["name": .string("Studio")]))
     #expect(duplicate.status == .conflict)
+    #expect(try await server.http(.post, "/v1/machine/mini/rotate").status == .ok)
+    #expect(try await server.http(.post, "/v1/machine/studio/rotate").status == .ok)
+    #expect(try await server.http(.post, "/v1/machine/\(added.id.rawValue)/rotate").status == .ok)
   }
 
   @Test func joiningClaimsTheHostnameAndSuffixesACollision() async throws {
@@ -382,7 +382,7 @@ import Testing
     let collided = try await server.http(.post, "/v1/enroll/consume", json: .object([
       "token": .string(second.token), "pubkey": .string(testPubkey("box-b")), "name": .string("mini.local"),
     ]))
-    #expect(try await collided.json(EnrollConsumeOutput.self).machineName == "mini.local-2")
+    #expect(try await collided.json(EnrollConsumeOutput.self).machineName == "mini.local_2")
 
     let third = try await (try await server.http(.post, "/v1/machine")).json(MachineAddOutput.self)
     let unnamed = try await server.http(.post, "/v1/enroll/consume", json: .object([

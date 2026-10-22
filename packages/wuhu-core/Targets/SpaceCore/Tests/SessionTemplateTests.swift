@@ -32,6 +32,17 @@ import Testing
     await #expect(throws: ExecutorSpecError.self) { _ = try await space.sessionTemplate(named: "loose", in: .shared) }
   }
 
+  @Test func qualifiedTemplatesResolveCurrentAndRetiredAliases() async throws {
+    let space = try makeSpace()
+    let owner = try await space.addAccount(kind: .human, name: "Morgan")
+    let group = try await space.createGroup(alias: "library", owner: owner.id)
+    _ = try await space.fs(group).write("/templates/worker/template.json", Data("{}".utf8), ifMatch: nil)
+    try await space.renameGroup(group, alias: "modules", by: .shared(.anonymous))
+    for spelling in ["library", "modules", group.rawValue] {
+      #expect(try await space.sessionTemplate(named: "wuhu://\(spelling).localspace/templates/worker", in: .shared).group == group)
+    }
+  }
+
   @Test func applyingATemplateClonesEverythingButTheManifestIntoTheHome() async throws {
     try await withSessionDeps {
       let space = try makeSpace()

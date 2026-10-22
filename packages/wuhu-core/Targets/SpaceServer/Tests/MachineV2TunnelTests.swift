@@ -96,7 +96,7 @@ import Testing
     await f.hub.remove(first)
     _ = try await f.hub.fetch(request, usableFrom: .shared)
     #expect(dispatched.withLock { $0 } == 2)
-    let other = try await f.space.addMachine(name: "other-v2", group: .shared)
+    let other = try await f.space.addMachine(name: "other_v2", group: .shared)
     try await f.space.registerMachineV2(other.id.rawValue, group: .shared)
     do { _ = try await f.hub.fetch(Request(url: URL(string: "https://operation.test/machine/v2/machines/" + other.id.rawValue)!), usableFrom: .shared); Issue.record("connection cannot authorize another machine") }
     catch let error as OperationError { #expect(error.code == .machineUnavailable) }
@@ -125,7 +125,7 @@ extension MachineV2TunnelTests {
 
   @Test func aLostEnrollResponseReplaysWithTheSameKeyOnly() async throws {
     let f = try await Fixture()
-    let created = try await f.space.addMachineV2(name: "retry-v2")
+    let created = try await f.space.addMachineV2(name: "retry_v2")
     let key = Curve25519.Signing.PrivateKey()
     let input = ["token": created.token.token.rawValue, "pubkey": key.pubkeyLabel]
     let first = try await f.http("/v1/machine-v2/enroll", method: .post, input: input)
@@ -176,7 +176,7 @@ extension MachineV2TunnelTests {
     #expect(try await verified.body.json(MachineStatus.self).id == f.machine.id)
     guard case let .response(replay) = try await handler(status) else { Issue.record("status should be HTTP"); return }
     #expect(replay.status == .unauthorized)
-    let add = Request(url: URL(string: "https://space.test/v1/machine-v2")!, method: .post, body: try .json(MachineAddInput(name: "unauthorized-v2")))
+    let add = Request(url: URL(string: "https://space.test/v1/machine-v2")!, method: .post, body: try .json(MachineAddInput(name: "unauthorized_v2")))
     guard case let .response(refused) = try await handler(add) else { Issue.record("add should be HTTP"); return }
     #expect(refused.status == .unauthorized)
   }
@@ -243,8 +243,9 @@ extension MachineV2TunnelTests {
 
     let taken = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "laptop", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(taken.status == .conflict)
-    _ = try await f.space.addMachine(name: "old-box")
-    let takenByV1 = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "old-box", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
+    let legacy = try await f.space.addMachine(name: "old_box")
+    _ = try await f.space.addKey(Curve25519.Signing.PrivateKey().pubkeyLabel, account: legacy.account, capabilities: [.execMachine], createdBy: nil, expiresAt: nil)
+    let takenByV1 = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "old_box", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel))
     #expect(takenByV1.status == .conflict)
     let reused = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: key.pubkeyLabel))
     #expect(reused.status == .conflict)
@@ -252,7 +253,7 @@ extension MachineV2TunnelTests {
     #expect(malformed.status == .badRequest)
     let unknownDevice = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other", pubkey: Curve25519.Signing.PrivateKey().pubkeyLabel, device: "no-such-device"))
     #expect(unknownDevice.status == .notFound)
-    let deviceWithoutKey = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other-v2", device: "no-such-device"))
+    let deviceWithoutKey = try await f.http("/v1/machine-v2", method: .post, input: MachineAddInput(name: "other_v2", device: "no-such-device"))
     #expect(deviceWithoutKey.status == .badRequest)
     #expect(try await f.space.resolveMachine("other") == nil)
   }

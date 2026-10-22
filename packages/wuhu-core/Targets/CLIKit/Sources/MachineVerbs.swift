@@ -49,16 +49,16 @@ extension Executor {
     await self.runner.stdout(text)
   }
 
-  // The wire takes an id; a name is a client-side lookup against the roster
-  // the space already publishes.
   mutating func machineID(_ reference: String, verb: String) async throws -> MachineID {
     if MachineID.isValid(reference) { return MachineID(rawValue: reference) }
     let space = try self.wallet.pinnedSpace()
-    let statuses: [MachineStatus] = try await self.api(.get, "/v1/machine", space: space)
-    guard let match = statuses.first(where: { $0.name?.lowercased() == reference.lowercased() }) else {
-      throw CLIError(message: "\(verb): no machine named \(reference) in this space; list them with: wuhu machine list")
-    }
-    return match.id
+    let encoded = reference.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!.replacingOccurrences(of: "/", with: "%2F")
+    let missing = CLIError(message: "\(verb): no machine named \(reference) in this space; list them with: wuhu machine list")
+    do {
+      let status: MachineStatus = try await self.api(.get, "/v1/machine/\(encoded)/status", space: space)
+      return status.id
+    } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound { throw missing }
+    catch let error as SpaceClient.TransportFailure where error.status == 404 { throw missing }
   }
 
   mutating func machineName(machine: String, name: String) async throws {
@@ -242,7 +242,7 @@ private func boxHostname() -> String? {
   return buffer.withUnsafeMutableBufferPointer { pointer -> String? in
     guard gethostname(pointer.baseAddress!, pointer.count - 1) == 0 else { return nil }
     let hostname = String(cString: pointer.baseAddress!)
-    return hostname.isEmpty ? nil : hostname
+    return hostname.isEmpty ? nil : hostname.replacingOccurrences(of: "-", with: "_")
   }
 }
 

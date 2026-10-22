@@ -41,6 +41,68 @@ import Testing
     return try await w.harness.api(request)
   }
 
+  @Test func aMemberCreatesRenamesAndReachesAGroupByIDAndAlias() async throws {
+    try await withSessionDeps {
+      let w = try await world()
+      let response = try await send(w, .post, "/v1/groups", ["alias": "research_notes"])
+      #expect(response.status == .created)
+      let created = try await response.json(GroupDetail.self)
+      let id = created.id
+      #expect(created.alias == "research_notes")
+      #expect(created.open)
+      #expect(created.entries == [GroupAccessEntry(kind: "account", id: w.account.rawValue, role: "admin")])
+      #expect(id.split(separator: "-").count == 3)
+      let listed = try await send(w, .get, "/v1/groups").json(JSONValue.self)
+      let summary = try #require(listed.array?.first { $0.object?["id"] == .string(id) }?.object)
+      #expect(Set(summary.keys) == ["id", "member", "readable", "admin"])
+      let detail = try await send(w, .get, "/v1/group/research_notes").json(GroupDetail.self)
+      #expect(detail.id == id)
+      #expect(detail.alias == "research_notes")
+      #expect(detail.open)
+      #expect(detail.entries == [GroupAccessEntry(kind: "account", id: w.account.rawValue, role: "admin")])
+      let changed = try await send(w, .put, "/v1/group/research_notes", ["alias": "science"]).json(GroupDetail.self)
+      #expect(changed.id == id)
+      #expect(changed.alias == "science")
+      #expect(try await send(w, .get, "/v1/group/research_notes").json(GroupDetail.self) == changed)
+      #expect(try await send(w, .get, "/v1/group/\(id)").json(GroupDetail.self) == changed)
+      #expect(try await send(w, .post, "/v1/groups", ["alias": "research_notes"]).status == .conflict)
+      #expect(try await send(w, .post, "/v1/groups", ["alias": "has-hyphens"]).status == .badRequest)
+      let guest = try await w.harness.space.addAccount(kind: .human, name: "Guest", guest: true)
+      let bearer = try await w.harness.enrolledBearer(account: guest.id).bearer
+      var request = Request(url: URL(string: "https://space.test/v1/groups")!, method: .post)
+      request.headers[.authorization] = "Bearer " + bearer
+      request.body = try .json(["alias": "guest_space"])
+      let refused = try await w.harness.api(request)
+      #expect(refused.status == .forbidden)
+      #expect(try await refused.json(JSONValue.self).object?["code"] == "memberRequired")
+    }
+  }
+
+  @Test func anonymousCreationPassesThroughTheBearerWall() async throws {
+    try await withSessionDeps {
+      let w = try await world()
+      let request = Request(url: URL(string: "https://space.test/v1/groups")!, method: .post, body: try .json(["alias": "research"]))
+      #expect(try await w.harness.api(request).status == .unauthorized)
+      #expect(try await w.harness.space.resolveGroup("research") == nil)
+    }
+  }
+
+  @Test func aSessionExecCannotCreateAGroupEvenWithAnEligibleOwner() async throws {
+    try await withSessionDeps {
+      let w = try await world()
+      let session = try await w.harness.store.createSession(group: .shared, title: "Creator", kind: .agent, createdBy: "person", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
+      let machine = try await w.harness.space.addMachine(name: "box")
+      let exec = try await w.harness.space.mintExec(machine: machine.id, caller: session.rawValue)
+      let bearer = w.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
+      var request = Request(url: URL(string: "https://space.test/v1/groups")!, method: .post, body: try .json(["alias": "research_notes", "owner": w.account.rawValue]))
+      request.headers[.authorization] = "Bearer " + bearer
+      let response = try await w.harness.api(request)
+      #expect(response.status == .forbidden)
+      #expect(try await response.text().contains("run_script"))
+      #expect(try await w.harness.space.resolveGroup("research_notes") == nil)
+    }
+  }
+
   @Test func anAdminOpensTheGroupAddsAPersonToListAndSwitchesSecrets() async throws {
     try await withSessionDeps {
       let w = try await world()

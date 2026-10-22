@@ -39,7 +39,7 @@ private struct SilentExec: OperationKind {
     try Data("needle".utf8).write(to: file)
     let space = try Space.inMemory()
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "caller-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "caller_v2", group: .shared)
     let seen = Mutex<[AdmittedStart]>([])
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { start in seen.withLock { $0.append(start) } })
     let hub = MachineHub(space: space)
@@ -83,7 +83,7 @@ private struct SilentExec: OperationKind {
     let harness = try await SessionHarness(execTokens: tokens)
     let space = harness.space
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "lane-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "lane_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
@@ -184,7 +184,7 @@ private struct SilentExec: OperationKind {
   private func withExecFixture(caller: Bool = true, _ body: (Space, MachineHub, SessionID, ExecRecord, Starts) async throws -> Void) async throws {
     let space = try Space.inMemory()
     let session = try await space.sessions.createSession(group: .shared, title: "Backend coder", kind: .task, createdBy: "owner", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-    let (record, _) = try await space.addMachineV2(name: "forge-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "forge_v2", group: .shared)
     let seen = Starts()
     let agent = try ComputerAgent(machine: record.id.rawValue, kinds: [.init(SilentExec())], audit: { seen.append($0) })
     let hub = MachineHub(space: space, tokens: ExecTokens(spaceURL: "https://test.invalid"))

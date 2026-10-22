@@ -258,7 +258,7 @@ import Testing
   func anAdminAddsAMachineDirectlyToTheRequestedGroup(path: String) async throws {
     try await withSessionDeps {
       try await world { w in
-        let added = try await send(w, .post, path, .object(["name": "common-v2", "group": "shared"]), bearer: w.admin)
+        let added = try await send(w, .post, path, .object(["name": "common_v2", "group": "shared"]), bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
         let id = output.id
@@ -282,10 +282,10 @@ import Testing
         // A space admin administers every group but another person's own, so
         // it may act in one it holds no entry in.
         let actingAsTarget = try await send(
-          w, .post, path, ["name": "admin-acting-v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
+          w, .post, path, ["name": "admin_acting_v2", "group": .string(project.rawValue)], bearer: w.admin, group: project,
         )
         #expect(actingAsTarget.status == .ok)
-        let body: JSONValue = ["name": "admin-only-v2", "group": .string(project.rawValue)]
+        let body: JSONValue = ["name": "admin_only_v2", "group": .string(project.rawValue)]
         let added = try await send(w, .post, path, body, bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
@@ -293,7 +293,7 @@ import Testing
         #expect(try await w.harness.space.machine(output.id)?.group == project)
 
         // Another person's own group is theirs: a space admin does not administer it.
-        let personal: JSONValue = ["name": "not-hers", "group": .string(w.bobGroup.rawValue)]
+        let personal: JSONValue = ["name": "not_hers", "group": .string(w.bobGroup.rawValue)]
         #expect(try await send(w, .post, path, personal, bearer: w.admin).status == .forbidden)
       }
     }
@@ -303,14 +303,14 @@ import Testing
   func addingToAGroupRequiresItsAdminAndAnExistingGroup(path: String) async throws {
     try await withSessionDeps {
       try await world { w in
-        let denied = try await send(w, .post, path, .object(["name": "denied-v2", "group": "shared"]), bearer: w.alice)
+        let denied = try await send(w, .post, path, .object(["name": "denied_v2", "group": "shared"]), bearer: w.alice)
         #expect(denied.status == .forbidden)
         #expect(try await code(denied) == "adminRequired")
-        let unknown = try await send(w, .post, path, .object(["name": "unknown-v2", "group": "missing"]), bearer: w.admin)
+        let unknown = try await send(w, .post, path, .object(["name": "unknown_v2", "group": "missing"]), bearer: w.admin)
         #expect(unknown.status == .notFound)
         #expect(try await code(unknown) == "unknownGroup")
-        #expect(try await w.harness.space.resolveMachine("denied-v2") == nil)
-        #expect(try await w.harness.space.resolveMachine("unknown-v2") == nil)
+        #expect(try await w.harness.space.resolveMachine("denied_v2") == nil)
+        #expect(try await w.harness.space.resolveMachine("unknown_v2") == nil)
       }
     }
   }
@@ -330,11 +330,11 @@ import Testing
         #expect(refused.status == .notFound)
         #expect(try await code(refused) == "unknownDevice")
         #expect(try await w.harness.space.device(id: foreign.id)?.machine == nil)
-        let fromSession = try await send(w, .post, "/v1/machine-v2", body("agent-made", device: mac.id), bearer: try await token(w, w.p))
+        let fromSession = try await send(w, .post, "/v1/machine-v2", body("agent_made", device: mac.id), bearer: try await token(w, w.p))
         #expect(fromSession.status == .forbidden)
 
         let pubkey = Curve25519.Signing.PrivateKey().pubkeyLabel
-        let enrolled = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
+        let enrolled = try await send(w, .post, "/v1/machine-v2", body("alice_mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
         #expect(enrolled.status == .ok)
         let output = try JSONValueDecoder().decode(EnrollConsumeOutput.self, from: try await json(enrolled))
         let machine = MachineID(rawValue: try #require(output.machine))
@@ -343,10 +343,10 @@ import Testing
         #expect(try await w.harness.space.machineV2Members(group: w.aliceGroup).contains(machine.rawValue))
 
         // A retry after a lost response replays; another key under the name does not.
-        let replayed = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
+        let replayed = try await send(w, .post, "/v1/machine-v2", body("alice_mac", device: mac.id, pubkey: pubkey), bearer: w.alice)
         #expect(replayed.status == .ok)
         #expect(try JSONValueDecoder().decode(EnrollConsumeOutput.self, from: try await json(replayed)) == output)
-        let otherKey = try await send(w, .post, "/v1/machine-v2", body("alice-mac", device: mac.id), bearer: w.alice)
+        let otherKey = try await send(w, .post, "/v1/machine-v2", body("alice_mac", device: mac.id), bearer: w.alice)
         #expect(otherKey.status == .conflict)
         #expect(try await code(otherKey) == "machineNameTaken")
       }
@@ -370,11 +370,11 @@ import Testing
   @Test func aPersonsV2MachineTakesItsNamedGroupAndThatGroupsAdmin() async throws {
     try await withSessionDeps {
       try await world { w in
-        let refused = try await send(w, .post, "/v1/machine-v2", .object(["name": "hers-v2"]), bearer: w.alice)
+        let refused = try await send(w, .post, "/v1/machine-v2", .object(["name": "hers_v2"]), bearer: w.alice)
         #expect(refused.status == .forbidden)
         let added = try await send(
           w, .post, "/v1/machine-v2",
-          .object(["name": "hers-v2", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
+          .object(["name": "hers_v2", "group": .string(w.aliceGroup.rawValue)]), bearer: w.alice,
         )
         #expect(added.status == .ok)
         let id = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added)).id
@@ -486,7 +486,7 @@ import Testing
     try await withSessionDeps {
       try await world { w in
         await w.harness.hub.configureV2(MachineV2Service(space: w.harness.space, hub: MachineV2Hub(space: w.harness.space), key: nil, failure: nil))
-        let (machine, _) = try await w.harness.space.addMachineV2(name: "common-v2", group: .shared)
+        let (machine, _) = try await w.harness.space.addMachineV2(name: "common_v2", group: .shared)
         let exec = try await w.harness.space.mintExec(machine: machine.id, caller: w.s.rawValue, group: .shared)
         #expect(try await dialRefusal(w, exec.id, bearer: w.bob) == .conflict)
         #expect(try await dialRefusal(w, exec.id, bearer: w.admin) == .conflict)
@@ -532,7 +532,7 @@ import Testing
         let common = try await w.harness.space.addMachine(name: "common")
         let path = "/v1/machine/\(common.id.rawValue)/name"
 
-        let refused = try await send(w, .put, path, .object(["name": "alices-now"]), bearer: w.alice)
+        let refused = try await send(w, .put, path, .object(["name": "alices_now"]), bearer: w.alice)
         #expect(refused.status == .forbidden)
         #expect(try await code(refused) == "adminRequired")
         #expect(try await w.harness.space.machine(common.id)?.name == "common")
@@ -540,9 +540,9 @@ import Testing
         #expect(try await w.harness.space.machine(common.id)?.name == "studio")
 
         let hers = try await w.harness.space.addMachine(name: "hers", group: w.aliceGroup)
-        let own = try await send(w, .put, "/v1/machine/\(hers.id.rawValue)/name", .object(["name": "her-box"]), bearer: w.alice, group: w.aliceGroup)
+        let own = try await send(w, .put, "/v1/machine/\(hers.id.rawValue)/name", .object(["name": "her_box"]), bearer: w.alice, group: w.aliceGroup)
         #expect(own.status == .ok)
-        #expect(try await w.harness.space.machine(hers.id)?.name == "her-box")
+        #expect(try await w.harness.space.machine(hers.id)?.name == "her_box")
       }
     }
   }

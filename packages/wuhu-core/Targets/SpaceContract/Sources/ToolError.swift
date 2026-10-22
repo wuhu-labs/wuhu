@@ -3,6 +3,9 @@ import JSONValue
 
 @Contract
 public enum ErrorCode: String, Codable, Equatable, Sendable {
+  case aliasTaken
+  case invalidAlias
+  case memberRequired
   case notFound
   case conflict
   case invalidPath

@@ -66,7 +66,8 @@ extension Space {
       }
       name = String(path.dropFirst(SessionTemplate.root.count + 1))
       if name.hasSuffix("/") { name.removeLast() }
-      owner = GroupID(rawValue: named)
+      guard let resolved = try await resolveGroup(named) else { throw ExecutorSpecError("unknown template: \(reference)") }
+      owner = resolved
     }
     guard SessionTemplate.isValidName(name) else {
       throw ExecutorSpecError("not a template name: \(name)")

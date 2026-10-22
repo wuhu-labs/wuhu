@@ -47,17 +47,17 @@ import Testing
 
   @Test(arguments: Source.allCases)
   func aSelectionActsInItsGroup(source: Source) async throws {
-    let h = try GroupHarness(features: ["groups"], configGroup: source == .config ? "alice" : nil)
+    let h = try GroupHarness(features: ["groups"], configGroup: source == .config ? "team_space" : nil)
     let result = switch source {
-    case .flag: await h.run(["--group", "alice", "ls", "/"])
-    case .environment: await h.run(["ls", "/"], environment: ["WUHU_GROUP": "alice"])
+    case .flag: await h.run(["--group", "team_space", "ls", "/"])
+    case .environment: await h.run(["ls", "/"], environment: ["WUHU_GROUP": "team_space"])
     case .config: await h.run(["ls", "/"])
     }
     #expect(result.code == 0, "\(result.stderr)")
     let requests = await h.recorder.requests
     #expect(requests.map(\.url.path) == ["/v1/server", "/v1/tools/ls"])
     #expect(requests.first?.headers["wuhu-group"] == nil, "the feature probe acts in no group")
-    #expect(requests.last?.headers["wuhu-group"] == "alice")
+    #expect(requests.last?.headers["wuhu-group"] == "team_space")
     let hosts = Set(requests.map { "\($0.url.host ?? ""):\($0.url.port ?? 0)" })
     #expect(hosts == ["127.0.0.1:5530"], "the group never enters the host")
   }
@@ -72,8 +72,8 @@ import Testing
     let configured = try GroupSelection.resolve(flag: nil, environment: [:], config: config)
     #expect(configured.group == "carol" && configured.source == .config)
     #expect(try GroupSelection.resolve(flag: nil, environment: ["WUHU_GROUP": ""], config: nil) == .none)
-    #expect(throws: UsageError.self) { try GroupSelection.resolve(flag: "Alice", environment: [:], config: nil) }
-    #expect(throws: UsageError.self) { try GroupSelection.resolve(flag: "a--b", environment: [:], config: nil) }
+    #expect(try GroupSelection.resolve(flag: "team_space", environment: [:], config: nil).group == "team_space")
+    #expect(try GroupSelection.resolve(flag: "a--b", environment: [:], config: nil).group == "a--b")
   }
 
   @Test(arguments: [nil, [String]()] as [[String]?])
@@ -139,26 +139,37 @@ import Testing
     #expect(try h.configJSON() == ["space": "127.0.0.1:6000"])
   }
 
-  @Test func anInvalidConfiguredGroupBlocksOnlyTheVerbsThatUseIt() async throws {
-    let h = try GroupHarness(features: ["groups"], configGroup: "Not A Group")
+  @Test func groupSpellingIsLeftToTheServer() async throws {
+    let h = try GroupHarness(features: ["groups"], configGroup: "team_space")
     let blocked = await h.run(["ls", "/"])
-    #expect(blocked.code == 64)
-    #expect(blocked.stderr.contains("Not A Group (from .wuhu/config.json) is not a group id"), "\(blocked.stderr)")
+    #expect(blocked.code == 0, "\(blocked.stderr)")
+    #expect(await h.recorder.requests.last?.headers["wuhu-group"] == "team_space")
 
     let clear = await h.run(["group", "use", "--clear"])
     #expect(clear.code == 0, "\(clear.stderr)")
     #expect(try h.configJSON() == ["space": "127.0.0.1:5530"])
 
-    let broken = try GroupHarness(features: ["groups"], configGroup: "Not A Group")
+    let broken = try GroupHarness(features: ["groups"], configGroup: "team_space")
     let chosen = await broken.run(["group", "use", "alice"])
     #expect(chosen.code == 0, "\(chosen.stderr)")
     #expect(try broken.configJSON()["group"] == "alice")
 
-    let repinned = try GroupHarness(features: ["groups"], configGroup: "Not A Group")
+    let repinned = try GroupHarness(features: ["groups"], configGroup: "team_space")
     let use = await repinned.run(["use", "127.0.0.1:5530"])
     #expect(use.code == 0, "\(use.stderr)")
-    #expect(try repinned.configJSON() == ["space": "127.0.0.1:5530"], "use drops the invalid group")
-    #expect(use.stderr == "note: cleared the group Not A Group: not a group id\n")
+    #expect(try repinned.configJSON() == ["space": "127.0.0.1:5530", "group": "team_space"])
+    #expect(use.stderr.isEmpty)
+  }
+
+  @Test func groupUsePassesAliasesToTheServerAndPreservesItsErrors() async throws {
+    let h = try GroupHarness(features: ["groups"], groups: ["team_space"])
+    let selected = await h.run(["group", "use", "team_space"])
+    #expect(selected.code == 0, "\(selected.stderr)")
+    #expect(try h.configJSON()["group"] == "team_space")
+    let missing = await h.run(["group", "use", "missing_group"])
+    #expect(missing.code == 1)
+    #expect(missing.stderr.contains("127.0.0.1:5530 has no group missing_group"))
+    #expect(try h.configJSON()["group"] == "team_space")
   }
 
   enum ExecAttempt: CaseIterable {
@@ -217,8 +228,8 @@ import Testing
     #expect(unsupported.stderr.contains("this server has no groups"))
     #expect(await h.recorder.requests.map(\.url.path) == ["/v1/server"])
     let invalid = await h.run(["--group", "Alice", "ls", "/"], environment: environment)
-    #expect(invalid.code == 64)
-    #expect(invalid.stderr.contains("is not a group id"))
+    #expect(invalid.code == 1)
+    #expect(invalid.stderr.contains("this server has no groups"))
   }
 
   @Test func anExecIgnoresTheConfiguredGroup() async throws {
@@ -321,6 +332,7 @@ import Testing
     let list = await h.run(["group", "list"])
     #expect(list.code == 0, "\(list.stderr)")
     #expect(list.stdout == "alice\nbob\n")
+    #expect(await h.recorder.requests.map(\.url.path) == ["/v1/server", "/v1/groups"])
     let current = await h.run(["group", "current"])
     #expect(current.stdout == "alice (the server's default)\n")
 
@@ -357,6 +369,8 @@ import Testing
   }
 
   @Test func groupAccessVerbsParseTheirSubjects() throws {
+    #expect(try Command.parse(["group", "create", "research_notes"]) == .groupCreate("research_notes"))
+    #expect(try Command.parse(["group", "rename", "studio", "research_notes"]) == .groupRename("studio", alias: "research_notes"))
     #expect(try Command.parse(["group", "open", "studio"]) == .groupOpen("studio", open: true))
     #expect(try Command.parse(["group", "close", "studio"]) == .groupOpen("studio", open: false))
     #expect(try Command.parse(["group", "secrets", "studio", "reachable"]) == .groupSecrets("studio", scope: "reachable"))
@@ -382,7 +396,7 @@ import Testing
     let expected = Invocation(group: nil, command: .machineAdd(name: nil, group: "shared"))
     #expect(try Invocation.parse(["machine", "add", "--group", "shared"]) == expected)
     #expect(try Invocation.parse(["--group", "shared", "machine", "add"]) == expected)
-    #expect(throws: UsageError.self) { try Invocation.parse(["machine", "add", "--group", "Not A Group"]) }
+    #expect(try Invocation.parse(["machine", "add", "--group", "team_space"]).command == .machineAdd(name: nil, group: "team_space"))
     #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine", "add", "--group", "shared"]) }
   }
 
@@ -573,6 +587,12 @@ private struct GroupHarness {
       case "/v1/groups":
         let values: [JSONValue] = groups.map { id in JSONValue.object(["id": JSONValue.string(id)]) }
         return try Response.json(JSONValue.array(values))
+      case let path where path.hasPrefix("/v1/group/"):
+        let id = String(path.dropFirst("/v1/group/".count))
+        guard groups.contains(id) else {
+          return try Response.json(["code": "notFound", "message": "127.0.0.1:5530 has no group " + id], status: .notFound)
+        }
+        return try Response.json(["id": .string(id), "open": true, "secrets": "owner", "personal": false, "entries": []] as JSONValue)
       case "/v1/notifications":
         // Every group's rows, whatever the Wuhu-Group header: the server's
         // inbox is the person's.

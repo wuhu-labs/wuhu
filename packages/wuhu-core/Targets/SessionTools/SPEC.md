@@ -160,3 +160,7 @@ Normal machine text/image reads and write/edit results retain opaque filesystem 
 ## Execution ownership
 
 The composed worker constructs Scripts and ToolExecutor together. Main-side tool routes and subscription firing use Worker, not concrete interpreter objects. Handler invocation/results live in MainHub; no forwarding handler protocol is required. Discovery configuration lives on Hub, reached through typed Main discovery operations. Machine bindings retain only typed machine/exec values and streams; Hub owns caller-leg transport and connection policy.
+
+## Group creation
+
+`createGroup({alias, owner})` from `wuhu:space` returns `{id, alias}`. This is the only session group-creation surface, transported by a script credential rather than an exec token. The owner is a live non-guest human space member, named by account id, persona id or current/retired person alias; only that human gains admin. The new group starts open, with a permanent three-word id from the session/persona allocator. `memberRequired`, `invalidAlias` and `aliasTaken` are typed `SpaceError` codes. The alias is renameable by a group admin, has no hyphens, and shares its permanent reservation namespace with people and machines. File addresses and module imports resolve current and retired aliases before access checks; imports still use the execution's frozen revision and readable-id snapshot.

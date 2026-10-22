@@ -29,12 +29,25 @@ func webResponse(
   pageFetch: PageFetchHandler? = nil,
   request: Request,
 ) async throws -> Response {
+  let resolved = try await space.resolveGroup(group.rawValue)
+  if let resolved, resolved != group, let record = try await space.group(resolved) {
+    var current = record.alias
+    if let account = record.personalAccount, let persona = try await space.persona(account: account) {
+      current = try await space.userProfile(principal: persona.name)?.handle
+    }
+    if let current, current != group.rawValue {
+      var parts = URLComponents(url: request.url, resolvingAgainstBaseURL: false)!
+      parts.host = contentHost.pattern?.template.replacingOccurrences(of: "{group}", with: current).split(separator: ":").first.map(String.init) ?? current + "." + contentHost.host
+      var redirect = Response(status: .temporaryRedirect)
+      redirect.headers[.cacheControl] = "no-store"
+      redirect.headers[.location] = parts.string!
+      return redirect
+    }
+  }
   let pairs = pairedOrigins(request: request, contentHost: contentHost, advertisedOrigin: advertisedOrigin)
   let paired = allowedOrigin(request: request, pairs: pairs)
   var response: Response
-  if group != .shared, try await !space.groupExists(group) {
-    response = errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(group.rawValue)")
-  } else {
+  if let group = resolved {
     response = try await routedWebResponse(
       space: space,
       caller: WebCaller(
@@ -50,6 +63,8 @@ func webResponse(
       pageFetch: pageFetch,
       request: request,
     )
+  } else {
+    response = errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(group.rawValue)")
   }
   response.headers[.vary] = request.method == .options
     ? "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
@@ -65,7 +80,7 @@ func webResponse(
   // Sibling hosts are same-site: only the host itself and the SPAs it pairs
   // with may frame a group's pages, even by a navigation the cookie wall lets
   // through.
-  if group != .shared {
+  if resolved != .shared {
     let framing = (["frame-ancestors 'self'"] + pairs.map(\.serialized)).joined(separator: " ")
     response.headers[contentSecurityPolicy] = [response.headers[contentSecurityPolicy], framing]
       .compactMap(\.self).joined(separator: "; ")

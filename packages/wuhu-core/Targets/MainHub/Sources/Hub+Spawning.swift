@@ -88,7 +88,12 @@ extension Hub {
     }
     let group: GroupID
     do {
-      group = try await space.homeGroup(order.group.map(GroupID.init(rawValue:)), creator: Principal(actor: .session(caller), group: creator.group))
+      let requested: GroupID?
+      if let spelling = order.group {
+        guard let resolved = try await space.resolveGroup(spelling) else { throw SpaceError.notFound(spelling) }
+        requested = resolved
+      } else { requested = nil }
+      group = try await space.homeGroup(requested, creator: Principal(actor: .session(caller), group: creator.group))
     } catch let error as SpaceError {
       throw ToolProblem(renderedFailure(Wire.failure(error)))
     }

@@ -69,7 +69,7 @@ struct MachineV2ExecOutputBudgetTests {
   private func runOverBudget(_ chunks: [String], window: Int, maxOutput: Int) async throws -> (stdout: String, stderr: String) {
     let note = StopNote()
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "budget-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "budget_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(ChunkedOutput(note: note))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })

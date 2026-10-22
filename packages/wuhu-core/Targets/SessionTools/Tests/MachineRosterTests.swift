@@ -10,8 +10,8 @@ import Testing
   @Test func rosterCarriesIdAliasAndAttachState() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let mini = try await space.addMachine(name: "mac-mini")
-      let builder = try await space.addMachine(name: "ci-box")
+      let mini = try await space.addMachine(name: "mac_mini")
+      let builder = try await space.addMachine(name: "ci_box")
       let machineFS = FakeMachineFS()
       machineFS.attached.withLock { $0 = [mini.id] }
       var world = ToolWorld(
@@ -23,13 +23,13 @@ import Testing
         throw Mismatch("machines failed")
       }
       #expect(result.machines.map(\.id) == [mini.id, builder.id].map(\.rawValue).sorted())
-      #expect(Set(result.machines.map(\.name)) == ["mac-mini", "ci-box"])
+      #expect(Set(result.machines.map(\.name)) == ["mac_mini", "ci_box"])
       #expect(result.machines.first { $0.id == mini.id.rawValue }?.attached == true)
       #expect(result.machines.first { $0.id == builder.id.rawValue }?.attached == false)
 
       let rendered = ToolResultPayload.machines(result).renderedText
-      #expect(rendered.contains("mac-mini \(mini.id.rawValue) attached"))
-      #expect(rendered.contains("ci-box \(builder.id.rawValue) detached"))
+      #expect(rendered.contains("mac_mini \(mini.id.rawValue) attached"))
+      #expect(rendered.contains("ci_box \(builder.id.rawValue) detached"))
     }
   }
 
@@ -69,7 +69,7 @@ import Testing
   @Test func aServerWithoutAMachineBackendRefuses() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      _ = try await space.addMachine(name: "mac-mini")
+      _ = try await space.addMachine(name: "mac_mini")
       var world = ToolWorld(executor: SessionRuntime.toolExecutor(owner: Hub(space: space)), session: try await makeSession(space))
 
       let message = try failureMessage(try await world.run("machines", .object([:])))

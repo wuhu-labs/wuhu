@@ -103,7 +103,7 @@ import Testing
       // owner's list admits the reader's group at read only.
       try await t.harness.space.setGrant(.group, group.rawValue, role: .read, in: owner, by: .anonymous, acting: owner)
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
-      let readerBox = try await t.harness.space.addMachine(name: "reader-box", group: group)
+      let readerBox = try await t.harness.space.addMachine(name: "reader_box", group: group)
       let machine = try #require(try await t.harness.space.resolveMachine(readerBox.id.rawValue, usableFrom: group))
       let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)
       let token = t.tokens.credential(session: reader, exec: exec.id, timeout: nil, now: Date()).token

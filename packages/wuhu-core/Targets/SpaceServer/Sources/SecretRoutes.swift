@@ -125,8 +125,7 @@ private func secretVerdict(
     var group = principal.group
     if let named = queryValues(of: request.url)["group"], named != group.rawValue {
       try SpaceSecrets.validate(group: named)
-      let target = GroupID(rawValue: named)
-      guard try await space.groupExists(target) else {
+      guard let target = try await space.resolveGroup(named) else {
         return errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)")
       }
       guard try await admitsSecrets(of: target, principal: principal, space: space) else {

@@ -74,6 +74,67 @@ import Testing
     try await json(response).object?["code"]?.stringValue
   }
 
+  @Test(arguments: ["{group}.space.test", "{group}--tenant.space.test"])
+  func aliasesReachTheSameGroupAndOldHostsRedirectWithoutChangingThePath(pattern: String) async throws {
+    let h = try Harness(dev: true, origin: Self.origin, contentHostPattern: pattern)
+    let owner = try await h.space.addAccount(kind: .human, name: "Morgan")
+    let group = try await h.space.createGroup(alias: "research_notes", owner: owner.id)
+    _ = try await h.space.fs(group).write("/plan.md", Data("research".utf8), ifMatch: nil)
+    let host = pattern.replacingOccurrences(of: "{group}", with: "research_notes")
+    let first = try await h.api(Request(url: URL(string: "https://\(host):5530/plan.md")!))
+    #expect(first.status == .ok)
+    #expect(try await first.text() == "research")
+    try await h.space.renameGroup(group, alias: "science", by: Principal(actor: .person(persona: "person", account: owner.id), group: group))
+    let redirected = try await h.api(Request(url: URL(string: "https://\(host):5530/plan.md?rev=3&x=y")!))
+    #expect(redirected.status == .temporaryRedirect)
+    #expect(redirected.headers[.cacheControl] == "no-store")
+    let current = pattern.replacingOccurrences(of: "{group}", with: "science")
+    #expect(redirected.headers[.location] == "https://\(current):5530/plan.md?rev=3&x=y")
+    for spelling in ["science", group.rawValue] {
+      let host = pattern.replacingOccurrences(of: "{group}", with: spelling)
+      #expect(try await h.api(Request(url: URL(string: "https://\(host):5530/plan.md")!)).status == .ok)
+    }
+  }
+
+  @Test func retiredHostRedirectsBeforeTheBrowserMintsItsCurrentHostOnlyCookie() async throws {
+    let h = try Harness(dev: false, origin: Self.origin, contentHostPattern: "{group}--tenant.space.test")
+    let owner = try await h.space.addAccount(kind: .human, name: "Morgan")
+    let group = try await h.space.createGroup(alias: "research", owner: owner.id)
+    let principal = Principal(actor: .person(persona: "reader", account: owner.id), group: group)
+    try await h.space.setVisibility(.private, of: group, by: principal.actor, acting: group)
+    _ = try await h.space.fs(group).write("/plan.md", Data("plan".utf8), ifMatch: nil)
+    try await h.space.renameGroup(group, alias: "science", by: principal)
+    let old = URL(string: "https://research--tenant.space.test:5530/plan.md")!
+    let redirect = try await h.api(Request(url: old))
+    #expect(redirect.status == .temporaryRedirect)
+    #expect(redirect.headers[.cacheControl] == "no-store")
+    let current = try #require(redirect.headers[.location].flatMap(URL.init(string:)))
+    #expect(current.host == "science--tenant.space.test")
+    #expect(try await h.api(Request(url: current)).status == .unauthorized)
+
+    let key = Curve25519.Signing.PrivateKey()
+    _ = try await h.space.addKey(key.pubkeyLabel, account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+    let assertion = try AssertionClaims(key: key.pubkeyLabel, space: try await h.space.identity().rawValue, expiresAt: fixedDate.addingTimeInterval(60)).signed(by: key)
+    var mint = Request(url: current.deletingLastPathComponent().appending(path: "_/session"), method: .post)
+    mint.headers[.authorization] = "Bearer " + assertion.rawValue
+    mint.headers[.origin] = Self.origin
+    let minted = try await h.api(mint)
+    #expect(minted.status == .noContent)
+    let cookie = try #require(minted.headers[values: .setCookie].first { $0.hasPrefix("__Host-wuhu_read=") })
+    #expect(!cookie.contains("Domain="))
+    var read = Request(url: current)
+    read.headers[.cookie] = String(cookie.prefix { $0 != ";" })
+    let page = try await h.api(read)
+    #expect(page.status == .ok)
+    #expect(try await page.text() == "plan")
+    try await h.space.renameGroup(group, alias: "research", by: principal)
+    let back = try await h.api(Request(url: current))
+    #expect(back.status == .temporaryRedirect)
+    #expect(back.headers[.location] == old.absoluteString)
+    #expect(back.headers[.cacheControl] == "no-store")
+    #expect(try await h.api(Request(url: old)).status == .unauthorized)
+  }
+
   @Test func aGroupHostServesItsGroupToAMemberWithThatHostsCookie() async throws {
     let r = try await rig()
     let alices = try await cookie(r, r.alice, r.aliceGroup)

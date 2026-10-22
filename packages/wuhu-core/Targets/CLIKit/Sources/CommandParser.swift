@@ -511,6 +511,15 @@ extension Command {
     case "current":
       try parser.finish(verb: "group current")
       return .groupCurrent
+    case "create":
+      let alias = try parser.required("alias", verb: "group create")
+      try parser.finish(verb: "group create")
+      return .groupCreate(alias)
+    case "rename":
+      let id = try parser.required("group", verb: "group rename")
+      let alias = try parser.required("alias", verb: "group rename")
+      try parser.finish(verb: "group rename")
+      return .groupRename(id, alias: alias)
     case "show":
       let id = try parser.required("group", verb: "group show")
       try parser.finish(verb: "group show")
@@ -1522,7 +1531,7 @@ extension Command {
 
     claims a display handle for the identity this device holds in the pinned
     space. handles are lowercased, unique per space, renameable, and match
-    [a-z0-9][a-z0-9-]{1,31}. a handle is display only: it never logs in and
+    [a-z0-9][a-z0-9_]{1,31}. a handle is display only: it never logs in and
     never appears in auth — the persona name stays the principal.
     \(exitCodes)
     """,
@@ -1675,7 +1684,10 @@ extension Command {
     usage: wuhu group <list|use|current> ...
 
     subcommands:
-      list              list the space's group ids
+      list              list group ids and readable aliases
+      create <alias>    create an open group as its human admin
+      rename <g> <alias>  change a group alias as its admin
+      show <g>          show a group by id or alias
       use <id>|--clear  record the group this wallet acts in, or clear it
       current           print the acting group and where it comes from
 
@@ -1687,10 +1699,24 @@ extension Command {
     owner and space; wallet mode uses the same group selection as a terminal.
     \(exitCodes)
     """,
+    "group create": """
+    usage: wuhu group create <alias>
+
+    creates an open group owned by the calling space member, never a guest.
+    sessions use createGroup({alias, owner}) in run_script instead.
+    \(exitCodes)
+    """,
+    "group rename": """
+    usage: wuhu group rename <id-or-alias> <alias>
+
+    changes the group's alias as its admin. old aliases keep resolving.
+    aliases use letters, digits and underscores, without hyphens.
+    \(exitCodes)
+    """,
     "group list": """
     usage: wuhu group list
 
-    prints the pinned space's group ids, one per line (GET /v1/groups).
+    prints ids, one group per line.
     \(exitCodes)
     """,
     "group use": """

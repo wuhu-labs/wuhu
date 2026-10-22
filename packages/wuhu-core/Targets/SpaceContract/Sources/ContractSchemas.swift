@@ -63,6 +63,7 @@ public enum ContractSchemas {
     ("AIProviderDisclosure", AIProviderDisclosure.jsonSchema),
     ("GroupSummary", GroupSummary.jsonSchema),
     ("GroupAccessEntry", GroupAccessEntry.jsonSchema),
+    ("GroupCreateInput", GroupCreateInput.jsonSchema),
     ("GroupDetail", GroupDetail.jsonSchema),
     ("GroupUpdateInput", GroupUpdateInput.jsonSchema),
     ("GroupAccessInput", GroupAccessInput.jsonSchema),

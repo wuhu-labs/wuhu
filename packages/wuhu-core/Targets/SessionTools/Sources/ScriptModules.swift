@@ -12,6 +12,7 @@ import func MainHub.systemModulePath
 #endif
 import QuickJSKit
 import SpaceClient
+import struct SpaceContract.GroupDetail
 import struct SpaceContract.GroupID
 import struct SpaceContract.GroupSummary
 import SpaceCore
@@ -62,7 +63,18 @@ func scriptModules(client: SpaceClient, snapshot: ScriptModuleSnapshot, typedErr
           let group: GroupID
           if let (named, _) = groupModulePath(name) {
             shown = name
-            group = named
+            if snapshot.readable.contains(named) {
+              group = named
+            } else {
+              do {
+                let detail: GroupDetail = try await client.api(.get, "/v1/group/\(named.rawValue)")
+                group = GroupID(rawValue: detail.id)
+              } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound || error.error.code == .forbidden {
+                throw SpaceError.notFound(shown)
+              } catch let error as SpaceClient.TransportFailure where error.status == 404 || error.status == 403 {
+                throw SpaceError.notFound(shown)
+              }
+            }
           } else {
             shown = String(name.dropFirst(scriptModuleScheme.count))
             group = snapshot.acting

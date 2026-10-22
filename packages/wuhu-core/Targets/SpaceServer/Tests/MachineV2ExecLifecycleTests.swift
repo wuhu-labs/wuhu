@@ -215,7 +215,7 @@ private struct Rig {
 
   init() async throws {
     space = try Space.inMemory()
-    machine = try await space.addMachineV2(name: "lifecycle-v2", group: .shared).machine
+    machine = try await space.addMachineV2(name: "lifecycle_v2", group: .shared).machine
     agent = try OperationAgent(machine: machine.id.rawValue, kinds: [.init(ScriptedProcess(side: side))], authorize: { _, _ in })
   }
 
@@ -787,7 +787,7 @@ extension MachineV2ExecLifecycleTests {
   func fortyExecsThroughARealTunnel(streams: Int) async throws {
     let space = try Space.inMemory()
     let signing = Curve25519.Signing.PrivateKey()
-    let machine = try await space.enrollMachineV2(name: "tunnel-v2", group: .shared, pubkey: signing.pubkeyLabel).machine
+    let machine = try await space.enrollMachineV2(name: "tunnel_v2", group: .shared, pubkey: signing.pubkeyLabel).machine
     let side = MachineSide()
     let agent = try OperationAgent(machine: machine.id.rawValue, kinds: [.init(ScriptedProcess(side: side))], authorize: { _, _ in })
     let tunnelHub = MachineV2Hub(space: space)

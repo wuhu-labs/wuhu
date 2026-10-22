@@ -243,9 +243,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
 
       #expect(try await touch(&world, "machines://atelier/tmp/b.txt").contains("studio manual"))
       #expect(try await space.readTextForTest("/_/machines/atelier/AGENTS.md") == "studio manual")
-      await #expect(throws: SpaceError.notFound("/_/machines/studio/AGENTS.md")) {
-        try await space.fs(.shared).read("/_/machines/studio/AGENTS.md")
-      }
+      #expect(try await space.readTextForTest("/_/machines/studio/AGENTS.md") == "studio manual")
     }
   }
 

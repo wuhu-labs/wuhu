@@ -239,7 +239,7 @@ import Testing
       ("/readme.md", "foo four"),
       ("/src/deep/nested.txt", "foo five\nfoo six"),
     ]
-    let (record, _) = try await space.addMachineV2(name: "parity-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "parity_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })

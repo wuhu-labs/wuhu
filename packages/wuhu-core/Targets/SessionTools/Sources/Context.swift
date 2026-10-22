@@ -60,7 +60,8 @@ extension ToolExecutor {
 
   /// The usable machine `reference` names: its id, or the name a human gave the box.
   func machine(_ reference: String, as session: SessionID) async throws -> MachineStatus? {
-    try await machines(as: session).first { $0.id.rawValue == reference || $0.name?.lowercased() == reference.lowercased() }
+    do { return try await client(session).api(.get, "/v1/machine/" + pathSegment(reference) + "/status") }
+    catch let error as SpaceClient.ToolFailure where error.error.code == .notFound { return nil }
   }
 
   // A machines:// host is the id or the name a human gave the box.

@@ -64,6 +64,19 @@ struct MachineFoldersTests {
     #expect(try await space.history(path("/_/machines/studio/AGENTS.md"), in: .shared).count == 2)
   }
 
+  @Test func retiredMachineNamesStillReachStoredNotes() async throws {
+    let space = try makeSpace()
+    let machine = try await space.addMachine(name: "old-studio")
+    let fs = await space.fs(.shared)
+    _ = try await fs.write("/_/machines/old-studio/AGENTS.md", Data("notes".utf8), ifMatch: nil)
+    _ = try await space.renameMachine(machine.id, name: "desk")
+    #expect(try await text(fs, "/_/machines/old-studio/AGENTS.md") == "notes")
+    #expect(try await fs.stat("/_/machines/old-studio").kind == .directory)
+    let token = try await fs.read("/_/machines/old-studio/AGENTS.md").0
+    _ = try await fs.write("/_/machines/old-studio/AGENTS.md", Data("updated".utf8), ifMatch: token)
+    #expect(try await text(fs, "/_/machines/desk/AGENTS.md") == "updated")
+  }
+
   @Test func theListingShowsOneEntryPerEnrolledMachineByName() async throws {
     let space = try makeSpace()
     let fs = await space.fs(.shared)
@@ -144,9 +157,7 @@ struct MachineFoldersTests {
     #expect(try await space.currentRevision() == before)
     #expect(try await text(fs, "/_/machines/atelier/AGENTS.md") == "manual")
     #expect(try await fs.list("/_/machines").1.map(\.name) == ["atelier"])
-    await #expect(throws: SpaceError.notFound("/_/machines/studio/AGENTS.md")) {
-      try await fs.read("/_/machines/studio/AGENTS.md")
-    }
+    #expect(try await text(fs, "/_/machines/studio/AGENTS.md") == "manual")
   }
 
   @Test func aMoveMapsBothSidesAndHistoryUsesTheCurrentNames() async throws {

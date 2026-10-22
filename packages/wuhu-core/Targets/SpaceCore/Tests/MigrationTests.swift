@@ -34,7 +34,7 @@ import Testing
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
     // The three already-applied migrations stay applied.
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 2)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 3)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -95,7 +95,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 2)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 3)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -358,7 +358,7 @@ import Testing
     #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
     #expect(try await database.read {
       try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
-    } == ["001", "002", "003", "004", "005", "998", "999"])
+    } == ["001", "002", "003", "004", "005", "006", "998", "999"])
     try await original.close()
   }
 }

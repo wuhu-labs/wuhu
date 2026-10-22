@@ -2,6 +2,7 @@ import struct Credentials.CredentialResolver
 import Crypto
 import DeterministicDependencies
 import Fetch
+import Foundation
 import JSONValue
 import SessionDomain
 @testable import SessionTools
@@ -38,6 +39,49 @@ import Testing
       try await rig.space.setGrant(.group, alice.rawValue, role: .write, in: hidden, by: .anonymous, acting: hidden)
       let changed = try await rig.evaluate("import {groups} from 'wuhu:space';result((await groups()).find(x=>x.id==='hidden'))")
       #expect(changed == ["id": "hidden", "member": false, "readable": true, "admin": false])
+    }
+  }
+
+  @Test func createGroupAssignsOnlyTheLiveMemberOwnerAndReturnsAReachableAlias() async throws {
+    try await withRig { rig in
+      let owner = try await rig.space.addAccount(kind: .human, name: "Morgan")
+      let guest = try await rig.space.addAccount(kind: .human, name: "Guest", guest: true)
+      let key = try await rig.space.addKey("ed25519:" + Data(repeating: 42, count: 32).base64EncodedString(), account: owner.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
+      let persona = try await rig.space.adoptPersona(key: key)
+      _ = try await rig.space.setUserProfile(principal: persona.name, handle: "morgan", displayName: nil)
+      let actual = try await rig.evaluate("""
+      import {createGroup, groups, context, writeText, readText} from 'wuhu:space'
+      const created = await createGroup({alias:'research_notes',owner:'morgan'})
+      await writeText(`wuhu://${created.alias}.localspace/probe.md`, 'created', {ifMatch:null})
+      const errors=[]
+      for (const input of [{alias:'guest_space',owner:'\(guest.id.rawValue)'},{alias:'research_notes',owner:'\(owner.id.rawValue)'},{alias:'missing_owner'}]) {
+        try { await createGroup(input) } catch(e) { errors.push(e.code) }
+      }
+      result({created, standing:(await groups()).find(g=>g.id===created.id), text:(await readText(`wuhu://${created.id}.localspace/probe.md`)).content, errors})
+      """)
+      let id = try #require(actual.object?["created"]?.object?["id"]?.stringValue)
+      let group = GroupID(rawValue: id)
+      #expect(actual.object?["text"] == "created")
+      #expect(actual.object?["errors"] == ["memberRequired", "aliasTaken", "invalidArgument"])
+      #expect(actual.object?["standing"] == ["id": .string(id), "member": false, "readable": true, "admin": false])
+      #expect(try await rig.space.isHumanAdmin(owner.id, of: group))
+      #expect(try await rig.space.group(group)?.visibility == .open)
+      #expect(try await rig.space.resolveGroup("research_notes") == group)
+    }
+  }
+
+  @Test func moduleImportsResolveCurrentAndRetiredGroupAliases() async throws {
+    try await withRig(prepare: { space, _ in
+      let owner = try await space.addAccount(kind: .human, name: "Morgan")
+      let group = try await space.createGroup(alias: "library", owner: owner.id)
+      _ = try await space.fs(group).write("/answer.js", Data("export const answer = 42".utf8), ifMatch: nil)
+    }) { rig in
+      #expect(try await rig.evaluate("import {answer} from 'wuhu://library.localspace/answer.js'; result(answer)") == 42)
+      let group = try #require(try await rig.space.resolveGroup("library"))
+      try await rig.space.renameGroup(group, alias: "modules", by: .shared(.anonymous))
+      for alias in ["library", "modules", group.rawValue] {
+        #expect(try await rig.evaluate("import {answer} from 'wuhu://\(alias).localspace/answer.js'; result(answer)") == 42)
+      }
     }
   }
 

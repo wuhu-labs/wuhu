@@ -46,7 +46,7 @@ import Testing
   func sessionToken(_ s: Space, in group: GroupID) async throws -> String {
     let model = SessionExecutor.kernel(ModelSpecifier(provider: "testing", model: "test-model", effort: "high"))
     let session = try await s.harness.store.createSession(group: group, title: "a", kind: .agent, createdBy: "owner", executor: model)
-    let exec = try await s.harness.space.mintExec(machine: try await s.harness.space.addMachine(name: "box-\(group.rawValue)").id, caller: session.rawValue)
+    let exec = try await s.harness.space.mintExec(machine: try await s.harness.space.addMachine(name: "box_\(group.rawValue.replacingOccurrences(of: "-", with: "_"))").id, caller: session.rawValue)
     return s.tokens.credential(session: session, exec: exec.id, timeout: nil, now: Date()).token
   }
 

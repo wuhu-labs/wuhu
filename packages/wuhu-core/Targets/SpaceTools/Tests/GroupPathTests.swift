@@ -32,6 +32,20 @@ import Testing
     if case .failed(code: .notFound, _, _, _) = await failure(name, input, context) { true } else { false }
   }
 
+  @Test func watchesResolveCurrentAndRetiredGroupAliasesBeforeCheckingAccess() async throws {
+    let r = try await rig()
+    try await r.alice.space.renameGroup(r.group, alias: "studio", by: r.alice.principal)
+    let glob = "wuhu://studio.localspace/**/*.md"
+    let watch = try await WatchedGlob(glob, as: r.alice.principal, in: r.alice.space)
+    #expect(watch.group == r.group)
+    #expect(watch.pattern == "/**/*.md")
+    try await r.alice.space.renameGroup(r.group, alias: "notes", by: r.alice.principal)
+    #expect(try await WatchedGlob(glob, as: r.alice.principal, in: r.alice.space).group == r.group)
+    await #expect(throws: SpaceError.notFound(glob)) {
+      try await WatchedGlob(glob, as: r.shared.principal, in: r.shared.space)
+    }
+  }
+
   @Test func sharedFindsNothingOfAlicesFiles() async throws {
     let rig = try await rig()
     let written = try await seedFile("/plan.md", "the secret plan", rig.alice)

@@ -23,10 +23,10 @@ extension GroupID {
   /// The reserved host suffix of a group's files: `wuhu://<group>.localspace/…`.
   public static let hostSuffix: String = ".localspace"
 
-  /// Lowercase letters, digits and inner hyphens.
+  /// Group-address spelling: an id with inner hyphens, or an alias with underscores.
   public static func isValid(_ id: some StringProtocol) -> Bool {
     !id.isEmpty && id.first != "-" && id.last != "-"
-      && id.unicodeScalars.allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "-" }
+      && id.unicodeScalars.allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "-" || $0 == "_" }
   }
 
   /// The group `host` names when it is `<group>.localspace`, compared lowercased like any

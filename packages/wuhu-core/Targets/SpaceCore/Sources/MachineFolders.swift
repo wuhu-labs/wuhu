@@ -90,9 +90,10 @@ struct MachineFolders: SpaceVFS {
 
   static func stored(_ path: SpacePath, mutating: Bool, in db: Database) throws -> SpacePath {
     guard path.components.count >= 3, path.components.starts(with: root) else { return path }
-    let reference = path.components[2]
+    let reference = path.components[2].lowercased().replacingOccurrences(of: "-", with: "_")
+    let alias = try AliasRow.where { $0.name.eq(reference.lowercased()) && $0.kind.eq(AliasKind.machine) }.fetchOne(db)
     let machine = try MachineRow.where { $0.id.eq(reference) }.fetchOne(db)
-      ?? MachineRow.where { $0.name.lower().eq(reference.lowercased()) }.fetchOne(db)
+      ?? alias.flatMap { alias in try MachineRow.where { $0.id.eq(alias.target) }.fetchOne(db) }
     guard let machine else {
       throw mutating ? SpaceError.alreadyExists(path.rawValue) : SpaceError.notFound(path.rawValue)
     }

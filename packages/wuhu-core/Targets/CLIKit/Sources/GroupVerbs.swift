@@ -20,25 +20,20 @@ extension Executor {
     let selected = self.group
     self.select(.none)
     defer { self.select(selected) }
-    let groups: [GroupSummary] = try await self.authenticated(space).api(.get, "/v1/groups")
-    guard groups.contains(where: { $0.id == group }) else {
-      throw CLIError(message: "\(space) has no group \(group); wuhu group list shows its groups")
-    }
+    let _: GroupDetail = try await self.authenticated(space).api(.get, "/v1/group/\(group)")
   }
 
   mutating func groupList() async throws {
     let space = try self.wallet.pinnedSpace()
     try await self.requireGroups(space: space, selected: self.group.group)
     let groups: [GroupSummary] = try await self.authenticated(space).api(.get, "/v1/groups")
-    await self.runner.stdout(groups.map { $0.id + "\n" }.joined())
+    let lines = groups.map(\.id)
+    await self.runner.stdout(lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n"))
   }
 
   mutating func groupUse(_ group: String?) async throws {
     let space = try self.wallet.pinnedSpace()
     if let group {
-      guard isValidGroupID(group) else {
-        throw UsageError(message: "group use: \(group) is not a group id: lowercase letters, digits and inner hyphens")
-      }
       try await self.requireGroup(group, space: space)
     }
     let config = try self.wallet.setGroup(group)
@@ -63,6 +58,18 @@ extension Executor {
   }
 
   // A group's access state: open or private, the secrets switch, the list.
+  mutating func groupCreate(_ alias: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let result: JSONValue = try await self.authenticated(space).api(.post, "/v1/groups", body: .object(["alias": .string(alias)]))
+    await self.runner.stdout(result.jsonString() + "\n")
+  }
+
+  mutating func groupRename(_ group: String, alias: String) async throws {
+    let space = try self.wallet.pinnedSpace()
+    let detail: GroupDetail = try await self.authenticated(space).api(.put, "/v1/group/\(group)", body: .object(["alias": .string(alias)]))
+    await self.runner.stdout(detailLines(detail))
+  }
+
   mutating func groupShow(_ group: String) async throws {
     let space = try self.wallet.pinnedSpace()
     let detail: GroupDetail = try await self.authenticated(space).api(.get, "/v1/group/\(group)")
@@ -107,7 +114,7 @@ extension Executor {
   }
 
   private func detailLines(_ detail: GroupDetail) -> String {
-    var lines = ["group \(detail.id) \(detail.open ? "open" : "private") secrets \(detail.secrets)"]
+    var lines = ["group \(detail.id) alias \(detail.alias ?? "none") \(detail.open ? "open" : "private") secrets \(detail.secrets)"]
     lines += detail.entries.map { "\($0.kind) \($0.id) \($0.role)" }
     return lines.joined(separator: "\n") + "\n"
   }

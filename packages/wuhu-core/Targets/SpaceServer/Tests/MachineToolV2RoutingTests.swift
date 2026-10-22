@@ -29,8 +29,8 @@ import Testing
     try Data("needle one\nneedle two\nneedle three".utf8).write(to: a)
     try Data("other".utf8).write(to: b)
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "normal-v2", group: .shared)
-    let legacy = try await space.addMachine(name: "legacy-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "normal_v2", group: .shared)
+    let legacy = try await space.addMachine(name: "legacy_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
@@ -80,7 +80,7 @@ import Testing
     let path = folder.url.appending(path: "file.txt")
     try Data("needle".utf8).write(to: path)
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "lost-operation-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "lost_operation_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
     let admitted = Mutex(false)
     let hub = MachineHub(space: space)
@@ -114,7 +114,7 @@ import Testing
 
   @Test func v2UnavailableNeverFallsBackToV1() async throws {
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "offline-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "offline_v2", group: .shared)
     let hub = MachineHub(space: space)
     do { _ = try await hub.vfs(machine: record.id, op: .stat(path: "/")); Issue.record("unconfigured transport admitted") }
     catch let error as OperationError { #expect(error.code == .machineUnavailable) }
@@ -154,7 +154,7 @@ extension MachineToolV2RoutingTests {
     let folder = try ScratchFolder("exec-early-eof")
     let exitGate = folder.url.appending(path: "exit")
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "exec-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "exec_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [native ? .init(ExecKind()) : .init(RoutedEcho(fastExit: fastExit))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
@@ -230,7 +230,7 @@ extension MachineToolV2RoutingTests {
 
   @Test func rosterAndStatusUsePersistedPresenceRatherThanTunnelBinding() async throws {
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "presence-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "presence_v2", group: .shared)
     let hub = MachineHub(space: space)
     let handler = SpaceServer.configuredHandler(space: space, hub: hub, dev: true, machineV2Hub: MachineV2Hub(space: space))
     for state: MachineV2Presence in [.attached, .lost, .detached] {
@@ -248,7 +248,7 @@ extension MachineToolV2RoutingTests {
 extension MachineToolV2RoutingTests {
   @Test func missingKindStaysTypedThroughNormalHttpToolsAndExecMint() async throws {
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "missing-kind-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "missing_kind_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
@@ -270,7 +270,7 @@ extension MachineToolV2RoutingTests {
 extension MachineToolV2RoutingTests {
   @Test func execPreflightDefersKnownUnlinkedKindsToTheMachineGate() async throws {
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "gated-kind-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "gated_kind_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [], availability: .init { ["exec.v1": .unavailable(reason: "edition")] }, authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })

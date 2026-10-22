@@ -83,7 +83,7 @@ import WuhuAI
     try await withKernelDeps { _ in
       let space = try Space.inMemory()
       let sessions = space.sessions
-      _ = try await space.setUserProfile(principal: "morgan", handle: "old-handle", displayName: nil)
+      _ = try await space.setUserProfile(principal: "morgan", handle: "old_handle", displayName: nil)
       let sid = try await sessions.createSession(group: .shared, title: "socket acceptance", kind: .agent, createdBy: "morgan", model: .test)
       let registry = ResponsesSocketRegistry()
       let document = ModelsDocument(providers: ["offline": .init(dialect: .responses, baseURL: URL(string: "https://example.test/v1")!, transport: .websocket, opaqueReplay: .affine, models: ["test": .init(maxInput: 1_001_000, maxOutput: 1000, efforts: ["low"], defaultEffort: "low")])])
@@ -116,7 +116,7 @@ import WuhuAI
           #expect(persisted?.items.contains(.assistant(entry)) == true)
           commits.withLock { $0.append(entry) }
           if kind != "no-ack" {
-            if kind == "handles" { _ = try? await space.setUserProfile(principal: "morgan", handle: "new-handle", displayName: nil) }
+            if kind == "handles" { _ = try? await space.setUserProfile(principal: "morgan", handle: "new_handle", displayName: nil) }
             await executor.acknowledge(entry: entry, transcript: transcript)
           }
         })

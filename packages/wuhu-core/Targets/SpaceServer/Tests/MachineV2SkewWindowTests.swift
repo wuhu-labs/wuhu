@@ -52,7 +52,7 @@ private final class Starts: Sendable {
 /// Runs a real agent behind a proxy that rewrites its description to `release`'s, and the server's normal hub in front.
 private func withAgent(advertising release: SkewAgentRelease, _ body: (MachineHub, MachineID, Starts) async throws -> Void) async throws {
   let space = try Space.inMemory()
-  let (record, _) = try await space.addMachineV2(name: "skew-v2", group: .shared)
+  let (record, _) = try await space.addMachineV2(name: "skew_v2", group: .shared)
   let agent = try OperationAgent(machine: record.id.rawValue, kinds: fileOperationKinds(), authorize: { _, _ in })
   let starts = Starts()
   let advertised = release.kinds

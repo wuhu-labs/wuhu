@@ -23,7 +23,7 @@ import Testing
   }
 
   @Test func aLocalspaceHostNamingNoGroupIsInvalid() {
-    for spelling in ["wuhu://localspace/x", "wuhu://.localspace/x", "wuhu://Bad_Id.localspace/x", "wuhu://-a.localspace/x"] {
+    for spelling in ["wuhu://localspace/x", "wuhu://.localspace/x", "wuhu://Bad.Id.localspace/x", "wuhu://-a.localspace/x"] {
       #expect(throws: InvalidGroupHost.self, "\(spelling)") { try GroupID.address(spelling) }
     }
   }

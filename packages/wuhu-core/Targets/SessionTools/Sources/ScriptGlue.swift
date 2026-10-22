@@ -18,6 +18,7 @@ const hostAttributes = __wuhu_space_attributes
 const hostPatch = __wuhu_space_patch
 const hostVerb = __wuhu_space_verb
 const discover = __wuhu_discovery
+const createGroupHost = __wuhu_create_group
 const identityOrigin = __wuhu_identity_origin
 const read = __wuhu_conversation
 const between = __wuhu_dm
@@ -72,6 +73,7 @@ export const { query, observe, watch, mutateRows, readAttributes, patchAttribute
 
 export const context = () => call(() => discover("context"))
 export const groups = () => call(() => discover("groups"))
+export const createGroup = (input) => call(() => createGroupHost(input))
 export async function identity() {
   const snapshot = await call(() => discover("identity"))
   return { ...snapshot, issuerFor(origin) {

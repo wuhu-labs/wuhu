@@ -338,6 +338,10 @@ struct Executor {
       try await self.groupUse(group)
     case .groupCurrent:
       try await self.groupCurrent()
+    case let .groupCreate(alias):
+      try await self.groupCreate(alias)
+    case let .groupRename(group, alias):
+      try await self.groupRename(group, alias: alias)
     case let .groupShow(group):
       try await self.groupShow(group)
     case let .groupOpen(group, open):
@@ -379,19 +383,12 @@ struct Executor {
     let trustLine = try await self.establishTrust(space: space, pinRequested: pinRequested)
     try await self.adoptAdvertisedIdentity(space: space)
     if let group {
-      guard isValidGroupID(group) else {
-        throw UsageError(message: "use: \(group) is not a group id: lowercase letters, digits and inner hyphens")
-      }
       try await self.requireGroup(group, space: space)
     }
-    // Re-pinning the same server keeps its group; an invalid one is dropped,
-    // since use is how a broken config gets repaired.
     var kept: String?
     if group == nil, let configured = self.wallet.configuredGroup {
       let pinned = try? self.wallet.pinnedSpace()
-      if !isValidGroupID(configured) {
-        await self.runner.stderr("note: cleared the group \(configured): not a group id\n")
-      } else if let pinned, !sameServer(pinned, space) {
+      if let pinned, !sameServer(pinned, space) {
         await self.runner.stderr("note: cleared the group \(configured): it belongs to \(pinned)\n")
       } else {
         kept = configured

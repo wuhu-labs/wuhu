@@ -37,14 +37,14 @@ import Testing
     let reopened = try await SpaceHost.open(folder: folder.url, deployment: deployment, configDirectory: nil, allowEnvironmentCredentials: false, dev: true)
     for request in [
       Request(url: URL(string: "https://isolated.test/v1/server")!),
-      Request(url: URL(string: "https://isolated.test/v1/machine")!, method: .post, body: try .json(["name": "still-v1"])),
+      Request(url: URL(string: "https://isolated.test/v1/machine")!, method: .post, body: try .json(["name": "still_v1"])),
       Request(url: URL(string: "https://isolated.test/v1/f/note.md")!, method: .put, body: .bytes(Data("ordinary files still work".utf8))),
     ] {
       guard case let .response(response) = try await reopened.handler(request) else { Issue.record("ordinary route upgraded"); continue }
       #expect((200 ..< 300).contains(response.status.code))
     }
     for path in ["/v1/machine-v2/challenge", "/v1/machine-v2"] {
-      let request = Request(url: URL(string: "https://isolated.test" + path)!, method: path.hasSuffix("challenge") ? .get : .post, body: path.hasSuffix("challenge") ? nil : try .json(["name": "blocked-v2"]))
+      let request = Request(url: URL(string: "https://isolated.test" + path)!, method: path.hasSuffix("challenge") ? .get : .post, body: path.hasSuffix("challenge") ? nil : try .json(["name": "blocked_v2"]))
       guard case let .response(response) = try await reopened.handler(request) else { Issue.record("unavailable v2 upgraded"); continue }
       #expect(response.status == .serviceUnavailable)
       #expect(try await response.body.json(ErrorEnvelope.self).error.code == .storeUnavailable)

@@ -34,19 +34,20 @@ struct UserProfileTests {
     #expect(try await space.userProfiles().count == 1)
   }
 
-  @Test func renamingFreesTheOldHandleForSomeoneElse() async throws {
+  @Test func renamingReservesAndResolvesTheOldHandle() async throws {
     let space = try makeSpace()
     _ = try await space.setUserProfile(principal: "one", handle: "alice", displayName: nil)
     _ = try await space.setUserProfile(principal: "one", handle: "alicia", displayName: nil)
-    #expect(try await space.userProfile(handle: "alice") == nil)
+    #expect(try await space.userProfile(handle: "alice")?.handle == "alicia")
     #expect(try await space.userProfile(principal: "one")?.handle == "alicia")
 
-    let taken = try await space.setUserProfile(principal: "two", handle: "alice", displayName: nil)
-    #expect(taken.principal == "two")
-    #expect(try await space.userProfiles().map(\.handle) == ["alice", "alicia"])
+    await #expect(throws: SpaceError.handleTaken("alice")) {
+      try await space.setUserProfile(principal: "two", handle: "alice", displayName: nil)
+    }
+    #expect(try await space.userProfiles().map(\.handle) == ["alicia"])
   }
 
-  @Test(arguments: ["a", "-alice", "alice_b", "aliceé", String(repeating: "a", count: 33), "", "al ice", "ALICE!"])
+  @Test(arguments: ["a", "-alice", "alice-b", "aliceé", String(repeating: "a", count: 33), "", "al ice", "ALICE!"])
   func invalidHandlesAreRefused(_ raw: String) async throws {
     #expect(Handle.normalized(raw) == nil)
     let space = try makeSpace()
@@ -55,7 +56,7 @@ struct UserProfileTests {
     }
   }
 
-  @Test(arguments: ["ab", "a1", String(repeating: "a", count: 32), "a-b-c", "Alice-2"])
+  @Test(arguments: ["ab", "a1", String(repeating: "a", count: 32), "a_b_c", "Alice_2"])
   func validHandlesNormalizeToLowercase(_ raw: String) {
     #expect(Handle.normalized(raw) == raw.lowercased())
   }

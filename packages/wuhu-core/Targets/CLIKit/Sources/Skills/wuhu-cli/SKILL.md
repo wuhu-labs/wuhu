@@ -34,6 +34,8 @@ the server's certificate legitimately changed and commands fail with a
 `server certificate changed` message, re-record it with `wuhu trust host:port`
 — no flag skips verification. `wuhu untrust host:port` forgets the record.
 
+A member creates an open group with `wuhu group create <alias>` and becomes its admin; guests cannot create groups. A group admin renames it with `wuhu group rename <id-or-alias> <alias>`. Aliases contain no hyphens and share one reserved namespace with people and machines; retired spellings keep resolving. A session instead uses `createGroup({alias, owner})` from `wuhu:space` in `run_script`, where the human owner becomes admin and the creating session gains no role.
+
 A space may hold several groups. `wuhu group list` prints them, `wuhu group
 use <id>` (or `wuhu use host:port --group <id>`) records the one this wallet
 acts in, `wuhu group use --clear` drops it, and `wuhu group current` says
@@ -216,7 +218,7 @@ wuhu key list [--account <id>]        # enrolled keys (own account; others need 
 wuhu key revoke <pubkey>              # kick a key; the device must re-enroll
 ```
 
-A handle is display only — never a login, never in auth. It is lowercased, unique per space, renameable by claiming another, and matches `[a-z0-9][a-z0-9-]{1,31}`. Rows keep storing the principal (a persona name such as `cedar-kite-lantern`); handles resolve at read time, so a rename re-attributes history everywhere.
+A handle is display only — never a login, never in auth. It is lowercased, unique per space, renameable by claiming another, and matches `[a-z0-9][a-z0-9_]{1,31}`. Rows keep storing the principal (a persona name such as `cedar-kite-lantern`); handles resolve at read time, so a rename re-attributes history everywhere.
 
 Without `--space`, `add`, `invite` and `admin` act as the signed-in person on the pinned running server; an unenrolled device is refused, even under `--dev`. Only an admin of `shared` may add people or grant admin; any person may invite their own account. `add` creates the personal group and `shared` membership, prints the account id, then a one-time device invite. `invite` prints only the link, for a lost invite or another device; both default to a one-hour lifetime (`--ttl <seconds>`), with the expiry note on stderr. Links use the server's advertised origin (the pinned address when no origin is configured), space id and generated-certificate fingerprint; discovery errors are reported, never silently bypassed.
 

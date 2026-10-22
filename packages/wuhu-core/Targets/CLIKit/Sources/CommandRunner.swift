@@ -350,6 +350,8 @@ enum Command: Equatable {
   case groupList
   case groupUse(String?)
   case groupCurrent
+  case groupCreate(String)
+  case groupRename(String, alias: String)
   case groupShow(String)
   case groupOpen(String, open: Bool)
   case groupSecrets(String, scope: String)

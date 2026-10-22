@@ -8,6 +8,8 @@ import Dependencies
 import GRDB
 import struct SessionDomain.SessionID
 import struct SpaceContract.GroupID
+import StructuredQueries
+import StructuredQueriesSQLite
 
 public enum Actor: Hashable, Sendable {
   case session(SessionID)
@@ -48,6 +50,7 @@ public struct Principal: Hashable, Sendable {
 
 public struct GroupRecord: Hashable, Sendable {
   public let id: GroupID
+  public let alias: String?
   public let createdAt: Date
   /// The person whose own group this is; nil for an ordinary group.
   public let personalAccount: AccountID?
@@ -59,20 +62,14 @@ public struct GroupRecord: Hashable, Sendable {
 extension Space {
   public func groups() async throws -> [GroupRecord] {
     try await writer.read { db in
-      try Row.fetchAll(
-        db,
-        sql: "SELECT id, created_at, personal_account, visibility, secrets_scope, removed_at FROM groups ORDER BY created_at, id",
-      ).map { Self.groupRecord(from: $0) }
+      try GroupRow.order { ($0.createdAt, $0.id) }.fetchAll(db).map(Self.groupRecord(from:))
     }
   }
 
   public func group(_ id: GroupID) async throws -> GroupRecord? {
     try await writer.read { db in
-      try Row.fetchOne(
-        db,
-        sql: "SELECT id, created_at, personal_account, visibility, secrets_scope, removed_at FROM groups WHERE id = ? AND removed_at IS NULL",
-        arguments: [id.rawValue],
-      ).map(Self.groupRecord(from:))
+      guard let row = try GroupRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db), row.removedAt == nil else { return nil }
+      return Self.groupRecord(from: row)
     }
   }
 
@@ -91,9 +88,8 @@ extension Space {
   /// A live group: one that exists and was not removed.
   public func groupExists(_ group: GroupID) async throws -> Bool {
     try await writer.read { db in
-      try Bool.fetchOne(
-        db, sql: "SELECT EXISTS (SELECT 1 FROM groups WHERE id = ? AND removed_at IS NULL)", arguments: [group.rawValue],
-      ) ?? false
+      guard let row = try GroupRow.where({ $0.id.eq(group.rawValue) }).fetchOne(db) else { return false }
+      return row.removedAt == nil
     }
   }
 
@@ -289,14 +285,15 @@ extension Space {
     }
   }
 
-  private static func groupRecord(from row: Row) -> GroupRecord {
+  private static func groupRecord(from row: GroupRow) -> GroupRecord {
     GroupRecord(
-      id: GroupID(rawValue: row["id"]),
-      createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
-      personalAccount: (row["personal_account"] as String?).map(AccountID.init(rawValue:)),
-      visibility: GroupVisibility(rawValue: row["visibility"]) ?? .private,
-      secretsScope: ReachScope(rawValue: row["secrets_scope"]) ?? .owner,
-      removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
+      id: GroupID(rawValue: row.id),
+      alias: row.alias,
+      createdAt: (try? SQLiteDateFormat.date(from: row.createdAt)) ?? Date(timeIntervalSince1970: 0),
+      personalAccount: row.personalAccount.map(AccountID.init(rawValue:)),
+      visibility: GroupVisibility(rawValue: row.visibility)!,
+      secretsScope: ReachScope(rawValue: row.secretsScope)!,
+      removedAt: row.removedAt.flatMap { try? SQLiteDateFormat.date(from: $0) },
     )
   }
 }

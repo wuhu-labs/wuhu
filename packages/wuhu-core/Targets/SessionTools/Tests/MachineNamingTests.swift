@@ -11,7 +11,7 @@ import Testing
   @Test func aPathResolvesAMachineNameAndKeepsTheIdInTheAddress() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let mini = try await space.addMachine(name: "mac-mini")
+      let mini = try await space.addMachine(name: "mac_mini")
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
@@ -19,16 +19,16 @@ import Testing
         session: try await makeSession(space),
       )
 
-      guard case let .read(read) = try await world.run("read", .object(["path": "machines://MAC-MINI/work/main.swift"]))
+      guard case let .read(read) = try await world.run("read", .object(["path": "machines://MAC_MINI/work/main.swift"]))
       else { throw Mismatch("read by machine name failed") }
       #expect(read.path == "machines://\(mini.id.rawValue)/work/main.swift")
     }
   }
 
-  @Test func aRenamedMachineAnswersToItsNewNameOnly() async throws {
+  @Test func aRenamedMachineAnswersToBothItsNewAndOldNames() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let mini = try await space.addMachine(name: "mac-mini")
+      let mini = try await space.addMachine(name: "mac_mini")
       let machineFS = FakeMachineFS()
       machineFS.put("/work/main.swift", "code", mtime: 100)
       var world = ToolWorld(
@@ -36,15 +36,16 @@ import Testing
         session: try await makeSession(space),
       )
 
-      _ = try await world.run("read", .object(["path": "machines://mac-mini/work/main.swift"]))
+      _ = try await world.run("read", .object(["path": "machines://mac_mini/work/main.swift"]))
       _ = try await space.renameMachine(mini.id, name: "studio")
 
       guard case let .read(read) = try await world.run("read", .object(["path": "machines://studio/work/main.swift"]))
       else { throw Mismatch("read after rename failed") }
       #expect(read.path == "machines://\(mini.id.rawValue)/work/main.swift")
 
-      let stale = try await world.run("read", .object(["path": "machines://mac-mini/work/main.swift"]))
-      #expect(try failureMessage(stale) == "unknown machine: mac-mini")
+      let stale = try await world.run("read", .object(["path": "machines://mac_mini/work/main.swift"]))
+      guard case let .read(oldName) = stale else { throw Mismatch("old alias did not resolve") }
+      #expect(oldName.path == "machines://\(mini.id.rawValue)/work/main.swift")
     }
   }
 
@@ -67,7 +68,7 @@ import Testing
   @Test func theRosterNamesTheBoxBeforeItsId() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let mini = try await space.addMachine(name: "mac-mini")
+      let mini = try await space.addMachine(name: "mac_mini")
       let anonymous = try await space.addMachine(name: nil)
       var world = ToolWorld(
         executor: SessionRuntime.toolExecutor(owner: Hub(space: space, machines: FakeMachineFS().seam)),
@@ -78,7 +79,7 @@ import Testing
         throw Mismatch("machines failed")
       }
       let rendered = ToolResultPayload.machines(result).renderedText
-      #expect(rendered.contains("mac-mini \(mini.id.rawValue) detached"))
+      #expect(rendered.contains("mac_mini \(mini.id.rawValue) detached"))
       #expect(rendered.contains("\n\(anonymous.id.rawValue) detached") || rendered.hasPrefix("\(anonymous.id.rawValue) detached"))
     }
   }

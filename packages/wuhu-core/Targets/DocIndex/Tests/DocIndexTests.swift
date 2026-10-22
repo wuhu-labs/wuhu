@@ -144,7 +144,10 @@ struct DocIndexMarkdownTests {
   @Test func `a group link takes only a host the file tools take`() {
     let body = "[a](wuhu://Alice.localspace/x.md), [b](wuhu://foo_bar.localspace/y.md), [c](wuhu://a.b.localspace/z.md), [d](wuhu://localspace/w.md)"
     let doc = DocIndex.parse(markdown: body, at: spacePath("/p.md"))
-    #expect(doc.groupLinks == [DocMeta.GroupLink(group: "alice", path: spacePath("/x.md"))])
+    #expect(doc.groupLinks == [
+      DocMeta.GroupLink(group: "alice", path: spacePath("/x.md")),
+      DocMeta.GroupLink(group: "foo_bar", path: spacePath("/y.md")),
+    ])
     #expect(doc.links.isEmpty)
   }
 

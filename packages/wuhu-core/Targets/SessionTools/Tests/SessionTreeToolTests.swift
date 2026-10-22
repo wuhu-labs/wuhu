@@ -34,6 +34,24 @@ private func directMessages(_ space: Space, to session: SessionID) async throws 
 
 @Suite(.deterministicDependencies)
 struct SessionTreeToolTests {
+  @Test func topLevelCreationResolvesCurrentAndRetiredGroupAliases() async throws {
+    try await withToolDeps { _ in
+      let space = try Space.inMemory()
+      let account = try await space.addAccount(kind: .human, name: "Morgan")
+      let group = try await space.createGroup(alias: "research", owner: account.id)
+      try await space.setGrant(.group, "shared", role: .admin, in: group, by: .anonymous, acting: group)
+      try await space.renameGroup(group, alias: "science", by: .shared(.anonymous))
+      let parent = try await makeSession(space, name: "parent")
+      var world = ToolWorld(executor: creating(space), session: parent)
+      for spelling in ["research", "science", group.rawValue] {
+        let outcome = try created(try await world.run("create_session", .object([
+          "title": "worker", "kind": "agent", "top_level": true, "group": .string(spelling),
+        ])))
+        #expect(try await space.sessions.record(outcome.sessionID).group == group)
+      }
+    }
+  }
+
   @Test func createSessionRejectsAnUnknownExecutorAsTypedFailure() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()

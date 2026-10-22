@@ -83,7 +83,7 @@ func sessionGate(
     case let .session(holder):
       // An exec token acts in its session's group; naming another is refused
       // here, whatever the route.
-      if let refused = groupMismatch(request, session: holder.session, group: holder.group) {
+      if let refused = try await groupMismatch(request, session: holder.session, group: holder.group, space: space) {
         return .response(refused)
       }
       return try await SessionPrincipal.$current.withValue(holder) {
@@ -238,6 +238,13 @@ private func sessionRouter(
     router.post("/v1/channel/:id/\(operation)", use: forward)
   }
   router.get("/v1/groups", use: forward)
+  router.get("/v1/group/:id", use: forward)
+  router.post("/v1/groups") { request, parameters in
+    guard !principal().exec else {
+      return errorResponse(.forbidden, code: "unauthorized", message: "sessions create groups only through createGroup in run_script")
+    }
+    return try await forward(request, parameters)
+  }
   router.get("/v1/templates", use: forward)
   router.get("/v1/secret", use: forward)
   // A value is for the worker's script, which masks what it got; an exec's
@@ -282,6 +289,17 @@ private func sessionRouter(
     return try Response.json(roster.machines.compactMap { listing in
       groups[listing.id].map { MachineStatus(id: MachineID(rawValue: listing.id), name: listing.name, group: $0, attached: listing.attached) }
     })
+  }
+  router.get("/v1/machine/:id/status") { _, parameters in
+    guard let raw = parameters["id"], let record = try await space.resolveMachine(raw, usableFrom: principal().group) else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown machine")
+    }
+    let payload = try await answered { try await owner.machineRoster(principal().session) }
+    guard case let .machines(roster) = payload else { return toolRefusal(payload) }
+    guard let listing = roster.machines.first(where: { $0.id == record.id.rawValue }) else {
+      return errorResponse(.notFound, code: "notFound", message: "unknown machine")
+    }
+    return try Response.json(MachineStatus(id: record.id, name: record.name, group: record.group.rawValue, attached: listing.attached, scope: record.scope.rawValue))
   }
   // A directory on a machine, which only a machine has; a file's parents the
   // byte route makes itself.
@@ -752,9 +770,12 @@ private func foreignHomeRefusal(_ addresses: [String], space: Space) async -> Re
           let path = try? SpacePath(validating: resolved.path)
     else { continue }
     do {
-      try SessionHome.refuseForeignWrite(
-        to: path, in: resolved.group.map(GroupID.init(rawValue:)) ?? home, by: session, home: home,
-      )
+      let target: GroupID
+      if let named = resolved.group {
+        guard let id = try await space.resolveGroup(named) else { continue }
+        target = id
+      } else { target = home }
+      try SessionHome.refuseForeignWrite(to: path, in: target, by: session, home: home)
     } catch {
       return jsonResponse(Wire.failure(error).payload, status: .unprocessableContent)
     }

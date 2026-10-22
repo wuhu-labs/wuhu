@@ -17,7 +17,7 @@ public struct ContentHostPattern: Equatable, Sendable {
           url.port == nil || url.port == (origin.port ?? 443),
           host.count <= 253,
           host.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({
-            $0.count <= 63 && GroupID.isValid($0)
+            $0.count <= 63 && !$0.contains("_") && GroupID.isValid($0)
           })
     else { return nil }
     let suffix = String(host.dropFirst("shared".count))

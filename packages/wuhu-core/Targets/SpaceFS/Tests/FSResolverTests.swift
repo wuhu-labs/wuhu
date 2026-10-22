@@ -98,7 +98,7 @@ struct FSResolverTests {
   }
 
   @Test func `a localspace host that names no group is an invalid address`() {
-    for address in ["wuhu://localspace/x", "wuhu://.localspace/x", "wuhu://Bad_Id.localspace/x", "wuhu://-a.localspace/x"] {
+    for address in ["wuhu://localspace/x", "wuhu://.localspace/x", "wuhu://Bad.Id.localspace/x", "wuhu://-a.localspace/x"] {
       #expect(throws: FSResolveError.invalidAddress(address)) { try resolver.resolve(address) }
     }
   }

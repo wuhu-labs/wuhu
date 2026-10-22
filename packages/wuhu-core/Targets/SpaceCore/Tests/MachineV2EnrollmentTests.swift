@@ -126,7 +126,7 @@ import Testing
     let device = try await space.upsertDevice(pubkey: deviceKey, installation: "inst", kind: "mac", name: "Mac")
     let before = try await Footprint(space)
     let sharedKey = Self.label()
-    let attempts = (0 ..< 12).map { n in sameName ? (name: "race", pubkey: Self.label()) : (name: "race-\(n)", pubkey: sharedKey) }
+    let attempts = (0 ..< 12).map { n in sameName ? (name: "race", pubkey: Self.label()) : (name: "race_\(n)", pubkey: sharedKey) }
     let results = await race(space, attempts, device: device.id, by: owner.id)
     let winners = results.compactMap { try? $0.get() }
     #expect(winners.count == 1)
@@ -171,9 +171,9 @@ import Testing
     #expect(try await Footprint(space) == footprint)
 
     #expect(try await space.revokeMachine(first.machine.id, presenting: pubkey))
-    await #expect(throws: SpaceError.machineNameTaken("studio")) {
-      try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: pubkey, enrolledBy: owner.id)
-    }
+    let successor = try await space.enrollMachineV2(name: "studio", group: .shared, pubkey: pubkey, enrolledBy: owner.id)
+    #expect(successor.machine.id != first.machine.id)
+    #expect(try await space.resolveMachine("studio")?.id == successor.machine.id)
   }
 
   @Test func concurrentReplaysOfOneEnrollmentAllReturnTheSameMachine() async throws {
@@ -199,7 +199,7 @@ import Testing
     } operation: {
       try Space.inMemory()
     }
-    let created = try await space.addMachineV2(name: "rekey-v2")
+    let created = try await space.addMachineV2(name: "rekey_v2")
     let first = Self.label()
     _ = try await space.consumeMachineV2JoinToken(created.token.token, pubkey: first)
     _ = try await space.resetCredentials(account: created.machine.account)

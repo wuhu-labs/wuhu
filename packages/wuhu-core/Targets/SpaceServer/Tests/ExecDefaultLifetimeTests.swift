@@ -54,7 +54,7 @@ struct ExecDefaultLifetimeTests {
     let work = try ScratchFolder("exec-default-lifetime-v2")
     defer { work.remove() }
     let space = try makeMachineSpace()
-    let (record, _) = try await space.addMachineV2(name: "lifetime-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "lifetime_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(ExecKind())], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { try await agent.handler($0) } })
@@ -82,7 +82,7 @@ struct ExecDefaultLifetimeTests {
     let clock = VirtualClock()
     let lifetime = 20
     let space = try makeMachineSpace()
-    let (record, _) = try await space.addMachineV2(name: "stuck-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "stuck_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(DeafExecKind())], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let started = Gate()

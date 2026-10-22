@@ -19,7 +19,7 @@ public struct UserProfile: Equatable, Sendable {
 
 public enum Handle {
   public static func normalized(_ raw: String) -> String? {
-    normalizedLabel(raw, allowing: ["-"], length: 2 ... 32)
+    normalizedLabel(raw, allowing: ["_"], length: 2 ... 32)
   }
 }
 
@@ -45,8 +45,8 @@ extension Space {
       updatedAt: SQLiteDateFormat.string(from: updatedAt),
     )
     try await writer.write { db in
-      let holder = try UserProfileRow.where { $0.handle.eq(normalized) }.fetchOne(db)
-      guard holder == nil || holder?.principal == principal else { throw SpaceError.handleTaken(normalized) }
+      do { try Aliases.requireFree(normalized, kind: .person, target: principal, in: db) }
+      catch AliasError.taken { throw SpaceError.handleTaken(normalized) }
       try UserProfileRow.upsert { row }.execute(db)
     }
     return UserProfile(principal: principal, handle: normalized, displayName: displayName, updatedAt: updatedAt)
@@ -61,7 +61,8 @@ extension Space {
   public func userProfile(handle: String) async throws -> UserProfile? {
     let lowered = handle.lowercased()
     return try await writer.read { db in
-      try UserProfileRow.where { $0.handle.eq(lowered) }.fetchOne(db).map(Self.userProfile(from:))
+      guard let alias = try AliasRow.where({ $0.name.eq(lowered) }).fetchOne(db), alias.kind == .person else { return nil }
+      return try UserProfileRow.find(alias.target).fetchOne(db).map(Self.userProfile(from:))
     }
   }
 

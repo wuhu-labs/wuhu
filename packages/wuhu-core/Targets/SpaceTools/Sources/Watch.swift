@@ -23,7 +23,8 @@ public struct WatchedGlob: Sendable {
     guard let named = try FSResolver.group(ofHost: host) else {
       throw FSResolveError.unsupportedHost(glob)
     }
-    group = GroupID(rawValue: named)
+    guard let resolved = try await space.resolveGroup(named) else { throw SpaceError.notFound(glob) }
+    group = resolved
     prefix = "wuhu://" + host.lowercased()
     pattern = String(glob.dropFirst("wuhu://".count + host.count))
     guard readable.contains(group) else {

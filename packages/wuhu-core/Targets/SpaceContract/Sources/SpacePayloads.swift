@@ -218,6 +218,7 @@ public struct GroupAccessEntry: Codable, Equatable, Sendable {
 @Contract
 public struct GroupDetail: Codable, Equatable, Sendable {
   public let id: String
+  public let alias: String?
   public let open: Bool
   public let secrets: String
   public let personal: Bool
@@ -226,6 +227,7 @@ public struct GroupDetail: Codable, Equatable, Sendable {
 
 @Contract
 public struct GroupUpdateInput: Codable, Equatable, Sendable {
+  public let alias: String?
   public let open: Bool?
   /// `owner` or `reachable`.
   public let secrets: String?
@@ -238,6 +240,12 @@ public struct GroupAccessInput: Codable, Equatable, Sendable {
   public let id: String
   /// `read`, `write` or `admin`.
   public let role: String
+}
+
+@Contract
+public struct GroupCreateInput: Codable, Equatable, Sendable {
+  public let alias: String
+  public let owner: String?
 }
 
 /// The request header that names the group a person's request acts in.

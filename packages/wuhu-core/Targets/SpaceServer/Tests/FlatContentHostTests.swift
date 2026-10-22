@@ -28,8 +28,9 @@ import Testing
     #expect(host.pattern?.template == "{group}--alex.wuhu.test:5530")
     #expect(host.plane(of: "SHARED--ALEX.WUHU.TEST.") == .content(.shared))
     #expect(host.plane(of: "bird-sky--alex.wuhu.test") == .content(GroupID(rawValue: "bird-sky")))
+    #expect(host.plane(of: "a_--alex.wuhu.test") == .content(GroupID(rawValue: "a_")))
     #expect(host.plane(of: "alex.wuhu.test") == .api)
-    for name in [nil, "--alex.wuhu.test", "a.b--alex.wuhu.test", "a_--alex.wuhu.test", "-a--alex.wuhu.test", "a---alex.wuhu.test", "xn----alex.wuhu.test", "xn--foo--alex.wuhu.test", "ab--cd--alex.wuhu.test", "shared--bob.wuhu.test", "shared.alex.wuhu.test", String(repeating: "a", count: 60) + "--alex.wuhu.test"] {
+    for name in [nil, "--alex.wuhu.test", "a.b--alex.wuhu.test", "-a--alex.wuhu.test", "a---alex.wuhu.test", "xn----alex.wuhu.test", "xn--foo--alex.wuhu.test", "ab--cd--alex.wuhu.test", "shared--bob.wuhu.test", "shared.alex.wuhu.test", String(repeating: "a", count: 60) + "--alex.wuhu.test"] {
       #expect(host.plane(of: name) == .misdirected)
     }
     #expect(ContentHostPattern("{group}--alex.wuhu.test:5530", origin: URL(string: origin)!)?.template == "{group}--alex.wuhu.test:5530")

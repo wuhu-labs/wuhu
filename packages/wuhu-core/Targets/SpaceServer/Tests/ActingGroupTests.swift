@@ -231,7 +231,7 @@ import Testing
       // a .localspace host naming no group is malformed, not missing.
       let upper = try await post("wuhu://Shared.localspace/common.md", group: p.alice.rawValue)
       #expect(upper.status == .ok)
-      for malformed in ["wuhu://localspace/common.md", "wuhu://Bad_Id.localspace/common.md"] {
+      for malformed in ["wuhu://localspace/common.md", "wuhu://Bad.Id.localspace/common.md"] {
         let refused = try await post(malformed, group: p.alice.rawValue)
         #expect(refused.status == .badRequest, "\(malformed)")
         #expect(try await code(refused) == "invalidArgument")

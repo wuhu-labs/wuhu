@@ -36,7 +36,7 @@ struct RequestMappingTests {
     #expect(throws: UsageError.self) { try Command.parse(["machine-v2", "add"]) }
     #expect(try Command.parse(["machine-v2", "add", "--name", "box"]).isRefusedToSessions)
     #expect(throws: UsageError.self) { try Invocation.parse(["--group", "shared", "machine-v2", "add", "--name", "box", "--group", "shared"]) }
-    #expect(throws: UsageError.self) { try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "Not A Group"]) }
+    #expect(try Invocation.parse(["machine-v2", "add", "--name", "box", "--group", "team_space"]).command == .machineV2Add(name: "box", group: "team_space"))
   }
 
   @Test func identityVerbsMapToReadOnlyDiscoveryAndHumanOnlySettings() async throws {
@@ -237,15 +237,36 @@ struct RequestMappingTests {
     #expect(await rejected.recorder.requests.isEmpty)
   }
 
+  @Test func groupCreationAndRenameSendTheirTypedInputs() async throws {
+    try await assertRequest(
+      ["group", "create", "research_notes"],
+      response: .object(["id": "amber-river-stone", "alias": "research_notes"]),
+    ) { request in
+      #expect(request.method == .post)
+      #expect(request.url.path == "/v1/groups")
+      let input = try await requestBodyJSON(request)
+      #expect(input == ["alias": "research_notes"])
+    }
+    try await assertRequest(
+      ["group", "rename", "research_notes", "science"],
+      response: .object(["id": "amber-river-stone", "alias": "science", "open": true, "secrets": "owner", "personal": false, "entries": []]),
+    ) { request in
+      #expect(request.method == .put)
+      #expect(request.url.path == "/v1/group/research_notes")
+      let input = try await requestBodyJSON(request)
+      #expect(input == ["alias": "science"])
+    }
+  }
+
   @Test func namingVerbsSendTheReferenceThroughUntouched() async throws {
     try await assertRequest(
-      ["machine", "name", "studio", "Mac-Mini"],
-      response: .object(["id": "mc_aaaaaaaa", "name": "mac-mini", "group": "shared", "attached": false]),
+      ["machine", "name", "studio", "Mac_Mini"],
+      response: .object(["id": "mc_aaaaaaaa", "name": "mac_mini", "group": "shared", "attached": false]),
     ) { request in
       #expect(request.method == .put)
       #expect(request.url.path == "/v1/machine/studio/name")
       let input = try await requestBodyJSON(request)
-      #expect(input == ["name": "Mac-Mini"])
+      #expect(input == ["name": "Mac_Mini"])
     }
 
     try await assertRequest(

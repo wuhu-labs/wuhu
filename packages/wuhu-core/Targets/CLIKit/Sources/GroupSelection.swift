@@ -25,22 +25,15 @@ struct GroupSelection: Equatable {
       }
       return .none
     }
-    if let flag { return try Self(validating: flag, source: .flag) }
-    if let named { return try Self(validating: named, source: .environment) }
-    if let config { return try Self(validating: config, source: .config) }
+    if let flag { return Self(group: flag, source: .flag) }
+    if let named { return Self(group: named, source: .environment) }
+    if let config { return Self(group: config, source: .config) }
     return .none
   }
 
   private init(group: String?, source: Source) {
     self.group = group
     self.source = source
-  }
-
-  private init(validating group: String, source: Source) throws {
-    guard isValidGroupID(group) else {
-      throw UsageError(message: "\(group) (from \(Self.label(source))) is not a group id: lowercase letters, digits and inner hyphens")
-    }
-    self.init(group: group, source: source)
   }
 
   var label: String { Self.label(self.source) }
@@ -52,13 +45,6 @@ struct GroupSelection: Equatable {
     case .config: ".wuhu/config.json"
     case .none: "none"
     }
-  }
-}
-
-func isValidGroupID(_ text: String) -> Bool {
-  let segments = text.split(separator: "-", omittingEmptySubsequences: false)
-  return !text.isEmpty && text.utf8.count <= 64 && segments.allSatisfy { segment in
-    !segment.isEmpty && segment.unicodeScalars.allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) }
   }
 }
 
@@ -97,9 +83,6 @@ struct Invocation: Equatable {
     if let registration {
       guard group == nil || registration.target == nil else { throw UsageError(message: "--group is given twice") }
       let target = registration.target ?? group
-      if let target, !isValidGroupID(target) {
-        throw UsageError(message: "\(target) (from --group) is not a group id: lowercase letters, digits and inner hyphens")
-      }
       return Self(group: nil, command: registration.command(target))
     }
     return Self(group: group, command: command)

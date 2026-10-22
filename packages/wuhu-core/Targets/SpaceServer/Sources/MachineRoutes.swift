@@ -94,6 +94,18 @@ func addMachineRoutes(
     return try Response.json(statuses)
   }
 
+  router.get("/v1/machine/:id/status") { request, parameters in
+    let record: MachineRecord
+    switch try await usable(request, parameters) {
+    case let .success((_, resolved)): record = resolved
+    case let .failure(response): return response
+    }
+    return try Response.json(MachineStatus(
+      id: record.id, name: record.name, group: record.group.rawValue,
+      attached: await hub.attachedMachines().contains(record.id), scope: record.scope.rawValue,
+    ))
+  }
+
   router.put("/v1/machine/:id/name") { request, parameters in
     let input = try await request.json(MachineNameInput.self)
     let record: MachineRecord
@@ -194,8 +206,7 @@ func addMachineRoutes(
     guard admitted || readable else {
       return unknownMachine(parameters)
     }
-    let target = GroupID(rawValue: input.group)
-    guard try await space.groupExists(target) else {
+    guard let target = try await space.resolveGroup(input.group) else {
       return errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(input.group)")
     }
     for group in [record.group, target] {
@@ -396,10 +407,10 @@ enum Admission<Value> {
 func machineRegistrationGroup(_ requested: String?, principal: Principal, space: Space) async throws -> Admission<GroupID> {
   let group: GroupID
   if let requested {
-    group = GroupID(rawValue: requested)
-    guard try await space.groupExists(group) else {
+    guard let resolved = try await space.resolveGroup(requested) else {
       return .failure(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(requested)"))
     }
+    group = resolved
   } else {
     group = principal.group
   }

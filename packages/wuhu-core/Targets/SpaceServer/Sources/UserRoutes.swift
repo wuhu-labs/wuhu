@@ -56,7 +56,7 @@ func addUserRoutes(_ router: inout Router, space: Space, dev: Bool) {
         .badRequest,
         code: "invalidHandle",
         message: "invalid handle: \(raw)",
-        hint: "handles are 2-32 characters matching [a-z0-9][a-z0-9-]*, compared case-insensitively",
+        hint: "handles are 2-32 characters matching [a-z0-9][a-z0-9_]*, compared case-insensitively",
       )
     } catch let SpaceError.handleTaken(handle) {
       return errorResponse(.conflict, code: "handleTaken", message: "handle @\(handle) is already taken")

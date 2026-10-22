@@ -41,7 +41,7 @@ extension Space {
     let expiresAt = createdAt.addingTimeInterval(3600)
     let stamp = SQLiteDateFormat.string(from: createdAt)
     try await writer.write { db in
-      try Self.requireMachineNameFree(name, besides: nil, in: db)
+      try Self.requireMachineNameFree(name, for: id, group: group, in: db)
       try EnrollmentMachineAccountRow.insert {
         EnrollmentMachineAccountRow(id: account.rawValue, kind: AccountKind.machine.rawValue, name: name, createdAt: stamp, removedAt: nil)
       }.execute(db)
@@ -96,7 +96,7 @@ extension Space {
         }
         return replayed
       }
-      try Self.requireMachineNameFree(name, besides: nil, in: db)
+      try Self.requireMachineNameFree(name, for: id, group: group, in: db)
       try EnrollmentMachineAccountRow.insert {
         EnrollmentMachineAccountRow(id: account.rawValue, kind: AccountKind.machine.rawValue, name: name, createdAt: stamp, removedAt: nil)
       }.execute(db)

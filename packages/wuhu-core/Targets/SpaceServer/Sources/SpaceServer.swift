@@ -284,7 +284,7 @@ public enum SpaceServer {
       "/v1/machine-v2/connect", "/v1/machine-v2/challenge", "/v1/machine-v2/enroll",
       "/v1/enroll/consume",
       "/v1/enroll/share-login", "/v1/enroll/share-login/challenge",
-      "/v1/server", "/v1/groups",
+      "/v1/server",
       "/.well-known/openid-configuration", "/.well-known/jwks.json",
       // A running exec's WUHU_ID_TOKEN_REQUEST capability (IDTokenRoute.swift).
       "/v1/id-token",
@@ -295,7 +295,7 @@ public enum SpaceServer {
         (request.method == .get && v2Path.count == 3) || (request.method == .get && v2Path.count == 4 && v2Path[3] == "upgrade")
           || (request.method == .post && v2Path.count == 4 && v2Path[3] == "revoke")
       )
-      if selfAuthenticating.contains(request.url.path) || v2KeySigned {
+      if selfAuthenticating.contains(request.url.path) || (request.method == .get && request.url.path == "/v1/groups") || v2KeySigned {
         return try await routed(request)
       }
       if webContent.webApp != nil, request.method == .get, !isAPIPath(request.url) {

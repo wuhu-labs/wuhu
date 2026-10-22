@@ -172,7 +172,7 @@ private final class Collected: Sendable {
     let seen = Seen()
     let execID = Mutex<ExecID?>(nil)
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "retry-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "retry_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: side))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let relayFailed = Mutex(false)
@@ -351,7 +351,7 @@ private final class Collected: Sendable {
   private func runSetupFailure(clock: VirtualClock) async throws {
     let probed = Gate(), describing = Gate(), overdue = Gate()
     let space = try Space.inMemory()
-    let (record, _) = try await space.addMachineV2(name: "slow-describe-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "slow_describe_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: MachineSide()))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: SymmetricKey(size: .bits256), failure: nil, fetch: { _ in FetchClient { request in
@@ -417,7 +417,7 @@ private final class Collected: Sendable {
     // The clock stands still until the start has reached the machine, after the exec was admitted with its deadline: its caller
     // must be answered by its timeout plus the stop grace from there.
     let answerBy = VirtualClock.at(.seconds(1) + MachineV2Service.timeoutStopGrace)
-    let (record, _) = try await space.addMachineV2(name: "retry-bound-v2", group: .shared)
+    let (record, _) = try await space.addMachineV2(name: "retry_bound_v2", group: .shared)
     let agent = try OperationAgent(machine: record.id.rawValue, kinds: [.init(HeldEcho(side: side))], authorize: { _, _ in })
     let hub = MachineHub(space: space)
     let service = MachineV2Service(space: space, hub: MachineV2Hub(space: space), key: key, failure: nil, fetch: { _ in FetchClient { request in

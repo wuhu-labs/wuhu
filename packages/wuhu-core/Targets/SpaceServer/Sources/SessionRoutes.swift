@@ -45,7 +45,12 @@ func addSessionRoutes(
       if case let .person(_, account) = principal.actor, try await space.isGuest(account) {
         return errorResponse(.forbidden, code: "groupForbidden", message: "a guest creates no sessions")
       }
-      group = try await space.homeGroup(input.group.map(GroupID.init(rawValue:)), creator: principal)
+      let requested: GroupID?
+      if let spelling = input.group {
+        guard let id = try await space.resolveGroup(spelling) else { throw SpaceError.groupForbidden(spelling) }
+        requested = id
+      } else { requested = nil }
+      group = try await space.homeGroup(requested, creator: principal)
     } catch SpaceError.groupForbidden(let named) {
       return errorResponse(
         .forbidden, code: "groupForbidden",

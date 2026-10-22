@@ -31,7 +31,7 @@ enum PrincipalVerdict: Sendable {
 func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
   if case let .session(session, group) = credential {
-    if let refused = groupMismatch(request, session: session, group: group) { return .refused(refused) }
+    if let refused = try await groupMismatch(request, session: session, group: group, space: space) { return .refused(refused) }
     return .principal(Principal(actor: .session(session), group: group))
   }
   let actor: Actor
@@ -47,8 +47,7 @@ func principal(for request: Request, credential: RequestCredential, space: Space
     }
     return .principal(.shared(actor))
   }
-  let group = GroupID(rawValue: named)
-  guard try await space.groupExists(group) else {
+  guard let group = try await space.resolveGroup(named) else {
     return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)"))
   }
   if case .anonymous = actor { return .principal(Principal(actor: actor, group: group)) }
@@ -91,8 +90,8 @@ func namedGroup(_ request: Request) -> GroupID {
 }
 
 /// A session naming another group than its own.
-func groupMismatch(_ request: Request, session: SessionID, group: GroupID) -> Response? {
-  guard let named = request.headers[GroupHeader.name], named != group.rawValue else { return nil }
+func groupMismatch(_ request: Request, session: SessionID, group: GroupID, space: Space) async throws -> Response? {
+  guard let named = request.headers[GroupHeader.name], try await space.resolveGroup(named) != group else { return nil }
   return errorResponse(
     .forbidden, code: "groupMismatch",
     message: "session \(session.rawValue) acts in its own group \(group.rawValue) only, not \(named)",

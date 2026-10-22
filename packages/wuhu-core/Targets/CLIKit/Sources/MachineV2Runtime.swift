@@ -111,7 +111,7 @@ public enum MachineV2Runtime {
     if let name { named = name }
     else {
       guard gethostname(&hostname, hostname.count - 1) == 0 else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Cannot read hostname; provide --name") }
-      named = String(decoding: hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+      named = String(decoding: hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self).replacingOccurrences(of: "-", with: "_")
     }
     guard !named.isEmpty else { throw MachineV2RuntimeError(.invalidConfiguration, message: "Machine name must not be empty") }
     guard fingerprint.map(ServerTrust.isFingerprint) ?? true else { throw MachineV2RuntimeError(.invalidConfiguration) }

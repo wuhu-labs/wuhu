@@ -9,6 +9,7 @@ struct GroupRow {
   @Column("removed_at") var removedAt: String?
   var visibility: String
   @Column("secrets_scope") var secretsScope: String
+  var alias: String? = nil
 }
 
 @Table("group_roles")

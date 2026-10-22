@@ -16,13 +16,13 @@ import Testing
     try await withToolDeps { _ in
       let space = try Space.inMemory()
       let session = try await makeSession(space)
-      let machine = try await space.addMachine(name: "owner-box").id
+      let machine = try await space.addMachine(name: "owner_box").id
       let scripted = ScriptedExecMachine()
       let claim = try await space.claimExec(machine: machine, caller: session.rawValue, toolCallID: .init("interrupted"))
       let files = FakeMachineFS().seam
       let owner = Hub(space: space, machines: files)
       let executor = scripted.executor(owner: owner)
-      #expect(await executor.machineID("owner-box", as: session) == machine)
+      #expect(await executor.machineID("owner_box", as: session) == machine)
       await executor.killInterrupted(session: session, callID: .init("missing"))
       #expect(scripted.kills.value.isEmpty)
       await executor.killInterrupted(session: session, callID: .init("interrupted"))

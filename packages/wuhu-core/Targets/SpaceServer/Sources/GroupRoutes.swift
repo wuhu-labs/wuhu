@@ -4,6 +4,7 @@ import Serve
 import ServeRouting
 import struct SpaceContract.GroupAccessEntry
 import struct SpaceContract.GroupAccessInput
+import struct SpaceContract.GroupCreateInput
 import struct SpaceContract.GroupDetail
 import struct SpaceContract.GroupID
 import struct SpaceContract.GroupSummary
@@ -35,24 +36,49 @@ func addGroupRoutes(
     return try Response.json(try await SpaceToolContext(space: space, principal: principal).discoveryGroups(dev: dev))
   }
 
+  router.post("/v1/groups") { request, _ in
+    let input: GroupCreateInput
+    do { input = try await request.json(GroupCreateInput.self) }
+    catch { return errorResponse(.badRequest, code: "invalidArgument", message: "expected {alias, owner?}") }
+    let owner: AccountID
+    switch try await requestCredential(request, space: space, date: clock) {
+    case let .credential(.person(credential)):
+      guard input.owner == nil else { return errorResponse(.badRequest, code: "invalidArgument", message: "a person creates their own group") }
+      owner = credential.key.account
+    case .credential(.session):
+      guard let named = input.owner else { return errorResponse(.badRequest, code: "invalidArgument", message: "createGroup requires owner") }
+      let persona = try await space.userProfile(handle: named)?.principal ?? named
+      owner = try await space.persona(named: persona)?.account ?? AccountID(rawValue: named)
+    case .credential(.anonymous):
+      return errorResponse(.forbidden, code: "memberRequired", message: "a live space member must own the group")
+    case let .refused(response): return response
+    }
+    do {
+      let id = try await space.createGroup(alias: input.alias, owner: owner)
+      let principal = Principal(actor: .person(persona: "", account: owner), group: id)
+      return try await Response.json(try groupDetail(id, principal: principal, space: space), status: .created)
+    } catch { return groupErrorResponse(error) }
+  }
+
   // A group's admin state: open or private, the secrets switch, and the list.
   // Its people and its admins see it; anyone else does not.
   router.get("/v1/group/:id") { request, parameters in
-    guard let group = groupID(parameters) else { return unknownGroup(parameters) }
+    guard let group = try await space.resolveGroup(parameters["id"] ?? "") else { return unknownGroup(parameters) }
     let principal: Principal
     switch try await principalOf(request) {
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
     do {
-      guard try await space.role(of: principal, in: group) != nil else { return unknownGroup(parameters) }
+      let readable = try await space.role(of: principal, in: group) != nil
+      guard readable else { return unknownGroup(parameters) }
       return try await Response.json(try groupDetail(group, principal: principal, space: space))
     } catch { return groupErrorResponse(error) }
   }
 
   // Open/private and the secrets switch: a group admin's call.
   router.put("/v1/group/:id") { request, parameters in
-    guard let group = groupID(parameters) else { return unknownGroup(parameters) }
+    guard let group = try await space.resolveGroup(parameters["id"] ?? "") else { return unknownGroup(parameters) }
     let input: GroupUpdateInput
     do {
       input = try await request.json(GroupUpdateInput.self)
@@ -67,8 +93,8 @@ func addGroupRoutes(
     case let .principal(resolved): principal = resolved
     case let .refused(response): return response
     }
-    guard input.open != nil || input.secrets != nil else {
-      return errorResponse(.badRequest, code: "invalidArgument", message: "a group update names open, secrets, or both")
+    guard input.alias != nil || input.open != nil || input.secrets != nil else {
+      return errorResponse(.badRequest, code: "invalidArgument", message: "a group update names alias, open, or secrets")
     }
     let secrets: ReachScope?
     if let raw = input.secrets {
@@ -80,6 +106,9 @@ func addGroupRoutes(
       secrets = nil
     }
     do {
+      if let alias = input.alias {
+        try await space.renameGroup(group, alias: alias, by: principal)
+      }
       if let open = input.open {
         try await space.setVisibility(open ? .open : .private, of: group, by: principal.actor, acting: principal.group)
       }
@@ -92,7 +121,7 @@ func addGroupRoutes(
 
   // A private group's list: put names an account or a group at a role.
   router.put("/v1/group/:id/access") { request, parameters in
-    guard let group = groupID(parameters) else { return unknownGroup(parameters) }
+    guard let group = try await space.resolveGroup(parameters["id"] ?? "") else { return unknownGroup(parameters) }
     let input: GroupAccessInput
     do {
       input = try await request.json(GroupAccessInput.self)
@@ -111,13 +140,14 @@ func addGroupRoutes(
     case let .refused(response): return response
     }
     do {
-      try await space.setGrant(subject, input.id, role: role, in: group, by: principal.actor, acting: principal.group)
+      let target = subject == .group ? try await space.resolveGroup(input.id)?.rawValue ?? input.id : input.id
+      try await space.setGrant(subject, target, role: role, in: group, by: principal.actor, acting: principal.group)
       return jsonResponse(.object([:]))
     } catch { return groupErrorResponse(error) }
   }
 
   router.delete("/v1/group/:id/access") { request, parameters in
-    guard let group = groupID(parameters) else { return unknownGroup(parameters) }
+    guard let group = try await space.resolveGroup(parameters["id"] ?? "") else { return unknownGroup(parameters) }
     let query = queryValues(of: request.url)
     guard let kind = query["kind"].flatMap(GroupGrant.Subject.init(rawValue:)), let id = query["id"], !id.isEmpty else {
       return errorResponse(.badRequest, code: "invalidArgument", message: "removing an entry takes ?kind=account|group&id=<id>")
@@ -128,7 +158,8 @@ func addGroupRoutes(
     case let .refused(response): return response
     }
     do {
-      try await space.removeGrant(kind, id, in: group, by: principal.actor, acting: principal.group)
+      let target = kind == .group ? try await space.resolveGroup(id)?.rawValue ?? id : id
+      try await space.removeGrant(kind, target, in: group, by: principal.actor, acting: principal.group)
       return jsonResponse(.object([:]))
     } catch { return groupErrorResponse(error) }
   }
@@ -141,16 +172,12 @@ private func groupDetail(_ group: GroupID, principal: Principal, space: Space) a
   let entries = try await space.grants(of: group, by: principal)
   return GroupDetail(
     id: record.id.rawValue,
+    alias: record.alias,
     open: record.visibility == .open,
     secrets: record.secretsScope.rawValue,
     personal: record.personalAccount != nil,
     entries: entries.map { GroupAccessEntry(kind: $0.subject.rawValue, id: $0.id, role: $0.role.rawValue) },
   )
-}
-
-private func groupID(_ parameters: RouteParameters) -> GroupID? {
-  guard let raw = parameters["id"], !raw.isEmpty else { return nil }
-  return GroupID(rawValue: raw)
 }
 
 private func unknownGroup(_ parameters: RouteParameters) -> Response {
@@ -159,6 +186,12 @@ private func unknownGroup(_ parameters: RouteParameters) -> Response {
 
 private func groupErrorResponse(_ error: any Error) -> Response {
   switch error {
+  case AliasError.memberRequired:
+    return errorResponse(.forbidden, code: "memberRequired", message: "owner must be a live non-guest space member")
+  case let AliasError.invalid(alias):
+    return errorResponse(.badRequest, code: "invalidAlias", message: "invalid alias: \(alias); use lowercase letters, digits, underscores, no hyphens")
+  case let AliasError.taken(alias):
+    return errorResponse(.conflict, code: "aliasTaken", message: "alias \(alias) is reserved")
   case SpaceError.notFound:
     return errorResponse(.notFound, code: "notFound", message: "no such account or group")
   case SpaceError.groupForbidden(let group):

@@ -98,7 +98,11 @@ public struct SpaceToolContext: Sendable {
     let seam = machines
     let acting = principal.group
     let actor = principal.actor
-    let address = try await machineAddressByID(address)
+    var address = try await machineAddressByID(address)
+    if let named = try GroupID.address(address) {
+      guard let id = try await space.resolveGroup(named.group.rawValue) else { throw SpaceError.notFound(address) }
+      address = id.address(named.path)
+    }
     let resolver = FSResolver(
       space: SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: nil, listingLimit: listingLimit, listingByteLimit: listingByteLimit),
       spaceAt: { SpaceView(space: space, group: acting, acting: acting, actor: actor, rev: $0, listingLimit: listingLimit, listingByteLimit: listingByteLimit) },

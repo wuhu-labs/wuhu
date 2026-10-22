@@ -28,11 +28,11 @@ public struct MachineRecord: Equatable, Sendable {
   }
 }
 
-// Underscore is excluded so a name can never satisfy MachineID.isValid, which
-// is what lets one route parameter carry either.
 public enum MachineName {
   public static func normalized(_ raw: String) -> String? {
-    normalizedLabel(raw, allowing: ["-", "."], length: 1 ... 63)
+    let mapped = raw.replacingOccurrences(of: "-", with: "_")
+    guard !MachineID.isValid(mapped.lowercased()) else { return nil }
+    return normalizedLabel(mapped, allowing: ["_", "."], length: 1 ... 63)
   }
 }
 
@@ -116,7 +116,7 @@ extension Space {
     let createdAt = dateGen.now
     let stored = SQLiteDateFormat.string(from: createdAt)
     try await writer.write { db in
-      if let requested { try Self.requireMachineNameFree(requested, besides: nil, in: db) }
+      if let requested { try Self.requireMachineNameFree(requested, for: id, group: group, in: db) }
       try db.execute(
         sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES (?, ?, ?, ?)",
         arguments: [account.rawValue, AccountKind.machine.rawValue, requested, stored],
@@ -137,7 +137,7 @@ extension Space {
       guard let row = try MachineRow.where({ $0.id.eq(id.rawValue) }).fetchOne(db) else {
         throw SpaceError.notFound(id.rawValue)
       }
-      try Self.requireMachineNameFree(requested, besides: id, in: db)
+      try Self.requireMachineNameFree(requested, for: id, group: GroupID(rawValue: row.grp), in: db)
       return try Self.storeMachineName(requested, on: row, in: db)
     }
   }
@@ -152,9 +152,15 @@ extension Space {
       }
       var candidate = base
       var ordinal = 1
-      while try Self.machineNameHolder(candidate, in: db).map({ $0 != id.rawValue }) == true {
-        ordinal += 1
-        candidate = String("\(base)-\(ordinal)".prefix(63))
+      while true {
+        do {
+          try Self.requireMachineNameFree(candidate, for: id, group: GroupID(rawValue: row.grp), in: db)
+          break
+        } catch SpaceError.machineNameTaken {
+          ordinal += 1
+          let suffix = "_\(ordinal)"
+          candidate = String(base.prefix(63 - suffix.count)) + suffix
+        }
       }
       return try Self.storeMachineName(candidate, on: row, in: db)
     }
@@ -180,14 +186,15 @@ extension Space {
   }
 
   public func machine(named name: String) async throws -> MachineRecord? {
-    let lowered = name.lowercased()
+    let lowered = name.lowercased().replacingOccurrences(of: "-", with: "_")
     return try await writer.read { db in
-      try MachineRow.where { $0.name.lower().eq(lowered) }.fetchOne(db).map(Self.machineRecord(from:))
+      guard let alias = try AliasRow.where({ $0.name.eq(lowered) }).fetchOne(db), alias.kind == .machine else { return nil }
+      return try MachineRow.where { $0.id.eq(alias.target) }.fetchOne(db).map(Self.machineRecord(from:))
     }
   }
 
   public func resolveMachine(_ reference: String) async throws -> MachineRecord? {
-    if MachineID.isValid(reference) { return try await machine(MachineID(rawValue: reference)) }
+    if let record = try await machine(MachineID(rawValue: reference)) { return record }
     return try await machine(named: reference)
   }
 
@@ -615,12 +622,9 @@ extension Space {
     return normalized
   }
 
-  // Uniqueness is a lookup inside the write transaction, never a unique index:
-  // an index would fail Space.open on a legacy space holding two same-named
-  // machines.
-  static func requireMachineNameFree(_ name: String, besides id: MachineID?, in db: Database) throws {
-    guard let holder = try machineNameHolder(name, in: db), holder != id?.rawValue else { return }
-    throw SpaceError.machineNameTaken(name)
+  static func requireMachineNameFree(_ name: String, for id: MachineID, group: GroupID, in db: Database) throws {
+    do { try Aliases.claimMachine(name, target: id.rawValue, group: group, in: db) }
+    catch AliasError.taken { throw SpaceError.machineNameTaken(name) }
   }
 
   private static func storeMachineName(_ name: String, on row: MachineRow, in db: Database) throws -> MachineRecord {
@@ -630,10 +634,6 @@ extension Space {
     try MachineRow.update(renamed).execute(db)
     try db.execute(sql: "UPDATE accounts SET name = ? WHERE id = ?", arguments: [name, row.accountID])
     return machineRecord(from: renamed)
-  }
-
-  private static func machineNameHolder(_ name: String, in db: Database) throws -> String? {
-    try MachineRow.where { $0.name.lower().eq(name) }.select { $0.id }.fetchOne(db)
   }
 
   static func machineRecord(from row: MachineRow) -> MachineRecord {

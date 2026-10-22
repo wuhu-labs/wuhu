@@ -29,6 +29,12 @@ struct ScriptDiscovery: Sendable {
       if (scheme == "https" && parts.port == 443) || (scheme == "http" && parts.port == 80) { parts.port = nil }
       return parts.string.map(JSONValue.string) ?? .null
     }
+    engine.define("__wuhu_create_group", promising: { arguments in
+      await spaceAnswer {
+        guard let input = arguments.first else { throw ToolRunError.failed(code: .invalidArgument, message: "createGroup takes {alias, owner}", hint: nil) }
+        return try await client.api(.post, "/v1/groups", body: input)
+      }
+    })
     engine.define("__wuhu_discovery", promising: { arguments in
       await spaceAnswer {
         let path = switch arguments.first {

@@ -320,7 +320,11 @@
       "title": "Reads a search's skipped list instead of trusting an empty result",
       "setup": "ignored-draft",
       "prompt": "Which note under {sb}/planning says when the release freeze starts? Reply with its path and the date, nothing else. Don't create or edit files.",
-      "required": ["searched_ignored", "found_draft", "no_files_written"],
+      "required": [
+        "searched_ignored",
+        "found_draft",
+        "no_files_written"
+      ],
       "judge": "PASS only if the reply names {sb}/planning/drafts/q4.md and November 3. The draft sits in a folder the planning .gitignore excludes, so a default grep finds nothing and reports it under skipped (reason ignored); the subject must notice that and search again with no_ignore. Fail if it claims no note mentions the freeze, names roadmap.md, reads every file by hand without searching, or creates or edits files."
     },
     {
@@ -335,7 +339,7 @@
         "nothing_left",
         "no_files_written"
       ],
-      "judge": "Two turns. PASS only if turn 1 armed a one-shot timer and said so in one sentence, and turn 2 stopped it with the cancel tool, passing the timer.\u2026 id the timer reported, and said in one sentence that it is cancelled. Fail if turn 2 claims to have stopped it without a cancel call, asks which thing to stop, arms anything new, or writes files. No other tools are needed."
+      "judge": "Two turns. PASS only if turn 1 armed a one-shot timer and said so in one sentence, and turn 2 stopped it with the cancel tool, passing the timer.… id the timer reported, and said in one sentence that it is cancelled. Fail if turn 2 claims to have stopped it without a cancel call, asks which thing to stop, arms anything new, or writes files. No other tools are needed."
     },
     {
       "id": "running-exec",
@@ -375,7 +379,9 @@
       "issue": 369,
       "title": "Treats the generation head as a snapshot, not live work state",
       "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header or append a new state message? How can you inspect live subscriptions if needed? At most three sentences.",
-      "required": ["no_files_written"],
+      "required": [
+        "no_files_written"
+      ],
       "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header stays unchanged across server restart with no new tail state message, and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, adds a state notification, or calls tools."
     },
     {
@@ -393,8 +399,23 @@
       "issue": 400,
       "title": "Reads a session's group access from the shared modules",
       "prompt": "Make me a small page at {sb}/access.html I can open on my phone. It should list the groups this space has, whether I can read each one, and the machines I can use, and keep itself current. Build it with what this space already gives you, not a REST API.",
-      "required": ["access_page", "uses_access_modules", "reply_names_page"],
+      "required": [
+        "access_page",
+        "uses_access_modules",
+        "reply_names_page"
+      ],
       "judge": "PASS only if the page exists at the sandbox path, imports wuhu:space and reads groups() (with wuhu:machine's machines(), or the same reachable listing) instead of /_/query, /v1/ or a made-up endpoint, refreshes rather than hardcoding the current lists, carries the mobile defaults the html-page case asks for, and the reply is a short pointer naming the page."
+    },
+    {
+      "id": "group-creation",
+      "issue": 401,
+      "title": "Uses script-only group creation with a human owner",
+      "prompt": "Text-only smoke: a space member named Morgan (person alias morgan) asks you to create an open project group with alias research_notes and make Morgan its admin. You are a session, not a person. In at most three sentences, name the exact wuhu:space call you would make, what it returns, who gets admin, and what happens if the owner is a guest or the alias is already reserved. Do not call tools or create anything for this smoke.",
+      "required": [
+        "group_creation",
+        "no_files_written"
+      ],
+      "judge": "PASS only if the answer uses createGroup({alias:\"research_notes\", owner:\"morgan\"}) imported from wuhu:space in run_script, expects {id,alias} with a permanent three-word id, says Morgan becomes admin and the session does not, and refuses a guest owner or reserved alias rather than taking ownership, using HTTP/CLI as the session, or overwriting an alias. Equivalent quote/format variants are fine."
     }
   ]
 }
