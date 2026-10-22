@@ -41,7 +41,7 @@ private let wavAudio = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8A
 private let configuredOpenAI = #"{"transcription":{"active":"openai","providers":{"openai":{"dialect":"openai-audio"}}}}"#
 
 private func configure(_ harness: Harness, _ json: String = configuredOpenAI) async throws {
-  _ = try await harness.space.fs(.shared).write("/capabilities.json", Data(json.utf8), ifMatch: nil)
+  _ = try await harness.space.fs(.settings).write("/capabilities.json", Data(json.utf8), ifMatch: nil)
 }
 
 @Suite(.deterministicDependencies) struct TranscribeRouteTests {

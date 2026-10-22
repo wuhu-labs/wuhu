@@ -27,7 +27,8 @@ enum PrincipalVerdict: Sendable {
 
 /// A session acts in its own group only. A person names one with the
 /// `wuhu-group` header, else acts in `shared`; any other group needs
-/// membership.
+/// membership, or a space admin's stand in the settings group. Acting in
+/// `shared` without a membership stays until shared is open to every member.
 func principal(for request: Request, credential: RequestCredential, space: Space) async throws -> PrincipalVerdict {
   let named = request.headers[GroupHeader.name]
   if case let .session(session, group) = credential {
@@ -46,8 +47,11 @@ func principal(for request: Request, credential: RequestCredential, space: Space
   guard try await space.groupExists(group) else {
     return .refused(errorResponse(.notFound, code: "unknownGroup", message: "this space has no group \(named)"))
   }
-  if case let .person(_, account) = actor, try await !space.isMember(account, of: group) {
-    return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(named)"))
+  if case let .person(_, account) = actor {
+    let settingsAdmin = group == .settings ? try await space.isHumanAdmin(account, of: .settings) : false
+    guard try await space.isMember(account, of: group) || settingsAdmin else {
+      return .refused(errorResponse(.forbidden, code: "groupForbidden", message: "you are not a member of group \(named)"))
+    }
   }
   return .principal(Principal(actor: actor, group: group))
 }

@@ -28,19 +28,19 @@ public struct SpaceToolContext: Sendable {
   }
 
   /// A page writes as a non-admin member agent of its group: never a session
-  /// home, and a layer only its own group's, never `shared`'s. Everyone else
-  /// meets the layer rule as themselves.
+  /// home, instructions only its own group's, and never the settings group.
+  /// Everyone else meets the instructions rule as themselves.
   func refuseWrite(_ path: SpacePath, in group: GroupID) async throws {
     guard page != nil else {
       if case let .session(session) = principal.actor {
         try SessionHome.refuseForeignWrite(to: path, in: group, by: session, home: principal.group)
       }
-      try await space.refuseLayerWrite(path, in: group, by: principal.actor)
+      try await space.refuseWrite(path, in: group, by: principal.actor)
       return
     }
     if let owner = path.homeOwner { throw SpaceError.foreignHome(path: path.rawValue, owner: owner) }
-    if GroupLayer.covers(path, in: group), group == .shared || group != principal.group {
-      throw SpaceError.layerForbidden(path: path.rawValue, group: group.rawValue)
+    if group == .settings || (space.isGroupInstructions(path) && group != principal.group) {
+      throw SpaceError.forbiddenWrite(path: path.rawValue, group: group.rawValue)
     }
   }
 
@@ -290,7 +290,7 @@ struct SpaceView: SpaceVFS {
     if case let .session(session) = actor {
       try SessionHome.refuseForeignWrite(to: p, in: group, by: session, home: acting)
     }
-    try await space.refuseLayerWrite(p, in: group, by: actor)
+    try await space.refuseWrite(p, in: group, by: actor)
   }
 
   func list(_ path: String) async throws -> (VersionToken, [SpaceFS.Entry]) {

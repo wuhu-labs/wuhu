@@ -27,9 +27,9 @@ import Testing
       let header: JSONValue = ["columns": [["name": "title", "type": "string"]]]
       let paths: [(String, String)] = [
         ("/ordinary.table", "ok"),
-        ("/.agents/skills/x/data.table", group == .shared && (task || child) ? "unauthorized" : "ok"),
+        ("/.agents/skills/x/data.table", "ok"),
         ("wuhu://shared.localspace/qualified-ordinary.table", "ok"),
-        ("wuhu://shared.localspace/.agents/skills/x/shared.table", group == .shared && !task && !child ? "ok" : "unauthorized"),
+        ("wuhu://shared.localspace/.agents/skills/x/shared.table", group == .shared ? "ok" : "unauthorized"),
         ("/_/sessions/\(rig.session.rawValue)/own.table", "ok"),
         ("/_/sessions/stranger/foreign.table", "unauthorized"),
         ("wuhu://missing.localspace/no.table", "notFound"),

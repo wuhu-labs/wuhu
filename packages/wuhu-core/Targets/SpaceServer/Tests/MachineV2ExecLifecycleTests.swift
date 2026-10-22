@@ -376,6 +376,7 @@ private struct Rig {
 
       let person = try await rig.space.addAccount(kind: .human, name: "elsewhere", admin: false)
       let group = try await rig.space.ensurePersonalGroup(account: person.id)
+      try await rig.space.addReadEdge(from: group, to: .shared)
       _ = try await rig.space.moveMachine(rig.machine.id, to: group)
       #expect(try await eventually(5) { await operations.recentDescription(rig.machine.id.rawValue) == nil })
       let moved = try await service.operations(group: group)

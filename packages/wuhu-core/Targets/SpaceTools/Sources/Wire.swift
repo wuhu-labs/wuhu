@@ -203,23 +203,23 @@ public enum Wire {
         message: "the space database has migrations unknown to this server: \(identifiers.joined(separator: ", "))",
         hint: "upgrade the server or restore a database backup from before those migrations",
       )
-    case let .adminThroughGroup(account, groups):
-      .failed(code: .conflict, message: adminThroughGroupMessage(account, groups), hint: nil)
     case let .notAPerson(account):
       .failed(code: .invalidArgument, message: "\(account) is not a human account; only a person is an admin", hint: nil)
     case let .groupForbidden(group):
       .failed(code: .unauthorized, message: "groupForbidden: group \(group) is not readable from here", hint: nil)
     case let .invalidCellValue(message):
       .failed(code: .invalidArgument, message: message, hint: nil)
-    case let .layerForbidden(path, group):
+    case let .forbiddenWrite(path, group):
       .failed(
         code: .unauthorized,
-        message: group == GroupID.shared.rawValue
-          ? "\(path) is part of the space-wide layer; only an admin of shared writes it"
-          : "\(path) is part of group \(group)'s layer; only its members write it",
-        hint: group == GroupID.shared.rawValue ? "ask a top-level agent or a human admin of shared to make the change" : nil,
+        message: group == GroupID.settings.rawValue
+          ? "\(path) is in the space's settings group; only a space admin writes it"
+          : "\(path) is part of group \(group)'s instructions; only its members write it",
+        hint: nil,
       )
-    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName, .personalGroupEdge,
+    case let .personalGroupPrivate(group):
+      .failed(code: .invalidArgument, message: "group \(group) is personal: only its owner reads it", hint: nil)
+    case .invalidHandle, .invalidMachineName, .invalidDeviceKind, .invalidDeviceName,
          .notAFile, .notADirectory, .pathIsDirectory, .invalidRevision,
          .columnCountMismatch, .columnTypeChanged, .invalidTableHeader, .reservedTablePath,
          .queryNotReadOnly, .templateInvalid, .importInvalid:

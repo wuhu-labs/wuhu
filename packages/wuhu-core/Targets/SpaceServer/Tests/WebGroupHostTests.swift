@@ -122,6 +122,7 @@ import Testing
 
     let carol = try await space.addAccount(kind: .human, name: "carol").id
     let carolGroup = try await space.ensurePersonalGroup(account: carol)
+    try await space.addReadEdge(from: carolGroup, to: .shared)
     let carolHost = "\(carolGroup.rawValue).space.test:5530"
     #expect(try await get(r, carolHost, path, cookie: try await cookie(r, carol, carolGroup)).status == .notFound)
   }

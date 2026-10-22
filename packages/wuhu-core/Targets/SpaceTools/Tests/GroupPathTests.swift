@@ -2,11 +2,11 @@ import Clocks
 import DeterministicDependencies
 import JSONValue
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 import SpaceTools
 import Testing
 
-// Alice's personal group reads shared; shared reads nothing of hers.
+// Alice's group reads shared; shared reads nothing of hers.
 @Suite(.deterministicDependencies(clock: TestClock())) struct GroupPathTests {
   struct Rig {
     let shared: SpaceToolContext
@@ -19,7 +19,11 @@ import Testing
   func rig() async throws -> Rig {
     let base = try makeContext()
     let account = try await base.space.addAccount(kind: .human, name: "alice")
-    let group = try await base.space.ensurePersonalGroup(account: account.id)
+    let group = GroupID(rawValue: "alice")
+    try await base.space.writer.write { db in
+      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00Z')")
+    }
+    try await base.space.addReadEdge(from: group, to: .shared)
     let alice = SpaceToolContext(space: base.space, principal: Principal(actor: .person(persona: group.rawValue, account: account.id), group: group))
     return Rig(shared: base, alice: alice, group: group)
   }

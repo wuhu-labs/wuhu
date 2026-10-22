@@ -337,7 +337,7 @@ private func sessionRouter(
       let home = try await space.sessionHome(session, at: try await store.activatePromptRevision(session))
       return try Response.json(SessionPromptOutput(
         home: home.path, group: home.group.rawValue,
-        spaceLayer: promptScope(home.spaceLayer), groupLayer: promptScope(home.groupLayer), homeLayer: promptScope(home.home),
+        groupLayer: promptScope(home.groupLayer), homeLayer: promptScope(home.home),
       ))
     } catch {
       return sessionErrorResponse(error)

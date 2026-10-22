@@ -20,7 +20,7 @@ import WuhuAI
         var enabled = try #require(document.providers["testing"]?.models["test-model"])
         enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 1)
         document.providers["testing"]?.models["warm-model"] = enabled
-        _ = try await space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: nil)
+        _ = try await space.fs(.settings).write("/models.json", JSONEncoder().encode(document), ifMatch: nil)
         let warmer = CacheWarmer(space: space, usage: UsageBoard())
         let store = space.sessions
         let warm = try await store.createSession(group: .shared, title: "Warm", kind: .agent, createdBy: "morgan", model: .init(provider: "testing", model: "warm-model", effort: "high"))
@@ -53,8 +53,8 @@ import WuhuAI
       var enabled = try #require(document.providers["testing"]?.models["test-model"])
       enabled.cacheWarming = CacheWarmingPolicy(floorTokens: 50000)
       document.providers["testing"]?.models["warm-model"] = enabled
-      let (head, _) = try await harness.space.fs(.shared).read("/models.json")
-      _ = try await harness.space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
+      let (head, _) = try await harness.space.fs(.settings).read("/models.json")
+      _ = try await harness.space.fs(.settings).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
       let id = try await harness.store.createSession(group: .shared, title: "Recovered", kind: reason == "task" ? .task : .agent, createdBy: "morgan", model: .init(provider: "testing", model: "warm-model", effort: "high"))
       try await harness.store.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 60000, outputTokens: 0, totalTokens: 60000)))
       _ = try await harness.store.enqueue(id, input: .notification(.init(id: UUID(), timestamp: Date(), kind: .context, subscriptionID: .init("cache-warming"), content: .init(text: "<cache-warming-notice>ignore</cache-warming-notice>"))))
@@ -78,8 +78,8 @@ import WuhuAI
       }
       if reason == "removed" || reason == "removed-pressure" || reason == "raised-floor" {
         document.providers["testing"]?.models["warm-model"]?.cacheWarming = reason == "raised-floor" ? CacheWarmingPolicy(floorTokens: 60001) : nil
-        let (head, _) = try await harness.space.fs(.shared).read("/models.json")
-        _ = try await harness.space.fs(.shared).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
+        let (head, _) = try await harness.space.fs(.settings).read("/models.json")
+        _ = try await harness.space.fs(.settings).write("/models.json", JSONEncoder().encode(document), ifMatch: head)
       }
       if reason == "quota" { usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 95, resetsAt: nil)], at: Date()) }
       try await harness.running {
@@ -138,8 +138,8 @@ extension CacheWarmerTests {
           .init(id: "held", provider: "testing", model: "test-model"),
           .init(id: "preferred", provider: "alternate", model: "test-model"),
         ], defaultEffort: "high", policy: .select(member: "preferred"))
-        _ = try await space.fs(.shared).write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: nil)
-        _ = try await space.fs(.shared).write(ModelsDocument.groupPath, JSONEncoder().encode(["work": group]), ifMatch: nil)
+        _ = try await space.fs(.settings).write(ModelsDocument.spacePath, JSONEncoder().encode(document), ifMatch: nil)
+        _ = try await space.fs(.settings).write(ModelsDocument.groupPath, JSONEncoder().encode(["work": group]), ifMatch: nil)
         let route = SessionModelRoute(group: "work", member: "held", specifier: .init(provider: "testing", model: "test-model", effort: "high"), bindingFingerprint: document.providers["testing"]!.routeFingerprint, epoch: "held-route", reason: .create, placedAt: time.withLock { $0 }, evidence: [])
         let id = try await space.sessions.createSession(group: .shared, title: "Pinned warmer", kind: .agent, createdBy: "morgan", executor: .modelGroup(id: "work", effort: "high"), modelRoute: route)
         try await space.sessions.appendAssistant(id, attemptID: UUID(), message: .init(content: []), metadata: .init(stopReason: .stop, usage: .init(inputTokens: 10, outputTokens: 0, totalTokens: 10)))

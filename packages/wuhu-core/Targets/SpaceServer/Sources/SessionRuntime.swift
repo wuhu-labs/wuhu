@@ -316,7 +316,7 @@ extension SessionRuntime {
 
 func modelExecutorResolver(space: Space) -> @Sendable (String, String, String?) async throws -> SessionExecutor {
   { provider, model, effort in
-    let data = try await space.fs(.shared).read(ModelsDocument.spacePath).1
+    let data = try await space.fs(.settings).read(ModelsDocument.spacePath).1
     let catalog = ProviderCatalog(document: try ModelsDocument(json: data), credentials: .unavailable)
     if let effort {
       let specifier = ModelSpecifier(provider: provider, model: model, effort: effort)

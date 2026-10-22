@@ -2,7 +2,7 @@ import DeterministicDependencies
 import JSONValue
 import OrderedCollections
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 import SpaceFS
 import SpaceTools
 import Testing
@@ -105,7 +105,8 @@ import Testing
   @Test func historyShowsTheViewerViaThePage() async throws {
     let context = try makeContext()
     let account = try await context.space.addAccount(kind: .human, name: "ada")
-    let group = try await context.space.ensurePersonalGroup(account: account.id)
+    let group = try await plainGroup(context.space, "ada")
+    try await context.space.addReadEdge(from: group, to: .shared)
     let page = SpaceToolContext(
       space: context.space, principal: Principal(actor: .person(persona: "ada", account: account.id), group: group),
       page: try SpacePath(validating: "/apps/tasks.html"),
@@ -126,7 +127,8 @@ import Testing
     let space = context.space
     let admin = try await space.addAccount(kind: .human, name: "root", admin: true)
     #expect(try await space.isHumanAdmin(admin.id, of: .shared))
-    let home = try await space.ensurePersonalGroup(account: admin.id)
+    let home = try await plainGroup(space, "home")
+    try await space.addReadEdge(from: home, to: .shared)
     let other = try await space.addAccount(kind: .human, name: "bob")
     let sibling = try await space.ensurePersonalGroup(account: other.id)
     let actor = Actor.person(persona: "root", account: admin.id)
@@ -145,7 +147,7 @@ import Testing
     #expect(await patch(person, "wuhu://shared.localspace/AGENTS.md", sharedLayer.token) == nil)
     let current = try await run("read", ["path": "/AGENTS.md"], context, as: ReadOutput.self).token
     #expect(code(await patch(try pageAt(home), "wuhu://shared.localspace/AGENTS.md", current)) == .unauthorized)
-    #expect(code(await patch(try pageAt(.shared), "/AGENTS.md", current)) == .unauthorized)
+    #expect(await patch(try pageAt(.shared), "/AGENTS.md", current) == nil)
     #expect(code(await patch(try pageAt(.shared), "/_/sessions/some-session-id/notes.md", sessionHome.token)) == .unauthorized)
     #expect(code(await patch(try pageAt(home), "wuhu://\(sibling.rawValue).localspace/n.md", siblingFile.token)) == .notFound)
     #expect(await patch(try pageAt(home), "/AGENTS.md", homeLayer.token) == nil)
@@ -155,4 +157,11 @@ import Testing
       _ = try await skills.commitRows("wuhu://shared.localspace/.agents/skills/x.table", edits: [])
     }
   }
+}
+
+private func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
+  try await space.writer.write { db in
+    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
+  }
+  return GroupID(rawValue: id)
 }

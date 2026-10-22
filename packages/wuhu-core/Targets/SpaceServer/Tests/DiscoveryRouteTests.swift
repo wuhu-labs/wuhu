@@ -61,7 +61,7 @@ private func discoveryScript(_ harness: SessionHarness, _ session: SessionID, _ 
       seen.withLock { $0.append(id) }
       return .chatGPT(accessToken: "private-token", accountID: "private-account")
     })
-    _ = try await harness.space.fs(.shared).write("/capabilities.json", Data(#"{"image":{"active":"studio","providers":{"studio":{"dialect":"openai-images","credential":"private-id","model":"gpt-image-1","baseURL":"https://private-endpoint.test"}}}}"#.utf8), ifMatch: nil)
+    _ = try await harness.space.fs(.settings).write("/capabilities.json", Data(#"{"image":{"active":"studio","providers":{"studio":{"dialect":"openai-images","credential":"private-id","model":"gpt-image-1","baseURL":"https://private-endpoint.test"}}}}"#.utf8), ifMatch: nil)
     let response = try await harness.get(harness.api, "/v1/capabilities/image")
     #expect(response.status == .ok)
     let value = try await json(response)

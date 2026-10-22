@@ -377,6 +377,16 @@
       "prompt": "Text-only smoke: do not call tools or write files. The <session-state> at this generation's start listed timer.old and exec.started. Later you received the timer cancellation result and the exec completion message, but the same header still lists both, even after the server restarts. The header is a persisted generation-start snapshot, not live state. Are either still running because the header lists them? Should the server rewrite that old header or append a new state message? How can you inspect live subscriptions if needed? At most three sentences.",
       "required": ["no_files_written"],
       "judge": "PASS only if the reply trusts the cancellation/completion events rather than the stale generation-start header, says the historical header stays unchanged across server restart with no new tail state message, and identifies querying the subscriptions table for live registrations. Fail if it treats listed ids as proof they remain active, rewrites the head, adds a state notification, or calls tools."
+    },
+    {
+      "id": "group-instructions",
+      "title": "Group-local instructions and hidden settings",
+      "prompt": "This is a text-only smoke; do not run tools or write files. You are in group studio. Shared has an AGENTS.md and a deploy skill. Are they injected into your prompt? Where do you read models.json and who may edit it? Can a personal group grant its person admin over studio? Answer in at most three lines.",
+      "required": [
+        "no_files_written"
+      ],
+      "judge": "PASS only if shared instructions and skills are not injected into studio; models.json is read from wuhu://settings.localspace/models.json and only a human space admin edits it; personal groups confer no admin over studio. No tools or files.",
+      "issue": 399
     }
   ]
 }

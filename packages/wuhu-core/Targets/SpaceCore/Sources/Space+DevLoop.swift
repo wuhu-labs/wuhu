@@ -52,6 +52,7 @@ extension Space {
 
   public func importFolder(_ url: URL) async throws {
     let live = fs(.shared)
+    let settings = fs(.settings)
     for (relative, fileURL) in try Self.regularFiles(under: url).sorted(by: { $0.0 < $1.0 }) {
       let path = try SpacePath(validating: "/" + relative)
       if relative.hasSuffix(".table") {
@@ -59,11 +60,19 @@ extension Space {
         let (header, rows) = try Self.parseTableCSV(text)
         _ = try await createTable(path, header: header, in: .shared, acting: .shared)
         if !rows.isEmpty { _ = try await mutateRows(path, rows.map { RowOp.insert($0) }, in: .shared, acting: .shared) }
+      } else if Self.settingsDocuments.contains(path.rawValue) {
+        _ = try await settings.write(path.rawValue, try Data(contentsOf: fileURL), ifMatch: nil)
       } else {
         _ = try await live.write(path.rawValue, try Data(contentsOf: fileURL), ifMatch: nil)
       }
     }
   }
+
+  /// The space's settings files: an import writes them to the settings group,
+  /// and a hosted seed lands them there.
+  public static let settingsDocuments: Set<String> = [
+    "/models.json", "/model-groups.json", "/capabilities.json", "/machine-v2-upgrade.json",
+  ]
 
   public func exportFolder(_ url: URL) async throws {
     let manager = FileManager.default

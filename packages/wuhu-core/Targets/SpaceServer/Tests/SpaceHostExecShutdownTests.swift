@@ -21,7 +21,7 @@ import struct WuhuAI.ToolCall
   @Test func archiveKillsAndAcknowledgesAWorkerExecBeforeForgettingItsEnd() async throws {
     try await withSessionDeps {
       let space = try makeMachineSpace()
-      _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+      _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
       let server = TestServer(space: space, clock: ContinuousClock())
       let (machine, key) = try await addMachine(server)
       let runtime = await SessionRuntime.assemble(space: space, hub: server.hub, credentials: .unavailable)
@@ -100,7 +100,7 @@ import struct WuhuAI.ToolCall
         let deployment = DeploymentRecord(origin: "https://exec.test", tlsFingerprint: "test", certificate: .provided)
         let host = try await SpaceHost.open(folder: folder, deployment: deployment, configDirectory: config, allowEnvironmentCredentials: false, dev: true)
         try await CredentialsStore(configDirectory: config, spaceID: host.id).save(CredentialsFile(providers: ["testing": .apiKey("test-key")]))
-        _ = try await host.space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+        _ = try await host.space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
         let api = ServeTesting.client(upgrading: host.handler)
         func http(_ path: String, method: Fetch.Method = .get, body: JSONValue? = nil) async throws -> Response {
           var request = Request(url: URL(string: "https://exec.test\(path)")!, method: method)

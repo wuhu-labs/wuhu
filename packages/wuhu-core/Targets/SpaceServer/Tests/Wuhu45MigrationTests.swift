@@ -63,13 +63,13 @@ import Testing
     let carols = GroupID(rawValue: "cedar-lake-ember")
     #expect(try await space.personalGroup(of: Self.boss) == bosses)
     #expect(try await space.personalGroup(of: Self.carol) == carols)
-    #expect(try await Set(space.groups().map(\.id)) == [.shared, bosses, carols])
+    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings, bosses, carols])
     #expect(try await space.isHumanAdmin(Self.boss, of: .shared))
     #expect(try await !space.isHumanAdmin(Self.carol, of: .shared))
     #expect(try await space.isHumanAdmin(Self.carol, of: carols))
     #expect(try await !space.isHumanAdmin(Self.carol, of: bosses))
-    #expect(try await space.reads(carols) == [carols, .shared])
-    #expect(try await space.reads(.shared) == [.shared])
+    #expect(try await space.reads(carols) == [carols, .shared, .settings])
+    #expect(try await space.reads(.shared) == [.shared, .settings])
   }
 
   @Test func anAdminWithoutAPersonaAbortsAndLeavesTheFileAsItWas() async throws {
@@ -97,10 +97,17 @@ import Testing
     let migrated = try Self.shape(file)
     let expected = try Self.shape(fresh)
     // Tables added after the groups migration come with the next open, IF NOT EXISTS.
-    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs"]
+    let later: Set = ["grdb_migrations", "session_model_routes", "session_model_route_history", "revision_actors", "space_deployment_certificate", "inferences", "conversation_titles", "machine_v2_key_check", "machine_v2_members", "machine_v2_presence", "machine_v2_operations", "machine_v2_channels", "machine_v2_output", "machine_v2_trace", "machine_v2_problem_index", "machine_v2_incidents", "machine_v2_retention", "machine_v2_maintenance", "session_command_tokens", "session_cache_warming", "session_worker_incarnations", "execution_worker_owners", "session_worker_assignments", "worker_script_owners", "join_token_receipts", "message_viewing", "session_api_receipts", "session_blobs", "group_roles"]
     let retired: Set = ["claude_code_sessions", "claude_code_handovers", "session_scope_context", "exec_jobs"]
-    #expect(migrated.keys.filter { !retired.contains($0) }.sorted() == expected.keys.filter { !later.contains($0) }.sorted())
-    for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) {
+    let dropped: Set = ["session_space_layer"]
+    let migratedKeys = Set(migrated.keys).subtracting(retired).subtracting(dropped)
+    let expectedKeys = Set(expected.keys).subtracting(later)
+    #expect(
+      migratedKeys == expectedKeys,
+      "migrated only: \(migratedKeys.subtracting(expectedKeys).sorted()); fresh only: \(expectedKeys.subtracting(migratedKeys).sorted())",
+    )
+    // `groups` is reshaped by the next migrations; the reopened comparison below pins its columns.
+    for (table, lines) in expected.sorted(by: { $0.key < $1.key }) where !later.contains(table) && table != "groups" {
       #expect(migrated[table] == lines.filter { line in
         !["claude_code_handovers_by_session", "session_contents_assistant_history", "session_pointers_by_content"].contains(where: line.contains)
           && !(table == "machine_execs" && (line.contains("tool_spec") || line.contains("tool_end_owed")))
@@ -108,7 +115,8 @@ import Testing
     }
     _ = try Space.open(file: file)
     let reopened = try Self.shape(file)
-    #expect(reopened == expected)
+    #expect(reopened["session_space_layer"] == nil)
+    #expect(reopened.filter { !retired.contains($0.key) } == expected)
     for table in retired {
       #expect(reopened[table] == nil)
     }

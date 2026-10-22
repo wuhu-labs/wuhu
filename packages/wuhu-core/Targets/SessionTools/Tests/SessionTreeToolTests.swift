@@ -4,8 +4,9 @@ import JSONValue
 import class MainHub.Hub
 import SessionDomain
 @testable import SessionTools
+import SpaceContract
 @testable import SpaceServer
-@_spi(Testing) import SpaceCore
+@_spi(Testing) @testable import SpaceCore
 import Testing
 import struct WuhuAI.ToolArguments
 
@@ -140,8 +141,9 @@ struct SessionTreeToolTests {
   @Test func aChildTakesItsCreatorsGroupAndOnlyATopLevelAgentNamesOne() async throws {
     try await withToolDeps { _ in
       let space = try Space.inMemory()
-      let alice = try await space.ensurePersonalGroup(account: try await space.addAccount(kind: .human, name: nil).id)
-      let bob = try await space.ensurePersonalGroup(account: try await space.addAccount(kind: .human, name: nil).id)
+      let alice = try await plainGroup(space, "alice")
+      let bob = try await plainGroup(space, "bob")
+      try await space.addReadEdge(from: alice, to: .shared)
       let agent = try await makeSession(space, name: "agent", group: alice)
       var world = ToolWorld(executor: creating(space), session: agent)
 
@@ -232,4 +234,11 @@ struct SessionTreeToolTests {
       #expect(try await directMessages(space, to: half.sessionID).count == 1)
     }
   }
+}
+
+func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
+  try await space.writer.write { db in
+    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
+  }
+  return GroupID(rawValue: id)
 }

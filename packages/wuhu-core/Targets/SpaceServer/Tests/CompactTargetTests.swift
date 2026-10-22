@@ -52,7 +52,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
       let route: SessionModelRoute
       do {
         let space = try Space.open(file: file)
-        let fs = await space.fs(.shared)
+        let fs = await space.fs(.settings)
         var document = try ModelsDocument(json: Data(testModelsJSON.utf8))
         document.providers["alternate"] = document.providers["testing"]
         let groups = ["work": ModelsDocument.Group(members: [.init(id: "a", provider: "testing", model: "test-model"), .init(id: "b", provider: "alternate", model: "test-model")], defaultEffort: "high", policy: .quotaAware())]
@@ -148,7 +148,7 @@ private func directSession(_ harness: SessionHarness, owner: Hub, catalog: Provi
   @Test func aSlashBearingGroupIDIsAGroupNotAProviderModel() async throws {
     try await withSessionDeps {
       let (harness, owner, _, _) = try await GroupSwitchingTests().setup()
-      let fs = await harness.space.fs(.shared)
+      let fs = await harness.space.fs(.settings)
       let (entry, data) = try await fs.read(ModelsDocument.groupPath)
       var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
       groups["team/claude"] = groups["work"]

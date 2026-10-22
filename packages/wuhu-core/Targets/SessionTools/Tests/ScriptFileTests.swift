@@ -64,9 +64,9 @@ import Testing
         let context = SpaceToolContext(space: rig.space, principal: principal)
         let paths: [(String, String)] = [
           ("/ordinary.md", "ok"),
-          ("/.agents/skills/example/file.md", home == .shared && kind != "root" ? "unauthorized" : "ok"),
+          ("/.agents/skills/example/file.md", "ok"),
           ("wuhu://shared.localspace/shared.md", "ok"),
-          ("wuhu://shared.localspace/.agents/skills/example/shared.md", home == .shared && kind == "root" ? "ok" : "unauthorized"),
+          ("wuhu://shared.localspace/.agents/skills/example/shared.md", home == .shared ? "ok" : "unauthorized"),
           ("/_/sessions/\(rig.session.rawValue)/file.md", "ok"),
           ("/_/sessions/stranger/file.md", "unauthorized"),
           ("wuhu://missing.localspace/file.md", "notFound"),

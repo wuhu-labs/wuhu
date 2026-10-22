@@ -34,7 +34,7 @@ import Testing
       #expect(expectedGroups.array?.first { $0.object?["id"] == "shared" } == ["id": "shared", "member": false, "readable": true, "admin": false])
       let forgedGroup = SpaceToolContext(space: rig.space, principal: Principal(actor: .session(rig.session), group: .shared))
       #expect(try await forgedGroup.discoveryContext(contentHost: nil).object?["group"] == "alice")
-      try await rig.space.addEdge(src: alice, dst: GroupID(rawValue: "hidden"), kind: .read, by: nil)
+      try await rig.space.addReadEdge(from: alice, to: GroupID(rawValue: "hidden"))
       let changed = try await rig.evaluate("import {groups} from 'wuhu:space';result((await groups()).find(x=>x.id==='hidden'))")
       #expect(changed == ["id": "hidden", "member": false, "readable": true, "admin": false])
     }

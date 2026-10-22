@@ -42,7 +42,7 @@ Values: BOOLEAN columns are `true`/`false`, JSON columns the parsed value, BLOB 
 
 Prefer `observe` over query-then-poll: its first snapshot replaces the initial query. A stream opens when the loop starts and closes when it leaves; a dropped connection reopens on its own. A refusal rejects with a `SpaceError` carrying `code`, `message` and sometimes `hint`; with the space unreachable, a one-shot call or write rejects with fetch's own `TypeError`.
 
-A page acts as an ordinary member of the group it lives in, as the person viewing it. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. Admin-only targets (`shared`'s `/AGENTS.md` and skills, group settings) are refused. Writes are online only and never queued.
+A page acts as an ordinary member of the group it lives in, as the person viewing it. A hostless path means that group; `wuhu://<group>.localspace/<path>` reaches another group it can read or write. A page writes its own group's `/AGENTS.md` and skills like any member, but no other group's, and never the settings group: only a space admin writes that. Writes are online only and never queued.
 
 `/_/query` and `/_/observe` are deprecated: they still serve existing pages their old untyped `{columns, rows}` shape, but new pages use `wuhu:space`.
 

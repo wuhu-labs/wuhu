@@ -50,6 +50,17 @@ extension SessionStore {
       if let conversation, conversation.kind == .users {
         return try Conversations.reads(conversation, reader: principal.member, group: principal.group, in: db)
       }
+      // A person's own group is theirs alone: it reads as nothing to everyone
+      // else, including a space admin.
+      if let owner = try String.fetchOne(
+        db, sql: "SELECT personal_account FROM groups WHERE id = ? AND personal_account IS NOT NULL",
+        arguments: [group.rawValue],
+      ) {
+        switch principal.actor {
+        case let .person(_, account): guard account.rawValue == owner else { return false }
+        case .session, .anonymous: guard principal.group == group else { return false }
+        }
+      }
       if group == principal.group { return true }
       if try Groups.reads(principal.group, in: db).contains(group) { return true }
       let parts = path.split(separator: "/", omittingEmptySubsequences: true)

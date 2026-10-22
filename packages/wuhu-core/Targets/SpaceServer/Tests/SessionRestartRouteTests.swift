@@ -115,7 +115,7 @@ import enum WuhuAI.InferenceError
   @Test func aRestartOnAnotherProviderKeepsNothingOfTheOldModel() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      _ = try await harness.space.fs(.shared).write("/models.json", Data("""
+      _ = try await harness.space.fs(.settings).write("/models.json", Data("""
       {"testing": {"dialect": "anthropic", "baseURL": "http://localhost:1", "opaqueReplay": "affine",
         "models": {"test-model": {"maxInput": 100000, "maxOutput": 1000, "efforts": ["low", "high"], "defaultEffort": "high"}}},
        "second": {"dialect": "anthropic", "baseURL": "http://localhost:2", "opaqueReplay": "affine",

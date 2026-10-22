@@ -21,8 +21,8 @@ import Testing
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addEdge(src: Self.alice, dst: .shared, kind: .read, by: nil)
-    try await space.addEdge(src: Self.bob, dst: Self.bob, kind: .read, by: nil)
+    try await space.addReadEdge(from: Self.alice, to: .shared)
+    try await space.addReadEdge(from: Self.bob, to: Self.bob)
     _ = try await space.fs(Self.alice).write("/plan.md", bytes("# Plan\n\nSee [readme](wuhu://shared.localspace/readme.md).\n"), ifMatch: nil)
     _ = try await space.fs(.shared).write("/readme.md", bytes("# Readme\n"), ifMatch: nil)
     _ = try await space.createTable(path("/t.table"), header: TableHeader(columns: [TableColumn(name: "n", type: .integer)]), in: Self.alice, acting: Self.alice)
@@ -147,7 +147,7 @@ import Testing
       }
     }
     #expect(try await awaitItems(frames, atLeast: 1).map(\.rows) == [[[.text("/readme.md")]]])
-    try await space.removeEdge(src: Self.alice, dst: .shared, kind: .read)
+    try await space.removeReadEdge(from: Self.alice, to: .shared)
     let error = await ending.value
     #expect(error as? SpaceError == .unknownRelation("wuhu://shared.localspace/docs"))
   }
@@ -183,7 +183,8 @@ import Testing
   }
 
   // administeredGroups(by:) names exactly the groups isAdmin admits, for an
-  // agent session, a human admin and non-admin, and an anonymous caller.
+  // agent session, a space admin and a person who administers only their own
+  // group, and an anonymous caller.
   @Test func administeredGroupsNamesWhatIsAdminAdmitsForEveryActor() async throws {
     let space = try makeSpace()
     let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
@@ -194,101 +195,54 @@ import Testing
     let task = try await space.sessions.createSession(
       group: .shared, title: "St", kind: .task, parent: agent, createdBy: "owner", executor: .kernel(.test),
     )
-    let alicePerson = SpaceCore.Actor.person(persona: alicesGroup.rawValue, account: alice.id)
+    // A space admin administers every group but another person's own.
+    let everyGroup: Set<GroupID> = [.shared, .settings, morgansGroup, alicesGroup]
     let cases: [(SpaceCore.Actor, Set<GroupID>)] = [
       (.session(agent), [.shared]),
       (.session(task), []),
-      (.person(persona: morgansGroup.rawValue, account: morgan.id), [.shared, morgansGroup]),
-      (alicePerson, [alicesGroup]),
+      (.person(persona: morgansGroup.rawValue, account: morgan.id), [.shared, .settings, morgansGroup]),
+      (.person(persona: alicesGroup.rawValue, account: alice.id), [alicesGroup]),
       (.anonymous, []),
     ]
     for (actor, expected) in cases {
       #expect(try await space.administeredGroups(by: actor) == expected, "\(actor)")
-      for group in [GroupID.shared, morgansGroup, alicesGroup] {
+      for group in everyGroup {
         #expect(try await space.isAdmin(actor, of: group) == expected.contains(group), "\(actor) of \(group)")
       }
     }
     _ = try await space.removeAccount(alice.id)
-    #expect(try await space.administeredGroups(by: alicePerson).isEmpty)
+    #expect(try await space.administeredGroups(by: .person(persona: alicesGroup.rawValue, account: alice.id)).isEmpty)
   }
 
-  @Test func aPersonAdministersTheirOwnGroupAndSharedOnlyByEdge() async throws {
+  @Test func aPersonAdministersTheirOwnGroupAndTheSpaceOnlyFromTheAdminTable() async throws {
     let space = try makeSpace()
     let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
     let alice = try await space.addAccount(kind: .human, name: "alice")
     let alicesGroup = try #require(try await space.personalGroup(of: alice.id))
+    let alicePerson = SpaceCore.Actor.person(persona: alicesGroup.rawValue, account: alice.id)
     #expect(try await space.isHumanAdmin(morgan.id, of: .shared))
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
     #expect(try await space.isHumanAdmin(alice.id, of: alicesGroup))
-    #expect(try await space.reads(alicesGroup) == [alicesGroup, .shared])
+    #expect(try await space.reads(alicesGroup) == [alicesGroup, .settings])
     #expect(try await Dictionary(uniqueKeysWithValues: space.accounts().map { ($0.name, $0.isAdmin) }) == ["morgan": true, "alice": false])
 
     _ = try await space.setAdmin(alice.id, admin: true)
     #expect(try await space.isHumanAdmin(alice.id, of: .shared))
-    try await space.removeEdge(src: alicesGroup, dst: .shared, kind: .admin)
+    #expect(try await space.isAdmin(alicePerson, of: alicesGroup))
+    _ = try await space.setAdmin(alice.id, admin: false)
     #expect(try await !space.isHumanAdmin(alice.id, of: .shared))
+    // Her own group is still hers: the personal group is not a grant.
+    #expect(try await space.isAdmin(alicePerson, of: alicesGroup))
     await #expect(throws: SpaceError.lastAdmin(morgan.id.rawValue)) { try await space.setAdmin(morgan.id, admin: false) }
-    let morgansGroup = try #require(try await space.personalGroup(of: morgan.id))
-    await #expect(throws: SpaceError.lastAdmin(morgansGroup.rawValue)) {
-      try await space.removeEdge(src: morgansGroup, dst: .shared, kind: .admin)
-    }
-    #expect(try await space.isHumanAdmin(morgan.id, of: .shared))
-    await #expect(throws: SpaceError.personalGroupEdge(alicesGroup.rawValue)) {
-      try await space.removeEdge(src: alicesGroup, dst: alicesGroup, kind: .admin)
-    }
     await #expect(throws: SpaceError.notAPerson("bot")) { try await space.addAccount(kind: .machine, name: "bot", admin: true) }
     _ = try await space.removeAccount(alice.id)
     #expect(try await !space.isHumanAdmin(alice.id, of: alicesGroup))
-  }
 
-  // A team group that administers itself and shared makes its members human
-  // admins of both, for isHumanAdmin, is_admin and last-admin counting alike.
-  @Test func aTeamGroupsAdminEdgeCountsForItsMembersByTheOneRule() async throws {
-    let space = try makeSpace()
-    let morgan = try await space.addAccount(kind: .human, name: "morgan", admin: true)
-    let carol = try await space.addAccount(kind: .human, name: "carol")
-    let carolsGroup = try #require(try await space.personalGroup(of: carol.id))
-    let ops = GroupID(rawValue: "ops")
-    try await space.writer.write { db in
-      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('ops', '2099-01-01T00:00:00.000Z')")
-      try db.execute(
-        sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('ops', ?, '2099-01-01T00:00:00.000Z')",
-        arguments: [carol.id.rawValue],
-      )
+    let morgansGroup = try #require(try await space.personalGroup(of: morgan.id))
+    let raw = try await space.writer.read { db in
+      try String.fetchAll(db, sql: "SELECT grp FROM group_roles WHERE role = 'admin' AND account_id = ? ORDER BY grp", arguments: [morgan.id.rawValue])
     }
-    try await space.addEdge(src: ops, dst: ops, kind: .admin, by: nil)
-    try await space.addEdge(src: ops, dst: .shared, kind: .admin, by: nil)
-    #expect(try await space.personalGroup(of: carol.id) == carolsGroup)
-    #expect(try await space.isHumanAdmin(carol.id, of: .shared))
-    #expect(try await space.isHumanAdmin(carol.id, of: ops))
-    #expect(try await space.isAdmin(.person(persona: carolsGroup.rawValue, account: carol.id), of: .shared))
-    #expect(try await Dictionary(uniqueKeysWithValues: space.accounts().map { ($0.name, $0.isAdmin) }) == ["morgan": true, "carol": true])
-
-    // Revoking admin held through ops says so and changes nothing, even with
-    // a personal edge to drop alongside it.
-    _ = try await space.setAdmin(carol.id, admin: true)
-    await #expect(throws: SpaceError.adminThroughGroup(account: carol.id.rawValue, groups: [ops.rawValue])) {
-      try await space.setAdmin(carol.id, admin: false)
-    }
-    let kept = try await space.writer.read { db in
-      try Bool.fetchOne(
-        db, sql: "SELECT EXISTS (SELECT 1 FROM group_edges WHERE src = ? AND dst = 'shared' AND kind = 'admin')",
-        arguments: [carolsGroup.rawValue],
-      )
-    }
-    #expect(kept == true)
-    try await space.removeEdge(src: carolsGroup, dst: .shared, kind: .admin)
-    await #expect(throws: SpaceError.adminThroughGroup(account: carol.id.rawValue, groups: [ops.rawValue])) {
-      try await space.setAdmin(carol.id, admin: false)
-    }
-    #expect(try await space.isHumanAdmin(carol.id, of: .shared))
-
-    _ = try await space.setAdmin(morgan.id, admin: false)
-    #expect(try await !space.isHumanAdmin(morgan.id, of: .shared))
-    await #expect(throws: SpaceError.lastAdmin(ops.rawValue)) {
-      try await space.removeEdge(src: ops, dst: .shared, kind: .admin)
-    }
-    #expect(try await space.isHumanAdmin(carol.id, of: .shared))
+    #expect(raw == [morgansGroup.rawValue, GroupID.settings.rawValue].sorted())
   }
 
   @Test func theFirstPersonaNamesThePersonalGroup() async throws {
@@ -298,7 +252,9 @@ import Testing
     let key = try await space.addKey(testPubkey("laptop"), account: account.id, capabilities: [.device], createdBy: nil, expiresAt: nil)
     let persona = try await space.adoptPersona(key: key)
     #expect(persona.name == group.rawValue)
-    #expect(try await Set(space.groups().map(\.id)) == [.shared, group])
+    #expect(try await Set(space.groups().map(\.id)) == [.shared, .settings, group])
+    #expect(try await space.groups().first { $0.id == group }?.personalAccount == account.id)
+    #expect(try await space.groups().first { $0.id == .settings }?.personalAccount == nil)
   }
 }
 

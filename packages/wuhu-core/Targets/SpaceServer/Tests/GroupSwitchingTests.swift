@@ -23,7 +23,7 @@ import WuhuAI
       .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
     })
     try await ModelGroupRouteTests().install(harness, model: model)
-    let fs = await harness.space.fs(.shared)
+    let fs = await harness.space.fs(.settings)
     let (entry, data) = try await fs.read(ModelsDocument.groupPath)
     var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
     groups["work"]!.policy = policy ?? .quotaAware(holdDownSeconds: seconds)
@@ -175,7 +175,7 @@ extension GroupSwitchingTests {
         let models = testModelsJSON.replacingOccurrences(of: "\"dialect\": \"anthropic\"", with: "\"dialect\": \"responses\"")
         let harness = try await SessionHarness(assembledModels: models, credentialResolver: .bound { provider in .init(credential: .apiKey("key-" + provider), identityEpoch: provider) })
         try await ModelGroupRouteTests().install(harness)
-        let fs = await harness.space.fs(.shared)
+        let fs = await harness.space.fs(.settings)
         let (entry, data) = try await fs.read(ModelsDocument.groupPath)
         var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
         groups["work"]!.policy = .quotaAware(holdDownSeconds: 0)
@@ -217,7 +217,7 @@ extension GroupSwitchingTests {
   @Test func typedRefreshRefusalOnlyAffectsHeldProviderAndWarmingFollowsReplacement() async throws {
     try await withSessionDeps {
       let (harness, owner, catalog, id) = try await setup(seconds: 0)
-      let fs = await harness.space.fs(.shared)
+      let fs = await harness.space.fs(.settings)
       let (entry, data) = try await fs.read(ModelsDocument.spacePath)
       var document = try ModelsDocument(json: data)
       for provider in ["testing", "alternate"] { document.providers[provider]!.models["test-model"]!.cacheWarming = .init(floorTokens: 1) }
@@ -255,7 +255,7 @@ extension GroupSwitchingTests {
     try await withSessionDeps {
       let (harness, owner, _, id) = try await setup()
       let held = try #require(await owner.modelRoute(id))
-      let fs = await harness.space.fs(.shared)
+      let fs = await harness.space.fs(.settings)
       let (entry, _) = try await fs.read(ModelsDocument.groupPath)
       _ = try await fs.write(ModelsDocument.groupPath, Data("{}".utf8), ifMatch: entry)
       let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
@@ -300,7 +300,7 @@ extension GroupSwitchingTests {
           return .init(credential: .apiKey("key-" + provider), identityEpoch: provider)
         })
         try await ModelGroupRouteTests().install(harness)
-        let fs = await harness.space.fs(.shared)
+        let fs = await harness.space.fs(.settings)
         let (entry, data) = try await fs.read(ModelsDocument.groupPath)
         var groups = try JSONDecoder().decode([String: ModelsDocument.Group].self, from: data)
         groups["work"]!.policy = .quotaAware(holdDownSeconds: 0)
@@ -335,7 +335,7 @@ extension GroupSwitchingTests {
       let now = Mutex(Date(timeIntervalSince1970: 10000))
       try await withDependencies { $0.date = DateGenerator { now.withLock { $0 } } } operation: {
         let (harness, owner, catalog, id) = try await setup()
-        let fs = await harness.space.fs(.shared)
+        let fs = await harness.space.fs(.settings)
         let (entry, data) = try await fs.read(ModelsDocument.spacePath)
         var document = try ModelsDocument(json: data)
         document.providers["testing"]!.models["test-model"]!.cacheWarming = .init(floorTokens: 1)
@@ -401,7 +401,7 @@ extension GroupSwitchingTests {
   @Test(arguments: [false, true]) func lastResortSkipsLapsedCandidateAtReadinessOrLateResolve(lateRefresh: Bool) async throws {
     try await withSessionDeps {
       let (harness, owner, _, id) = try await setup(seconds: 0)
-      let fs = await harness.space.fs(.shared)
+      let fs = await harness.space.fs(.settings)
       let (entry, data) = try await fs.read(ModelsDocument.spacePath)
       var document = try ModelsDocument(json: data)
       document.providers["third"] = document.providers["testing"]

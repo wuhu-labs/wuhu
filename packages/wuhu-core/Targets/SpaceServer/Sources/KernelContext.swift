@@ -18,12 +18,12 @@ func budgetResolver(owner: any Main, executor: ToolExecutor) -> @Sendable (Sessi
   }
 }
 
-// Main's own, for what it shows of a session's context: the shared group's models document.
+// Main's own, for what it shows of a session's context: the settings group's models document.
 func budgetResolver(owner: Hub) -> @Sendable (SessionID) async -> ContextBudget {
   { id in
     guard let record = try? await owner.record(id),
           let specifier = await activeModelSpecifier(record, owner: owner),
-          let data = try? await owner.space.fs(.shared).read(ModelsDocument.spacePath).1,
+          let data = try? await owner.space.fs(.settings).read(ModelsDocument.spacePath).1,
           let document = try? ModelsDocument(json: data)
     else { return fallbackBudget }
     return contextBudget(specifier, document) ?? fallbackBudget
@@ -74,10 +74,9 @@ re-read, and keep working.
 
 // One string, most shared first, so a provider's prefix cache can reuse it
 // across sessions: (1) the executor's fixed text, (2) the system AGENTS.md
-// and skills from the binary, (3) the space-wide layer, outside `shared`,
-// (4) the group's AGENTS.md and skills, (5) the session: identity, kind,
-// model, home. Parts 3 to 5 come from `home`, read at the session's prompt
-// revision, so they hold still between compactions.
+// and skills from the binary, (3) the group's AGENTS.md and skills, (4) the
+// session: identity, kind, model, home. Parts 3 and 4 come from `home`, read
+// at the session's prompt revision, so they hold still between compactions.
 func layoutPrompt(fixed: String, identity: String, record: SessionRecord, home: SessionHome) -> String {
   let model: String? = switch record.executor {
   case let .kernel(specifier): "\(specifier.provider)/\(specifier.model)"
@@ -86,7 +85,7 @@ func layoutPrompt(fixed: String, identity: String, record: SessionRecord, home: 
   }
   let session = [identity, SessionPrompt.sessionCore(task: record.kind == .task, model: model), home.rendered]
     .joined(separator: "\n\n")
-  return [fixed, SystemFiles.rendered, home.spaceLayerRendered, home.groupRendered, session]
+  return [fixed, SystemFiles.rendered, home.groupRendered, session]
     .filter { !$0.isEmpty }
     .joined(separator: "\n\n")
 }

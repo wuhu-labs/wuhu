@@ -183,25 +183,15 @@ public enum SpaceError: Error, Equatable, Sendable {
   /// The database predates a schema compaction this binary requires.
   case needsMigration(String)
   case unknownMigrations([String])
-  /// Admin is held through a personal group, which only a human account has.
+  /// Only a person administers a space.
   case notAPerson(String)
-  /// A personal group's admin edge to itself is what makes it personal.
-  case personalGroupEdge(String)
-  /// Revoking admin from an account that stays an admin of shared through
-  /// another group it belongs to: nothing changed.
-  case adminThroughGroup(account: String, groups: [String])
   /// A group the actor's group does not read, named as a new session's home.
   case groupForbidden(String)
-  /// A write to a group's instruction layer by someone the layer does not admit.
-  case layerForbidden(path: String, group: String)
-}
-
-/// Why revoking an account's admin changed nothing: its membership in another
-/// group keeps it an admin of shared.
-package func adminThroughGroupMessage(_ account: String, _ groups: [String]) -> String {
-  let named = groups.count == 1 ? "group \(groups[0])" : "groups \(groups.joined(separator: ", "))"
-  return "\(account) stays an admin of shared through its membership in \(named); nothing was changed. "
-    + "Revoke that group's admin edge to shared, or remove \(account) from it"
+  /// A write by someone the group does not admit: its instructions, or the
+  /// settings group.
+  case forbiddenWrite(path: String, group: String)
+  /// A read edge into a person's own group: it has one member, its owner.
+  case personalGroupPrivate(String)
 }
 
 extension VersionToken {

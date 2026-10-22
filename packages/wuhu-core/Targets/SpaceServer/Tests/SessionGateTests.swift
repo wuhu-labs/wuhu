@@ -96,6 +96,7 @@ import Testing
       let t = try await tree()
       let account = try await t.harness.space.addAccount(kind: .human, name: "reader")
       let group = try await t.harness.space.ensurePersonalGroup(account: account.id)
+      try await t.harness.space.addReadEdge(from: group, to: .shared)
       let reader = try await t.harness.store.createSession(group: group, title: "reader", kind: .agent, createdBy: "reader", executor: .kernel(.init(provider: "testing", model: "test-model", effort: "high")))
       let machine = try #require(try await t.harness.space.resolveMachine("box", usableFrom: group))
       let exec = try await t.harness.space.mintExec(machine: machine.id, caller: reader.rawValue)

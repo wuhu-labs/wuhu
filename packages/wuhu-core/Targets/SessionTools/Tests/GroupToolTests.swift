@@ -9,6 +9,7 @@ import SessionDomain
 import struct SpaceClient.SpaceClient
 import struct SpaceContract.GroupID
 @testable import SpaceCore
+import SpaceFS
 @testable import SpaceServer
 import Testing
 import struct WuhuAI.ToolArguments
@@ -34,7 +35,7 @@ import struct WuhuAI.ToolArguments
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addEdge(src: Self.alice, dst: .shared, kind: .read, by: nil)
+    try await space.addReadEdge(from: Self.alice, to: .shared)
     return Rig(
       space: space,
       executor: SessionRuntime.toolExecutor(owner: Hub(space: space)),
@@ -56,21 +57,28 @@ import struct WuhuAI.ToolArguments
     return try await world.run("write", .object(["path": .string(path), "content": "rules"]))
   }
 
-  @Test func theWriteToolKeepsTheLayerRules() async throws {
+  @Test func theWriteToolKeepsTheInstructionRules() async throws {
     try await withToolDeps { _ in
       let rig = try await makeRig()
       let t = try await task(rig, of: rig.p, in: Self.alice)
       guard case .write = try await write(rig, as: t, "/AGENTS.md") else {
-        throw Mismatch("a task writes its own group's layer")
+        throw Mismatch("a task writes its own group's instructions")
       }
       #expect(try await rig.space.fs(Self.alice).read("/AGENTS.md").1 == Data("rules".utf8))
 
       let st = try await task(rig, of: rig.s, in: .shared)
-      let refused = try failureMessage(try await write(rig, as: st, "/AGENTS.md"))
-      #expect(refused == "unauthorized: /AGENTS.md is part of the space-wide layer; only an admin of shared writes it (ask a top-level agent or a human admin of shared to make the change)")
+      guard case .write = try await write(rig, as: st, "/AGENTS.md") else {
+        throw Mismatch("a task in shared writes shared's instructions")
+      }
+      await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "shared")) {
+        try await rig.space.refuseWrite(try SpacePath(validating: "/AGENTS.md"), in: .shared, by: .session(t))
+      }
 
       let foreign = try failureMessage(try await write(rig, as: rig.b, "wuhu://alice.localspace/AGENTS.md"))
       #expect(foreign.hasPrefix("notFound: "))
+
+      let settings = try failureMessage(try await write(rig, as: rig.s, "wuhu://settings.localspace/models.json"))
+      #expect(settings == "unauthorized: /models.json is in the space's settings group; only a space admin writes it")
     }
   }
 

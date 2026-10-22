@@ -15,6 +15,7 @@ import struct MainHub.ToolProblem
 import OrderedCollections
 import SessionDomain
 import SpaceClient
+import struct SpaceContract.GroupID
 
 // The capabilities (search, images, transcription) run on main behind its
 // routes, with main's provider credentials; the worker sends the request and
@@ -80,9 +81,9 @@ extension ToolExecutor {
     }
   }
 
-  /// `/models.json` and its companions from `shared`; nil when absent.
-  func sharedDocument(_ session: SessionID, _ path: String) async throws -> Data? {
-    do { return try await client(session).file("wuhu://shared.localspace" + path).data }
+  /// A settings document (`/models.json` and its companions); nil when absent.
+  func settingsDocument(_ session: SessionID, _ path: String) async throws -> Data? {
+    do { return try await client(session).file(GroupID.settings.address(path)).data }
     catch let failure as SpaceClient.ToolFailure where failure.error.code == .notFound { return nil }
   }
 

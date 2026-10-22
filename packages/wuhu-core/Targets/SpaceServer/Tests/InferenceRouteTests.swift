@@ -39,7 +39,6 @@ private func principal(_ session: SessionID) -> Principal { Principal(actor: .se
       let prompt = try JSONDecoder().decode(SessionPromptOutput.self, from: try await first.body.data())
       #expect(prompt.home == "/_/sessions/\(session.rawValue)")
       #expect(prompt.group == "shared")
-      #expect(prompt.spaceLayer.sections.isEmpty)
       #expect(prompt.groupLayer.sections == [PromptSection(path: "/AGENTS.md", text: "frozen guidance")], "\(prompt)")
       _ = try await fs.write("/AGENTS.md", Data("later edit".utf8), ifMatch: guidance)
       let second = try await harness.get("/v1/prompt", bearer: token)

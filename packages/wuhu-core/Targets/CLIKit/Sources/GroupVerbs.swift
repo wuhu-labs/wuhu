@@ -1,7 +1,6 @@
 import JSONValue
 import SpaceClient
 import enum SpaceContract.GroupHeader
-import struct SpaceContract.GroupSettings
 import struct SpaceContract.GroupSummary
 import struct SpaceContract.ServerInfo
 
@@ -61,14 +60,6 @@ extension Executor {
       return
     }
     await self.runner.stdout("\(group) (" + (self.session == nil ? "the server's default" : "this session's group") + ")\n")
-  }
-
-  mutating func groupSet(_ group: String, spaceLayer: Bool) async throws {
-    let space = try self.wallet.pinnedSpace()
-    try await self.requireGroups(space: space, selected: self.group.group)
-    let body: JSONValue = .object(["spaceLayer": .bool(spaceLayer)])
-    let settings: GroupSettings = try await self.authenticated(space).api(.put, "/v1/groups/\(group)", body: body)
-    await self.runner.stdout("\(settings.id) space-layer \(settings.spaceLayer ? "on" : "off")\n")
   }
 
   // Only an answer without the feature means no groups; a failed probe is

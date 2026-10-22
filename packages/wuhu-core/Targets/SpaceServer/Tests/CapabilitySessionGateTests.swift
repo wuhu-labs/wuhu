@@ -12,7 +12,7 @@ extension SessionGateTests {
   @Test func capabilityRoutesAcceptLiveSessionTokensOnlyInTheirOwnGroup() async throws {
     try await withSessionDeps {
       let t = try await tree(dev: false, credentials: .init { _ in .apiKey("synthetic") })
-      _ = try await t.harness.space.fs(.shared).write("/capabilities.json", Data(#"{"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://provider.test"}}},"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://provider.test"}}},"transcription":{"active":"openai","providers":{"openai":{"dialect":"openai-audio","baseURL":"https://provider.test"}}}}"#.utf8), ifMatch: nil)
+      _ = try await t.harness.space.fs(.settings).write("/capabilities.json", Data(#"{"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://provider.test"}}},"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://provider.test"}}},"transcription":{"active":"openai","providers":{"openai":{"dialect":"openai-audio","baseURL":"https://provider.test"}}}}"#.utf8), ifMatch: nil)
       let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
       let calls = LockIsolated(0)
       let provider = FetchClient { request in

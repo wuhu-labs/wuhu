@@ -79,8 +79,8 @@ data: {}
       """#)
       #expect(errors == .array([.string("unknownModel"), .string("unknownModel"), .string("unknownModel"), .string("providerNotConfigured")]))
       #expect(calls.value == ["offline"])
-      let token = try await rig.space.fs(.shared).read("/models.json").0
-      _ = try await rig.space.fs(.shared).write("/models.json", Data("broken".utf8), ifMatch: token)
+      let token = try await rig.space.fs(.settings).read("/models.json").0
+      _ = try await rig.space.fs(.settings).write("/models.json", Data("broken".utf8), ifMatch: token)
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello', {model:'offline/small'}) } catch(e) { result(e.code) }"#) == .string("providerNotConfigured"))
     }
   }
@@ -230,9 +230,9 @@ data: {}
     try await withRig(fetch: fetch, credentials: .bound { _ in CredentialBinding(credential: .apiKey("fixture"), identityEpoch: "completion-fixture") }) { rig in
       try await rig.write("/models.json", completionModels.replacingOccurrences(of: "offline", with: "deepseek"))
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello',{model:'deepseek/small',schema:{type:'object'}}) } catch(e) { result(e.code) }"#) == .string("unsupportedSchema"))
-      let token = try await rig.space.fs(.shared).read("/models.json").0
+      let token = try await rig.space.fs(.settings).read("/models.json").0
       let malformed = completionModels.replacingOccurrences(of: "https://offline.test", with: "file:///private")
-      _ = try await rig.space.fs(.shared).write("/models.json", Data(malformed.utf8), ifMatch: token)
+      _ = try await rig.space.fs(.settings).write("/models.json", Data(malformed.utf8), ifMatch: token)
       #expect(try await rig.evaluate(#"import { complete } from 'wuhu:ai'; try { await complete('hello',{model:'offline/small'}) } catch(e) { result(e.code) }"#) == .string("providerNotConfigured"))
     }
   }

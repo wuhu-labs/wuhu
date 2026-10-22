@@ -511,15 +511,6 @@ extension Command {
     case "current":
       try parser.finish(verb: "group current")
       return .groupCurrent
-    case "set":
-      let layer = try parser.option("--space-layer", verb: "group set")
-      let id = try parser.required("id", verb: "group set")
-      try parser.finish(verb: "group set")
-      switch layer {
-      case "on": return .groupSet(id: id, spaceLayer: true)
-      case "off": return .groupSet(id: id, spaceLayer: false)
-      default: throw UsageError(message: "group set: pass --space-layer on|off")
-      }
     default:
       throw UsageError(message: "group: unknown subcommand \(subcommand)")
     }
@@ -1637,13 +1628,12 @@ extension Command {
     \(exitCodes)
     """,
     "group": """
-    usage: wuhu group <list|use|current|set> ...
+    usage: wuhu group <list|use|current> ...
 
     subcommands:
       list              list the space's group ids
       use <id>|--clear  record the group this wallet acts in, or clear it
       current           print the acting group and where it comes from
-      set <id> ...      change a group's settings
 
     a request names its group in a Wuhu-Group header, from --group <id>, else
     WUHU_GROUP, else the wallet's group; with none it sends no header and the
@@ -1672,14 +1662,6 @@ extension Command {
     prints the selected group and its source (--group, WUHU_GROUP or
     .wuhu/config.json). with none, prints the group the server picks for
     this caller, or none on a server without groups.
-    \(exitCodes)
-    """,
-    "group set": """
-    usage: wuhu group set --space-layer on|off <id>
-
-    whether the sessions of group <id> render the space-wide instruction
-    layer (shared's /AGENTS.md and skills); they pick the change up at their
-    next turn. only an admin of the group may (PUT /v1/groups/<id>).
     \(exitCodes)
     """,
     "exec": """

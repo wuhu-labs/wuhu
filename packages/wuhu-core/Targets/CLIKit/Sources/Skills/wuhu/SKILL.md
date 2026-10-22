@@ -88,7 +88,7 @@ queue, one owning channel, persisted in the space SQLite. Every session has
 one executor: the built-in kernel loop, for every provider.
 Created inert (`wuhu session create --provider P --model M [--effort E]
 <title>`); it starts working when something is posted to it. The
-`(provider, model, effort)` spec is validated against `/models.json` — a plain space file keyed
+`(provider, model, effort)` spec is validated against `wuhu://settings.localspace/models.json` — a plain space file keyed
 by provider (`dialect`, `baseURL`, per-model `maxInput`/`maxOutput`/
 `efforts`/`defaultEffort`/optional `headroomOverride`). An `anthropic`-dialect
 `baseURL` is the vendor's published one (`https://api.deepseek.com/anthropic`);

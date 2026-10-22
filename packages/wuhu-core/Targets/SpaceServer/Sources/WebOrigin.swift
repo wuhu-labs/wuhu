@@ -378,7 +378,8 @@ func cookieAdmission(space: Space, group: GroupID, cookies: ContentCookies, requ
   // own cookie at the parent domain, and it must not shadow this host's.
   for raw in readCookieTokens(request: request, cookies: cookies) {
     guard let account = try await space.account(readSession: ReadSessionToken(rawValue: raw), in: group) else { continue }
-    let member = group == .shared ? true : try await space.isMember(account, of: group)
+    let settingsAdmin = group == .settings ? try await space.isHumanAdmin(account, of: .settings) : false
+    let member = group == .shared || settingsAdmin ? true : try await space.isMember(account, of: group)
     guard member else {
       return .refused(errorResponse(
         .forbidden, code: "groupForbidden", message: "you are not a member of group \(group.rawValue)",

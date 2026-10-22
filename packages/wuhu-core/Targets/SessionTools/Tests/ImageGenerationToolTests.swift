@@ -47,7 +47,7 @@ private final class ImageRequestRecorder: Sendable {
 }
 
 private func installModels(_ space: Space) async throws {
-  _ = try await space.fs(.shared).write(ModelsPath, Data(#"""
+  _ = try await space.fs(.settings).write(ModelsPath, Data(#"""
   {
     "codex": {
       "dialect": "codex",
@@ -69,7 +69,7 @@ private func installModels(_ space: Space) async throws {
 }
 
 private func installModelsWithoutCodex(_ space: Space) async throws {
-  _ = try await space.fs(.shared).write(ModelsPath, Data(#"""
+  _ = try await space.fs(.settings).write(ModelsPath, Data(#"""
   {
     "deepseek": {
       "dialect": "anthropic",

@@ -24,6 +24,7 @@ extension SpaceToolContext {
 
   public func discoveryGroups(dev: Bool = false) async throws -> [GroupSummary] {
     let caller = try await discoveryPrincipal()
+    let live = try await space.groups().filter { $0.removedAt == nil }
     let member: Set<GroupID>
     let readable: Set<GroupID>
     switch caller.actor {
@@ -34,22 +35,24 @@ extension SpaceToolContext {
       member = try await space.memberGroups(of: account)
       readable = try await space.reads(member)
     case .anonymous:
-      let all = dev ? Set(try await space.groups().filter { $0.removedAt == nil }.map(\.id)) : []
+      let all = dev ? Set(live.map(\.id)) : []
       member = all
       readable = all
     }
-    let live = try await space.groups().filter { $0.removedAt == nil }.map(\.id)
     // The dev seat acts in every group, so it administers every group too.
     let administered: Set<GroupID> = if case .anonymous = caller.actor {
-      dev ? Set(live) : []
+      dev ? Set(live.map(\.id)) : []
     } else {
       try await space.administeredGroups(by: caller.actor)
     }
-    return live.map { group in
-      GroupSummary(
-        id: group.rawValue, member: member.contains(group), readable: readable.contains(group), admin: administered.contains(group),
-      )
-    }
+    return live
+      .filter { group in group.id != .settings && (group.personalAccount == nil || member.contains(group.id)) }
+      .map { group in
+        GroupSummary(
+          id: group.id.rawValue, member: member.contains(group.id), readable: readable.contains(group.id),
+          admin: administered.contains(group.id),
+        )
+      }
   }
 
   private func discoveryPrincipal() async throws -> Principal {

@@ -109,7 +109,7 @@ private final class SessionCLIHarness: Sendable {
     space = try Space.inMemory()
     store = space.sessions
     if models {
-      _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+      _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let hub = MachineHub(space: space)
     let attempts = AttemptHub()
@@ -450,9 +450,9 @@ private func until(
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "unexpected"))]) }
       let groups = #"{"work":{"kind":"group","defaultEffort":"high","members":[{"id":"first","provider":"testing","model":"test-model"}],"policy":{"type":"select","member":"first"}}}"#
-      let written = try await harness.space.fs(.shared).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
+      let written = try await harness.space.fs(.settings).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
       #expect(await harness.run(["models", "update"]) == 0)
-      let groupFile = try await harness.space.fs(.shared).read("/model-groups.json")
+      let groupFile = try await harness.space.fs(.settings).read("/model-groups.json")
       #expect(groupFile.0 == written)
       #expect(String(decoding: groupFile.1, as: UTF8.self) == groups)
       let before = await harness.stdout.text
@@ -468,13 +468,13 @@ private func until(
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "unexpected"))]) }
       let groups = #"{"anthropic":{"kind":"group","defaultEffort":"high","members":[{"id":"first","provider":"testing","model":"test-model"}],"policy":{"type":"select","member":"first"}}}"#
-      _ = try await harness.space.fs(.shared).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
-      let originalModels = try await harness.space.fs(.shared).read("/models.json")
-      let originalGroups = try await harness.space.fs(.shared).read("/model-groups.json")
+      _ = try await harness.space.fs(.settings).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
+      let originalModels = try await harness.space.fs(.settings).read("/models.json")
+      let originalGroups = try await harness.space.fs(.settings).read("/model-groups.json")
       #expect(await harness.run(["models", "update"]) == 1)
       #expect(await harness.stderr.text.contains("anthropic"))
-      let modelsAfter = try await harness.space.fs(.shared).read("/models.json")
-      let groupsAfter = try await harness.space.fs(.shared).read("/model-groups.json")
+      let modelsAfter = try await harness.space.fs(.settings).read("/models.json")
+      let groupsAfter = try await harness.space.fs(.settings).read("/model-groups.json")
       #expect(modelsAfter.0 == originalModels.0 && modelsAfter.1 == originalModels.1)
       #expect(groupsAfter.0 == originalGroups.0 && groupsAfter.1 == originalGroups.1)
     }
@@ -559,7 +559,7 @@ private func until(
             .toolCall(ToolCall(
               id: "call_read",
               name: "read",
-              arguments: .object(["path": .string("/models.json")]),
+              arguments: .object(["path": .string("wuhu://settings.localspace/models.json")]),
             )),
             .toolCall(ToolCall(
               id: "call_reply",
@@ -680,9 +680,6 @@ private func until(
     #expect(try Command.parse([
       "session", "create", "--top-level", "--home-group", "alice", "title",
     ]) == .sessionCreate(SessionCreateCommand(title: "title", tags: [], topLevel: true, homeGroup: "alice")))
-    #expect(try Command.parse(["group", "set", "--space-layer", "off", "alice"]) == .groupSet(id: "alice", spaceLayer: false))
-    #expect(try Command.parse(["group", "set", "--space-layer", "on", "alice"]) == .groupSet(id: "alice", spaceLayer: true))
-    #expect(throws: (any Error).self) { try Command.parse(["group", "set", "--space-layer", "maybe", "alice"]) }
     #expect(throws: (any Error).self) {
       try Command.parse(["session", "create", "--executor", "kernel", "title"])
     }

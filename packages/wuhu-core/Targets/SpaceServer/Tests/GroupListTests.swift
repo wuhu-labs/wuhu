@@ -40,7 +40,14 @@ import Testing
         arguments: [Self.team.rawValue, key.account.rawValue],
       )
     }
-    try await harness.space.addEdge(src: Self.team, dst: Self.library, kind: .read, by: nil)
+    try await harness.space.addReadEdge(from: alice, to: .shared)
+    try await harness.space.writer.write { db in
+      try db.execute(
+        sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', ?, '2030-01-01T00:00:00.000Z')",
+        arguments: [key.account.rawValue],
+      )
+    }
+    try await harness.space.addReadEdge(from: Self.team, to: Self.library)
     return Space(harness: harness, tokens: tokens, bearer: bearer, account: key.account, alice: alice, bob: bob)
   }
 
@@ -72,7 +79,7 @@ import Testing
       let s = try await space()
       #expect(try await standing(s, bearer: s.bearer) == [
         "shared": "member+readable", s.alice.rawValue: "member+readable", "team": "member+readable",
-        "library": "readable", s.bob.rawValue: "",
+        "library": "readable",
       ])
     }
   }
@@ -81,10 +88,10 @@ import Testing
     try await withSessionDeps {
       let s = try await space()
       #expect(try await standing(s, bearer: try await sessionToken(s, in: s.alice)) == [
-        "shared": "readable", s.alice.rawValue: "member+readable", "team": "", "library": "", s.bob.rawValue: "",
+        "shared": "readable", s.alice.rawValue: "member+readable", "team": "", "library": "",
       ])
       #expect(try await standing(s, bearer: try await sessionToken(s, in: Self.team)) == [
-        "shared": "", s.alice.rawValue: "", "team": "member+readable", "library": "readable", s.bob.rawValue: "",
+        "shared": "", "team": "member+readable", "library": "readable",
       ])
     }
   }
@@ -93,7 +100,7 @@ import Testing
     try await withSessionDeps {
       let s = try await space()
       #expect(try await standing(s, bearer: nil) == [
-        "shared": "", s.alice.rawValue: "", "team": "", "library": "", s.bob.rawValue: "",
+        "shared": "", "team": "", "library": "",
       ])
       let forged = try await list(s, bearer: "not-an-assertion")
       #expect(forged.status == .unauthorized)
@@ -107,7 +114,7 @@ import Testing
         "shared": "member+readable", s.alice.rawValue: "member+readable", "team": "member+readable",
         "library": "member+readable", s.bob.rawValue: "member+readable",
       ])
-      #expect(try await standing(s, bearer: s.bearer)[s.bob.rawValue] == "")
+      #expect(try await standing(s, bearer: s.bearer)[s.bob.rawValue] == nil)
     }
   }
 
@@ -157,7 +164,7 @@ import Testing
       let s = try await space()
       #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue])
       _ = try await s.harness.space.setAdmin(s.account, admin: true)
-      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue, "shared"])
+      #expect(try await administered(s, bearer: s.bearer) == [s.alice.rawValue, "shared", "team", "library"])
       #expect(try await administered(s, bearer: try await sessionToken(s, in: Self.team)) == ["team"])
       #expect(try await administered(s, bearer: nil) == [])
       let dev = try await space(dev: true)

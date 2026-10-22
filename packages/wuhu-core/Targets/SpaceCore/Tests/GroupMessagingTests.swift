@@ -27,7 +27,7 @@ import Testing
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
       }
     }
-    try await space.addEdge(src: Self.alice, dst: .shared, kind: .read, by: nil)
+    try await space.addReadEdge(from: Self.alice, to: .shared)
     let p = try await space.sessions.createSession(group: Self.alice, title: "P", kind: .agent, createdBy: "owner", model: .test)
     let s = try await space.sessions.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", model: .test)
     return Rig(space: space, p: p, s: s)
@@ -166,6 +166,9 @@ import Testing
     let rig = try await makeRig()
     #expect(try await rig.space.homeGroup(nil, creator: Self.alice) == Self.alice)
     #expect(try await rig.space.homeGroup(.shared, creator: Self.alice) == .shared)
+    await #expect(throws: SpaceError.groupForbidden(GroupID.settings.rawValue)) {
+      _ = try await rig.space.homeGroup(.settings, creator: Self.alice)
+    }
     await #expect(throws: SpaceError.groupForbidden(Self.alice.rawValue)) {
       _ = try await rig.space.homeGroup(Self.alice, creator: .shared)
     }
@@ -174,62 +177,52 @@ import Testing
     }
   }
 
-  @Test func layerWritesNeedASharedAdminOnlyInShared() async throws {
+  @Test func instructionWritesTakeTheGroupsOwnSessions() async throws {
     let rig = try await makeRig()
-    let child = try await rig.store.createSession(
-      group: .shared, title: "t", kind: .task, parent: rig.s, createdBy: rig.s.rawValue, executor: .kernel(.test),
-    )
     let agents = try path("/AGENTS.md")
     let skill = try path("/.agents/skills/x/SKILL.md")
-    let models = try path("/models.json")
-    await #expect(throws: SpaceError.layerForbidden(path: "/AGENTS.md", group: "shared")) {
-      try await rig.space.refuseLayerWrite(agents, in: .shared, by: .session(child))
+    // A group's instructions take the sessions of that group, and no other.
+    try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.s))
+    try await rig.space.refuseWrite(skill, in: .shared, by: .session(rig.s))
+    try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.p))
+    await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "alice")) {
+      try await rig.space.refuseWrite(agents, in: Self.alice, by: .session(rig.s))
     }
-    await #expect(throws: SpaceError.layerForbidden(path: "/models.json", group: "shared")) {
-      try await rig.space.refuseLayerWrite(models, in: .shared, by: .session(rig.p))
-    }
-    let upgrade = try path("/machine-v2-upgrade.json")
-    await #expect(throws: SpaceError.layerForbidden(path: "/machine-v2-upgrade.json", group: "shared")) {
-      try await rig.space.refuseLayerWrite(upgrade, in: .shared, by: .session(child))
-    }
-    try await rig.space.refuseLayerWrite(upgrade, in: .shared, by: .session(rig.s))
-    try await rig.space.refuseLayerWrite(upgrade, in: Self.alice, by: .session(rig.p))
-    try await rig.space.refuseLayerWrite(skill, in: .shared, by: .session(rig.s))
-    try await rig.space.refuseLayerWrite(agents, in: Self.alice, by: .session(rig.p))
-    try await rig.space.refuseLayerWrite(models, in: Self.alice, by: .session(rig.p))
-    await #expect(throws: SpaceError.layerForbidden(path: "/AGENTS.md", group: "alice")) {
-      try await rig.space.refuseLayerWrite(agents, in: Self.alice, by: .session(rig.s))
+    await #expect(throws: SpaceError.forbiddenWrite(path: "/AGENTS.md", group: "shared")) {
+      try await rig.space.refuseWrite(agents, in: .shared, by: .session(rig.p))
     }
   }
 
-  @Test func theSpaceWideLayerIsListedInFullAndCanBeTurnedOff() async throws {
+  @Test func theSettingsGroupTakesASpaceAdmin() async throws {
+    let rig = try await makeRig()
+    let models = try path("/models.json")
+    for path in [models, try path("/AGENTS.md"), try path("/notes/plan.md")] {
+      await #expect(throws: SpaceError.forbiddenWrite(path: path.rawValue, group: "settings")) {
+        try await rig.space.refuseWrite(path, in: .settings, by: .session(rig.s))
+      }
+    }
+    let morgan = try await rig.space.addAccount(kind: .human, name: "morgan", admin: true)
+    try await rig.space.refuseWrite(models, in: .settings, by: .person(persona: "morgan", account: morgan.id))
+  }
+
+  @Test func aGroupRendersOnlyItsOwnInstructions() async throws {
     let rig = try await makeRig()
     _ = try await rig.space.fs(.shared).write("/AGENTS.md", bytes("Shared rules.\n"), ifMatch: nil)
     _ = try await rig.space.fs(.shared).write("/.agents/skills/deploy/SKILL.md", bytes("---\ndescription: Deploy.\n---\n"), ifMatch: nil)
+    _ = try await rig.space.fs(Self.alice).write("/AGENTS.md", bytes("Alice rules.\n"), ifMatch: nil)
     _ = try await rig.space.fs(Self.alice).write("/.agents/skills/mine/SKILL.md", bytes("---\ndescription: Mine.\n---\n"), ifMatch: nil)
 
     let home = try await rig.space.sessionHome(rig.p)
-    #expect(home.spaceLayerRendered.contains("from wuhu://shared.localspace/AGENTS.md:\n\nShared rules."))
-    #expect(home.spaceLayerRendered.contains("(wuhu://shared.localspace/.agents/skills/deploy/SKILL.md)"))
-    #expect(home.groupRendered.contains("Group skills"))
+    #expect(home.groupRendered.contains("from /AGENTS.md:\n\nAlice rules."))
     #expect(home.groupRendered.contains("(/.agents/skills/mine/SKILL.md)"))
-    #expect(home.rendered.contains("the system, the space-wide layer, your group's root, then yours"))
+    #expect(!home.groupRendered.contains("Shared rules."))
+    #expect(!home.groupRendered.contains("deploy"))
+    #expect(home.rendered.contains("the system, your group's root, then yours"))
 
     let shared = try await rig.space.sessionHome(rig.s)
-    #expect(shared.spaceLayerRendered.isEmpty)
+    #expect(shared.groupRendered.contains("from /AGENTS.md:\n\nShared rules."))
     #expect(shared.groupRendered.contains("(/.agents/skills/deploy/SKILL.md)"))
-
-    try await rig.store.advancePromptRevision(rig.p)
-    try await rig.space.setSpaceLayer(Self.alice, on: false)
-    // The frozen prompt keeps the layer until the next compaction or Start over.
-    let frozen = try await rig.space.sessionHome(rig.p, at: try await rig.store.promptRevision(rig.p))
-    #expect(!frozen.spaceLayerRendered.isEmpty)
-    try await rig.store.advancePromptRevision(rig.p)
-    let off = try await rig.space.sessionHome(rig.p, at: try await rig.store.promptRevision(rig.p))
-    #expect(off.spaceLayerRendered.isEmpty)
-    #expect(off.rendered.contains("the system, your group's root, then yours"))
-    let fresh = try await rig.store.createSession(group: Self.alice, title: "Q", kind: .agent, createdBy: "owner", model: .test)
-    #expect(try await rig.space.sessionHome(fresh, at: try await rig.store.promptRevision(fresh)).spaceLayerRendered.isEmpty)
+    #expect(shared.rendered.contains("the system, your group's root, then yours"))
   }
 
   @Test func senderAdminIsAboutTheRecipientsGroup() async throws {

@@ -59,15 +59,16 @@ public struct InferenceAccess: Sendable {
 }
 
 extension ToolExecutor {
-  /// The provider catalog as the session reads it: `/models.json` from
-  /// `shared`, with `/model-groups.json` when asked, signed with the worker's access.
+  /// The provider catalog as the session reads it: `/models.json` from the
+  /// settings group, with `/model-groups.json` when asked, signed with the
+  /// worker's access.
   public func catalog(
     _ session: SessionID,
     includeGroups: Bool,
     receiveCodexResponseHeaders: @escaping @Sendable (String, [String: String]) async -> Void = { _, _ in },
   ) async throws -> ProviderCatalog {
-    guard let models = try await sharedDocument(session, ModelsDocument.spacePath) else { throw SpaceError.notFound(ModelsDocument.spacePath) }
-    let groups = includeGroups ? try await sharedDocument(session, ModelsDocument.groupPath) : nil
+    guard let models = try await settingsDocument(session, ModelsDocument.spacePath) else { throw SpaceError.notFound(ModelsDocument.spacePath) }
+    let groups = includeGroups ? try await settingsDocument(session, ModelsDocument.groupPath) : nil
     return access.catalog(try ModelsDocument(json: models, groupsJSON: groups), receiveCodexResponseHeaders: receiveCodexResponseHeaders)
   }
 
@@ -76,7 +77,7 @@ extension ToolExecutor {
     let output: SessionPromptOutput = try await client(session).api(.get, "/v1/prompt")
     return SessionHome(
       path: output.home, group: GroupID(rawValue: output.group),
-      spaceLayer: scope(output.spaceLayer), groupLayer: scope(output.groupLayer), home: scope(output.homeLayer),
+      groupLayer: scope(output.groupLayer), home: scope(output.homeLayer),
     )
   }
 

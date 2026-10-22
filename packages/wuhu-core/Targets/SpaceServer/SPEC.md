@@ -141,19 +141,18 @@ as `/_/space-core.js`). The core speaks these routes on the content origin;
   `group` without a top-level agent is refused. A template name resolves in
   the creator's group, or `wuhu://<group>.localspace/templates/<name>` in a
   readable one; `GET /v1/templates` lists the acting group's.
-- Instruction layers, in prompt order: the system files; the space-wide layer
-  (`shared`'s `/AGENTS.md` and skills, listed by full
-  `wuhu://shared.localspace/…` path), only for a session outside `shared`
-  whose group has `space_layer` on; the group layer (the group's `/AGENTS.md`
-  and skills, hostless); the home. Like the files, the `space_layer` flag is
-  taken at session start and again at each compaction and Start over, never
-  mid-generation; every toggle, on or off, bumps `group_epoch` and drops the
-  scope notices of the group's sessions. A machine's notes come from the machine's
-  group, qualified when that is not the session's. Automatic machine/repository notices deduplicate exact file text across all paths and machines within one generation, replacing repeated AGENTS.md text or skill listings with a one-line reference to the first loaded path. Compaction and Start over reset this history; same-generation restart preserves it.
-- Writing `/AGENTS.md` or anything under `/.agents/skills/` in `shared` needs
-  an admin of `shared` (a top-level agent or a human admin; a child never is),
-  else `layerForbidden`; in any other group every member may. `/models.json`
-  and `/machine-v2-upgrade.json` are `shared`-admin only. Anonymous in dev passes.
+- Instructions, in prompt order: the system files; the session's own group
+  (`/AGENTS.md` and the skills under `/.agents/skills/`, hostless); the home.
+  No group's instructions reach another group's sessions. The scopes are read
+  as of the session's prompt revision, so an edit reaches a live session only
+  at its next compaction or Start over, never mid-generation. A machine's
+  notes come from the machine's group, qualified when that is not the
+  session's. Automatic machine/repository notices deduplicate exact file text across all paths and machines within one generation, replacing repeated AGENTS.md text or skill listings with a one-line reference to the first loaded path. Compaction and Start over reset this history; same-generation restart preserves it.
+- Writing a group's `/AGENTS.md` or anything under `/.agents/skills/` takes a
+  member of that group (a session of it, or a member person), else
+  `forbiddenWrite`; every group, `shared` included, follows the same rule.
+  Every file of the settings group takes a space admin (an `admin` of that
+  group). Anonymous in dev passes.
 - No dialing in. A post to a box needs the box's group readable; opening a
   DM to a session needs its group readable, and an existing DM needs that or
   the other side having posted in it; a mention or reply-target wakes a
@@ -197,12 +196,7 @@ Removing a key ends what it holds open. A streamed response (no `Content-Length`
 - In flat mode (`--content-host-pattern`, requiring `--origin` and exclusive with `--group-certificate`), the pattern starts with exactly one `{group}` and is a DNS authority; its port, if present, must match the origin. Group hosts substitute a valid `GroupID` prefix into the template, excluding ids with `--` at positions 3–4 (reserved for IDNA); hosts other than the origin host or a pattern match return 421 before either plane. `/v1/server` advertises `contentHost` instead of `contentBase`. Read/viewer cookies are `__Host-wuhu_read` / `__Host-wuhu_viewer`, retaining the legacy attributes, with no legacy-name admission or emission. The service worker reads the prefixed viewer name first, then the legacy name. Share links and the smart banner follow the template, not `<group>.<host>`: a content link is `https://` plus the template with `{group}` replaced (`https://<group>--<tenant host>/<path>`, `shared--…` for `shared`), and a refused top-level navigation there gets the same 303 to the web app; the banner's `app-argument` folds `?group=<g>` (other than `shared`) into `wuhu://<g>--<tenant host>/<path>`. The dotted `<group>.<host>` forms get 421. Without the flag, host routing, discovery and cookies are unchanged.
 
 - `GET /v1/server` — discovery for API clients: `ServerInfo` with `origin` (`--origin`, absent without it) and `contentBase`, the `host[:port]` a client writes after `<group>.` for a group's content origin (`https://<group>.<contentBase>`): the `--origin` authority, else `localhost:<port>`. Public, outside the API wall. `features` lists `groups` (the server takes the `wuhu-group` header) , `observe-batch` (opt-in whole-revision filesystem observation) and `watch-batch` (whole-revision `/_/space/watch` responses), and `group` is the group the request names, unchecked: an exec token's session group, else the header, else `shared`. `now` is the server's clock when it answered, Unix epoch seconds with a fraction: a client that signs its own assertions learns its clock offset from it (see Bearer assertions); the answer carries `Cache-Control: no-store` and an HTTP-date `Date` of the same instant. It carries no list of groups; that is `GET /v1/groups`.
-- `GET /v1/groups` — `[GroupSummary]`, every group not removed, with where the caller stands: `member` (it acts and creates there: a person's `group_members` rows, a session's own group only) and `readable` (the union of what its member groups read, so every member group is readable) and `admin` (it administers the group under `is_admin`: a person through an admin edge from a group they belong to, a session when it is a live top-level agent in that group). The caller is the request's credential alone; for a person the group the request names by `wuhu-group` header changes nothing, and it need not be a member of it. A session's exec token naming a group other than its own is still 403 `groupMismatch` at the session gate, as on every route. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`): naming it by `wuhu-group`, or minting `/_/session` on its content host, is 403 `groupForbidden`. Public discovery outside the API wall, like `/v1/server`: anonymous is every flag `false` everywhere, the --dev seat every flag `true` (it acts in every group), a bearer that fails verification 401. The flags are optional in the contract so a newer client reads an older server; a client treats a missing `admin` as not an admin.
-- `PUT /v1/groups/:id` — `GroupUpdateInput` → `GroupSettings`. Behind the API
-  wall. `spaceLayer` turns the space-wide layer (see *Sessions in groups*) on
-  or off for the group's sessions. Only an admin of that group may, else 403
-  `forbidden`; anonymous in dev passes. A missing group is 404
-  `unknownGroup`. The CLI is `wuhu group set --space-layer on|off <id>`.
+- `GET /v1/groups` — `[GroupSummary]`, every group not removed, with where the caller stands: `member` (it acts and creates there: a person's `group_members` rows, a session's own group only) and `readable` (the union of what its member groups read, the settings group always included, so every member group is readable) and `admin` (it administers the group: a person holding `admin` for it in `group_roles`, a space admin — an `admin` of the settings group — every group but another person's own, a session when it is a live top-level agent in that group). The settings group is left out, and so is a personal group unless the caller is a member of it. The caller is the request's credential alone; for a person the group the request names by `wuhu-group` header changes nothing, and it need not be a member of it. A session's exec token naming a group other than its own is still 403 `groupMismatch` at the session gate, as on every route. A readable group the caller is not a member of is reached only through a member group's hostful paths (`wuhu://<g>.localspace/…`): naming it by `wuhu-group`, or minting `/_/session` on its content host, is 403 `groupForbidden`. Public discovery outside the API wall, like `/v1/server`: anonymous is every flag `false` everywhere, the --dev seat every flag `true` (it acts in every group), a bearer that fails verification 401. The flags are optional in the contract so a newer client reads an older server; a client treats a missing `admin` as not an admin.
 - `GET /v1/receipt` — the answer recorded for the caller's tool call (the
   `wuhu-tool-call` header), as `PUT /v1/f/*` and `POST /v1/tools/*` record
   it: a worker whose call is a replay learns its write already happened before
@@ -259,6 +253,8 @@ Removing a key ends what it holds open. A streamed response (no `Content-Length`
   (kick + fresh join token) · `POST /v1/machine/:id/revoke` (kick) ·
   `PUT /v1/machine/:id/name` `{name}` (rename) ·
   `PUT /v1/machine/:id/group` `{group}` (move).
+- Every space has a hidden `settings` group holding `/models.json`, `/model-groups.json`, `/capabilities.json` and `/machine-v2-upgrade.json`; the server reads them from there and nowhere else, and migration 003 deleted `shared`'s copies. Every group reads it, and only a space admin writes any of its files or takes it as a session's home. It is never listed by `GET /v1/groups`.
+- Admin is a row in `group_roles` (`grp`, `account_id`, `role`, now always `admin`). A space admin holds `admin` in the settings group and administers every group but another person's own; any other row is that group's admin alone. An account's `admin` flag (`GET /v1/accounts`, `AccountPayload`) is the space-admin rule. A personal group (`groups.personal_account`) belongs to one person, is listed only to that person, reads as nothing to anyone else (an incoming read edge into one is refused), and grants nothing beyond itself.
 - A machine belongs to one group (`machines.grp`). Without a body `group`, a person's new machine joins their personal group, the `--dev` seat's joins `shared` (every machine enrolled before groups is in `shared`). An explicit body `group` must exist (`404 unknownGroup`) and admit the caller as an admin (`403 adminRequired`), using the same check as a move's target. Sessions always use their principal's group. Both registration routes follow this policy and echo the actual group in `MachineAddOutput.group`; `wuhu machine add --group G` and the global `wuhu --group G machine add` send only the registration target in the body, not the acting-group header. The CLI checks the echo when an explicit target was requested; environment and folder group settings do not set a registration target. A route that names a
   machine or an exec, the listing and `POST /v1/exec` see only machines in a
   group the acting group reads, 404 otherwise. A move needs an admin of the
@@ -839,9 +835,9 @@ Host shutdown owns and cancels response-body forwarding through completion, with
 
 ## Live account creation and admin
 
-`POST /v1/accounts` and `POST /v1/accounts/:id/admin` authorize through the account's admin reachability to `shared`, not its acting group or personal-group admin status. Refusals retain code `adminRequired` and say that an admin of `shared` is required. The existing anonymous `--dev` owner remains a development-only management actor; the live CLI requires an enrolled person instead. `POST /v1/enroll` remains self or admin of `shared`.
+`POST /v1/accounts` and `POST /v1/accounts/:id/admin` authorize through the account's space-admin flag, not its acting group or personal-group admin status. Refusals retain code `adminRequired`. The existing anonymous `--dev` owner remains a development-only management actor; the live CLI requires an enrolled person instead. `POST /v1/enroll` remains self or space admin.
 
-Creating a human account calls `Space.addAccount`, which transactionally runs `Groups.ensurePersonalGroup`: the new person belongs to their personal group and `shared`, their personal group reads `shared` and administers itself, and `admin:true` grants admin of `shared`. Repeated personal-group assurance returns the same group. No server stop or schema change is required.
+Creating a human account calls `Space.addAccount`, which transactionally runs `Groups.ensurePersonalGroup`: the new person becomes the admin of their new personal group, which reads `shared`, and nothing else — a new account no longer joins `shared`. `admin:true` also writes their `admin` row in the settings group. Repeated personal-group assurance returns the same group. No server stop or schema change is required.
 
 ## Machine v2 startup and key ownership
 

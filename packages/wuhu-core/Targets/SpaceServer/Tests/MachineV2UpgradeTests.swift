@@ -82,7 +82,7 @@ private struct Fixture {
   }
 
   func setting(_ text: String?) async throws {
-    let fs = await space.fs(.shared)
+    let fs = await space.fs(.settings)
     if let text {
       let current = try? await fs.read(MachineV2UpgradeSetting.path).0
       _ = try await fs.write(MachineV2UpgradeSetting.path, Data(text.utf8), ifMatch: current)

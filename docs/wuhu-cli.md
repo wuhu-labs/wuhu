@@ -302,7 +302,6 @@ A space holds groups: `shared`, and one personal group per person. A request nam
 | --- | --- |
 | `wuhu group list` | Print the space's group ids (`GET /v1/groups`). |
 | `wuhu group use <id>` / `--clear` | Record the wallet's group in `.wuhu/config.json` after checking the server has it, or remove it. `--group` and `WUHU_GROUP` still win. It ignores the configured group, so it repairs an invalid one; so does `wuhu use`. |
-| `wuhu group set --space-layer on\|off <id>` | Whether the sessions of group `<id>` render the space-wide instruction layer (`shared`'s `/AGENTS.md` and skills); they pick the change up at their next turn. Needs an admin of the group (`PUT /v1/groups/<id>`). Prints `<id> space-layer on\|off`. |
 | `wuhu group current` | Print the selected group and its source; with none, the group the server picks for this caller (`group` in `GET /v1/server`), or `none` on a server without groups. |
 
 A selected group is never dropped: when `GET /v1/server` answers without `groups` in `features`, the command fails with `this server has no groups` before sending anything else; when the probe itself fails, that failure is the error. In a session's exec the acting group is the session's; `--group` and `WUHU_GROUP` are refused unless `WUHU_IDENTITY=wallet` opts into the wallet, where the same group selection applies.

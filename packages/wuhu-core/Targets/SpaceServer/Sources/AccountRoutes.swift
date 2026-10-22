@@ -102,8 +102,6 @@ func addAccountRoutes(_ router: inout Router, space: Space, dev: Bool, keyStream
           code: "invalidArgument",
           message: "\(id.rawValue) is not a person's account; only a person is an admin",
         )
-      } catch let SpaceError.adminThroughGroup(account, groups) {
-        return errorResponse(.conflict, code: "adminThroughGroup", message: adminThroughGroupMessage(account, groups))
       }
     }
   }

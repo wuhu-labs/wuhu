@@ -1,6 +1,7 @@
 import DeterministicDependencies
 import Foundation
 import GRDB
+import struct SpaceContract.GroupID
 @testable import SpaceCore
 import Testing
 
@@ -17,7 +18,7 @@ import Testing
     let machine = try await space.addMachine(name: "box").id
     let exec = try await space.claimExec(machine: machine, caller: "caller", toolCallID: .init("call"))
     try await database.write { db in
-      try db.execute(sql: "DROP TABLE grdb_migrations")
+      try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('001', '002')")
       try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_spec")
       try db.execute(sql: "ALTER TABLE machine_execs DROP COLUMN tool_end_owed")
       try db.execute(sql: "ALTER TABLE session_api_receipts DROP COLUMN request")
@@ -32,7 +33,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "ALTER TABLE exec_jobs DROP COLUMN spec") }
     #expect(throws: DatabaseError.self) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 0)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 1)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await database.write { db in
       try db.execute(sql: "ALTER TABLE exec_jobs ADD COLUMN spec TEXT")
@@ -91,7 +92,7 @@ import Testing
     let original = try await baseline(database)
     try await database.write { db in try db.execute(sql: "DELETE FROM schema_compactions WHERE name = 'wuhu-45'") }
     #expect(throws: SpaceError.needsMigration("wuhu-45")) { try Space(writer: database) }
-    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 0)
+    #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM grdb_migrations") } == 1)
     #expect(try await database.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM pragma_table_info('machine_execs') WHERE name = 'tool_spec'") } == 0)
     try await original.close()
   }
@@ -266,53 +267,60 @@ import Testing
 
   @Test func anOldSpacesDroppedStoresAndContractorIdentityLeaveTheFreshSchema() async throws {
     let database = try database()
-    let original = try await baseline(database)
-    let kept = try #require(try await original.accounts().first { $0.name == "Kept" })
-    let session = try await original.sessions.createSession(group: .shared, title: "old", kind: .agent, createdBy: "owner", model: .test)
-    _ = try await original.sessions.armSubscription(
-      session, slot: .init(id: .init("timer.keep"), kind: .timer(.cron("* * * * *"), message: "tick")),
-      nextFireAt: Date(timeIntervalSince1970: 1_800_000_000),
-    )
+    // A space at migration 001, carrying the stores a real old space still had.
     try await database.write { db in
-      try db.execute(sql: "INSERT INTO session_subscriptions (session_id, subscription_id, payload, armed_at) VALUES (?, 'park.r-1', '{}', '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO accounts (id, kind, name, created_at) VALUES ('ac_0000000a', 'contractor', 'wrapper', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'ac_0000000a', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO read_sessions (token_hash, account_id, created_at, expires_at) VALUES ('read-hash', 'ac_0000000a', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('wrapper-key', 'ac_0000000a', 'exec-machine contractor', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('kept-key', ?, 'device', '2026-01-01T00:00:00.000Z')", arguments: [kept.id.rawValue])
-      try db.execute(sql: "INSERT INTO devices (id, account_id, pubkey, installation, kind, name, created_at, last_seen_at) VALUES ('dev_1', 'ac_0000000a', 'wrapper-key', 'wrapper', 'mac', 'wrapper', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO device_commands (device_id, payload, issued_by, created_at) VALUES ('dev_1', '{}', 'ac_0000000a', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO message_devices (message_id, device_id) VALUES ('m_1', 'dev_1')")
-      try db.execute(sql: "INSERT INTO personas (name, allocation, pubkey, account_id, created_at) VALUES ('wrapper', 9001, 'wrapper-key', 'ac_0000000a', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO join_tokens (token_hash, account_id, capabilities, created_at, expires_at, grp) VALUES ('join-hash', 'ac_0000000a', 'device', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z', 'shared')")
-      // A row an older binary left dangling: 002 must not validate what it did not write.
-      // The baseline's two-column exec_jobs served 001's backfill; the real one goes back in its place.
-      try db.execute(sql: "DROP TABLE exec_jobs")
+      try Migration001.apply(db)
+      try db.execute(sql: """
+      CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
+      INSERT INTO grdb_migrations VALUES ('001');
+      INSERT INTO accounts (id, kind, name, created_at) VALUES
+        ('ac_kept00001', 'human', 'Kept', '2026-01-01T00:00:00.000Z'),
+        ('ac_mach00001', 'machine', 'box', '2026-01-01T00:00:00.000Z'),
+        ('ac_wrap00001', 'contractor', 'wrapper', '2026-01-01T00:00:00.000Z');
+      INSERT INTO machines (id, account_id, name, created_at, grp) VALUES ('mc_00000001', 'ac_mach00001', 'box', '2026-01-01T00:00:00.000Z', 'shared');
+      INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('wrapper-key', 'ac_wrap00001', 'exec-machine contractor', '2026-01-01T00:00:00.000Z');
+      INSERT INTO account_keys (pubkey, account_id, capabilities, created_at) VALUES ('kept-key', 'ac_kept00001', 'device', '2026-01-01T00:00:00.000Z');
+      INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'ac_wrap00001', '2026-01-01T00:00:00.000Z');
+      INSERT INTO read_sessions (token_hash, account_id, created_at, expires_at) VALUES ('read-hash', 'ac_wrap00001', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z');
+      INSERT INTO devices (id, account_id, pubkey, installation, kind, name, created_at, last_seen_at) VALUES ('dev_1', 'ac_wrap00001', 'wrapper-key', 'wrapper', 'mac', 'wrapper', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO device_commands (device_id, payload, issued_by, created_at) VALUES ('dev_1', '{}', 'ac_wrap00001', '2026-01-01T00:00:00.000Z');
+      INSERT INTO message_devices (message_id, device_id) VALUES ('m_1', 'dev_1');
+      INSERT INTO personas (name, allocation, pubkey, account_id, created_at) VALUES ('wrapper', 9001, 'wrapper-key', 'ac_wrap00001', '2026-01-01T00:00:00.000Z');
+      INSERT INTO join_tokens (token_hash, account_id, capabilities, created_at, expires_at, grp) VALUES ('join-hash', 'ac_wrap00001', 'device', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z', 'shared');
+      INSERT INTO sessions (id, allocation, kind, title, tags, created_by, executor, executor_config, created_at, last_activity_at, hold, work, lifecycle, run_state, grp)
+        VALUES ('ses_old00001', 1, 'agent', 'old', '[]', 'owner', 'kernel', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'normal', 'idle', 'live', 'no_run', 'shared');
+      INSERT INTO session_subscriptions (session_id, subscription_id, payload, armed_at) VALUES
+        ('ses_old00001', 'timer.keep', '{}', '2026-01-01T00:00:00.000Z'),
+        ('ses_old00001', 'park.r-1', '{}', '2026-01-01T00:00:00.000Z');
+      """)
+      // The retired stores, in the shape a real old space carries them.
       try db.execute(sql: Self.legacySchema)
-      try db.execute(sql: "INSERT INTO contractors (name, allocation, account_id, created_at) VALUES ('wrapper', 9001, 'ac_0000000a', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "INSERT INTO contractors (name, allocation, account_id, created_at) VALUES ('wrapper', 9001, 'ac_wrap00001', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "INSERT INTO contractor_slots (contractor, generation, claimed_at, last_seen) VALUES ('wrapper', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "INSERT INTO contractor_rate_limits (contractor, report, reported_at) VALUES ('wrapper', '{}', '2026-01-01T00:00:00.000Z')")
-      try db.execute(sql: "INSERT INTO contractor_entries (session_id, physical_session_id, ordinal, kind, payload, received_at) VALUES (?, 'physical', 0, 'entry', '{}', '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_code_sessions (session_id, claude_session_id) VALUES (?, 'claude-session')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_code_handovers (session_id, entry_uuid, effect, handed_over_at) VALUES (?, 'entry', 'delivered', '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_history_progress (session_id, generation, version, epoch, next_line, offset, count, raw_head, handover_head, summary_position, ready) VALUES (?, 0, 1, 'epoch', 0, 0, 0, 0, 0, 0, 1)", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_history_items (session_id, generation, position, payload) VALUES (?, 0, 0, '{}')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_history_seen (session_id, generation, uuid) VALUES (?, 0, 'entry')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO claude_history_calls (session_id, generation, call_id, origin, wuhu) VALUES (?, 0, 'call', 0, 1)", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO physical_sessions (session_id, id, started_at) VALUES (?, 'physical', '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO session_mirror (seq, session_id, project_key, sdk_session_id, subpath, entry, received_at) VALUES (1, ?, 'project', 'sdk', '', '{}', '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO session_scope_context (session_id, tool_call_id, folders, text) VALUES (?, 'call', '[]', 'text')", arguments: [session.rawValue])
-      try db.execute(sql: "INSERT INTO session_watches (session_id, identity, armed, armed_at) VALUES (?, 'owner', 1, '2026-01-01T00:00:00.000Z')", arguments: [session.rawValue])
+      try db.execute(sql: "INSERT INTO contractor_entries (session_id, physical_session_id, ordinal, kind, payload, received_at) VALUES ('ses_old00001', 'physical', 0, 'entry', '{}', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "INSERT INTO claude_code_sessions (session_id, claude_session_id) VALUES ('ses_old00001', 'claude-session')")
+      try db.execute(sql: "INSERT INTO claude_code_handovers (session_id, entry_uuid, effect, handed_over_at) VALUES ('ses_old00001', 'entry', 'delivered', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "INSERT INTO claude_history_progress (session_id, generation, version, epoch, next_line, offset, count, raw_head, handover_head, summary_position, ready) VALUES ('ses_old00001', 0, 1, 'epoch', 0, 0, 0, 0, 0, 0, 1)")
+      try db.execute(sql: "INSERT INTO claude_history_items (session_id, generation, position, payload) VALUES ('ses_old00001', 0, 0, '{}')")
+      try db.execute(sql: "INSERT INTO claude_history_seen (session_id, generation, uuid) VALUES ('ses_old00001', 0, 'entry')")
+      try db.execute(sql: "INSERT INTO claude_history_calls (session_id, generation, call_id, origin, wuhu) VALUES ('ses_old00001', 0, 'call', 0, 1)")
+      try db.execute(sql: "INSERT INTO physical_sessions (session_id, id, started_at) VALUES ('ses_old00001', 'physical', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "INSERT INTO session_mirror (seq, session_id, project_key, sdk_session_id, subpath, entry, received_at) VALUES (1, 'ses_old00001', 'project', 'sdk', '', '{}', '2026-01-01T00:00:00.000Z')")
+      try db.execute(sql: "INSERT INTO session_scope_context (session_id, tool_call_id, folders, text) VALUES ('ses_old00001', 'call', '[]', 'text')")
+      try db.execute(sql: "INSERT INTO session_watches (session_id, identity, armed, armed_at) VALUES ('ses_old00001', 'owner', 1, '2026-01-01T00:00:00.000Z')")
     }
+    // A row an older binary left dangling: the migrations must not validate what they did not write.
     try await database.writeWithoutTransaction { db in
       try db.execute(sql: "PRAGMA foreign_keys = OFF")
       try db.execute(sql: "INSERT INTO group_members (grp, account_id, joined_at) VALUES ('shared', 'ac_dangling0', '2026-01-01T00:00:00.000Z')")
       try db.execute(sql: "PRAGMA foreign_keys = ON")
     }
+    let kept = AccountID(rawValue: "ac_kept00001")
     let reopened = try DatabaseQueue(path: database.path)
     let upgraded = try Space(writer: reopened)
     #expect(try await upgraded.accounts().map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.human, .machine])
-    #expect(try await upgraded.accounts().contains { $0.id == kept.id })
+    #expect(try await upgraded.accounts().contains { $0.id == kept })
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT pubkey FROM account_keys") } == ["kept-key"])
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM devices") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM device_commands") } == 0)
@@ -320,7 +328,7 @@ import Testing
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM personas") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM join_tokens") } == 0)
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT subscription_id FROM session_subscriptions ORDER BY 1") } == ["timer.keep"])
-    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM group_members WHERE account_id = 'ac_0000000a'") } == 0)
+    #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM group_members WHERE account_id = 'ac_wrap00001'") } == 0)
     #expect(try await reopened.read { db in try Int.fetchOne(db, sql: "SELECT count(*) FROM group_members WHERE account_id = 'ac_dangling0'") } == 1)
     #expect(try await reopened.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE name IN (\(Self.dropped.map { "'" + $0 + "'" }.joined(separator: ","))) ORDER BY 1") } == [])
     let fresh = try self.database()
@@ -332,7 +340,6 @@ import Testing
       #expect(migrated.tables[table] == lines, "\(table)")
     }
     #expect(migrated.indexesAndTriggers == expected.indexesAndTriggers)
-    try await original.close()
     try await upgraded.close()
     try await freshSpace.close()
   }
@@ -340,9 +347,11 @@ import Testing
   @Test func newerDatabaseIsRefusedWithoutChanges() async throws {
     let database = try database()
     let original = try Space(writer: database)
-    try await database.write { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('003')") }
-    #expect(throws: SpaceError.unknownMigrations(["003"])) { try Space(writer: database) }
-    #expect(try await database.read { try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier") } == ["001", "002", "003"])
+    try await database.write { db in try db.execute(sql: "INSERT INTO grdb_migrations VALUES ('998'), ('999')") }
+    #expect(throws: SpaceError.unknownMigrations(["998", "999"])) { try Space(writer: database) }
+    #expect(try await database.read {
+      try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
+    } == ["001", "002", "003", "998", "999"])
     try await original.close()
   }
 }

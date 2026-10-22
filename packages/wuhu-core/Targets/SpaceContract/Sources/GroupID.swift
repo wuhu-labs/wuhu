@@ -1,4 +1,4 @@
-/// A group of a space: a three-word id, or `shared`, the group every space has.
+/// A group of a space: a three-word id, `shared`, or the hidden `settings` group.
 public struct GroupID: RawRepresentable, Hashable, Sendable, Codable {
   public let rawValue: String
 
@@ -7,6 +7,9 @@ public struct GroupID: RawRepresentable, Hashable, Sendable, Codable {
   }
 
   public static let shared: GroupID = GroupID(rawValue: "shared")
+
+  /// The hidden group a space's settings live in.
+  public static let settings: GroupID = GroupID(rawValue: "settings")
 }
 
 /// A `.localspace` host that names no valid group, the bare `localspace` included.

@@ -189,7 +189,7 @@ struct SecretRig: Sendable {
     try await space.writer.write { db in
       try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2030-01-01T00:00:00.000Z')", arguments: [name])
     }
-    try await space.addEdge(src: .shared, dst: group, kind: .read, by: nil)
+    try await space.addReadEdge(from: .shared, to: group)
     return group
   }
 

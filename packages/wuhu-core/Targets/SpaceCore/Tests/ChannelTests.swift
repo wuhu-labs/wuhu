@@ -85,15 +85,15 @@ import Testing
   @Test func aReadableGroupAdmitsSessionsButNotItsNonMemberPeople() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
-      let alice = try await space.ensurePersonalGroup(account: space.addAccount(kind: .human, name: nil).id)
-      let bob = try await space.ensurePersonalGroup(account: space.addAccount(kind: .human, name: nil).id)
+      let alice = try await plainGroup(space, "alice")
+      let bob = try await plainGroup(space, "bob")
       let agent = try await space.sessions.createSession(group: bob, title: "Reader", kind: .agent, createdBy: "bob", model: .test)
       let id = try await space.sessions.createConversation(members: ["alice"], title: "People", in: alice)
       #expect(try await !space.sessions.reads(space.sessions.conversation(id), reader: agent.rawValue, group: bob))
       await #expect(throws: SessionStoreError.unknownConversation(id.rawValue)) {
         try await space.sessions.post(.conversation(id), messageID: MessageID("before"), sender: person(agent.rawValue), senderSession: agent, content: .init(text: "no access"))
       }
-      try await space.addEdge(src: bob, dst: alice, kind: .read, by: nil)
+      try await space.addReadEdge(from: bob, to: alice)
       #expect(try await space.sessions.reads(space.sessions.conversation(id), reader: agent.rawValue, group: bob))
       #expect(try await !space.sessions.reads(space.sessions.conversation(id), reader: "bob", group: bob))
       let principal = Principal(actor: .session(agent), group: bob)
@@ -117,8 +117,8 @@ import Testing
   @Test func notificationViewsEnforceChannelReadershipAndRevokeObservers() async throws {
     try await withSessionDeps {
       let space = try makeSpace()
-      let foreign = try await space.ensurePersonalGroup(account: space.addAccount(kind: .human, name: nil).id)
-      try await space.addEdge(src: .shared, dst: foreign, kind: .read, by: nil)
+      let foreign = try await plainGroup(space, "foreign")
+      try await space.addReadEdge(from: .shared, to: foreign)
       let agent = try await space.sessions.createSession(group: .shared, title: "Reader", kind: .agent, createdBy: "alice", model: .test)
       for group in [GroupID.shared, foreign] {
         let id = try await space.sessions.createConversation(members: ["alice", "bob"], in: group)
@@ -155,9 +155,9 @@ import Testing
       let store = space.sessions
       let older = try await store.createConversation(members: ["alice"], title: "Older", in: .shared)
       let newer = try await store.createConversation(members: ["alice"], title: "Newer", in: .shared)
-      let foreign = try await space.ensurePersonalGroup(account: space.addAccount(kind: .human, name: nil).id)
+      let foreign = try await plainGroup(space, "foreign")
       let remote = try await store.createConversation(members: ["alice"], in: foreign)
-      try await space.addEdge(src: .shared, dst: foreign, kind: .read, by: nil)
+      try await space.addReadEdge(from: .shared, to: foreign)
       #expect(try await !store.reads(store.conversation(older), reader: nil, group: .shared))
       for operation in [0, 1, 2] {
         await #expect(throws: SessionStoreError.unknownConversation(older.rawValue)) {
@@ -180,3 +180,10 @@ import Testing
 }
 
 private func person(_ id: String) -> Sender { Sender(id: id, timeZone: .gmt) }
+
+private func plainGroup(_ space: Space, _ id: String) async throws -> GroupID {
+  try await space.writer.write { db in
+    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00Z')", arguments: [id])
+  }
+  return GroupID(rawValue: id)
+}

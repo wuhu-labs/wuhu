@@ -51,7 +51,7 @@ func activeModelSpecifier(_ record: SessionRecord, store: SessionStore) async ->
 }
 
 func readModelsDocument(space: Space, includeGroups: Bool = true) async throws -> ModelsDocument {
-  let fs = await space.fs(.shared)
+  let fs = await space.fs(.settings)
   let data: Data
   do { data = try await fs.read(ModelsDocument.spacePath).1 }
   catch SpaceError.notFound { data = Data("{}".utf8) }
@@ -63,11 +63,11 @@ func readModelsDocument(space: Space, includeGroups: Bool = true) async throws -
 }
 
 // Main's own catalog for placing and validating routes: `/models.json` and
-// `/model-groups.json` from `shared`, re-read per use (models are data in the
-// space, edited at runtime), signed with `access`.
+// `/model-groups.json` from the settings group, re-read per use (models are
+// data in the space, edited at runtime), signed with `access`.
 func groupCatalog(space: Space, access: InferenceAccess) -> @Sendable () async throws -> ProviderCatalog {
   {
-    let fs = await space.fs(.shared)
+    let fs = await space.fs(.settings)
     let data = try await fs.read(ModelsDocument.spacePath).1
     let groups: Data?
     do { groups = try await fs.read(ModelsDocument.groupPath).1 }

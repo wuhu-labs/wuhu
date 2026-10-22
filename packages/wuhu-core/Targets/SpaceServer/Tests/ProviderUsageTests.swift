@@ -145,7 +145,7 @@ private let codexAndClaudeModels = """
   @Test func theRefresherReadsOnlyCodexWhenStale() async throws {
     try await withSessionDeps {
       let space = try Space.inMemory()
-      _ = try await space.fs(.shared).write("/models.json", Data(codexAndClaudeModels.utf8), ifMatch: nil)
+      _ = try await space.fs(.settings).write("/models.json", Data(codexAndClaudeModels.utf8), ifMatch: nil)
       let board = UsageBoard()
       let resolved = Mutex<[String]>([])
       let seen = Mutex<[URLRequestSummary]>([])

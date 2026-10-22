@@ -350,7 +350,6 @@ enum Command: Equatable {
   case groupList
   case groupUse(String?)
   case groupCurrent
-  case groupSet(id: String, spaceLayer: Bool)
 }
 
 extension String {

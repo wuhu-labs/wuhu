@@ -23,7 +23,9 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens)
     let (bearer, key) = try await harness.enrolledBearer()
     let alice = try await harness.space.ensurePersonalGroup(account: key.account)
+    try await harness.space.addReadEdge(from: alice, to: .shared)
     let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
+    try await harness.space.addReadEdge(from: bob, to: .shared)
     return People(harness: harness, bearer: bearer, alice: alice, bob: bob)
   }
 
@@ -142,6 +144,7 @@ import Testing
     let harness = try Harness()
     let account = try await harness.space.addAccount(kind: .human, name: nil)
     let alice = try await harness.space.ensurePersonalGroup(account: account.id)
+    try await harness.space.addReadEdge(from: alice, to: .shared)
     _ = try await harness.space.fs(alice).write("/hers-1.md", Data("x".utf8), ifMatch: nil)
     _ = try await harness.space.fs(.shared).write("/common-1.md", Data("x".utf8), ifMatch: nil)
     let response = try await harness.get(harness.web, "/_/observe", query: ["glob": "**", "from": "0"])
@@ -246,7 +249,7 @@ import Testing
       #expect(server.features?.contains(GroupHeader.feature) == true)
       #expect(server.group == GroupID.shared.rawValue)
       let listed = try JSONValueDecoder().decode([GroupSummary].self, from: try await json(try await p.harness.get("/v1/groups")))
-      #expect(Set(listed.map(\.id)) == [GroupID.shared.rawValue, p.alice.rawValue, p.bob.rawValue])
+      #expect(Set(listed.map(\.id)) == [GroupID.shared.rawValue])
     }
   }
 

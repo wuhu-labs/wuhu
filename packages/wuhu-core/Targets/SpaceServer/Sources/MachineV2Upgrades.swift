@@ -13,7 +13,7 @@ import SpaceCore
 import Synchronization
 
 /// The admin's hold on machine agent upgrades: `/machine-v2-upgrade.json` in
-/// the space-wide layer. A per-machine field overrides the global one.
+/// the settings group. A per-machine field overrides the global one.
 struct MachineV2UpgradeSetting: Equatable, Sendable {
   struct Rule: Equatable, Sendable {
     var pause: Bool?
@@ -240,7 +240,7 @@ final class MachineV2Upgrades: Sendable {
   /// logged once per distinct content rather than on every hello.
   private func setting() async -> MachineV2UpgradeSetting? {
     let data: Data
-    do { data = try await space.fs(.shared).read(MachineV2UpgradeSetting.path).1 }
+    do { data = try await space.fs(.settings).read(MachineV2UpgradeSetting.path).1 }
     catch SpaceError.notFound { return nil }
     catch {
       ignoring("unreadable: \(error)")

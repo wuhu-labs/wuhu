@@ -313,7 +313,7 @@ private final class Story: Sendable {
     let space = try Space.inMemory()
     self.space = space
     store = space.sessions
-    _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+    _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     tokens = ExecTokens(spaceURL: "http://space")
     let hub = MachineHub(space: space, tokens: tokens)
     self.hub = hub

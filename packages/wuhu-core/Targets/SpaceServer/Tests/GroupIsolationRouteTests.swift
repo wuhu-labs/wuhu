@@ -12,7 +12,7 @@ import Serve
 import ServeTesting
 import SessionDomain
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Testing
 
@@ -46,11 +46,14 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530", execTokens: tokens, secrets: stores, machineV2: true)
     let (alice, aliceKey) = try await harness.enrolledBearer()
     let aliceGroup = try await harness.space.ensurePersonalGroup(account: aliceKey.account)
+    try await harness.space.addReadEdge(from: aliceGroup, to: .shared)
     let (bob, bobKey) = try await harness.enrolledBearer()
     let bobGroup = try await harness.space.ensurePersonalGroup(account: bobKey.account)
+    try await harness.space.addReadEdge(from: bobGroup, to: .shared)
     let (admin, adminKey) = try await harness.enrolledBearer()
     let adminGroup = try await harness.space.ensurePersonalGroup(account: adminKey.account)
-    try await harness.space.addEdge(src: adminGroup, dst: .shared, kind: .admin, by: nil)
+    try await harness.space.addReadEdge(from: adminGroup, to: .shared)
+    _ = try await harness.space.setAdmin(adminKey.account, admin: true)
     let p = try await harness.store.createSession(group: aliceGroup, title: "P", kind: .agent, createdBy: "owner", executor: Self.model)
     let s = try await harness.store.createSession(group: .shared, title: "S", kind: .agent, createdBy: "owner", executor: Self.model)
     try await body(World(
@@ -268,19 +271,26 @@ import Testing
   }
 
   @Test(arguments: ["/v1/machine", "/v1/machine-v2"])
-  func anAdminEdgeDoesNotRequireTargetGroupMembership(path: String) async throws {
+  func aSpaceAdminDoesNotNeedTheTargetGroupsMembership(path: String) async throws {
     try await withSessionDeps {
       try await world { w in
-        try await w.harness.space.addEdge(src: w.adminGroup, dst: w.bobGroup, kind: .admin, by: nil)
-        let body: JSONValue = ["name": "admin-only-v2", "group": .string(w.bobGroup.rawValue)]
-        let actingAsTarget = try await send(w, .post, path, body, bearer: w.admin, group: w.bobGroup)
+        let project = GroupID(rawValue: "project")
+        try await w.harness.space.writer.write { db in
+          try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
+        }
+        let body: JSONValue = ["name": "admin-only-v2", "group": .string(project.rawValue)]
+        let actingAsTarget = try await send(w, .post, path, body, bearer: w.admin, group: project)
         #expect(actingAsTarget.status == .forbidden)
         #expect(try await code(actingAsTarget) == "groupForbidden")
         let added = try await send(w, .post, path, body, bearer: w.admin)
         #expect(added.status == .ok)
         let output = try JSONValueDecoder().decode(MachineAddOutput.self, from: try await json(added))
-        #expect(output.group == w.bobGroup.rawValue)
-        #expect(try await w.harness.space.machine(output.id)?.group == w.bobGroup)
+        #expect(output.group == project.rawValue)
+        #expect(try await w.harness.space.machine(output.id)?.group == project)
+
+        // Another person's own group is theirs: a space admin does not administer it.
+        let personal: JSONValue = ["name": "not-hers", "group": .string(w.bobGroup.rawValue)]
+        #expect(try await send(w, .post, path, personal, bearer: w.admin).status == .forbidden)
       }
     }
   }
@@ -480,12 +490,14 @@ import Testing
         let notSharedAdmin = try await send(w, .put, path, toShared, bearer: w.alice)
         #expect(notSharedAdmin.status == .forbidden)
         #expect(try await code(notSharedAdmin) == "adminRequired")
-        #expect(try await send(w, .put, path, toShared, bearer: w.admin).status == .notFound)
         #expect(try await send(w, .put, path, .object(["group": "nowhere"]), bearer: w.alice).status == .notFound)
         #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
 
-        let aliceGroup = w.aliceGroup
-        try await w.harness.space.addEdge(src: aliceGroup, dst: .shared, kind: .admin, by: nil)
+        // Another person's own group is theirs: even a space admin does not move
+        // its machine, and alice may once she administers the space herself.
+        #expect(try await send(w, .put, path, toShared, bearer: w.admin).status == .notFound)
+        #expect(try await w.harness.space.machine(id)?.group == w.aliceGroup)
+        _ = try await w.harness.space.setAdmin(w.aliceAccount, admin: true)
         #expect(try await send(w, .put, path, toShared, bearer: w.alice).status == .ok)
         #expect(try await w.harness.space.machine(id)?.group == .shared)
         let fromS = try await send(w, .post, "/v1/exec", .object(["machine": .string(id.rawValue)]), bearer: try await token(w, w.s))

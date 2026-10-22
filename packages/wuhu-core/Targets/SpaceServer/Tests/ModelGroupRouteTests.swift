@@ -12,7 +12,7 @@ import Testing
 
 @Suite(.deterministicDependencies) struct ModelGroupRouteTests {
   func install(_ harness: SessionHarness, model: String = "test-model") async throws {
-    let fs = await harness.space.fs(.shared)
+    let fs = await harness.space.fs(.settings)
     let (entry, data) = try await fs.read("/models.json")
     var doc = try ModelsDocument(json: data)
     if model != "test-model", let entry = doc.providers["testing"]?.models.removeValue(forKey: "test-model") {
@@ -96,7 +96,7 @@ extension ModelGroupRouteTests {
       let harness = try await SessionHarness(credentials: CredentialResolver { _ in .apiKey("fixture") })
       try await install(harness)
       let created = try await harness.call("/v1/session", .object(["title": "Group", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
-      let fs = await harness.space.fs(.shared)
+      let fs = await harness.space.fs(.settings)
       let (token, _) = try await fs.read(ModelsDocument.groupPath)
       _ = try await fs.write(ModelsDocument.groupPath, Data(#"{"work":{"kind":"group","members":[],"defaultEffort":"high"}}"#.utf8), ifMatch: token)
       let restarted = try await harness.call("/v1/session/\(created.id)/restart", .object(["provider": "testing", "model": "test-model"]), as: SessionRestartOutput.self)

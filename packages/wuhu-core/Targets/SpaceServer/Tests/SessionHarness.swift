@@ -90,7 +90,7 @@ struct SessionHarness {
     self.space = space
     store = space.sessions
     if models {
-      _ = try await space.fs(.shared).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
+      _ = try await space.fs(.settings).write("/models.json", Data(testModelsJSON.utf8), ifMatch: nil)
     }
     let tokens = execTokens ?? ExecTokens(spaceURL: "http://space")
     let hub = MachineHub(space: space, tokens: tokens)
@@ -189,7 +189,7 @@ struct SessionHarness {
     let space = try Space.inMemory()
     self.space = space
     store = space.sessions
-    _ = try await space.fs(.shared).write("/models.json", Data(models.utf8), ifMatch: nil)
+    _ = try await space.fs(.settings).write("/models.json", Data(models.utf8), ifMatch: nil)
     let hub = MachineHub(space: space)
     self.hub = hub
     runtime = await SessionRuntime.assemble(

@@ -37,6 +37,7 @@ import Testing
       harness: harness, alice: alice, aliceGroup: try await harness.space.ensurePersonalGroup(account: alice),
       bob: bob, bobGroup: try await harness.space.ensurePersonalGroup(account: bob),
     )
+    try await harness.space.addReadEdge(from: rig.aliceGroup, to: .shared)
     _ = try await run(rig, .shared, "table.create", [
       "path": "/tasks.table", "header": ["columns": [["name": "title", "type": "string"], ["name": "meta", "type": "json"]]],
     ])
@@ -102,23 +103,32 @@ import Testing
     #expect(history.entries.filter { $0.via != nil }.count == 1)
   }
 
-  @Test func aPageCannotPatchSharedAgentsMDEvenForAnAdmin() async throws {
+  @Test func aPageWritesItsOwnGroupsInstructionsButNeverSettings() async throws {
     let r = try await rig()
     #expect(try await r.harness.space.isHumanAdmin(r.alice, of: .shared))
     let written = try await run(r, .shared, "write", ["path": "/AGENTS.md", "content": "---\nk: 1\n---\nrules\n"])
     let token = try #require(written.object?["token"])
     let alices = try await cookie(r, r.alice, .shared)
-    let refused = try await post(r, Self.sharedHost, "/_/space/attributes", [
+    // A page acts as a member of its own group, and shared is an ordinary group.
+    let patched = try await post(r, Self.sharedHost, "/_/space/attributes", [
       "path": "/AGENTS.md", "set": ["k": 2], "ifMatch": token, "page": "/p.html",
+    ], cookie: alices)
+    #expect(patched.status == .ok)
+
+    // The settings group stays out of a page's reach, an admin's cookie or not.
+    let skill = try await run(r, .settings, "write", ["path": "/.agents/skills/x/SKILL.md", "content": "---\nk: 1\n---\nrules\n"])
+    let refused = try await post(r, Self.sharedHost, "/_/space/attributes", [
+      "path": "wuhu://settings.localspace/.agents/skills/x/SKILL.md", "set": ["k": 2],
+      "ifMatch": try #require(skill.object?["token"]), "page": "/p.html",
     ], cookie: alices)
     #expect(refused.status == .forbidden)
     #expect(try await code(refused) == "unauthorized")
 
     let plan = try await run(r, .shared, "write", ["path": "/plan.md", "content": "---\nk: 1\n---\n"])
-    let patched = try await post(r, Self.sharedHost, "/_/space/attributes", [
+    let ordinary = try await post(r, Self.sharedHost, "/_/space/attributes", [
       "path": "/plan.md", "set": ["k": 2], "ifMatch": try #require(plan.object?["token"]), "page": "/p.html",
     ], cookie: alices)
-    #expect(patched.status == .ok)
+    #expect(ordinary.status == .ok)
     let read = try JSONValueDecoder().decode(ReadOutput.self, from: try await run(r, .shared, "read", ["path": "/plan.md"]))
     #expect(read.content == "---\nk: 2\n---\n")
   }

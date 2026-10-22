@@ -97,7 +97,7 @@ import Testing
       let harness = try await SessionHarness(credentials: CredentialResolver { providerID in
         providerID == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : nil
       })
-      _ = try await harness.space.fs(.shared).write("/models.json", Data(testImageModels.utf8), ifMatch: nil)
+      _ = try await harness.space.fs(.settings).write("/models.json", Data(testImageModels.utf8), ifMatch: nil)
       let executor = SessionExecutor.kernel(ModelSpecifier(provider: "claude", model: "opus", effort: "high"))
       let owner = try await harness.store.createSession(group: .shared, title: "owner", kind: .agent, createdBy: "morgan", executor: executor).rawValue
       let other = try await harness.store.createSession(group: .shared, title: "image", kind: .agent, createdBy: "morgan", executor: executor).rawValue

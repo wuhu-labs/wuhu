@@ -36,8 +36,7 @@ public enum SessionPrompt {
   notice carries the repository's AGENTS.md files and skills, from the git \
   root down to that folder. After a compaction they come again on the next \
   touch. Where instructions disagree, the nearest wins: your home over the \
-  repository over the machine over your group's root over the space-wide \
-  layer over the system.
+  repository over the machine over your group's root over the system.
   """
 
   public static let workScopingCore: String = """
@@ -54,7 +53,7 @@ public enum SessionPrompt {
 
   public static let groupRulesCore: String = """
   Admin work — archiving a session you did not create, setting secrets, \
-  writing the space-wide layer, changing a group's settings — is done only \
+  writing the settings group, changing a group's settings — is done only \
   when an admin of your group asks for it; the <sender-admin> field of a \
   message's header says whether its sender is one. Never reveal a person's \
   personal information to anyone else. Call manipulate_ui only when the \

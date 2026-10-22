@@ -58,7 +58,7 @@ func addTranscribeRoutes(_ router: inout Router, space: Space, credentials: Cred
 
 func spaceCapabilities(space: Space, credentials: CredentialResolver) async throws -> CapabilityClient {
   try await CapabilityClient.load(read: { path in
-    do { return try await space.fs(.shared).read(path).1 }
+    do { return try await space.fs(.settings).read(path).1 }
     catch SpaceError.notFound { return nil }
   }, credentials: credentials)
 }

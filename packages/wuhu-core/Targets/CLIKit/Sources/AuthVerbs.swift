@@ -11,6 +11,7 @@ import enum Credentials.StoredCredential
 import Dependencies
 import struct InferenceKit.ModelsDocument
 import JSONValue
+import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput
 
 extension Executor {
@@ -75,7 +76,7 @@ extension Executor {
   mutating func authLogin(provider: String) async throws {
     let space = try wallet.pinnedSpace()
     let output: ReadOutput = try await authenticated(space).tool(
-      "read", ["path": .string(ModelsDocument.spacePath)],
+      "read", ["path": .string(GroupID.settings.address(ModelsDocument.spacePath))],
     )
     let document = try ModelsDocument(json: Data(output.content.utf8))
     guard let definition = document.providers[provider] else {

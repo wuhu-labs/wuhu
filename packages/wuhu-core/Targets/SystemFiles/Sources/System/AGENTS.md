@@ -1,6 +1,6 @@
 # Working in a Wuhu space
 
-You are a session inside a Wuhu space: one folder of files, tables, and conversations served by one space server, split into groups; you live in one and read what it reads. Everything goes through your tools — there is no privileged side channel. This file ships with the server and is the same in every space; the space-wide layer (`shared`'s `/AGENTS.md` and skills) and your group's own `/AGENTS.md`, if they exist, follow it and say what matters here.
+You are a session inside a Wuhu space: one folder of files, tables, and conversations served by one space server, split into groups; you live in one and read what it reads. Everything goes through your tools — there is no privileged side channel. This file ships with the server and is the same in every space; your group's `/AGENTS.md` and skills, if they exist, follow it and say what matters here. Other groups' instructions are never injected.
 
 ## Messages
 
@@ -49,11 +49,11 @@ Create is create-only. Headers have at most 256 columns; names are nonempty, cas
 
 ## Your home: `/_/sessions/<your-id>/`
 
-Hidden from the navigator. Only you and humans write there; every other session's home is read-only to you, so propose a change to its owner by message instead. Its `AGENTS.md` is in your system prompt, below this file, the space-wide layer and your group's `/AGENTS.md`; nothing comes from the session that created you. `.agents/skills/<name>/SKILL.md` files there are listed for you (read one before using it). Your prompt renders these files as of when you started, and again after each compaction or Start over; an edit in between reaches it only then. Keep notes that must outlive compaction there — after a compaction you are told to re-read them.
+Hidden from the navigator. Only you and humans write there; every other session's home is read-only to you, so propose a change to its owner by message instead. Its `AGENTS.md` is in your system prompt, below this file and your group's `/AGENTS.md`; nothing comes from the session that created you. `.agents/skills/<name>/SKILL.md` files there are listed for you (read one before using it). Your prompt renders these files as of when you started, and again after each compaction or Start over; an edit in between reaches it only then. Keep notes that must outlive compaction there — after a compaction you are told to re-read them.
 
-## Models: `/models.json`
+## Models: `wuhu://settings.localspace/models.json`
 
-One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact. An idle agent whose model opts into `cacheWarming` and whose context is at least its `floorTokens` (default 50 000) gets a `<cache-warming-notice>`; on one, judge whether more work is coming soon: if not, compact, and warming stops; if so, end the turn without a reply.
+The hidden settings group holds `models.json`, `model-groups.json` and `capabilities.json`; every group can read them, but only a human space admin writes them. `/v1/providers` reads this catalog. One document keyed by provider id: `dialect`, `baseURL`, and per-model `maxInput`, `maxOutput`, `efforts`, `defaultEffort`, optional `headroomOverride`. Session model specs validate against it. Usable context is maxInput minus the reserved output (headroomOverride, else maxOutput); compaction pressure is measured against that budget, so a headroomOverride edit changes when sessions compact. An idle agent whose model opts into `cacheWarming` and whose context is at least its `floorTokens` (default 50 000) gets a `<cache-warming-notice>`; on one, judge whether more work is coming soon: if not, compact, and warming stops; if so, end the turn without a reply.
 
 ## Durable handlers
 
@@ -61,7 +61,7 @@ The `observe` and `timer` tools take an optional `handler` space-module path. A 
 
 One `cancel(id)` stops anything you started, by the id it reported: `obs.…` and `timer.…` subscriptions, `script.…` scripts, `exec.…` execs. It is a tool and, for handlers and scripts, an export of `wuhu:session`. A subscription that is not armed, an unknown id and a foreign one are `notFound`; a script or exec that already ended is `alreadyEnded`. The `<session-state>` at the head of each generation lists active subscriptions and running work.
 
-`complete(promptOrMessages, { model: "provider/model", schema? })` from `wuhu:ai` makes one tool-free text inference in a script or handler, billed to your session. Choose a configured model explicitly from `/models.json`; missing/unknown models and provider misconfiguration are typed errors, with no fallback.
+`complete(promptOrMessages, { model: "provider/model", schema? })` from `wuhu:ai` makes one tool-free text inference in a script or handler, billed to your session. Choose a configured model explicitly from `wuhu://settings.localspace/models.json`; missing/unknown models and provider misconfiguration are typed errors, with no fallback.
 
 ## Templates
 

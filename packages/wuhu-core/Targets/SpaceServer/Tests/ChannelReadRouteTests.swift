@@ -5,7 +5,7 @@ import Foundation
 import JSONValue
 import SessionDomain
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 @testable import SpaceServer
 import Testing
 
@@ -19,8 +19,11 @@ import Testing
       _ = try await harness.space.mintPersona(key: carolKey)
       let aliceCookie = try await harness.space.createReadSession(account: aliceKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
       let carolCookie = try await harness.space.createReadSession(account: carolKey.account, group: .shared, expiresAt: Date().addingTimeInterval(3600))
-      let foreign = try await harness.space.ensurePersonalGroup(account: harness.space.addAccount(kind: .human, name: nil).id)
-      try await harness.space.addEdge(src: .shared, dst: foreign, kind: .read, by: nil)
+      let foreign = GroupID(rawValue: "project")
+      try await harness.space.writer.write { db in
+        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
+      }
+      try await harness.space.addReadEdge(from: .shared, to: foreign)
       for group in [GroupID.shared, foreign] {
         let id = try await harness.store.createConversation(members: [alice], in: group)
         let delivery = try await harness.store.post(.conversation(id), messageID: MessageID("attachment-" + group.rawValue), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: "look"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])
@@ -61,8 +64,11 @@ import Testing
       let alice = try await harness.space.mintPersona(key: aliceKey).name
       let bob = try await harness.space.mintPersona(key: bobKey).name
       let destination = try await harness.store.createConversation(members: [bob], in: .shared)
-      let foreign = try await harness.space.ensurePersonalGroup(account: harness.space.addAccount(kind: .human, name: nil).id)
-      try await harness.space.addEdge(src: .shared, dst: foreign, kind: .read, by: nil)
+      let foreign = GroupID(rawValue: "project")
+      try await harness.space.writer.write { db in
+        try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('project', '2026-01-01T00:00:00Z')")
+      }
+      try await harness.space.addReadEdge(from: .shared, to: foreign)
       for group in [GroupID.shared, foreign] {
         let source = try await harness.store.createConversation(members: [alice, bob], in: group)
         let delivery = try await harness.store.post(.conversation(source), messageID: MessageID("copy-source-" + group.rawValue), sender: Sender(id: alice, timeZone: .gmt), content: .init(text: "private"), uploads: [AttachmentUpload(name: "secret.txt", bytes: Array("secret".utf8))])

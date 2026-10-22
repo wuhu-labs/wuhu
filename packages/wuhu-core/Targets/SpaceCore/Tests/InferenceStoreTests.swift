@@ -61,7 +61,7 @@ import Testing
     await #expect(throws: SpaceError.unknownRelation("wuhu://other.localspace/inferences")) {
       try await space.query("SELECT * FROM \"wuhu://other.localspace/inferences\"")
     }
-    try await space.addEdge(src: .shared, dst: other, kind: .read, by: nil)
+    try await space.addReadEdge(from: .shared, to: other)
     #expect(try await space.query("SELECT session FROM \"wuhu://other.localspace/inferences\"").rows == [[.text(session.rawValue)]])
     #expect(try await space.query("SELECT grp, session FROM \"wuhu://*.localspace/inferences\"").rows == [[.text("other"), .text(session.rawValue)]])
     #expect(try await space.query("SELECT * FROM inferences").rows.isEmpty)

@@ -57,7 +57,7 @@ extension SessionStore {
     let p = try await LiveFS.validatedFileTarget(MachineFolders.stored(path, mutating: true, in: writer))
     let home = try await writer.read { db in try Sessions.group(of: key, in: db) }
     try SessionHome.refuseForeignWrite(to: p, in: group, by: id, home: home)
-    try await writer.read { db in try GroupLayer.refuseWrite(p, in: group, by: .session(id), in: db) }
+    try await writer.read { db in try GroupWrites.refuseWrite(p, in: group, by: .session(id), in: db) }
     let blob = try await blobs.stage(Array(content))
     let broadcast = broadcast
     let result: RecordedWrite = try await Substrate.writeEmitting(writer, to: broadcast) { db, pending in

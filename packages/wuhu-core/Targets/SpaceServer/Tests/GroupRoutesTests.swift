@@ -23,7 +23,9 @@ import Testing
     let harness = try await SessionHarness(dev: false, origin: "https://space.test:5530")
     let (bearer, key) = try await harness.enrolledBearer()
     let alice = try await harness.space.ensurePersonalGroup(account: key.account)
+    try await harness.space.addReadEdge(from: alice, to: .shared)
     let bob = try await harness.space.ensurePersonalGroup(account: try await harness.space.addAccount(kind: .human, name: nil).id)
+    try await harness.space.addReadEdge(from: bob, to: .shared)
     return People(harness: harness, bearer: bearer, key: key, alice: alice, bob: bob)
   }
 
@@ -40,23 +42,6 @@ import Testing
 
   func code(_ response: Response) async throws -> String? {
     try await json(response).object?["code"]?.stringValue
-  }
-
-  @Test func anAdminTurnsTheSpaceWideLayerOffForTheirGroupOnly() async throws {
-    try await withSessionDeps {
-      let p = try await people()
-      let off = try await send(p, .put, "/v1/groups/\(p.alice.rawValue)", .object(["spaceLayer": false]))
-      #expect(off.status == .ok)
-      #expect(try await json(off) == .object(["id": .string(p.alice.rawValue), "spaceLayer": false]))
-      #expect(try await !p.harness.space.spaceLayer(of: p.alice))
-      let foreign = try await send(p, .put, "/v1/groups/\(p.bob.rawValue)", .object(["spaceLayer": false]))
-      #expect(foreign.status == .forbidden)
-      #expect(try await code(foreign) == "forbidden")
-      #expect(try await p.harness.space.spaceLayer(of: p.bob))
-      let unknown = try await send(p, .put, "/v1/groups/nowhere", .object(["spaceLayer": false]))
-      #expect(unknown.status == .notFound)
-      #expect(try await code(unknown) == "unknownGroup")
-    }
   }
 
   @Test func aTopLevelSessionLandsInTheActingGroupOrAReadableOne() async throws {

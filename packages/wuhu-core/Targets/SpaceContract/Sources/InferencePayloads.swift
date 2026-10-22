@@ -9,21 +9,20 @@ public struct PromptSection: Codable, Equatable, Sendable {
   public let text: String
 }
 
-// One layer of a session's prompt: its instruction sections and skills.
+// One scope of a session's prompt: its instruction sections and skills.
 @Contract
 public struct PromptScope: Codable, Equatable, Sendable {
   public let sections: [PromptSection]
   public let skills: [SessionHomeSkill]
 }
 
-// The caller's prompt home, frozen at its prompt revision: the space-wide
-// layer (`shared`'s, for a session outside it), its group's root, and its own
-// home. The kernel lays these out after the fixed text it carries itself.
+// The caller's prompt home, frozen at its prompt revision: its group's root
+// and its own home. The kernel lays these out after the fixed text it carries
+// itself.
 @Contract
 public struct SessionPromptOutput: Codable, Equatable, Sendable {
   public let home: String
   public let group: String
-  public let spaceLayer: PromptScope
   public let groupLayer: PromptScope
   public let homeLayer: PromptScope
 }

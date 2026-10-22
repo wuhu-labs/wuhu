@@ -187,7 +187,7 @@ Self-updates from `https://wuhu.ai`, unauthenticated: one GET of the lane pointe
 wuhu agent [--log run.jsonl | --resume run.jsonl] < request.json
 ```
 
-Runs a read/write/bash coding agent in the current directory, no space involved, until the model calls `complete`; prints `{"result": ...}`. The request names the model, its provider's `/models.json` entry, the credential, `system`, `task`, `maxTurns` and `bashTimeoutSeconds`: `wuhu agent --help` shows the shape. Credentials go only on stdin.
+Runs a read/write/bash coding agent in the current directory, no space involved, until the model calls `complete`; prints `{"result": ...}`. The request names the model, its provider's `wuhu://settings.localspace/models.json` entry, the credential, `system`, `task`, `maxTurns` and `bashTimeoutSeconds`: `wuhu agent --help` shows the shape. Credentials go only on stdin.
 
 ## Server
 
@@ -283,7 +283,7 @@ A device is an app install signed into the space; it registers itself on every c
 
 ```bash
 wuhu models [--json]                # concrete models and groups with policy/ordered member aliases
-wuhu models update                  # seed/merge providers-only /models.json; /model-groups.json untouched
+wuhu models update                  # seed/merge providers-only models.json; model-groups.json untouched
 wuhu tool-roster [--executor kernel] [--json]  # the tools sessions of that kind are given
 wuhu usage [--json]                 # plan usage per codex provider, window by window
 wuhu auth set <provider> < key.txt  # store an api key for the pinned space (stdin)
@@ -311,7 +311,7 @@ wuhu inbox
   `harbor-lantern-moss`, not a UUID; every session verb and `send` want that
   id, and they **reject** anything not shaped like ≥3 lowercase hyphenated
   words with `not a session id`. Never fabricate or validate ids as UUIDs.
-- Either `--provider`/`--model` or `--model-group` selects a target, validated against `/models.json` (concrete) and `/model-groups.json` (groups); the two forms are mutually exclusive. A child inherits the parent’s requested target rather than its active group member. Templates supply defaults, and explicit targets replace those defaults as a whole —
+- Either `--provider`/`--model` or `--model-group` selects a target, validated against `wuhu://settings.localspace/models.json` (concrete) and `wuhu://settings.localspace/model-groups.json` (groups); the two forms are mutually exclusive. A child inherits the parent’s requested target rather than its active group member. Templates supply defaults, and explicit targets replace those defaults as a whole —
   run `wuhu models update` first on a fresh space. Every provider runs in the kernel. `--effort` must be one of the model's declared
   effort strings (omitted means the model's default). The
   session is inert until something is posted; the title is a positional
@@ -352,7 +352,7 @@ wuhu inbox
   included, and prints the stored tags one per line; with no tags it clears
   the list. A session retags itself and its descendants from run_script's
   `wuhu:session` (`setTags`).
-- `models` discovers concrete providers/models from `/models.json` and groups from `/model-groups.json`. `--json` returns `{providers, groups}` keyed by catalog IDs. A missing group file means no groups; malformed catalogs and provider/group ID collisions are errors. `models update` writes only provider defaults, never the group file. A seed provider colliding with a declared group ID fails before either file is changed.
+- `models` discovers concrete providers/models from `wuhu://settings.localspace/models.json` and groups from `wuhu://settings.localspace/model-groups.json`. `--json` returns `{providers, groups}` keyed by catalog IDs. A missing group file means no groups; malformed catalogs and provider/group ID collisions are errors. `models update` writes only provider defaults, never the group file. A seed provider colliding with a declared group ID fails before either file is changed.
 - `session list` queries `sessions` with a left join to scoped `session_model_routes`, including requested_model_group from the route’s group_id, active_provider, active_model and model_route_phase. Stored executor_config is always concrete provider/model/effort; group intent lives in the additive route row. Concrete sessions without a route keep their provider/model from executor_config. `session inspect <id>` prints structured JSON with requestedTarget, active provider/model and route placement reason/evidence and recorded decisions. Query or observe the same scoped projections for dashboards.
 - `archive` takes the entire descendant subtree, leaves first and root last. Without `--force`, it checks every node and refuses without archiving anything if one is busy, listing every busy id and title. `--force` first interrupts busy nodes, then archives them all and closes open requests with a final-kind “archived before reporting” message to each requester. Separately created top-level agents stay live. `unarchive` restores only one session and works only inside the ~24 h grace window.
 - `inbox` prints notifications above this wallet's cursor, then advances the
@@ -380,7 +380,7 @@ pi). Idempotent; prints every path it writes; skips files it does not own.
 
 `wuhu image 'prompt' --destination ./output.png [--image ./reference.png]... [--provider qwen] [--model id] [--quality draft|standard|fine|ultra] [--size 1536x1024]` generates, or edits when references are present. Private reference bytes upload internally; local output is exclusive/create-only.
 
-`wuhu transcribe recording.m4a [--provider qwen] [--model id] [--language en] [--timestamps words,segments] [--diarize] [--json]` uses the same capability resolver as dictation and code mode. JSON returns optional seconds-based timestamp/speaker metadata. Audio is bounded to 25 MiB/two hours. `/capabilities.json` active selection is authoritative: unconfigured capabilities synthesize Codex, broken explicit configuration never falls back. Provider keys are installed by an authorized human on the server with `wuhu auth set <credential-id>` on stdin, not `wuhu secret set`.
+`wuhu transcribe recording.m4a [--provider qwen] [--model id] [--language en] [--timestamps words,segments] [--diarize] [--json]` uses the same capability resolver as dictation and code mode. JSON returns optional seconds-based timestamp/speaker metadata. Audio is bounded to 25 MiB/two hours. `wuhu://settings.localspace/capabilities.json` active selection is authoritative: unconfigured capabilities synthesize Codex, broken explicit configuration never falls back. Provider keys are installed by an authorized human on the server with `wuhu auth set <credential-id>` on stdin, not `wuhu secret set`.
 
 ## Identity
 

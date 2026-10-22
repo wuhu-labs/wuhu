@@ -668,7 +668,8 @@ final class ScriptRig: Sendable {
   }
 
   func write(_ path: String, _ text: String) async throws {
-    _ = try await space.fs(.shared).write(path, Data(text.utf8), ifMatch: nil)
+    let group: GroupID = ["/models.json", "/model-groups.json", "/capabilities.json"].contains(path) ? .settings : .shared
+    _ = try await space.fs(group).write(path, Data(text.utf8), ifMatch: nil)
   }
 
   /// A cancel with its failure code shown, from `caller` (the rig's session
@@ -887,7 +888,7 @@ func withRig(
         try await space.writer.write { db in
           try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, '2026-01-01T00:00:00.000Z')", arguments: [group.rawValue])
         }
-        try await space.addEdge(src: group, dst: .shared, kind: .read, by: nil)
+        try await space.addReadEdge(from: group, to: .shared)
       }
       var session = try await makeSession(space, group: group)
       if task || childAgent {

@@ -57,6 +57,7 @@ import Testing
     } operation: {
       let account = try await space.addAccount(kind: .human, name: "alice")
       let alice = try await space.ensurePersonalGroup(account: account.id)
+      try await space.addReadEdge(from: alice, to: .shared)
       let visitor = try await space.sessions.createSession(
         group: alice, title: "visitor", kind: .agent, createdBy: "alice",
         model: ModelSpecifier(provider: "testing", model: "test-model", effort: "medium"),

@@ -336,8 +336,6 @@ struct Executor {
       try await self.groupUse(group)
     case .groupCurrent:
       try await self.groupCurrent()
-    case let .groupSet(id, spaceLayer):
-      try await self.groupSet(id, spaceLayer: spaceLayer)
     }
     return 0
   }

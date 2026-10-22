@@ -22,22 +22,22 @@ extension Space {
         arguments: [id.rawValue, kind.rawValue, name, created],
       )
       guard kind == .human else { return }
-      let personal = try Groups.ensurePersonalGroup(account: id, created: created, rng: rng, in: db)
-      if admin { try Groups.addEdge(src: personal, dst: .shared, kind: .admin, created: created, by: nil, in: db) }
+      _ = try Groups.ensurePersonalGroup(account: id, created: created, rng: rng, in: db)
+      if admin { try Groups.grant(.admin, in: .settings, to: id, created: created, in: db) }
     }
     return AccountRecord(id: id, kind: kind, name: name, isAdmin: admin, createdAt: createdAt, removedAt: nil)
   }
 
   public func account(_ id: AccountID) async throws -> AccountRecord? {
     try await writer.read { db in
-      try Row.fetchOne(db, sql: "SELECT *, \(Groups.sharedAdminColumn) FROM accounts WHERE id = ?", arguments: [id.rawValue])
+      try Row.fetchOne(db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ?", arguments: [id.rawValue])
         .map(Self.accountRecord(from:))
     }
   }
 
   public func accounts() async throws -> [AccountRecord] {
     try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT *, \(Groups.sharedAdminColumn) FROM accounts WHERE removed_at IS NULL ORDER BY created_at, id")
+      try Row.fetchAll(db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL ORDER BY created_at, id")
         .map(Self.accountRecord(from:))
     }
   }
@@ -50,10 +50,9 @@ extension Space {
 
   public func setAdmin(_ id: AccountID, admin: Bool) async throws -> AccountRecord {
     let created = SQLiteDateFormat.string(from: dateGen.now)
-    let rng = rng
     return try await writer.write { db in
       guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(Groups.sharedAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
+        db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
         arguments: [id.rawValue],
       ) else {
         throw SpaceError.notFound(id.rawValue)
@@ -64,19 +63,9 @@ extension Space {
       }
       if admin, record.kind != .human { throw SpaceError.notAPerson(id.rawValue) }
       if admin {
-        let personal = try Groups.ensurePersonalGroup(account: id, created: created, rng: rng, in: db)
-        try Groups.addEdge(src: personal, dst: .shared, kind: .admin, created: created, by: nil, in: db)
+        try Groups.grant(.admin, in: .settings, to: id, created: created, in: db)
       } else {
-        let personal = try Groups.personalGroup(of: id, in: db)
-        if let personal {
-          try Groups.removeEdge(src: personal, dst: .shared, kind: .admin, in: db)
-        }
-        // Admin held through a team group is that group's to revoke: say so
-        // rather than report a demotion that didn't happen.
-        let granting = try Groups.adminGrantingGroups(of: id, over: .shared, in: db).filter { $0 != personal }
-        if !granting.isEmpty {
-          throw SpaceError.adminThroughGroup(account: id.rawValue, groups: granting.map(\.rawValue))
-        }
+        try Groups.revoke(.admin, in: .settings, from: id, in: db)
       }
       return AccountRecord(
         id: record.id, kind: record.kind, name: record.name,
@@ -92,7 +81,7 @@ extension Space {
     let now = SQLiteDateFormat.string(from: dateGen.now)
     return try await writer.write { db in
       guard let row = try Row.fetchOne(
-        db, sql: "SELECT *, \(Groups.sharedAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
+        db, sql: "SELECT *, \(Groups.spaceAdminColumn) FROM accounts WHERE id = ? AND removed_at IS NULL",
         arguments: [id.rawValue],
       ) else {
         throw SpaceError.notFound(id.rawValue)
@@ -300,7 +289,7 @@ extension Space {
 
   static func liveAdminCount(in db: Database) throws -> Int {
     try Int.fetchOne(
-      db, sql: "SELECT count(*) FROM (SELECT \(Groups.sharedAdminColumn) FROM accounts WHERE removed_at IS NULL) WHERE is_admin",
+      db, sql: "SELECT count(*) FROM (SELECT \(Groups.spaceAdminColumn) FROM accounts WHERE removed_at IS NULL) WHERE is_admin",
     ) ?? 0
   }
 

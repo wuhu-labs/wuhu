@@ -49,30 +49,32 @@ public struct Principal: Hashable, Sendable {
 public struct GroupRecord: Hashable, Sendable {
   public let id: GroupID
   public let createdAt: Date
-  public let spaceLayer: Bool
+  /// The person whose own group this is; nil for an ordinary group.
+  public let personalAccount: AccountID?
   public let removedAt: Date?
 }
 
-public enum GroupEdgeKind: String, Sendable {
-  case read
+/// The roles an account holds in a group. A space admin holds `admin` in the
+/// settings group, which administers every group.
+enum GroupRole: String, Sendable {
   case admin
 }
 
 extension Space {
   public func groups() async throws -> [GroupRecord] {
     try await writer.read { db in
-      try Row.fetchAll(db, sql: "SELECT id, created_at, space_layer, removed_at FROM groups ORDER BY created_at, id").map { row in
+      try Row.fetchAll(db, sql: "SELECT id, created_at, personal_account, removed_at FROM groups ORDER BY created_at, id").map { row in
         GroupRecord(
           id: GroupID(rawValue: row["id"]),
           createdAt: (try? SQLiteDateFormat.date(from: row["created_at"])) ?? Date(timeIntervalSince1970: 0),
-          spaceLayer: row["space_layer"],
+          personalAccount: (row["personal_account"] as String?).map(AccountID.init(rawValue:)),
           removedAt: (row["removed_at"] as String?).flatMap { try? SQLiteDateFormat.date(from: $0) },
         )
       }
     }
   }
 
-  /// The groups `group` reads, itself included.
+  /// The groups `group` reads, itself and the settings group included.
   public func reads(_ group: GroupID) async throws -> Set<GroupID> {
     try await writer.read { db in try Groups.reads(group, in: db) }
   }
@@ -87,12 +89,7 @@ extension Space {
   }
 
   public func isMember(_ account: AccountID, of group: GroupID) async throws -> Bool {
-    try await writer.read { db in
-      try Bool.fetchOne(
-        db, sql: "SELECT EXISTS (SELECT 1 FROM group_members WHERE grp = ? AND account_id = ?)",
-        arguments: [group.rawValue, account.rawValue],
-      ) ?? false
-    }
+    try await writer.read { db in try Groups.isMember(account, of: group, in: db) }
   }
 
   public func memberGroups(of account: AccountID) async throws -> Set<GroupID> {
@@ -115,7 +112,7 @@ extension Space {
     try await writer.read { db in Principal(actor: .session(session), group: try Sessions.group(of: session.rawValue, in: db)) }
   }
 
-  /// Top-level agents (kind agent, no parent, live) in `group`, plus human admins of `group`.
+  /// Top-level agents (kind agent, no parent, live) in `group`, plus its admins.
   public func isAdmin(_ actor: Actor, of group: GroupID) async throws -> Bool {
     try await writer.read { db in try Groups.isAdmin(actor, of: group, in: db) }
   }
@@ -125,8 +122,7 @@ extension Space {
     try await writer.read { db in try Groups.administeredGroups(by: actor, in: db) }
   }
 
-  /// A live human with a membership in a self-administering group that holds
-  /// an admin edge to `group`: the rule `is_admin` and last-admin counting use.
+  /// A live person holding `admin` in `group`, or in the settings group.
   public func isHumanAdmin(_ account: AccountID, of group: GroupID) async throws -> Bool {
     try await writer.read { db in try Groups.isHumanAdmin(account, of: group, in: db) }
   }
@@ -144,71 +140,79 @@ extension Space {
     }
   }
 
-  public func addEdge(src: GroupID, dst: GroupID, kind: GroupEdgeKind, by creator: String?) async throws {
+  public func addReadEdge(from src: GroupID, to dst: GroupID, by creator: String? = nil) async throws {
     let created = SQLiteDateFormat.string(from: dateGen.now)
     try await writer.write { db in
-      try Groups.addEdge(src: src, dst: dst, kind: kind, created: created, by: creator, in: db)
+      try Groups.insertReadEdge(src: src, dst: dst, created: created, by: creator, in: db)
+      try Groups.recompute(in: db)
     }
   }
 
-  public func removeEdge(src: GroupID, dst: GroupID, kind: GroupEdgeKind) async throws {
+  public func removeReadEdge(from src: GroupID, to dst: GroupID) async throws {
     try await writer.write { db in
-      try Groups.removeEdge(src: src, dst: dst, kind: kind, in: db)
+      try Groups.removeReadEdge(src: src, dst: dst, in: db)
+      try Groups.recompute(in: db)
     }
   }
 }
 
 enum Groups {
-  /// The account's personal group: the group it is a member of that administers itself.
-  static let personalGroupSQL: String = """
-  SELECT m.grp FROM group_members m
-  JOIN group_edges s ON s.src = m.grp AND s.dst = m.grp AND s.kind = 'admin'
-  WHERE m.account_id = ? ORDER BY m.joined_at, m.grp LIMIT 1
-  """
-
-  /// The one rule for a person administering a group: a membership of theirs
-  /// in a self-administering group (their personal group or a team's) that
-  /// holds an admin edge to it. `account` and `group` are SQL expressions.
-  static func adminMembershipSQL(account: String, group: String) -> String {
+  /// The admin rows that make `account` a space admin: the settings group's.
+  /// `account` is a SQL expression.
+  static func spaceAdminSQL(account: String) -> String {
     """
-    SELECT 1 FROM group_members m
-      JOIN group_edges s ON s.src = m.grp AND s.dst = m.grp AND s.kind = 'admin'
-      JOIN group_edges e ON e.src = m.grp AND e.dst = \(group) AND e.kind = 'admin'
-      WHERE m.account_id = \(account)
+    SELECT 1 FROM group_roles r
+      WHERE r.grp = '\(GroupID.settings.rawValue)' AND r.account_id = \(account) AND r.role = 'admin'
     """
   }
 
-  /// The groups whose membership makes `account` an admin of `group`.
-  static func adminGrantingGroups(of account: AccountID, over group: GroupID, in db: Database) throws -> [GroupID] {
-    try String.fetchAll(
-      db,
-      sql: """
-      SELECT DISTINCT m.grp FROM group_members m
-        JOIN group_edges s ON s.src = m.grp AND s.dst = m.grp AND s.kind = 'admin'
-        JOIN group_edges e ON e.src = m.grp AND e.dst = ? AND e.kind = 'admin'
-        WHERE m.account_id = ? ORDER BY m.grp
-      """,
-      arguments: [group.rawValue, account.rawValue],
-    ).map(GroupID.init(rawValue:))
-  }
+  /// `is_admin` of an `accounts` row: a live person who is a space admin.
+  static let spaceAdminColumn: String =
+    "EXISTS (\(spaceAdminSQL(account: "accounts.id"))) AND accounts.kind = 'human' AS is_admin"
 
-  /// `is_admin` of an `accounts` row: a human admin of shared.
-  static let sharedAdminColumn: String =
-    "EXISTS (\(adminMembershipSQL(account: "accounts.id", group: "'shared'")) AND accounts.kind = 'human') AS is_admin"
-
+  /// The groups `group` reads. The settings group is every group's to read;
+  /// only space admins write it.
   static func reads(_ group: GroupID, in db: Database) throws -> Set<GroupID> {
     let readable = try String.fetchAll(db, sql: "SELECT readable FROM group_reads WHERE grp = ?", arguments: [group.rawValue])
-    return Set(readable.map(GroupID.init(rawValue:))).union([group])
+    return Set(readable.map(GroupID.init(rawValue:))).union([group, .settings])
+  }
+
+  /// Whether `account` belongs to `group`. A personal group has one member:
+  /// its owner.
+  static func isMember(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {
+    try Bool.fetchOne(
+      db,
+      sql: """
+      SELECT EXISTS (
+        SELECT 1 FROM group_members m JOIN groups g ON g.id = m.grp
+        WHERE m.grp = ? AND m.account_id = ? AND (g.personal_account IS NULL OR g.personal_account = ?)
+      )
+      """,
+      arguments: [group.rawValue, account.rawValue, account.rawValue],
+    ) ?? false
   }
 
   static func personalGroup(of account: AccountID, in db: Database) throws -> GroupID? {
-    try String.fetchOne(db, sql: personalGroupSQL, arguments: [account.rawValue]).map(GroupID.init(rawValue:))
+    try String.fetchOne(
+      db,
+      sql: "SELECT id FROM groups WHERE personal_account = ? AND removed_at IS NULL ORDER BY created_at, id LIMIT 1",
+      arguments: [account.rawValue],
+    ).map(GroupID.init(rawValue:))
+  }
+
+  /// Whether `group` is someone's own group.
+  static func isPersonal(_ group: GroupID, in db: Database) throws -> Bool {
+    try Bool.fetchOne(
+      db, sql: "SELECT EXISTS (SELECT 1 FROM groups WHERE id = ? AND personal_account IS NOT NULL)",
+      arguments: [group.rawValue],
+    ) ?? false
   }
 
   static func isAdmin(_ actor: Actor, of group: GroupID, in db: Database) throws -> Bool {
     switch actor {
     case let .session(id):
-      try Bool.fetchOne(
+      guard group != .settings else { return false }
+      return try Bool.fetchOne(
         db,
         sql: """
         SELECT EXISTS (SELECT 1 FROM sessions
@@ -217,34 +221,54 @@ enum Groups {
         arguments: [id.rawValue, group.rawValue],
       ) ?? false
     case let .person(_, account):
-      try isHumanAdmin(account, of: group, in: db)
+      return try isHumanAdmin(account, of: group, in: db)
     case .anonymous:
-      false
+      return false
     }
   }
 
   static func administeredGroups(by actor: Actor, in db: Database) throws -> Set<GroupID> {
-    let ids: [String] = switch actor {
+    let ids: [String]
+    switch actor {
     case let .session(id):
-      try String.fetchAll(
+      ids = try String.fetchAll(
         db,
         sql: "SELECT grp FROM sessions WHERE id = ? AND kind = 'agent' AND parent IS NULL AND lifecycle = 'live'",
         arguments: [id.rawValue],
       )
     case let .person(_, account):
-      try String.fetchAll(
-        db,
-        sql: """
-        SELECT g.id FROM groups g, accounts a
-          WHERE a.id = ? AND a.kind = 'human' AND a.removed_at IS NULL
-            AND EXISTS (\(adminMembershipSQL(account: "a.id", group: "g.id")))
-        """,
-        arguments: [account.rawValue],
-      )
+      ids = try administeredGroupIDs(of: account, in: db)
     case .anonymous:
-      []
+      ids = []
     }
     return Set(ids.map(GroupID.init(rawValue:)))
+  }
+
+  /// The groups the account holds `admin` in, plus, for a space admin, every
+  /// group but another person's own.
+  private static func administeredGroupIDs(of account: AccountID, in db: Database) throws -> [String] {
+    guard try Bool.fetchOne(
+      db,
+      sql: "SELECT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ? AND a.kind = 'human' AND a.removed_at IS NULL)",
+      arguments: [account.rawValue],
+    ) == true else { return [] }
+    let held = try String.fetchAll(
+      db,
+      sql: """
+      SELECT g.id FROM groups g
+        WHERE g.removed_at IS NULL AND EXISTS (
+          SELECT 1 FROM group_roles r WHERE r.grp = g.id AND r.account_id = ? AND r.role = 'admin'
+        )
+      """,
+      arguments: [account.rawValue],
+    )
+    let spaceAdmin = try Bool.fetchOne(
+      db,
+      sql: "SELECT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ? AND EXISTS (\(spaceAdminSQL(account: "a.id"))))",
+      arguments: [account.rawValue],
+    ) ?? false
+    guard spaceAdmin else { return held }
+    return held + (try String.fetchAll(db, sql: "SELECT id FROM groups WHERE removed_at IS NULL AND personal_account IS NULL"))
   }
 
   static func isHumanAdmin(_ account: AccountID, of group: GroupID, in db: Database) throws -> Bool {
@@ -253,9 +277,29 @@ enum Groups {
       arguments: [account.rawValue],
     ) == true else { return false }
     return try Bool.fetchOne(
-      db, sql: "SELECT EXISTS (\(adminMembershipSQL(account: "?", group: "?")))",
-      arguments: [group.rawValue, account.rawValue],
+      db,
+      sql: """
+      SELECT EXISTS (SELECT 1 FROM group_roles WHERE grp = ? AND account_id = ? AND role = 'admin')
+        OR (EXISTS (\(spaceAdminSQL(account: "?")))
+          AND NOT EXISTS (SELECT 1 FROM groups WHERE id = ? AND personal_account IS NOT NULL))
+      """,
+      arguments: [group.rawValue, account.rawValue, account.rawValue, group.rawValue],
     ) ?? false
+  }
+
+  /// Writes `account`'s `role` in `group`, idempotently.
+  static func grant(_ role: GroupRole, in group: GroupID, to account: AccountID, created: String, in db: Database) throws {
+    try db.execute(
+      sql: "INSERT OR IGNORE INTO group_roles (grp, account_id, role, created_at) VALUES (?, ?, ?, ?)",
+      arguments: [group.rawValue, account.rawValue, role.rawValue, created],
+    )
+  }
+
+  static func revoke(_ role: GroupRole, in group: GroupID, from account: AccountID, in db: Database) throws {
+    try db.execute(
+      sql: "DELETE FROM group_roles WHERE grp = ? AND account_id = ? AND role = ?",
+      arguments: [group.rawValue, account.rawValue, role.rawValue],
+    )
   }
 
   /// A human's personal group, created on first need. Its id is the account's earliest persona, else the
@@ -279,15 +323,14 @@ enum Groups {
       name = try Allocations.draw(.persona, createdBy: account.rawValue, created: created, minted: minted, in: db).name
     }
     let group = GroupID(rawValue: name)
-    try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES (?, ?)", arguments: [name, created])
-    for member in [group, .shared] {
-      try db.execute(
-        sql: "INSERT OR IGNORE INTO group_members (grp, account_id, joined_at) VALUES (?, ?, ?)",
-        arguments: [member.rawValue, account.rawValue, created],
-      )
-    }
-    try insertEdge(src: group, dst: .shared, kind: .read, created: created, by: nil, in: db)
-    try insertEdge(src: group, dst: group, kind: .admin, created: created, by: nil, in: db)
+    try db.execute(
+      sql: "INSERT INTO groups (id, created_at, personal_account) VALUES (?, ?, ?)", arguments: [name, created, account.rawValue],
+    )
+    try db.execute(
+      sql: "INSERT OR IGNORE INTO group_members (grp, account_id, joined_at) VALUES (?, ?, ?)",
+      arguments: [group.rawValue, account.rawValue, created],
+    )
+    try grant(.admin, in: group, to: account, created: created, in: db)
     try recompute(in: db)
     return group
   }
@@ -306,44 +349,18 @@ enum Groups {
     return (id, name)
   }
 
-  static func addEdge(src: GroupID, dst: GroupID, kind: GroupEdgeKind, created: String, by creator: String?, in db: Database) throws {
-    try insertEdge(src: src, dst: dst, kind: kind, created: created, by: creator, in: db)
-    try recompute(in: db)
-  }
-
-  static func removeEdge(src: GroupID, dst: GroupID, kind: GroupEdgeKind, in db: Database) throws {
-    if kind == .admin, src == dst {
-      throw SpaceError.personalGroupEdge(src.rawValue)
-    }
-    let admins = kind == .admin ? try humanAdminCount(of: dst, in: db) : 0
+  static func insertReadEdge(src: GroupID, dst: GroupID, created: String, by creator: String?, in db: Database) throws {
+    guard try !isPersonal(dst, in: db) else { throw SpaceError.personalGroupPrivate(dst.rawValue) }
     try db.execute(
-      sql: "DELETE FROM group_edges WHERE src = ? AND dst = ? AND kind = ?",
-      arguments: [src.rawValue, dst.rawValue, kind.rawValue],
+      sql: "INSERT OR IGNORE INTO group_edges (src, dst, kind, created_at, created_by) VALUES (?, ?, 'read', ?, ?)",
+      arguments: [src.rawValue, dst.rawValue, created, creator],
     )
-    if admins > 0, try humanAdminCount(of: dst, in: db) == 0 {
-      throw SpaceError.lastAdmin(src.rawValue)
-    }
-    try recompute(in: db)
   }
 
-  /// Live people who administer `group`, by `adminMembershipSQL`.
-  static func humanAdminCount(of group: GroupID, in db: Database) throws -> Int {
-    try Int.fetchOne(
-      db,
-      sql: """
-      SELECT count(*) FROM accounts a
-      WHERE a.kind = 'human' AND a.removed_at IS NULL AND EXISTS (\(adminMembershipSQL(account: "a.id", group: "?")))
-      """,
-      arguments: [group.rawValue],
-    ) ?? 0
-  }
-
-  private static func insertEdge(
-    src: GroupID, dst: GroupID, kind: GroupEdgeKind, created: String, by creator: String?, in db: Database,
-  ) throws {
+  static func removeReadEdge(src: GroupID, dst: GroupID, in db: Database) throws {
     try db.execute(
-      sql: "INSERT OR IGNORE INTO group_edges (src, dst, kind, created_at, created_by) VALUES (?, ?, ?, ?, ?)",
-      arguments: [src.rawValue, dst.rawValue, kind.rawValue, created, creator],
+      sql: "DELETE FROM group_edges WHERE src = ? AND dst = ? AND kind = 'read'",
+      arguments: [src.rawValue, dst.rawValue],
     )
   }
 

@@ -99,7 +99,7 @@ private final class IdentityHarness: Sendable {
     let space = try Space.inMemory()
     self.space = space
     self.store = space.sessions
-    _ = try await space.fs(.shared).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
+    _ = try await space.fs(.settings).write("/models.json", Data(identityModelsJSON.utf8), ifMatch: nil)
     let tokens = ExecTokens(spaceURL: Self.sessionSpace)
     let hub = MachineHub(space: space, tokens: tokens)
     let executor = SessionRuntime.toolExecutor(owner: Hub(space: space))

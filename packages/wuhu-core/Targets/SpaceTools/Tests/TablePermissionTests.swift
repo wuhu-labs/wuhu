@@ -1,15 +1,18 @@
 import DeterministicDependencies
 import JSONValue
 import SpaceContract
-import SpaceCore
+@testable import SpaceCore
 import SpaceTools
 import Testing
 
 @Suite(.deterministicDependencies) struct TablePermissionTests {
   @Test func readableSharedDoesNotPermitProtectedTableWrites() async throws {
     let base = try makeContext()
-    let account = try await base.space.addAccount(kind: .human, name: "reader")
-    let group = try await base.space.ensurePersonalGroup(account: account.id)
+    let group = GroupID(rawValue: "reader")
+    try await base.space.writer.write { db in
+      try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('reader', '2026-01-01T00:00:00Z')")
+    }
+    try await base.space.addReadEdge(from: group, to: .shared)
     let session = try await base.space.sessions.createSession(
       group: group, title: "reader", kind: .agent, createdBy: "reader",
       model: .init(provider: "test", model: "test", effort: "high"),

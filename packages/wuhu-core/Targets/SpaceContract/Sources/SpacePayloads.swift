@@ -204,27 +204,6 @@ public struct GroupSummary: Codable, Equatable, Sendable {
   public let admin: Bool?
 }
 
-/// `PUT /v1/groups/:id`: the settings to change; a missing one stays.
-public struct GroupUpdateInput: Codable, Equatable, Sendable {
-  /// Whether the group's sessions render the space-wide instruction layer.
-  public let spaceLayer: Bool?
-
-  public init(spaceLayer: Bool?) {
-    self.spaceLayer = spaceLayer
-  }
-}
-
-/// A group's settings, as `PUT /v1/groups/:id` leaves them.
-public struct GroupSettings: Codable, Equatable, Sendable {
-  public let id: String
-  public let spaceLayer: Bool
-
-  public init(id: String, spaceLayer: Bool) {
-    self.id = id
-    self.spaceLayer = spaceLayer
-  }
-}
-
 /// The request header that names the group a person's request acts in.
 public enum GroupHeader {
   public static let name: String = "wuhu-group"

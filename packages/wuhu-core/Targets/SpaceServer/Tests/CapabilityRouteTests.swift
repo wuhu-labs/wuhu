@@ -12,7 +12,7 @@ private let routePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 
 @Suite(.deterministicDependencies) struct CapabilityRouteTests {
   @Test func imageAndSearchHTTPUseTheSharedAuthoritativeResolution() async throws {
     let harness = try Harness(credentials: .init { id in id == "codex" ? .chatGPT(accessToken: "token", accountID: "account") : .apiKey("key") })
-    _ = try await harness.space.fs(.shared).write("/capabilities.json", Data(#"{"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://fake.openai/v1"}}},"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://fake.brave"}}}}"#.utf8), ifMatch: nil)
+    _ = try await harness.space.fs(.settings).write("/capabilities.json", Data(#"{"image":{"active":"openai","providers":{"openai":{"dialect":"openai-images","baseURL":"https://fake.openai/v1"}}},"web_search":{"active":"brave","providers":{"brave":{"dialect":"brave","baseURL":"https://fake.brave"}}}}"#.utf8), ifMatch: nil)
     let seen = LockIsolated<[String]>([])
     let provider = FetchClient { request in
       seen.withValue { $0.append(request.url.absoluteString) }

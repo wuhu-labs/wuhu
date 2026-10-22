@@ -135,7 +135,7 @@ private func touch(_ world: inout ToolWorld, _ address: String) async throws -> 
       try await space.writer.write { db in
         try db.execute(sql: "INSERT INTO groups (id, created_at) VALUES ('alice', '2026-01-01T00:00:00.000Z')")
       }
-      try await space.addEdge(src: alice, dst: .shared, kind: .read, by: nil)
+      try await space.addReadEdge(from: alice, to: .shared)
       let studio = try await space.addMachine(name: "studio").id.rawValue
       let mini = try await space.addMachine(name: "mini").id.rawValue
       try await space.writer.write { db in

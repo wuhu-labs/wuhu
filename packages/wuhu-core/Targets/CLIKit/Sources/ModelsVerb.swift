@@ -7,6 +7,7 @@
 import struct InferenceKit.ModelsDocument
 import JSONValue
 import SpaceClient
+import struct SpaceContract.GroupID
 import struct SpaceContract.ReadOutput
 import struct SpaceContract.WriteOutput
 
@@ -145,6 +146,12 @@ func prettyJSON(_ value: JSONValue, indent: Int = 0) -> String {
   }
 }
 
+/// The models catalog lives in the space's settings group, which only a space
+/// admin writes.
+private func settingsAddress(_ path: String) -> String {
+  GroupID.settings.address(path)
+}
+
 func renderedModels(providers: JSONValue, groups: JSONValue) -> String {
   let providerRows = (providers.object ?? [:]).sorted(by: { $0.key < $1.key }).map { id, entry in
     let models = (entry.object?["models"]?.object ?? [:]).keys.sorted().map { "  \(id)/\($0)\n" }.joined()
@@ -165,10 +172,10 @@ extension Executor {
   mutating func modelsList(json: Bool) async throws {
     let space = try self.wallet.pinnedSpace()
     let client = try await self.authenticated(space)
-    let output: ReadOutput = try await client.tool("read", ["path": .string(ModelsDocument.spacePath)])
+    let output: ReadOutput = try await client.tool("read", ["path": .string(settingsAddress(ModelsDocument.spacePath))])
     var groupText: String?
     do {
-      let groupOutput: ReadOutput = try await client.tool("read", ["path": .string(ModelsDocument.groupPath)])
+      let groupOutput: ReadOutput = try await client.tool("read", ["path": .string(settingsAddress(ModelsDocument.groupPath))])
       groupText = groupOutput.content
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
     _ = try ModelsDocument(json: Data(output.content.utf8), groupsJSON: groupText.map { Data($0.utf8) })
@@ -188,7 +195,7 @@ extension Executor {
     var token: String?
     do {
       let output: ReadOutput = try await self.authenticated(space).tool(
-        "read", ["path": .string(WellKnownModels.spacePath)],
+        "read", ["path": .string(settingsAddress(WellKnownModels.spacePath))],
       )
       token = output.token
       guard let existing = JSONValue.parse(output.content) else {
@@ -200,7 +207,9 @@ extension Executor {
     let merge = ModelsMerge(basis: basis, user: user)
     var groupText: String?
     do {
-      let output: ReadOutput = try await self.authenticated(space).tool("read", ["path": .string(ModelsDocument.groupPath)])
+      let output: ReadOutput = try await self.authenticated(space).tool(
+        "read", ["path": .string(settingsAddress(ModelsDocument.groupPath))],
+      )
       groupText = output.content
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
     _ = try ModelsDocument(json: Data(merge.merged.jsonString().utf8), groupsJSON: groupText.map { Data($0.utf8) })
@@ -210,12 +219,12 @@ extension Executor {
     }
 
     var input: JSONValue = [
-      "path": .string(WellKnownModels.spacePath),
+      "path": .string(settingsAddress(WellKnownModels.spacePath)),
       "content": .string(prettyJSON(merge.merged) + "\n"),
     ]
     input.set("ifMatch", token.map(JSONValue.string))
     let output: WriteOutput = try await self.authenticated(space).tool("write", input)
-    try self.wallet.record(token: output.token, space: space, path: WellKnownModels.spacePath)
+    try self.wallet.record(token: output.token, space: space, path: settingsAddress(WellKnownModels.spacePath))
 
     var report = merge.added.map { "added \($0)\n" }.joined()
     report += output.rev.map { "rev \($0)\n" } ?? ""

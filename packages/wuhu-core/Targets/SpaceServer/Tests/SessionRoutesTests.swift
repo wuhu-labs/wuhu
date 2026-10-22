@@ -42,7 +42,7 @@ import Testing
   @Test func aProviderFromModelsJSONCreatesAKernelSession() async throws {
     try await withSessionDeps {
       let harness = try await SessionHarness()
-      _ = try await harness.space.fs(.shared).write("/models.json", Data("""
+      _ = try await harness.space.fs(.settings).write("/models.json", Data("""
       {"claude": {"dialect": "anthropic", "baseURL": "https://api.anthropic.com/v1",
         "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
           "efforts": ["high"], "defaultEffort": "high"}}}}

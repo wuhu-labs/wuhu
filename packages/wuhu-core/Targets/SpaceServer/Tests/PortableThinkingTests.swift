@@ -91,7 +91,7 @@ func thinkingHistory(binding: ReplayBinding?, scope: String?, signed: Bool = tru
         let oldBinding: ReplayBinding? = boundary == .legacyAdoption ? nil : .init(identity: old.bindingIdentity, epoch: old.routeEpoch)
         if boundary == .credentialIdentity { identity.withLock { $0 = "new-account" } }
         if boundary == .providerConfiguration {
-          let fs = await harness.space.fs(.shared)
+          let fs = await harness.space.fs(.settings)
           let (entry, _) = try await fs.read("/models.json")
           _ = try await fs.write("/models.json", Data(models.replacingOccurrences(of: "localhost:1", with: "localhost:2").utf8), ifMatch: entry)
         }

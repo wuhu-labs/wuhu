@@ -22,7 +22,7 @@ export default async ({ rows, state, wake }) => {
 
 This **every-message** example catches up on history too. Returning the snapshot's newest `n` without waking on the first call starts from now instead. A bounded newest-message query can omit messages during an outage; a small observation on the newest `n` can instead trigger a paged `conversation()` catch-up with a saved message id (see `read-box`).
 
-A **topic** watch might select release or decision messages with `/\b(release|decision)\b/i.test(m.text)`. For semantic relevance, `complete()` from `wuhu:ai` can judge a batch using a cheap model you explicitly choose from `/models.json`:
+A **topic** watch might select release or decision messages with `/\b(release|decision)\b/i.test(m.text)`. For semantic relevance, `complete()` from `wuhu:ai` can judge a batch using a cheap model you explicitly choose from `wuhu://settings.localspace/models.json`:
 
 ```js
 import { complete } from "wuhu:ai";
