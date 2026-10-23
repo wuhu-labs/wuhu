@@ -3,6 +3,7 @@ import { requireAISharing } from '~/lib/ai-sharing'
 import type {
   SessionCreateInput,
   SessionCreateOutput,
+  SessionRestartInput,
 } from '~/lib/contract.gen'
 
 export interface Attachment {
@@ -144,4 +145,27 @@ export async function createSession(
 export interface SessionAddress {
   id: string
   group: string
+}
+
+export function archiveSession(
+  address: SessionAddress,
+  input: { force?: boolean } = {},
+): Promise<Record<string, never>> {
+  return post(
+    `/v1/session/${address.id}/archive`,
+    input,
+    inGroup(address.group),
+  )
+}
+
+export async function restartSession(
+  address: SessionAddress,
+  input: SessionRestartInput,
+): Promise<Record<string, never>> {
+  await requireAISharing()
+  return post(
+    `/v1/session/${address.id}/restart`,
+    input,
+    inGroup(address.group),
+  )
 }

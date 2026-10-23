@@ -2,14 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 import {
   AppShell,
-  GlassButton,
-  Glyph,
+  Glass,
+  GlassMenu,
   NavButtons,
   type PageLayout,
   TitlePill,
 } from '@wuhu/ui'
 import { AISharingDialog } from '~/components/ai-sharing-dialog'
+import { SpaceTools } from '~/components/space-tools'
 import { Composer } from '~/components/composer'
+import { SessionMenu } from '~/components/session-menu'
 import { SessionCreateDialog } from '~/components/session-create'
 import {
   settingsPlace,
@@ -27,10 +29,14 @@ import { inCreationOrder } from '~/lib/cards'
 import { composerSend } from '~/lib/composer-send'
 import {
   composerAim,
-  dockAfter,
   keepDock,
+  keepRecents,
   keptDock,
+  keptRecents,
   pageTarget,
+  pickTarget,
+  recentTargets,
+  reconcileTargeting,
   targetKey,
 } from '~/lib/composer-target'
 import type { QueryOutput } from '~/lib/contract.gen'
@@ -295,24 +301,43 @@ export function SpaceBody(
   const page = pageTarget(destination, capability)
   // The dock follows navigation, adjusted while rendering, and is kept per
   // space; before any agent box was opened it is Shared's oldest live agent.
-  const [dock, setDock] = useState(() => keptDock(scope))
-  if (dockAfter(dock, page) !== dock) setDock(dockAfter(dock, page))
-  useEffect(() => keepDock(scope, dock), [scope, dock])
+  const pageKey = page === null ? null : targetKey(page)
+  const [targeting, setTargeting] = useState(() => ({
+    page: pageKey,
+    dock: page?.kind === 'session' ? page.id : keptDock(scope),
+    recents: page?.kind === 'session'
+      ? recentTargets(keptRecents(scope), page.id)
+      : keptRecents(scope),
+  }))
+  const liveAgents =
+    sessions?.filter((session) =>
+      session.kind === 'agent' && session.lifecycle !== 'archived'
+    ) ?? null
   const fallbackDock =
     inCreationOrder(shared.sessions ?? []).find((session) =>
       session.kind === 'agent' && session.parent == null &&
       session.lifecycle !== 'archived'
     )?.id ?? null
-  const live = (id: string | null) =>
-    sessions?.find((session) =>
-      session.id === id && session.lifecycle !== 'archived'
-    )
-  const docked = live(dock) ?? live(fallbackDock) ?? null
-  const aim = onSettings ? null : composerAim({
-    destination,
+  const reconciled = reconcileTargeting(
+    targeting,
     page,
-    dock: docked?.id ?? null,
-  })
+    liveAgents?.map((session) => session.id) ?? null,
+    fallbackDock,
+  )
+  if (reconciled !== targeting) setTargeting(reconciled)
+  const { dock, recents } = reconciled
+  const selectTarget = (id: string) =>
+    setTargeting((state) => pickTarget(state, id))
+  useEffect(() => {
+    keepDock(scope, dock)
+    keepRecents(scope, recents)
+  }, [scope, dock, recents])
+  const live = (id: string | null) =>
+    liveAgents?.find((session) => session.id === id)
+  const docked = live(dock) ?? null
+  const aim = onSettings
+    ? null
+    : composerAim({ destination, page, dock: docked?.id ?? null })
   const drafts = useDrafts()
   const dictate = useDictationOffered()
   const channel = conversationId == null
@@ -320,9 +345,40 @@ export function SpaceBody(
     : shared.channels?.find((found) => found.id === conversationId) ?? null
   const pageTitle = usePageTitle(group, shown, carried.title ?? null)
 
+  const targetSession = aim?.target.kind === 'session'
+    ? live(aim.target.id)
+    : null
+  const recentSessions =
+    (targetSession ? recentTargets(recents, targetSession.id) : recents)
+      .flatMap((id) => {
+        const session = live(id)
+        return session ? [session] : []
+      })
+
   const composer = drafts === null || aim === null ? null : (
     <Composer
       key={targetKey(aim.target)}
+      targetChip={aim.docked && targetSession && (recentSessions.length <= 1
+        ? (
+          <Glass className='wui-pill wui-pill-lead'>
+            <SessionAvatar session={targetSession} size={26} />
+            <span>{targetSession.title}</span>
+          </Glass>
+        )
+        : (
+          <GlassMenu
+            label='Composer target'
+            placement='above'
+            lead={<SessionAvatar session={targetSession} size={26} />}
+            sections={[recentSessions.map((session) => ({
+              label: session.title,
+              selected: session.id === targetSession.id,
+              onSelect: () => selectTarget(session.id),
+            }))]}
+          >
+            {targetSession.title}
+          </GlassMenu>
+        ))}
       drafts={drafts}
       draftKey={targetKey(aim.target)}
       placeholder={aim.docked
@@ -344,13 +400,15 @@ export function SpaceBody(
   const pill = onSettings
     ? <TitlePill>Settings</TitlePill>
     : destination?.kind === 'session'
-    ? (
-      <TitlePill
-        lead={record && <SessionAvatar session={record} size={26} />}
-      >
-        {record?.title ?? destination.id}
-      </TitlePill>
-    )
+    ? (record?.kind === 'agent'
+      ? <SessionMenu key={record.id} record={record} />
+      : (
+        <TitlePill
+          lead={record && <SessionAvatar session={record} size={26} />}
+        >
+          {record?.title ?? destination.id}
+        </TitlePill>
+      ))
     : destination?.kind === 'conversation'
     ? <TitlePill>{channel?.title ?? 'Channel'}</TitlePill>
     : pageTitle && <TitlePill>{pageTitle}</TitlePill>
@@ -415,27 +473,14 @@ export function SpaceBody(
         onToggleSidebar={toggleSidebar}
         pinned={onSettings}
         tools={
-          <>
-            <GlassButton
-              aria-label='Settings'
-              title='Settings'
-              aria-pressed={onSettings}
-              solid={onSettings}
-              onClick={() =>
-                onSettings
-                  ? go(settingsFrom, settingsFromTitle)
-                  : go(screens.settings)}
-            >
-              <Glyph name='gear' w={18} h={18} />
-            </GlassButton>
-            <GlassButton
-              aria-label='New agent'
-              title='New agent'
-              onClick={() => setCreating(true)}
-            >
-              <Glyph name='plus' w={15} h={16} />
-            </GlassButton>
-          </>
+          <SpaceTools
+            settings={onSettings}
+            onSettings={() =>
+              onSettings
+                ? go(settingsFrom, settingsFromTitle)
+                : go(screens.settings)}
+            onCreate={() => setCreating(true)}
+          />
         }
         rail={settings
           ? <SettingsRail topic={settings.topic} onNavigate={go} />

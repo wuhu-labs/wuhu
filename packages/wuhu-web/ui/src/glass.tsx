@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, HTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, HTMLAttributes, RefAttributes } from 'react'
 
 // The one glass surface every chrome control is drawn on. It owns fill,
 // border, shadow, blur, height and radius; a caller only lays out what is in
@@ -37,7 +37,8 @@ export function Glass(
 export function GlassButton(
   { size, circle = true, solid, className, type = 'button', ...rest }:
     & GlassLook
-    & ButtonHTMLAttributes<HTMLButtonElement>,
+    & ButtonHTMLAttributes<HTMLButtonElement>
+    & RefAttributes<HTMLButtonElement>,
 ) {
   return (
     <button

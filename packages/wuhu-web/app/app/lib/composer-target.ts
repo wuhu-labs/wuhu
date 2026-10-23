@@ -33,25 +33,15 @@ export function keptDock(scope: string | null): string | null {
 
 export function keepDock(scope: string | null, dock: string | null): void {
   const key = dockKey(scope)
-  if (key === null || dock === null) return
-  globalThis.localStorage?.setItem(key, dock)
-}
-
-// The dock aims at the last agent box the reader opened, and only an agent box
-// moves it.
-export function dockAfter(
-  dock: string | null,
-  page: ComposeTarget | null,
-): string | null {
-  return page?.kind === 'session' ? page.id : dock
+  if (key === null) return
+  if (dock === null) globalThis.localStorage?.removeItem(key)
+  else globalThis.localStorage?.setItem(key, dock)
 }
 
 export type ComposerAim =
   | { target: ComposeTarget; docked: false }
   | { target: { kind: 'session'; id: string }; docked: true }
 
-// A session or conversation page posts to itself or has no composer; any other
-// page asks the docked agent about itself.
 export function composerAim({ destination, page, dock }: {
   destination: SpaceDestination | null
   page: ComposeTarget | null
@@ -63,4 +53,70 @@ export function composerAim({ destination, page, dock }: {
   return dock === null
     ? null
     : { target: { kind: 'session', id: dock }, docked: true }
+}
+
+export interface Targeting {
+  page: string | null
+  dock: string | null
+  recents: string[]
+}
+
+export function reconcileTargeting(
+  state: Targeting,
+  page: ComposeTarget | null,
+  live: readonly string[] | null,
+  fallback: string | null,
+): Targeting {
+  const key = page === null ? null : targetKey(page)
+  const own = page?.kind === 'session' ? page.id : null
+  const available = (id: string | null) =>
+    id !== null && (live === null || live.includes(id))
+  const dock = own ?? (available(state.dock) ? state.dock : fallback)
+  const kept = live === null
+    ? state.recents
+    : state.recents.filter((id) => live.includes(id))
+  const recents = dock === null ? kept : recentTargets(kept, dock)
+  return key === state.page && dock === state.dock &&
+      recents.length === state.recents.length &&
+      recents.every((id, index) => id === state.recents[index])
+    ? state
+    : { page: key, dock, recents }
+}
+
+export function pickTarget(state: Targeting, id: string): Targeting {
+  return { ...state, dock: id, recents: recentTargets(state.recents, id) }
+}
+
+export function recentTargets(
+  recents: readonly string[],
+  target: string,
+): string[] {
+  return [target, ...recents.filter((id) => id !== target)].slice(0, 8)
+}
+
+export function keptRecents(scope: string | null): string[] {
+  if (scope === null) return []
+  const raw = globalThis.localStorage?.getItem(`wuhu:dock-recents:${scope}`)
+  if (raw == null) return []
+  try {
+    const value: unknown = JSON.parse(raw)
+    return Array.isArray(value)
+      ? [...new Set(value.filter((id): id is string => typeof id === 'string'))]
+        .slice(0, 8)
+      : []
+  } catch {
+    return []
+  }
+}
+
+export function keepRecents(
+  scope: string | null,
+  recents: readonly string[],
+): void {
+  if (scope !== null) {
+    globalThis.localStorage?.setItem(
+      `wuhu:dock-recents:${scope}`,
+      JSON.stringify(recents),
+    )
+  }
 }

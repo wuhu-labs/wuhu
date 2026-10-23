@@ -316,3 +316,14 @@ Deno.test('flat links follow the advertised template and canonical port', () => 
     null,
   )
 })
+
+Deno.test('session journey link keeps transcript and group together', () => {
+  assertEquals(
+    sessionHref('a', 'shared', 'transcript'),
+    '/_/sessions/a?view=transcript',
+  )
+  assertEquals(
+    sessionHref('a', 'team', 'transcript'),
+    '/_/sessions/a?view=transcript&group=team',
+  )
+})

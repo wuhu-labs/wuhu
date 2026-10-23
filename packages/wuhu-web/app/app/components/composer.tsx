@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { ComposerRow, Glass, GlassButton, Glyph } from '@wuhu/ui'
 import { isComposerSendKey, sendKeyLabel, useSendKey } from '~/lib/composer'
 import { type Drafts, restoreDraft, withDictation } from '~/lib/drafts'
@@ -12,12 +12,14 @@ const fieldSizing = globalThis.CSS?.supports('field-sizing', 'content') ??
 // The composer: a glass field that grows with its text, the mic where the
 // space can transcribe, and the solid send.
 export function Composer({
+  targetChip,
   drafts,
   draftKey,
   placeholder,
   dictate,
   onSend,
 }: {
+  targetChip?: ReactNode
   drafts: Drafts
   draftKey: string
   placeholder: string
@@ -73,66 +75,69 @@ export function Composer({
   return (
     <>
       {error && <p className='wuhu-composer-error' role='alert'>{error}</p>}
-      <ComposerRow>
-        <Glass size='field' className='wuhu-composer-field'>
-          <textarea
-            ref={field}
-            rows={1}
-            aria-label={placeholder}
-            aria-keyshortcuts={sendKeyLabel(sendKey)}
-            placeholder={placeholder}
-            value={text}
-            onChange={(event) => {
-              setError(null)
-              drafts.set(draftKey, event.target.value)
-            }}
-            onKeyDown={(event) => {
-              if (
-                isComposerSendKey({
-                  key: event.key,
-                  keyCode: event.keyCode,
-                  shiftKey: event.shiftKey,
-                  isComposing: event.nativeEvent.isComposing,
-                  sendKey,
-                })
-              ) {
-                event.preventDefault()
-                send()
-              }
-            }}
-          />
-        </Glass>
-        {dictate && (
+      <div className='wuhu-composer-layout'>
+        {targetChip && <div className='wuhu-composer-target'>{targetChip}</div>}
+        <ComposerRow>
+          <Glass size='field' className='wuhu-composer-field'>
+            <textarea
+              ref={field}
+              rows={1}
+              aria-label={placeholder}
+              aria-keyshortcuts={sendKeyLabel(sendKey)}
+              placeholder={placeholder}
+              value={text}
+              onChange={(event) => {
+                setError(null)
+                drafts.set(draftKey, event.target.value)
+              }}
+              onKeyDown={(event) => {
+                if (
+                  isComposerSendKey({
+                    key: event.key,
+                    keyCode: event.keyCode,
+                    shiftKey: event.shiftKey,
+                    isComposing: event.nativeEvent.isComposing,
+                    sendKey,
+                  })
+                ) {
+                  event.preventDefault()
+                  send()
+                }
+              }}
+            />
+          </Glass>
+          {dictate && (
+            <GlassButton
+              size='field'
+              aria-label={dictation.phase === 'recording'
+                ? 'Stop and transcribe'
+                : dictation.phase === 'off'
+                ? 'Dictate'
+                : 'Transcribing…'}
+              aria-pressed={dictation.phase === 'recording'}
+              disabled={dictation.phase === 'starting' ||
+                dictation.phase === 'transcribing'}
+              solid={dictation.phase === 'recording'}
+              onClick={() => {
+                setError(null)
+                dictation.toggle()
+              }}
+            >
+              <Glyph name='mic' w={13} h={18} />
+            </GlassButton>
+          )}
           <GlassButton
             size='field'
-            aria-label={dictation.phase === 'recording'
-              ? 'Stop and transcribe'
-              : dictation.phase === 'off'
-              ? 'Dictate'
-              : 'Transcribing…'}
-            aria-pressed={dictation.phase === 'recording'}
-            disabled={dictation.phase === 'starting' ||
-              dictation.phase === 'transcribing'}
-            solid={dictation.phase === 'recording'}
-            onClick={() => {
-              setError(null)
-              dictation.toggle()
-            }}
+            solid
+            aria-label={`Send (${sendKeyLabel(sendKey)})`}
+            title={`Send (${sendKeyLabel(sendKey)})`}
+            disabled={!canSend}
+            onClick={send}
           >
-            <Glyph name='mic' w={13} h={18} />
+            <Glyph name='send' w={18} h={19} />
           </GlassButton>
-        )}
-        <GlassButton
-          size='field'
-          solid
-          aria-label={`Send (${sendKeyLabel(sendKey)})`}
-          title={`Send (${sendKeyLabel(sendKey)})`}
-          disabled={!canSend}
-          onClick={send}
-        >
-          <Glyph name='send' w={18} h={19} />
-        </GlassButton>
-      </ComposerRow>
+        </ComposerRow>
+      </div>
     </>
   )
 }

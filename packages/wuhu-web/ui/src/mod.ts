@@ -28,3 +28,5 @@ export {
   CatalogError,
   type CatalogLinks,
 } from './catalog.tsx'
+
+export { GlassMenu, type MenuItem } from './menu.tsx'

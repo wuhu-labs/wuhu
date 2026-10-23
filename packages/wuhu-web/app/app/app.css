@@ -272,7 +272,7 @@ summary,
 }
 
 .wuhu-composer-error {
-  max-width: 705px;
+  max-width: var(--wui-composer-width);
   margin: 0 auto 8px;
   padding: 0 21px;
   font-size: 12px;
@@ -734,4 +734,53 @@ summary,
   color: var(--color-mint-deep);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.wuhu-transcript article {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border, var(--_border));
+}
+.wuhu-transcript article > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+.wuhu-transcript article > header > strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.wuhu-transcript time {
+  color: var(--fg-muted, var(--_fg-muted));
+}
+.wuhu-transcript pre {
+  overflow: auto;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wuhu-composer-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wui-composer-chip-gap);
+  max-width: var(--wui-composer-width);
+  margin: 0 auto;
+}
+.wuhu-composer-layout > .wui-composer-inner {
+  width: 100%;
+}
+.wuhu-composer-target {
+  max-width: var(--wui-composer-chip-width);
+  margin-left: 8px;
+  pointer-events: auto;
+}
+.wuhu-composer-target > .wui-pill {
+  max-width: 100%;
+}
+.wuhu-transcript > h1 {
+  font-size: 26px;
+  font-weight: 650;
+  margin: 0 0 20px;
 }

@@ -5,9 +5,9 @@ import {
   useParams,
 } from 'react-router'
 import { ConversationChat } from '~/components/conversation-chat'
-import { TaskChat } from '~/components/task-chat'
+import { SessionTranscript } from '~/components/session-transcript'
 import { type CreatedSession, sessionHref } from '~/lib/links'
-import { lookupSession } from '~/lib/session-model'
+import { lookupSession, sessionPresentation } from '~/lib/session-model'
 import { useSpaceFeeds } from '~/lib/space-feeds'
 import type { SpaceContext } from '~/routes/space'
 
@@ -19,6 +19,7 @@ export function meta() {
 export default function Session() {
   const id = useParams().id!
   const location = useLocation()
+  const view = new URLSearchParams(location.search).get('view')
   const created = (location.state as CreatedSession | null)?.created === id
   const lookup = lookupSession(useSpaceFeeds().sessions, id, created)
   const { group } = useOutletContext<SpaceContext>()
@@ -37,9 +38,20 @@ export default function Session() {
   const { record } = lookup
   // A link that named no group, or the wrong one, still finds the session.
   if (record.group !== group) {
-    return <Navigate replace to={sessionHref(id, record.group)} />
+    return (
+      <Navigate
+        replace
+        to={sessionHref(
+          id,
+          record.group,
+          view === 'transcript' ? 'transcript' : undefined,
+        )}
+      />
+    )
   }
-  if (record.kind === 'task') return <TaskChat key={id} record={record} />
+  if (sessionPresentation(record.kind, view) === 'transcript') {
+    return <SessionTranscript key={id} record={record} />
+  }
   return (
     <ConversationChat
       key={id}

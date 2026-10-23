@@ -1,3 +1,4 @@
+import { sessionPresentation } from './session-model.ts'
 import { canCompose, sessionCapability } from './session-capability.ts'
 import { conversationCapability } from './use-conversation-access.ts'
 
@@ -70,4 +71,12 @@ Deno.test('conversation access waits for membership and roster, and excludes tas
     ),
     false,
   )
+})
+
+Deno.test('session route presentation opens tasks directly and agents only on their transcript journey', () => {
+  equal(sessionPresentation('task', null), 'transcript')
+  equal(sessionPresentation('task', 'transcript'), 'transcript')
+  equal(sessionPresentation('agent', null), 'chat')
+  equal(sessionPresentation('agent', 'transcript'), 'transcript')
+  equal(sessionPresentation('agent', 'unknown'), 'chat')
 })

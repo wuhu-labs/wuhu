@@ -49,8 +49,15 @@ export function placeHref(
   return withGroup(destinationPath(destination), group)
 }
 
-export function sessionHref(id: string, group: string): string {
-  return placeHref({ kind: 'session', id }, group)
+export function sessionHref(
+  id: string,
+  group: string,
+  view?: 'transcript',
+): string {
+  return withGroup(
+    destinationPath({ kind: 'session', id }) + (view ? `?view=${view}` : ''),
+    group,
+  )
 }
 
 export function conversationHref(id: string, group: string): string {

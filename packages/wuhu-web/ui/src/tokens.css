@@ -70,9 +70,14 @@
   --wui-control: 36px;
   --wui-field-h: 44px;
   --wui-card-radius: 28px;
-  --wui-column: 760px;
-  /* The one-line composer row: field plus its 31px bottom margin. */
+  --wui-menu-radius: 18px;
+  --wui-menu-item-radius: 12px;
+  --wui-menu-highlight: rgba(255, 255, 255, .6);
+  --wui-composer-width: 705px;
   --wui-composer-row: 75px;
+  --wui-composer-chip-gap: 8px;
+  --wui-composer-chip-width: 220px;
+  --wui-column: 760px;
 
   --blob-0: hsl(219 58% 80%);
   --blob-1: hsl(148 39% 78%);
@@ -334,6 +339,7 @@ button.wui-glass-solid:disabled {
    the floating titlebar and composer, with no edge fade. */
 .wui-app {
   --wui-main-left: var(--wui-sidebar-w);
+  --wui-composer-rest: var(--wui-composer-row);
   /* The first card's top, on the sidebar and on a framed page alike, and
      the gap between it and the buttons above it. */
   --wui-card-top: calc(var(--wui-titlebar) + 16px);
@@ -381,9 +387,7 @@ button.wui-glass-solid:disabled {
 .wui-page[data-layout='framed'] {
   top: var(--wui-card-top);
   right: 20px;
-  /* The frame stops short of the one-line composer row by the gap above it,
-     so it sits symmetric; a taller composer floats over it. */
-  bottom: calc(var(--wui-composer-row) + var(--wui-chrome-gap));
+  bottom: calc(var(--wui-composer-rest) + var(--wui-chrome-gap));
   left: var(--wui-frame-left);
   overflow: hidden;
   border-radius: 24px;
@@ -554,6 +558,7 @@ button.wui-glass-solid:disabled {
 }
 
 .wui-nav {
+  flex: none;
   width: 84px;
   overflow: hidden;
 }
@@ -622,7 +627,7 @@ button.wui-glass-solid:disabled {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  max-width: 705px;
+  max-width: var(--wui-composer-width);
   margin: 0 auto;
 }
 
@@ -885,4 +890,54 @@ button.wui-glass-solid:disabled {
 
 .wui-tree .wui-row-label {
   font-size: 14px;
+}
+
+.wui-menu-positioner {
+  z-index: 20;
+}
+.wui-menu {
+  height: auto;
+  min-width: 210px;
+  max-width: min(320px, var(--available-width));
+  max-height: var(--available-height);
+  overflow: auto;
+  padding: 6px;
+  border-radius: var(--wui-menu-radius);
+  display: block;
+  outline: none;
+}
+.wui-menu :is([role='menuitem'], [role='menuitemradio']) {
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--wui-menu-item-radius);
+  cursor: pointer;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+.wui-menu [data-highlighted] {
+  background: var(--wui-menu-highlight);
+}
+.wui-menu [data-disabled] {
+  opacity: .45;
+  cursor: default;
+}
+.wui-menu [role='separator'] {
+  border-top: 1px solid var(--wui-glass-border);
+  margin: 5px 8px;
+}
+
+.wui-app:has(.wuhu-composer-target) {
+  --wui-composer-rest: calc(var(--wui-composer-row) + var(--wui-control) + var(--wui-composer-chip-gap));
+}
+.wui-menu-trigger {
+  gap: 8px;
+  max-width: 100%;
+}
+.wui-menu-trigger.wui-pill-lead > :first-child {
+  margin-right: 3px;
 }

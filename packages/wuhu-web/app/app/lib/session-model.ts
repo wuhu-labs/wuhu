@@ -93,3 +93,10 @@ export function sessionKind(value: unknown): SessionKind {
   }
   return value
 }
+
+export function sessionPresentation(
+  kind: SessionKind,
+  view: string | null,
+): 'chat' | 'transcript' {
+  return kind === 'task' || view === 'transcript' ? 'transcript' : 'chat'
+}

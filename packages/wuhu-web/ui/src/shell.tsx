@@ -215,7 +215,6 @@ export function NavButtons({
   )
 }
 
-// The page pill: what is open, with an optional round lead (an avatar).
 export function TitlePill(
   { lead, children }: { lead?: ReactNode; children: ReactNode },
 ) {
