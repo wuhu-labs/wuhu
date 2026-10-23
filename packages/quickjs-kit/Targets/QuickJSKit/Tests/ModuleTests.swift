@@ -51,7 +51,7 @@ private func never() async throws -> JSONValue {
     do {
       try await engine.run(module: "import { readFile } from 'fs'")
       Issue.record("expected the import to fail")
-    } catch let JSError.exception(message, _) {
+    } catch let JSError.exception(message, _, _) {
       #expect(message == "ReferenceError: could not load module 'fs'")
     }
   }
@@ -97,7 +97,7 @@ private func never() async throws -> JSONValue {
     do {
       try await engine.run(module: "block()\nawait null\nthrow new Error('boom')")
       Issue.record("expected the rejection")
-    } catch let JSError.exception(message, stack) {
+    } catch let JSError.exception(message, stack, _) {
       #expect(message == "Error: boom", "\(String(describing: stack))")
     }
   }
@@ -108,5 +108,25 @@ private func never() async throws -> JSONValue {
     let run = Task { try await engine.run(module: "await block()") }
     run.cancel()
     await #expect(throws: CancellationError.self) { try await run.value }
+  }
+
+  @Test func authorizesDefinedModulesBeforeResolving() async throws {
+    let engine = JSEngine()
+    try engine.defineModule("host:private", source: "export const secret = 1")
+    let calls = Mutex<[String]>([])
+    await #expect(throws: JSError.self) {
+      try await engine.run(module: "import {secret} from 'host:private'", name: "author", loader: .init(
+        maxModules: 0,
+        authorize: { specifier, referrer in
+          calls.withLock { $0.append("\(referrer):\(specifier)") }
+          throw JSError.unsupportedValue("Private module")
+        },
+        resolve: { _, _ in Issue.record("Private import reached resolution"); return "unexpected" },
+        source: { _ in Issue.record("Private import reached source loading"); return "" },
+      ))
+    }
+    #expect(calls.withLock { $0 } == ["author:host:private"])
+    try await engine.run(module: "import {secret} from 'host:private'; globalThis.answer = secret", name: "trusted")
+    #expect(try engine.evaluate("answer") == .integer(1))
   }
 }

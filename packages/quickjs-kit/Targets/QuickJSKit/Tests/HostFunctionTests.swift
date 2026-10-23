@@ -103,7 +103,7 @@ private struct HostFailure: Error, CustomStringConvertible {
       _ = try await engine.run("await boomLater()")
       Issue.record("expected a rejection")
     } catch let error as JSError {
-      guard case .exception(let message, _) = error else {
+      guard case .exception(let message, _, _) = error else {
         Issue.record("expected an exception, got \(error)")
         return
       }

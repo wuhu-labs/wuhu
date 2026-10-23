@@ -40,7 +40,7 @@ export function useShell(): ShellState {
 // The geometry the insets name, the one source: tokens.css reads it as
 // --wui-titlebar and --wui-sidebar-w.
 const titlebar = 70
-const sidebarWidth = 399
+const sidebarWidth = 429
 const zero: Insets = { top: 0, left: 0, right: 0, bottom: 0 }
 
 interface AppStyle extends CSSProperties {

@@ -7,6 +7,8 @@ Provides macros that mirror the project's custom SPM layout:
 """
 
 load("@build_bazel_rules_apple//apple:ios.bzl", "ios_unit_test")
+load("@build_bazel_rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@build_bazel_rules_apple//apple:providers.bzl", "AppleTestRunnerInfo", "apple_provider")
 load("@build_bazel_rules_apple//apple:resources.bzl", "apple_resource_bundle")
 load("@build_bazel_rules_apple//apple:tvos.bzl", "tvos_unit_test")
 load("@build_bazel_rules_apple//apple:visionos.bzl", "visionos_unit_test")
@@ -486,6 +488,107 @@ def wuhu_swift_test(name, srcs, deps, package_name, copy_resources = None, proce
             "//conditions:default": [],
         }),
         **kwargs
+    )
+
+def _wuhu_macos_runner_impl(ctx):
+    base = ctx.attr.base[AppleTestRunnerInfo]
+    environment = {}
+    for key, value in ctx.attr.env.items():
+        # rules_apple expands make variables in env, but not data locations.
+        expanded = ctx.expand_location(
+            value.replace("$(rootpaths ", "$(locations ").replace("$(rootpath ", "$(location "),
+            targets = ctx.attr.data,
+        )
+        expanded = ctx.expand_make_variables("env", expanded, {})
+        for file in sorted(ctx.files.data, key = _file_path_length, reverse = True):
+            # The default runner interpolates test_env in a shell assignment before Xcode changes cwd.
+            expanded = expanded.replace(file.path, "${TEST_SRCDIR}/" + ctx.workspace_name + "/" + file.short_path)
+        environment[key] = expanded
+    template = ctx.actions.declare_file(ctx.label.name + ".sh")
+    inherited = []
+    for name in ctx.attr.env_inherit:
+        if not name or not (name[0].isalpha() or name[0] == "_") or not name.replace("_", "").isalnum():
+            fail("invalid inherited environment name: " + name)
+        if name not in environment:
+            inherited.append('if [[ "${' + name + '+x}" == x ]]; then TEST_ENV="${TEST_ENV:+$TEST_ENV,}' + name + '=${' + name + '}"; fi')
+    ctx.actions.run(
+        executable = ctx.file._deno,
+        inputs = [base.test_runner_template, ctx.file._template_adapter],
+        outputs = [template],
+        arguments = [
+            "run", "--no-config", "--allow-read", "--allow-write", ctx.file._template_adapter.path,
+            base.test_runner_template.path, template.path, json.encode(inherited),
+            "true" if "WUHU_VDISPLAY_TOOL" in environment else "false",
+        ],
+        mnemonic = "MacTestRunnerTemplate",
+    )
+    runfiles = ctx.runfiles(files = ctx.files.data).merge(ctx.attr.base[DefaultInfo].default_runfiles)
+    for target in ctx.attr.data:
+        runfiles = runfiles.merge(target[DefaultInfo].default_runfiles)
+    return [
+        apple_provider.make_apple_test_runner_info(
+            test_runner_template = template,
+            execution_requirements = getattr(base, "execution_requirements", {}),
+            execution_environment = dict(getattr(base, "execution_environment", {}), **environment),
+            test_environment = dict(getattr(base, "test_environment", {}), **environment),
+        ),
+        DefaultInfo(runfiles = runfiles),
+    ]
+
+def _file_path_length(file):
+    return len(file.path)
+
+_wuhu_macos_runner = rule(
+    implementation = _wuhu_macos_runner_impl,
+    attrs = {
+        "base": attr.label(default = Label("@build_bazel_rules_apple//apple/testing/default_runner:macos_default_runner"), providers = [AppleTestRunnerInfo]),
+        "data": attr.label_list(allow_files = True),
+        "env": attr.string_dict(),
+        "env_inherit": attr.string_list(),
+        "_template_adapter": attr.label(default = Label("//bazel/rules:mac_runner_template.ts"), allow_single_file = True),
+        "_deno": attr.label(default = Label("//bazel/rules:deno"), allow_single_file = True, cfg = "exec"),
+    },
+)
+
+def wuhu_macos_test(name, srcs, deps, package_name, minimum_os_version, target_compatible_with, copy_resources = None, process_resources = None, resource_root = None, resource_sentinel = None, extra_data = None, copts = [], plugins = [], env = None, env_inherit = None, size = None, tags = None, linkopts = []):
+    copy_resources = copy_resources or []
+    process_resources = process_resources or []
+    resource_srcs, resource_data = _wuhu_resource_srcs(name, package_name, name, resource_root, resource_sentinel, copy_resources, process_resources)
+    library_name = "{}.library".format(name)
+    swift_library(
+        name = library_name,
+        testonly = True,
+        srcs = srcs + resource_srcs,
+        copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_CONTROLLABLE_CLOCK_COPTS + copts,
+        data = copy_resources + (extra_data or []),
+        deps = deps,
+        module_name = name.replace("-", "_"),
+        package_name = package_name,
+        plugins = plugins,
+        tags = ["manual"],
+        target_compatible_with = target_compatible_with,
+    )
+    runner_name = "{}.runner".format(name)
+    inherited = (env_inherit or []) + ["TEST_SRCDIR", "RUNFILES_DIR", "TEST_UNDECLARED_OUTPUTS_DIR", "TEST_TMPDIR"]
+    _wuhu_macos_runner(
+        name = runner_name,
+        testonly = True,
+        data = copy_resources + (extra_data or []),
+        env = env,
+        env_inherit = inherited,
+    )
+    macos_unit_test(
+        name = name,
+        runner = ":" + runner_name,
+        minimum_os_version = minimum_os_version,
+        resources = resource_data,
+        data = copy_resources + (extra_data or []),
+        deps = [":" + library_name],
+        linkopts = linkopts,
+        env_inherit = inherited,
+        size = size,
+        tags = tags or [],
+        target_compatible_with = target_compatible_with,
     )
 
 _SIMULATOR_UNIT_TEST_RULES = {

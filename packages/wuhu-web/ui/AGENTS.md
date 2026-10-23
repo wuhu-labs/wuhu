@@ -15,6 +15,6 @@ small.
   composer), `framed` (one card that never scrolls) and `immersive` (under the
   whole window). `useShell()` gives the scroller and the insets, the composer's
   live height included. No edge clip, mask or fade anywhere.
-- `kit.tsx`: cards and rows from the mock's `src/kit`, authored at 317px and
-  drawn at the sidebar's zoom.
+- `kit.tsx`: cards and rows from the mock's `src/kit`, drawn at their authored
+  317px width without zoom.
 - Desktop widths only; no compact or touch layout.

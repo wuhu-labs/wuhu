@@ -46,4 +46,31 @@ import Testing
       try engine.evaluate("const a = {}; a.self = a; a")
     }
   }
+
+  @Test func isolatedEvaluationHasFreshGlobalsAndRestoresInterrupts() throws {
+    let engine = JSEngine(limits: .init(stepBudget: 4))
+    try engine.execute("globalThis.secret = 7; Object.prototype.tainted = true")
+    #expect(try engine.evaluateIsolated("[typeof secret, Object.prototype.tainted === undefined]") == [.string("undefined"), .bool(true)])
+    #expect(throws: JSError.terminated) { try engine.evaluateIsolated("while (true) {}") }
+    #expect(try engine.evaluate("secret") == .integer(7))
+    #expect(throws: JSError.terminated) { try engine.evaluate("while (true) {}") }
+  }
+
+  @Test func isolatedEvaluationSharesTheMemoryLimit() throws {
+    let engine = JSEngine(limits: .init(memoryBytes: 4 << 20))
+    try engine.execute("globalThis.retained = new ArrayBuffer(2500000)")
+    #expect(throws: JSError.self) { try engine.evaluateIsolated("new ArrayBuffer(2500000).byteLength") }
+    #expect(try engine.evaluate("retained.byteLength") == .integer(2_500_000))
+  }
+
+  @Test func isolatedEvaluationAcceptsOnlyItsOwnModules() throws {
+    let engine = JSEngine()
+    try engine.defineModule("private", source: "export const value = 99")
+    #expect(try engine.evaluateIsolated("answer", modules: [
+      (name: "local", source: "globalThis.answer = 42"),
+    ]) == .integer(42))
+    #expect(throws: JSError.self) {
+      try engine.evaluateIsolated("0", modules: [(name: "probe", source: "import {value} from 'private'")])
+    }
+  }
 }

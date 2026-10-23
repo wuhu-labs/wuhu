@@ -1,3 +1,4 @@
+import { macRunnerTemplate } from '../../bazel/rules/mac_runner_template.ts'
 import {
   appBundleInfo,
   appBundles,
@@ -3415,4 +3416,96 @@ Deno.test('test-only helper libraries include developer framework search paths',
     testOnly: true,
   }])
   assertIncludes(build, 'name = "TestDependencies",\n    testonly = True,')
+})
+
+Deno.test('macBundle opts only the mac host into an assembled XCTest resource bundle', async () => {
+  const pkg = { ...basePkg, platforms: { macOS: '15.0', iOS: '18.0' } }
+  const target: TargetManifest = {
+    ...minimalTarget('Capture', 'library'),
+    tests: {
+      macBundle: true,
+      checks: { test: ['mac', 'ios'] },
+      platformRuntime: {
+        mac: {
+          externalData: ['//tools:holder'],
+          env: { TOOL: '$(rootpath //tools:holder)' },
+        },
+      },
+    },
+  }
+  const build = await generateBuildBazel(pkg, [target])
+  assertIncludes(build, 'wuhu_macos_test(\n    name = "CaptureTests",')
+  assertIncludes(build, 'minimum_os_version = "15.0"')
+  const host = build.slice(
+    build.indexOf('wuhu_macos_test('),
+    build.indexOf('wuhu_sim_test('),
+  )
+  assertIncludes(host, '"//tools:holder"')
+  assertIncludes(host, '"TOOL": "$(rootpath //tools:holder)"')
+  assertIncludes(build, 'wuhu_sim_test(\n    name = "CaptureTests.ios",')
+  assertEquals(
+    build.includes('wuhu_swift_test(\n    name = "CaptureTests",'),
+    false,
+  )
+  const ordinary = await generateBuildBazel(pkg, [{
+    ...target,
+    tests: { checks: { test: ['mac'] } },
+  }])
+  assertIncludes(ordinary, 'wuhu_swift_test(\n    name = "CaptureTests",')
+})
+
+const macRunnerFixture = `#!/bin/bash
+set -e
+TEST_ENV="%(test_env)s"
+for SINGLE_TEST_ENV in \${TEST_ENV//,/ }; do
+  IFS== read key value <<< "$SINGLE_TEST_ENV"
+  echo "$key=$value"
+done
+xcodebuild test-without-building
+`
+
+Deno.test('mac runner forwards inherited environment without prelaunch for ordinary bundles', () => {
+  const inherited =
+    'if [[ "${WUHU_SNAPSHOT_RECORD_DIR+x}" == x ]]; then TEST_ENV="${TEST_ENV:+$TEST_ENV,}WUHU_SNAPSHOT_RECORD_DIR=${WUHU_SNAPSHOT_RECORD_DIR}"; fi'
+  const output = macRunnerTemplate(macRunnerFixture, [inherited], false)
+  assertIncludes(output, `TEST_ENV="%(test_env)s"\n${inherited}`)
+  assertEquals(output.includes('"$value" acquire'), false)
+  assertIncludes(output, 'xcodebuild test-without-building')
+})
+
+Deno.test('mac capture runner acquires declared display before launching XCTest', () => {
+  const output = macRunnerTemplate(macRunnerFixture, [], true)
+  assertIncludes(output, 'if [[ "$key" == WUHU_VDISPLAY_TOOL ]]; then')
+  assertIncludes(output, 'if ! "$value" acquire; then')
+  assertIncludes(
+    output,
+    'macOS capture display prelaunch acquisition failed: $value',
+  )
+  assertIncludes(output, 'exit 1')
+  assertEquals(
+    output.indexOf('"$value" acquire') <
+      output.indexOf('xcodebuild test-without-building'),
+    true,
+  )
+})
+
+Deno.test('mac runner rejects missing and duplicate pinned insertion anchors', () => {
+  for (
+    const anchor of [
+      'TEST_ENV="%(test_env)s"',
+      '  IFS== read key value <<< "$SINGLE_TEST_ENV"',
+    ]
+  ) {
+    for (
+      const source of [
+        macRunnerFixture.replace(anchor, ''),
+        macRunnerFixture.replace(anchor, `${anchor}\n${anchor}`),
+      ]
+    ) {
+      assertThrows(
+        () => macRunnerTemplate(source, [], true),
+        'pinned macOS runner template changed: expected one',
+      )
+    }
+  }
 })

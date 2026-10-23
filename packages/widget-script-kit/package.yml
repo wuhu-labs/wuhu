@@ -1,0 +1,13 @@
+name: widget-script-kit
+owner: shared
+swiftToolsVersion: "6.3"
+packageName: WidgetScriptKit
+products:
+  - WidgetScriptSource
+platforms:
+  macOS: "26.0"
+  iOS: "26.0"
+  visionOS: "26.0"
+checks:
+  build: [mac, ios, visionos]
+  test: [mac]

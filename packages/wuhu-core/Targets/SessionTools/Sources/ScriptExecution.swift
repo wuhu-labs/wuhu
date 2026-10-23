@@ -337,7 +337,7 @@ final class ScriptExecution: Sendable {
       let modules = scriptModules(client: client, snapshot: try await ScriptModuleSnapshot.load(client), typedErrors: handler != nil)
       try await engine.run(module: source, name: "script", meta: ["session": .string(session.rawValue)], loader: modules)
       return .released
-    } catch let JSError.exception(message, stack) {
+    } catch let JSError.exception(message, stack, _) {
       let trace = (stack ?? "").split(separator: "\n").map(String.init)
       return .failed(secrets.mask(([message] + trace).joined(separator: "\n")))
     } catch {

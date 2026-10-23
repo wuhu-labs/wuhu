@@ -151,7 +151,10 @@ func exception(_ thrown: JSValue, in ctx: OpaquePointer) -> JSError {
   let stackValue = JS_GetPropertyStr(ctx, thrown, "stack")
   defer { JS_FreeValue(ctx, stackValue) }
   let stack = tag(of: stackValue) == JS_TAG_STRING ? string(stackValue, in: ctx) : nil
-  return .exception(message: message, stack: stack)
+  let detailValue = JS_GetPropertyStr(ctx, thrown, "message")
+  defer { JS_FreeValue(ctx, detailValue) }
+  let detail = tag(of: detailValue) == JS_TAG_STRING ? string(detailValue, in: ctx) : nil
+  return .exception(message: message, stack: stack, detail: detail)
 }
 
 func throwError(_ message: String, in ctx: OpaquePointer) -> JSValue {

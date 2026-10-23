@@ -1,0 +1,13 @@
+name: WidgetScriptSource
+kind: library
+sources: Sources
+resources:
+  - path: Resources/prelude.js
+    mode: process
+  - path: Resources/tree.js
+    mode: process
+embeddedResources:
+  - name: WidgetScripts
+    path: Resources
+    typeName: EmbeddedWidgetScripts
+    symbolName: widgetscripts

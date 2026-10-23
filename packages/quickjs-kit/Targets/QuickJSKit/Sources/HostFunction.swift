@@ -169,7 +169,7 @@ private func cancel(_ promise: JSValue, reason: JSValue, state: EngineState, in 
 }
 
 func describe(_ error: any Error) -> String {
-  if let jsError = error as? JSError, case .exception(let message, _) = jsError {
+  if let jsError = error as? JSError, case .exception(let message, _, _) = jsError {
     return message
   }
   return String(describing: error)

@@ -4,15 +4,18 @@ import OrderedCollections
 
 extension JSEngine {
   public struct ModuleLoader: Sendable {
+    let authorize: @Sendable (_ specifier: String, _ referrer: String) throws -> Void
     let maxModules: Int
     let resolve: @Sendable (_ specifier: String, _ referrer: String) throws -> String
     let source: @Sendable (_ name: String) async throws -> String
 
     public init(
       maxModules: Int,
+      authorize: @escaping @Sendable (_ specifier: String, _ referrer: String) throws -> Void = { _, _ in },
       resolve: @escaping @Sendable (_ specifier: String, _ referrer: String) throws -> String,
       source: @escaping @Sendable (_ name: String) async throws -> String,
     ) {
+      self.authorize = authorize
       self.maxModules = maxModules
       self.resolve = resolve
       self.source = source
@@ -24,7 +27,11 @@ extension JSEngine {
   // empty stubs to learn what it imports, wave by wave, so the real compile
   // finds every source already fetched.
   func discover(_ source: String, registry: ModuleRegistry) async throws {
-    let scratch = JSEngine(limits: limits)
+    let scratch = try isolatedContext()
+    defer {
+      JS_SetModuleLoaderFunc(runtime, nil, nil, nil)
+      restoreInterruptHandler()
+    }
     registry.install(on: scratch.runtime)
     try scratch.compile(source, name: registry.entry, for: registry)
     while registry.discovered.count > registry.fetched {
@@ -68,8 +75,8 @@ extension JSEngine {
     guard !isException(compiled) else {
       let error = failure()
       if let failure = registry.failure { throw failure }
-      guard name != registry.entry, case .exception(let message, let stack) = error else { throw error }
-      throw registry.located(message, at: name, stack: stack)
+      guard name != registry.entry, case .exception(let message, let stack, let detail) = error else { throw error }
+      throw registry.located(message, at: name, stack: stack, detail: detail)
     }
     JS_FreeValue(context, compiled)
   }
@@ -100,14 +107,15 @@ final class ModuleRegistry {
     JS_SetModuleLoaderFunc(runtime, normalizeModule, loadModule, Unmanaged.passUnretained(self).toOpaque())
   }
 
-  func located(_ message: String, at name: String, stack: String? = nil) -> JSError {
+  func located(_ message: String, at name: String, stack: String? = nil, detail: String? = nil) -> JSError {
     var chain = [name]
     while let importer = importers[chain.last!] { chain.append(importer) }
-    return .exception(message: "\(chain.reversed().joined(separator: " → ")): \(message)", stack: stack)
+    let path = chain.reversed().joined(separator: " → ")
+    return .exception(message: "\(path): \(message)", stack: stack, detail: detail.map { "\(path): \($0)" })
   }
 
-  func record(_ message: String, at name: String, stack: String? = nil) {
-    if failure == nil { failure = located(message, at: name, stack: stack) }
+  func record(_ message: String, at name: String, stack: String? = nil, detail: String? = nil) {
+    if failure == nil { failure = located(message, at: name, stack: stack, detail: detail) }
   }
 }
 
@@ -128,10 +136,11 @@ private func normalizeModule(
     _ = throwError("import() is not supported; import '\(specifier)' statically", in: ctx)
     return nil
   }
-  if registry.builtins.contains(specifier) { return js_strdup(ctx, name) }
   let referrer = String(cString: base)
   let resolved: String
   do {
+    try registry.loader.authorize(specifier, referrer)
+    if registry.builtins.contains(specifier) { return js_strdup(ctx, name) }
     resolved = try registry.loader.resolve(specifier, referrer)
   } catch {
     registry.record(describe(error), at: referrer)
@@ -169,8 +178,8 @@ private func loadModule(
   let compiled = evaluateSource(source, name: moduleName, flags: JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY, in: ctx)
   if isException(compiled) {
     let thrown = JS_GetException(ctx)
-    if case .exception(let message, let stack) = exception(thrown, in: ctx) {
-      registry.record(message, at: moduleName, stack: stack)
+    if case .exception(let message, let stack, let detail) = exception(thrown, in: ctx) {
+      registry.record(message, at: moduleName, stack: stack, detail: detail)
     }
     _ = JS_Throw(ctx, thrown)
     return nil

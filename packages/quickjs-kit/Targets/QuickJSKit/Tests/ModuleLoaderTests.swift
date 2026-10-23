@@ -46,7 +46,7 @@ private func message(of run: () async throws -> Void) async -> String? {
   do {
     try await run()
     return nil
-  } catch let JSError.exception(message, _) {
+  } catch let JSError.exception(message, _, _) {
     return message
   } catch {
     return "\(error)"
@@ -67,6 +67,19 @@ private func message(of run: () async throws -> Void) async -> String? {
     )
     #expect(library.reported == [.string("b"), .string("a"), .integer(3)])
     #expect(library.read.sorted() == ["lib:a", "lib:b"])
+  }
+
+  @Test func importedSyntaxFailuresRetainTheDisplayChain() async throws {
+    let library = Library(["lib:a": "import 'lib:b'", "lib:b": "export const ="])
+    let engine = library.engine()
+    do {
+      try await engine.run(module: "import 'lib:a'", name: "script", loader: library.loader())
+      Issue.record("Expected an imported syntax error")
+    } catch let JSError.exception(message, _, detail) {
+      #expect(message.hasPrefix("script → lib:a → lib:b: "))
+      #expect(detail?.hasPrefix("script → lib:a → lib:b: ") == true)
+      #expect(detail?.contains("SyntaxError:") == false)
+    }
   }
 
   @Test func cyclesFollowModuleSemantics() async throws {

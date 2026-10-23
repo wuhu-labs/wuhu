@@ -9,7 +9,11 @@
     "public/_/worklets/bubble.js",
     "public/_/iconamoon.svg",
     "app/lib/widgets/quickjs/emscripten-module.browser.mjs",
-    "app/lib/widgets/iconamoon-names.json"
+    "app/lib/widgets/iconamoon-names.json",
+    "app/lib/widgets/shared/prelude.js",
+    "app/lib/widgets/shared/tree.js",
+    "app/lib/widgets/shared/prelude.d.ts",
+    "app/lib/widgets/shared/tree.d.ts"
   ],
   "generated": {
     "app/lib/contract.gen.ts": "//tools/contract-ts:space-contract",
@@ -18,7 +22,11 @@
     "app/lib/widgets/quickjs/emscripten-module.browser.mjs": "//tools/quickjs-wasm:emscripten-module.browser.mjs",
     "app/lib/widgets/quickjs/emscripten-module.wasm": "//tools/quickjs-wasm:emscripten-module.wasm",
     "app/lib/widgets/iconamoon-names.json": "//tools/iconamoon:names.json",
-    "public/_/iconamoon.svg": "//tools/iconamoon:iconamoon.svg"
+    "public/_/iconamoon.svg": "//tools/iconamoon:iconamoon.svg",
+    "app/lib/widgets/shared/prelude.js": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/prelude.js",
+    "app/lib/widgets/shared/tree.js": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/tree.js",
+    "app/lib/widgets/shared/prelude.d.ts": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/prelude.d.ts",
+    "app/lib/widgets/shared/tree.d.ts": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/tree.d.ts"
   },
   "exportedDirs": {
     "shell-sdk": "app/lib/shell-sdk"

@@ -8,11 +8,13 @@ public final class JSEngine {
   let runtime: OpaquePointer
   let context: OpaquePointer
   let state: EngineState
+  private let ownsRuntime: Bool
 
   public init(limits: Limits = Limits(), interrupter: Interrupter = Interrupter()) {
     guard let runtime = JS_NewRuntime(), let context = JS_NewContext(runtime) else {
       fatalError("QuickJS runtime allocation failed")
     }
+    self.ownsRuntime = true
     self.runtime = runtime
     self.context = context
     self.interrupter = interrupter
@@ -26,12 +28,42 @@ public final class JSEngine {
     JS_SetInterruptHandler(runtime, interruptHandler, opaque)
   }
 
+  private init(sharing engine: JSEngine) throws {
+    guard let context = JS_NewContext(engine.runtime) else {
+      throw JSError.unsupportedValue("memory limit exceeded creating isolated context")
+    }
+    self.ownsRuntime = false
+    self.runtime = engine.runtime
+    self.context = context
+    self.interrupter = engine.interrupter
+    self.limits = engine.limits
+    self.state = EngineState(interrupter: engine.interrupter, stepBudget: engine.limits.stepBudget)
+    let opaque = Unmanaged.passUnretained(state).toOpaque()
+    JS_SetContextOpaque(context, opaque)
+    JS_SetInterruptHandler(runtime, interruptHandler, opaque)
+  }
+
+  func isolatedContext() throws -> JSEngine { try JSEngine(sharing: self) }
+
+  func restoreInterruptHandler() {
+    JS_SetInterruptHandler(runtime, interruptHandler, Unmanaged.passUnretained(state).toOpaque())
+  }
+
+  /// Evaluates trusted synchronous code in a fresh realm under this engine's shared memory limit.
+  public func evaluateIsolated(_ source: String, modules: [(name: String, source: String)] = []) throws -> JSONValue {
+    precondition(!state.running, "isolated evaluation cannot overlap a run")
+    let isolated = try isolatedContext()
+    defer { restoreInterruptHandler() }
+    for module in modules { try isolated.defineModule(module.name, source: module.source) }
+    return try isolated.evaluate(source)
+  }
+
   deinit {
     for call in state.pending.values {
       state.release(call, in: context)
     }
     JS_FreeContext(context)
-    JS_FreeRuntime(runtime)
+    if ownsRuntime { JS_FreeRuntime(runtime) }
   }
 
   public func define(

@@ -514,14 +514,13 @@ button.wui-glass-solid:disabled {
   height: 24px !important;
 }
 
-/* The list scrolls the full window height; cards are authored at 317px and
-   drawn at 287 (the mock's zoom). */
+/* The list scrolls the full window height with full-size 317px cards. */
 .wui-sidebar-scroll {
   position: absolute;
   top: 0;
   bottom: 0;
   left: calc(var(--wui-list-left) - 4px);
-  width: 295px;
+  width: 325px;
   overflow-y: auto;
   scrollbar-width: none;
   box-sizing: border-box;
@@ -530,7 +529,6 @@ button.wui-glass-solid:disabled {
 }
 
 .wui-sidebar-list {
-  zoom: 0.9054;
   width: 317px;
 }
 

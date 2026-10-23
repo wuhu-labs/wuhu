@@ -178,6 +178,7 @@ const testSizes = ['small', 'medium', 'large', 'enormous'] as const
 type TestSize = (typeof testSizes)[number]
 
 interface TestConfig {
+  macBundle?: boolean
   hostLinkopts?: string[]
   dependencies?: Dependency[]
   resources?: Resource[]
@@ -2302,6 +2303,7 @@ export async function generateBuildBazel(
     'wuhu_swift_binary',
     'wuhu_swift_library',
     'wuhu_swift_test',
+    'wuhu_macos_test',
   ]
   if (doccCatalogs.size > 0) {
     loadSymbols.push('wuhu_docc_archive', 'wuhu_docc_site')
@@ -2607,9 +2609,24 @@ ${
           }, which is not one of its simulator test lanes`,
         )
       }
+      if (
+        config.macBundle &&
+        (runnable.length !== 1 || runnable[0] !== 'mac' ||
+          !pkg.platforms?.macOS)
+      ) {
+        throw new Error(
+          `${location} macBundle requires an exclusively mac host test lane and platforms.macOS`,
+        )
+      }
       if (runnable.length > 0) {
+        const hostRule = config.macBundle
+          ? 'wuhu_macos_test'
+          : 'wuhu_swift_test'
+        const bundleAttrs = config.macBundle
+          ? `    minimum_os_version = "${pkg.platforms!.macOS}",\n`
+          : ''
         chunks.push(
-          `wuhu_swift_test(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${sharedAttrs}${
+          `${hostRule}(\n    name = "${test.name}",\n    package_name = "${pkg.packageName}",\n${bundleAttrs}${sharedAttrs}${
             config.hostLinkopts?.length
               ? `    linkopts = ${quotedStarlarkList(config.hostLinkopts)},\n`
               : ''

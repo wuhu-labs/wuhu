@@ -1,8 +1,10 @@
 # QuickJSKit
 
 A Swift wrapper around [quickjs-ng](https://github.com/quickjs-ng/quickjs). One
-`JSEngine` owns one QuickJS runtime and one context; values cross the boundary
+`JSEngine` owns one QuickJS runtime and its main context; values cross the boundary
 as `JSONValue`.
+
+`JSError.exception` retains the diagnostic string and stack separately from the optional string `message` property of a thrown object (`detail`). Display consumers use that detail for web-compatible message-only errors, retaining the import chain when module loading located the failure; non-object throws keep their diagnostic string.
 
 ## Confinement
 
@@ -41,6 +43,7 @@ including cycles — are rejected rather than walked.
 
 - `evaluate` runs a script and bridges its completion value. It pumps no jobs:
   a promise created by the script stays pending.
+- `evaluateIsolated` evaluates trusted synchronous code in a temporary fresh realm, optionally defining trusted modules in order first. Globals and modules from the main realm are not visible. Both realms share the engine’s memory cap and interrupter; the temporary context is released on return. It must not overlap a `run`.
 - `execute` runs a script for effect and discards the completion value. This is
   the prelude entry point — a prelude's last statement is usually an assignment,
   whose value has no JSON shape.
@@ -63,7 +66,7 @@ Cancelling the task that awaits `run` ends it with `CancellationError` once the 
 
 Without a loader, importing any other name fails with `ReferenceError: could not load module '<name>'`.
 
-`run(module:loader:)` takes a `ModuleLoader` for every other import. `resolve(specifier, referrer)` turns an import specifier into a module name, given the name of the importing module (the entry's name is `run`'s `name`); a defined module's name never reaches it. `source(name)` supplies a module's text. The loader walks the whole static import graph before anything runs: each name is resolved and fetched once, the fetches for one level of the graph run concurrently, and nothing is evaluated until every source has arrived. Each module is instantiated once per run, so cycles behave as ES modules specify. Imported modules share the entry's realm and get the same `import.meta`.
+`run(module:loader:)` takes a `ModuleLoader` for every other import. `resolve(specifier, referrer)` turns an import specifier into a module name, given the name of the importing module (the entry's name is `run`'s `name`); a defined module's name never reaches it. Optional `authorize(specifier, referrer)` runs before resolving every static import, including defined modules, and may refuse it. By default authorization permits all imports. `source(name)` supplies a module's text. Discovery compiles without executing in a temporary context on the same runtime and under the same memory cap. The loader walks the whole static import graph before anything runs: each name is resolved and fetched once, the fetches for one level of the graph run concurrently, and nothing is evaluated until every source has arrived. Each module is instantiated once per run, so cycles behave as ES modules specify. Imported modules share the entry's realm and get the same `import.meta`.
 
 A graph with more than `maxModules` names is refused before the first name over the limit is fetched. When an imported module fails to resolve, fetch or compile, the run fails with a message that starts with the import chain, as in `script → lib:a → lib:b: no such module`. The entry's own syntax errors keep their plain message.
 

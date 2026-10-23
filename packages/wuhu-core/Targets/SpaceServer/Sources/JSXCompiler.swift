@@ -43,7 +43,7 @@ actor JSXCompiler {
         preconditionFailure("compileJSX returns a string")
       }
       result = .success(code)
-    } catch let JSError.exception(message, _) {
+    } catch let JSError.exception(message, _, _) {
       result = .failure(Failure(message: "\(file): \(message)"))
     } catch JSError.terminated {
       result = .failure(Failure(message: "\(file): too long to compile"))

@@ -3,6 +3,7 @@ load(":docc.bzl", "wuhu_host_tool")
 
 exports_files([
     "docc.bzl",
+    "mac_runner_template.ts",
     "sim_runner.bzl",
     "sim_test_runner.template.sh",
 ])

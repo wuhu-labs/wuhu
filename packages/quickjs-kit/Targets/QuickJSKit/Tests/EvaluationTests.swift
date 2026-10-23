@@ -61,11 +61,12 @@ import Testing
       _ = try engine.evaluate("function boom() { throw new Error('kaboom') }; boom()")
       Issue.record("expected a thrown exception")
     } catch let error as JSError {
-      guard case .exception(let message, let stack) = error else {
+      guard case .exception(let message, let stack, let detail) = error else {
         Issue.record("expected an exception, got \(error)")
         return
       }
       #expect(message == "Error: kaboom")
+      #expect(detail == "kaboom")
       #expect(stack?.contains("boom") == true)
     }
   }
