@@ -13,8 +13,8 @@ import SessionDomain
 import WuhuAI
 
 func replacementRoute(_ held: SessionModelRoute, catalog: ProviderCatalog, usage: UsageBoard, reason: ModelPlacementReason) throws -> SessionModelRoute {
-  guard let id = held.group, let group = catalog.document.groups[id] else { throw CatalogError.modelRouteInvalid(group: held.group ?? "<direct>", member: held.member ?? "<missing>") }
-  guard !group.members.isEmpty else { throw CatalogError.noUsableMembers(id) }
+  guard let id = held.group else { throw CatalogError.modelRouteInvalid(group: held.group ?? "<direct>", member: held.member ?? "<missing>") }
+  let group = try catalog.validatedGroup(id, effort: held.specifier.effort).declaration
   @Dependency(\.date.now) var now
   @Dependency(\.uuid) var uuid
   let placed = try placeModelGroup(id: id, group: group, providers: catalog.document.providers, usage: groupUsage(group, usage: usage), now: now, reason: reason)
@@ -22,8 +22,8 @@ func replacementRoute(_ held: SessionModelRoute, catalog: ProviderCatalog, usage
 }
 
 private func placementCatalog(_ held: SessionModelRoute, catalog: ProviderCatalog, excludingHeld: Bool) async throws -> ProviderCatalog {
-  guard let id = held.group, var group = catalog.document.groups[id] else { throw CatalogError.modelRouteInvalid(group: held.group ?? "<direct>", member: held.member ?? "<missing>") }
-  _ = try catalog.validateGroup(id, effort: held.specifier.effort)
+  guard let id = held.group else { throw CatalogError.modelRouteInvalid(group: held.group ?? "<direct>", member: held.member ?? "<missing>") }
+  var group = try catalog.validatedGroup(id, effort: held.specifier.effort).declaration
   var eligible: [ModelsDocument.Member] = []
   for member in group.members {
     do {
@@ -115,7 +115,7 @@ func requestedTransition(_ target: CompactionTarget, session id: SessionID, tran
   @Dependency(\.uuid) var uuid
   let next: SessionModelRoute
   let resolved: ResolvedModel
-  if catalog.document.groups[name] == nil, let slash = name.firstIndex(of: "/") {
+  if catalog.document.groups[name] == nil, catalog.document.groupErrors[name] == nil, let slash = name.firstIndex(of: "/") {
     let provider = String(name[..<slash])
     let model = String(name[name.index(after: slash)...])
     let sameModel = held.specifier.provider == provider && held.specifier.model == model

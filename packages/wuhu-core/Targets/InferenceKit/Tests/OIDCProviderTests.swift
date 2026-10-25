@@ -82,7 +82,8 @@ import WuhuAI
     #expect(try ModelsDocument(json: JSONEncoder().encode(catalog.document)) == catalog.document)
     var json = try #require(String(data: JSONEncoder().encode(catalog.document), encoding: .utf8))
     json = json.replacingOccurrences(of: "oidc", with: "unsupported")
-    #expect(throws: (any Error).self) { try ModelsDocument(json: Data(json.utf8)) }
+    let invalid = try ModelsDocument(json: Data(json.utf8))
+    #expect(throws: CatalogError.self) { try ProviderCatalog(document: invalid, credentials: .unavailable).validate(.init(provider: "openai", model: "gpt-5.4", effort: "medium")) }
   }
 
   @Test func bearerNeverAppearsInAttemptLog() async throws {

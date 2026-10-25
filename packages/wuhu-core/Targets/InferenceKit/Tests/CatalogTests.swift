@@ -85,13 +85,14 @@ private let chatGPTOnly = CredentialResolver { _ in
     #expect(document.providers["codex"]?.originator == "wuhu")
   }
 
-  @Test func theRemovedClaudeDialectNoLongerParses() {
-    #expect(throws: CatalogError.invalidDocument) {
-      try ModelsDocument(json: Data("""
-      {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
-        "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
-          "efforts": ["high"], "defaultEffort": "high"}}}}
-      """.utf8))
+  @Test func theRemovedClaudeDialectFailsOnlyItsOwnUse() throws {
+    let document = try ModelsDocument(json: Data("""
+    {"claude": {"dialect": "claude", "baseURL": "https://api.anthropic.com/v1",
+      "models": {"opus": {"maxInput": 1000000, "maxOutput": 32000,
+        "efforts": ["high"], "defaultEffort": "high"}}}}
+    """.utf8))
+    #expect(throws: CatalogError.self) {
+      try ProviderCatalog(document: document, credentials: .unavailable).validate(.init(provider: "claude", model: "opus", effort: "high"))
     }
   }
 

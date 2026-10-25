@@ -21,5 +21,11 @@
     "fmt": "deno fmt --check .",
     "typecheck": "deno check src",
     "lint": "deno lint src"
+  },
+  "exclude": [
+    "src/shared/allowance.json"
+  ],
+  "generated": {
+    "src/shared/allowance.json": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/allowance.json"
   }
 }

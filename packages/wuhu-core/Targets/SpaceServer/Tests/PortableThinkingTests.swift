@@ -164,8 +164,8 @@ extension PortableThinkingTests {
         source.items += items
         try await harness.store.append(id, items: items, inputOrigin: source.cacheWarmingInputOrigin)
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
-        harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
-        harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
+        harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
+        harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
         if lastResort {
           let failure = ModelRouteFailure(reason: .quota, firstFailureAt: Date().addingTimeInterval(-1900), deadline: Date().addingTimeInterval(-100), retryAt: nil)
           try await owner.append(id, .modelRouteFailureUpdated(expectedEpoch: held.epoch, failure: failure)).value(Void.self)

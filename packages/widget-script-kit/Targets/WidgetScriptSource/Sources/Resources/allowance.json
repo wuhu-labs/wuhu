@@ -1,0 +1,263 @@
+{
+  "lines": {
+    "title": 2,
+    "name": 1,
+    "caption": 1,
+    "row": 1
+  },
+  "cards": {
+    "Figure": {
+      "small": {
+        "props": [
+          "value",
+          "unit",
+          "label",
+          "icon",
+          "tone",
+          "to"
+        ],
+        "caps": {},
+        "exclusive": [
+          [
+            "label",
+            "icon"
+          ]
+        ]
+      },
+      "wide": {
+        "props": [
+          "value",
+          "unit",
+          "label",
+          "icon",
+          "tone",
+          "note",
+          "chart",
+          "meter",
+          "to"
+        ],
+        "caps": {},
+        "exclusive": [
+          [
+            "chart",
+            "meter"
+          ]
+        ]
+      }
+    },
+    "List": {
+      "small": {
+        "props": [
+          "rows",
+          "title",
+          "label",
+          "count",
+          "accessory",
+          "to"
+        ],
+        "caps": {
+          "rows": 3
+        }
+      },
+      "wide": {
+        "props": [
+          "rows",
+          "title",
+          "label",
+          "count",
+          "accessory",
+          "to"
+        ],
+        "caps": {
+          "rows": 6
+        }
+      }
+    },
+    "Doc": {
+      "small": {
+        "props": [
+          "title",
+          "caption",
+          "icon",
+          "to"
+        ],
+        "caps": {}
+      },
+      "wide": {
+        "props": [
+          "title",
+          "caption",
+          "icon",
+          "kicker",
+          "preview",
+          "meta",
+          "badge",
+          "action",
+          "to"
+        ],
+        "caps": {}
+      }
+    },
+    "Subject": {
+      "small": {
+        "props": [
+          "name",
+          "avatar",
+          "caption",
+          "actions",
+          "to"
+        ],
+        "caps": {
+          "actions": 2
+        }
+      },
+      "wide": {
+        "props": [
+          "name",
+          "avatar",
+          "caption",
+          "actions",
+          "to"
+        ],
+        "caps": {
+          "actions": 4
+        }
+      }
+    },
+    "Agent": {
+      "small": {
+        "props": [
+          "name",
+          "avatar",
+          "status",
+          "unread",
+          "to"
+        ],
+        "caps": {}
+      },
+      "wide": {
+        "props": [
+          "name",
+          "avatar",
+          "status",
+          "unread",
+          "to"
+        ],
+        "caps": {}
+      }
+    },
+    "Progress": {
+      "small": {
+        "props": [
+          "value",
+          "max",
+          "title",
+          "caption",
+          "ticks",
+          "to"
+        ],
+        "caps": {}
+      },
+      "wide": {
+        "props": [
+          "value",
+          "max",
+          "title",
+          "caption",
+          "ticks",
+          "to"
+        ],
+        "caps": {}
+      }
+    },
+    "Pattern": {
+      "small": {
+        "props": [
+          "days",
+          "title",
+          "label",
+          "value",
+          "unit",
+          "accessory"
+        ],
+        "caps": {}
+      },
+      "wide": {
+        "props": [
+          "days",
+          "title",
+          "label",
+          "value",
+          "unit",
+          "accessory",
+          "axis",
+          "bands",
+          "legend"
+        ],
+        "caps": {}
+      }
+    },
+    "Calendar": {
+      "small": {
+        "props": [
+          "days",
+          "title",
+          "today",
+          "offset",
+          "accessory",
+          "to"
+        ],
+        "caps": {
+          "days": 31
+        }
+      },
+      "wide": {
+        "props": [
+          "days",
+          "title",
+          "today",
+          "offset",
+          "accessory",
+          "to"
+        ],
+        "caps": {
+          "days": 31
+        }
+      }
+    },
+    "Entity": {
+      "small": {
+        "props": [
+          "title",
+          "sub",
+          "label",
+          "chip",
+          "tone",
+          "lead",
+          "open",
+          "children",
+          "to"
+        ],
+        "caps": {
+          "children": 3
+        }
+      },
+      "wide": {
+        "props": [
+          "title",
+          "sub",
+          "label",
+          "chip",
+          "tone",
+          "lead",
+          "open",
+          "children",
+          "to"
+        ],
+        "caps": {
+          "children": 6
+        }
+      }
+    }
+  }
+}

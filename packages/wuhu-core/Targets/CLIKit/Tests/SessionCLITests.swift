@@ -464,18 +464,17 @@ private func until(
     }
   }
 
-  @Test func modelUpdateRefusesSeedGroupCollisionWithoutChangingEitherFile() async throws {
+  @Test func modelUpdateReportsSeedGroupCollisionAndKeepsGroupFileUntouched() async throws {
     try await withSessionDeps {
       let harness = try await SessionCLIHarness { _ in reply([.text(.init(text: "unexpected"))]) }
       let groups = #"{"anthropic":{"kind":"group","defaultEffort":"high","members":[{"id":"first","provider":"testing","model":"test-model"}],"policy":{"type":"select","member":"first"}}}"#
       _ = try await harness.space.fs(.settings).write("/model-groups.json", Data(groups.utf8), ifMatch: nil)
-      let originalModels = try await harness.space.fs(.settings).read("/models.json")
       let originalGroups = try await harness.space.fs(.settings).read("/model-groups.json")
-      #expect(await harness.run(["models", "update"]) == 1)
-      #expect(await harness.stderr.text.contains("anthropic"))
+      #expect(await harness.run(["models", "update"]) == 0)
+      #expect(await harness.stdout.text.contains("invalid model group anthropic"))
       let modelsAfter = try await harness.space.fs(.settings).read("/models.json")
       let groupsAfter = try await harness.space.fs(.settings).read("/model-groups.json")
-      #expect(modelsAfter.0 == originalModels.0 && modelsAfter.1 == originalModels.1)
+      #expect(JSONValue.parse(String(decoding: modelsAfter.1, as: UTF8.self))?.object?["anthropic"] != nil)
       #expect(groupsAfter.0 == originalGroups.0 && groupsAfter.1 == originalGroups.1)
     }
   }

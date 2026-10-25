@@ -15,6 +15,7 @@ public struct UsageWindow: Codable, Equatable, Sendable {
   public let name: String
   public let usedPercent: Double?
   public let resetsAt: Double?
+  public let windowMinutes: Int?
 }
 
 @Contract
@@ -38,6 +39,8 @@ public struct ProviderDescriptor: Codable, Equatable, Sendable {
 public struct ProvidersOutput: Codable, Equatable, Sendable {
   public let providers: [ProviderDescriptor]
   public let groups: [ModelGroupDescriptor]?
+  public let providerErrors: [CatalogEntryError]?
+  public let groupErrors: [CatalogEntryError]?
 }
 
 @Contract
@@ -54,4 +57,11 @@ public struct ModelGroupDescriptor: Codable, Equatable, Sendable {
   public let defaultEffort: String
   public let effortLevels: [String]
   public let policy: JSONValue
+  public let memberErrors: [CatalogEntryError]?
+}
+
+@Contract
+public struct CatalogEntryError: Codable, Equatable, Sendable {
+  public let id: String
+  public let message: String
 }

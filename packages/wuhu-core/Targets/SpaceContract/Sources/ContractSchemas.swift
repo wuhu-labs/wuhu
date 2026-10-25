@@ -117,6 +117,7 @@ public enum ContractSchemas {
     ("ModelGroupDescriptor", ModelGroupDescriptor.jsonSchema),
     ("SessionModelRouteOutput", SessionModelRouteOutput.jsonSchema),
     ("ProvidersOutput", ProvidersOutput.jsonSchema),
+    ("CatalogEntryError", CatalogEntryError.jsonSchema),
 
     ("SessionCreateInput", SessionCreateInput.jsonSchema),
     ("SessionCreateOutput", SessionCreateOutput.jsonSchema),

@@ -13,8 +13,9 @@ import struct SessionDomain.ModelSpecifier
 import struct SessionDomain.SessionID
 import WuhuAI
 
-public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConvertible {
+public indirect enum CatalogError: Error, Hashable, Sendable, CustomStringConvertible {
   case invalidDocument
+  case invalidProvider(provider: String, reason: String)
   case invalidGroupsDocument
   case unknownProvider(String)
   case unsupportedTarget(String)
@@ -40,10 +41,11 @@ public indirect enum CatalogError: Error, Equatable, Sendable, CustomStringConve
   public var description: String {
     switch self {
     case .invalidGroupsDocument: "invalid /model-groups.json catalog shape"
+    case let .invalidProvider(provider, reason): "invalid provider \(provider): \(reason)"
     case .invalidDocument: "invalid /models.json catalog shape"
     case let .unsupportedTarget(target): "unsupported model target: \(target); this operation requires a concrete provider/model"
     case let .noUsableMembers(group): "model group \(group) has no usable member"
-    case let .invalidCapacity(provider, window): "invalid capacity for provider \(provider), window \(window): use positive fiveHour/sevenDay numbers"
+    case let .invalidCapacity(provider, window): "invalid capacity for provider \(provider), window \(window): use a model's binding window name and a positive finite number"
     case let .unknownGroup(group): "unknown model group: \(group)"
     case let .invalidGroup(group, reason): "invalid model group \(group): \(reason)"
     case let .groupMember(group, member, reason): "model group \(group) member \(member): \(reason.description)"
@@ -124,17 +126,13 @@ public struct ProviderCatalog: Sendable {
   }
 
   @discardableResult
-  public func validate(_ specifier: ModelSpecifier) throws -> ModelsDocument.Model {
-    if document.groups[specifier.provider] != nil { throw CatalogError.unsupportedTarget(specifier.provider) }
+  public func validate(_ specifier: ModelSpecifier) throws(CatalogError) -> ModelsDocument.Model {
+    if let error = document.providerErrors[specifier.provider] { throw error }
+    if document.groupErrors[specifier.provider] != nil || document.groups[specifier.provider] != nil { throw CatalogError.unsupportedTarget(specifier.provider) }
     guard let provider = document.providers[specifier.provider] else {
       throw CatalogError.unknownProvider(specifier.provider)
     }
     try provider.validateCapacity(providerID: specifier.provider)
-    guard ["http", "https"].contains(provider.baseURL.scheme?.lowercased() ?? ""), provider.baseURL.host != nil,
-          provider.baseURL.user == nil, provider.baseURL.password == nil
-    else {
-      throw CatalogError.invalidEndpoint(provider: specifier.provider)
-    }
     try provider.validateConfiguration(providerID: specifier.provider)
     guard let model = provider.models[specifier.model] else {
       throw CatalogError.unknownModel(provider: specifier.provider, model: specifier.model)
@@ -156,8 +154,9 @@ public struct ProviderCatalog: Sendable {
     return model
   }
 
-  public func defaultSpecifier(provider providerID: String, model modelName: String) throws -> ModelSpecifier {
-    if document.groups[providerID] != nil { throw CatalogError.unsupportedTarget(providerID) }
+  public func defaultSpecifier(provider providerID: String, model modelName: String) throws(CatalogError) -> ModelSpecifier {
+    if let error = document.providerErrors[providerID] { throw error }
+    if document.groupErrors[providerID] != nil || document.groups[providerID] != nil { throw CatalogError.unsupportedTarget(providerID) }
     guard let provider = document.providers[providerID] else {
       throw CatalogError.unknownProvider(providerID)
     }
@@ -303,7 +302,7 @@ extension CatalogError {
     case .modelRouteInvalid: "modelRouteInvalid"
     case .noUsableMembers: "modelGroupUnavailable"
     case .unsupportedTarget: "unsupportedTarget"
-    case .invalidDocument, .invalidGroupsDocument, .invalidGroup, .unknownGroup, .groupMember, .invalidCapacity: "modelGroupConfiguration"
+    case .invalidDocument, .invalidGroupsDocument, .invalidProvider, .invalidGroup, .unknownGroup, .groupMember, .invalidCapacity: "modelGroupConfiguration"
     default: "invalidArgument"
     }
   }

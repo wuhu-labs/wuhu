@@ -17,7 +17,8 @@ import Testing
   func malformedPolicyIsTypedConfigError(_ value: String) throws {
     let json = String(decoding: fixtureJSON, as: UTF8.self).replacingOccurrences(of: "\"maxInput\": 200000", with: "\"cacheWarming\": \(value), \"maxInput\": 200000")
     do {
-      _ = try ModelsDocument(json: Data(json.utf8))
+      let document = try ModelsDocument(json: Data(json.utf8))
+      _ = try ProviderCatalog(document: document, credentials: .unavailable).validate(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "high"))
       Issue.record("accepted malformed policy: \(value)")
     } catch let error as CatalogError {
       guard case .invalidCacheWarming = error else { Issue.record("wrong config error: \(error)"); return }

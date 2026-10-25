@@ -2,6 +2,8 @@ name: WidgetScriptSource
 kind: library
 sources: Sources
 resources:
+  - path: Resources/allowance.json
+    mode: process
   - path: Resources/prelude.js
     mode: process
   - path: Resources/tree.js

@@ -182,7 +182,7 @@ public struct CapabilityClient: Sendable {
     case .transcription: document?.transcription
     }
     let id = options.provider ?? selection?.active ?? "codex"
-    if models.groups[id] != nil || options.model.flatMap({ models.groups[$0] }) != nil {
+    if models.groups[id] != nil || models.groupErrors[id] != nil || options.model.map({ models.groups[$0] != nil || models.groupErrors[$0] != nil }) == true {
       throw CapabilityError(.unsupportedTarget, "Model groups are session routing targets, not capability targets.")
     }
     let variant: CapabilitiesDocument.Variant
@@ -204,8 +204,11 @@ public struct CapabilityClient: Sendable {
       throw CapabilityError(.providerNotConfigured, "Dialect '\(variant.dialect)' does not implement this capability.")
     }
     let credentialID = variant.credential ?? (variant.dialect == "codex" ? models.providers.sorted(by: { $0.key < $1.key }).first(where: { $0.value.dialect == .codex })?.key ?? "codex" : id)
-    if models.groups[credentialID] != nil {
+    if models.groups[credentialID] != nil || models.groupErrors[credentialID] != nil {
       throw CapabilityError(.unsupportedTarget, "A model group cannot supply capability credentials.")
+    }
+    if let error = models.providerErrors[credentialID] {
+      throw CapabilityError(.providerNotConfigured, error.description)
     }
     let defaultURL = switch variant.dialect {
     case "codex": models.providers[credentialID]?.baseURL ?? URL(string: "https://chatgpt.com/backend-api/codex")!

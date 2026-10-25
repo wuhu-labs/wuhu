@@ -100,3 +100,13 @@ extension ModelsVerbTests {
     #expect(merge.merged.object?["deepseek"]?.object?["opaqueReplay"] == .string("affine"))
   }
 }
+
+extension ModelsVerbTests {
+  @Test func updateNeverReplacesMalformedUserDeclarationsWithSeedDefaults() throws {
+    let basis = try #require(JSONValue.parse(WellKnownModels.seed))
+    let user: JSONValue = ["anthropic": .null, "openai": ["models": "wrong"]]
+    let merge = ModelsMerge(basis: basis, user: user)
+    #expect(merge.merged.object?["anthropic"] == .null)
+    #expect(merge.merged.object?["openai"] == user.object?["openai"])
+  }
+}

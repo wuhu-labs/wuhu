@@ -100,7 +100,7 @@ func codexUsage(headers: [String: String]) -> [UsageWindow] {
     let resetsAt = headers["\(prefix)-reset-at"].flatMap(Double.init)
     let minutes = headers["\(prefix)-window-minutes"].flatMap(Int.init)
     guard usedPercent != nil || resetsAt != nil, minutes != 0 else { return nil }
-    return UsageWindow(name: minutes.map(usageWindowName(minutes:)) ?? fallback, usedPercent: usedPercent, resetsAt: resetsAt)
+    return UsageWindow(name: minutes.map(usageWindowName(minutes:)) ?? fallback, usedPercent: usedPercent, resetsAt: resetsAt, windowMinutes: minutes)
   }
 }
 
@@ -114,6 +114,7 @@ func codexUsage(payload: JSONValue) -> (plan: String?, windows: [UsageWindow]) {
       name: seconds.map { usageWindowName(minutes: $0 / 60) } ?? key,
       usedPercent: window["used_percent"]?.doubleValue,
       resetsAt: window["reset_at"]?.doubleValue,
+      windowMinutes: seconds.map { $0 / 60 },
     )
   }
   return (payload.object?["plan_type"]?.stringValue, windows)
@@ -176,11 +177,18 @@ struct UsageRefresher: Sendable {
 
 func codexSocketUsage(_ payload: JSONValue) -> (plan: String?, windows: [UsageWindow]) {
   let rates = payload.object?["rate_limits"]?.object
-  let windows = ["primary", "secondary"].compactMap { key -> UsageWindow? in
-    guard let window = rates?[key]?.object, let minutes = window["window_minutes"]?.intValue, minutes > 0,
+  var windows: [String: UsageWindow] = [:]
+  func record(_ name: String, _ value: JSONValue) {
+    guard let window = value.object, let minutes = window["window_minutes"]?.intValue, minutes > 0,
           let used = window["used_percent"]?.doubleValue, used.isFinite, (0 ... 100).contains(used),
-          let reset = window["reset_at"]?.doubleValue, reset.isFinite, reset >= 0 else { return nil }
-    return UsageWindow(name: usageWindowName(minutes: minutes), usedPercent: used, resetsAt: reset)
+          let reset = window["reset_at"]?.doubleValue, reset.isFinite, reset >= 0 else { return }
+    windows[name] = UsageWindow(name: name, usedPercent: used, resetsAt: reset, windowMinutes: minutes)
   }
-  return (payload.object?["plan_type"]?.stringValue, windows)
+  for key in ["primary", "secondary"] {
+    if let value = rates?[key], let minutes = value.object?["window_minutes"]?.intValue {
+      record(usageWindowName(minutes: minutes), value)
+    }
+  }
+  for (name, value) in rates?["windows"]?.object ?? [:] { record(name, value) }
+  return (payload.object?["plan_type"]?.stringValue, windows.values.sorted { $0.name < $1.name })
 }

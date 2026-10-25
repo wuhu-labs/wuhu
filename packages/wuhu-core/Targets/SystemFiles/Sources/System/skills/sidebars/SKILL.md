@@ -68,6 +68,20 @@ It returns exactly one card. Cards and their props (required in bold; `to` makes
 - `Calendar` **days**, title, today, offset, accessory, to
 - `Entity` **title**, sub, label, chip, tone, lead, open, children, to
 
+The renderers enforce this allowance: excess props and trailing items are left out whole; kept text ellipsizes at its line limit. Only `small` and `wide` exist; links and tones remain available where listed above. When both are supplied, a small Figure keeps label rather than icon, and a wide Figure keeps chart rather than meter.
+
+| Card | `small` allowance | `wide` allowance | Text limits (both sizes) |
+| --- | --- | --- | --- |
+| Figure | value, unit, label **or** icon | value, unit, label, icon, note, chart **or** meter | Each 1 line |
+| List | title + accessory **or** count + label; first 3 rows | Same header; first 6 rows | Row label, caption, trail: 1 line each |
+| Doc | icon, title, caption | Adds kicker, preview, meta, badge, action | Title: 2 lines; caption/kicker/meta: 1 |
+| Subject | avatar, name, caption; first 2 actions | Same; first 4 actions | Name/caption: 1 line each |
+| Agent | avatar, name, status, unread | Same | Name/status: 1 line each |
+| Progress | title, value/max, meter (or ticks), caption | Same | Title/caption: 1 line each |
+| Pattern | title, accessory, value/unit, label, days series | Adds bands, axis, legend | Title/label/legend/axis/band label: 1 line each |
+| Calendar | title, accessory, offset, today; first 31 days | Same | Title/accessory: 1 line each |
+| Entity | lead, title, sub, chip; first 3 children when open | Same; first 6 children | Title/sub/chip and row text: 1 line each |
+
 Parts usable inside props: `Row`, `Tag`, `Chip`, `Avatar`, `LeadIcon`, and `Button` with `to` (required). Every `icon` must be an IconaMoon name, or the widget draws its error card. Tones: `blue`, `mint`, `teal`, `amber`, `rose`; a note also takes `good` or `bad`. A widget has no state and never writes; there are no handlers, only links.
 
 ## query and fetch

@@ -26,6 +26,26 @@ private let onePixelPNG: [UInt8] = [
 
 @Suite(.deterministicDependencies(clock: TestClock()))
 struct ClientServerFaithfulnessTests {
+  @Test func modelsListAndUpdateKeepInvalidEntriesAndReportThem() async throws {
+    let harness = try ServerHarness()
+    let provider = #"{"dialect":"responses","baseURL":"https://fixture.test","capacity":{"weekly":2},"models":{"m":{"maxInput":10000,"maxOutput":1000,"efforts":["high"],"defaultEffort":"high"}}}"#
+    let models = "{\"broken\":" + provider + "}"
+    let groups = #"{"broken-group":{"kind":"group","members":[],"defaultEffort":"high","policy":{"type":"unknown"}}}"#
+    #expect(await harness.run(["write", "wuhu://settings.localspace/models.json", "--body", models]) == 0)
+    #expect(await harness.run(["write", "wuhu://settings.localspace/model-groups.json", "--body", groups]) == 0)
+    #expect(await harness.run(["models"]) == 0)
+    #expect(await harness.stdout.text.contains("invalid capacity for provider broken"))
+    #expect(await harness.stdout.text.contains("invalid model group broken-group"))
+    #expect(await harness.run(["models", "--json"]) == 0)
+    #expect(await harness.stdout.text.contains("providerErrors"))
+    #expect(await harness.run(["models", "update"]) == 0)
+    #expect(await harness.run(["read", "wuhu://settings.localspace/models.json"]) == 0)
+    #expect(await harness.stdout.text.contains("weekly"))
+    #expect(await harness.stdout.text.contains("anthropic"))
+    #expect(await harness.run(["read", "wuhu://settings.localspace/model-groups.json"]) == 0)
+    #expect(await harness.stdout.text.contains(groups))
+  }
+
   @Test func everyVerbRunsAgainstRealSpaceServer() async throws {
     let harness = try ServerHarness()
 

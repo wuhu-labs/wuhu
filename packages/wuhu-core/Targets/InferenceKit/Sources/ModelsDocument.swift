@@ -10,6 +10,8 @@ import struct SessionDomain.ImageLimits
 public struct ModelsDocument: Hashable, Sendable, Codable {
   public var providers: [String: Provider]
   public var groups: [String: Group]
+  public private(set) var providerErrors: [String: CatalogError] = [:]
+  public private(set) var groupErrors: [String: CatalogError] = [:]
 
   public init(providers: [String: Provider], groups: [String: Group] = [:]) {
     self.providers = providers
@@ -17,33 +19,15 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
   }
 
   public init(from decoder: any Decoder) throws {
-    self.init(providers: try decoder.singleValueContainer().decode([String: Provider].self))
-    try validateDeclarations()
+    let entries = try decoder.singleValueContainer().decode([String: CatalogEntry<Provider>].self)
+    self.init(providers: entries.compactMapValues(\.value))
+    providerErrors = entries.compactMapValues(\.error)
   }
 
   public func encode(to encoder: any Encoder) throws {
+    if let error = providerErrors.sorted(by: { $0.key < $1.key }).first?.value { throw error }
     var container = encoder.singleValueContainer()
     try container.encode(providers)
-  }
-
-  private func validateDeclarations() throws {
-    for (id, provider) in providers {
-      do {
-        try provider.validateCapacity(providerID: id)
-        if provider.transport == .websocket && provider.dialect != .responses && provider.dialect != .codex {
-          throw CatalogError.invalidTransport(provider: id)
-        }
-      } catch let error as CatalogError {
-        if let (group, declaration) = groups.sorted(by: { $0.key < $1.key }).first(where: { $0.value.members.contains(where: { $0.provider == id }) }),
-           let member = declaration.members.first(where: { $0.provider == id })
-        {
-          throw CatalogError.groupMember(group: group, member: member.id, reason: error)
-        }
-        throw error
-      }
-    }
-    let catalog = ProviderCatalog(document: self, credentials: .unavailable)
-    for id in groups.keys.sorted() { _ = try catalog.validateGroup(id) }
   }
 
   public static let spacePath: String = "/models.json"
@@ -109,6 +93,9 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
     public var defaultEffort: String
     public var headroomOverride: Int?
     public var cacheWarming: CacheWarmingPolicy?
+    public var usageWindows: [String]?
+
+    var bindingWindows: [String] { usageWindows ?? ["five_hour", "seven_day"] }
 
     public init(
       maxInput: Int,
@@ -117,6 +104,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       defaultEffort: String,
       headroomOverride: Int? = nil,
       cacheWarming: CacheWarmingPolicy? = nil,
+      usageWindows: [String]? = nil,
     ) {
       self.maxInput = maxInput
       self.maxOutput = maxOutput
@@ -124,10 +112,11 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       self.defaultEffort = defaultEffort
       self.headroomOverride = headroomOverride
       self.cacheWarming = cacheWarming
+      self.usageWindows = usageWindows
     }
 
     enum CodingKeys: String, CodingKey {
-      case maxInput, maxOutput, efforts, defaultEffort, headroomOverride, cacheWarming
+      case maxInput, maxOutput, efforts, defaultEffort, headroomOverride, cacheWarming, usageWindows
     }
 
     public init(from decoder: any Decoder) throws {
@@ -137,6 +126,7 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
       efforts = try values.decode([String].self, forKey: .efforts)
       defaultEffort = try values.decode(String.self, forKey: .defaultEffort)
       headroomOverride = try values.decodeIfPresent(Int.self, forKey: .headroomOverride)
+      usageWindows = try values.decodeIfPresent([String].self, forKey: .usageWindows)
       if values.contains(.cacheWarming) {
         do { cacheWarming = try values.decode(CacheWarmingPolicy.self, forKey: .cacheWarming) }
         catch let error as CatalogError { throw error }
@@ -152,16 +142,18 @@ public struct ModelsDocument: Hashable, Sendable, Codable {
 
 extension ModelsDocument {
   public init(json: Data, groupsJSON: Data? = nil) throws {
-    let groups: [String: Group]
-    do { groups = try groupsJSON.map { try JSONDecoder().decode(GroupDeclarations.self, from: $0).groups } ?? [:] }
-    catch let error as CatalogError { throw error }
-    catch { throw CatalogError.invalidGroupsDocument }
     do {
-      let providers = try JSONDecoder().decode([String: Provider].self, from: json)
-      self.init(providers: providers, groups: groups)
-      try validateDeclarations()
-    } catch let error as CatalogError { throw error }
-    catch { throw CatalogError.invalidDocument }
+      self = try JSONDecoder().decode(Self.self, from: json)
+    } catch { throw CatalogError.invalidDocument }
+    do {
+      let entries = try groupsJSON.map { try JSONDecoder().decode([String: CatalogEntry<Group>].self, from: $0) } ?? [:]
+      groups = entries.compactMapValues(\.value)
+      groupErrors = entries.compactMapValues(\.error)
+      for (id, error) in groupErrors {
+        let reason = if case let .invalidProvider(_, reason) = error { reason } else { error.description }
+        groupErrors[id] = .invalidGroup(group: id, reason: reason)
+      }
+    } catch { throw CatalogError.invalidGroupsDocument }
   }
 }
 
@@ -179,7 +171,12 @@ extension ModelsDocument.Provider {
     }
   }
 
-  func validateConfiguration(providerID: String) throws {
+  func validateConfiguration(providerID: String) throws(CatalogError) {
+    guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""), baseURL.host != nil,
+          baseURL.user == nil, baseURL.password == nil
+    else {
+      throw CatalogError.invalidEndpoint(provider: providerID)
+    }
     guard auth != .oidc || dialect != .codex else {
       throw CatalogError.invalidOIDCDialect(provider: providerID)
     }
@@ -227,5 +224,24 @@ extension ModelsDocument.Provider {
     else { try container.encodeIfPresent(opaqueReplay, forKey: .opaqueReplay) }
     try container.encodeIfPresent(capacity, forKey: .capacity)
     try container.encode(models, forKey: .models)
+  }
+}
+
+private enum CatalogEntry<Value: Decodable>: Decodable {
+  case valid(Value)
+  case invalid(CatalogError)
+
+  init(from decoder: any Decoder) throws {
+    do { self = .valid(try Value(from: decoder)) }
+    catch let error as CatalogError { self = .invalid(error) }
+    catch { self = .invalid(.invalidProvider(provider: decoder.codingPath.last!.stringValue, reason: String(describing: error))) }
+  }
+
+  var value: Value? {
+    if case let .valid(value) = self { value } else { nil }
+  }
+
+  var error: CatalogError? {
+    if case let .invalid(error) = self { error } else { nil }
   }
 }

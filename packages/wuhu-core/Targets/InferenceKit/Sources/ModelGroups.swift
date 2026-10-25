@@ -88,31 +88,6 @@ extension ModelsDocument {
       }
     }
   }
-
-  struct GroupDeclarations: Decodable {
-    var groups: [String: Group]
-
-    init(from decoder: any Decoder) throws {
-      let entries = try decoder.singleValueContainer().decode([String: GroupEntry].self)
-      groups = [:]
-      for (id, entry) in entries {
-        switch entry {
-        case let .group(group): groups[id] = group
-        case let .invalid(reason): throw CatalogError.invalidGroup(group: id, reason: reason)
-        }
-      }
-    }
-  }
-
-  private enum GroupEntry: Decodable {
-    case group(Group)
-    case invalid(String)
-
-    init(from decoder: any Decoder) throws {
-      do { self = .group(try Group(from: decoder)) }
-      catch { self = .invalid(String(describing: error)) }
-    }
-  }
 }
 
 private struct GroupDeclarationError: Error, CustomStringConvertible {

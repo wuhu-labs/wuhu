@@ -30,11 +30,13 @@ import WuhuAI
       invalid.providers["openai"]?.dialect = dialect
       invalid.providers["openai"]?.transport = .websocket
       let bytes = try JSONEncoder().encode(invalid)
-      #expect(throws: CatalogError.invalidTransport(provider: "openai")) { _ = try ModelsDocument(json: bytes) }
+      let decoded = try ModelsDocument(json: bytes)
+      #expect(throws: CatalogError.invalidTransport(provider: "openai")) { try ProviderCatalog(document: decoded, credentials: .unavailable).validate(.init(provider: "openai", model: "gpt-5.4", effort: "medium")) }
       #expect(throws: CatalogError.invalidTransport(provider: "openai")) { try ProviderCatalog(document: invalid, credentials: .unavailable).validate(.init(provider: "openai", model: "gpt-5.4", effort: "medium")) }
     }
     let malformed = String(decoding: fixtureJSON, as: UTF8.self).replacingOccurrences(of: "\"dialect\": \"responses\",", with: "\"dialect\": \"responses\", \"transport\":\"unknown\",")
-    #expect(throws: (any Error).self) { _ = try ModelsDocument(json: Data(malformed.utf8)) }
+    let malformedDocument = try ModelsDocument(json: Data(malformed.utf8))
+    #expect(throws: CatalogError.self) { try ProviderCatalog(document: malformedDocument, credentials: .unavailable).validate(.init(provider: "openai", model: "gpt-5.4", effort: "medium")) }
     let ws = try await model()
     #expect(ws.transport == .websocket)
   }

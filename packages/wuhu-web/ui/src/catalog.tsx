@@ -1,10 +1,12 @@
 import {
   createContext,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
   useContext,
 } from 'react'
 import { Icon } from './icons.tsx'
+import allowance from './shared/allowance.json' with { type: 'json' }
 
 // The widget catalog: hazel-mock's UI system demo (public/demos/system/kit.jsx
 // at 1a79209) in React, drawn from a script's checked result. Class names are
@@ -435,6 +437,9 @@ function Figure(p: Props & { size: Size }) {
           <FigureText {...p} />
         </div>
         {p.chart != null && <Chart points={numbers(p.chart)} line={49} />}
+        {meter != null && (
+          <Meter shape='ring' size={38} value={meter.value} max={meter.max} />
+        )}
       </Card>
     )
   }
@@ -653,12 +658,39 @@ export function CatalogCard(
     links: CatalogLinks
   },
 ) {
+  const rule = (allowance.cards as Record<
+    string,
+    Record<Size, {
+      props: string[]
+      caps: Record<string, number>
+      exclusive?: string[][]
+    }>
+  >)[element.$element]?.[size]
+  if (rule == null) return null
+  const props = Object.fromEntries(
+    rule.props.map((key) => [key, element.props[key]]),
+  )
+  for (const [key, cap] of Object.entries(rule.caps)) {
+    if (Array.isArray(props[key])) props[key] = props[key].slice(0, cap)
+  }
+  for (const group of rule.exclusive ?? []) {
+    const kept = group.find((key) => props[key] != null)
+    for (const key of group) if (key !== kept) delete props[key]
+  }
   const View = templateViews[element.$element]
   if (View == null) return null
   return (
     <Links.Provider value={links}>
-      <div className='wui-widget' data-size={size}>
-        <View {...element.props} size={size} />
+      <div
+        className='wui-widget'
+        data-size={size}
+        style={Object.fromEntries(
+          Object.entries(allowance.lines).map((
+            [key, value],
+          ) => [`--catalog-${key}-lines`, value]),
+        ) as CSSProperties}
+      >
+        <View {...props} size={size} />
       </div>
     </Links.Provider>
   )

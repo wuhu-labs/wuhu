@@ -835,3 +835,72 @@
   white-space: normal;
   line-height: 19px;
 }
+
+.wui-widget .row-text,
+.wui-widget .t-agent-text,
+.wui-widget .t-figure-text {
+  min-width: 0;
+}
+
+.wui-widget .row-label,
+.wui-widget .row-caption,
+.wui-widget .row-trail,
+.wui-widget .k-label,
+.wui-widget .k-note,
+.wui-widget .k-head > span,
+.wui-widget .k-value,
+.wui-widget .t-subject .k-title,
+.wui-widget .t-agent .k-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wui-widget .t-doc .k-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--catalog-title-lines);
+  overflow: hidden;
+}
+
+.wui-widget .row-label,
+.wui-widget .row-caption,
+.wui-widget .row-trail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--catalog-row-lines);
+  white-space: normal;
+}
+
+.wui-widget .k-label,
+.wui-widget .k-note,
+.wui-widget .k-head > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--catalog-caption-lines);
+  white-space: normal;
+}
+
+.wui-widget .t-subject .k-title,
+.wui-widget .t-agent .k-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--catalog-name-lines);
+  white-space: normal;
+}
+
+.wui-widget .chip,
+.wui-widget .tag,
+.wui-widget .k-button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wui-widget .k-axis > span,
+.wui-widget .k-bands > div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

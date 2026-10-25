@@ -20,11 +20,13 @@ public struct ModelUsageSnapshot: Hashable, Sendable {
     public var name: String
     public var usedPercent: Double?
     public var resetsAt: Double?
+    public var windowMinutes: Int?
 
-    public init(name: String, usedPercent: Double?, resetsAt: Double?) {
+    public init(name: String, usedPercent: Double?, resetsAt: Double?, windowMinutes: Int? = nil) {
       self.name = name
       self.usedPercent = usedPercent
       self.resetsAt = resetsAt
+      self.windowMinutes = windowMinutes
     }
   }
 }
@@ -43,27 +45,31 @@ public func placeModelGroup(
   now: Date,
   reason: ModelPlacementReason,
 ) throws -> ModelPlacement {
-  _ = try ProviderCatalog(document: ModelsDocument(providers: providers, groups: [id: group]), credentials: .unavailable).validateGroup(id)
+  let group = try ProviderCatalog(document: ModelsDocument(providers: providers, groups: [id: group]), credentials: .unavailable).validatedGroup(id).declaration
   let evidence = group.members.map { member in
     let snapshot = usage[member.provider]
-    let windows = (snapshot?.windows ?? []).compactMap { window -> ModelHeadroomWindow? in
-      let capacityKey: String
-      let duration: Double
-      switch window.name {
-      case "five_hour": capacityKey = "fiveHour"; duration = 5 * 3600
-      case "seven_day": capacityKey = "sevenDay"; duration = 7 * 24 * 3600
-      default: return nil
-      }
-      guard let used = window.usedPercent, used.isFinite, used >= 0 else { return nil }
-      let reset = window.resetsAt.flatMap { $0.isFinite ? $0 : nil }
+    let provider = providers[member.provider]!
+    let binding = provider.models[member.model]!.bindingWindows
+    let windows = binding.map { name -> ModelHeadroomWindow in
+      let window = snapshot?.windows.first { $0.name == name }
+      let capacity = provider.capacity?[name] ?? 1
+      let used = window?.usedPercent.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+      let reset = window?.resetsAt.flatMap { $0.isFinite ? $0 : nil }
+      var evidence = ModelHeadroomWindow(name: name, usedPercent: used, resetsAt: reset, capacity: capacity, remaining: nil, score: nil)
+      let defaultMinutes = ["five_hour": 300, "seven_day": 10080][name]
+      guard let minutes = window?.windowMinutes ?? defaultMinutes, minutes > 0,
+            let used else { return evidence }
+      let duration = Double(minutes) * 60
       let expired = reset.map { $0 <= now.timeIntervalSince1970 } ?? false
-      let capacity = providers[member.provider]?.capacity?[capacityKey] ?? 1
       let remaining = (expired ? 1 : max(0, 1 - used / 100)) * capacity
       let secondsLeft = expired ? duration : reset.map { max(60, $0 - now.timeIntervalSince1970) } ?? duration
       let score = min(Double.greatestFiniteMagnitude, remaining / min(1, secondsLeft / duration))
-      return ModelHeadroomWindow(name: window.name, usedPercent: used, resetsAt: reset, capacity: capacity, remaining: remaining, score: score)
+      evidence.remaining = remaining
+      evidence.score = score
+      return evidence
     }
-    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows, score: windows.map(\.score).min())
+    let scores = windows.compactMap(\.score)
+    return ModelPlacementEvidence(member: member.id, observedAt: snapshot?.observedAt, windows: windows, score: scores.count == binding.count ? scores.min() : nil)
   }
   let chosen: ModelsDocument.Member?
   switch group.policy {

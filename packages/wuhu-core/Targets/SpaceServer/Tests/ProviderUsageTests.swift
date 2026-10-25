@@ -76,7 +76,7 @@ private let codexAndClaudeModels = """
       "x-codex-primary-reset-at": "1790728625",
       "x-codex-secondary-used-percent": "0",
       "x-codex-secondary-window-minutes": "0",
-    ]) == [UsageWindow(name: "seven_day", usedPercent: 9, resetsAt: 1_790_728_625)])
+    ]) == [UsageWindow(name: "seven_day", usedPercent: 9, resetsAt: 1_790_728_625, windowMinutes: 10080)])
     #expect(codexUsage(headers: [
       "x-codex-primary-used-percent": "12.5",
       "x-codex-primary-window-minutes": "300",
@@ -85,8 +85,8 @@ private let codexAndClaudeModels = """
       "x-codex-secondary-window-minutes": "10080",
       "x-codex-secondary-reset-at": "1800600000",
     ]) == [
-      UsageWindow(name: "five_hour", usedPercent: 12.5, resetsAt: 1_800_000_300),
-      UsageWindow(name: "seven_day", usedPercent: 34, resetsAt: 1_800_600_000),
+      UsageWindow(name: "five_hour", usedPercent: 12.5, resetsAt: 1_800_000_300, windowMinutes: 300),
+      UsageWindow(name: "seven_day", usedPercent: 34, resetsAt: 1_800_600_000, windowMinutes: 10080),
     ])
     #expect(codexUsage(headers: ["content-type": "text/event-stream"]).isEmpty)
   }
@@ -95,9 +95,28 @@ private let codexAndClaudeModels = """
     let valid = try #require(JSONValue.parse(#"{"type":"codex.rate_limits","plan_type":"pro","rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"reset_at":1800000300},"secondary":{"used_percent":34,"window_minutes":10080,"reset_at":1800600000}}}"#))
     let result = codexSocketUsage(valid)
     #expect(result.plan == "pro")
-    #expect(result.windows == [UsageWindow(name: "five_hour", usedPercent: 12.5, resetsAt: 1_800_000_300), UsageWindow(name: "seven_day", usedPercent: 34, resetsAt: 1_800_600_000)])
+    #expect(result.windows == [UsageWindow(name: "five_hour", usedPercent: 12.5, resetsAt: 1_800_000_300, windowMinutes: 300), UsageWindow(name: "seven_day", usedPercent: 34, resetsAt: 1_800_600_000, windowMinutes: 10080)])
     for text in [#"{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":300,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":12,"window_minutes":0,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":101,"window_minutes":300,"reset_at":1800000300}}}"#, #"{"rate_limits":{"primary":{"used_percent":12,"window_minutes":300}}}"#] {
       #expect(codexSocketUsage(try #require(JSONValue.parse(text))).windows.isEmpty)
+    }
+  }
+
+  @Test func namedSocketWindowsRetainTheirNamesAndDurationsThroughTheBoard() async throws {
+    try await withSessionDeps {
+      let harness = try await SessionHarness()
+      let event = try #require(JSONValue.parse(#"{"rate_limits":{"primary":{"used_percent":12,"window_minutes":300,"reset_at":1800000300},"windows":{"five_hour":{"used_percent":15,"window_minutes":300,"reset_at":1800000300},"model_week":{"used_percent":100,"window_minutes":10080,"reset_at":1800600000}}}}"#))
+      let parsed = codexSocketUsage(event)
+      #expect(parsed.windows.map(\.name) == ["five_hour", "model_week"])
+      #expect(parsed.windows.map(\.windowMinutes) == [300, 10080])
+      #expect(parsed.windows.first?.usedPercent == 15)
+      harness.runtime.usage.record("testing", plan: parsed.plan, windows: parsed.windows, at: Date(timeIntervalSince1970: 1_800_000_000))
+      #expect(try await providers(harness).first?.usage?.windows == parsed.windows)
+      let copied = UsageBoard()
+      copied.merge(harness.runtime.usage.snapshot())
+      #expect(copied.usage("testing")?.windows == parsed.windows)
+      for malformed in [#"{"rate_limits":{"windows":{"model_week":{"used_percent":12,"window_minutes":0,"reset_at":1}}}}"#, #"{"rate_limits":{"windows":{"model_week":{"used_percent":101,"window_minutes":10080,"reset_at":1}}}}"#] {
+        #expect(codexSocketUsage(try #require(JSONValue.parse(malformed))).windows.isEmpty)
+      }
     }
   }
 
@@ -108,7 +127,7 @@ private let codexAndClaudeModels = """
     """))
     let (plan, windows) = codexUsage(payload: payload)
     #expect(plan == "pro")
-    #expect(windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546)])
+    #expect(windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546, windowMinutes: 10080)])
   }
 
   @Test func windowsMergeByNameAndAPlanSurvivesAReportWithoutOne() {
@@ -172,7 +191,7 @@ private let codexAndClaudeModels = """
       #expect(seen.withLock { $0 } == [URLRequestSummary(url: "https://chatgpt.com/backend-api/wham/usage", account: "acct-42", authorization: "Bearer jwt")])
       #expect(resolved.withLock { $0 } == ["chatgpt"], "the second fresh pass reads no credentials and only Codex is probed")
       #expect(board.usage("chatgpt")?.plan == "pro")
-      #expect(board.usage("chatgpt")?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546)])
+      #expect(board.usage("chatgpt")?.windows == [UsageWindow(name: "seven_day", usedPercent: 61, resetsAt: 1_790_314_546, windowMinutes: 10080)])
       #expect(board.usage("claude") == nil)
       #expect(board.usage("testing") == nil)
     }

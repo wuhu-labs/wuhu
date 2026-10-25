@@ -116,8 +116,8 @@ import WuhuAI
       let compacted = try await harness.store.transcript(id).compacted(head: head, kept: nil)
       let prepare = compactionPlacement(owner: owner, catalog: { _ in catalog }, usage: harness.runtime.usage)
       #expect(try await prepare(id, compacted, nil) == nil)
-      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
-      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
+      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: Date().timeIntervalSince1970 + 18000), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
+      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: Date().timeIntervalSince1970 + 18000), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
       let transition = try #require(await prepare(id, compacted, nil))
       #expect(transition.route.member == "b")
       #expect(transition.route.reason == .compaction)
@@ -137,7 +137,7 @@ import WuhuAI
     try await withSessionDeps {
       let (harness, owner, catalog, id) = try await setup(seconds: 0)
       _ = try await recordRouteFailure(InferenceError.authenticationRefused(code: "invalid_api_key"), session: id, owner: owner, catalog: catalog)
-      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: Date().timeIntervalSince1970 + 18000)], at: Date())
+      harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 100, resetsAt: Date().timeIntervalSince1970 + 18000), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
       let held = try #require(await owner.modelRoute(id))
       await #expect(throws: ModelRouteWaiting.self) { try await routeWaitOrSwitch(held, session: id, catalog: catalog, usage: harness.runtime.usage) }
       #expect(try await CacheWarmer(space: harness.space, usage: harness.runtime.usage).allows(id) == false)
@@ -471,8 +471,8 @@ extension GroupSwitchingTests {
         let owner = Hub(space: harness.space)
         let catalog = try await groupCatalog(space: harness.space, access: InferenceAccess(credentials: harness.credentials))()
         let reset = Date().addingTimeInterval(18000).timeIntervalSince1970
-        harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset)], at: Date())
-        harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset)], at: Date())
+        harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 99, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
+        harness.runtime.usage.record("alternate", plan: nil, windows: [.init(name: "five_hour", usedPercent: 0, resetsAt: reset), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: Date())
         let head = GenerationHead(id: UUID(), timestamp: Date(), summary: "preserved ordinary summary", snapshot: .init(preReads: ["/task.md"]), runningWork: ["exec.running"])
         let kept = 1 ..< source.items.count
         let compacted = source.compacted(head: head, kept: kept)
@@ -500,7 +500,7 @@ extension GroupSwitchingTests {
       let (harness, owner, _, _) = try await setup()
       let instant = Date(timeIntervalSince1970: 10000)
       let reset = instant.addingTimeInterval(18000)
-      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 10, resetsAt: reset.timeIntervalSince1970)], at: instant)
+      harness.runtime.usage.record("testing", plan: nil, windows: [.init(name: "five_hour", usedPercent: 10, resetsAt: reset.timeIntervalSince1970), .init(name: "seven_day", usedPercent: 0, resetsAt: nil)], at: instant)
       let created = try await harness.call("/v1/session", .object(["title": "Date inspection", "kind": "agent", "modelGroup": "work"]), as: SessionCreateOutput.self)
       let id = SessionID(created.id)
       let held = try #require(await owner.modelRoute(id))

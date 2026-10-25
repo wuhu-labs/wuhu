@@ -26,7 +26,8 @@
     "app/lib/widgets/shared/prelude.js": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/prelude.js",
     "app/lib/widgets/shared/tree.js": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/tree.js",
     "app/lib/widgets/shared/prelude.d.ts": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/prelude.d.ts",
-    "app/lib/widgets/shared/tree.d.ts": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/tree.d.ts"
+    "app/lib/widgets/shared/tree.d.ts": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/tree.d.ts",
+    "../ui/src/shared/allowance.json": "//packages/widget-script-kit:Targets/WidgetScriptSource/Sources/Resources/allowance.json"
   },
   "exportedDirs": {
     "shell-sdk": "app/lib/shell-sdk"

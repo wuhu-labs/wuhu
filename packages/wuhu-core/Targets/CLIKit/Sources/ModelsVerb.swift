@@ -5,6 +5,7 @@
 #endif
 
 import struct InferenceKit.ModelsDocument
+import struct InferenceKit.ProviderCatalog
 import JSONValue
 import SpaceClient
 import struct SpaceContract.GroupID
@@ -103,12 +104,13 @@ struct ModelsMerge {
     var result = user?.object ?? [:]
     var added: [String] = []
     for (providerID, basisProvider) in basis.object ?? [:] {
-      guard var userProvider = result[providerID]?.object else {
+      guard result[providerID] != nil else {
         result[providerID] = basisProvider
         added.append("provider \(providerID)")
         continue
       }
-      guard userProvider["kind"] != .string("group") else { continue }
+      guard var userProvider = result[providerID]?.object, userProvider["kind"] != .string("group") else { continue }
+      guard userProvider["models"] == nil || userProvider["models"]?.object != nil else { continue }
       var userModels = userProvider["models"]?.object ?? [:]
       for (modelName, basisModel) in basisProvider.object?["models"]?.object ?? [:] {
         guard userModels[modelName] == nil else { continue }
@@ -178,11 +180,21 @@ extension Executor {
       let groupOutput: ReadOutput = try await client.tool("read", ["path": .string(settingsAddress(ModelsDocument.groupPath))])
       groupText = groupOutput.content
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
-    _ = try ModelsDocument(json: Data(output.content.utf8), groupsJSON: groupText.map { Data($0.utf8) })
+    let document = try ModelsDocument(json: Data(output.content.utf8), groupsJSON: groupText.map { Data($0.utf8) })
     guard let providers = JSONValue.parse(output.content) else { throw CLIError(message: "Model catalogs are not valid JSON") }
     let groups = groupText.flatMap(JSONValue.parse) ?? .object([:])
-    let catalog: JSONValue = ["providers": providers, "groups": groups]
-    await self.runner.stdout(json ? prettyJSON(catalog) + "\n" : renderedModels(providers: providers, groups: groups))
+    let validation = ProviderCatalog(document: document, credentials: .unavailable)
+    let errors = ["providerErrors": validation.providerErrors, "groupErrors": validation.groupErrors]
+    var catalog: JSONValue = ["providers": providers, "groups": groups]
+    for (kind, entries) in errors { catalog.set(kind, try JSONValueEncoder().encode(entries.mapValues(\.description))) }
+    let memberErrors = validation.groupMemberErrors.mapValues { $0.mapValues(\.description) }
+    catalog.set("groupMemberErrors", try JSONValueEncoder().encode(memberErrors))
+    let diagnostics = memberErrors.sorted(by: { $0.key < $1.key }).flatMap { _, entries in
+      entries.sorted(by: { $0.key < $1.key }).map { "\($0.value)\n" }
+    }.joined() + errors.sorted(by: { $0.key < $1.key }).flatMap { kind, entries in
+      entries.sorted(by: { $0.key < $1.key }).map { "\(kind) \($0.key): \($0.value.description)\n" }
+    }.joined()
+    await self.runner.stdout(json ? prettyJSON(catalog) + "\n" : renderedModels(providers: providers, groups: groups) + diagnostics)
   }
 
   mutating func modelsUpdate() async throws {
@@ -198,8 +210,8 @@ extension Executor {
         "read", ["path": .string(settingsAddress(WellKnownModels.spacePath))],
       )
       token = output.token
-      guard let existing = JSONValue.parse(output.content) else {
-        throw CLIError(message: "\(WellKnownModels.spacePath) is not valid JSON; fix or remove it, then re-run")
+      guard let existing = JSONValue.parse(output.content), existing.object != nil else {
+        throw CLIError(message: "\(WellKnownModels.spacePath) must be a JSON object; fix or remove it, then re-run")
       }
       user = existing
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
@@ -212,7 +224,11 @@ extension Executor {
       )
       groupText = output.content
     } catch let error as SpaceClient.ToolFailure where error.error.code == .notFound {}
-    _ = try ModelsDocument(json: Data(merge.merged.jsonString().utf8), groupsJSON: groupText.map { Data($0.utf8) })
+    let document = try ModelsDocument(json: Data(merge.merged.jsonString().utf8), groupsJSON: groupText.map { Data($0.utf8) })
+    let validation = ProviderCatalog(document: document, credentials: .unavailable)
+    for errors in [validation.providerErrors, validation.groupErrors] + Array(validation.groupMemberErrors.values) {
+      for (id, error) in errors.sorted(by: { $0.key < $1.key }) { await self.runner.stdout("\(id): \(error.description)\n") }
+    }
     guard !merge.added.isEmpty else {
       await self.runner.stdout("models: up to date\n")
       return

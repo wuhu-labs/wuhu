@@ -13,13 +13,13 @@ public enum ModelPlacementReason: String, Hashable, Sendable, Codable {
 
 public struct ModelHeadroomWindow: Hashable, Sendable, Codable {
   public var name: String
-  public var usedPercent: Double
+  public var usedPercent: Double?
   public var resetsAt: Double?
   public var capacity: Double
-  public var remaining: Double
-  public var score: Double
+  public var remaining: Double?
+  public var score: Double?
 
-  public init(name: String, usedPercent: Double, resetsAt: Double?, capacity: Double, remaining: Double, score: Double) {
+  public init(name: String, usedPercent: Double?, resetsAt: Double?, capacity: Double, remaining: Double?, score: Double?) {
     self.name = name
     self.usedPercent = usedPercent
     self.resetsAt = resetsAt

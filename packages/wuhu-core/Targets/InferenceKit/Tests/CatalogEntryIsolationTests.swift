@@ -82,3 +82,64 @@ private let mixedCatalogCredentials = CredentialResolver.bound { provider in
     #expect(image == Data("PNG".utf8))
   }
 }
+
+extension CatalogEntryIsolationTests {
+  @Test func invalidCapacityAndGroupStayLocalAtUseTime() async throws {
+    var source = try ModelsDocument(json: fixtureJSON)
+    source.providers["openai"]!.capacity = ["weekly": 2]
+    let groups = Data(#"{"mixed":{"kind":"group","members":[{"id":"a","provider":"anthropic","model":"claude-sonnet-5"},{"id":"b","provider":"openai","model":"gpt-5.4"}],"defaultEffort":"high"},"good":{"kind":"group","members":[{"id":"a","provider":"anthropic","model":"claude-sonnet-5"}],"defaultEffort":"high"},"bad":{"kind":"group","members":[{"id":"b","provider":"openai","model":"gpt-5.4"}],"defaultEffort":"high"}}"#.utf8)
+    let document = try ModelsDocument(json: JSONEncoder().encode(source), groupsJSON: groups)
+    let catalog = ProviderCatalog(document: document, credentials: .init { _ in .apiKey("fixture") })
+    let error = CatalogError.invalidCapacity(provider: "openai", window: "weekly")
+    #expect(throws: error) { try catalog.validate(.init(provider: "openai", model: "gpt-5.4", effort: "high")) }
+    #expect(throws: CatalogError.groupMember(group: "bad", member: "b", reason: error)) { try catalog.validateGroup("bad") }
+    #expect(try catalog.validateGroup("good") == "high")
+    let resolved = try await catalog.resolve(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "high"), session: .init("test"))
+    #expect(resolved.specifier.provider == "anthropic")
+    #expect(catalog.providerErrors == ["openai": error])
+    #expect(catalog.groupErrors.keys.sorted() == ["bad"])
+    let validated = try catalog.validatedGroup("mixed")
+    #expect(validated.memberErrors["b"] == .groupMember(group: "mixed", member: "b", reason: error))
+    #expect(try await catalog.validateGroupReadiness("mixed") == "high")
+    let placement = try placeModelGroup(id: "mixed", group: document.groups["mixed"]!, providers: document.providers, usage: [:], now: Date(), reason: .create)
+    #expect(placement.member.id == "a")
+    #expect(placement.evidence.map(\.member) == ["a"])
+  }
+
+  @Test(arguments: [#"{"kind":"group","members":[],"defaultEffort":"high","policy":{"type":"unknown"}}"#, #"{"kind":"group","members":"wrong"}"#, "null"])
+  func malformedGroupDoesNotPoisonHealthyGroup(_ bad: String) throws {
+    let groups = Data((#"{"good":{"kind":"group","members":[{"id":"a","provider":"anthropic","model":"claude-sonnet-5"}],"defaultEffort":"high"},"bad":"# + bad + "}").utf8)
+    let document = try ModelsDocument(json: fixtureJSON, groupsJSON: groups)
+    let catalog = ProviderCatalog(document: document, credentials: .unavailable)
+    #expect(try catalog.validateGroup("good") == "high")
+    #expect(throws: CatalogError.self) { try catalog.validateGroup("bad") }
+    #expect(catalog.groupErrors.keys.sorted() == ["bad"])
+  }
+
+  @Test(arguments: [#"{"dialect":"unknown"}"#, "null", #"{"capacity":"wrong"}"#])
+  func malformedProviderDoesNotPoisonHealthyProvider(_ bad: String) throws {
+    let text = String(decoding: fixtureJSON, as: UTF8.self)
+    let json = Data(("{\"bad\":" + bad + "," + text.dropFirst()).utf8)
+    let catalog = ProviderCatalog(document: try ModelsDocument(json: json), credentials: .unavailable)
+    _ = try catalog.validate(.init(provider: "anthropic", model: "claude-sonnet-5", effort: "high"))
+    #expect(throws: CatalogError.self) { try catalog.validate(.init(provider: "bad", model: "m", effort: "high")) }
+    #expect(catalog.providerErrors.keys.sorted() == ["bad"])
+    #expect(throws: CatalogError.self) { try JSONEncoder().encode(catalog.document) }
+  }
+
+  @Test func malformedSelectedCapabilityCredentialDoesNotFallBack() async throws {
+    let config = Data(#"{"image":{"active":"test","providers":{"test":{"dialect":"codex","credential":"broken"}}}}"#.utf8)
+    let client = try await CapabilityClient.load(read: { path in
+      if path == "/capabilities.json" { return config }
+      if path == ModelsDocument.spacePath { return Data(#"{"broken":{"dialect":"unknown"}}"#.utf8) }
+      return nil
+    }, credentials: mixedCatalogCredentials)
+    #expect(throws: CapabilityError.self) { try client.capability("image") }
+  }
+
+  @Test(arguments: ["[]", "null", "1", "{invalid"])
+  func unreadableFilesStillFail(_ json: String) {
+    #expect(throws: CatalogError.invalidDocument) { try ModelsDocument(json: Data(json.utf8)) }
+    #expect(throws: CatalogError.invalidGroupsDocument) { try ModelsDocument(json: fixtureJSON, groupsJSON: Data(json.utf8)) }
+  }
+}
