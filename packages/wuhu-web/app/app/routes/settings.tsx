@@ -3,6 +3,7 @@ import { Link, useLocation, useOutletContext } from 'react-router'
 import { policyLinks } from '~/components/ai-sharing-dialog'
 import { Avatar } from '~/components/avatar'
 import { BrowserCard } from '~/components/settings-browser'
+import { GroupSettings } from '~/components/settings-groups'
 import {
   settingsPlace,
   type SettingsRow,
@@ -40,7 +41,12 @@ export function meta() {
 // The selected row's detail; the rows themselves are the sidebar's
 // (components/settings-nav.tsx).
 export default function Settings() {
-  const { row } = settingsPlace(useLocation().search)
+  const search = useLocation().search
+  const { row, topic } = settingsPlace(search)
+  const { sidebarCatalog } = useOutletContext<SpaceContext>()
+  if (topic === 'groups') {
+    return <GroupSettings catalog={sidebarCatalog} />
+  }
   return (
     <div className='wuhu-content wuhu-settings'>
       <h1 className='wuhu-settings-title'>{settingsRowLabel(row)}</h1>

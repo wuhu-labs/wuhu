@@ -11,7 +11,6 @@ import Scratch
 @testable import SpaceServer
 import Synchronization
 import Testing
-import WuhuVFS
 
 @Suite(.deterministicDependencies, .dependency(\.continuousClock, ContinuousClock())) struct IdentityRotationTests {
   @Test(arguments: [false, true]) func overlapSwitchRetireAndRestart(directory: Bool) async throws {
@@ -124,7 +123,7 @@ import WuhuVFS
       let id = String(repeating: "n", count: 32)
       return try Response.json(JSONValue.object(["id": .string(id), "issuer": .string("https://id.wuhu.ai/" + id), "confirmed": true]), status: .created)
     }
-    let controller = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    let controller = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: rig.fs.identityStateStore, fetch: fetch)
     await #expect(throws: failure) { try await rig.tokenKid(controller) }
     await #expect(throws: failure.inferenceError) {
       try await controller.tokenForInference(audience: URL(string: "https://verifier.test")!, space: "s", group: "g", session: "a", now: rig.epoch, id: UUID(0))
@@ -142,7 +141,7 @@ import WuhuVFS
     let issuer = try await controller.issuerFor(URL(string: "https://verifier.test")!)
     #expect(issuer != oldIssuer)
     #expect(issuer == "https://id.wuhu.ai/" + String(repeating: "n", count: 32))
-    let reopened = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    let reopened = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: rig.fs.identityStateStore, fetch: fetch)
     #expect(try await reopened.issuerFor(URL(string: "https://verifier.test")!) == issuer)
     #expect(await controller.directoryConfirmed)
   }
@@ -150,7 +149,7 @@ import WuhuVFS
   @Test func lifecycleAutomaticallyMaintainsAndCancelsItsSleep() async throws {
     let rig = try await RotationRig(directory: false)
     let entered = Gate()
-    let store = IdentityStateStore.filesystem(rig.fs)
+    let store = rig.fs.identityStateStore
     let controller = try await rig.at(0) {
       try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .init(load: store.load, save: { data in
         try await store.save(data)
@@ -205,7 +204,7 @@ import WuhuVFS
       try await rig.at(0) { try await rig.controller.rotate() }
       try await rig.at(86400) { try await rig.controller.maintain() }
     }
-    let store = IdentityStateStore.filesystem(rig.fs)
+    let store = rig.fs.identityStateStore
     let fail = Mutex(false)
     let failingStore = IdentityStateStore(load: store.load, save: { data in
       let schedule = try JSONDecoder().decode(IdentitySettings.self, from: data).keySchedule!
@@ -261,7 +260,7 @@ import WuhuVFS
   @Test func durableWriteFailureNeverSwitchesSigner() async throws {
     let rig = try await RotationRig(directory: true)
     try await rig.at(0) { try await rig.controller.rotate() }
-    let store = IdentityStateStore.filesystem(rig.fs)
+    let store = rig.fs.identityStateStore
     let failure = Mutex(false)
     let failingStore = IdentityStateStore(load: store.load, save: { data in
       if failure.withLock({ $0 }) { throw IdentityError.keyUnavailable }
@@ -287,7 +286,7 @@ final class RotationRig: Sendable {
     var effects: [(method: Fetch.Method, signer: String)] = []
   }
 
-  let fs: NodeTreeVFS
+  let fs: MemoryFiles
   let key: ServerIdentity
   let controller: IdentityController
   let fetch: FetchClient
@@ -301,9 +300,9 @@ final class RotationRig: Sendable {
 
   init(directory: Bool) async throws {
     let epoch = Date(timeIntervalSince1970: 1_800_000_000)
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
+    let fs = MemoryFiles()
     self.fs = fs
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     self.key = key
     let remote = RemoteBox()
     self.remote = remote
@@ -330,7 +329,7 @@ final class RotationRig: Sendable {
     }
     self.fetch = fetch
     controller = try await withDependencies { $0.date = .constant(epoch) } operation: {
-      try await IdentityController.load(identity: key, origin: "https://private.test", store: .filesystem(fs), fetch: fetch)
+      try await IdentityController.load(identity: key, origin: "https://private.test", store: fs.identityStateStore, fetch: fetch)
     }
     if directory {
       try await withDependencies { $0.date = .constant(epoch) } operation: { try await controller.set(defaultIssuer: .directory) }
@@ -342,7 +341,7 @@ final class RotationRig: Sendable {
   }
 
   func reopen() async throws -> IdentityController {
-    try await IdentityController.load(identity: key, origin: "https://private.test", store: .filesystem(fs), fetch: fetch)
+    try await IdentityController.load(identity: key, origin: "https://private.test", store: fs.identityStateStore, fetch: fetch)
   }
 
   func tokenKid(_ controller: IdentityController? = nil) async throws -> String {

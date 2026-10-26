@@ -20,6 +20,7 @@ export {
   Row,
   type Status,
   type StatusTone,
+  Switch,
   Tree,
 } from './kit.tsx'
 export {

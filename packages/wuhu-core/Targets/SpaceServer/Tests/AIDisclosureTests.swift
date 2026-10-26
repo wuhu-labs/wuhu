@@ -6,7 +6,6 @@ import Scratch
 import SpaceContract
 @testable import SpaceServer
 import Testing
-import WuhuVFS
 
 @Suite(.deterministicDependencies) struct AIDisclosureTests {
   let disclosure = AIDisclosure(version: "trial-2026-10", providers: [
@@ -33,12 +32,12 @@ import WuhuVFS
     #expect(try await response.text() == "{\"space\":\"\(identity)\",\"origin\":\"https://space.test\",\"contentBase\":\"space.test\",\"features\":[\"groups\",\"observe-batch\",\"watch-batch\"],\"group\":\"shared\",\"now\":1700000000.0}")
   }
 
-  @Test func readsConfiguredFileThroughVFS() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    try await fs.createFile(at: VFSPath(absoluteFilePath: "/disclosure.json"), data: JSONEncoder().encode(disclosure))
-    #expect(try await loadAIDisclosure(from: fs, path: "/disclosure.json", file: "disclosure.json") == disclosure)
+  @Test func readsConfiguredFileThroughReader() async throws {
+    let fs = MemoryFiles()
+    try await fs.create("/disclosure.json", data: JSONEncoder().encode(disclosure))
+    #expect(try await loadAIDisclosure(file: "disclosure.json") { try await fs.read("/disclosure.json") } == disclosure)
     await #expect(throws: AIDisclosureError.unreadable(file: "missing.json")) {
-      try await loadAIDisclosure(from: fs, path: "/missing.json", file: "missing.json")
+      try await loadAIDisclosure(file: "missing.json") { try await fs.read("/missing.json") }
     }
   }
 
@@ -50,10 +49,10 @@ import WuhuVFS
     #"{"version":"v","providers":[{"name":"DeepSeek","location":"China","via":"proxy","policy":"/privacy"}]}"#,
     #"{"version":"v","providers":[{"name":"DeepSeek","location":"China","via":"proxy","policy":"http://wuhu.ai/privacy"}]}"#,
   ]) func malformedFileIsTypedFailure(_ json: String) async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    try await fs.createFile(at: VFSPath(absoluteFilePath: "/bad.json"), data: Data(json.utf8))
+    let fs = MemoryFiles()
+    try await fs.create("/bad.json", data: Data(json.utf8))
     await #expect(throws: AIDisclosureError.invalid(file: "bad.json")) {
-      try await loadAIDisclosure(from: fs, path: "/bad.json", file: "bad.json")
+      try await loadAIDisclosure(file: "bad.json") { try await fs.read("/bad.json") }
     }
   }
 
@@ -62,10 +61,10 @@ import WuhuVFS
     let invalid = AIDisclosure(version: "trial-2026-10", providers: [
       AIProviderDisclosure(name: "DeepSeek", location: "China", via: "Wuhu metering proxy", policy: policy),
     ])
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    try await fs.createFile(at: VFSPath(absoluteFilePath: "/bad.json"), data: JSONEncoder().encode(invalid))
+    let fs = MemoryFiles()
+    try await fs.create("/bad.json", data: JSONEncoder().encode(invalid))
     await #expect(throws: AIDisclosureError.invalid(file: "bad.json")) {
-      try await loadAIDisclosure(from: fs, path: "/bad.json", file: "bad.json")
+      try await loadAIDisclosure(file: "bad.json") { try await fs.read("/bad.json") }
     }
   }
 

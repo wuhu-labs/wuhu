@@ -123,5 +123,4 @@ packages/wuhu-web/app/app/lib/space-url.vectors.json
 
 # Agent worktrees (isolation mode). Untracked, and a stray `git add -A` during an
 # agent run would otherwise commit them as embedded repos.
-/.claude/worktrees/
 .skill-bench/

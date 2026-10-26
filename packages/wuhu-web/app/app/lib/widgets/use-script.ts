@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { SpaceClient } from '~/sdk/client'
+import type { SpaceClient, SpaceServer } from '~/sdk/client'
+import { type SidebarAddress, sidebarKey } from '../sidebar-catalog.ts'
 import { errorMessage } from '~/sdk/errors'
 import { scriptHost } from './browser-host.ts'
 import type { ScriptResult, Watching } from './host.ts'
@@ -76,42 +77,67 @@ export function useScript(
 // Every sidebar script of a group at once: the rail needs each one's name
 // and icon. Only the one on screen is active.
 export function useScripts(
-  client: SpaceClient,
-  paths: readonly string[],
+  server: SpaceServer,
+  addresses: readonly SidebarAddress[],
   current: string | null,
   active: boolean,
 ): ReadonlyMap<string, ScriptState> {
   const [states, setStates] = useState<ReadonlyMap<string, ScriptState>>(
     () => new Map(),
   )
-  const key = paths.join('\n')
+  const key = JSON.stringify(addresses)
   const on = useRef({ current, active })
   const watches = useRef(new Map<string, ReturnType<typeof watchScript>>())
+  useEffect(() => () => {
+    for (const watching of watches.current.values()) watching.stop()
+    watches.current.clear()
+  }, [server])
   useEffect(() => {
-    const started = new Map<string, ReturnType<typeof watchScript>>()
-    for (const path of key === '' ? [] : key.split('\n')) {
-      started.set(
-        path,
-        watchScript(
-          client,
-          path,
+    const wanted = new Set(
+      (JSON.parse(key) as SidebarAddress[]).map(sidebarKey),
+    )
+    setStates((previous) =>
+      new Map([...previous].filter(([id]) => wanted.has(id)))
+    )
+    reconcileScriptWatches(
+      watches.current,
+      JSON.parse(key) as SidebarAddress[],
+      (address) => {
+        const id = sidebarKey(address)
+        return watchScript(
+          server.client(address.group),
+          address.path,
           {},
-          () => on.current.active && on.current.current === path,
-          (state) =>
-            setStates((previous) => new Map(previous).set(path, state)),
-        ),
-      )
-    }
-    watches.current = started
-    return () => {
-      for (const watching of started.values()) watching.stop()
-    }
-  }, [client, key])
+          () => on.current.active && on.current.current === id,
+          (state) => setStates((previous) => new Map(previous).set(id, state)),
+        )
+      },
+    )
+  }, [server, key])
   useEffect(() => {
     on.current = { current, active }
     for (const [path, watching] of watches.current) {
       watching.setActive(active && path === current)
     }
   }, [current, active])
-  return states
+  const wanted = new Set(addresses.map(sidebarKey))
+  return new Map([...states].filter(([id]) => wanted.has(id)))
+}
+
+export function reconcileScriptWatches<Watch extends { stop(): void }>(
+  watches: Map<string, Watch>,
+  addresses: readonly SidebarAddress[],
+  start: (address: SidebarAddress) => Watch,
+): void {
+  const wanted = new Set(addresses.map(sidebarKey))
+  for (const [key, watch] of watches) {
+    if (!wanted.has(key)) {
+      watch.stop()
+      watches.delete(key)
+    }
+  }
+  for (const address of addresses) {
+    const key = sidebarKey(address)
+    if (!watches.has(key)) watches.set(key, start(address))
+  }
 }

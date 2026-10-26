@@ -27,7 +27,7 @@ import Testing
       default: return Response(status: .serviceUnavailable)
       }
     }
-    let controller = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    let controller = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: rig.fs.identityStateStore, fetch: fetch)
     let before = await controller.settings
     let tokenBefore = try await rig.tokenKid(controller)
     await #expect(throws: IdentityError.directoryUnavailable) { try await controller.registerNew() }
@@ -36,7 +36,7 @@ import Testing
     #expect(try await rig.tokenKid(controller) == tokenBefore)
     #expect(try await controller.snapshot().object?["publicationFailure"] == .null)
     try await controller.maintain()
-    let reopened = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+    let reopened = try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: rig.fs.identityStateStore, fetch: fetch)
     #expect(await reopened.settings == before)
     let token = try await reopened.token(audience: URL(string: "https://verifier.test")!, space: "s", group: "g", now: rig.epoch, id: UUID(0))
     #expect(try rotationJSON(String(token.split(separator: ".")[1])).object?["iss"] == .string(issuer))
@@ -51,7 +51,7 @@ import Testing
       return Response(status: .serviceUnavailable)
     }
     let controller = try await withDependencies { $0.continuousClock = clock } operation: {
-      try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: .filesystem(rig.fs), fetch: fetch)
+      try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: rig.fs.identityStateStore, fetch: fetch)
     }
     let before = await controller.settings
     try await withDependencies { $0.continuousClock = clock } operation: {
@@ -69,7 +69,7 @@ import Testing
     let rig = try await RotationRig(directory: true)
     let oldSettings = await rig.controller.settings
     let fail = Mutex(false)
-    let store = IdentityStateStore.filesystem(rig.fs)
+    let store = rig.fs.identityStateStore
     let failingStore = IdentityStateStore(load: store.load, save: { data in
       if fail.withLock({ $0 }) { throw IdentityError.keyUnavailable }
       try await store.save(data)
@@ -165,7 +165,7 @@ import Testing
       }
       return response
     }
-    let store = IdentityStateStore.filesystem(rig.fs)
+    let store = rig.fs.identityStateStore
     let controller = try await rig.at(0) {
       try await IdentityController.load(identity: rig.key, origin: "https://private.test", store: store, fetch: fetch)
     }
@@ -228,7 +228,7 @@ import Testing
     let rig = try await RotationRig(directory: true)
     let logs = IdentityLogs()
     let reject = Mutex(true)
-    let controller = try IdentityController(identity: rig.key, origin: "https://private.test", settings: await rig.controller.settings, store: .filesystem(rig.fs), fetch: FetchClient { _ in
+    let controller = try IdentityController(identity: rig.key, origin: "https://private.test", settings: await rig.controller.settings, store: rig.fs.identityStateStore, fetch: FetchClient { _ in
       if reject.withLock({ $0 }) { return try Response.json(["code": failure.directoryCode!], status: .forbidden) }
       return try Response.json(["confirmed": true])
     }, logger: logs.logger)

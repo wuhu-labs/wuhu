@@ -1,3 +1,4 @@
+import { retryRead } from './retry-read.ts'
 import {
   createContext,
   type ReactNode,
@@ -121,17 +122,15 @@ export function DirectoryProvider({
       )
     }
     load()
-    ownPrincipal().then(
-      (found) => {
-        if (!cancelled) setPrincipal(found)
-      },
-      () => {
-        if (!cancelled) setPrincipal(null)
-      },
+    const stopPrincipal = retryRead(
+      ownPrincipal,
+      (found) => setPrincipal(found),
+      () => setPrincipal((previous) => previous ?? null),
     )
     globalThis.addEventListener(profileChangedEvent, load)
     return () => {
       cancelled = true
+      stopPrincipal()
       globalThis.removeEventListener(profileChangedEvent, load)
     }
   }, [cache])

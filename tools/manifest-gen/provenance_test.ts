@@ -1,5 +1,5 @@
+import { assertEquals } from '@std/assert'
 import { join } from '@std/path'
-import { assertEquals } from './assertions.ts'
 import { manifestInputPaths } from './provenance.ts'
 
 Deno.test('provenance covers module fragments and configure fragments', async () => {

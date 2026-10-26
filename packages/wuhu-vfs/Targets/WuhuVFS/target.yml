@@ -1,7 +1,0 @@
-name: WuhuVFS
-kind: library
-sources: Sources
-dependencies:
-  - NIOCore
-  - NIOPosix
-tests: {}

@@ -1,11 +1,11 @@
 ---
 name: sidebars
-description: Author a sidebar for the web app — /.sidebars/<name>.sidebar.jsx returning PageCards and Widgets, and /.widgets/<name>.widget.jsx script widgets that query, fetch and draw one catalog card (Figure, List, Doc, …).
+description: Author a sidebar for the apps — /.sidebars/<name>.sidebar.jsx returning PageCards and Widgets, and /.widgets/<name>.widget.jsx script widgets that query, fetch and draw one catalog card (Figure, List, Doc, …).
 ---
 
 # Sidebars
 
-A sidebar is a file in shared's `/.sidebars/`. The web app draws one rail button per file; the person picks one. Two formats, by extension: a script `<name>.sidebar.jsx` (this skill) or a JSON definition of SQL sections `<name>.json` (older, still drawn; the native app draws only these). `/.sidebars/everything.sidebar.jsx` is Everything: edit it to change Everything, delete it to get the stock one back on the next server start.
+A sidebar is a file in any readable non-personal group's `/.sidebars/`. The web and native apps draw one rail entry per file, grouped by group; the person picks one and chooses which show in Settings → Groups. The hidden settings group never contributes. Two formats, by extension: a script `<name>.sidebar.jsx` (this skill) or a JSON definition of SQL sections `<name>.json` (older, still drawn). Shared’s `/.sidebars/everything.sidebar.jsx` is Everything: edit it to change Everything, delete it to get the stock one back on the next server start.
 
 Authors write JSX; there is no build step and no import. A script runs in a sandbox with only `query`, `fetch` and the elements below: no timers, DOM, storage or other network.
 

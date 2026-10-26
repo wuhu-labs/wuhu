@@ -1,16 +1,16 @@
-import { Glyph, ListCard, Row } from '@wuhu/ui'
+import { Glyph, Icon, ListCard, Row } from '@wuhu/ui'
 import { Avatar } from '~/components/avatar'
 import { aiSharing } from '~/lib/ai-sharing'
 import { sendKeyLabel, useSendKey } from '~/lib/composer'
 import { handleFor } from '~/lib/directory'
 import { screens } from '~/lib/links'
 import { useDirectory, useOwnPrincipal } from '~/lib/use-directory'
+import type { SidebarCatalog } from '~/lib/use-sidebar-catalog'
 
-// Settings is two topics on the rail, each a card of one-line rows whose
-// detail draws on the right.
 export const settingsTopics = {
   you: { label: 'You', rows: ['profile', 'devices', 'browser', 'ai-sharing'] },
   space: { label: 'Space', rows: ['templates', 'usage'] },
+  groups: { label: 'Groups', rows: [] },
 } as const
 
 export type SettingsTopic = keyof typeof settingsTopics
@@ -35,16 +35,28 @@ export function settingsHref(topic: SettingsTopic, row?: SettingsRow): string {
   return `${screens.settings}?${params}`
 }
 
+export function groupSettingsHref(group: string): string {
+  const params = new URLSearchParams({ topic: 'groups', group })
+  return `${screens.settings}?${params}`
+}
+
 // The topic and row a settings address names; the topic's first row when it
 // names none.
 export function settingsPlace(
   search: string,
 ): { topic: SettingsTopic; row: SettingsRow } {
   const params = new URLSearchParams(search)
-  const topic: SettingsTopic = params.get('topic') === 'space' ? 'space' : 'you'
+  const topic: SettingsTopic = params.get('topic') === 'groups'
+    ? 'groups'
+    : params.get('topic') === 'space'
+    ? 'space'
+    : 'you'
   const rows: readonly SettingsRow[] = settingsTopics[topic].rows
   const asked = params.get('row') as SettingsRow | null
-  return { topic, row: asked && rows.includes(asked) ? asked : rows[0] }
+  return {
+    topic,
+    row: asked && rows.includes(asked) ? asked : rows[0] ?? 'profile',
+  }
 }
 
 export function SettingsRail({
@@ -74,6 +86,15 @@ export function SettingsRail({
         onClick={() => onNavigate(settingsHref('space'))}
       >
         <Glyph name='grid' w={17} h={17} />
+      </button>
+      <button
+        type='button'
+        title='Groups'
+        aria-label='Groups'
+        aria-pressed={topic === 'groups'}
+        onClick={() => onNavigate(settingsHref('groups'))}
+      >
+        <Icon name='component' size={20} />
       </button>
     </>
   )
@@ -129,12 +150,17 @@ function SettingsRowLink({
 export function SettingsSidebar({
   topic,
   row,
+  catalog,
   onNavigate,
 }: {
   topic: SettingsTopic
   row: SettingsRow
+  catalog: SidebarCatalog
   onNavigate: (href: string) => void
 }) {
+  if (topic === 'groups') {
+    return <GroupRows catalog={catalog} onNavigate={onNavigate} />
+  }
   return (
     <ListCard title={settingsTopics[topic].label}>
       {settingsTopics[topic].rows.map((option) => (
@@ -143,6 +169,27 @@ export function SettingsSidebar({
           topic={topic}
           row={option}
           current={option === row}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </ListCard>
+  )
+}
+
+function GroupRows(
+  { catalog, onNavigate }: {
+    catalog: SidebarCatalog
+    onNavigate: (href: string) => void
+  },
+) {
+  return (
+    <ListCard title='Groups'>
+      {catalog.groups?.map((group) => (
+        <Row
+          key={group.id}
+          label={group.label}
+          href={groupSettingsHref(group.id)}
+          current={group.selected}
           onNavigate={onNavigate}
         />
       ))}

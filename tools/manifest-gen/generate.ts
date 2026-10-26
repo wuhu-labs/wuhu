@@ -3596,9 +3596,11 @@ async function generatePackage(packageDir: string): Promise<void> {
       packageOutput,
       generatePackageSwift(pkg, packageDir, targets),
     )
-  } else if (await exists(packageOutput)) {
+  } else if (workspacePackage === undefined && await exists(packageOutput)) {
     // A stale manifest left behind keeps `swift build` working, which is the
-    // affordance this flag exists to remove.
+    // affordance this flag exists to remove. A --workspace run asks for one
+    // package's Xcode workspace and leaves every other package's alone, so
+    // two workspaces stay open side by side.
     await Deno.remove(packageOutput)
   }
   await writeIfChanged(buildOutput, buildBazel)
@@ -4789,6 +4791,7 @@ async function prepareApp(
   validateAppIntents(app, source)
   validateAppEntitlements(app, source)
   await validateAppResources(app, appDir)
+  await validateAppDependencies(app, source)
   app.signingTeamID = teamID
   populateAppBundleInfo(app)
   const bundles = appBundles(app)
@@ -4863,23 +4866,31 @@ export async function localPathClosure(packageDir: string): Promise<string[]> {
   return closure
 }
 
+function appDependencyLabels(app: AppManifest): string[] {
+  return [
+    ...app.targets.flatMap((target) => target.dependencies),
+    ...(app.extensions ?? []).flatMap((target) => target.dependencies),
+    ...(app.watchApplications ?? []).flatMap((target) => target.dependencies),
+    ...(app.libraries ?? []).flatMap((library) => library.dependencies ?? []),
+  ]
+}
+
+function appFrameworkLabels(app: AppManifest): string[] {
+  return [
+    ...app.targets,
+    ...(app.extensions ?? []),
+    ...(app.watchApplications ?? []),
+  ].flatMap((target) => target.frameworks ?? [])
+}
+
 async function localPackageRefs(
   app: AppManifest,
   appDir: string,
 ): Promise<Record<string, LocalPackageRef>> {
-  const labels = [
-    ...app.targets.flatMap((target) => target.dependencies),
-    ...app.targets.flatMap((target) => target.frameworks ?? []),
-    ...(app.extensions ?? []).flatMap((target) => target.dependencies),
-    ...(app.extensions ?? []).flatMap((target) => target.frameworks ?? []),
-    ...(app.watchApplications ?? []).flatMap((target) => target.dependencies),
-    ...(app.watchApplications ?? []).flatMap((target) =>
-      target.frameworks ?? []
-    ),
-    ...(app.libraries ?? []).flatMap((library) => library.dependencies ?? []),
-  ]
   const refs: Record<string, LocalPackageRef> = {}
-  for (const label of labels) {
+  for (
+    const label of [...appDependencyLabels(app), ...appFrameworkLabels(app)]
+  ) {
     const match = /^\/\/(.+):(.+)$/.exec(label)
     if (!match || refs[match[1]]) continue
     const dir = match[1]
@@ -4894,6 +4905,42 @@ async function localPackageRefs(
     }
   }
   return refs
+}
+
+// Every app dependency must exist in the SwiftPM graph too, as target.yml
+// requires of its own: a //pkg:X is a product of a local package, and a raw
+// Bazel label is a swiftpkg or one a target of those packages lowers with
+// `swiftpm:`. `frameworks:` only says what Bazel embeds and is not checked.
+async function validateAppDependencies(
+  app: AppManifest,
+  source: string,
+): Promise<void> {
+  const refs = await localPackageRefs(app, '.')
+  const lowered = new Set<string>()
+  for (const dir of Object.keys(refs)) {
+    for (const target of await discoverTargets(dir)) {
+      for (const dep of target.dependencies ?? []) {
+        if (typeof dep !== 'string' && dep.swiftpm) lowered.add(dep.name)
+      }
+    }
+  }
+  for (const label of appDependencyLabels(app)) {
+    if (label.startsWith(':') || label.startsWith('@swiftpkg_')) continue
+    const match = /^\/\/(.+):(.+)$/.exec(label)
+    if (match) {
+      if (!refs[match[1]]?.products.includes(match[2])) {
+        throw new Error(
+          `${source} depends on ${label}, which is not a product listed in ${
+            match[1]
+          }/package.yml`,
+        )
+      }
+    } else if (!lowered.has(label)) {
+      throw new Error(
+        `${source} depends on ${label}, which no target in its packages lowers with swiftpm:`,
+      )
+    }
+  }
 }
 
 async function resolveXcodegen(): Promise<string> {
@@ -4936,7 +4983,7 @@ async function generateXcodeWorkspace(packageDir: string): Promise<void> {
     const local = (await exists(localPath))
       ? await readYaml<WorkspaceLocalConfig>(localPath)
       : {}
-    const { spec, unresolved } = xcodeProjectSpec(
+    const spec = xcodeProjectSpec(
       app,
       await localPackageRefs(app, appDir),
       local,
@@ -4961,9 +5008,6 @@ async function generateXcodeWorkspace(packageDir: string): Promise<void> {
     if (!generated.success) {
       throw new Error(`xcodegen failed for ${specPath}`)
     }
-    for (const name of unresolved) {
-      console.log(`xcode workspace: left out Bazel-only dependency ${name}`)
-    }
     projectPaths.push(
       relative(dirname(packageDir), join(appDir, `${app.name}.xcodeproj`)),
     )
@@ -4977,6 +5021,14 @@ async function generateXcodeWorkspace(packageDir: string): Promise<void> {
   await writeIfChanged(
     join(workspaceDir, 'contents.xcworkspacedata'),
     workspaceContents(basename(packageDir), projectPaths),
+  )
+  // Without pins Xcode resolves every remote package to its newest version;
+  // the umbrella's pins are the versions Bazel builds.
+  const pinsDir = join(workspaceDir, 'xcshareddata', 'swiftpm')
+  await Deno.mkdir(pinsDir, { recursive: true })
+  await writeIfChanged(
+    join(pinsDir, 'Package.resolved'),
+    await Deno.readTextFile('bazel/umbrella/Package.resolved'),
   )
   console.log(`xcode workspace: open ${workspaceDir}`)
 }

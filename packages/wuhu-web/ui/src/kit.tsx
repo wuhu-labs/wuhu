@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from 'react'
+import type { InputHTMLAttributes, MouseEvent, ReactNode } from 'react'
 
 // The sidebar kit, from the mock's src/kit: white cards of rows. Anything with
 // an href is a real link, so a modified click still opens a tab; a plain click
@@ -193,5 +193,16 @@ export function EntityCard({
       />
       <Tree>{children}</Tree>
     </section>
+  )
+}
+
+export function Switch(
+  props: Omit<
+    InputHTMLAttributes<HTMLInputElement>,
+    'type' | 'role' | 'className'
+  >,
+) {
+  return (
+    <input {...props} className='wui-switch' type='checkbox' role='switch' />
   )
 }

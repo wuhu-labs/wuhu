@@ -10,7 +10,7 @@ A person's message may carry `<viewing>/path</viewing>` in its header, right aft
 
 ## Replies
 
-A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document.
+A reply is read on a phone, between other things: the first line is the outcome, and anything longer than a few lines follows the `writing-style` skill — read it before a reply that explains, proposes, or hands over a document. A reply renders as markdown: a bare URL becomes a link, a URL inside backticks does not, so a link the reader should open goes bare.
 
 ## Scratch files
 

@@ -14,11 +14,6 @@ export interface LocalPackageRef {
   path: string
 }
 
-export interface XcodeProjectSpec {
-  spec: Record<string, unknown>
-  unresolved: string[]
-}
-
 const bundleSourceExtensions = ['.xcassets', '.icon']
 
 export interface AppIconSource {
@@ -115,7 +110,6 @@ export function targetedDeviceFamily(families: string[]): string | undefined {
 interface ResolvedDependencies {
   sources: string[]
   packageProducts: { package: string; product: string }[]
-  unresolved: string[]
 }
 
 function resolveDependencies(
@@ -125,7 +119,6 @@ function resolveDependencies(
 ): ResolvedDependencies {
   const sources: string[] = []
   const packageProducts: { package: string; product: string }[] = []
-  const unresolved: string[] = []
   const seen = new Set<string>()
   const queue = [...target.dependencies]
 
@@ -149,20 +142,29 @@ function resolveDependencies(
       continue
     }
 
-    const match = /^\/\/(.+):(.+)$/.exec(dependency)
-    const local = match ? packages[match[1]] : undefined
-    if (!match || !local || !local.products.includes(match[2])) {
-      unresolved.push(dependency)
-      continue
+    // prepareApp has validated every label. A //pkg:X is a local product. A
+    // swiftpkg product resolves anywhere in the workspace graph; xcodegen only
+    // needs a local package to hang it on. Any other raw label is lowered by a
+    // package target, which already brings it into the graph.
+    const local = /^\/\/(.+):(.+)$/.exec(dependency)
+    const remote = /^@swiftpkg_.+\/\/:(.+)$/.exec(dependency)
+    if (local) {
+      packageProducts.push({
+        package: packages[local[1]].name,
+        product: local[2],
+      })
+    } else if (remote) {
+      const host = Object.values(packages)[0]
+      if (!host) {
+        throw new Error(
+          `${target.name} depends on ${dependency} but on no local package to resolve it through`,
+        )
+      }
+      packageProducts.push({ package: host.name, product: remote[1] })
     }
-    packageProducts.push({ package: local.name, product: match[2] })
   }
 
-  return {
-    sources: [...new Set(sources)],
-    packageProducts,
-    unresolved,
-  }
+  return { sources: [...new Set(sources)], packageProducts }
 }
 
 function targetSpec(
@@ -260,13 +262,12 @@ export function xcodeProjectSpec(
   app: AppManifest,
   packages: Record<string, LocalPackageRef>,
   local: WorkspaceLocalConfig = {},
-): XcodeProjectSpec {
+): Record<string, unknown> {
   const libraries = new Map(
     (app.libraries ?? []).map((library) => [library.name, library]),
   )
   const teamID = app.signingTeamID
   const targets: Record<string, unknown> = {}
-  const unresolved: string[] = []
   const usedPackages = new Set<string>()
 
   for (const extension of app.extensions ?? []) {
@@ -274,9 +275,6 @@ export function xcodeProjectSpec(
     for (const entry of resolved.packageProducts) {
       usedPackages.add(entry.package)
     }
-    unresolved.push(
-      ...resolved.unresolved.map((name) => `${extension.name}: ${name}`),
-    )
     targets[extension.name] = targetSpec(
       app,
       extension,
@@ -292,9 +290,6 @@ export function xcodeProjectSpec(
     for (const entry of resolved.packageProducts) {
       usedPackages.add(entry.package)
     }
-    unresolved.push(
-      ...resolved.unresolved.map((name) => `${watch.name}: ${name}`),
-    )
     targets[watch.name] = targetSpec(
       app,
       watch,
@@ -310,9 +305,6 @@ export function xcodeProjectSpec(
     for (const entry of resolved.packageProducts) {
       usedPackages.add(entry.package)
     }
-    unresolved.push(
-      ...resolved.unresolved.map((name) => `${target.name}: ${name}`),
-    )
     targets[target.name] = targetSpec(
       app,
       target,
@@ -339,18 +331,15 @@ export function xcodeProjectSpec(
   }
 
   return {
-    spec: {
-      name: app.name,
-      options: {
-        createIntermediateGroups: true,
-        // The .xcodeproj is derived and untracked; there is no second machine
-        // to keep its file ordering stable for.
-        generateEmptyDirectories: false,
-      },
-      packages: specPackages,
-      targets,
+    name: app.name,
+    options: {
+      createIntermediateGroups: true,
+      // The .xcodeproj is derived and untracked; there is no second machine
+      // to keep its file ordering stable for.
+      generateEmptyDirectories: false,
     },
-    unresolved,
+    packages: specPackages,
+    targets,
   }
 }
 

@@ -8,7 +8,6 @@ import SessionDomain
 import SpaceCore
 @testable import SpaceServer
 import Testing
-import WuhuVFS
 
 // A session's exec trades its WUHU_ID_TOKEN_REQUEST capability for a short
 // OIDC token naming its session, machine and exec, through the real handler.
@@ -25,9 +24,9 @@ import WuhuVFS
 
   func rig(dev: Bool = true, identity: Bool = true) async throws -> Rig {
     let tokens = ExecTokens(spaceURL: "https://space.test")
-    let key = try await ServerIdentity.loadOrCreate(from: NodeTreeVFS(root: InMemoryVFSNode()))
+    let key = try await ServerIdentity.loadOrCreate(from: MemoryFiles().keyStore("/identity.p256"))
     let controller = try IdentityController(
-      identity: key, origin: "https://space.test", store: .filesystem(NodeTreeVFS(root: InMemoryVFSNode())),
+      identity: key, origin: "https://space.test", store: MemoryFiles().identityStateStore,
       fetch: FetchClient { _ in Response(status: .forbidden) },
     )
     let harness = try await SessionHarness(dev: dev, origin: "https://space.test", execTokens: tokens, identityController: identity ? controller : nil)

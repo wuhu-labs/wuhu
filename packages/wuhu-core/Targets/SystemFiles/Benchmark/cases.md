@@ -181,6 +181,6 @@ _Afterwards:_ `{sb}/welcome.html` exists, its head carries `<meta name="wuhu-lay
 
 ## script-sidebar
 
-_Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}."
+_Prompt:_ "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}. Tell me where to hide this sidebar later."
 
-_Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget.
+_Afterwards:_ `/.sidebars/bench-{tag}….sidebar.jsx` returns a `<Sidebar>` of `PageCard`s from a `sessions` query and two `<Widget src>` placements, one `size='small'`; the widgets are their own `/.widgets/bench-{tag}….widget.jsx` files that `query` and return one card each, the small one declaring `export const sizes` with `small`. No JSON sidebar or widget. The reply names Settings → Groups to choose which sidebars show.

@@ -7,8 +7,6 @@
 import JSONValue
 import struct SpaceContract.AIDisclosure
 import struct SpaceContract.AIProviderDisclosure
-import struct WuhuVFS.VFSPath
-import protocol WuhuVFS.VirtualFileSystem
 
 public enum AIDisclosureError: Error, Equatable, CustomStringConvertible {
   case unreadable(file: String)
@@ -24,10 +22,10 @@ public enum AIDisclosureError: Error, Equatable, CustomStringConvertible {
   }
 }
 
-func loadAIDisclosure(from fs: any VirtualFileSystem, path: String, file: String) async throws -> AIDisclosure {
+func loadAIDisclosure(file: String, read: @Sendable () async throws -> Data) async throws -> AIDisclosure {
   let data: Data
   do {
-    data = try await fs.readData(at: VFSPath(absoluteFilePath: path))
+    data = try await read()
   } catch {
     throw AIDisclosureError.unreadable(file: file)
   }

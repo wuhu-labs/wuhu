@@ -7,10 +7,6 @@ import Crypto
 import JSONValue
 import OrderedCollections
 import enum WuhuAI.InferenceError
-import struct WuhuVFS.DiskVFSNode
-import struct WuhuVFS.NodeTreeVFS
-import struct WuhuVFS.VFSPath
-import protocol WuhuVFS.VirtualFileSystem
 
 struct ExecClaims: Equatable, Sendable {
   let machine: String
@@ -30,13 +26,10 @@ struct ServerIdentity: Sendable {
 
   static func generate() throws -> Self { try Self(rawKey: P256.Signing.PrivateKey().rawRepresentation) }
 
-  static func loadOrCreate(from fs: any VirtualFileSystem) async throws -> Self {
-    let path = try VFSPath(absoluteFilePath: "/identity.p256")
-    if try await fs.status(at: path) != nil {
-      return try Self(rawKey: await fs.readData(at: path))
-    }
+  static func loadOrCreate(from store: KeyFileStore) async throws -> Self {
+    if let data = try await store.load() { return try Self(rawKey: data) }
     let key = P256.Signing.PrivateKey()
-    try await fs.createFile(at: path, data: key.rawRepresentation)
+    try await store.create(key.rawRepresentation)
     return try Self(rawKey: key.rawRepresentation)
   }
 
@@ -48,7 +41,7 @@ struct ServerIdentity: Sendable {
     if FileManager.default.fileExists(atPath: file.path) {
       guard try file.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw IdentityError.keyUnavailable }
     }
-    let identity = try await loadOrCreate(from: WuhuVFS.NodeTreeVFS(root: WuhuVFS.DiskVFSNode(path: directory.path, isMutable: true)))
+    let identity = try await loadOrCreate(from: .disk(file))
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     return identity
   }

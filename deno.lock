@@ -1,6 +1,8 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/assert@1.0.13": "1.0.13",
+    "jsr:@std/internal@^1.0.6": "1.0.14",
     "jsr:@std/path@1.0.8": "1.0.8",
     "jsr:@std/yaml@1.0.5": "1.0.5",
     "npm:@opentelemetry/api@1.9.0": "1.9.0",
@@ -9,6 +11,15 @@
     "npm:typescript@5.9.3": "5.9.3"
   },
   "jsr": {
+    "@std/assert@1.0.13": {
+      "integrity": "ae0d31e41919b12c656c742b22522c32fb26ed0cba32975cb0de2a273cb68b29",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
     "@std/path@1.0.8": {
       "integrity": "548fa456bb6a04d3c1a1e7477986b6cffbce95102d0bb447c67c4ee70e0364be"
     },
@@ -34,6 +45,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/assert@1.0.13",
       "jsr:@std/path@1.0.8",
       "jsr:@std/yaml@1.0.5",
       "npm:@opentelemetry/api@1.9.0",

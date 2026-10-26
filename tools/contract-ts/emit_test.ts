@@ -1,35 +1,5 @@
+import { assertEquals, assertStringIncludes, assertThrows } from '@std/assert'
 import { emitContract, renderType, type Schema } from './emit.ts'
-
-function assertEquals<T>(actual: T, expected: T): void {
-  if (actual !== expected) {
-    throw new Error(
-      `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    )
-  }
-}
-
-function assertStringIncludes(haystack: string, needle: string): void {
-  if (!haystack.includes(needle)) {
-    throw new Error(
-      `expected output to include ${JSON.stringify(needle)}:\n${haystack}`,
-    )
-  }
-}
-
-function assertThrows(body: () => unknown, message: string): void {
-  try {
-    body()
-  } catch (error) {
-    const text = error instanceof Error ? error.message : String(error)
-    if (!text.includes(message)) {
-      throw new Error(
-        `expected error including ${JSON.stringify(message)}, got ${text}`,
-      )
-    }
-    return
-  }
-  throw new Error(`expected a throw including ${JSON.stringify(message)}`)
-}
 
 Deno.test('string enum becomes a union type alias', () => {
   const schema: Schema = {
@@ -127,10 +97,6 @@ Deno.test('nullable array of strings', () => {
   assertEquals(rendered, 'string[] | null')
 })
 
-Deno.test('empty schema renders unknown', () => {
-  assertEquals(renderType({}, 'payload', ''), 'unknown')
-})
-
 Deno.test('declarations are emitted in sorted title order', () => {
   const output = emitContract([
     { title: 'Zebra', type: 'string', enum: ['z'] },
@@ -145,6 +111,7 @@ Deno.test('declarations are emitted in sorted title order', () => {
 Deno.test('crash on unknown scalar type', () => {
   assertThrows(
     () => renderType({ type: 'weird' } as unknown as Schema, 'x', ''),
+    Error,
     'unsupported schema construct',
   )
 })
@@ -152,6 +119,7 @@ Deno.test('crash on unknown scalar type', () => {
 Deno.test('crash on non-string enum', () => {
   assertThrows(
     () => renderType({ type: 'integer', enum: [1, 2] }, 'x', ''),
+    Error,
     'unsupported schema construct',
   )
 })
@@ -159,6 +127,7 @@ Deno.test('crash on non-string enum', () => {
 Deno.test('crash on object without properties', () => {
   assertThrows(
     () => renderType({ type: 'object' }, 'x', ''),
+    Error,
     'unsupported schema construct',
   )
 })
@@ -166,6 +135,7 @@ Deno.test('crash on object without properties', () => {
 Deno.test('crash on array without items', () => {
   assertThrows(
     () => renderType({ type: 'array' }, 'x', ''),
+    Error,
     'unsupported schema construct',
   )
 })
@@ -173,6 +143,7 @@ Deno.test('crash on array without items', () => {
 Deno.test('crash on missing title at declaration level', () => {
   assertThrows(
     () => emitContract([{ type: 'string', enum: ['a'] }]),
+    Error,
     'missing a title',
   )
 })

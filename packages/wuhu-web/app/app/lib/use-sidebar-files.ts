@@ -36,7 +36,11 @@ export function useSidebarFiles(client: SpaceClient): SidebarFile[] | null {
     }
     publish()
     for (const path of paths.filter(isScript)) {
-      loaded.set(path, { path, title: sidebarName(path), script: true })
+      loaded.set(path, {
+        path,
+        title: sidebarName(path, client.group),
+        script: true,
+      })
     }
     publish()
     const stops = paths.filter((path) => !isScript(path)).map((path) =>
@@ -48,7 +52,7 @@ export function useSidebarFiles(client: SpaceClient): SidebarFile[] | null {
         (failure) => {
           loaded.set(path, {
             path,
-            title: sidebarName(path),
+            title: sidebarName(path, client.group),
             failure: errorMessage(failure),
           })
           publish()

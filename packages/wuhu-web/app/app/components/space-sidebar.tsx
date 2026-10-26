@@ -19,7 +19,6 @@ import {
   type DefinitionFile,
   type RowTarget,
   rowTarget,
-  type SidebarFile,
   type SidebarNode,
   sidebarNodes,
   type SidebarSection,
@@ -31,6 +30,7 @@ import { errorMessage } from '~/sdk/errors'
 import { sqlSubscription } from '~/sdk/subscriptions'
 import { Avatar } from './avatar'
 import { scriptSidebar } from './script-sidebar'
+import { type CatalogSidebar, sidebarKey } from '~/lib/sidebar-catalog'
 
 interface Navigation {
   // The address on screen, pathname plus search, to light up its row.
@@ -262,18 +262,18 @@ export function SidebarRail({
   current,
   onPick,
 }: {
-  files: SidebarFile[] | null
+  files: CatalogSidebar[] | null
   scripts: ReadonlyMap<string, ScriptState>
   current: string
-  onPick: (sidebar: string) => void
+  onPick: (sidebar: CatalogSidebar) => void
 }) {
   return files?.map((file) => {
-    let title = file.title
+    const id = sidebarKey({ group: file.group.id, path: file.path })
+    const title = file.title
     let glyph: ReactNode = null
     if ('script' in file) {
-      const tree = scriptSidebar(file.path, scripts.get(file.path))
+      const tree = scriptSidebar(file.path, scripts.get(id))
       if (typeof tree === 'object' && tree != null) {
-        title = tree.name
         if (tree.icon != null && knownIcon(tree.icon)) {
           glyph = <Icon name={tree.icon} size={20} />
         }
@@ -284,12 +284,12 @@ export function SidebarRail({
     }
     return (
       <button
-        key={file.path}
+        key={id}
         type='button'
         title={title}
         aria-label={title}
-        aria-pressed={current === file.path}
-        onClick={() => onPick(file.path)}
+        aria-pressed={current === id}
+        onClick={() => onPick(file)}
       >
         {glyph ?? initialsFrom(title).slice(0, 1)}
       </button>

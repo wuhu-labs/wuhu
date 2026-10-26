@@ -31,8 +31,6 @@ import struct SpaceContract.GroupID
 import SpaceCore
 import SpaceTools
 import WebPush
-import struct WuhuVFS.DiskVFSNode
-import struct WuhuVFS.NodeTreeVFS
 
 public enum SpaceServer {
   public static let unstampedVersion: String = "0.0.0-unstamped"
@@ -375,10 +373,7 @@ public enum SpaceServer {
   ) async throws -> ServeEnd {
     let aiDisclosure: AIDisclosure?
     if let aiDisclosureFile {
-      aiDisclosure = try await loadAIDisclosure(
-        from: NodeTreeVFS(root: DiskVFSNode(path: aiDisclosureFile.deletingLastPathComponent().path, isMutable: false)),
-        path: "/" + aiDisclosureFile.lastPathComponent, file: aiDisclosureFile.path,
-      )
+      aiDisclosure = try await loadAIDisclosure(file: aiDisclosureFile.path) { try Data(contentsOf: aiDisclosureFile) }
     } else { aiDisclosure = nil }
     if let contentHostPattern {
       guard groupCertificate == nil, groupPrivateKey == nil else { throw ContentHostPatternError.groupCertificate }

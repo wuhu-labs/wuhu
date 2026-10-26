@@ -46,7 +46,12 @@ import {
   type SessionCapability,
   sessionCapability,
 } from '~/lib/session-capability'
-import { everything, isScript, pageHref, sameView } from '~/lib/sidebars'
+import { isScript, pageHref, sameView } from '~/lib/sidebars'
+import { selectedSidebar, sidebarKey } from '~/lib/sidebar-catalog'
+import {
+  type SidebarCatalog,
+  useSidebarCatalog,
+} from '~/lib/use-sidebar-catalog'
 import {
   SpaceFeedsProvider,
   spaceScope,
@@ -65,7 +70,6 @@ import { useObserve } from '~/lib/use-observe'
 import { useShownNode } from '~/lib/use-shown-node'
 import { useSidebarView } from '~/lib/use-sidebar-view'
 import { usePageVisible } from '~/lib/use-page-visible'
-import { useScripts } from '~/lib/widgets/use-script'
 import { useThemeStylesheet } from '~/lib/use-theme'
 import { type ShownPage, viewingOf } from '~/lib/viewing'
 import { ViewerCacheContext } from '~/lib/viewer-cache'
@@ -76,6 +80,7 @@ import { viewerCaches } from '~/sdk/open-cache'
 import { sqlSubscription } from '~/sdk/subscriptions'
 
 export interface SpaceContext {
+  sidebarCatalog: SidebarCatalog
   group: string
   client: SpaceClient
   contentOrigin: ContentOrigin
@@ -428,42 +433,43 @@ export function SpaceBody(
   const onScreen = known === null ? held.shown : shown
 
   const settings = onSettings ? settingsPlace(location.search) : null
-  const sidebarFiles = shared.sidebars
-  // A view whose file left the space falls back to Everything without
-  // forgetting the choice.
-  const file = sidebarFiles?.find((found) => found.path === view.sidebar) ??
-    sidebarFiles?.find((found) => found.path === everything) ?? null
-  const sharedClient = server.client(sharedGroup)
   const visible = usePageVisible()
-  const scripts = useScripts(
-    sharedClient,
-    useMemo(
-      () =>
-        sidebarFiles?.filter((found) => 'script' in found).map((found) =>
-          found.path
-        ) ?? [],
-      [sidebarFiles],
-    ),
-    file?.path ?? null,
+  const sidebarCatalog = useSidebarCatalog(
+    server,
+    view,
     sidebarOpen && visible,
+    new URLSearchParams(location.search).get('group'),
   )
+  const { scripts } = sidebarCatalog
+  const sidebarFiles =
+    sidebarCatalog.entries?.filter((entry) => entry.visible) ?? null
+  const file = selectedSidebar(sidebarCatalog.entries, view)
+  const selectedKey = file == null
+    ? null
+    : sidebarKey({ group: file.group.id, path: file.path })
+  const sidebarClient = server.client(file?.group.id ?? sharedGroup)
   // A script sidebar opens its home when picked, or once its first run
   // answers if it had not yet; navigating away first cancels that.
   const [opening, setOpening] = useState<
-    { sidebar: string; from: string } | null
+    { group: string; sidebar: string; from: string } | null
   >(null)
-  const openHome = (sidebar: string): boolean => {
-    const tree = scriptSidebar(sidebar, scripts.get(sidebar))
+  const openHome = (group: string, sidebar: string): boolean => {
+    const tree = scriptSidebar(
+      sidebar,
+      scripts.get(sidebarKey({ group, path: sidebar })),
+    )
     if (tree == null) return false
     const home = typeof tree === 'object' && tree.home != null
-      ? pageHref(tree.home, sharedGroup)
+      ? pageHref(tree.home, group)
       : null
     if (home != null && home !== here) go(home)
     return true
   }
   useEffect(() => {
     if (opening == null) return
-    if (opening.from !== here || openHome(opening.sidebar)) setOpening(null)
+    if (opening.from !== here || openHome(opening.group, opening.sidebar)) {
+      setOpening(null)
+    }
   })
 
   return (
@@ -488,14 +494,15 @@ export function SpaceBody(
             <SidebarRail
               files={sidebarFiles}
               scripts={scripts}
-              current={file?.path ?? everything}
-              onPick={(sidebar) => {
-                const next = { group: sharedGroup, sidebar }
+              current={selectedKey ?? ''}
+              onPick={(entry) => {
+                const { path: sidebar, group: { id: group } } = entry
+                const next = { group, sidebar }
                 if (!sameView(next, view)) selectView(next)
                 setOpening(
-                  !isScript(sidebar) || openHome(sidebar)
+                  !isScript(sidebar) || openHome(group, sidebar)
                     ? null
-                    : { sidebar, from: here },
+                    : { group, sidebar, from: here },
                 )
               }}
             />
@@ -505,6 +512,7 @@ export function SpaceBody(
             <SettingsSidebar
               topic={settings.topic}
               row={settings.row}
+              catalog={sidebarCatalog}
               onNavigate={go}
             />
           )
@@ -513,12 +521,12 @@ export function SpaceBody(
           : 'script' in file
           ? (
             <ScriptSidebar
-              key={file.path}
+              key={selectedKey}
               path={file.path}
-              state={scripts.get(file.path)}
-              client={sharedClient}
+              state={scripts.get(selectedKey!)}
+              client={sidebarClient}
               sessions={sessions}
-              channels={shared.channels}
+              channels={feeds.feed(file.group.id).channels}
               active={sidebarOpen && visible}
               here={here}
               onNavigate={go}
@@ -526,9 +534,9 @@ export function SpaceBody(
           )
           : (
             <CustomSidebar
-              key={file.path}
+              key={selectedKey}
               file={file}
-              group={sharedGroup}
+              group={file.group.id}
               sessions={sessions}
               here={here}
               onNavigate={go}
@@ -550,6 +558,7 @@ export function SpaceBody(
       >
         <Outlet
           context={{
+            sidebarCatalog,
             group,
             client,
             contentOrigin,

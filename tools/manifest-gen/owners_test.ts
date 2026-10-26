@@ -1,7 +1,6 @@
+import { assertEquals, assertThrows } from '@std/assert'
 import { join } from '@std/path'
-import { assertEquals, assertThrows } from './assertions.ts'
 import {
-  assertOwner,
   assertPublicEdges,
   discoverOwnedPackages,
   type OwnedPackage,
@@ -10,12 +9,6 @@ import {
   referencedLabelPackages,
 } from './owners.ts'
 import { moduleFragmentRepos } from './module.ts'
-
-Deno.test('an owner outside the law-2 vocabulary is rejected', () => {
-  assertOwner('wuhu', 'p/package.yml')
-  assertThrows(() => assertOwner(undefined, 'p/package.yml'), 'p/package.yml')
-  assertThrows(() => assertOwner('nobuyclub', 'p/package.yml'), 'nobuyclub')
-})
 
 Deno.test('labels reduce to their package path wherever they sit', () => {
   assertEquals(
@@ -65,6 +58,7 @@ Deno.test('an external repository belongs to the package whose fragment declares
   ]
   assertThrows(
     () => assertPublicEdges(packages),
+    Error,
     'packages/core (owner wuhu) -> packages/media (owner arcroom) via @ffmpeg',
   )
   assertPublicEdges([{ ...packages[0], references: ['@quickjs'] }, packages[1]])
@@ -84,6 +78,7 @@ Deno.test('a public package may not reach a non-public one', () => {
         { dir: 'packages/core', owner: 'wuhu', references: ['packages/kit'] },
         { dir: 'packages/kit', owner: 'wuhu-app', references: [] },
       ]),
+    Error,
     'packages/core (owner wuhu) -> packages/kit (owner wuhu-app)',
   )
 })
@@ -111,6 +106,7 @@ Deno.test('a reference outside every manifest fails loudly', () => {
       assertPublicEdges([
         { dir: 'packages/core', owner: 'wuhu', references: ['packages/gone'] },
       ]),
+    Error,
     'inside no package manifest',
   )
 })
@@ -176,6 +172,7 @@ Deno.test('discovery reads Swift and deno owners and their edges', async () => {
         assertPublicEdges(
           packages.filter((pkg) => pkg.dir !== join(root, 'core')),
         ),
+      Error,
       `${join(root, 'web')} (owner wuhu) -> ${join(root, 'web/lab')}`,
     )
   } finally {

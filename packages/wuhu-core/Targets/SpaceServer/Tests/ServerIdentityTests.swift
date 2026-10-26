@@ -9,13 +9,12 @@ import ServeTesting
 @testable import SpaceServer
 import Testing
 import enum WuhuAI.InferenceError
-import WuhuVFS
 
 @Suite(.deterministicDependencies) struct ServerIdentityTests {
   @Test func jwksVerifiesTokenAndKeySurvivesReopen() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let first = try await ServerIdentity.loadOrCreate(from: fs)
-    let reopened = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let first = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let reopened = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     #expect(first.jwks == reopened.jwks)
     let jwt = try reopened.token(issuer: "https://tenant.wuhu.space", audience: URL(string: "http://172.31.255.1:8089/v1?ignored=true")!, space: "space-id", group: "main", session: "blue-fox-tree", now: fixedDate, id: UUID(0))
     #expect(jwt.utf8.count < 1024)
@@ -70,18 +69,42 @@ import WuhuVFS
     #expect(mode?.intValue == 0o600)
   }
 
+  @Test(arguments: [false, true])
+  func diskKeySymlinksAreRefused(dangling: Bool) async throws {
+    let folder = try ScratchFolder("identity-key-link")
+    let directory = folder.url.appendingPathComponent("state")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let target = folder.url.appendingPathComponent("target")
+    let bytes = try ServerIdentity.generate().rawKey
+    if !dangling { try bytes.write(to: target) }
+    try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("identity.p256"), withDestinationURL: target)
+    await #expect(throws: IdentityError.keyUnavailable) { try await ServerIdentity.loadOrCreate(directory: directory) }
+    if !dangling { #expect(try Data(contentsOf: target) == bytes) }
+    else { #expect(!FileManager.default.fileExists(atPath: target.path)) }
+  }
+
+  @Test func diskKeyCreationIsExclusive() async throws {
+    let folder = try ScratchFolder("exclusive-key")
+    let file = folder.url.appendingPathComponent("key")
+    let store = KeyFileStore.disk(file)
+    let original = Data([1, 2, 3])
+    try await store.create(original)
+    await #expect(throws: IdentityError.keyUnavailable) { try await store.create(Data([4, 5, 6])) }
+    #expect(try await store.load() == original)
+  }
+
   @Test func corruptStoredKeyIsNotReplaced() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let path = try VFSPath(absoluteFilePath: "/identity.p256")
-    try await fs.createFile(at: path, data: Data("bad key".utf8))
-    await #expect(throws: (any Error).self) { try await ServerIdentity.loadOrCreate(from: fs) }
-    #expect(try await fs.readData(at: path) == Data("bad key".utf8))
+    let fs = MemoryFiles()
+    let path = "/identity.p256"
+    try await fs.create(path, data: Data("bad key".utf8))
+    await #expect(throws: (any Error).self) { try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256")) }
+    #expect(try await fs.read(path) == Data("bad key".utf8))
   }
 
   @Test(arguments: ["https://origin.example.test", "https://acme.wuhu.space"])
   func discoveryIsUnauthenticatedAndUsesConfiguredIssuer(origin: String) async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let identity = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let identity = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let space = try makeMachineSpace()
     let handler = withDependencies { $0.continuousClock = ContinuousClock() } operation: {
       SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: origin, dev: false, identityJWKS: identity.jwks)
@@ -103,7 +126,7 @@ import WuhuVFS
   }
 
   @Test func audienceIsCanonicalAndRejectsUserInformation() async throws {
-    let identity = try await ServerIdentity.loadOrCreate(from: NodeTreeVFS(root: InMemoryVFSNode()))
+    let identity = try await ServerIdentity.loadOrCreate(from: MemoryFiles().keyStore("/identity.p256"))
     let token = try identity.token(issuer: "https://space.test", audience: URL(string: "https://PROVIDER.test:443/v1")!, space: "s", group: "g", now: fixedDate, id: UUID(0))
     let claims = try #require(JSONValue.parse(String(decoding: decode(String(token.split(separator: ".")[1])), as: UTF8.self))?.object)
     #expect(claims["aud"] == .string("https://provider.test"))
@@ -119,7 +142,7 @@ import WuhuVFS
       #expect(response.status == .unprocessableContent)
       #expect(try await json(response).object?["code"] == .string("oidcConfiguration"))
     }
-    let identity = try await ServerIdentity.loadOrCreate(from: NodeTreeVFS(root: InMemoryVFSNode()))
+    let identity = try await ServerIdentity.loadOrCreate(from: MemoryFiles().keyStore("/identity.p256"))
     #expect(throws: IdentityError.invalidIssuer) {
       try identity.token(issuer: nil, audience: URL(string: "https://provider.test")!, space: "s", group: "g", now: fixedDate, id: UUID(0))
     }

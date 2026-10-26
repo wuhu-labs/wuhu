@@ -58,9 +58,6 @@ externalPackages:
   qr-code:
     path: ../qr-code
     products: [QRCode]
-  wuhu-vfs:
-    path: ../wuhu-vfs
-    products: [WuhuVFS]
   swift-service-context:
     url: https://github.com/apple/swift-service-context.git
     exact: "1.3.0"

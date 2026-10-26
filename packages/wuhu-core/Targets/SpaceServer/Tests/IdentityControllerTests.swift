@@ -13,21 +13,20 @@ import SpaceCore
 import Synchronization
 import Testing
 import enum WuhuAI.InferenceError
-import WuhuVFS
 
 @Suite(.deterministicDependencies, .dependency(\.continuousClock, ContinuousClock())) struct IdentityControllerTests {
   @Test func inferenceSelectsIssuerAndRefusedRestartHasStaticTypedFailure() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let id = String(repeating: "i", count: 32)
-    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id), store: .filesystem(fs), fetch: FetchClient { _ in try Response.json(["confirmed": true]) })
+    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id), store: fs.identityStateStore, fetch: FetchClient { _ in try Response.json(["confirmed": true]) })
     try await controller.set(defaultIssuer: .directory)
     for (audience, issuer) in [("https://lab.test/v1", "https://private.test"), ("https://outside.test/v1", "https://id.wuhu.ai/" + id)] {
       let token = try await controller.tokenForInference(audience: URL(string: audience)!, space: "s", group: "g", session: "a", now: fixedDate, id: UUID(0))
       #expect(try claims(token).object?["iss"] == .string(issuer))
       try verify(token, jwks: key.jwks)
     }
-    let reopened = try await IdentityController.load(identity: key, origin: "https://private.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
+    let reopened = try await IdentityController.load(identity: key, origin: "https://private.test", store: fs.identityStateStore, fetch: FetchClient { _ in Response(status: .forbidden) })
     #expect(await reopened.settings.directoryID == id)
     await #expect(throws: InferenceError.invalidInput(status: 422, body: "OIDC directoryUnavailable: the key directory has not confirmed this server key; retry publication with wuhu identity set.")) {
       try await reopened.tokenForInference(audience: URL(string: "https://outside.test/v1")!, space: "s", group: "g", session: "a", now: fixedDate, id: UUID(0))
@@ -38,9 +37,9 @@ import WuhuVFS
 
   @Test(arguments: ["https://*.test", "custom://service"])
   func discoveryHTTPRejectsNonFetchOrigins(origin: String) async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
-    let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let controller = try IdentityController(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: FetchClient { _ in Response(status: .forbidden) })
     let space = try makeMachineSpace()
     let api = ServeTesting.client(upgrading: SpaceServer.configuredHandler(space: space, hub: MachineHub(space: space), origin: "https://space.test", dev: true, identityController: controller))
     var parts = URLComponents(string: "https://space.test/v1/identity/issuer-for")!
@@ -53,9 +52,9 @@ import WuhuVFS
   @Test func concurrentSettingsWriteReturnsTypedBusyWithoutChangingConfiguration() async throws {
     let entered = Gate()
     let release = Gate()
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
-    let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let controller = try IdentityController(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: FetchClient { _ in
       entered.open()
       await release.wait()
       return try Response.json(JSONValue.object(["id": .string(String(repeating: "b", count: 32)), "issuer": .string("https://id.wuhu.ai/" + String(repeating: "b", count: 32)), "confirmed": true]), status: .created)
@@ -75,9 +74,9 @@ import WuhuVFS
   }
 
   @Test func defaultMakesNoDirectoryRequestAndMatchesExistingClaims() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
-    let controller = try await IdentityController.load(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let controller = try await IdentityController.load(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: FetchClient { _ in
       Issue.record("default identity must not contact the directory")
       return Response(status: .internalServerError)
     })
@@ -90,15 +89,15 @@ import WuhuVFS
   }
 
   @Test func registrationAndStartupReplacementAreSignedRecordedEffects() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let requests = Mutex<[Request]>([])
     let id = String(repeating: "a", count: 32)
     let fetch = FetchClient { request in
       requests.withLock { $0.append(request) }
       return try Response.json(request.method == .post ? JSONValue.object(["id": .string(id), "issuer": .string("https://id.wuhu.ai/" + id), "confirmed": true]) : ["confirmed": true], status: request.method == .post ? .created : .ok)
     }
-    let controller = try await IdentityController.load(identity: key, origin: "https://private.test", store: .filesystem(fs), fetch: fetch)
+    let controller = try await IdentityController.load(identity: key, origin: "https://private.test", store: fs.identityStateStore, fetch: fetch)
     try await withDependencies { $0.date = .constant(fixedDate) } operation: {
       try await controller.set(defaultIssuer: .directory)
     }
@@ -107,7 +106,7 @@ import WuhuVFS
     #expect(try await controller.issuerFor(URL(string: "https://outside.test/v1")!) == "https://id.wuhu.ai/" + id)
     let jwt = try await controller.token(audience: URL(string: "https://outside.test")!, space: "s", group: "g", now: fixedDate, id: UUID(1))
     #expect(try claims(jwt).object?["iss"] == .string("https://id.wuhu.ai/" + id))
-    let reopened = try await IdentityController.load(identity: key, origin: "https://private.test", store: .filesystem(fs), fetch: fetch)
+    let reopened = try await IdentityController.load(identity: key, origin: "https://private.test", store: fs.identityStateStore, fetch: fetch)
     #expect(try await controller.snapshot() == reopened.snapshot())
     #expect(await reopened.directoryConfirmed)
     let recorded = requests.withLock { $0 }
@@ -139,15 +138,15 @@ import WuhuVFS
   }
 
   @Test func refusalPersistsChoiceButNeverFallsBackAndReopenRetries() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let fetch = FetchClient { _ in Response(status: .forbidden) }
-    let controller = try await IdentityController.load(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: fetch)
+    let controller = try await IdentityController.load(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: fetch)
     await #expect(throws: IdentityError.directoryUnavailable) { try await controller.set(defaultIssuer: .directory) }
     await #expect(throws: IdentityError.directoryUnavailable) {
       try await controller.token(audience: URL(string: "https://provider.test")!, space: "s", group: "g", now: fixedDate, id: UUID(0))
     }
-    let reopened = try await IdentityController.load(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: fetch)
+    let reopened = try await IdentityController.load(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: fetch)
     #expect(await reopened.settings.defaultIssuer == .directory)
     #expect(await reopened.directoryConfirmed == false)
     try await reopened.set(defaultIssuer: .self)
@@ -155,9 +154,9 @@ import WuhuVFS
   }
 
   @Test func directoryFailureIsTypedForPageAndScriptWithoutAnyRequest() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
-    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory), store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory), store: fs.identityStateStore, fetch: FetchClient { _ in Response(status: .forbidden) })
     let page = PageFetch(controller: controller, hop: { _, _ in Issue.record("unconfirmed identity must not connect"); return Response(status: .ok) })
     do {
       _ = try await page.response(Request(url: URL(string: "https://outside.test")!), allow: ["https://outside.test"], space: "s", group: "g", page: "/page", viewer: "v", deadline: .now() + .seconds(60))
@@ -170,10 +169,10 @@ import WuhuVFS
   }
 
   @Test func scriptAndPageSelectTheSameAudienceOverride() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
     let id = String(repeating: "a", count: 32)
-    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id), store: .filesystem(fs), fetch: FetchClient { _ in try Response.json(["confirmed": true]) })
+    let controller = try IdentityController(identity: key, origin: "https://private.test", settings: .init(defaultIssuer: .directory, overrides: ["https://lab.test": .self], directoryID: id), store: fs.identityStateStore, fetch: FetchClient { _ in try Response.json(["confirmed": true]) })
     try await controller.publish()
     let sent = Mutex<[String]>([])
     let hop: @Sendable (Request) async throws -> Response = { request in
@@ -197,9 +196,9 @@ import WuhuVFS
   @Test func sessionReadsButCannotChangeServerSettingsAndHumanWritesNeedSpaceAdmin() async throws {
     try await withSessionDeps {
       let tree = try await SessionGateTests().tree(dev: false)
-      let fs = NodeTreeVFS(root: InMemoryVFSNode())
-      let key = try await ServerIdentity.loadOrCreate(from: fs)
-      let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .forbidden) })
+      let fs = MemoryFiles()
+      let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+      let controller = try IdentityController(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: FetchClient { _ in Response(status: .forbidden) })
       let harness = tree.harness
       let handler = SpaceServer.configuredHandler(space: harness.space, hub: harness.hub, sessions: harness.runtime, origin: "https://space.test", dev: false, execTokens: tree.tokens, identityController: controller)
       let api = ServeTesting.client(upgrading: handler)
@@ -237,9 +236,9 @@ import WuhuVFS
 
   @Test(arguments: ["https://id.wuhu.ai/evil", "https://example.test/path", "https://user@example.test", "https://*.test", "https://example.test:443", "https://EXAMPLE.test", "https://example.test/"])
   func invalidOverrideDoesNotPersist(origin: String) async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
-    let key = try await ServerIdentity.loadOrCreate(from: fs)
-    let controller = try IdentityController(identity: key, origin: "https://space.test", store: .filesystem(fs), fetch: FetchClient { _ in Response(status: .ok) })
+    let fs = MemoryFiles()
+    let key = try await ServerIdentity.loadOrCreate(from: fs.keyStore("/identity.p256"))
+    let controller = try IdentityController(identity: key, origin: "https://space.test", store: fs.identityStateStore, fetch: FetchClient { _ in Response(status: .ok) })
     await #expect(throws: IdentityError.invalidAudience) { try await controller.set(audience: origin, choice: .directory) }
     #expect(await controller.settings.overrides.isEmpty)
   }

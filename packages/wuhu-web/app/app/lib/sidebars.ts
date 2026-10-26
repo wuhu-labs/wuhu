@@ -73,7 +73,8 @@ export function sidebarPaths(listing: ListOutput): string[] {
     )
 }
 
-export function sidebarName(path: string): string {
+export function sidebarName(path: string, group?: string): string {
+  if (group === sharedGroup && path === everything) return 'Everything'
   return path.slice(path.lastIndexOf('/') + 1).replace(
     /\.(json|sidebar\.jsx)$/,
     '',

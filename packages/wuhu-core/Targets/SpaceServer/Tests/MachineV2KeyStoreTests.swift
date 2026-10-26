@@ -16,7 +16,6 @@ import Scratch
 import SpaceCore
 @testable import SpaceServer
 import Testing
-import WuhuVFS
 
 @Suite(.deterministicDependencies) struct MachineV2KeyStoreTests {
   @Test func durableDiskKeyAndNewTableCheckSurviveDatabaseReopen() async throws {
@@ -43,43 +42,43 @@ import WuhuVFS
   }
 
   @Test func missingKeyNeverRecreatesEvenWithoutOperationRows() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
+    let fs = MemoryFiles()
     let space = try Space.inMemory()
-    _ = try await MachineV2KeyStore.loadOrCreate(from: fs, space: space)
-    let path = try VFSPath(absoluteFilePath: "/" + MachineV2KeyStore.filename)
-    try await fs.remove(at: path, recursive: false)
-    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs, space: space) }
-    #expect(try await fs.status(at: path) == nil)
+    _ = try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space)
+    let path = "/" + MachineV2KeyStore.filename
+    await fs.remove(path)
+    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space) }
+    #expect(await fs.load(path) == nil)
   }
 
   @Test func preexistingEncryptedOperationsRequireOriginalKeyWithoutBackfill() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
+    let fs = MemoryFiles()
     let space = try Space.inMemory()
     let key = SymmetricKey(size: .bits256)
     let store = try await space.machineV2Store(group: .shared, key: key, problemsGroup: .shared)
     let record = Self.record()
     _ = try await store.claim(.init(scope: "prior-slice", key: "one"), record: record)
-    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs, space: space) }
-    let path = try VFSPath(absoluteFilePath: "/" + MachineV2KeyStore.filename)
-    #expect(try await fs.status(at: path) == nil)
-    try await fs.createFile(at: path, data: Data(repeating: 17, count: 32))
-    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs, space: space) }
-    #expect(try await fs.readData(at: path) == Data(repeating: 17, count: 32))
-    try await fs.writeData(key.withUnsafeBytes { Data($0) }, at: path, append: false)
-    _ = try await MachineV2KeyStore.loadOrCreate(from: fs, space: space)
+    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space) }
+    let path = "/" + MachineV2KeyStore.filename
+    #expect(await fs.load(path) == nil)
+    try await fs.create(path, data: Data(repeating: 17, count: 32))
+    await #expect(throws: OperationError.self) { try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space) }
+    #expect(try await fs.read(path) == Data(repeating: 17, count: 32))
+    await fs.write(key.withUnsafeBytes { Data($0) }, at: path)
+    _ = try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space)
     #expect(try await store.read(record.id).start.input == record.start.input)
   }
 
   @Test func corruptOrWrongKeyIsTypedAndNeverOverwritten() async throws {
-    let fs = NodeTreeVFS(root: InMemoryVFSNode())
+    let fs = MemoryFiles()
     let space = try Space.inMemory()
-    _ = try await MachineV2KeyStore.loadOrCreate(from: fs, space: space)
-    let path = try VFSPath(absoluteFilePath: "/" + MachineV2KeyStore.filename)
+    _ = try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space)
+    let path = "/" + MachineV2KeyStore.filename
     for bad in [Data([1, 2]), Data(repeating: 0, count: 32)] {
-      try await fs.writeData(bad, at: path, append: false)
-      do { _ = try await MachineV2KeyStore.loadOrCreate(from: fs, space: space); Issue.record("wrong key accepted") }
+      await fs.write(bad, at: path)
+      do { _ = try await MachineV2KeyStore.loadOrCreate(from: fs.keyStore("/machine-v2.key"), space: space); Issue.record("wrong key accepted") }
       catch let error as OperationError { #expect(error.code == .storeUnavailable) }
-      #expect(try await fs.readData(at: path) == bad)
+      #expect(try await fs.read(path) == bad)
     }
   }
 

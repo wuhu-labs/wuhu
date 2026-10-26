@@ -437,7 +437,7 @@
       "id": "script-sidebar",
       "issue": 406,
       "title": "Writes a script sidebar with widgets",
-      "prompt": "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}.",
+      "prompt": "In the web app I want a sidebar of my own, named bench-{tag}: a card for each live agent, then a small tile counting the Markdown docs under {sb}/ and a wide list of those docs, each opening its doc. Put its files where the app looks for them, each file name starting with bench-{tag}. Tell me where to hide this sidebar later.",
       "required": [
         "sidebar_script",
         "places_widgets",
@@ -447,7 +447,7 @@
       "skills": {
         "sidebars": true
       },
-      "judge": "PASS only if a /.sidebars/bench-{tag}*.sidebar.jsx file default-exports a function returning one <Sidebar name=...> whose children are PageCards for the agents (queried from sessions, not hardcoded) and <Widget src=\"/.widgets/...widget.jsx\"> placements, one with size='small'; the widgets are separate /.widgets/bench-{tag}*.widget.jsx files that query docs and return one catalog card each (Figure for the count, List with rows linking via to for the docs), the small one declaring export const sizes including 'small'. Fail a JSON sidebar or widget, inline widget markup in the sidebar, invented elements or props, writes or handlers in a widget, or a reply that claims the native app shows it."
+      "judge": "PASS only if a /.sidebars/bench-{tag}*.sidebar.jsx file default-exports a function returning one <Sidebar name=...> whose children are PageCards for the agents (queried from sessions, not hardcoded) and <Widget src=\"/.widgets/...widget.jsx\"> placements, one with size='small'; the widgets are separate /.widgets/bench-{tag}*.widget.jsx files that query docs and return one catalog card each (Figure for the count, List with rows linking via to for the docs), the small one declaring export const sizes including 'small'. Fail a JSON sidebar or widget, inline widget markup in the sidebar, invented elements or props, writes or handlers in a widget. The reply must name Settings → Groups as where the person chooses which sidebars show."
     }
   ]
 }

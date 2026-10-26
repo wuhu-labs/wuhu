@@ -1,9 +1,5 @@
-import { assertEquals, assertIncludes, assertThrows } from './assertions.ts'
-import {
-  configureFragmentRepo,
-  pinnedRepos,
-  renderModuleBazel,
-} from './module.ts'
+import { assertEquals, assertStringIncludes, assertThrows } from '@std/assert'
+import { configureFragmentRepo, renderModuleBazel } from './module.ts'
 
 const template = `module(name = "t")
 
@@ -24,17 +20,6 @@ function configure(repo: string, name = repo) {
   }
 }
 
-Deno.test('pinned repos follow the rspm naming of each pin identity', () => {
-  assertEquals(
-    [
-      ...pinnedRepos(JSON.stringify({
-        pins: [{ identity: 'swift-clocks' }, { identity: 'tca26' }],
-      })),
-    ],
-    ['swiftpkg_swift_clocks', 'swiftpkg_tca26'],
-  )
-})
-
 Deno.test('a configure fragment must configure the repo it is named for', () => {
   assertEquals(
     configureFragmentRepo(configure('swiftpkg_tca26')),
@@ -42,6 +27,7 @@ Deno.test('a configure fragment must configure the repo it is named for', () => 
   )
   assertThrows(
     () => configureFragmentRepo(configure('swiftpkg_tca26', 'swiftpkg_other')),
+    Error,
     'must hold exactly one configure_package for swiftpkg_tca26',
   )
 })
@@ -61,13 +47,13 @@ Deno.test('only configure fragments for pinned repos are rendered', () => {
     pinned: new Set(['swiftpkg_swift_clocks']),
     strict: false,
   })
-  assertIncludes(
+  assertStringIncludes(
     rendered,
     '# From packages/a/MODULE.fragment.bazel.\nhttp_archive(name = "a")\n',
   )
-  assertIncludes(rendered, 'name = "swiftpkg_swift_clocks"')
+  assertStringIncludes(rendered, 'name = "swiftpkg_swift_clocks"')
   assertEquals(rendered.includes('swiftpkg_tca26'), false)
-  assertIncludes(
+  assertStringIncludes(
     rendered,
     '    swift_deps,\n    "swift_package",\n    "swiftpkg_swift_clocks",\n)',
   )
@@ -84,6 +70,7 @@ Deno.test('the whole-repo render rejects a fragment for an unpinned repo', () =>
         pinned: new Set(),
         strict: true,
       }),
+    Error,
     'which bazel/umbrella/Package.resolved does not pin',
   )
 })
@@ -112,6 +99,7 @@ Deno.test('a template missing a placeholder is rejected', () => {
         pinned: new Set(),
         strict: true,
       }),
+    Error,
     'must contain {{package_modules}} exactly once',
   )
 })

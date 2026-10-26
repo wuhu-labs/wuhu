@@ -212,10 +212,13 @@ export function SpaceFeedsProvider({
         sessions,
       }}
     >
-      {members.map((group) => (
+      {(groups ?? []).filter((group) => group.readable).map((
+        { id: group, member },
+      ) => (
         <GroupFeedReporter
           key={group}
           client={server.client(group)}
+          member={member === true}
           report={report}
         />
       ))}
@@ -232,12 +235,14 @@ export function SpaceFeedsProvider({
 
 function GroupFeedReporter({
   client,
+  member,
   report,
 }: {
   client: SpaceClient
+  member: boolean
   report: (group: string, feed: GroupFeed) => void
 }) {
-  const feed = useGroupFeed(client)
+  const feed = useGroupFeed(client, member)
   useEffect(() => report(client.group, feed), [client, feed, report])
   return null
 }
@@ -246,7 +251,10 @@ function GroupFeedReporter({
 // (SpaceClient), the theme and session photos. It starts where it last
 // reached, else at the head, so no change between a read and the feed's
 // open is lost.
-function useGroupFeed(client: SpaceClient): GroupFeed {
+function useGroupFeed(
+  client: SpaceClient,
+  member: boolean,
+): GroupFeed {
   const [start, setStart] = useState<FeedStart>({ from: null, error: null })
   const [themeSeed] = useState(() => Date.now())
   const cache = useViewerCache(client.group)
@@ -278,8 +286,12 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
       client.filesConnected()
     },
   }), [discovery, client])
+  const sidebars = useSidebarFiles(client)
+  const active = groupFeedActive(member, sidebars)
   const files = useObserve<FileState, RevisionEvents>(
-    ready === discovery ? globSubscription(client, '**', start.from) : null,
+    ready === discovery
+      ? groupChangeSubscription(client, member, sidebars, start.from)
+      : null,
     foldFiles,
     { rev: start.from ?? 0, themeRev: themeSeed, avatarRevs: {} },
     events,
@@ -293,21 +305,26 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     return () => clearTimeout(timer)
   }, [cache, start.from !== null, rev])
 
-  const sidebars = useSidebarFiles(client)
   const channels = useObserve<ChannelSummary[] | null, QueryOutput>(
-    sqlSubscription(channelsSQL, client.group),
+    active ? sqlSubscription(channelsSQL, client.group) : null,
     (_, output) => channelRows(output),
     null,
   ).data
-  const rows = useObserve<SessionRecord[] | null, QueryOutput>(
-    sqlSubscription(sessionsSQL, client.group),
+  const roster = useObserve<SessionRecord[] | null, QueryOutput>(
+    member ? sqlSubscription(sessionsSQL, client.group) : null,
     (_, output) => sessionRows(output, client.group),
     null,
-  ).data
+  )
+  const rows = roster.data
   // A server without the route tables refuses this query once; its sessions
   // keep their rows and carry no route for the rest of the connection.
   const routes = useObserve<ReadonlyMap<string, SessionRoute>, QueryOutput>(
-    { ...sqlSubscription(sessionRoutesSQL, client.group), stopOnRefusal: true },
+    member
+      ? {
+        ...sqlSubscription(sessionRoutesSQL, client.group),
+        stopOnRefusal: true,
+      }
+      : null,
     (_, output) => routeRows(output),
     noRoutes,
   ).data
@@ -327,4 +344,24 @@ function useGroupFeed(client: SpaceClient): GroupFeed {
     channels,
     contentOrigin,
   ])
+}
+
+export function groupFeedActive(
+  member: boolean,
+  sidebars: readonly SidebarFile[] | null,
+): boolean {
+  return member || (sidebars?.length ?? 0) > 0
+}
+
+export function groupChangeSubscription(
+  client: SpaceClient,
+  member: boolean,
+  sidebars: readonly SidebarFile[] | null,
+  from: number | null,
+) {
+  return globSubscription(
+    client,
+    groupFeedActive(member, sidebars) ? '**' : '/.sidebars/**',
+    from,
+  )
 }

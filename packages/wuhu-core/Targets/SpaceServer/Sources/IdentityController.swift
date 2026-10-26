@@ -9,7 +9,6 @@ import JSONValue
 import Logging
 import func SessionTools.fetchOrigin
 import enum WuhuAI.InferenceError
-import WuhuVFS
 
 enum IssuerChoice: String, Codable, Sendable { case `self`, directory }
 
@@ -25,16 +24,6 @@ struct IdentitySettings: Codable, Equatable, Sendable {
 struct IdentityStateStore: Sendable {
   var load: @Sendable () async throws -> Data?
   var save: @Sendable (Data) async throws -> Void
-
-  static func filesystem(_ fs: any VirtualFileSystem) -> Self {
-    let path = try! VFSPath(absoluteFilePath: "/settings.json")
-    return Self(load: {
-      try await fs.status(at: path) == nil ? nil : fs.readData(at: path)
-    }, save: { data in
-      if try await fs.status(at: path) == nil { try await fs.createFile(at: path, data: data) }
-      else { try await fs.writeData(data, at: path, append: false) }
-    })
-  }
 
   static func disk(_ directory: URL) -> Self {
     let file = directory.appendingPathComponent("settings.json")

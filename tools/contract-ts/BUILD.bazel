@@ -57,6 +57,7 @@ deno_generate(
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/grep-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/grep-output.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/group-summary.schema.json",
+        "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/group-detail.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/history-entry.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/history-input.schema.json",
         "//packages/wuhu-core:Targets/SpaceContract/Tests/contract/history-output.schema.json",

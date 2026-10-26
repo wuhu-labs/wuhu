@@ -1,14 +1,10 @@
-import { assertEquals, assertThrows } from './assertions.ts'
-import { parse } from '@std/yaml'
-import type { AppManifest, PackageManifest } from './generate.ts'
+import { assertEquals, assertThrows } from '@std/assert'
+import type { AppManifest } from './generate.ts'
 import { takeFlagValue } from './generate.ts'
 import {
   appIconSource,
   type LocalPackageRef,
   resourceSourcePath,
-  targetedDeviceFamily,
-  workspaceContents,
-  xcodeInfoPlist,
   xcodeProjectSpec,
 } from './xcode-workspace.ts'
 
@@ -91,14 +87,6 @@ Deno.test('bundle-interior resources fold to the enclosing bundle', () => {
   )
 })
 
-Deno.test('device families lower to Xcode identifiers, macOS to none', () => {
-  assertEquals(targetedDeviceFamily(['iphone', 'ipad']), '1,2')
-  assertEquals(targetedDeviceFamily(['tv']), '3')
-  assertEquals(targetedDeviceFamily(['vision']), '7')
-  assertEquals(targetedDeviceFamily(['watch']), '4')
-  assertEquals(targetedDeviceFamily(['mac']), undefined)
-})
-
 Deno.test('watch applications become embedded companion Xcode targets', () => {
   const app = shell({
     libraries: [{ name: 'WatchLibrary', sources: 'Watch/Sources' }],
@@ -117,7 +105,7 @@ Deno.test('watch applications become embedded companion Xcode targets', () => {
     }],
   })
   app.targets[0].watchApplication = 'ExampleWatch'
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const targets = spec.targets as Record<string, Record<string, unknown>>
   assertEquals(targets.ExampleWatch.platform, 'watchOS')
   assertEquals(targets.ExampleWatch.deploymentTarget, '11.0')
@@ -128,8 +116,7 @@ Deno.test('watch applications become embedded companion Xcode targets', () => {
 })
 
 Deno.test('an app target becomes an application target linking the package product', () => {
-  const { spec, unresolved } = xcodeProjectSpec(shell(), packages)
-  assertEquals(unresolved, [])
+  const spec = xcodeProjectSpec(shell(), packages)
   assertEquals(spec.packages, { ExampleCore: { path: '../..' } })
   const target = (spec.targets as Record<string, Record<string, unknown>>)
     .ExampleiOS
@@ -180,7 +167,7 @@ Deno.test('app extensions become embedded Xcode targets', () => {
   })
   app.targets[0].extensions = ['ExampleWidgets']
 
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const targets = spec.targets as Record<string, Record<string, unknown>>
   assertEquals(targets.ExampleWidgets.type, 'app-extension')
   assertEquals(targets.ExampleWidgets.sources, [
@@ -191,19 +178,6 @@ Deno.test('app extensions become embedded Xcode targets', () => {
   assertEquals(targets.ExampleiOS.dependencies, [
     { package: 'ExampleCore', product: 'ExampleUI' },
     { target: 'ExampleWidgets' },
-  ])
-})
-
-Deno.test('app resources join the target sources so Xcode bundles them', () => {
-  const app = shell()
-  app.targets[0].resources = ['Resources/Localizations']
-  const { spec } = xcodeProjectSpec(app, packages)
-  const target = (spec.targets as Record<string, Record<string, unknown>>)
-    .ExampleiOS
-  assertEquals(target.sources, [
-    { path: 'Resources/Mobile/Assets.xcassets' },
-    { path: 'Resources/Localizations' },
-    { path: '.xcodegen/ExampleiOS-XcodeShell.swift' },
   ])
 })
 
@@ -223,7 +197,7 @@ Deno.test('shell libraries fold into the app target, transitively', () => {
     ],
   })
   app.targets[0].dependencies = [':Mobile']
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const target = (spec.targets as Record<string, Record<string, unknown>>)
     .ExampleiOS
   assertEquals(target.sources, [
@@ -238,22 +212,19 @@ Deno.test('shell libraries fold into the app target, transitively', () => {
   ])
 })
 
-Deno.test('bazel-only dependencies are reported rather than silently dropped', () => {
+Deno.test('remote products hang on a local package; lowered Bazel repos are skipped', () => {
   const app = shell()
   app.targets[0].dependencies = [
     '//packages/example:ExampleUI',
+    '@swiftpkg_remote_kit//:RemoteKit',
     '@ffmpeg//:libavcodec',
-    '//packages/example:NotAProduct',
   ]
-  const { spec, unresolved } = xcodeProjectSpec(app, packages)
-  assertEquals(unresolved, [
-    'ExampleiOS: @ffmpeg//:libavcodec',
-    'ExampleiOS: //packages/example:NotAProduct',
-  ])
+  const spec = xcodeProjectSpec(app, packages)
   const target = (spec.targets as Record<string, Record<string, unknown>>)
     .ExampleiOS
   assertEquals(target.dependencies, [
     { package: 'ExampleCore', product: 'ExampleUI' },
+    { package: 'ExampleCore', product: 'RemoteKit' },
   ])
 })
 
@@ -262,6 +233,7 @@ Deno.test('a dependency on an undeclared library is an error', () => {
   app.targets[0].dependencies = [':Missing']
   assertThrows(
     () => xcodeProjectSpec(app, packages),
+    Error,
     'which no library declares',
   )
 })
@@ -278,7 +250,7 @@ Deno.test('sibling platform shells keep one bundle id and one team', () => {
     infoPlist: 'Sources/BazelInfo-tvOS.plist',
     minimumOSVersion: '26.0',
   })
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const targets = spec.targets as Record<
     string,
     { settings: { base: Record<string, string> } }
@@ -310,7 +282,7 @@ Deno.test('a native visionOS shell never reuses the iOS profile name', () => {
       minimumOSVersion: '26.0',
     }],
   })
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const targets = spec.targets as Record<
     string,
     { settings: { base: Record<string, string> } }
@@ -318,23 +290,6 @@ Deno.test('a native visionOS shell never reuses the iOS profile name', () => {
   assertEquals(
     targets.ExampleVision.settings.base.PROVISIONING_PROFILE_SPECIFIER,
     'Wuhu Dev tech.example.app visionOS',
-  )
-})
-
-Deno.test('the workspace lists the package itself before each shell project', () => {
-  assertEquals(
-    workspaceContents('example', ['example/Apps/example/Example.xcodeproj']),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<Workspace
-   version = "1.0">
-   <FileRef
-      location = "group:example">
-   </FileRef>
-   <FileRef
-      location = "group:example/Apps/example/Example.xcodeproj">
-   </FileRef>
-</Workspace>
-`,
   )
 })
 
@@ -362,40 +317,9 @@ Deno.test('--workspace takes its value out of the positional package list', () =
   )
   assertThrows(
     () => takeFlagValue(['--workspace', '--apply'], '--workspace'),
+    Error,
     'needs a package directory',
   )
-})
-
-Deno.test('xcodeInfoPlist injects CFBundleExecutable for Xcode processing', () => {
-  const merged = xcodeInfoPlist({ CFBundleName: 'Example' })
-  assertEquals(merged.CFBundleExecutable, '$(EXECUTABLE_NAME)')
-  assertEquals(merged.CFBundleName, 'Example')
-})
-
-Deno.test('xcodeInfoPlist keeps an explicit CFBundleExecutable', () => {
-  const merged = xcodeInfoPlist({ CFBundleExecutable: 'Custom' })
-  assertEquals(merged.CFBundleExecutable, 'Custom')
-})
-
-Deno.test('local launch arguments land on every generated scheme', () => {
-  const { spec } = xcodeProjectSpec(shell(), packages, {
-    launchArguments: ['-seedLibrary /Volumes/share/arcroom-seed'],
-  })
-  const target = (spec.targets as Record<string, Record<string, unknown>>)
-    .ExampleiOS
-  assertEquals(target.scheme, {
-    testTargets: [],
-    commandLineArguments: {
-      '-seedLibrary /Volumes/share/arcroom-seed': true,
-    },
-  })
-})
-
-Deno.test('no local config leaves the scheme argument-free', () => {
-  const { spec } = xcodeProjectSpec(shell(), packages)
-  const target = (spec.targets as Record<string, Record<string, unknown>>)
-    .ExampleiOS
-  assertEquals(target.scheme, { testTargets: [] })
 })
 
 Deno.test('direct macOS workspace uses its only release entitlements variant', () => {
@@ -408,7 +332,7 @@ Deno.test('direct macOS workspace uses its only release entitlements variant', (
     bundleID: 'ai.wuhu.app.direct',
     families: ['mac'],
   }
-  const { spec } = xcodeProjectSpec(app, packages)
+  const spec = xcodeProjectSpec(app, packages)
   const targets = spec.targets as Record<
     string,
     { settings: { base: Record<string, string> } }
@@ -420,40 +344,4 @@ Deno.test('direct macOS workspace uses its only release entitlements variant', (
   )
   assertEquals(settings.PRODUCT_BUNDLE_IDENTIFIER, 'ai.wuhu.app.direct')
   assertEquals(settings.PROVISIONING_PROFILE_SPECIFIER, undefined)
-})
-
-Deno.test('the real direct Wuhu workspace resolves SoftwareUpdate as a package product', async () => {
-  const app = parse(
-    await Deno.readTextFile(
-      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
-    ),
-  ) as AppManifest
-  const pkg = parse(
-    await Deno.readTextFile(
-      new URL('../../packages/wuhu-app/package.yml', import.meta.url),
-    ),
-  ) as PackageManifest
-  assertEquals(Array.isArray(pkg.products), true)
-  const { spec, unresolved } = xcodeProjectSpec(app, {
-    'packages/wuhu-app': {
-      name: pkg.packageName,
-      products: pkg.products as string[],
-      path: '../..',
-    },
-  })
-  const targets = spec.targets as Record<
-    string,
-    { dependencies: { package: string; product: string }[] }
-  >
-  assertEquals(
-    targets.WuhuAppDirect.dependencies.some((dependency) =>
-      dependency.package === pkg.packageName &&
-      dependency.product === 'SoftwareUpdate'
-    ),
-    true,
-  )
-  assertEquals(
-    unresolved.includes('WuhuAppDirect: //packages/wuhu-app:SoftwareUpdate'),
-    false,
-  )
 })

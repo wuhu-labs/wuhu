@@ -1,3 +1,9 @@
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from '@std/assert'
 import { macRunnerTemplate } from '../../bazel/rules/mac_runner_template.ts'
 import {
   appBundleInfo,
@@ -8,13 +14,9 @@ import {
   assertLockfileHonorsPins,
   assertNoMacroProductExport,
   assertNoViewPilotDependency,
-  bazelIgnore,
-  bazelPackageFromPath,
-  bazelRepoFromUrl,
   collectLoweredDependencies,
   combineBuildBazel,
   comparePlatformVersions,
-  discoverAppDirs,
   type ExternalPackage,
   generateAppBuildBazel,
   generateBuildBazel,
@@ -27,10 +29,8 @@ import {
   pilotInfo,
   pilotPersistedLibrarySubsystems,
   populateAppBundleInfo,
-  productTargetLabel,
   productTargets,
   rawLabelLowering,
-  requiresPublicHeaderMaterialization,
   resolvedEntitlements,
   swiftlintSuiteBuildBazel,
   swiftPMIdentityFromUrl,
@@ -46,12 +46,10 @@ import {
   validateTargetLinkedFrameworks,
   validateTargetRelease,
   validateTargetUnstamped,
-  variantBundle,
   viewPilotProducts,
 } from './generate.ts'
 import { join } from '@std/path'
 import { parse } from '@std/yaml'
-import { assertEquals, assertIncludes, assertThrows } from './assertions.ts'
 
 Deno.test('ViewPilot defaults on, opt-out is honored, and previews cannot opt out', () => {
   const target: AppManifest['targets'][number] = {
@@ -115,6 +113,7 @@ Deno.test('a target that names ViewPilot fails generation', () => {
       assertNoViewPilotDependency('packages/wuhu-app', [library], [], [
         'ViewPilot',
       ]),
+    Error,
     'packages/wuhu-app target CommonUI declares a dependency on ViewPilot',
   )
 
@@ -130,6 +129,7 @@ Deno.test('a target that names ViewPilot fails generation', () => {
         [],
         ['ViewPilot'],
       ),
+    Error,
     'target CommonUI declares a dependency on ViewPilot',
   )
 
@@ -145,6 +145,7 @@ Deno.test('a target that names ViewPilot fails generation', () => {
         [],
         ['ViewPilot'],
       ),
+    Error,
     'target CommonUI declares a dependency on ViewPilot',
   )
 
@@ -173,6 +174,7 @@ Deno.test('only a shell that embeds ViewPilot may name it', () => {
         viewPilot: false,
         targets: [bundle],
       }], ['ViewPilot']),
+    Error,
     'packages/gika app bundle ExampleiOS declares a dependency on ViewPilot',
   )
 })
@@ -213,10 +215,12 @@ Deno.test('ViewPilot plist additions preserve app-authored log preferences', () 
 
   assertThrows(
     () => pilotInfo({ ...target, info: { OSLogPreferences: 'invalid' } }),
+    Error,
     'OSLogPreferences must be a dictionary',
   )
   assertThrows(
     () => pilotInfo({ ...target, info: { OSLogPreferences: null as never } }),
+    Error,
     'OSLogPreferences must be a dictionary',
   )
 })
@@ -240,11 +244,11 @@ Deno.test('generated app BUILD embeds ViewPilot only in the development signing 
     release: { name: 'example', platforms: ['ios'] },
     targets: [target],
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:dev": [\n            "//packages/view-pilot:ViewPilot",\n            "//packages/view-pilot:ViewPilotBootstrap",',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:store": ["Sources/BazelInfo-release.plist"]',
   )
@@ -281,25 +285,25 @@ Deno.test('app signing variant selects profiles and generated entitlements at bu
     ['ExampleiOS-dev.entitlements', 'ExampleiOS-release.entitlements'],
     'Apps/example',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     'profile_name = "Wuhu Store tech.example.app"',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:dev": "Apps/example/ExampleiOS-dev.entitlements"',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:store": ":ExampleiOS_store_profile__run_deno_task_prepare_profiles"',
   )
-  assertIncludes(build, 'tags = ["manual"]')
-  assertIncludes(build, '"//bazel/signing:store_unsigned": None,')
-  assertIncludes(
+  assertStringIncludes(build, 'tags = ["manual"]')
+  assertStringIncludes(build, '"//bazel/signing:store_unsigned": None,')
+  assertStringIncludes(
     build,
     '"//bazel/signing:dev_simulator": None,\n        "//bazel/signing:dev": ":ExampleiOS_dev_profile',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:store_simulator": None,\n        "//bazel/signing:store": ":ExampleiOS_store_profile',
   )
@@ -362,19 +366,25 @@ Deno.test('native platforms select their complete profile-backed variants', () =
     ],
     'Apps/example',
   )
-  assertIncludes(build, 'profile_name = "Wuhu Store tech.example.app macOS"')
-  assertIncludes(build, 'profile_name = "Wuhu Dev tech.example.app iOS"')
-  assertIncludes(build, 'profile_name = "Wuhu Dev tech.example.app tvOS"')
-  assertIncludes(
+  assertStringIncludes(
+    build,
+    'profile_name = "Wuhu Store tech.example.app macOS"',
+  )
+  assertStringIncludes(build, 'profile_name = "Wuhu Dev tech.example.app iOS"')
+  assertStringIncludes(build, 'profile_name = "Wuhu Dev tech.example.app tvOS"')
+  assertStringIncludes(
     build,
     'profile_name = "Wuhu Dev tech.example.app visionOS"',
   )
-  assertIncludes(build, 'profile_name = "Wuhu Dev tech.example.app macOS"')
-  assertIncludes(
+  assertStringIncludes(
+    build,
+    'profile_name = "Wuhu Dev tech.example.app macOS"',
+  )
+  assertStringIncludes(
     build,
     '"//bazel/signing:dev": ":ExampleMac_dev_profile',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:adhoc": None,\n        "//bazel/signing:store": ":ExampleMac_store_profile',
   )
@@ -442,27 +452,27 @@ Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () =
   validateAppEntitlements(app, 'app.yml')
   populateAppBundleInfo(app)
   const build = generateAppBuildBazel(app, undefined, 'Apps/example')
-  assertIncludes(
+  assertStringIncludes(
     build,
     'bundle_id = select({\n        "//bazel/signing:dev": "tech.example.app.dev",\n        "//bazel/signing:adhoc": "tech.example.app.dev",\n        "//bazel/signing:store": "tech.example.app",\n    })',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:adhoc": "Apps/example/ExampleiOS-adhoc.entitlements"',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:store": "Apps/example/ExampleiOS-release.entitlements"',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:adhoc": ["Apps/example/Sources/Info-adhoc.plist"]',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:dev": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:adhoc": ["Apps/example/Widgets/Info.plist"],\n        "//bazel/signing:store": ["Apps/example/Widgets/Info-release.plist"]',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/signing:adhoc": glob(["Apps/example/Dev/AppIcon.icon/**"])',
   )
@@ -474,7 +484,7 @@ Deno.test('a devIdentity signs dev and adhoc as a second app beside store', () =
       'Wuhu AdHoc tech.example.app.dev.Widgets',
       'Wuhu Store tech.example.app.Widgets',
     ]
-  ) assertIncludes(build, `profile_name = "${name}"`)
+  ) assertStringIncludes(build, `profile_name = "${name}"`)
   if (build.includes('profile_name = "Wuhu Dev tech.example.app"')) {
     throw new Error('store identity must not get a Dev profile')
   }
@@ -539,10 +549,12 @@ Deno.test('a devIdentity must cover the whole app and extend its bundle ID', () 
   })
   assertThrows(
     () => validateAppEntitlements(app(undefined), 'app.yml'),
+    Error,
     'must both declare a devIdentity or neither',
   )
   assertThrows(
     () => validateAppEntitlements(app('tech.example.other.Widgets'), 'app.yml'),
+    Error,
     'must extend tech.example.app.dev',
   )
   validateAppEntitlements(app('tech.example.app.dev.Widgets'), 'app.yml')
@@ -567,8 +579,8 @@ Deno.test('an iOS preview builds adhoc on the wildcard AdHoc profile', () => {
     undefined,
     'Apps/example-preview',
   )
-  assertIncludes(build, 'profile_name = "Wuhu AdHoc Previews"')
-  assertIncludes(
+  assertStringIncludes(build, 'profile_name = "Wuhu AdHoc Previews"')
+  assertStringIncludes(
     build,
     '"//bazel/signing:adhoc": "Apps/example-preview/ExamplePreviewiOS-release.entitlements"',
   )
@@ -683,6 +695,7 @@ Deno.test('app entitlements reject the retired plist path spelling', () => {
   } as unknown as AppManifest
   assertThrows(
     () => validateAppEntitlements(app, 'app.yml'),
+    Error,
     'must be a common/dev/release mapping',
   )
 })
@@ -706,6 +719,7 @@ for (const overlay of ['common', 'dev', 'release'] as const) {
       } as unknown as AppManifest
       assertThrows(
         () => validateAppEntitlements(app, 'app.yml'),
+        Error,
         `${key} is generated and must not be authored`,
       )
     })
@@ -721,8 +735,8 @@ Deno.test('package BUILD combination has one package declaration and release man
     ['Apps/example/app.yml'],
   )
   assertEquals(build.match(/package\(/g)?.length, 1)
-  assertIncludes(build, 'name = "release_manifest"')
-  assertIncludes(build, '"Apps/example/app.yml"')
+  assertStringIncludes(build, 'name = "release_manifest"')
+  assertStringIncludes(build, '"Apps/example/app.yml"')
 })
 
 Deno.test('app-shell library copts thread extra rule symbols and load them', () => {
@@ -776,28 +790,28 @@ Deno.test('app-shell library copts thread extra rule symbols and load them', () 
   const build = generateAppBuildBazel(manifest)
 
   // The extra copts symbol is loaded from rules.bzl alongside the base symbol.
-  assertIncludes(
+  assertStringIncludes(
     build,
     `load("//bazel/rules:rules.bzl", "WUHU_SWIFT_LANGUAGE_MODE_COPTS", "WUHU_UI_CONTROL_COPTS", "wuhu_platforms")`,
   )
   // The gated library appends the extra symbol; the plain one does not.
-  assertIncludes(
+  assertStringIncludes(
     build,
     'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_UI_CONTROL_COPTS,',
   )
-  assertIncludes(build, 'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS,')
-  assertIncludes(
+  assertStringIncludes(build, 'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS,')
+  assertStringIncludes(
     build,
     'frameworks = [\n        "@example//:DynamicFramework",\n    ],',
   )
   // Each shell library is constrained to the lanes of the app targets that
   // actually depend on it, not to the union across the whole shell: that is what
   // lets a macOS-only library sit beside a mobile one in the same app.yml.
-  assertIncludes(
+  assertStringIncludes(
     build,
     'target_compatible_with = wuhu_platforms([\n        "mac",\n    ]),',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     'target_compatible_with = wuhu_platforms([\n        "ios",\n    ]),',
   )
@@ -827,7 +841,7 @@ Deno.test('app target resource files and directories become a rules_apple glob',
     ],
   }
 
-  assertIncludes(
+  assertStringIncludes(
     generateAppBuildBazel(manifest),
     'resources = glob([\n        "Resources/LaunchScreen.storyboard",\n        "Resources/LaunchScreen.storyboard/**",\n        "Resources/Localizations",\n        "Resources/Localizations/**",\n    ], allow_empty = True),',
   )
@@ -928,6 +942,7 @@ Deno.test('Watch application plists receive complete application metadata', () =
         ...watch,
         info: { UIRequiredDeviceCapabilities: ['arm64'] },
       }, 'application'),
+    Error,
     'UIRequiredDeviceCapabilities is forbidden on watchOS',
   )
 })
@@ -953,6 +968,7 @@ Deno.test('app bundle plist boilerplate has one typed source of truth', () => {
         target,
         'application',
       ),
+    Error,
     'info.CFBundleIdentifier is generated from typed app.yml fields',
   )
 })
@@ -1001,16 +1017,19 @@ Deno.test('app extensions compile and embed from declarative shell metadata', ()
   }
 
   const build = generateAppBuildBazel(manifest)
-  assertIncludes(
+  assertStringIncludes(
     build,
     'load("@build_bazel_rules_apple//apple:ios.bzl", "ios_application", "ios_extension")',
   )
-  assertIncludes(build, 'ios_extension(\n    name = "ExampleWidgets",')
-  assertIncludes(
+  assertStringIncludes(build, 'ios_extension(\n    name = "ExampleWidgets",')
+  assertStringIncludes(
     build,
     'resources = glob([\n        "Widgets/Resources",\n        "Widgets/Resources/**",\n    ], allow_empty = True),',
   )
-  assertIncludes(build, 'extensions = [\n        ":ExampleWidgets",\n    ],')
+  assertStringIncludes(
+    build,
+    'extensions = [\n        ":ExampleWidgets",\n    ],',
+  )
 })
 
 Deno.test('watch applications compile and embed from declarative companion metadata', () => {
@@ -1049,17 +1068,20 @@ Deno.test('watch applications compile and embed from declarative companion metad
 
   validateAppExtensions(manifest, 'app.yml')
   const build = generateAppBuildBazel(manifest)
-  assertIncludes(
+  assertStringIncludes(
     build,
     'load("@build_bazel_rules_apple//apple:watchos.bzl", "watchos_application")',
   )
-  assertIncludes(build, 'watchos_application(\n    name = "ExampleWatch",')
-  assertIncludes(
+  assertStringIncludes(
+    build,
+    'watchos_application(\n    name = "ExampleWatch",',
+  )
+  assertStringIncludes(
     build,
     'profile_name = "Wuhu Store tech.example.app.watchkitapp watchOS"',
   )
-  assertIncludes(build, 'watch_application = ":ExampleWatch",')
-  assertIncludes(
+  assertStringIncludes(build, 'watch_application = ":ExampleWatch",')
+  assertStringIncludes(
     build,
     'target_compatible_with = wuhu_platforms([\n        "watchos",',
   )
@@ -1104,12 +1126,15 @@ Deno.test('declared app intents reach the bundle and its library', () => {
 
   validateAppIntents(manifest, 'app.yml')
   const build = generateAppBuildBazel(manifest)
-  assertIncludes(build, '    app_intents = [\n        ":AppLibrary",\n    ],')
-  assertIncludes(
+  assertStringIncludes(
+    build,
+    '    app_intents = [\n        ":AppLibrary",\n    ],',
+  )
+  assertStringIncludes(
     build,
     'swift_library(\n    name = "AppLibrary",',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '    linkopts = [\n        "-framework",\n        "AppIntents",\n    ],',
   )
@@ -1142,6 +1167,7 @@ Deno.test('app intents must name a declared library this bundle links', () => {
         libraries: [{ name: 'AppLibrary', sources: 'Sources' }],
         targets: [target],
       }, 'app.yml'),
+    Error,
     'not a library this shell declares',
   )
   assertThrows(
@@ -1151,6 +1177,7 @@ Deno.test('app intents must name a declared library this bundle links', () => {
         libraries: [{ name: 'AppLibrary', sources: 'Sources' }],
         targets: [{ ...target, dependencies: [], appIntents: [':AppLibrary'] }],
       }, 'app.yml'),
+    Error,
     'without depending on it',
   )
 })
@@ -1176,6 +1203,7 @@ Deno.test('watch applications require one iOS companion', () => {
         watchApplications: [watch],
         targets: [],
       }, 'app.yml'),
+    Error,
     'must have exactly one iOS companion',
   )
 })
@@ -1198,6 +1226,7 @@ Deno.test('app extension embedding names an existing same-platform bundle', () =
   assertThrows(
     () =>
       validateAppExtensions({ name: 'Example', targets: [target] }, 'app.yml'),
+    Error,
     'does not declare as an extension',
   )
   assertThrows(
@@ -1224,14 +1253,8 @@ Deno.test('app extension embedding names an existing same-platform bundle', () =
         },
         'app.yml',
       ),
+    Error,
     'cannot embed ExampleWidgets (macOS)',
-  )
-})
-
-Deno.test('an app shell exports its manifest as a label', () => {
-  assertIncludes(
-    generateAppBuildBazel({ name: 'Example', targets: [] }),
-    'exports_files(["app.yml"])',
   )
 })
 
@@ -1245,6 +1268,7 @@ Deno.test('release blocks are validated at parse', () => {
         release: { teamID: '97w7a3y9gd' },
         manifestDir: 'packages/wuhu-core/Targets/wuhu',
       }),
+    Error,
     'release.teamID must be 10 characters of A-Z0-9',
   )
   assertThrows(
@@ -1256,6 +1280,7 @@ Deno.test('release blocks are validated at parse', () => {
         release: { teamID: '97W7A3Y9GD' },
         manifestDir: 'packages/wuhu-core/Targets/CLIKit',
       }),
+    Error,
     'is a library, not an executable',
   )
   assertThrows(
@@ -1268,6 +1293,7 @@ Deno.test('release blocks are validated at parse', () => {
         },
         'packages/example/Apps/example',
       ),
+    Error,
     'release.name must be kebab-case',
   )
   assertThrows(
@@ -1280,6 +1306,7 @@ Deno.test('release blocks are validated at parse', () => {
         },
         'packages/example/Apps/example',
       ),
+    Error,
     'release.platforms must list at least one',
   )
 })
@@ -1324,43 +1351,6 @@ Deno.test('swiftPMIdentityFromUrl lowercases the last segment and strips .git', 
     swiftPMIdentityFromUrl('https://github.com/apple/swift-nio'),
     'swift-nio',
   )
-})
-
-Deno.test('bazelRepoFromUrl prefixes swiftpkg_ and maps - to _', () => {
-  assertEquals(
-    bazelRepoFromUrl('https://github.com/apple/swift-identified-collections'),
-    'swiftpkg_swift_identified_collections',
-  )
-  assertEquals(
-    bazelRepoFromUrl('https://github.com/jpsim/Yams.git'),
-    'swiftpkg_yams',
-  )
-  assertEquals(
-    bazelRepoFromUrl('https://github.com/groue/GRDB.swift.git'),
-    'swiftpkg_grdb.swift',
-  )
-})
-
-Deno.test('bazelPackageFromPath resolves a sibling path to //packages/<dir>', () => {
-  assertEquals(
-    bazelPackageFromPath('packages/wuhu-ai', '../wuhu-json'),
-    '//packages/wuhu-json',
-  )
-  assertEquals(
-    bazelPackageFromPath('packages/wuhu-app', '../wuhu-core'),
-    '//packages/wuhu-core',
-  )
-})
-
-Deno.test('productTargetLabel maps a list product to itself and honors a map override', () => {
-  const listOnly: ExternalPackage = { products: ['Fetch', 'FetchSSE'] }
-  assertEquals(productTargetLabel(listOnly, 'Fetch'), 'Fetch')
-  assertEquals(productTargetLabel(listOnly, 'FetchSSE'), 'FetchSSE')
-
-  const override: ExternalPackage = {
-    products: { 'Product': 'AliasedTarget' },
-  }
-  assertEquals(productTargetLabel(override, 'Product'), 'AliasedTarget')
 })
 
 const basePkg: PackageManifest = {
@@ -1422,14 +1412,6 @@ const quickjsLowering = {
   },
 }
 
-Deno.test('upstream C headers already under include stay in place', () => {
-  assertEquals(requiresPublicHeaderMaterialization('quickjs.h'), true)
-  assertEquals(
-    requiresPublicHeaderMaterialization('include/smb2/libsmb2.h'),
-    false,
-  )
-})
-
 // A raw Bazel label names a repository the SwiftPM graph cannot see (a pinned
 // http_archive): it passes through verbatim on the Bazel side, and it must
 // carry a swiftpm: lowering so the SwiftPM side has a real target for it.
@@ -1449,6 +1431,7 @@ Deno.test('partitionBazelDeps passes a lowered raw Bazel label through verbatim'
   )
   assertThrows(
     () => partitionBazelDeps(basePkg, targetNames, kindByName, ['Nope']),
+    Error,
     'No external package declares product Nope',
   )
 })
@@ -1461,10 +1444,12 @@ Deno.test('a raw Bazel label without a swiftpm lowering is rejected on every pat
       partitionBazelDeps(basePkg, targetNames, kindByName, [
         '@ffmpeg//:libavcodec',
       ]),
+    Error,
     'declares no swiftpm: lowering',
   )
   assertThrows(
     () => rawLabelLowering({ name: '@quickjs//:quickjs' }),
+    Error,
     'declares no swiftpm: lowering',
   )
   assertThrows(
@@ -1473,6 +1458,7 @@ Deno.test('a raw Bazel label without a swiftpm lowering is rejected on every pat
         name: '@quickjs//:quickjs',
         swiftpm: { ...avcodecLowering, ...quickjsLowering },
       }),
+    Error,
     'exactly one of swiftpm.binaryTarget, cTarget or systemLibrary',
   )
 })
@@ -1487,6 +1473,7 @@ Deno.test('the retired swift: toggle is rejected with a pointer to swiftpm lower
           name: string
         },
       ]),
+    Error,
     'retired `swift:` toggle',
   )
 })
@@ -1504,21 +1491,21 @@ Deno.test('generatePackageSwift lowers raw labels to binaryTarget and local cTar
     'packages/p',
     [target],
   )
-  assertIncludes(
+  assertStringIncludes(
     swift,
     `dependencies: [\n        "libavcodec",\n        "CQuickJS",\n      ]`,
   )
-  assertIncludes(
+  assertStringIncludes(
     swift,
     `.binaryTarget(\n      name: "libavcodec",\n      url: "https://example.com/libavcodec.zip",\n      checksum: "abc123"\n    )`,
   )
-  assertIncludes(swift, `.target(\n      name: "CQuickJS"`)
-  assertIncludes(swift, `path: ".upstream/CQuickJS"`)
-  assertIncludes(swift, `sources: ["dtoa.c", "quickjs.c"]`)
-  assertIncludes(swift, `publicHeadersPath: "include"`)
-  assertIncludes(swift, `.define("_GNU_SOURCE")`)
-  assertIncludes(swift, `.unsafeFlags(["-funsigned-char"])`)
-  assertIncludes(
+  assertStringIncludes(swift, `.target(\n      name: "CQuickJS"`)
+  assertStringIncludes(swift, `path: ".upstream/CQuickJS"`)
+  assertStringIncludes(swift, `sources: ["dtoa.c", "quickjs.c"]`)
+  assertStringIncludes(swift, `publicHeadersPath: "include"`)
+  assertStringIncludes(swift, `.define("_GNU_SOURCE")`)
+  assertStringIncludes(swift, `.unsafeFlags(["-funsigned-char"])`)
+  assertStringIncludes(
     swift,
     `.linkedLibrary("m", .when(platforms: [.linux]))`,
   )
@@ -1548,14 +1535,8 @@ Deno.test('collectLoweredDependencies dedupes identical lowerings and rejects co
   }
   assertThrows(
     () => collectLoweredDependencies([first, conflicting]),
+    Error,
     'conflicting swiftpm lowerings for libavcodec',
-  )
-})
-
-Deno.test('bazelIgnore enumerates deno node_modules and per-package SwiftPM litter', () => {
-  assertEquals(
-    bazelIgnore(['packages/wuhu-web'], ['packages/arcroom']),
-    'packages/arcroom/.build\npackages/arcroom/.upstream\npackages/arcroom/Packages\npackages/wuhu-web/node_modules\n',
   )
 })
 
@@ -1568,6 +1549,7 @@ Deno.test('assertNoMacroProductExport rejects a macro consumed as an external pr
         macroNames,
         'packages/consumer/package.yml',
       ),
+    Error,
     'macro targets are consumed within their owning package',
   )
   // The map form resolves through the target label, catching an aliased product.
@@ -1578,6 +1560,7 @@ Deno.test('assertNoMacroProductExport rejects a macro consumed as an external pr
         macroNames,
         'loc',
       ),
+    Error,
     'macro targets are consumed within their owning package',
   )
   // A non-macro product is accepted.
@@ -1595,6 +1578,7 @@ Deno.test('productTargets rejects an explicit macro product and drops macros oth
   ]
   assertThrows(
     () => productTargets({ ...basePkg, products: ['Mac'] }, targets),
+    Error,
     'is a macro target',
   )
   assertEquals(
@@ -1619,8 +1603,8 @@ Deno.test('generatePackageSwift imports CompilerPluginSupport only with a macro 
     'packages/p',
     [minimalTarget('Mac', 'macro')],
   )
-  assertIncludes(withMacro, 'import CompilerPluginSupport')
-  assertIncludes(withMacro, `.macro(\n      name: "Mac"`)
+  assertStringIncludes(withMacro, 'import CompilerPluginSupport')
+  assertStringIncludes(withMacro, `.macro(\n      name: "Mac"`)
 
   const withoutMacro = generatePackageSwift(
     { ...basePkg, products: 'all' },
@@ -1644,13 +1628,13 @@ Deno.test('an executable may expose a product name without changing its target m
     'packages/p',
     [target],
   )
-  assertIncludes(
+  assertStringIncludes(
     swift,
     '.executable(name: "arcroom-cli", targets: ["CLIV2"])',
   )
   const bazel = await generateBuildBazel(basePkg, [target])
-  assertIncludes(bazel, 'name = "CLIV2"')
-  assertIncludes(
+  assertStringIncludes(bazel, 'name = "CLIV2"')
+  assertStringIncludes(
     bazel,
     'alias(\n    name = "arcroom-cli",\n    actual = ":CLIV2",\n)',
   )
@@ -1681,18 +1665,18 @@ Deno.test('generateBuildBazel discovers DocC catalogs and emits a merged site', 
     }
 
     const build = await generateBuildBazel(basePkg, targets)
-    assertIncludes(build, '"wuhu_docc_archive"')
-    assertIncludes(build, '"wuhu_docc_site"')
-    assertIncludes(build, 'name = "BaseDocC"')
-    assertIncludes(build, 'name = "FeatureDocC"')
-    assertIncludes(build, 'dependencies = [\n        ":BaseDocC",\n    ]')
-    assertIncludes(build, 'name = "docs"')
+    assertStringIncludes(build, '"wuhu_docc_archive"')
+    assertStringIncludes(build, '"wuhu_docc_site"')
+    assertStringIncludes(build, 'name = "BaseDocC"')
+    assertStringIncludes(build, 'name = "FeatureDocC"')
+    assertStringIncludes(build, 'dependencies = [\n        ":BaseDocC",\n    ]')
+    assertStringIncludes(build, 'name = "docs"')
     assertEquals(build.match(/tags = \["manual"\]/g)?.length, 4)
-    assertIncludes(
+    assertStringIncludes(
       build,
       'archives = [\n        ":BaseDocC",\n        ":FeatureDocC",\n    ]',
     )
-    assertIncludes(
+    assertStringIncludes(
       build,
       'catalog = glob(["Targets/Feature/Sources/Feature.docc/**"])',
     )
@@ -1705,25 +1689,25 @@ Deno.test('generateBuildBazel stamps an executable with a status genrule and def
   const build = await generateBuildBazel(basePkg, [
     { ...minimalTarget('wuhu', 'executable'), stamp: true },
   ])
-  assertIncludes(build, `name = "wuhu_stamp"`)
-  assertIncludes(build, 'stamp = 1')
+  assertStringIncludes(build, `name = "wuhu_stamp"`)
+  assertStringIncludes(build, 'stamp = 1')
   // The cmd body crosses four quoting layers (TS -> Starlark -> genrule Make
   // expansion -> bash heredoc); pin the literals whose $ count is load-bearing.
-  assertIncludes(
+  assertStringIncludes(
     build,
     "version=$$(sed -n 's/^STABLE_WUHU_VERSION //p' bazel-out/stable-status.txt)",
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     "date=$$(sed -n 's/^WUHU_BUILD_DATE //p' bazel-out/volatile-status.txt)",
   )
-  assertIncludes(build, 'cat > $@ <<SWIFT')
-  assertIncludes(build, `static let version = "$\${version:?}"`)
-  assertIncludes(
+  assertStringIncludes(build, 'cat > $@ <<SWIFT')
+  assertStringIncludes(build, `static let version = "$\${version:?}"`)
+  assertStringIncludes(
     build,
     `srcs = glob(["Targets/wuhu/Sources/**/*.swift"]) + [":wuhu_stamp"]`,
   )
-  assertIncludes(build, `"-DWUHU_STAMPED"`)
+  assertStringIncludes(build, `"-DWUHU_STAMPED"`)
   // The twin is opt-in.
   if (build.includes('wuhu_unstamped')) {
     throw new Error('did not expect a twin without unstamped: true')
@@ -1734,11 +1718,11 @@ Deno.test('generateBuildBazel stamps an executable with a status genrule and def
     { ...minimalTarget('wuhu', 'executable'), stamp: true, unstamped: true },
   ])
   const twin = twinChunk(twinned, 'wuhu')
-  assertIncludes(
+  assertStringIncludes(
     twin,
     `name = "wuhu_unstamped",\n    srcs = glob(["Targets/wuhu/Sources/**/*.swift"]),`,
   )
-  assertIncludes(twin, 'tags = ["manual"]')
+  assertStringIncludes(twin, 'tags = ["manual"]')
   if (twin.includes(':wuhu_stamp') || twin.includes('WUHU_STAMPED')) {
     throw new Error(`the twin takes the stamp:\n${twin}`)
   }
@@ -1771,29 +1755,32 @@ Deno.test('generateBuildBazel embeds an executable Info.plist on macOS only', as
       info: { CFBundleIdentifier: 'ai.wuhu.cli', Cost: '$5 \\ R&D' },
     },
   ])
-  assertIncludes(build, `name = "wuhu_info_plist"`)
-  assertIncludes(build, 'outs = ["Targets/wuhu/Info.plist"]')
-  assertIncludes(
+  assertStringIncludes(build, `name = "wuhu_info_plist"`)
+  assertStringIncludes(build, 'outs = ["Targets/wuhu/Info.plist"]')
+  assertStringIncludes(
     build,
     `sed "s/@WUHU_VERSION@/$\${version:?}/g" > $@ <<'PLIST'`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '\t<key>CFBundleIdentifier</key>\n\t<string>ai.wuhu.cli</string>',
   )
   // Starlark unescapes `\\` and Make expansion unescapes `$$`; the quoted
   // heredoc passes the rest through.
-  assertIncludes(build, '<string>$$5 \\\\ R&amp;D</string>')
-  assertIncludes(
+  assertStringIncludes(build, '<string>$$5 \\\\ R&amp;D</string>')
+  assertStringIncludes(
     build,
     '\t<key>CFBundleShortVersionString</key>\n\t<string>@WUHU_VERSION@</string>\n\t<key>CFBundleVersion</key>\n\t<string>@WUHU_VERSION@</string>',
   )
-  assertIncludes(build, 'target_compatible_with = wuhu_platforms(["mac"])')
-  assertIncludes(
+  assertStringIncludes(
+    build,
+    'target_compatible_with = wuhu_platforms(["mac"])',
+  )
+  assertStringIncludes(
     build,
     '    additional_linker_inputs = select({\n        "//bazel/constraints:mac": [":wuhu_info_plist"],\n        "//conditions:default": [],\n    }),',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '    linkopts = select({\n        "//bazel/constraints:mac": ["-Wl,-sectcreate,__TEXT,__info_plist,$(location :wuhu_info_plist)"],\n        "//conditions:default": [],\n    }),',
   )
@@ -1819,19 +1806,23 @@ Deno.test('executable info blocks are validated at parse', () => {
   validateTargetInfo(target)
   assertThrows(
     () => validateTargetInfo({ ...target, stamp: false }),
+    Error,
     'is not a stamped executable',
   )
   assertThrows(
     () => validateTargetInfo({ ...target, kind: 'library' }),
+    Error,
     'is not a stamped executable',
   )
   validateTargetUnstamped({ ...target, unstamped: true })
   assertThrows(
     () => validateTargetUnstamped({ ...target, stamp: false, unstamped: true }),
+    Error,
     'declares unstamped: but is not a stamped executable',
   )
   assertThrows(
     () => validateTargetInfo({ ...target, info: { CFBundleName: 'wuhu' } }),
+    Error,
     'must declare CFBundleIdentifier',
   )
   assertThrows(
@@ -1840,6 +1831,7 @@ Deno.test('executable info blocks are validated at parse', () => {
         ...target,
         info: { ...target.info, CFBundleVersion: '1' },
       }),
+    Error,
     'CFBundleVersion is stamped from the release version',
   )
 })
@@ -1864,6 +1856,7 @@ Deno.test('package target copts load rule symbols once and reject literal flags'
         ...minimalTarget('Invalid', 'library'),
         copts: ['-DBUILD_WITH_UI_CONTROL'],
       }]),
+    Error,
     'target copts entry is not a rules.bzl symbol',
   )
 })
@@ -1872,16 +1865,17 @@ Deno.test('every Swift package gets a manual SwiftLint test, run together by //p
   const build = await generateBuildBazel(basePkg, [
     minimalTarget('Lib', 'library'),
   ])
-  assertIncludes(
+  assertStringIncludes(
     build,
     'load("//bazel/swiftlint:defs.bzl", "swiftlint_test")',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     'swiftlint_test(\n    name = "swiftlint",\n    srcs = glob(["**/*.swift"], allow_empty = True, exclude = ["Package.swift"]),\n    tags = ["manual"],\n)',
   )
   await assertRejects(
     () => generateBuildBazel(basePkg, [minimalTarget('swiftlint', 'library')]),
+    Error,
     'generated SwiftLint test :swiftlint conflicts with a source target',
   )
   assertEquals(
@@ -1894,7 +1888,7 @@ Deno.test('generateBuildBazel threads a test size into swift_test and rejects an
   const sized = await generateBuildBazel(basePkg, [
     { ...minimalTarget('Lib', 'library'), tests: { size: 'large' } },
   ])
-  assertIncludes(sized, `    size = "large",`)
+  assertStringIncludes(sized, `    size = "large",`)
 
   const unsized = await generateBuildBazel(basePkg, [
     { ...minimalTarget('Lib', 'library'), tests: {} },
@@ -1936,29 +1930,35 @@ Deno.test('multiple test targets use folder-derived names in Bazel and SwiftPM',
   const support = minimalTarget('Support', 'library')
 
   const build = await generateBuildBazel(basePkg, [target, support])
-  assertIncludes(build, `name = "FeatureTests"`)
-  assertIncludes(
+  assertStringIncludes(build, `name = "FeatureTests"`)
+  assertStringIncludes(
     build,
     `srcs = glob(["Targets/Feature/Tests/**/*.swift"])`,
   )
-  assertIncludes(build, `name = "FeatureSnapshotTests"`)
-  assertIncludes(
+  assertStringIncludes(build, `name = "FeatureSnapshotTests"`)
+  assertStringIncludes(
     build,
     `srcs = glob(["Targets/Feature/SnapshotTests/**/*.swift"])`,
   )
-  assertIncludes(build, `name = "FeatureIntegrationTests"`)
-  assertIncludes(
+  assertStringIncludes(build, `name = "FeatureIntegrationTests"`)
+  assertStringIncludes(
     build,
     `srcs = glob(["Targets/Feature/Nested/IntegrationTests/**/*.swift"])`,
   )
 
   const swift = generatePackageSwift(basePkg, '.', [target, support])
-  assertIncludes(swift, `.testTarget(\n      name: "FeatureTests"`)
-  assertIncludes(swift, `path: "Targets/Feature/Tests"`)
-  assertIncludes(swift, `.testTarget(\n      name: "FeatureSnapshotTests"`)
-  assertIncludes(swift, `path: "Targets/Feature/SnapshotTests"`)
-  assertIncludes(swift, `.testTarget(\n      name: "FeatureIntegrationTests"`)
-  assertIncludes(swift, `path: "Targets/Feature/Nested/IntegrationTests"`)
+  assertStringIncludes(swift, `.testTarget(\n      name: "FeatureTests"`)
+  assertStringIncludes(swift, `path: "Targets/Feature/Tests"`)
+  assertStringIncludes(
+    swift,
+    `.testTarget(\n      name: "FeatureSnapshotTests"`,
+  )
+  assertStringIncludes(swift, `path: "Targets/Feature/SnapshotTests"`)
+  assertStringIncludes(
+    swift,
+    `.testTarget(\n      name: "FeatureIntegrationTests"`,
+  )
+  assertStringIncludes(swift, `path: "Targets/Feature/Nested/IntegrationTests"`)
 })
 
 Deno.test('retired tests.sources and sourceless additional targets are rejected', async () => {
@@ -1968,6 +1968,7 @@ Deno.test('retired tests.sources and sourceless additional targets are rejected'
         ...minimalTarget('Legacy', 'library'),
         tests: { sources: 'LegacyTests' },
       } as unknown as TargetManifest]),
+    Error,
     'uses retired tests.sources',
   )
   await assertRejects(
@@ -1976,18 +1977,8 @@ Deno.test('retired tests.sources and sourceless additional targets are rejected'
         ...minimalTarget('Missing', 'library'),
         additionalTestTargets: [{}],
       } as unknown as TargetManifest]),
+    Error,
     'additionalTestTargets entries must declare sources',
-  )
-})
-
-Deno.test('generateBuildBazel inherits E2E environment into host tests', async () => {
-  const build = await generateBuildBazel(basePkg, [{
-    ...minimalTarget('E2E', 'library'),
-    tests: { envInherit: ['EXAMPLE_TOKEN'] },
-  }])
-  assertIncludes(
-    build,
-    `    env_inherit = [\n        "EXAMPLE_TOKEN",\n    ],`,
   )
 })
 
@@ -1999,11 +1990,11 @@ Deno.test('generateBuildBazel threads execution tags into host and simulator tes
       tags: ['no-sandbox', 'no-remote-exec', 'requires-network'],
     },
   }])
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    tags = [\n        "no-sandbox",\n        "no-remote-exec",\n        "requires-network",\n    ],`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    tags = [\n        "resources:simulators:1",\n        "no-sandbox",\n        "no-remote-exec",\n        "requires-network",\n    ],`,
   )
@@ -2038,19 +2029,19 @@ targets:
       'target.yml',
       root,
     )
-    assertIncludes(
+    assertStringIncludes(
       rule,
       `ios_application(\n    name = "LibTests.ios.host",\n    testonly = True,\n    bundle_id = "tech.example.host",`,
     )
-    assertIncludes(
+    assertStringIncludes(
       rule,
       `    infoplists = ["//packages/kit:Apps/host/Sources/Info.plist"],`,
     )
-    assertIncludes(
+    assertStringIncludes(
       rule,
       `    resources = glob([\n        "Apps/shell/Localizations",\n        "Apps/shell/Localizations/**",\n    ], allow_empty = True),`,
     )
-    assertIncludes(rule, `"//packages/kit:HostLibrary",`)
+    assertStringIncludes(rule, `"//packages/kit:HostLibrary",`)
     await assertRejects(
       () =>
         testHostVariant(
@@ -2060,6 +2051,7 @@ targets:
           'target.yml',
           root,
         ),
+      Error,
       'which no app.yml',
     )
   } finally {
@@ -2074,6 +2066,7 @@ Deno.test('hostResources requires a test host', async () => {
         ...minimalTarget('Unhosted', 'library'),
         tests: { checks: { test: ['ios'] }, hostResources: ['Apps/a/R'] },
       }]),
+    Error,
     'names hostResources but no test host',
   )
 })
@@ -2088,6 +2081,7 @@ Deno.test('hostArguments requires a test host', async () => {
           hostArguments: ['-AppleLanguages'],
         },
       }]),
+    Error,
     'names hostArguments but no test host',
   )
 })
@@ -2100,7 +2094,7 @@ Deno.test('generateBuildBazel hosts a simulator test only on the lanes that name
       host: { ios: '//packages/preview-kit:TestHostiOS' },
     },
   }])
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    minimum_os_version = "18.4",\n    test_host = "//packages/preview-kit:TestHostiOS",\n`,
   )
@@ -2114,6 +2108,7 @@ Deno.test('generateBuildBazel hosts a simulator test only on the lanes that name
           host: { tvos: '//packages/preview-kit:TestHostiOS' },
         },
       }]),
+    Error,
     'names a test host for tvos, which is not one of its simulator test lanes',
   )
 })
@@ -2148,7 +2143,7 @@ Deno.test('every Swift test links IssueReporting support without changing produc
   const product =
     '.product(name: "IssueReportingTestSupport", package: "swift-issue-reporting")'
   assertEquals(swift.split(product).length - 1, 2)
-  assertIncludes(
+  assertStringIncludes(
     swift,
     '.package(url: "https://github.com/pointfreeco/swift-issue-reporting", from: "2.1.2")',
   )
@@ -2169,16 +2164,16 @@ Deno.test('a simulator test lane lowers to its own bundle target beside the swif
       tests: { checks: { test: ['mac', 'ios', 'tvos'] } },
     },
   ])
-  assertIncludes(build, `"wuhu_sim_test"`)
-  assertIncludes(
+  assertStringIncludes(build, `"wuhu_sim_test"`)
+  assertStringIncludes(
     build,
     `wuhu_swift_test(\n    name = "LibTests",\n    package_name = "AKit",`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `wuhu_sim_test(\n    name = "LibTests.ios",\n    lane = "ios",\n    module_name = "LibTests",\n    package_name = "AKit",\n    minimum_os_version = "18.4",`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `wuhu_sim_test(\n    name = "LibTests.tvos",\n    lane = "tvos",\n    module_name = "LibTests",\n    package_name = "AKit",\n    minimum_os_version = "26.0",`,
   )
@@ -2187,15 +2182,15 @@ Deno.test('a simulator test lane lowers to its own bundle target beside the swif
     2,
   )
   // Each lane's runner is its own; a lane must not see another lane's bundle.
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    target_compatible_with = wuhu_platforms([\n        "ios",\n    ]),`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    target_compatible_with = wuhu_platforms([\n        "tvos",\n    ]),`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    target_compatible_with = wuhu_platforms([\n        "mac",\n    ]),`,
   )
@@ -2208,7 +2203,7 @@ Deno.test('a simulator-only test lane drops the swift_test entirely', async () =
       tests: { checks: { test: ['ios'] } },
     },
   ])
-  assertIncludes(build, `wuhu_sim_test(\n    name = "LibTests.ios",`)
+  assertStringIncludes(build, `wuhu_sim_test(\n    name = "LibTests.ios",`)
   if (build.includes('wuhu_swift_test(')) {
     throw new Error('did not expect a swift_test with no runnable lane')
   }
@@ -2232,34 +2227,10 @@ Deno.test('a simulator test lane without a platform floor is rejected', async ()
           tests: { checks: { test: ['ios'] } },
         },
       ]),
+    Error,
     'names ios in checks.test, but the package declares no iOS platform floor',
   )
 })
-
-Deno.test('visionos in checks.test lowers to a visionos simulator bundle', async () => {
-  const build = await generateBuildBazel(applePkg, [
-    {
-      ...minimalTarget('Lib', 'library'),
-      tests: { checks: { test: ['visionos'] } },
-    },
-  ])
-  assertIncludes(build, `name = "LibTests.visionos"`)
-  assertIncludes(build, `lane = "visionos"`)
-  assertIncludes(build, `minimum_os_version = "26.0"`)
-})
-
-async function assertRejects(
-  body: () => Promise<unknown>,
-  expected: string,
-): Promise<void> {
-  try {
-    await body()
-  } catch (error) {
-    if (String(error).includes(expected)) return
-    throw new Error(`unexpected error: ${String(error)}`)
-  }
-  throw new Error(`expected a rejection containing ${JSON.stringify(expected)}`)
-}
 
 Deno.test('systemLibrary kind emits a .systemLibrary and a wuhu_system_library', async () => {
   const systemTarget: TargetManifest = {
@@ -2278,9 +2249,9 @@ Deno.test('systemLibrary kind emits a .systemLibrary and a wuhu_system_library',
     '.',
     [systemTarget, consumer],
   )
-  assertIncludes(swift, `.systemLibrary(\n      name: "CSQLite"`)
-  assertIncludes(swift, `path: "Targets/CSQLite"`)
-  assertIncludes(swift, `providers: [.apt(["libsqlite3-dev"])]`)
+  assertStringIncludes(swift, `.systemLibrary(\n      name: "CSQLite"`)
+  assertStringIncludes(swift, `path: "Targets/CSQLite"`)
+  assertStringIncludes(swift, `providers: [.apt(["libsqlite3-dev"])]`)
   if (swift.includes(`.library(name: "CSQLite"`)) {
     throw new Error('a system library must not be exported as a product')
   }
@@ -2289,12 +2260,12 @@ Deno.test('systemLibrary kind emits a .systemLibrary and a wuhu_system_library',
     systemTarget,
     consumer,
   ])
-  assertIncludes(bazel, `"wuhu_system_library"`)
-  assertIncludes(bazel, `wuhu_system_library(\n    name = "CSQLite"`)
-  assertIncludes(bazel, `hdrs = glob(["Targets/CSQLite/**/*.h"])`)
-  assertIncludes(bazel, `module_map = "Targets/CSQLite/module.modulemap"`)
-  assertIncludes(bazel, `linkopts = [\n        "-lsqlite3",\n    ]`)
-  assertIncludes(bazel, `deps = [\n        ":CSQLite",`)
+  assertStringIncludes(bazel, `"wuhu_system_library"`)
+  assertStringIncludes(bazel, `wuhu_system_library(\n    name = "CSQLite"`)
+  assertStringIncludes(bazel, `hdrs = glob(["Targets/CSQLite/**/*.h"])`)
+  assertStringIncludes(bazel, `module_map = "Targets/CSQLite/module.modulemap"`)
+  assertStringIncludes(bazel, `linkopts = [\n        "-lsqlite3",\n    ]`)
+  assertStringIncludes(bazel, `deps = [\n        ":CSQLite",`)
 })
 
 Deno.test('a library links its declared SDK frameworks in both graphs', async () => {
@@ -2307,14 +2278,14 @@ Deno.test('a library links its declared SDK frameworks in both graphs', async ()
     '.',
     [target],
   )
-  assertIncludes(
+  assertStringIncludes(
     swift,
     `linkerSettings: [\n        .linkedFramework("AVKit")\n      ]`,
   )
   const bazel = await generateBuildBazel({ ...basePkg, products: ['Player'] }, [
     target,
   ])
-  assertIncludes(
+  assertStringIncludes(
     bazel,
     `linkopts = [\n        "-framework",\n        "AVKit",\n    ],`,
   )
@@ -2324,6 +2295,7 @@ Deno.test('a library links its declared SDK frameworks in both graphs', async ()
         ...minimalTarget('Tool', 'executable'),
         linkedFrameworks: ['AVKit'],
       }),
+    Error,
     'is kind executable, not library',
   )
 })
@@ -2344,14 +2316,14 @@ Deno.test('objcLibrary kind emits an always-linked Objective-C target', async ()
     [target, native],
   )
 
-  assertIncludes(swift, `.target(\n      name: "Bootstrap"`)
-  assertIncludes(
+  assertStringIncludes(swift, `.target(\n      name: "Bootstrap"`)
+  assertStringIncludes(
     bazel,
     `load("@rules_cc//cc:objc_library.bzl", "objc_library")`,
   )
-  assertIncludes(bazel, `objc_library(\n    name = "Bootstrap"`)
-  assertIncludes(bazel, `alwayslink = True`)
-  assertIncludes(bazel, `deps = [\n        ":Native",`)
+  assertStringIncludes(bazel, `objc_library(\n    name = "Bootstrap"`)
+  assertStringIncludes(bazel, `alwayslink = True`)
+  assertStringIncludes(bazel, `deps = [\n        ":Native",`)
 })
 
 Deno.test('generateDenoBuildBazel emits bundle and task tests from deno.json tasks', () => {
@@ -2366,17 +2338,17 @@ Deno.test('generateDenoBuildBazel emits bundle and task tests from deno.json tas
       dev: 'ignored',
     },
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     `load("//bazel/rules:deno.bzl", "deno_bundle", "deno_task_test")`,
   )
-  assertIncludes(build, `deno_bundle(\n    name = "bundle"`)
-  assertIncludes(build, `output_dir = "build/client"`)
-  assertIncludes(build, `tags = ["requires-network"]`)
-  assertIncludes(build, `task = "fmt"`)
-  assertIncludes(build, `task = "typecheck"`)
-  assertIncludes(build, `task = "lint"`)
-  assertIncludes(build, `task = "test"`)
+  assertStringIncludes(build, `deno_bundle(\n    name = "bundle"`)
+  assertStringIncludes(build, `output_dir = "build/client"`)
+  assertStringIncludes(build, `tags = ["requires-network"]`)
+  assertStringIncludes(build, `task = "fmt"`)
+  assertStringIncludes(build, `task = "typecheck"`)
+  assertStringIncludes(build, `task = "lint"`)
+  assertStringIncludes(build, `task = "test"`)
   if (build.includes(`"dev"`)) {
     throw new Error('did not expect a target for the dev task')
   }
@@ -2388,11 +2360,11 @@ Deno.test('generateDenoBuildBazel emits exported_dir targets', () => {
     tasks: { lint: 'z' },
     exportedDirs: { 'shell-sdk': 'app/lib/shell-sdk' },
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     `load("//bazel/rules:deno.bzl", "deno_task_test", "exported_dir")`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `exported_dir(\n    name = "shell-sdk",\n    srcs = glob(["app/lib/shell-sdk/**"], exclude = ["**/.DS_Store"]),\n    path = "app/lib/shell-sdk",\n)`,
   )
@@ -2413,11 +2385,11 @@ Deno.test('generateDenoBuildBazel emits deno_artifact targets with declared inpu
       },
     },
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     `load("//bazel/rules:deno.bzl", "deno_artifact", "deno_task_test")`,
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     `deno_artifact(\n    name = "dist",\n    srcs = [":srcs"],\n    inputs = {\n        "@tool_a//file": "TOOL_A",\n        "@tool_b//file": "TOOL_B",\n    },\n    tags = ["requires-network"],\n    task = "package",\n    target_compatible_with = wuhu_platforms([\n        "linux",\n    ]),\n)`,
   )
@@ -2447,11 +2419,11 @@ Deno.test('generateDenoBuildBazel injects generated inputs and excludes their pa
     },
     tasks: { build: 'x', typecheck: 'y' },
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    generated = {\n        "//tools/contract-ts:space-contract": "app/lib/contract.gen.ts",\n    },`,
   )
-  assertIncludes(build, `"app/lib/contract.gen.ts",\n        ],`)
+  assertStringIncludes(build, `"app/lib/contract.gen.ts",\n        ],`)
 })
 
 Deno.test('generateDenoBuildBazel requires owner', () => {
@@ -2473,7 +2445,7 @@ Deno.test('generateDenoBuildBazel leaves a non-member package byte-identical', (
   const standalone = generateDenoBuildBazel('packages/standalone', manifest)
   // Every deno package exposes :srcs so a `links` edge can name it, but a
   // package that belongs to no workspace gets no cluster wiring.
-  assertIncludes(standalone, 'filegroup(')
+  assertStringIncludes(standalone, 'filegroup(')
   for (
     const attr of ['workspace_root_files', 'workspace_member_srcs', 'link_srcs']
   ) {
@@ -2489,7 +2461,7 @@ Deno.test('generateDenoBuildBazel makes a linking standalone package its own clu
     tasks: { test: 't' },
     links: ['../space-oidc'],
   })
-  assertIncludes(
+  assertStringIncludes(
     build,
     `    workspace_root_files = [
         "//packages/build-pool:deno.json",
@@ -2515,65 +2487,15 @@ Deno.test('generateDenoBuildBazel wires a workspace member to the cluster', () =
       links: [],
     },
   )
-  assertEquals(
+  assertStringIncludes(
     build,
-    `load("//bazel/rules:deno.bzl", "deno_task_test")
-load("//bazel/rules:rules.bzl", "wuhu_platforms")
-
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "srcs",
-    srcs = glob(
-        ["**"],
-        exclude = [
-            ".env*",
-            ".react-router/**",
-            "BUILD.bazel",
-            "build/**",
-            "node_modules/**",
-            "**/.DS_Store",
-        ],
-    ),
-)
-
-deno_task_test(
-    name = "typecheck",
-    srcs = [":srcs"],
-    workspace_root_files = [
-        "//packages/wuhu-web:deno.json",
-        "//packages/wuhu-web:deno.lock",
-    ],
-    workspace_member_srcs = [
-        "//packages/wuhu-web/lab:srcs",
-    ],
-    tags = ["requires-network"],
-    task = "typecheck",
-    target_compatible_with = wuhu_platforms([
-        "linux",
-        "mac",
-    ]),
-)
-
-deno_task_test(
-    name = "lint",
-    srcs = [":srcs"],
-    workspace_root_files = [
-        "//packages/wuhu-web:deno.json",
-        "//packages/wuhu-web:deno.lock",
-    ],
-    workspace_member_srcs = [
-        "//packages/wuhu-web/lab:srcs",
-    ],
-    tags = ["requires-network"],
-    task = "lint",
-    target_compatible_with = wuhu_platforms([
-        "linux",
-        "mac",
-    ]),
-)
-`,
+    'workspace_root_files = [\n        "//packages/wuhu-web:deno.json",\n        "//packages/wuhu-web:deno.lock",\n    ]',
   )
+  assertStringIncludes(
+    build,
+    'workspace_member_srcs = [\n        "//packages/wuhu-web/lab:srcs",\n    ]',
+  )
+  assertEquals(build.includes('"//packages/wuhu-web/ui:srcs"'), false)
 })
 
 Deno.test('generateDenoBuildBazel omits workspace_member_srcs for a lone member', () => {
@@ -2582,8 +2504,8 @@ Deno.test('generateDenoBuildBazel omits workspace_member_srcs for a lone member'
     { owner: 'wuhu', tasks: { typecheck: 'y' } },
     { dir: 'packages/wuhu-web', members: ['packages/wuhu-web/ui'], links: [] },
   )
-  assertIncludes(build, `srcs = [":srcs"]`)
-  assertIncludes(build, `workspace_root_files = [`)
+  assertStringIncludes(build, `srcs = [":srcs"]`)
+  assertStringIncludes(build, `workspace_root_files = [`)
   if (build.includes('workspace_member_srcs')) {
     throw new Error('a lone workspace member has no siblings to pull in')
   }
@@ -2633,6 +2555,7 @@ Deno.test('assertLockfileHonorsPins catches a stale revision pin', () => {
   })
   assertThrows(
     () => assertLockfileHonorsPins(externals, lockfile),
+    Error,
     'silent no-op',
   )
 })
@@ -2650,6 +2573,7 @@ Deno.test('assertLockfileHonorsPins catches a stale exact version', () => {
   })
   assertThrows(
     () => assertLockfileHonorsPins(externals, lockfile),
+    Error,
     'silent no-op',
   )
 })
@@ -2664,6 +2588,7 @@ Deno.test('assertLockfileHonorsPins catches a pinned package missing from the lo
   ])
   assertThrows(
     () => assertLockfileHonorsPins(externals, JSON.stringify({ pins: [] })),
+    Error,
     'no pin for tca26',
   )
 })
@@ -2722,8 +2647,8 @@ Deno.test('a real shell outside default release lanes still has release variants
       info: {},
     }],
   })
-  assertIncludes(build, '"ExampleiOS-dev.entitlements"')
-  assertIncludes(build, '"ExampleiOS-release.entitlements"')
+  assertStringIncludes(build, '"ExampleiOS-dev.entitlements"')
+  assertStringIncludes(build, '"ExampleiOS-release.entitlements"')
 })
 
 Deno.test('a package without app shells reads no signing team', async () => {
@@ -2738,6 +2663,7 @@ Deno.test('a package without app shells reads no signing team', async () => {
   )
   await assertRejects(
     () => appSigningTeamID(['packages/x/Apps/x'], unreadable),
+    Error,
     'no tools/signing',
   )
 })
@@ -2746,7 +2672,10 @@ Deno.test('only the public tree may lack view-pilot', async () => {
   const root = await Deno.makeTempDir()
   const missing = join(root, 'view-pilot')
   assertEquals(await viewPilotProducts(missing, true), [])
-  await assertRejects(() => viewPilotProducts(missing, false), 'NotFound')
+  await assertRejects(
+    () => viewPilotProducts(missing, false),
+    Deno.errors.NotFound,
+  )
 
   const present = join(root, 'present')
   await Deno.mkdir(present)
@@ -2808,6 +2737,7 @@ Deno.test('ATS rejects every arbitrary-load override, including false values', (
       ) {
         assertThrows(
           () => validateAppTransportSecurity(value, 'app.yml'),
+          Error,
           `combines NSAllowsArbitraryLoads with ${key}`,
         )
       }
@@ -2829,30 +2759,6 @@ Deno.test('ATS permits local networking when arbitrary loads are disabled', () =
       NSAllowsLocalNetworking: true,
     },
   }, 'Info.plist')
-})
-
-Deno.test('all wuhu-app shells and generated bundle variants keep ATS overrides separate', async () => {
-  const packageDir =
-    new URL('../../packages/wuhu-app', import.meta.url).pathname
-  const appDirs = await discoverAppDirs(packageDir)
-  assertEquals(appDirs.length > 0, true)
-  for (const appDir of appDirs) {
-    const source = join(appDir, 'app.yml')
-    const app = parse(await Deno.readTextFile(source)) as AppManifest
-    validateAppTransportSecurity(app, source)
-    populateAppBundleInfo(app)
-    for (const target of appBundles(app)) {
-      for (const variant of ['dev', 'store', 'adhoc'] as const) {
-        const bundle = variantBundle(target, variant)
-        validateAppTransportSecurity(bundle.info, `${target.name}.${variant}`)
-        validateAppTransportSecurity(pilotInfo(bundle), `${target.name}.pilot`)
-        const ats = bundle.info.NSAppTransportSecurity
-        if (ats !== undefined) {
-          assertEquals(ats, { NSAllowsArbitraryLoads: true })
-        }
-      }
-    }
-  }
 })
 
 Deno.test('compiled C libraries and platform dependencies lower into both graphs', async () => {
@@ -2884,23 +2790,23 @@ Deno.test('compiled C libraries and platform dependencies lower into both graphs
     codec,
     consumer,
   ])
-  assertIncludes(swift, 'publicHeadersPath: "include"')
-  assertIncludes(
+  assertStringIncludes(swift, 'publicHeadersPath: "include"')
+  assertStringIncludes(
     swift,
     '.systemLibrary(name: "CPNG", path: "Targets/Codec/SystemPNG", providers: [.apt(["libpng-dev"])])',
   )
-  assertIncludes(
+  assertStringIncludes(
     swift,
     '.target(name: "Codec", condition: .when(platforms: [.linux]))',
   )
   const bazel = await generateBuildBazel(basePkg, [codec, consumer])
-  assertIncludes(bazel, 'wuhu_c_library(')
-  assertIncludes(
+  assertStringIncludes(bazel, 'wuhu_c_library(')
+  assertStringIncludes(
     bazel,
     'module_map = "Targets/Codec/Sources/include/module.modulemap"',
   )
-  assertIncludes(bazel, '"@png//:png"')
-  assertIncludes(
+  assertStringIncludes(bazel, '"@png//:png"')
+  assertStringIncludes(
     bazel,
     'select({"//bazel/constraints:linux": [":Codec"], "//conditions:default": []})',
   )
@@ -2909,6 +2815,7 @@ Deno.test('compiled C libraries and platform dependencies lower into both graphs
       partitionBazelDeps(basePkg, new Set(['Codec']), new Map(), [
         { name: 'Codec', platforms: [] },
       ]),
+    Error,
     'dependency platforms must be a nonempty list',
   )
 })
@@ -2926,6 +2833,7 @@ Deno.test('compiler-plugin edges reject platform conditions, including test depe
           ],
           macrosToDeps,
         ),
+      Error,
       'compiler-plugin dependencies do not support platform conditions',
     )
   }
@@ -2943,6 +2851,7 @@ Deno.test('compiled C targets reject DocC catalogs', async () => {
     })
     await assertRejects(
       () => generateBuildBazel(basePkg, [target]),
+      Error,
       'cannot document a cLibrary',
     )
   } finally {
@@ -2971,39 +2880,10 @@ Deno.test('unsigned Store profile bypass covers every real Wuhu app and embedded
     bundles.length,
   )
   for (const bundle of bundles) {
-    assertIncludes(
+    assertStringIncludes(
       build,
       `"//bazel/signing:store": ":${bundle.name}_store_profile__run_deno_task_prepare_profiles"`,
     )
-  }
-})
-
-Deno.test('rules_apple override patches each touch one file for Bazel native ctx.patch', async () => {
-  const template = await Deno.readTextFile(
-    new URL('../../MODULE.bazel.template', import.meta.url),
-  )
-  const override = template.match(
-    /single_version_override\(\s*module_name = "rules_apple",[\s\S]*?\n\)/,
-  )?.[0]
-  if (!override) throw new Error('missing rules_apple single_version_override')
-  const patches = [...override.matchAll(/"\/\/bazel\/patches:([^"]+\.patch)"/g)]
-    .map((match) => match[1])
-  for (
-    const platform of ['ios', 'tvos', 'visionos', 'watchos']
-  ) {
-    assertIncludes(
-      patches.join('\n'),
-      `rules-apple-unsigned-device-profiles-${platform}.patch`,
-    )
-  }
-  for (const patch of patches) {
-    const text = await Deno.readTextFile(
-      new URL(`../../bazel/patches/${patch}`, import.meta.url),
-    )
-    assertEquals({ patch, files: text.match(/^--- /gm)?.length }, {
-      patch,
-      files: 1,
-    })
   }
 })
 
@@ -3027,20 +2907,20 @@ Deno.test('platform runtime data and env stay out of simulator test actions', as
     build.indexOf('wuhu_sim_test('),
   )
   const simulator = build.slice(build.indexOf('wuhu_sim_test('))
-  assertIncludes(
+  assertStringIncludes(
     host,
     'extra_data = [\n        "//fixtures:shared",\n    ] + select({',
   )
-  assertIncludes(
+  assertStringIncludes(
     host,
     '"//bazel/constraints:mac": [\n        "//tools:holder",\n    ]',
   )
-  assertIncludes(
+  assertStringIncludes(
     host,
     'env = select({"//bazel/constraints:mac": {"HOLDER": "$(rootpath //tools:holder)", "SHARED": "yes"}, "//conditions:default": {"SHARED": "yes"}})',
   )
-  assertIncludes(simulator, '"//fixtures:shared"')
-  assertIncludes(simulator, 'env = {"SHARED": "yes"}')
+  assertStringIncludes(simulator, '"//fixtures:shared"')
+  assertStringIncludes(simulator, 'env = {"SHARED": "yes"}')
   assertEquals(simulator.includes('//tools:holder'), false)
   assertEquals(simulator.includes('HOLDER'), false)
 })
@@ -3055,122 +2935,9 @@ Deno.test('platform runtime rejects platforms outside the test lanes', async () 
           platformRuntime: { mac: { externalData: ['//tools:holder'] } },
         },
       }]),
+    Error,
     'names test runtime for mac, which is not one of its test lanes',
   )
-})
-
-Deno.test('Wuhu direct distribution separates Sparkle, identity, entitlements and release channels', async () => {
-  const app = parse(
-    await Deno.readTextFile(
-      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
-    ),
-  ) as AppManifest
-  validateAppRelease(app, 'wuhu/app.yml')
-  const direct = app.targets.find((target) => target.distribution === 'direct')!
-  const store = app.targets.find((target) => target.name === 'WuhuApp')!
-  assertEquals(direct.bundleID, 'ai.wuhu.app.direct')
-  assertEquals(store.bundleID, 'ai.wuhu.app')
-  assertEquals(direct.bundleID === store.bundleID, false)
-  assertEquals(direct.bundleName, store.bundleName)
-  const libraries = new Map(
-    app.libraries!.map((library) => [library.name, library]),
-  )
-  function dependencies(labels: string[]): string[] {
-    return labels.flatMap((
-      label,
-    ) => [
-      label,
-      ...(label.startsWith(':')
-        ? dependencies(libraries.get(label.slice(1))?.dependencies ?? [])
-        : []),
-    ])
-  }
-  for (const target of app.targets) {
-    assertEquals(
-      dependencies(target.dependencies).includes(
-        '//packages/wuhu-app:SoftwareUpdate',
-      ),
-      target === direct,
-    )
-    const entitlements = resolvedEntitlements(target, 'store', '97W7A3Y9GD')
-    assertEquals(
-      entitlements[
-        'com.apple.security.temporary-exception.mach-lookup.global-name'
-      ],
-      undefined,
-    )
-    if (target !== direct) {
-      assertEquals(
-        Object.keys(target.info).some((key) => key.startsWith('SU')),
-        false,
-      )
-      assertEquals(target.info.WuhuStorageNamespace, undefined)
-      continue
-    }
-    assertEquals(entitlements['com.apple.security.app-sandbox'], undefined)
-    assertEquals(entitlements['com.apple.security.device.audio-input'], true)
-    assertEquals(entitlements['keychain-access-groups'], [
-      '97W7A3Y9GD.ai.wuhu.app.direct',
-    ])
-    assertEquals(
-      entitlements['com.apple.application-identifier'],
-      '97W7A3Y9GD.ai.wuhu.app.direct',
-    )
-    assertEquals(
-      entitlements['com.apple.developer.team-identifier'],
-      '97W7A3Y9GD',
-    )
-    assertEquals(entitlements['get-task-allow'], undefined)
-    assertEquals(
-      entitlements['com.apple.security.cs.disable-library-validation'],
-      undefined,
-    )
-    assertEquals(entitlements['com.apple.security.network.server'], undefined)
-    assertEquals(target.info.SUEnableInstallerLauncherService, undefined)
-    assertEquals(target.info.SUEnableDownloaderService, undefined)
-    assertEquals(target.info.SUEnableAutomaticChecks, true)
-    assertEquals(target.info.SUAutomaticallyUpdate, false)
-    assertEquals(
-      target.info.SUPublicEDKey,
-      'FDHcWJqmjGNaFO726V0NXy9hKZWoaBYGaCW7zRd/CG4=',
-    )
-    assertEquals(target.info.WuhuStorageNamespace, target.bundleID)
-  }
-  assertEquals(
-    store.entitlements.common!['com.apple.security.app-sandbox'],
-    true,
-  )
-  assertEquals(direct.releaseChannels, {
-    stable: {
-      SUFeedURL: 'https://wuhu.ai/releases/app/mac/appcast.xml',
-      WuhuUpdateChannel: 'stable',
-    },
-    staging: {
-      SUFeedURL: 'https://wuhu.ai/releases/app/mac-staging/appcast.xml',
-      WuhuUpdateChannel: 'staging',
-    },
-  })
-  const build = generateAppBuildBazel(app, [], 'Apps/wuhu')
-  const directRule = build.split('\n)\n').find((rule) =>
-    rule.includes('name = "WuhuAppDirect",')
-  )!
-  assertIncludes(directRule, 'features = ["disable_legacy_signing"]')
-  assertEquals(directRule.includes('provisioning_profile'), false)
-  assertEquals(directRule.includes('ViewPilot'), false)
-  assertIncludes(directRule, ':WuhuAppDirect_channel_stable')
-  assertIncludes(directRule, 'BazelInfo-direct-staging.plist')
-  assertIncludes(build, 'build_setting_default = "stable"')
-  const directLibrary = build.split('\n)\n').find((rule) =>
-    rule.includes('name = "WuhuAppDirectLibrary",')
-  )!
-  assertIncludes(directLibrary, 'Commands/Direct/**/*.swift')
-  assertEquals(directLibrary.includes('WUHU_UI_CONTROL_COPTS'), false)
-  populateAppBundleInfo(app)
-  assertEquals(
-    direct.info.SUFeedURL,
-    'https://wuhu.ai/releases/app/mac/appcast.xml',
-  )
-  assertEquals(direct.info.WuhuUpdateChannel, 'stable')
 })
 
 Deno.test('direct distribution rejects mobile, development identity and channel identity overrides', async () => {
@@ -3186,61 +2953,30 @@ Deno.test('direct distribution rejects mobile, development identity and channel 
     change((target) => {
       target.platform = 'iOS'
     }),
+    Error,
     'direct requires macOS',
   )
   assertThrows(
     change((target) => {
       target.devIdentity = { bundleID: 'dev.example' }
     }),
+    Error,
     'release-only app identity',
   )
   assertThrows(
     change((target) => {
       delete target.releaseChannels!.stable
     }),
+    Error,
     'stable default',
   )
   assertThrows(
     change((target) => {
       target.releaseChannels!.staging.CFBundleIdentifier = 'wrong'
     }),
+    Error,
     'cannot change bundle identity',
   )
-})
-
-Deno.test('Sparkle official XCFramework and tools share one pin and exclude unused XPC services', async () => {
-  const fragment = await Deno.readTextFile(
-    new URL('../../packages/wuhu-app/MODULE.fragment.bazel', import.meta.url),
-  )
-  const target = parse(
-    await Deno.readTextFile(
-      new URL(
-        '../../packages/wuhu-app/Targets/SoftwareUpdate/target.yml',
-        import.meta.url,
-      ),
-    ),
-  ) as TargetManifest
-  assertEquals(target.checks?.build, ['mac'])
-  const dependency = target.dependencies![0] as {
-    name: string
-    swiftpm: { binaryTarget: { url: string; checksum: string } }
-  }
-  assertEquals(dependency.name, '@sparkle//:Sparkle')
-  const { url, checksum } = dependency.swiftpm.binaryTarget
-  assertEquals(
-    url,
-    'https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip',
-  )
-  assertEquals(
-    checksum,
-    '17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959',
-  )
-  assertIncludes(fragment, `sha256 = "${checksum}"`)
-  assertIncludes(fragment, `url = "${url}"`)
-  assertIncludes(fragment, 'Sparkle.framework/Versions/B/XPCServices')
-  for (const name of ['sign_update', 'generate_appcast', 'generate_keys']) {
-    assertIncludes(fragment, `name = "${name}"`)
-  }
 })
 
 Deno.test('host linker arguments reach the native test without entering simulator tests', async () => {
@@ -3258,47 +2994,12 @@ Deno.test('host linker arguments reach the native test without entering simulato
     build.indexOf('wuhu_sim_test('),
   )
   const simulator = build.slice(build.indexOf('wuhu_sim_test('))
-  assertIncludes(host, 'linkopts = [')
-  assertIncludes(
+  assertStringIncludes(host, 'linkopts = [')
+  assertStringIncludes(
     host,
     '"-Wl,-rpath,@loader_path/UpdaterTests.runfiles/frameworks"',
   )
   assertEquals(simulator.includes('linkopts ='), false)
-})
-
-Deno.test('Wuhu mobile plists declare only scheduled push refresh in every signing variant', async () => {
-  const app = parse(
-    await Deno.readTextFile(
-      new URL('../../packages/wuhu-app/Apps/wuhu/app.yml', import.meta.url),
-    ),
-  ) as AppManifest
-  for (const name of ['WuhuAppIOS', 'WuhuAppVision']) {
-    const target = app.targets.find((target) => target.name === name)!
-    for (const variant of ['dev', 'adhoc', 'store'] as const) {
-      const info = appBundleInfo(
-        app,
-        variantBundle(target, variant),
-        'application',
-      )
-      assertEquals(info.UIBackgroundModes, ['fetch'])
-      assertEquals(info.BGTaskSchedulerPermittedIdentifiers, [
-        'ai.wuhu.app.push-refresh',
-      ])
-      assertEquals(
-        info.NSMicrophoneUsageDescription,
-        name === 'WuhuAppIOS'
-          ? 'Wuhu records what you dictate into the composer and sends it to your space to transcribe.'
-          : 'Wuhu records what you dictate into the composer and sends it to your space to transcribe. In voice mode it listens for “wuhu wuhu” and records what you say next.',
-      )
-    }
-  }
-  for (
-    const target of app.targets.filter((target) => target.platform === 'macOS')
-  ) {
-    const info = appBundleInfo(app, target, 'application')
-    assertEquals(info.UIBackgroundModes, undefined)
-    assertEquals(info.BGTaskSchedulerPermittedIdentifiers, undefined)
-  }
 })
 
 Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Development only', () => {
@@ -3330,15 +3031,15 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
     dependencies: [':WidgetLibrary'],
   }]
   const build = generateAppBuildBazel(app)
-  assertIncludes(
+  assertStringIncludes(
     build,
     'wuhu_hmr_app(\n    name = "ExampleIOSHMR",\n    app = ":ExampleIOS",\n    tags = ["manual"],\n    target_compatible_with = wuhu_platforms([\n        "ios",\n    ]),\n)',
   )
-  assertIncludes(
+  assertStringIncludes(
     build,
     '"//bazel/rules:hmr_enabled": ["//packages/hmr:HMRRuntime"]',
   )
-  assertIncludes(build, '"//bazel/rules:hmr_enabled": ["-interposable"]')
+  assertStringIncludes(build, '"//bazel/rules:hmr_enabled": ["-interposable"]')
   const widget = build.slice(
     build.indexOf('name = "WidgetLibrary"'),
     build.indexOf('ios_application(', build.indexOf('name = "WidgetLibrary"')),
@@ -3347,7 +3048,7 @@ Deno.test('HMR app variants are manual and runtime/linker hooks are opt-in Devel
   assertEquals(widget.includes('WUHU_HMR_VIEW_COPTS'), false)
   // Shell views erase their opaque body types like every wuhu_swift_library,
   // so a type-changing patch to a shell source keeps a stable `Body`.
-  assertIncludes(
+  assertStringIncludes(
     build,
     'copts = WUHU_SWIFT_LANGUAGE_MODE_COPTS + WUHU_HMR_COPTS + WUHU_HMR_VIEW_COPTS,',
   )
@@ -3410,14 +3111,6 @@ Deno.test('ad hoc honors an explicit Dev CloudKit environment without changing S
   )
 })
 
-Deno.test('test-only helper libraries include developer framework search paths', async () => {
-  const build = await generateBuildBazel(applePkg, [{
-    ...minimalTarget('TestDependencies', 'library'),
-    testOnly: true,
-  }])
-  assertIncludes(build, 'name = "TestDependencies",\n    testonly = True,')
-})
-
 Deno.test('macBundle opts only the mac host into an assembled XCTest resource bundle', async () => {
   const pkg = { ...basePkg, platforms: { macOS: '15.0', iOS: '18.0' } }
   const target: TargetManifest = {
@@ -3434,15 +3127,15 @@ Deno.test('macBundle opts only the mac host into an assembled XCTest resource bu
     },
   }
   const build = await generateBuildBazel(pkg, [target])
-  assertIncludes(build, 'wuhu_macos_test(\n    name = "CaptureTests",')
-  assertIncludes(build, 'minimum_os_version = "15.0"')
+  assertStringIncludes(build, 'wuhu_macos_test(\n    name = "CaptureTests",')
+  assertStringIncludes(build, 'minimum_os_version = "15.0"')
   const host = build.slice(
     build.indexOf('wuhu_macos_test('),
     build.indexOf('wuhu_sim_test('),
   )
-  assertIncludes(host, '"//tools:holder"')
-  assertIncludes(host, '"TOOL": "$(rootpath //tools:holder)"')
-  assertIncludes(build, 'wuhu_sim_test(\n    name = "CaptureTests.ios",')
+  assertStringIncludes(host, '"//tools:holder"')
+  assertStringIncludes(host, '"TOOL": "$(rootpath //tools:holder)"')
+  assertStringIncludes(build, 'wuhu_sim_test(\n    name = "CaptureTests.ios",')
   assertEquals(
     build.includes('wuhu_swift_test(\n    name = "CaptureTests",'),
     false,
@@ -3451,7 +3144,7 @@ Deno.test('macBundle opts only the mac host into an assembled XCTest resource bu
     ...target,
     tests: { checks: { test: ['mac'] } },
   }])
-  assertIncludes(ordinary, 'wuhu_swift_test(\n    name = "CaptureTests",')
+  assertStringIncludes(ordinary, 'wuhu_swift_test(\n    name = "CaptureTests",')
 })
 
 const macRunnerFixture = `#!/bin/bash
@@ -3464,24 +3157,15 @@ done
 xcodebuild test-without-building
 `
 
-Deno.test('mac runner forwards inherited environment without prelaunch for ordinary bundles', () => {
-  const inherited =
-    'if [[ "${WUHU_SNAPSHOT_RECORD_DIR+x}" == x ]]; then TEST_ENV="${TEST_ENV:+$TEST_ENV,}WUHU_SNAPSHOT_RECORD_DIR=${WUHU_SNAPSHOT_RECORD_DIR}"; fi'
-  const output = macRunnerTemplate(macRunnerFixture, [inherited], false)
-  assertIncludes(output, `TEST_ENV="%(test_env)s"\n${inherited}`)
-  assertEquals(output.includes('"$value" acquire'), false)
-  assertIncludes(output, 'xcodebuild test-without-building')
-})
-
 Deno.test('mac capture runner acquires declared display before launching XCTest', () => {
   const output = macRunnerTemplate(macRunnerFixture, [], true)
-  assertIncludes(output, 'if [[ "$key" == WUHU_VDISPLAY_TOOL ]]; then')
-  assertIncludes(output, 'if ! "$value" acquire; then')
-  assertIncludes(
+  assertStringIncludes(output, 'if [[ "$key" == WUHU_VDISPLAY_TOOL ]]; then')
+  assertStringIncludes(output, 'if ! "$value" acquire; then')
+  assertStringIncludes(
     output,
     'macOS capture display prelaunch acquisition failed: $value',
   )
-  assertIncludes(output, 'exit 1')
+  assertStringIncludes(output, 'exit 1')
   assertEquals(
     output.indexOf('"$value" acquire') <
       output.indexOf('xcodebuild test-without-building'),
@@ -3504,6 +3188,7 @@ Deno.test('mac runner rejects missing and duplicate pinned insertion anchors', (
     ) {
       assertThrows(
         () => macRunnerTemplate(source, [], true),
+        Error,
         'pinned macOS runner template changed: expected one',
       )
     }

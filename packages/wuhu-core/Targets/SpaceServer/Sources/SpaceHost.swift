@@ -17,8 +17,6 @@ import struct SessionDomain.SessionID
 import struct SpaceContract.AIDisclosure
 import SpaceCore
 import WebPush
-import struct WuhuVFS.DiskVFSNode
-import struct WuhuVFS.NodeTreeVFS
 
 public actor SpaceHost {
   public nonisolated let space: Space
@@ -39,10 +37,7 @@ public actor SpaceHost {
   nonisolated let execTokens: ExecTokens?
 
   public static func loadDisclosure(from file: URL) async throws -> AIDisclosure {
-    try await loadAIDisclosure(
-      from: NodeTreeVFS(root: DiskVFSNode(path: file.deletingLastPathComponent().path, isMutable: false)),
-      path: "/" + file.lastPathComponent, file: file.path,
-    )
+    try await loadAIDisclosure(file: file.path) { try Data(contentsOf: file) }
   }
 
   public static func open(

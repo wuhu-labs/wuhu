@@ -184,3 +184,7 @@
 .wuhu-settings-logout {
   margin-right: auto;
 }
+
+.wuhu-group-settings > .wui-card + .wui-card {
+  margin-top: 0.9rem;
+}
